@@ -793,9 +793,9 @@ export async function waitForStableBlockRows(page: Page, expectedRows = 1): Prom
 // at boot (see `@tauri-apps/api/mocks` + `tauri-mock/index.ts`). We wrap that
 // live function with a recorder that pushes `{ cmd, args }` onto a window
 // array, then delegates to the original so the mock still answers. This is
-// purely test-side — no production source is touched — and is the only way to
-// observe toggle flags / filter params on the web+mock harness (the mock's
-// `search_blocks` handler folds on content and ignores the filter struct).
+// purely test-side — no production source is touched. Search specs assert the
+// rendered rows instead (`seedSearchBlocks` + `searchResultIds`): the mock's
+// `search_blocks` applies the filter struct and the toggles.
 // ---------------------------------------------------------------------------
 
 /** Boot the app and open the find-in-files Search view (SearchPanel). */
@@ -809,6 +809,77 @@ export async function openSearchView(page: Page): Promise<Locator> {
   const input = page.getByPlaceholder('Search blocks...')
   await expect(input).toBeVisible()
   return input
+}
+
+/** A block for {@link seedSearchBlocks}. A numeric date is that many days from the browser's today. */
+export interface SearchSeed {
+  content: string
+  /** Defaults to the seeded Projects page. */
+  parentId?: string
+  todo?: string
+  priority?: string
+  due?: string | number
+  scheduled?: string | number
+  props?: Record<string, string>
+  tagIds?: string[]
+}
+
+/** Create each block through the mock IPC; returns their ids in order. */
+export function seedSearchBlocks(page: Page, seeds: SearchSeed[]): Promise<string[]> {
+  return page.evaluate(async (list) => {
+    const { invoke } = (
+      window as unknown as {
+        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+      }
+    ).__TAURI_INTERNALS__
+    const isoDate = (d: string | number): string => {
+      if (typeof d === 'string') return d
+      const t = new Date()
+      t.setDate(t.getDate() + d)
+      return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
+    }
+    const ids: string[] = []
+    for (const s of list) {
+      const { id } = (await invoke('create_block', {
+        blockType: 'content',
+        content: s.content,
+        parentId: s.parentId ?? '00000000000000000000PAGE04',
+        index: null,
+        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+        blockId: null,
+      })) as { id: string }
+      if (s.todo) await invoke('set_todo_state', { blockId: id, state: s.todo })
+      if (s.priority) await invoke('set_priority', { blockId: id, level: s.priority })
+      if (s.due !== undefined) await invoke('set_due_date', { blockId: id, date: isoDate(s.due) })
+      if (s.scheduled !== undefined) {
+        await invoke('set_scheduled_date', { blockId: id, date: isoDate(s.scheduled) })
+      }
+      for (const [key, value] of Object.entries(s.props ?? {})) {
+        await invoke('set_property', { blockId: id, key, value: { value_text: value } })
+      }
+      for (const tagId of s.tagIds ?? []) await invoke('add_tag', { blockId: id, tagId })
+      ids.push(id)
+    }
+    return ids
+  }, seeds)
+}
+
+/** Type `query` into the Search view and submit it. */
+export async function submitSearch(page: Page, query: string): Promise<void> {
+  // The placeholder changes in regex mode; the accessible name does not.
+  const input = page.getByRole('combobox', { name: 'Search blocks' })
+  await input.fill(query)
+  await input.press('Enter')
+}
+
+/** Block ids of the rendered search result rows, sorted. */
+export async function searchResultIds(page: Page): Promise<string[]> {
+  const ids = await page
+    .locator('[data-testid^="search-result-row-"]')
+    .evaluateAll((rows) =>
+      rows.map((r) => r.getAttribute('data-testid')?.replace('search-result-row-', '') ?? ''),
+    )
+  return ids.toSorted()
 }
 
 declare global {

@@ -2,31 +2,22 @@
  * E2E — search-view toggles (E2E-1) + invalid-regex inline error
  * (E2E-2).
  *
- * The web+mock harness has no real Rust FTS/regex pipeline, so "exercise the
- * toggles against the real backend" (the literal E2E-1 wording) is not
- * achievable here. Instead we assert the contract the UI is responsible for:
- *
  *   - clicking each toggle flips its `aria-pressed` + `data-state`;
- *   - the toggle state is reflected in the IPC payload (`filter.caseSensitive`
- *     / `wholeWord` / `isRegex`) the panel sends to `search_blocks`;
- * Regex mode is symmetric with normal mode (cluster-1): structured
- *     tokens are parsed out and applied as filter params, only the free-text
- *     remainder is the regex pattern;
+ *   - each toggle changes which seeded blocks the results render;
+ *   - regex mode is symmetric with normal mode (cluster-1): structured tokens
+ *     are parsed out and applied as filters, only the free-text remainder is
+ *     the regex pattern;
  *   - an invalid regex surfaces inline (`search-inline-error`) and a
  *     non-regex backend error renders the visible error state (E2E-2).
- *
- * The IPC recorder (helpers `installIpcRecorder` / `getInvokeCalls`) wraps the
- * live mock `invoke` so we can read the filter flags the real backend would
- * receive.
  */
 
 import {
   clearConsoleErrors,
-  clearInvokeCalls,
   expect,
-  getInvokeCalls,
-  installIpcRecorder,
   openSearchView,
+  searchResultIds,
+  seedSearchBlocks,
+  submitSearch,
   test,
 } from './helpers'
 
@@ -38,21 +29,19 @@ interface MockErrorWindow extends Window {
   __clearMockErrors?: () => void
 }
 
-/** Fire a query and wait until at least one `search_blocks` IPC is recorded. */
-async function searchAndAwaitIpc(page: import('@playwright/test').Page, query: string) {
-  await clearInvokeCalls(page)
-  const input = page.getByRole('combobox', { name: 'Search blocks' })
-  await input.fill(query)
-  await input.press('Enter')
-  await expect
-    .poll(async () => (await getInvokeCalls(page, 'search_blocks')).length)
-    .toBeGreaterThan(0)
-}
-
 test.describe('Search toggles (E2E-1)', () => {
+  /** Capitalised, lower-case TODO, and a longer word: each toggle drops a different one. */
+  let capitalised: string
+  let lowerTodo: string
+  let longerWord: string
+
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
-    await installIpcRecorder(page)
+    ;[capitalised, lowerTodo, longerWord] = (await seedSearchBlocks(page, [
+      { content: 'Quokka zone' },
+      { content: 'a quokka here', todo: 'TODO' },
+      { content: 'quokkas everywhere' },
+    ])) as [string, string, string]
   })
 
   test('case / word / regex toggles flip aria-pressed and data-state', async ({ page }) => {
@@ -78,55 +67,34 @@ test.describe('Search toggles (E2E-1)', () => {
     }
   })
 
-  test('default search sends all-false filter flags', async ({ page }) => {
-    await searchAndAwaitIpc(page, 'Welcome')
-    const calls = await getInvokeCalls(page, 'search_blocks')
-    const filter = calls.at(-1)?.['filter'] as Record<string, unknown>
-    expect(filter['caseSensitive']).toBe(false)
-    expect(filter['wholeWord']).toBe(false)
-    expect(filter['isRegex']).toBe(false)
+  test('default search folds case and matches inside words', async ({ page }) => {
+    await submitSearch(page, 'quokka')
+    await expect
+      .poll(() => searchResultIds(page))
+      .toEqual([capitalised, lowerTodo, longerWord].toSorted())
   })
 
-  test('case-sensitive toggle sets filter.caseSensitive on the IPC payload', async ({ page }) => {
+  test('case-sensitive toggle drops a differently cased match', async ({ page }) => {
     await page.getByTestId('search-toggle-case-sensitive').click()
-    await searchAndAwaitIpc(page, 'Welcome')
-    const calls = await getInvokeCalls(page, 'search_blocks')
-    const filter = calls.at(-1)?.['filter'] as Record<string, unknown>
-    expect(filter['caseSensitive']).toBe(true)
-    expect(filter['wholeWord']).toBe(false)
-    expect(filter['isRegex']).toBe(false)
+    await submitSearch(page, 'quokka')
+    await expect.poll(() => searchResultIds(page)).toEqual([lowerTodo, longerWord].toSorted())
   })
 
-  test('whole-word toggle sets filter.wholeWord on the IPC payload', async ({ page }) => {
+  test('whole-word toggle drops a match inside a longer word', async ({ page }) => {
     await page.getByTestId('search-toggle-whole-word').click()
-    await searchAndAwaitIpc(page, 'Welcome')
-    const calls = await getInvokeCalls(page, 'search_blocks')
-    const filter = calls.at(-1)?.['filter'] as Record<string, unknown>
-    expect(filter['wholeWord']).toBe(true)
-    expect(filter['caseSensitive']).toBe(false)
-    expect(filter['isRegex']).toBe(false)
+    await submitSearch(page, 'quokka')
+    await expect.poll(() => searchResultIds(page)).toEqual([capitalised, lowerTodo].toSorted())
   })
 
   test('regex mode parses structured filters out of the pattern (symmetric with normal mode)', async ({
     page,
   }) => {
     await page.getByTestId('search-toggle-regex').click()
-    // Cluster-1 (decided with the user) — regex mode is
-    // SYMMETRIC with normal mode: a structured token (`state:`) is parsed out of
-    // the input and applied as a SQL filter; only the free-text remainder
-    // ('W.*come') is forwarded as the regex pattern. This replaced the original
-    // Contract (regex forwarded the raw string verbatim and dropped
-    // filters), which this test used to assert. A `state:` token is used (not a
-    // tag) so the assertion is synchronous — no async tag-id resolution to race.
-    await searchAndAwaitIpc(page, 'W.*come state:TODO')
-    const calls = await getInvokeCalls(page, 'search_blocks')
-    const last = calls.at(-1)
-    const filter = last?.['filter'] as Record<string, unknown>
-    expect(filter['isRegex']).toBe(true)
-    // The `state:` token is stripped from the regex pattern…
-    expect(last?.['query']).toBe('W.*come')
-    // …and applied as a filter param instead (symmetric with normal mode).
-    expect(filter['stateFilter']).toContain('TODO')
+    // Cluster-1 — regex mode is SYMMETRIC with normal mode: `state:TODO` is
+    // applied as a filter and only `qu.kka` is the pattern. No block holds the
+    // literal text `qu.kka`, so a hit proves the pattern ran as a regex.
+    await submitSearch(page, 'qu.kka state:TODO')
+    await expect.poll(() => searchResultIds(page)).toEqual([lowerTodo])
   })
 })
 

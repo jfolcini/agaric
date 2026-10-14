@@ -1,51 +1,18 @@
 /**
  * E2E — search-view filters: the Add filter builder (E2E-3), chip
- * lifecycle (E2E-4), and structured-DSL → IPC-param marshalling (E2E-6).
- *
- * The web+mock harness has no real SQL filtering (the mock `search_blocks`
- * handler folds on content and ignores the `SearchFilter` struct), so E2E-6
- * cannot assert a *filtered result set*. Instead we assert the panel marshals
- * each DSL token into the correct IPC `filter` param — the contract the real
- * backend consumes. The chip + popover flows are pure DOM and fully covered.
+ * lifecycle (E2E-4), and each structured-DSL token narrowing the rendered
+ * results (E2E-6), seeded with blocks the filter must keep and must drop.
  */
 
 import {
-  clearInvokeCalls,
   expect,
-  getInvokeCalls,
-  installIpcRecorder,
   openSearchView,
+  type SearchSeed,
+  searchResultIds,
+  seedSearchBlocks,
+  submitSearch,
   test,
 } from './helpers'
-
-const TAG_WORK_ID = '000000000000000000000TAG01'
-
-/** Latest recorded `search_blocks` filter payload. */
-async function latestFilter(
-  page: import('@playwright/test').Page,
-): Promise<Record<string, unknown>> {
-  const calls = await getInvokeCalls(page, 'search_blocks')
-  return calls.at(-1)?.['filter'] as Record<string, unknown>
-}
-
-/** Type a query, submit, and wait until a `search_blocks` IPC matching the
- *  predicate has been recorded (handles the async tag-id re-fire). */
-async function searchUntil(
-  page: import('@playwright/test').Page,
-  query: string,
-  predicate: (filter: Record<string, unknown>) => boolean,
-) {
-  await clearInvokeCalls(page)
-  const input = page.getByPlaceholder('Search blocks...')
-  await input.fill(query)
-  await input.press('Enter')
-  await expect
-    .poll(async () => {
-      const calls = await getInvokeCalls(page, 'search_blocks')
-      return calls.some((c) => predicate(c['filter'] as Record<string, unknown>))
-    })
-    .toBe(true)
-}
 
 // ===========================================================================
 // E2E-3 — Add filter builder popover
@@ -154,172 +121,118 @@ test.describe('Filter chip lifecycle (E2E-4)', () => {
 })
 
 // ===========================================================================
-// E2E-6 — structured DSL filters → IPC params
+// E2E-6 — structured DSL filters narrow the rendered results
 // ===========================================================================
 
-test.describe('Structured DSL filters → IPC params (E2E-6)', () => {
+const MARK = 'quokka'
+const TAG_WORK_ID = '000000000000000000000TAG01'
+const TAG_PERSONAL_ID = '000000000000000000000TAG02'
+const PAGE_MEETINGS = '00000000000000000000PAGE05'
+
+type Seed = Omit<SearchSeed, 'content'>
+
+/** Seed `keep` and `drop` blocks that all hold `MARK`; `<token> MARK` must render exactly `keep`. */
+async function expectFilterKeeps(
+  page: import('@playwright/test').Page,
+  token: string,
+  keep: Seed[],
+  drop: Seed[],
+): Promise<void> {
+  const ids = await seedSearchBlocks(
+    page,
+    [...keep, ...drop].map((seed, i) => Object.assign({ content: `${MARK} ${i}` }, seed)),
+  )
+  await submitSearch(page, `${token} ${MARK}`)
+  await expect.poll(() => searchResultIds(page)).toEqual(ids.slice(0, keep.length).toSorted())
+}
+
+test.describe('Structured DSL filters narrow the results (E2E-6)', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
-    await installIpcRecorder(page)
   })
 
-  test('state: token → filter.stateFilter', async ({ page }) => {
-    await searchUntil(
+  test('state: keeps blocks in that state', async ({ page }) => {
+    await expectFilterKeeps(page, 'state:TODO', [{ todo: 'TODO' }], [{ todo: 'DONE' }, {}])
+  })
+
+  test('path: keeps blocks on pages whose title matches the glob', async ({ page }) => {
+    await expectFilterKeeps(page, 'path:Proj*', [{}], [{ parentId: PAGE_MEETINGS }])
+  })
+
+  test('due: bucket keeps blocks due in it', async ({ page }) => {
+    await expectFilterKeeps(page, 'due:today', [{ due: 0 }], [{ due: 1 }, {}])
+  })
+
+  test('due: comparison keeps blocks due on or after the date', async ({ page }) => {
+    await expectFilterKeeps(
       page,
-      'state:TODO',
-      (f) => Array.isArray(f['stateFilter']) && (f['stateFilter'] as string[]).includes('TODO'),
+      'due:>=2026-01-01',
+      [{ due: '2026-01-01' }, { due: '2026-03-01' }],
+      [{ due: '2025-12-31' }, {}],
     )
-    const filter = await latestFilter(page)
-    expect(filter['stateFilter']).toContain('TODO')
   })
 
-  test('path: token → filter.includePageGlobs', async ({ page }) => {
-    await searchUntil(
-      page,
-      'path:Journal/2026-*',
-      (f) =>
-        Array.isArray(f['includePageGlobs']) &&
-        (f['includePageGlobs'] as string[]).includes('Journal/2026-*'),
-    )
-    const filter = await latestFilter(page)
-    expect(filter['includePageGlobs']).toContain('Journal/2026-*')
-  })
-
-  test('due: bucket token → filter.dueFilter named range', async ({ page }) => {
-    await searchUntil(page, 'due:today', (f) => {
-      const due = f['dueFilter'] as Record<string, unknown> | null
-      return !!due && due['named'] === 'today'
-    })
-    const filter = await latestFilter(page)
-    expect((filter['dueFilter'] as Record<string, unknown>)['named']).toBe('today')
-  })
-
-  test('due: comparison token → filter.dueFilter op shape', async ({ page }) => {
-    await searchUntil(page, 'due:>=2026-01-01', (f) => {
-      const due = f['dueFilter'] as { op?: { op?: string; date?: string } } | null
-      return !!due?.op && due.op.op === 'gte' && due.op.date === '2026-01-01'
-    })
-    const filter = await latestFilter(page)
-    const due = filter['dueFilter'] as { op: { op: string; date: string } }
-    expect(due.op.op).toBe('gte')
-    expect(due.op.date).toBe('2026-01-01')
-  })
-
-  test('prop: token → filter.propertyFilters key/value', async ({ page }) => {
-    await searchUntil(
+  test('prop: keeps blocks with that key and value', async ({ page }) => {
+    await expectFilterKeeps(
       page,
       'prop:project=alpha',
-      (f) =>
-        Array.isArray(f['propertyFilters']) &&
-        (f['propertyFilters'] as Array<{ key: string; value: string }>).some(
-          (p) => p.key === 'project' && p.value === 'alpha',
-        ),
+      [{ props: { project: 'alpha' } }],
+      [{ props: { project: 'beta' } }, {}],
     )
-    const filter = await latestFilter(page)
-    expect(filter['propertyFilters']).toContainEqual({ key: 'project', value: 'alpha' })
   })
 
-  test('tag: token resolves the name to an id → filter.tagIds', async ({ page }) => {
-    // Tag name → id resolution is async (listTagsByPrefix); the IPC re-fires
-    // once the id lands. Poll until a call carries the resolved id.
-    await searchUntil(
+  test('tag: keeps blocks carrying the named tag', async ({ page }) => {
+    await expectFilterKeeps(
       page,
       'tag:#work',
-      (f) => Array.isArray(f['tagIds']) && (f['tagIds'] as string[]).includes(TAG_WORK_ID),
+      [{ tagIds: [TAG_WORK_ID] }],
+      [{ tagIds: [TAG_PERSONAL_ID] }, {}],
     )
-    const filter = await latestFilter(page)
-    expect(filter['tagIds']).toContain(TAG_WORK_ID)
   })
 
-  // E2E-A1 — negated filters project onto the dedicated `excluded*` fields
-  // (wiring; the backend emits NULL-inclusive `NOT IN (...)`).
-  test('not-state: token → filter.excludedStateFilter', async ({ page }) => {
-    await searchUntil(
-      page,
-      'not-state:DONE',
-      (f) =>
-        Array.isArray(f['excludedStateFilter']) &&
-        (f['excludedStateFilter'] as string[]).includes('DONE'),
-    )
-    const filter = await latestFilter(page)
-    expect(filter['excludedStateFilter']).toContain('DONE')
+  // E2E-A1 — negated filters keep the NULL bucket (`NOT IN` is NULL-inclusive).
+  test('not-state: drops blocks in that state and keeps stateless ones', async ({ page }) => {
+    await expectFilterKeeps(page, 'not-state:DONE', [{ todo: 'TODO' }, {}], [{ todo: 'DONE' }])
   })
 
-  test('not-priority: token → filter.excludedPriorityFilter', async ({ page }) => {
-    await searchUntil(
-      page,
-      'not-priority:3',
-      (f) =>
-        Array.isArray(f['excludedPriorityFilter']) &&
-        (f['excludedPriorityFilter'] as string[]).includes('3'),
-    )
-    const filter = await latestFilter(page)
-    expect(filter['excludedPriorityFilter']).toContain('3')
+  test('not-priority: drops blocks at that priority and keeps unprioritised ones', async ({
+    page,
+  }) => {
+    await expectFilterKeeps(page, 'not-priority:3', [{ priority: '1' }, {}], [{ priority: '3' }])
   })
 
-  test('not-prop: token → filter.excludedPropertyFilters key/value', async ({ page }) => {
-    await searchUntil(
+  test('not-prop: drops blocks with that key and value', async ({ page }) => {
+    await expectFilterKeeps(
       page,
       'not-prop:archived=true',
-      (f) =>
-        Array.isArray(f['excludedPropertyFilters']) &&
-        (f['excludedPropertyFilters'] as Array<{ key: string; value: string }>).some(
-          (p) => p.key === 'archived' && p.value === 'true',
-        ),
+      [{ props: { archived: 'false' } }, {}],
+      [{ props: { archived: 'true' } }],
     )
-    const filter = await latestFilter(page)
-    expect(filter['excludedPropertyFilters']).toContainEqual({ key: 'archived', value: 'true' })
   })
 
-  // E2E-A2 — `scheduled:` parallels `due:` (same DateFilter wire shape).
-  test('scheduled: bucket token → filter.scheduledFilter named range', async ({ page }) => {
-    await searchUntil(page, 'scheduled:today', (f) => {
-      const scheduled = f['scheduledFilter'] as Record<string, unknown> | null
-      return !!scheduled && scheduled['named'] === 'today'
-    })
-    const filter = await latestFilter(page)
-    expect((filter['scheduledFilter'] as Record<string, unknown>)['named']).toBe('today')
+  // E2E-A2 — `scheduled:` parallels `due:`.
+  test('scheduled: bucket keeps blocks scheduled in it', async ({ page }) => {
+    await expectFilterKeeps(page, 'scheduled:today', [{ scheduled: 0 }], [{ scheduled: 1 }, {}])
   })
 
-  test('scheduled: comparison token → filter.scheduledFilter op shape', async ({ page }) => {
-    await searchUntil(page, 'scheduled:>=2026-01-01', (f) => {
-      const scheduled = f['scheduledFilter'] as { op?: { op?: string; date?: string } } | null
-      return !!scheduled?.op && scheduled.op.op === 'gte' && scheduled.op.date === '2026-01-01'
-    })
-    const filter = await latestFilter(page)
-    const scheduled = filter['scheduledFilter'] as { op: { op: string; date: string } }
-    expect(scheduled.op.op).toBe('gte')
-    expect(scheduled.op.date).toBe('2026-01-01')
-  })
-
-  // E2E-A11 — `not-path:` projects onto the exclude glob list.
-  test('not-path: token → filter.excludePageGlobs', async ({ page }) => {
-    await searchUntil(
+  test('scheduled: comparison keeps blocks scheduled on or after the date', async ({ page }) => {
+    await expectFilterKeeps(
       page,
-      'not-path:Archive/**',
-      (f) =>
-        Array.isArray(f['excludePageGlobs']) &&
-        (f['excludePageGlobs'] as string[]).includes('Archive/**'),
+      'scheduled:>=2026-01-01',
+      [{ scheduled: '2026-01-01' }, { scheduled: '2026-03-01' }],
+      [{ scheduled: '2025-12-31' }, {}],
     )
-    const filter = await latestFilter(page)
-    expect(filter['excludePageGlobs']).toContain('Archive/**')
   })
 
-  // E2E-A8 — empty-prop contract pin: a trailing `=` yields a
-  // key-presence-only filter (empty value), mirroring the unit test in
-  // `to-search-filter.test.ts`. The key has no definition: a declared select
-  // such as `status` offers its options, and Enter picks the first.
-  test('prop: token with empty value → filter.propertyFilters key-presence', async ({ page }) => {
-    await searchUntil(
-      page,
-      'prop:mood=',
-      (f) =>
-        Array.isArray(f['propertyFilters']) &&
-        (f['propertyFilters'] as Array<{ key: string; value: string }>).some(
-          (p) => p.key === 'mood' && p.value === '',
-        ),
-    )
-    const filter = await latestFilter(page)
-    expect(filter['propertyFilters']).toContainEqual({ key: 'mood', value: '' })
+  // E2E-A11
+  test('not-path: drops blocks on pages whose title matches the glob', async ({ page }) => {
+    await expectFilterKeeps(page, 'not-path:Proj*', [{ parentId: PAGE_MEETINGS }], [{}])
+  })
+
+  // E2E-A8 — a trailing `=` filters on key presence. The key has no
+  // definition: a declared select such as `status` offers its options, and
+  // Enter picks the first.
+  test('prop: with an empty value keeps blocks that have the key', async ({ page }) => {
+    await expectFilterKeeps(page, 'prop:mood=', [{ props: { mood: 'calm' } }], [{}])
   })
 })
