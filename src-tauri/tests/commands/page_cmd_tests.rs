@@ -8807,6 +8807,7 @@ async fn list_page_links_excludes_deleted_pages() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -8935,6 +8936,7 @@ async fn list_page_links_excludes_self_links() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()

@@ -125,7 +125,7 @@ There is one subscriber pattern underneath — adding a fifth per-space slice me
 
 ### Resolve cache
 
-`useResolveStore` uses composite cache keys: `${spaceId}::${ulid}`. The sentinel `__global__` is used when the resolver runs in `Global` scope (cross-space view lookups). On space switch, `clearAllForSpace(prevSpaceId)` fires before the new space takes effect — prevents stale chip titles flashing across the switch.
+`useResolveStore` uses composite cache keys: `${spaceId}::${ulid}`. The sentinel `__global__` keys entries made while no space is active. On space switch, `clearAllForSpace(prevSpaceId)` fires before the new space takes effect — prevents stale chip titles flashing across the switch.
 
 ### Frontend integration surfaces
 

@@ -223,13 +223,10 @@ pub async fn list_page_links_inner_split_with_cap(
     // `[[ULID]]` token only ever resolves to a page in the markdown
     // serializer).
     //
-    // (preserved) — `(?1 IS NULL OR...)` filters both
-    // endpoints by space membership. Cross-space rows cannot exist in
-    // `page_link_cache` to begin with because the underlying
-    // `block_links` rows are write-time-filtered to same-space pairs
-    // (Phase 3 in `cache::block_links::reindex_block_links`),
-    // but the explicit filter here defends against legacy rows that
-    // Slipped in pre-.
+    // The space filter checks both endpoints. Cross-space rows cannot exist
+    // in `page_link_cache` (the underlying `block_links` rows are write-time
+    // filtered to same-space pairs, `cache::block_links::reindex_block_links`);
+    // the filter defends against legacy rows written before that.
     //
     // F (preserved) — the `space_members` CTE is materialised
     // Once and reused for both endpoints. (preserved)

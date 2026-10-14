@@ -15,10 +15,10 @@
 //! | `get_page` | [`get_page_inner`](crate::commands::get_page_inner) | Composes `get_active_block_inner` + paginated subtree via `page_id`; `page` carries its properties, tags and aliases (#5377). soft-deleted pages → `NotFound`. |
 //! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. |
 //! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. |
-//! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. |
+//! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. `space_id` required. |
 //! | `list_tags` | [`list_tags_inner`] | The tags of one space. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
 //! | `list_property_defs` | [`list_property_defs_inner`] | Typed property schema; cursor paginated. |
-//! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. |
+//! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. `space_id` required. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
 //! | `get_page_markdown` | [`get_page_for_agent_inner`] | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. |

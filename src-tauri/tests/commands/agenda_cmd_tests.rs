@@ -1127,6 +1127,7 @@ async fn projected_agenda_skips_done_blocks() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let entries = list_projected_agenda_inner(
         &pool,
         "2026-04-07".into(),
@@ -1596,6 +1597,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let entries = list_projected_agenda_inner(
         &pool,
         "2026-04-07".into(),
@@ -1939,6 +1941,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
+    assign_all_to_test_space(&pool).await;
     // Cache path: the materializer has populated `projected_agenda_cache`
     // for the repeating task.  With the template filter, nothing should
     // come back.
@@ -2219,6 +2222,7 @@ async fn list_undated_tasks_excludes_dated_tasks() {
     .await
     .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_undated_tasks_inner(&pool, None, None, &test_space_scope())
         .await
         .unwrap();
@@ -2259,6 +2263,7 @@ async fn list_undated_tasks_excludes_deleted() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let resp = list_undated_tasks_inner(&pool, None, None, &test_space_scope())
         .await
         .unwrap();
@@ -3527,6 +3532,7 @@ async fn projected_agenda_empty_window_inside_horizon_does_not_expand() {
         "fixture: the rebuild must have materialized {day}"
     );
 
+    assign_all_to_test_space(&pool).await;
     let page = list_projected_agenda_inner_with_today(
         &pool,
         day.clone(),
@@ -5270,6 +5276,7 @@ async fn projected_agenda_rejects_or_survives_hostile_cursors_3206() {
     agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
         .await
         .unwrap();
+    assign_all_to_test_space(&pool).await;
     let day = (pinned_today + chrono::Duration::days(4))
         .format("%Y-%m-%d")
         .to_string();

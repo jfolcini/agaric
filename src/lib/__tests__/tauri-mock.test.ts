@@ -4653,12 +4653,12 @@ describe('list_pages_with_metadata — inbound same-page exclusion', () => {
 })
 
 // ---------------------------------------------------------------------------
-// #5415 — `list_blocks` has no cross-space form: the backend rejects a global
-// scope via `require_active`, and the mock refuses the same call instead of
+// #5415 — `list_blocks` has no cross-space form: the backend fails to
+// deserialize a global scope, and the mock refuses the same call instead of
 // widening.
 // ---------------------------------------------------------------------------
 describe('list_blocks scope', () => {
-  it('refuses a global scope, mirroring require_active', () => {
+  it('refuses a global scope, as the backend does', () => {
     expect(() =>
       invoke('list_blocks', {
         request: { parentId: SEED_IDS.PAGE_GETTING_STARTED, limit: 10 },

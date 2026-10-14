@@ -879,6 +879,7 @@ async fn query_by_property_excludes_deleted_blocks() {
         .await
         .unwrap();
 
+    assign_all_to_test_space(&pool).await;
     let result = query_by_property_inner(
         &pool,
         "todo".into(),
