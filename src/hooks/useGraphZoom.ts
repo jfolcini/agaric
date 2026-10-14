@@ -31,13 +31,15 @@ export interface UseGraphZoomResult {
   /**
    * Wire the zoom behavior + keyboard shortcut to the rendered SVG/`g`
    * selection, starting from `initial` when the view comes back (#5434).
-   * The fit shortcut calls `fitShortcut`. Call inside the orchestrator's
-   * effect after render and invoke the returned cleanup on effect teardown.
+   * The fit shortcut calls `fitShortcut`, and every zoom that ends calls
+   * `onZoomEnd`. Call inside the orchestrator's effect after render and
+   * invoke the returned cleanup on effect teardown.
    */
   attach: (
     svg: SVGSVGElement,
     g: GSel,
     fitShortcut: () => void,
+    onZoomEnd: () => void,
     initial?: ZoomTransform,
   ) => () => void
   zoomIn: () => void
@@ -51,16 +53,19 @@ export interface UseGraphZoomResult {
 export function useGraphZoom(svgRef: React.RefObject<SVGSVGElement | null>): UseGraphZoomResult {
   const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null)
 
-  const attach = useCallback<UseGraphZoomResult['attach']>((svg, g, fitShortcut, initial) => {
-    const zoomBehavior = setupZoomBehavior(svg, g)
-    if (initial) zoomBehavior.transform(select(svg), initial)
-    zoomBehaviorRef.current = zoomBehavior
-    const handleZoomKey = createZoomKeyHandler(svg, zoomBehavior, fitShortcut)
-    svg.addEventListener('keydown', handleZoomKey)
-    return () => {
-      svg.removeEventListener('keydown', handleZoomKey)
-    }
-  }, [])
+  const attach = useCallback<UseGraphZoomResult['attach']>(
+    (svg, g, fitShortcut, onZoomEnd, initial) => {
+      const zoomBehavior = setupZoomBehavior(svg, g, onZoomEnd)
+      if (initial) zoomBehavior.transform(select(svg), initial)
+      zoomBehaviorRef.current = zoomBehavior
+      const handleZoomKey = createZoomKeyHandler(svg, zoomBehavior, fitShortcut)
+      svg.addEventListener('keydown', handleZoomKey)
+      return () => {
+        svg.removeEventListener('keydown', handleZoomKey)
+      }
+    },
+    [],
+  )
 
   const zoomIn = useCallback(() => {
     if (!svgRef.current) return
