@@ -517,7 +517,7 @@ async function timeToReady(
   }, selector)
   await act()
   return Math.round(
-    await page.evaluate(() => (window as unknown as { __ready__: number }).__ready__),
+    await page.evaluate(() => (window as unknown as { __ready__: Promise<number> }).__ready__),
   )
 }
 

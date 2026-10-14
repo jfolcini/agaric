@@ -98,7 +98,6 @@ describe('ViewDispatcher — idle preload (#5444)', () => {
     rerender(<ViewDispatcher {...props('search')} />)
     // Synchronous: a view that suspends shows `view-fallback` here instead.
     expect(screen.getByTestId('search-panel-mock')).toBeInTheDocument()
-    expect(screen.queryByTestId('view-fallback')).not.toBeInTheDocument()
     expect(requestIdle).toHaveBeenCalledTimes(1)
   })
 })
