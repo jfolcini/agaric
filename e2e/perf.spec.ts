@@ -550,10 +550,9 @@ const LIST_VIEWS: ListView[] = [
   {
     name: 'Pages',
     rows: '[id^="page-row-"]',
-    // set_title, count_trash, list_pages_with_metadata, then load_page_subtree
-    // for the first MAX_INFLIGHT_PREFETCHES (4) rows in view. The fixed 1280×720
-    // viewport holds more than 4. #5446 makes that prefetch touch-only: 3 then.
-    ipcOnOpen: 7,
+    // set_title, count_trash, list_pages_with_metadata. Visible rows prefetch
+    // their subtree only on touch (#5446), and this viewport is a mouse one.
+    ipcOnOpen: 3,
     seed: (page) =>
       invokeEach(
         page,
