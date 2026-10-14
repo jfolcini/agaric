@@ -1960,9 +1960,8 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
 
     if dependent_count > 0 {
         return Err(AppError::validation(format!(
-            "cannot delete property definition '{key}': {dependent_count} block_properties \
-             row(s) reference this key. Clear them first via set_property(value=None) on each \
-             affected block."
+            "Can't delete '{key}': {dependent_count} block(s) still use it. Remove the property \
+             from them first."
         )));
     }
 
