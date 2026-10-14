@@ -27,7 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { SheetBody } from '@/components/ui/sheet'
-import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { FilterPrimitive } from '@/lib/bindings'

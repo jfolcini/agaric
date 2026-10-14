@@ -17,10 +17,13 @@
 import type React from 'react'
 
 import { type RenderMode, Tip, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
+import {
+  toolbarActiveClass,
+  toolbarMenuRowClass,
+} from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
-import { dispatchBlockEvent } from '@/lib/block-events'
-import { toolbarActiveClass, toolbarMenuRowClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
+import { dispatchBlockCommand } from '@/stores/block-command-bus'
 
 interface CyclePriorityButtonProps {
   mode: RenderMode
@@ -53,7 +56,7 @@ export function renderCyclePriority({
   t,
   currentPriority,
   onAfterOverflowAction,
-  onCycle = () => dispatchBlockEvent('CYCLE_PRIORITY'),
+  onCycle = () => dispatchBlockCommand('CYCLE_PRIORITY'),
 }: CyclePriorityButtonProps): React.ReactElement {
   const tipText = t('toolbar.cyclePriorityTip')
   if (mode === 'overflow') {

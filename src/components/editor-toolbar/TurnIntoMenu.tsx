@@ -39,12 +39,12 @@ import { CalloutTypeSelector } from '@/components/editor-toolbar/CalloutTypeSele
 import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSelector'
 import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
+import { toolbarMenuRowClass } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
-import { dispatchBlockEvent } from '@/lib/block-events'
 import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
-import { toolbarMenuRowClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
+import { dispatchBlockCommand } from '@/stores/block-command-bus'
 
 interface TurnIntoMenuProps {
   editor: Editor
@@ -200,7 +200,7 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
               size="sm"
               className={cn(toolbarMenuRowClass, active && 'font-medium')}
               {...toolbarPressHandlers(() => {
-                dispatchBlockEvent('TURN_INTO_BLOCK', { type: opt.blockType })
+                dispatchBlockCommand('TURN_INTO_BLOCK', { type: opt.blockType })
                 onClose()
               })}
             >
@@ -217,7 +217,7 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
           aria-label={t('toolbar.divider')}
           className={toolbarMenuRowClass}
           {...toolbarPressHandlers(() => {
-            dispatchBlockEvent('INSERT_DIVIDER')
+            dispatchBlockCommand('INSERT_DIVIDER')
             onClose()
           })}
         >

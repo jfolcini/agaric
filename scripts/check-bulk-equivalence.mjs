@@ -150,7 +150,7 @@
 //
 //   - a NEW bulk-named function with no baseline entry
 //   - a STALE baseline entry (the function is gone) — so the baseline only
-//     ratchets DOWN, exactly like `check-lib-layering.mjs`
+//     ratchets DOWN
 //   - a recorded kind that no longer matches the computed kind
 //   - a `covered` entry whose named test no longer runs (gone, not a test, or
 //     `#[ignore]`d)

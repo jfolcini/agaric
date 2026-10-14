@@ -55,7 +55,7 @@ import { logger } from '@/lib/logger'
 import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
 import { type FlatBlock, getDragDescendants } from '@/lib/tree-utils'
-import { settlePendingSaves } from '@/lib/unmount-flush'
+import { settlePendingSaves } from '@/stores/unmount-flush'
 
 export interface EmptyBlockGuardInput {
   /** The page store's full flat tree (NOT the zoom/collapse projection). */

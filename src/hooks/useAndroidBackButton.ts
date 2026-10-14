@@ -43,9 +43,9 @@ import {
   registerBackHandler,
   runBackChain,
 } from '@/lib/back-chain'
-import { navigationBackHandler, overlayBackHandler } from '@/lib/back-handlers'
 import { logger } from '@/lib/logger'
 import { isAndroid } from '@/lib/platform'
+import { navigationBackHandler, overlayBackHandler } from '@/stores/back-handlers'
 
 export function useAndroidBackButton(): void {
   useEffect(() => {

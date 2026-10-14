@@ -67,7 +67,7 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { logger } from '@/lib/logger'
-import { classifyUnmountFlush } from '@/lib/unmount-flush'
+import { classifyUnmountFlush } from '@/stores/unmount-flush'
 
 /** Trailing idle-debounce window (ms) before a mid-typing content commit. */
 export const CONTENT_COMMIT_DEBOUNCE_MS = 700

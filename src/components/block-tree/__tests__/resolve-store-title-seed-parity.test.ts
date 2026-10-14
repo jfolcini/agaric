@@ -672,18 +672,18 @@ const DECLARED_WRITERS: Record<
     kind: 'echo',
     note: 'journal page just created',
   },
-  'src/hooks/usePageDeleteAction.tsx': {
+  'src/hooks/usePageDeleteAction.ts': {
     writes: 1,
     kind: 'echo',
     note: 're-writes the title the caller already holds, only `deleted` changes',
   },
   'src/hooks/useRichContentCallbacks.ts': { writes: 1, kind: 'echo', note: 'tag just created' },
-  'src/lib/inline-property-commit.ts': {
+  'src/stores/inline-property-commit.ts': {
     writes: 1,
     kind: 'echo',
     note: 'tag the flush just created for a `#name` saved as text (#5160 follow-up 7a)',
   },
-  'src/lib/palette-commands.ts': {
+  'src/hooks/palette-commands.ts': {
     writes: 1,
     kind: 'echo',
     note: 'new page via palette — see App.tsx',

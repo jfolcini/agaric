@@ -108,10 +108,6 @@
  * existing user's stored value.
  */
 
-import {
-  broadcastPreferenceChange,
-  useLocalStoragePreference,
-} from '@/hooks/useLocalStoragePreference'
 import type { FilterPrimitive, PageBuffer } from '@/lib/bindings'
 import {
   DEFAULT_LOCAL_GRAPH_HOPS,
@@ -119,6 +115,10 @@ import {
   type LocalGraphHops,
 } from '@/lib/graph-neighborhood'
 import { isLanguagePreference, type LanguagePreference } from '@/lib/i18n/locales'
+import {
+  broadcastPreferenceChange,
+  useLocalStoragePreference,
+} from '@/lib/local-storage-preference'
 import { logger } from '@/lib/logger'
 
 export interface PreferenceDefinition<T> {
@@ -552,6 +552,32 @@ const SPACE_TEXT_JOURNAL_TEMPLATES_DELETED_PREFERENCE: PreferenceDefinition<bool
   defaultValue: false,
   parse: (raw) => raw === 'true',
   serialize: () => 'true',
+}
+
+/**
+ * `agaric:debug` — debug mode (#1987): error surfaces append the raw error
+ * code (`formatErrorForDisplay`). Stored in the zustand `persist` envelope it
+ * was first written in, so an existing setting keeps working.
+ */
+const DEBUG_MODE_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'agaric:debug',
+  scope: 'device',
+  version: 1,
+  defaultValue: false,
+  parse: (raw) => {
+    const parsed: unknown = JSON.parse(raw)
+    const state: unknown =
+      parsed !== null && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)['state']
+        : undefined
+    const debugMode: unknown =
+      state !== null && typeof state === 'object'
+        ? (state as Record<string, unknown>)['debugMode']
+        : undefined
+    if (typeof debugMode !== 'boolean') throw new Error('debug mode: not a boolean')
+    return debugMode
+  },
+  serialize: (debugMode) => JSON.stringify({ state: { debugMode }, version: 1 }),
 }
 
 /** `tag-colors` — tag id -> CSS color/accent-token map (`src/lib/tag-colors.ts`). */
@@ -1159,7 +1185,7 @@ const GRAPH_LOCAL_PREFERENCE: PreferenceDefinition<LocalGraphPreference> = {
 
 /**
  * `recent_searches:<spaceId>` — per-space MRU of recent search terms
- * (`src/lib/recent-searches.ts`). Space-keyed.
+ * (`src/stores/recent-searches.ts`). Space-keyed.
  */
 const RECENT_SEARCHES_PREFERENCE: PreferenceDefinition<string[]> = {
   key: 'recent_searches',
@@ -1174,7 +1200,7 @@ const RECENT_SEARCHES_PREFERENCE: PreferenceDefinition<string[]> = {
   serialize: jsonSerialize<string[]>,
 }
 
-/** A recently-run command entry (`src/lib/recent-commands.ts`). */
+/** A recently-run command entry (`src/stores/recent-commands.ts`). */
 export interface RecentCommand {
   /** Stable command id (e.g. `go-settings`, `search-everywhere`). */
   id: string
@@ -1196,7 +1222,7 @@ function parseRecentCommands(raw: string): RecentCommand[] {
 
 /**
  * `recent_commands:<spaceId>` — per-space MRU of recently-run command-palette
- * ids (`src/lib/recent-commands.ts`). Space-keyed.
+ * ids (`src/stores/recent-commands.ts`). Space-keyed.
  */
 const RECENT_COMMANDS_PALETTE_PREFERENCE: PreferenceDefinition<RecentCommand[]> = {
   key: 'recent_commands',
@@ -1429,6 +1455,7 @@ export const PREFERENCES = {
   onboardingDone: ONBOARDING_DONE_PREFERENCE,
   defaultSpace: DEFAULT_SPACE_PREFERENCE,
   spaceTextJournalTemplatesDeleted: SPACE_TEXT_JOURNAL_TEMPLATES_DELETED_PREFERENCE,
+  debugMode: DEBUG_MODE_PREFERENCE,
   tagColors: TAG_COLORS_PREFERENCE,
   pinnedSearchScope: PINNED_SEARCH_SCOPE_PREFERENCE,
   emojiPickerEnabled: EMOJI_PICKER_ENABLED_PREFERENCE,

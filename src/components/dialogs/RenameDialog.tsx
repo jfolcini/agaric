@@ -27,7 +27,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 
 export const MAX_RENAME_LENGTH = 64
 

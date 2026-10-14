@@ -25,8 +25,8 @@ import type { StoreApi } from 'zustand'
 import { shouldSplitOnBlur } from '@/editor/content-delta'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { logger } from '@/lib/logger'
-import { runUnmountFlush } from '@/lib/unmount-flush'
 import type { PageBlockState } from '@/stores/page-blocks'
+import { runUnmountFlush } from '@/stores/unmount-flush'
 
 /**
  * Single-attribute opt-in for transient UI elements (popups, toolbars,

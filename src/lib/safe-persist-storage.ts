@@ -15,10 +15,7 @@
  * remaining gap: the write path.
  *
  * Usage: pass `storage: safePersistStorage` in a store's
- * `persist(..., { storage: safePersistStorage, ... })` options. Stores that
- * sit in the `notify → error-display` import chain (e.g. `useDebugStore`)
- * must use `guardedPersistStorage` from `guarded-storage.ts` instead to avoid
- * an import cycle — they stay guarded but skip the toast.
+ * `persist(..., { storage: safePersistStorage, ... })` options.
  */
 
 import { createGuardedStorage } from '@/lib/guarded-storage'

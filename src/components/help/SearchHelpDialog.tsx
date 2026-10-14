@@ -23,7 +23,7 @@ import { Trans, useTranslation } from 'react-i18next'
 import { DialogBody } from '@/components/ui/dialog'
 import { Kbd } from '@/components/ui/kbd'
 import { SheetBody } from '@/components/ui/sheet'
-import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 
 interface SearchHelpDialogProps {
   open: boolean

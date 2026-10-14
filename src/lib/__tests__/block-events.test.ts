@@ -1,13 +1,6 @@
 /**
- * Tests for block-events constants and helpers.
- *
- * Validates:
- *  - BLOCK_EVENTS has the expected keys and string values
- *
- * (#2222 — `dispatchBlockEvent` is now a thin alias of the focus-keyed
- * `dispatchBlockCommand` bus; its routing is covered by the block-command-bus
- * tests. The dead document-broadcast path and the `onBlockEvent` listener
- * helper were removed, so their tests are gone with them.)
+ * Tests for block-events constants: BLOCK_EVENTS has the expected keys and
+ * string values. Dispatch routing is covered by the block-command-bus tests.
  */
 
 import { describe, expect, it } from 'vitest'

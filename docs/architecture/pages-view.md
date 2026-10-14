@@ -59,7 +59,7 @@ Every Pages-view list render walks the same five stages. The IPC is the only asy
 
 One side hook orbits this pipeline without altering its shape:
 
-- **Alias resolver** (`src/hooks/usePageBrowserFilters.ts`) is a parallel single-row IPC for "user typed an alias in the filter box" (`resolvePageByAlias` → sets `aliasMatchId` so the matching page surfaces even when its visible title doesn't match the filter). Independent of the list query.
+- **Alias resolver** (`src/components/PageBrowser/usePageBrowserFilters.ts`) is a parallel single-row IPC for "user typed an alias in the filter box" (`resolvePageByAlias` → sets `aliasMatchId` so the matching page surfaces even when its visible title doesn't match the filter). Independent of the list query.
 
 ## Sort modes
 

@@ -82,7 +82,7 @@
  *    `src/stores/page-rename.ts:87` and `src/components/TagList.tsx:156` do.
  *  - Fall back to {@link invalidateNameCaches}. Conservative, and what
  *    `src/components/TagList.tsx:197`, `src/components/TagList.tsx:236`,
- *    `src/hooks/usePageDeleteAction.tsx:195`, and — since #4524, through the
+ *    `usePageDeleteAction`'s `handleConfirm`, and — since #4524, through the
  *    shared {@link notifyPagesRemoved} rather than a copy of the branch —
  *    `PageBrowserBatchToolbar`'s `handleTrash` and `handleMoveToSpace` plus
  *    `useBlockMultiSelect`'s `handleBatchDelete` do.

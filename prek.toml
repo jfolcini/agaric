@@ -659,27 +659,23 @@ pass_filenames = false
 files = "^(src/stores/.*\\.(ts|tsx)|scripts/(check-store-layering|check-import-cycles)\\.mjs)$"
 stages = ["pre-commit"]
 
-# lib-layering ratchet (#3121): names four frontend tiers —
+# lib-layering (#3121): names four frontend tiers —
 # lib < stores < hooks < components (arrow = "is depended on by") — and
-# forbids a lower tier importing a higher one. Distinct from both hooks
-# above: `import-cycles` only proves acyclicity (a pure util importing a
-# store is acyclic and still a layering break); `store-layering` only
-# covers store-to-store edges. This is step 1 of #3121 (name the tiers +
-# ratchet the baseline); it moves no files. Keyed to
-# scripts/lib-layering-baseline.json, fails on a NEW upward import (count
-# went up) AND a STALE baseline entry (count must ratchet down as
-# violations are fixed). pass_filenames=false — the script does its own
-# scoped walk of the four tier directories.
+# fails on any lower tier importing a higher one (no baseline). Distinct
+# from both hooks above: `import-cycles` only proves acyclicity (a pure util
+# importing a store is acyclic and still a layering break); `store-layering`
+# only covers store-to-store edges. pass_filenames=false — the script does
+# its own scoped walk of the four tier directories.
 # WHY: a lower tier importing a higher one inverts the documented dependency direction — #3121
 [[repos.hooks]]
 id = "lib-layering"
-name = "frontend tier layering (lib < stores < hooks < components, ratchet)"
+name = "frontend tier layering (lib < stores < hooks < components)"
 entry = "node scripts/check-lib-layering.mjs"
 language = "system"
 pass_filenames = false
 # #3997: this guard imports `detectImports` from check-import-cycles.mjs;
-# union it so an edit confined to that shared module can't defang the ratchet.
-files = "^(src/(lib|stores|hooks|components)/.*\\.(ts|tsx)|scripts/(lib-layering-baseline\\.json|check-import-cycles\\.mjs))$"
+# union it so an edit confined to that shared module can't defang the guard.
+files = "^(src/(lib|stores|hooks|components)/.*\\.(ts|tsx)|scripts/(check-lib-layering|check-import-cycles)\\.mjs)$"
 stages = ["pre-commit"]
 
 # src/types/ must stay type-only (#4226): check-lib-layering.mjs excludes
@@ -1171,10 +1167,9 @@ stages = ["manual"]
 # "non-scalar" STRUCTURALLY from each store's state interface (every
 # `partialize`d field's declared type), not from a hardcoded filename
 # allowlist — an unresolvable type (a bare alias, a helper-delegated
-# partialize) is conservatively treated as non-scalar. `space.ts` and
-# `useDebugStore.ts` need no exemption entry: their single persisted field
-# is a plain `string | null` / `boolean`, which the interface alone proves
-# scalar. A per-site `// persist-hooks-allow: <reason>` marker (empty
+# partialize) is conservatively treated as non-scalar. `space.ts` needs no
+# exemption entry: its single persisted field is a plain `string | null`,
+# which the interface alone proves scalar. A per-site `// persist-hooks-allow: <reason>` marker (empty
 # reason does not suppress) is the escape hatch for a shape this guard
 # cannot see through; there is no baseline file because the live tree
 # currently has zero pre-existing violations.
@@ -1196,7 +1191,7 @@ stages = ["pre-commit"]
 # shared scanner it delegates its lexing to (#3993) — changes:
 # a non-scalar persist() missing migrate, missing merge, or missing both all
 # FAIL (including the search-history.ts shape — merge present, migrate
-# absent); two scalar-only stores (mirroring space.ts and useDebugStore.ts)
+# absent); two scalar-only stores (a `string | null` and a `boolean` field)
 # with neither hook PASS via the interface, not a filename; a reasoned
 # persist-hooks-allow marker suppresses, an empty-reason marker does not;
 # and the guard is proven to scan only its synthetic src/stores/ fixture

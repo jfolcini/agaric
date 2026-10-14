@@ -14,12 +14,12 @@
  * The hook owns:
  *   - The pending `deleteTarget` (`null` when no dialog open).
  *   - The in-flight `deletingId` (drives disabled state on buttons).
- *   - A `confirmDialog` React node — the host just embeds `{confirmDialog}`
- *     once in its JSX and forwards `requestDelete()` to any number of
- *     trigger buttons. Only ONE dialog instance ever renders, so there's
- *     no double-confirm risk when the same host has multiple delete
- *     entry points (e.g. PageHeader's dedicated trash button AND its
- *     kebab "Delete page" item).
+ *   - `confirmDialogProps` — the host renders
+ *     `<ConfirmDialog {...confirmDialogProps} />` once in its JSX and forwards
+ *     `requestDelete()` to any number of trigger buttons. Only ONE dialog
+ *     instance ever renders, so there's no double-confirm risk when the same
+ *     host has multiple delete entry points (e.g. PageHeader's dedicated
+ *     trash button AND its kebab "Delete page" item).
  *
  * The hook does NOT mutate any list state. Callers that need post-delete
  * or post-restore side effects pass `onDeleted(pageId)` / `onRestored(pageId)`
@@ -32,11 +32,9 @@
  * one-element call.
  */
 
-import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -103,6 +101,19 @@ function setResolveDeletedStatus(target: DeleteTarget, deleted: boolean): void {
   useResolveStore.getState().set(target.id, target.title, deleted)
 }
 
+/** The props the host spreads onto its single `ConfirmDialog`. */
+export interface PageDeleteConfirmDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  titleKey: string
+  descriptionKey: string
+  confirmKey: string
+  cancelKey: string
+  values: Record<string, string | number>
+  variant: 'destructive'
+  onConfirm: () => Promise<void>
+}
+
 export interface UsePageDeleteActionReturn {
   /** Open the confirm dialog for the given page. */
   requestDelete: (pageId: string, title: string, options?: RequestDeleteOptions) => void
@@ -110,8 +121,8 @@ export interface UsePageDeleteActionReturn {
   isDeleting: boolean
   /** The id currently being deleted (or `null`). */
   deletingId: string | null
-  /** Embed once in the host's JSX — owns the single ConfirmDialog instance. */
-  confirmDialog: React.ReactElement
+  /** Spread onto the host's single `ConfirmDialog`. */
+  confirmDialogProps: PageDeleteConfirmDialogProps
 }
 
 export function usePageDeleteAction(): UsePageDeleteActionReturn {
@@ -301,20 +312,18 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
   const dialogCancelKey = target?.copy.cancelKey ?? 'pageHeader.cancel'
   const dialogValues = target?.copy.values ?? EMPTY_VALUES
 
-  const confirmDialog = useMemo(
-    () => (
-      <ConfirmDialog
-        open={target != null}
-        onOpenChange={handleOpenChange}
-        titleKey={dialogTitleKey}
-        descriptionKey={dialogDescriptionKey}
-        confirmKey={dialogConfirmKey}
-        cancelKey={dialogCancelKey}
-        values={dialogValues}
-        variant="destructive"
-        onConfirm={handleConfirm}
-      />
-    ),
+  const confirmDialogProps = useMemo(
+    (): PageDeleteConfirmDialogProps => ({
+      open: target != null,
+      onOpenChange: handleOpenChange,
+      titleKey: dialogTitleKey,
+      descriptionKey: dialogDescriptionKey,
+      confirmKey: dialogConfirmKey,
+      cancelKey: dialogCancelKey,
+      values: dialogValues,
+      variant: 'destructive',
+      onConfirm: handleConfirm,
+    }),
     [
       dialogCancelKey,
       dialogConfirmKey,
@@ -331,6 +340,6 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
     requestDelete,
     isDeleting: deletingId != null,
     deletingId,
-    confirmDialog,
+    confirmDialogProps,
   }
 }

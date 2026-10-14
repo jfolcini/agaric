@@ -14,9 +14,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlockRow, withOps } from '@/__tests__/fixtures'
 import { deferred, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { TagCacheRow } from '@/lib/bindings'
-import { bumpFlushSeq } from '@/lib/inline-property-commit'
-import { classifyUnmountFlush, runUnmountFlush, settlePendingSaves } from '@/lib/unmount-flush'
+import { bumpFlushSeq } from '@/stores/inline-property-commit'
 import { useSpaceStore } from '@/stores/space'
+import { classifyUnmountFlush, runUnmountFlush, settlePendingSaves } from '@/stores/unmount-flush'
 
 function run(loaded: string, changed: string, saved = true) {
   const edit = vi.fn<(id: string, content: string) => Promise<boolean>>(() =>

@@ -67,8 +67,8 @@ import {
 } from '@/editor/emoji-data'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { useIsTouch } from '@/hooks/useIsTouch'
-import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
+import { useLocalStoragePreference } from '@/lib/local-storage-preference'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 

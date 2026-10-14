@@ -38,10 +38,10 @@ import { CalloutBlockquote } from '@/editor/extensions/callout-blockquote'
 import { TaskParagraph } from '@/editor/extensions/task-paragraph'
 import { parse } from '@/editor/markdown-serializer'
 
-const dispatchBlockEvent = vi.fn()
+const dispatchBlockCommand = vi.fn()
 
-vi.mock('@/lib/block-events', () => ({
-  dispatchBlockEvent: (...args: unknown[]) => dispatchBlockEvent(...args),
+vi.mock('@/stores/block-command-bus', () => ({
+  dispatchBlockCommand: (...args: unknown[]) => dispatchBlockCommand(...args),
 }))
 
 // The currently-focused block id is read at runtime from the global block store
@@ -161,7 +161,7 @@ describe('convertAndInsert — destroyed-view guard (#2033)', () => {
     ).resolves.toBeUndefined()
 
     expect(view.dispatch).not.toHaveBeenCalled()
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
     // Conversion is short-circuited before the dynamic import even resolves.
     expect(htmlBodyToOutline).not.toHaveBeenCalled()
   })
@@ -204,9 +204,9 @@ describe('convertAndInsert — destroyed-view guard (#2033)', () => {
 
     // Post-await guard fired: the body was never walked, no block event routed,
     // and nothing dispatched into the now-destroyed view. If that guard were
-    // removed, htmlBodyToOutline would run and dispatchBlockEvent would fire.
+    // removed, htmlBodyToOutline would run and dispatchBlockCommand would fire.
     expect(htmlBodyToOutline).not.toHaveBeenCalled()
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
     expect(view.dispatch).not.toHaveBeenCalled()
   })
 
@@ -227,7 +227,7 @@ describe('convertAndInsert — destroyed-view guard (#2033)', () => {
     // The inline-insert guard caught the destroyed view: no dispatch, and the
     // block-paste bus was never used (this was the single-block inline path).
     expect(view.dispatch).not.toHaveBeenCalled()
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
   })
 })
 
@@ -251,7 +251,7 @@ describe('convertAndInsert — single-inline focus-handoff guard (#2454)', () =>
     // The inline insert was aborted: nothing dispatched into the (wrong) block,
     // and the block-paste bus was not used (this was the inline path).
     expect(view.dispatch).not.toHaveBeenCalled()
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
   })
 
   it('inline-inserts when focus is unchanged (happy path)', async () => {
@@ -267,7 +267,7 @@ describe('convertAndInsert — single-inline focus-handoff guard (#2454)', () =>
 
     // The inline insert ran: exactly one dispatch into the view, no block event.
     expect(view.dispatch).toHaveBeenCalledTimes(1)
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
   })
 
   it('inline-inserts when targetBlockId is null regardless of current focus', async () => {
@@ -283,7 +283,7 @@ describe('convertAndInsert — single-inline focus-handoff guard (#2454)', () =>
     await convertAndInsert(view as unknown as EditorView, '<p>hello</p>', 'hello', null)
 
     expect(view.dispatch).toHaveBeenCalledTimes(1)
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
   })
 })
 
@@ -309,7 +309,7 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
 
     await convertAndInsert(editor.view, '<p>one</p><p>two</p>', 'one\ntwo', 'BLOCK_A')
 
-    expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
+    expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
       input: { kind: 'blocks', blocks },
       targetBlockId: 'BLOCK_A',
       splice: { before: 'Hello ', after: 'world' },
@@ -331,7 +331,7 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
 
     await convertAndInsert(editor.view, '<p>one</p><p>two</p>', 'one\ntwo', null)
 
-    expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
+    expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
       input: { kind: 'blocks', blocks },
       targetBlockId: null,
       splice: { before: '', after: '' },
@@ -352,7 +352,7 @@ describe('convertAndInsert — captured paste target (#2033)', () => {
 
     await convertAndInsert(editor.view, '<p>one</p><p>two</p>', 'one\ntwo', 'BLOCK_A')
 
-    expect(dispatchBlockEvent).toHaveBeenCalledWith(
+    expect(dispatchBlockCommand).toHaveBeenCalledWith(
       'PASTE_BLOCKS',
       expect.objectContaining({ splice: { before: 'Hello ', after: 'world' } }),
     )
@@ -459,8 +459,8 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(paste(editor, text)).toBe(true)
 
-    expect(dispatchBlockEvent).toHaveBeenCalledTimes(1)
-    expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
+    expect(dispatchBlockCommand).toHaveBeenCalledTimes(1)
+    expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
       input: { kind: 'text', text },
       targetBlockId: 'BLOCK_A',
       splice: { before: 'Hello ', after: 'world' },
@@ -479,7 +479,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(paste(editor, 'a\nb')).toBe(true)
 
-    expect(dispatchBlockEvent).toHaveBeenCalledWith(
+    expect(dispatchBlockCommand).toHaveBeenCalledWith(
       'PASTE_BLOCKS',
       expect.objectContaining({ splice }),
     )
@@ -501,7 +501,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(paste(editor, 'a\nb')).toBe(true)
 
-    expect(dispatchBlockEvent).toHaveBeenCalledWith(
+    expect(dispatchBlockCommand).toHaveBeenCalledWith(
       'PASTE_BLOCKS',
       expect.objectContaining({ splice: { before: '## Heading ', after: 'here\n\nnext line' } }),
     )
@@ -521,7 +521,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(paste(editor, 'a\nb')).toBe(true)
 
-    expect(dispatchBlockEvent).toHaveBeenCalledWith(
+    expect(dispatchBlockCommand).toHaveBeenCalledWith(
       'PASTE_BLOCKS',
       expect.objectContaining({ splice: { before: '> quoted', after: ' text' } }),
     )
@@ -533,7 +533,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(paste(editor, '- a\n- b')).toBe(true)
 
-    expect(dispatchBlockEvent).toHaveBeenCalledWith(
+    expect(dispatchBlockCommand).toHaveBeenCalledWith(
       'PASTE_BLOCKS',
       expect.objectContaining({ splice: { before: 'Hello ', after: 'world' } }),
     )
@@ -545,7 +545,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     paste(editor, '## Plan\n1. step\n')
 
-    const [, detail] = dispatchBlockEvent.mock.calls[0] as [string, { asText: string }]
+    const [, detail] = dispatchBlockCommand.mock.calls[0] as [string, { asText: string }]
     expect(parse(detail.asText).content).toEqual([
       {
         type: 'paragraph',
@@ -564,7 +564,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(paste(editor, '- a\n- b', html)).toBe(true)
 
-    expect(dispatchBlockEvent).toHaveBeenCalledWith('PASTE_BLOCKS', {
+    expect(dispatchBlockCommand).toHaveBeenCalledWith('PASTE_BLOCKS', {
       input: { kind: 'text', text: '- a\n- b' },
       targetBlockId: null,
       splice: { before: '', after: '' },
@@ -585,7 +585,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(paste(editor, text)).toBe(false)
 
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
   })
 
   it('keeps text pasted inside a code block literal', async () => {
@@ -596,7 +596,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(paste(editor, '- a\n- b')).toBe(false)
 
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
   })
 
   // #5160 follow-up, item 13 — the splice cuts the block's doc at the cursor,
@@ -647,7 +647,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(paste(editor, 'a\nb')).toBe(true)
 
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
     const { doc } = editor.state
     expect(doc.childCount).toBe(1)
     const table = doc.child(0)
@@ -663,7 +663,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
 
     expect(paste(editor, '- a\n- b')).toBe(true)
 
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
     const { doc } = editor.state
     expect(doc.childCount).toBe(1)
     const list = doc.child(0)
@@ -686,7 +686,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     expect(paste(ed, 'Title', '<h1>Title</h1>')).toBe(true)
     await vi.waitFor(() => expect(ed.state.doc.textContent).toContain('Title'))
 
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
     const { doc } = ed.state
     expect(doc.childCount).toBe(1)
     const table = doc.child(0)
@@ -712,7 +712,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     expect(paste(ed, '', '<h1>Title</h1><p>Body</p>')).toBe(true)
     await vi.waitFor(() => expect(ed.state.doc.textContent).toContain('Body'))
 
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
     expect(ed.state.doc.child(0).child(1).child(0).child(0).toJSON().content).toEqual([
       { type: 'text', text: '# Title' },
       { type: 'hardBreak' },
@@ -727,7 +727,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     keyDown(editor, { key: 'V', ctrlKey: true, shiftKey: true })
     expect(paste(editor, '## Plan\n- step')).toBe(true)
 
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
     expect(editor.getJSON().content?.map((node) => node.content)).toEqual([
       [
         { type: 'text', text: 'Hello ## Plan' },
@@ -756,7 +756,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     keyDown(editor, { key: 'a' })
     expect(paste(editor, 'a\nb')).toBe(true)
 
-    expect(dispatchBlockEvent).toHaveBeenCalledTimes(1)
+    expect(dispatchBlockCommand).toHaveBeenCalledTimes(1)
   })
 
   it('reads a plain Ctrl+V as a normal paste', async () => {
@@ -765,7 +765,7 @@ describe('handlePaste — pasted text goes to the block path, spliced (#5160 D4)
     keyDown(editor, { key: 'v', ctrlKey: true })
     expect(paste(editor, 'a\nb')).toBe(true)
 
-    expect(dispatchBlockEvent).toHaveBeenCalledTimes(1)
+    expect(dispatchBlockCommand).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -806,7 +806,7 @@ describe('handlePaste — one pasted line is read as inline markdown (#5160 N11)
 
     expect(paste(editor, '**big** [docs](https://example.com) ')).toBe(true)
 
-    expect(dispatchBlockEvent).not.toHaveBeenCalled()
+    expect(dispatchBlockCommand).not.toHaveBeenCalled()
     expect(editor.getJSON().content?.[0]?.content).toEqual([
       { type: 'text', text: 'Hello ' },
       { type: 'text', text: 'big', marks: [{ type: 'bold' }] },

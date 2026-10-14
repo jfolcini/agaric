@@ -7,10 +7,9 @@
  * remain owned by `usePageDeleteAction`.
  */
 
-import type React from 'react'
 import { useCallback } from 'react'
 
-import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
+import { type PageDeleteConfirmDialogProps, usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import type { BlockRow } from '@/lib/bindings'
 
 interface DeleteTarget {
@@ -23,15 +22,15 @@ interface UsePageDeleteResult {
   deletingId: string | null
   /** Open the shared confirmation dialog for a PageBrowser row. */
   setDeleteTarget: (target: DeleteTarget | null) => void
-  /** Embed once in PageBrowser — the shared hook owns the single dialog. */
-  confirmDialog: React.ReactElement
+  /** Spread once onto PageBrowser's `ConfirmDialog` — the shared hook owns its state. */
+  confirmDialogProps: PageDeleteConfirmDialogProps
 }
 
 export function usePageDelete(
   setPages: (updater: (prev: BlockRow[]) => BlockRow[]) => void,
   onRestored: (pageId: string) => void,
 ): UsePageDeleteResult {
-  const { requestDelete, deletingId, confirmDialog } = usePageDeleteAction()
+  const { requestDelete, deletingId, confirmDialogProps } = usePageDeleteAction()
 
   const setDeleteTarget = useCallback(
     (target: DeleteTarget | null) => {
@@ -56,6 +55,6 @@ export function usePageDelete(
   return {
     deletingId,
     setDeleteTarget,
-    confirmDialog,
+    confirmDialogProps,
   }
 }

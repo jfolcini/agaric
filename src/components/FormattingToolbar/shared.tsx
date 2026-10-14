@@ -10,11 +10,14 @@
 
 import type React from 'react'
 
+import type { ToolbarButtonConfig } from '@/components/FormattingToolbar/toolbar-config'
+import {
+  toolbarActiveClass,
+  toolbarMenuRowClass,
+} from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { getShortcutKeys } from '@/lib/keyboard-config'
-import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
-import { toolbarActiveClass, toolbarMenuRowClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
 /** Render mode for each toolbar item. */

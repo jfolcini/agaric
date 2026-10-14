@@ -19,11 +19,14 @@ import type { StoreApi } from 'zustand'
 
 import { releaseActiveEmbed, setActiveEmbed } from '@/components/editor/embed/active-embed'
 import type { PickerItem } from '@/editor/SuggestionList'
-import { dispatchBlockEvent } from '@/lib/block-events'
 import { t } from '@/lib/i18n'
 import type { ListStyle } from '@/lib/list-style'
+import { PREFERENCES, removePreference } from '@/lib/preferences'
+import { RECENT_SLASH_CATEGORY } from '@/lib/slash-commands'
+import { dispatchBlockCommand } from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { addRecentCommand, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
 import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
@@ -98,7 +101,7 @@ const mockListMarker = vi.fn((): { style: ListStyle; ordinal: number | undefined
 // headless `editorHost` and the `editorSurface` component). SortableBlock is
 // mocked in this suite, so the editor UI is never rendered here; return the same
 // mock handle as before, with a null host/surface.
-vi.mock('@/hooks/useLazyRovingEditor', () => ({
+vi.mock('@/components/editor/useLazyRovingEditor', () => ({
   useLazyRovingEditor: (opts: {
     searchTags?: (query: string) => PickerItem[] | Promise<PickerItem[]>
     searchPages?: (query: string) => PickerItem[] | Promise<PickerItem[]>
@@ -1541,6 +1544,33 @@ describe('BlockTree slash command wiring', () => {
       'voice',
       'emoji',
     ])
+  })
+
+  it('searchSlashCommands leads an empty query with the slash MRU and skips it for a typed query', async () => {
+    // BlockTree reads the MRU and hands it to `searchSlashCommands`; the pure
+    // function's own tests supply the list themselves and cannot see this seam.
+    addRecentCommand('done', RECENT_SLASH_PREFIX)
+    addRecentCommand('todo', RECENT_SLASH_PREFIX)
+    try {
+      stubBlockTree({ load_page_subtree: () => emptySubtree })
+
+      renderBlockTree()
+
+      await waitFor(() => {
+        expect(capturedSearchSlashCommands).toBeDefined()
+      })
+
+      const empty = await capturedSearchSlashCommands?.('')
+      expect(empty?.slice(0, 2)).toMatchObject([
+        { id: 'todo', category: RECENT_SLASH_CATEGORY },
+        { id: 'done', category: RECENT_SLASH_CATEGORY },
+      ])
+
+      const typed = await capturedSearchSlashCommands?.('todo')
+      expect(typed?.some((r) => r.category === RECENT_SLASH_CATEGORY)).toBe(false)
+    } finally {
+      removePreference(PREFERENCES.recentCommandsSlash, 'SPACE_TEST')
+    }
   })
 
   it('searchSlashCommands filters commands by query', async () => {
@@ -4386,7 +4416,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
 
     act(() => {
       // #1250 — route through the producer path (focus-keyed command bus).
-      dispatchBlockEvent('SET_PRIORITY_1')
+      dispatchBlockCommand('SET_PRIORITY_1')
     })
 
     await waitFor(() => {
@@ -4416,7 +4446,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     })
 
     act(() => {
-      dispatchBlockEvent('SET_PRIORITY_2')
+      dispatchBlockCommand('SET_PRIORITY_2')
     })
 
     await waitFor(() => {
@@ -4445,7 +4475,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     })
 
     act(() => {
-      dispatchBlockEvent('SET_PRIORITY_3')
+      dispatchBlockCommand('SET_PRIORITY_3')
     })
 
     await waitFor(() => {
@@ -4476,7 +4506,7 @@ describe('BlockTree priority keyboard shortcuts', () => {
     // focused. Wrap in act(async) so any chained microtask settles before
     // asserting set_priority was not invoked (TEST-FE-1).
     await act(async () => {
-      dispatchBlockEvent('SET_PRIORITY_1')
+      dispatchBlockCommand('SET_PRIORITY_1')
     })
 
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_priority', expect.anything())

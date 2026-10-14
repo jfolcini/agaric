@@ -50,7 +50,7 @@ import { useTranslation } from 'react-i18next'
 import { AlertDialogAction, AlertDialogBody, AlertDialogCancel } from '@/components/ui/alert-dialog'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { cn } from '@/lib/utils'
 
 type ConfirmHandler = () => Promise<void> | void

@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { activeSpaceKey } from '@/lib/active-space'
+import { activeSpaceKey } from '@/stores/active-space'
 import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
 
 const initial = useSpaceStore.getState()

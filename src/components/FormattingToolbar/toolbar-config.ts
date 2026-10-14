@@ -32,8 +32,8 @@ import {
   X,
 } from 'lucide-react'
 
-import { dispatchBlockEvent } from '@/lib/block-events'
 import { getShortcutKeys } from '@/lib/keyboard-config'
+import { dispatchBlockCommand } from '@/stores/block-command-bus'
 
 // ── Shared constants ────────────────────────────────────────────────────
 
@@ -255,7 +255,7 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
       label: 'toolbar.insertQuery',
       tip: 'toolbar.queryTip',
       priority: 30,
-      action: () => dispatchBlockEvent('OPEN_QUERY_BUILDER'),
+      action: () => dispatchBlockCommand('OPEN_QUERY_BUILDER'),
     },
     {
       // #281 — open the browse-grid emoji picker (the mouse-first twin of the
@@ -267,7 +267,7 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
       label: 'toolbar.emoji',
       tip: 'toolbar.emojiTip',
       priority: 40,
-      action: () => dispatchBlockEvent('OPEN_EMOJI_PICKER'),
+      action: () => dispatchBlockCommand('OPEN_EMOJI_PICKER'),
     },
   ]
 }
@@ -305,35 +305,35 @@ export function createMetadataButtons(): ToolbarButtonConfig[] {
       label: 'toolbar.insertDate',
       tip: 'toolbar.insertDateTip',
       priority: 40,
-      action: () => dispatchBlockEvent('OPEN_DATE_PICKER'),
+      action: () => dispatchBlockCommand('OPEN_DATE_PICKER'),
     },
     {
       icon: CalendarClock,
       label: 'toolbar.setDueDate',
       tip: 'toolbar.dueDateTip',
       priority: 40,
-      action: () => dispatchBlockEvent('OPEN_DUE_DATE_PICKER'),
+      action: () => dispatchBlockCommand('OPEN_DUE_DATE_PICKER'),
     },
     {
       icon: CalendarCheck2,
       label: 'toolbar.setScheduledDate',
       tip: 'toolbar.scheduledDateTip',
       priority: 40,
-      action: () => dispatchBlockEvent('OPEN_SCHEDULED_DATE_PICKER'),
+      action: () => dispatchBlockCommand('OPEN_SCHEDULED_DATE_PICKER'),
     },
     {
       icon: CheckSquare,
       label: 'toolbar.todoToggle',
       tip: 'toolbar.todoToggleTip',
       priority: 80,
-      action: () => dispatchBlockEvent('TOGGLE_TODO_STATE'),
+      action: () => dispatchBlockCommand('TOGGLE_TODO_STATE'),
     },
     {
       icon: Settings2,
       label: 'toolbar.properties',
       tip: 'toolbar.propertiesTip',
       priority: 40,
-      action: () => dispatchBlockEvent('OPEN_BLOCK_PROPERTIES'),
+      action: () => dispatchBlockCommand('OPEN_BLOCK_PROPERTIES'),
     },
   ]
 }
@@ -361,7 +361,7 @@ export function createHistoryButtons(editor: Editor): ToolbarButtonConfig[] {
       label: 'toolbar.discard',
       tip: 'toolbar.discardTip',
       priority: 30,
-      action: () => dispatchBlockEvent('DISCARD_BLOCK_EDIT'),
+      action: () => dispatchBlockCommand('DISCARD_BLOCK_EDIT'),
     },
   ]
 }

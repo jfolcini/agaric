@@ -10,7 +10,7 @@
  * suppressed).
  *
  * Layer B: each button carries a `priority` (see
- * `src/lib/toolbar-config.ts`). When the container is narrow enough that not
+ * `src/components/FormattingToolbar/toolbar-config.ts`). When the container is narrow enough that not
  * every button fits, the lowest-priority buttons collapse into a
  * `MoreHorizontal` overflow popover. Group separators disappear when both
  * sides have lost all visible buttons. The hook `useToolbarOverflow` does
@@ -41,14 +41,14 @@ import {
   renderTurnIntoButton,
 } from '@/components/FormattingToolbar/RefsAndBlocksGroup'
 import { type RenderMode, renderConfigButton } from '@/components/FormattingToolbar/shared'
-import { ToolbarFrame } from '@/components/FormattingToolbar/ToolbarFrame'
-import type { ToolbarItem } from '@/hooks/useToolbarOverflow'
 import {
   createHistoryButtons,
   createMetadataButtons,
   createRefsAndBlocks,
   createStructureButtons,
-} from '@/lib/toolbar-config'
+} from '@/components/FormattingToolbar/toolbar-config'
+import { ToolbarFrame } from '@/components/FormattingToolbar/ToolbarFrame'
+import type { ToolbarItem } from '@/hooks/useToolbarOverflow'
 
 interface FormattingToolbarProps {
   editor: Editor

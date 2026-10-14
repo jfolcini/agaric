@@ -71,6 +71,7 @@ import { EmbedRowEditorContext } from '@/components/editor/embed/embed-row-edito
 import { useEmbedRowEditorValue } from '@/components/editor/embed/use-embed-row-editor'
 import { useBlockDialogs } from '@/components/editor/useBlockDialogs'
 import { useFocusedBlockActions } from '@/components/editor/useFocusedBlockActions'
+import { useLazyRovingEditor } from '@/components/editor/useLazyRovingEditor'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
 import { INERT_BLOCK_KEYBOARD_CALLBACKS, useBlockKeyboard } from '@/editor/use-block-keyboard'
@@ -79,7 +80,6 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import { useScopedBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
-import { useLazyRovingEditor } from '@/hooks/useLazyRovingEditor'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 import { useViewportWindow } from '@/hooks/useViewportWindow'
@@ -89,7 +89,6 @@ import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { convertBlockContent } from '@/lib/block-type-convert'
-import { deleteBlockIfLeakedEmpty } from '@/lib/empty-block-cleanup'
 import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -98,7 +97,9 @@ import type { FlatBlock } from '@/lib/tree-utils'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { mountedScopedIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
+import { deleteBlockIfLeakedEmpty } from '@/stores/empty-block-cleanup'
 import { storeOwnsBlock, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
+import { getRecentCommands, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
 import { useSpaceStore } from '@/stores/space'
 
 // #5441 — the slash-command pickers mount only while open; lazy so the date
@@ -593,7 +594,8 @@ export function BlockTree({
     searchBlockRefs: resolve.searchBlockRefs,
     onCreatePage: resolve.onCreatePage,
     onCreateTag: resolve.onCreateTag,
-    searchSlashCommands,
+    searchSlashCommands: (query: string) =>
+      searchSlashCommands(query, getRecentCommands(RECENT_SLASH_PREFIX)),
     onSlashCommand: dispatch.thunks.slashCommand,
     onCheckbox: dispatch.thunks.checkbox,
     onListStyle: dispatch.thunks.listStyle,

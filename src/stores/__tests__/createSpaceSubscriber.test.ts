@@ -22,7 +22,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createSpaceSubscriber } from '@/lib/createSpaceSubscriber'
+import { createSpaceSubscriber } from '@/stores/createSpaceSubscriber'
 import { useSpaceStore } from '@/stores/space'
 
 beforeEach(() => {

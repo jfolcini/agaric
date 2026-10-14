@@ -12,7 +12,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { addRecentCommand, getRecentCommands } from '@/lib/recent-commands'
+import { addRecentCommand, getRecentCommands } from '@/stores/recent-commands'
 import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
 
 const LEGACY_STORAGE_KEY = `recent_commands:${LEGACY_SPACE_KEY}`

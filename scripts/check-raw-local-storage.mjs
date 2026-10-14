@@ -65,7 +65,7 @@ const EXEMPT_FILES = Object.freeze(
     // registry; `usePreference` delegates to it, and a handful of
     // pre-registry call sites (useAgendaPreferences.ts, etc.) still use
     // it directly with their own key/parse/serialize.
-    'src/hooks/useLocalStoragePreference.ts',
+    'src/lib/local-storage-preference.ts',
     // useSyncExternalStore + synthetic same-tab StorageEvent dispatch
     // carrying the exact raw old/new string — readPreference/
     // writePreference only expose the typed value, not the raw string

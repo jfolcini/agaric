@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
-import { useDebugStore } from '@/stores/useDebugStore'
+import { PREFERENCES, removePreference, writePreference } from '@/lib/preferences'
 
 // `notify.retry` is the standardised "error + Retry action" helper
 // (ui-improvements 2026-05-16 batch). The global Sonner mock from
@@ -119,7 +119,7 @@ describe('notify dedup (id forwarding)', () => {
 // untouched (covered above).
 describe('notify.error debug-mode formatting (#1987)', () => {
   afterEach(() => {
-    useDebugStore.setState({ debugMode: false })
+    removePreference(PREFERENCES.debugMode)
   })
 
   it('shows a cleaned IPC AppError message and hides the kind when debug is off', () => {
@@ -130,7 +130,7 @@ describe('notify.error debug-mode formatting (#1987)', () => {
   })
 
   it('appends the kind code to an IPC AppError when debug is on', () => {
-    useDebugStore.setState({ debugMode: true })
+    writePreference(PREFERENCES.debugMode, true)
     notify.error({ kind: 'validation', message: 'Validation error: pairing.no_active_session' })
 
     expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe(

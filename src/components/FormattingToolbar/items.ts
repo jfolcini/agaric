@@ -11,8 +11,8 @@
  * full result and so this module has no React dependency.
  */
 
+import type { ToolbarButtonConfig } from '@/components/FormattingToolbar/toolbar-config'
 import type { ToolbarItem } from '@/hooks/useToolbarOverflow'
-import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
 
 export interface ToolbarItemGroups {
   refsAndBlocks: ToolbarButtonConfig[]

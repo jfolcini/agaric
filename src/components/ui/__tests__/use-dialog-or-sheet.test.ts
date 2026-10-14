@@ -38,7 +38,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { type DialogKind, useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { type DialogKind, useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
 
 vi.mock('@/hooks/useIsMobile', () => ({

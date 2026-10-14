@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { formatErrorForDisplay } from '@/lib/error-display'
-import { useDebugStore } from '@/stores/useDebugStore'
+import { PREFERENCES, removePreference, writePreference } from '@/lib/preferences'
 
 afterEach(() => {
   // Reset the app-wide flag so cross-test ordering can't leak debug state.
-  useDebugStore.setState({ debugMode: false })
+  removePreference(PREFERENCES.debugMode)
 })
 
 describe('formatErrorForDisplay', () => {
@@ -96,11 +96,11 @@ describe('formatErrorForDisplay', () => {
     })
   })
 
-  it('falls back to the live store value when no explicit debug flag is passed', () => {
+  it('falls back to the stored preference when no explicit debug flag is passed', () => {
     const appError = { kind: 'io', message: 'IO error: disk full' }
-    // Store defaults to off.
+    // Defaults to off.
     expect(formatErrorForDisplay(appError)).toBe('disk full')
-    useDebugStore.setState({ debugMode: true })
+    writePreference(PREFERENCES.debugMode, true)
     expect(formatErrorForDisplay(appError)).toBe('disk full · code: io')
   })
 })

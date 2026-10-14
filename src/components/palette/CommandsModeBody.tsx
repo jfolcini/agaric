@@ -10,10 +10,10 @@ import type { useTranslation } from 'react-i18next'
 
 import { CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command'
 import { Kbd } from '@/components/ui/kbd'
+import { PALETTE_COMMANDS, type PaletteCommandSpec } from '@/hooks/palette-commands'
 import { formatChordTokens } from '@/lib/keyboard-config/format-chord'
 import { getShortcutKeys } from '@/lib/keyboard-config/storage'
-import { PALETTE_COMMANDS, type PaletteCommandSpec } from '@/lib/palette-commands'
-import { addRecentCommand, getRecentCommands } from '@/lib/recent-commands'
+import { addRecentCommand, getRecentCommands } from '@/stores/recent-commands'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 
 /**
@@ -74,7 +74,7 @@ export function CommandsModeBody({
   const query = useCommandPaletteStore((s) => s.query)
   const filter = query.toLowerCase().trim()
 
-  // Phase 8 — registry hoisted to `lib/palette-commands.ts`
+  // Phase 8 — registry hoisted to `hooks/palette-commands.ts`
   // so the global `runLastCommand` shortcut can execute by id without
   // mounting the palette body. Here we adapt each spec into the
   // shape the rest of the body expects: a flat `label` (resolved via

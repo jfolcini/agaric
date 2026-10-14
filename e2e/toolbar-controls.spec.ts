@@ -5,7 +5,7 @@
  * rendered DOM; for content changes it persists through a reopen
  * (`reopenPage`). Selectors were verified against component source:
  *   - Always-visible toolbar: `src/components/FormattingToolbar.tsx` +
- *     `src/lib/toolbar-config.ts` + `src/components/FormattingToolbar/*`
+ *     `src/components/FormattingToolbar/toolbar-config.ts` + `src/components/FormattingToolbar/*`
  *     (accessible names come from `src/lib/i18n/toolbar.ts`).
  *   - Secondary selectors: `HeadingLevelSelector`, `CodeLanguageSelector`,
  *     `TablePicker` in `src/components/editor-toolbar/`.

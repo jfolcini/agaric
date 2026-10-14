@@ -31,9 +31,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import { activeSpaceKey } from '@/lib/active-space'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
 import { setStarred } from '@/lib/starred-pages'
+import { activeSpaceKey } from '@/stores/active-space'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 

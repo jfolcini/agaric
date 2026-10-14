@@ -44,7 +44,7 @@ Notable hooks that enforce architectural contracts:
 - **`tauri-command-sanitize`** — see Security § Error sanitization below.
 - **`tauri-mock-parity`** — fails if `src/lib/tauri-mock/handlers.ts` is missing a handler the frontend calls.
 - **`no-raw-invoke`** — no bare `invoke()` in app code.
-- **`lib-layering`** — ranks the frontend tiers `lib(0) ← stores(1) ← hooks(2) ← components(3)` and fails a commit where a lower tier imports a higher one (#3121). Ratcheted through `scripts/lib-layering-baseline.json`: a new upward import fails, and so does a stale baseline entry, so the count may only fall. Distinct from `import-cycles` (which only proves acyclicity) and `store-layering` (store-to-store edges only); `src/editor/`, `src/workers/` and `src/types/` are out of scope on both sides. Full rules in [`frontend.md`](frontend.md) § `lib-layering` — the frontend tier ratchet.
+- **`lib-layering`** — ranks the frontend tiers `lib(0) ← stores(1) ← hooks(2) ← components(3)` and fails a commit where a lower tier imports a higher one (#3121). No baseline: any upward import fails. Distinct from `import-cycles` (which only proves acyclicity) and `store-layering` (store-to-store edges only); `src/editor/`, `src/workers/` and `src/types/` are out of scope on both sides. Full rules in [`frontend.md`](frontend.md) § `lib-layering` — the frontend tier guard.
 - **`migrations-immutable`** — refuses changes to already-shipped migrations.
 - **`migrations-strict-tables`** — every new schema migration must use `STRICT` mode.
 - **`ipc-error-path-coverage`** — every Tauri command's error paths must be exercised by tests.

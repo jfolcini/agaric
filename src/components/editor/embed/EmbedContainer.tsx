@@ -97,14 +97,14 @@ import { embedAncestors, selectEmbeddedRows } from '@/components/editor/embed/em
 import { EmbeddedBlockTree } from '@/components/editor/embed/EmbeddedBlockTree'
 import { useEmbedTarget } from '@/components/editor/embed/use-embed-target'
 import { isSuggestionPopupVisible } from '@/editor/use-block-keyboard'
-import {
-  blockIsRenderedByAMountedTree,
-  subscribeBlockCommandTargets,
-} from '@/lib/block-command-bus'
 import { normalizeBlockRefTitle } from '@/lib/block-title'
 import { EMBED_MOUNT_LIMIT, MAX_EMBED_DEPTH, parseEmbedToken } from '@/lib/embed-token'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { cn } from '@/lib/utils'
+import {
+  blockIsRenderedByAMountedTree,
+  subscribeBlockCommandTargets,
+} from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import {

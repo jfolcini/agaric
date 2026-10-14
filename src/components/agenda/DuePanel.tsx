@@ -34,7 +34,6 @@ import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useDuePanelData } from '@/hooks/useDuePanelData'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
 import { useRovingRowFocus } from '@/hooks/useListKeyboardNavigation'
-import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import {
   type RichContentCallbacks,
@@ -44,6 +43,7 @@ import {
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 import type { ActiveProjectedAgendaEntry } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { useLocalStoragePreference } from '@/lib/local-storage-preference'
 import { priorityRank } from '@/lib/priority-levels'
 import { TASK_STATE_SORT_ORDER } from '@/lib/task-states'
 import { cn } from '@/lib/utils'

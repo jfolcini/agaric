@@ -32,10 +32,10 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
   }
 })
 
+import { getPaletteCommand, PALETTE_COMMANDS } from '@/hooks/palette-commands'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { SHOW_SHORTCUTS_EVENT } from '@/lib/overlay-events'
-import { getPaletteCommand, PALETTE_COMMANDS } from '@/lib/palette-commands'
 import {
   type LocalGraphPreference,
   PREFERENCES,

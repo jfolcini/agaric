@@ -24,7 +24,6 @@ import {
 } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
 import { _resetPropertyKeysCacheForTest } from '@/lib/property-keys-cache'
-import { addRecentCommand, getRecentCommands, RECENT_SLASH_PREFIX } from '@/lib/recent-commands'
 import {
   RECENT_SLASH_CATEGORY,
   SLASH_COMMANDS,
@@ -33,6 +32,7 @@ import {
 } from '@/lib/slash-commands'
 import { insertTemplateBlocks } from '@/lib/template-utils'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { addRecentCommand, getRecentCommands, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
 import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
@@ -169,7 +169,7 @@ describe('searchSlashCommands', () => {
     // #1105 — with an empty MRU the band is omitted, so empty `/` still
     // yields exactly the full base catalog (re-export shares the lib MRU,
     // localStorage is cleared in beforeEach).
-    const results = searchSlashCommands('')
+    const results = searchSlashCommands('', getRecentCommands(RECENT_SLASH_PREFIX))
     expect(results.length).toBe(SLASH_COMMANDS.length)
   })
 
@@ -178,7 +178,7 @@ describe('searchSlashCommands', () => {
     addRecentCommand('done', RECENT_SLASH_PREFIX)
     addRecentCommand('todo', RECENT_SLASH_PREFIX)
 
-    const results = searchSlashCommands('')
+    const results = searchSlashCommands('', getRecentCommands(RECENT_SLASH_PREFIX))
 
     // Band first, tagged with the synthetic Recent category, MRU order.
     expect(results[0]).toMatchObject({ id: 'todo', category: RECENT_SLASH_CATEGORY })
@@ -194,7 +194,7 @@ describe('searchSlashCommands', () => {
     // `table:3:3` is an expanded sub-option, not a base SLASH_COMMANDS id.
     addRecentCommand('table:3:3', RECENT_SLASH_PREFIX)
 
-    const results = searchSlashCommands('')
+    const results = searchSlashCommands('', getRecentCommands(RECENT_SLASH_PREFIX))
 
     // Only the base id surfaces in the band; the stale id is dropped.
     expect(results[0]).toMatchObject({ id: 'todo', category: RECENT_SLASH_CATEGORY })
@@ -204,7 +204,7 @@ describe('searchSlashCommands', () => {
   it('omits the Recent band for a typed query (#1105)', () => {
     addRecentCommand('done', RECENT_SLASH_PREFIX)
 
-    const results = searchSlashCommands('todo')
+    const results = searchSlashCommands('todo', getRecentCommands(RECENT_SLASH_PREFIX))
 
     // Normal filtered list; no Recent-category rows injected.
     expect(results.some((r) => r.category === RECENT_SLASH_CATEGORY)).toBe(false)
@@ -212,59 +212,59 @@ describe('searchSlashCommands', () => {
   })
 
   it('filters by query string', () => {
-    const results = searchSlashCommands('todo')
+    const results = searchSlashCommands('todo', [])
     expect(results.some((r) => r.id === 'todo')).toBe(true)
     // With fuzzy matching, top results should include 'todo'
     expect(results[0]?.id).toBe('todo')
   })
 
   it('includes priority commands when query matches', () => {
-    const results = searchSlashCommands('priority')
+    const results = searchSlashCommands('priority', [])
     expect(results.some((r) => r.id === 'priority-high')).toBe(true)
     expect(results.some((r) => r.id === 'priority-medium')).toBe(true)
     expect(results.some((r) => r.id === 'priority-low')).toBe(true)
   })
 
   it('includes heading commands when query matches', () => {
-    const results = searchSlashCommands('heading')
+    const results = searchSlashCommands('heading', [])
     expect(results.some((r) => r.id === 'h1')).toBe(true)
     expect(results.some((r) => r.id === 'h6')).toBe(true)
   })
 
   it('includes repeat commands when query matches', () => {
-    const results = searchSlashCommands('repeat')
+    const results = searchSlashCommands('repeat', [])
     expect(results.some((r) => r.id === 'repeat-daily')).toBe(true)
     expect(results.some((r) => r.id === 'repeat-remove')).toBe(true)
   })
 
   it('includes effort commands when query matches', () => {
-    const results = searchSlashCommands('effort')
+    const results = searchSlashCommands('effort', [])
     expect(results.some((r) => r.id === 'effort-1h')).toBe(true)
   })
 
   it('includes assignee commands when query matches', () => {
-    const results = searchSlashCommands('assignee')
+    const results = searchSlashCommands('assignee', [])
     expect(results.some((r) => r.id === 'assignee-me')).toBe(true)
   })
 
   it('includes location commands when query matches', () => {
-    const results = searchSlashCommands('location')
+    const results = searchSlashCommands('location', [])
     expect(results.some((r) => r.id === 'location-office')).toBe(true)
   })
 
   it('handles table NxM pattern', () => {
-    const results = searchSlashCommands('table 4x6')
+    const results = searchSlashCommands('table 4x6', [])
     expect(results.some((r) => r.id === 'table:4:6')).toBe(true)
     expect(results.every((r) => r.id !== 'table')).toBe(true)
   })
 
   it('returns empty array-like for non-matching query', () => {
-    const results = searchSlashCommands('zzzzzzzznonexistent')
+    const results = searchSlashCommands('zzzzzzzznonexistent', [])
     expect(results.length).toBe(0)
   })
 
   it('filtered results preserve category and icon metadata', () => {
-    const results = searchSlashCommands('todo')
+    const results = searchSlashCommands('todo', [])
     const todoItem = results.find((r) => r.id === 'todo')
     expect(todoItem).toBeDefined()
     expect(todoItem?.category).toBe('slashCommand.categories.tasks')
@@ -272,7 +272,7 @@ describe('searchSlashCommands', () => {
   })
 
   it('dynamic table command includes category and icon', () => {
-    const results = searchSlashCommands('table 3x3')
+    const results = searchSlashCommands('table 3x3', [])
     const tableItem = results.find((r) => r.id === 'table:3:3')
     expect(tableItem).toBeDefined()
     expect(tableItem?.category).toBe('slashCommand.categories.structure')
@@ -283,13 +283,13 @@ describe('searchSlashCommands', () => {
 
   it('fuzzy matches non-substring queries', () => {
     // "tdo" is not a substring of "TODO — Mark as to-do" but fuzzy should match
-    const results = searchSlashCommands('tdo')
+    const results = searchSlashCommands('tdo', [])
     expect(results.some((r) => r.id === 'todo')).toBe(true)
   })
 
   it('fuzzy matches across command groups', () => {
     // "prihi" should fuzzy match "PRIORITY 1 — Set high priority"
-    const results = searchSlashCommands('pri')
+    const results = searchSlashCommands('pri', [])
     expect(results.some((r) => r.id === 'priority-high')).toBe(true)
   })
 })

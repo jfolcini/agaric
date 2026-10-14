@@ -29,7 +29,7 @@ vi.mock('@/hooks/usePageDelete', () => ({
     return {
       deletingId: null,
       setDeleteTarget: vi.fn(),
-      confirmDialog: null,
+      confirmDialogProps: null,
     }
   },
 }))

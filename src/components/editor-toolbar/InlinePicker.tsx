@@ -28,10 +28,10 @@
 import { Check } from 'lucide-react'
 import type React from 'react'
 
+import { toolbarMenuRowClass } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
-import { toolbarMenuRowClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
 export interface UseInlinePickerKeyboardOptions {

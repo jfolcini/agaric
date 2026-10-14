@@ -10,7 +10,7 @@
  *   - single inline run (one heading/paragraph/list-item, no nesting) → inserted
  *     inline at the caret as real marks (bold/italic/code/strike/links);
  *   - multi-block (several blocks, or any nesting) → routed through the
- *     block-creation path: `dispatchBlockEvent('PASTE_BLOCKS', …)` → the
+ *     block-creation path: `dispatchBlockCommand('PASTE_BLOCKS', …)` → the
  *     focused BlockTree's `pasteBlocks(focusedBlockId, { kind: 'blocks', … })`.
  *
  * With no usable HTML, plain text of more than one line — or one bullet line,
@@ -58,8 +58,8 @@ import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
 import { parse, parseLine, serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
 import type { PasteInput, PasteSplice } from '@/lib/bindings'
-import { dispatchBlockEvent } from '@/lib/block-events'
 import { logger } from '@/lib/logger'
+import { dispatchBlockCommand } from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
 
 /**
@@ -347,7 +347,7 @@ function dispatchPasteBlocks(
 ): void {
   const asText = toMarkdown(view.state.tr.replaceSelection(literalLines(view, plainText)).doc)
   const detail: PasteBlocksDetail = { input, targetBlockId, splice: pasteSplice(view), asText }
-  dispatchBlockEvent('PASTE_BLOCKS', detail)
+  dispatchBlockCommand('PASTE_BLOCKS', detail)
 }
 
 /**

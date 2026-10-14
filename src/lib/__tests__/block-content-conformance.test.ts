@@ -18,7 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { processCheckboxSyntax } from '@/lib/block-utils'
 import { TASK_STATE_TO_MARKER, TASK_STATES, type TodoState } from '@/lib/task-states'
-import { runUnmountFlush, type UnmountFlushResult } from '@/lib/unmount-flush'
+import { runUnmountFlush, type UnmountFlushResult } from '@/stores/unmount-flush'
 
 interface StoredBlock {
   name: string

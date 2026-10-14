@@ -76,13 +76,13 @@ import { cleanupOrphanedPopups } from '@/editor/suggestion-renderer'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import type { DocNode } from '@/editor/types'
-import { dispatchBlockEvent } from '@/lib/block-events'
 import { unresolvedBlockLabel, unresolvedBlockRefLabel } from '@/lib/block-title'
 import { t } from '@/lib/i18n'
 import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { curatedLowlight } from '@/lib/lowlight-curated'
 import type { TodoState } from '@/lib/task-states'
+import { dispatchBlockCommand } from '@/stores/block-command-bus'
 
 const suggestionPluginKeys = [
   atTagPickerPluginKey,
@@ -518,7 +518,7 @@ export function dispatchPriorityEvent(level: 1 | 2 | 3): void {
   // truth constant, not a hand-built literal (the producer/consumer can no
   // longer silently desync on a rename). `SET_PRIORITY_${level}` is a typed key
   // of BLOCK_EVENTS, so a typo here is a compile error.
-  dispatchBlockEvent(`SET_PRIORITY_${level}`)
+  dispatchBlockCommand(`SET_PRIORITY_${level}`)
 }
 
 /** Custom extension dispatching priority shortcut events. @internal Exported for testing. */

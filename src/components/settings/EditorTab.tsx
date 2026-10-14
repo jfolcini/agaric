@@ -23,9 +23,9 @@ import {
 import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { ToggleRow } from '@/components/ui/toggle-row'
 import { useExternalImageAllowlist, useExternalImagePolicy } from '@/hooks/useExternalImagePolicy'
-import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { EMOJI_PICKER_ENABLED_KEY, TAB_INDENTS_BLOCKS_KEY } from '@/lib/editor-preferences'
 import { type ExternalImagePolicy, isExternalImagePolicy } from '@/lib/external-image-policy'
+import { useLocalStoragePreference } from '@/lib/local-storage-preference'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
 

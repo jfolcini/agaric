@@ -25,6 +25,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useTranslation } from 'react-i18next'
 
 import { LinkEditPopover } from '@/components/editor-toolbar/LinkEditPopover'
+import {
+  createMarkToggles,
+  MARK_TOGGLE_SHORTCUT_IDS,
+  toolbarActiveClass,
+  withShortcutHint,
+} from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
@@ -32,12 +38,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
-import {
-  createMarkToggles,
-  MARK_TOGGLE_SHORTCUT_IDS,
-  toolbarActiveClass,
-  withShortcutHint,
-} from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
 interface SelectionBubbleMenuProps {

@@ -60,7 +60,7 @@
 // swept. Bulk-fixing 18 call sites in the same PR that lands the widened
 // scanner would bury the mechanical change under an unrelated content
 // sweep, so — following the shrink-only baseline convention already used
-// by `scripts/lib-layering-baseline.json` and `scripts/bulk-equivalence-baseline.json`
+// by `scripts/bulk-equivalence-baseline.json`
 // — they are recorded in `scripts/doc-code-paths-baseline.json` instead. A
 // baselined (file, ref) pair is grandfathered; anything ELSE is still a
 // hard failure, so this guard already prevents the count from growing even
@@ -389,10 +389,9 @@ function readBaseline({ lenientOnParseError = false } = {}) {
 }
 
 function writeBaseline(entries) {
-  // Plain UTF-8/UTF-16 code-unit order, NOT `localeCompare` — the
-  // repo-wide baseline convention (`.toSorted()` with no comparator, and the
-  // tag-row byte-sort fix in #4125) is a byte sort, and `localeCompare` disagrees with it on case (it would
-  // sort `SearchPanel` before `backlinks`; a byte sort does not).
+  // Plain UTF-8/UTF-16 code-unit order, NOT `localeCompare`: a byte sort, as
+  // in the tag-row fix of #4125. `localeCompare` disagrees on case (it would
+  // sort `SearchPanel` before `backlinks`).
   const key = (e) => `${e.file}\u0000${e.ref}`
   const sorted = entries.toSorted((a, b) => {
     const ak = key(a)
