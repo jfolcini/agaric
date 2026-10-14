@@ -215,7 +215,7 @@ describe('PropertyDefinitionsList', () => {
     expect(await screen.findByText('Delete this property definition?')).toBeInTheDocument()
     expect(
       screen.getByText(
-        'Blocks using this property will keep their values, but the definition will be removed.',
+        "A property still in use can't be deleted. Remove it from every block that uses it first.",
       ),
     ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument()
@@ -399,8 +399,7 @@ describe('PropertyDefinitionsList', () => {
       kind: 'validation',
       code: null,
       message:
-        "cannot delete property definition 'project': 2 block_properties row(s) reference this " +
-        'key. Clear them first via set_property(value=None) on each affected block.',
+        "Can't delete 'project': 2 block(s) still use it. Remove the property from them first.",
     }
     stubInvoke({ delete_property_def: () => Promise.reject(inUse) })
 

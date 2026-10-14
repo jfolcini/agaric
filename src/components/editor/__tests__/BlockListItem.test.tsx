@@ -737,15 +737,15 @@ describe('BlockListItem — reschedule button', () => {
     expect(screen.queryByTestId('reschedule-btn')).not.toBeInTheDocument()
   })
 
-  it('renders calendar popover content when blockId is provided', () => {
+  it('renders calendar popover content when blockId is provided', async () => {
     render(
       <ul>
         <BlockListItem {...defaultProps({ blockId: 'block-1' })} />
       </ul>,
     )
 
-    // The mocked Popover always renders children inline
-    expect(screen.getByTestId('mock-calendar')).toBeInTheDocument()
+    // The mocked Popover always renders children inline; the Calendar is lazy (#5441)
+    expect(await screen.findByTestId('mock-calendar')).toBeInTheDocument()
   })
 })
 
@@ -765,7 +765,7 @@ describe('BlockListItem — handleDateSelect', () => {
     )
 
     // Simulate date selection via the captured Calendar onSelect
-    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(() => expect(mockCalendarOnSelect).toBeDefined())
     await waitFor(async () => {
       ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 5, 15))
     })
@@ -790,7 +790,7 @@ describe('BlockListItem — handleDateSelect', () => {
       </ul>,
     )
 
-    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(() => expect(mockCalendarOnSelect).toBeDefined())
     await waitFor(async () => {
       ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 2, 10))
     })
@@ -815,7 +815,7 @@ describe('BlockListItem — handleDateSelect', () => {
       </ul>,
     )
 
-    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(() => expect(mockCalendarOnSelect).toBeDefined())
     await waitFor(async () => {
       ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 0, 20))
     })
@@ -837,7 +837,7 @@ describe('BlockListItem — handleDateSelect', () => {
       </ul>,
     )
 
-    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(() => expect(mockCalendarOnSelect).toBeDefined())
     await waitFor(async () => {
       ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 0, 1))
     })
@@ -860,7 +860,7 @@ describe('BlockListItem — handleDateSelect', () => {
       </ul>,
     )
 
-    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(() => expect(mockCalendarOnSelect).toBeDefined())
     await waitFor(async () => {
       ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 0, 5))
     })
@@ -879,7 +879,7 @@ describe('BlockListItem — handleDateSelect', () => {
       </ul>,
     )
 
-    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(() => expect(mockCalendarOnSelect).toBeDefined())
     await waitFor(async () => {
       ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 7, 25))
     })
@@ -908,7 +908,7 @@ describe('BlockListItem — handleDateSelect', () => {
       </ul>,
     )
 
-    expect(mockCalendarOnSelect).toBeDefined()
+    await waitFor(() => expect(mockCalendarOnSelect).toBeDefined())
     await waitFor(async () => {
       ;(mockCalendarOnSelect as (d: Date) => void)(new Date(2025, 0, 20))
     })

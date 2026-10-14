@@ -74,6 +74,12 @@ function renderBuilder(overrides?: Partial<BacklinkFilterBuilderProps>) {
   return render(<BacklinkFilterBuilder {...props} />)
 }
 
+/** "Add filter" mounts the lazy add-filter row (#5441), so wait for it to load. */
+async function openAddFilterRow(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: /Add filter/i }))
+  await screen.findByLabelText('Filter category')
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
@@ -111,7 +117,7 @@ describe('BacklinkFilterBuilder', () => {
       renderBuilder({ onFiltersChange })
 
       // Click "Add filter"
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
 
       // Select filter category
       await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
@@ -132,7 +138,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
       await user.selectOptions(screen.getByLabelText('Block type value'), 'page')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -145,7 +151,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'status')
       await user.selectOptions(screen.getByLabelText('Status value'), 'DONE')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -166,7 +172,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'status')
       await user.selectOptions(screen.getByLabelText('Status value'), 'none')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -192,7 +198,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder()
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'status')
 
       const statusSelect = screen.getByLabelText('Status value') as HTMLSelectElement
@@ -213,7 +219,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'priority')
       await user.selectOptions(screen.getByLabelText('Priority value'), '1')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -231,7 +237,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder()
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'priority')
 
       const prioritySelect = screen.getByLabelText('Priority value') as HTMLSelectElement
@@ -249,7 +255,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'priority')
       await user.selectOptions(screen.getByLabelText('Priority value'), 'none')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -267,7 +273,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
       await user.type(screen.getByLabelText('Contains text'), 'hello world')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -282,7 +288,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
 
       // Select key from dropdown
@@ -302,7 +308,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'date')
 
       // Fill in the after date
@@ -322,7 +328,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'date')
 
       // Don't fill in any dates, just click Apply
@@ -338,7 +344,7 @@ describe('BacklinkFilterBuilder', () => {
       // No property keys so we get the text input instead of dropdown
       renderBuilder({ onFiltersChange, propertyKeys: [] })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
 
       // Leave key empty, just click Apply
@@ -354,7 +360,7 @@ describe('BacklinkFilterBuilder', () => {
       // Start with no propertyKeys so the SearchInput renders, allowing free-form input
       const { rerender } = renderBuilder({ onFiltersChange, propertyKeys: [] })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
 
       // Type an unknown key into the free-form SearchInput
@@ -382,7 +388,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
       // Change property type to Number
       await user.selectOptions(screen.getByLabelText('Property type'), 'num')
@@ -399,7 +405,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
       // Change property type to Date
       await user.selectOptions(screen.getByLabelText('Property type'), 'date')
@@ -421,7 +427,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property-set')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
@@ -435,7 +441,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property-empty')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
@@ -449,7 +455,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'tag-prefix')
       await user.type(screen.getByLabelText('Tag prefix'), 'work')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -464,7 +470,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
       await user.selectOptions(screen.getByLabelText('Property type'), 'num')
       await user.type(screen.getByLabelText('Property value'), 'abc')
@@ -479,7 +485,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
       await user.selectOptions(screen.getByLabelText('Property type'), 'date')
       // Leave value empty, just click Apply
@@ -494,7 +500,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange, propertyKeys: [] })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property-set')
       // Leave key empty, just click Apply
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -508,7 +514,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange, propertyKeys: [] })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property-empty')
       // Leave key empty, just click Apply
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -522,7 +528,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'tag-prefix')
       // Leave prefix empty, just click Apply
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -536,7 +542,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       expect(screen.getByLabelText('Filter category')).toBeInTheDocument()
 
       await user.click(screen.getByRole('button', { name: /Cancel adding filter/i }))
@@ -553,7 +559,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder()
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       // Pick a category so the Apply button renders.
       await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
 
@@ -734,7 +740,7 @@ describe('BacklinkFilterBuilder', () => {
         onFiltersChange,
       })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
 
       // Open tag search popover (trigger shows "Alpha" since tagValue defaults to TAG_A)
@@ -760,7 +766,7 @@ describe('BacklinkFilterBuilder', () => {
         onFiltersChange,
       })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
       await user.selectOptions(screen.getByLabelText('Block type value'), 'content')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -794,7 +800,7 @@ describe('BacklinkFilterBuilder', () => {
         const { rerender } = renderBuilder({ onFiltersChange })
 
         // First add — produces a stamped filter via handleAddFilter.
-        await user.click(screen.getByRole('button', { name: /Add filter/i }))
+        await openAddFilterRow(user)
         await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
         await user.selectOptions(screen.getByLabelText('Block type value'), 'page')
         await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -813,7 +819,7 @@ describe('BacklinkFilterBuilder', () => {
         expect(onFiltersChange).toHaveBeenCalledTimes(1)
 
         // Second add of the byte-identical filter — dedup must reject it.
-        await user.click(screen.getByRole('button', { name: /Add filter/i }))
+        await openAddFilterRow(user)
         await user.selectOptions(screen.getByLabelText('Filter category'), 'type')
         await user.selectOptions(screen.getByLabelText('Block type value'), 'page')
         await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -840,7 +846,7 @@ describe('BacklinkFilterBuilder', () => {
         const { rerender } = renderBuilder({ onFiltersChange })
 
         // Add filter A.
-        await user.click(screen.getByRole('button', { name: /Add filter/i }))
+        await openAddFilterRow(user)
         await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
         await user.type(screen.getByLabelText('Contains text'), 'alpha')
         await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -855,7 +861,7 @@ describe('BacklinkFilterBuilder', () => {
         )
 
         // Add filter B.
-        await user.click(screen.getByRole('button', { name: /Add filter/i }))
+        await openAddFilterRow(user)
         await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
         await user.type(screen.getByLabelText('Contains text'), 'beta')
         await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -900,7 +906,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
@@ -914,7 +920,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder()
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'tag-prefix')
 
       const input = screen.getByLabelText('Tag prefix')
@@ -936,7 +942,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder({ tags: tagsData })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
 
       // tagValue defaults to first tag ID, so trigger shows "Project"
@@ -948,7 +954,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder({ tags: tagsData })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
 
       // Open the popover
@@ -964,7 +970,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ tags: tagsData, onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
       // tagValue defaults to first tag; click Apply directly
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
@@ -1000,7 +1006,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
       const input = screen.getByLabelText('Contains text')
       await user.type(input, 'hello{Enter}')
@@ -1020,7 +1026,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder()
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       const categorySelect = screen.getByLabelText('Filter category')
       expect(categorySelect).toBeInTheDocument()
 
@@ -1082,7 +1088,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
       await user.selectOptions(screen.getByLabelText('Property type'), 'num')
       await user.type(screen.getByLabelText('Property value'), 'Infinity')
@@ -1097,7 +1103,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
       await user.selectOptions(screen.getByLabelText('Property type'), 'num')
       await user.type(screen.getByLabelText('Property value'), 'NaN')
@@ -1118,7 +1124,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'date')
 
       const afterInput = screen.getByLabelText('Date after')
@@ -1137,7 +1143,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'date')
 
       const afterInput = screen.getByLabelText('Date after')
@@ -1159,7 +1165,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'date')
 
       const afterInput = screen.getByLabelText('Date after')
@@ -1183,7 +1189,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'date')
 
       const afterInput = screen.getByLabelText('Date after')
@@ -1218,7 +1224,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange, propertyKeys: [] })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
       await user.type(screen.getByLabelText('Property key'), 'custom_key')
       await user.type(screen.getByLabelText('Property value'), 'val')
@@ -1240,7 +1246,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange, propertyKeys: ['todo', 'priority', 'due'] })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
       await user.selectOptions(screen.getByLabelText('Property key'), 'due')
       await user.type(screen.getByLabelText('Property value'), 'tomorrow')
@@ -1263,7 +1269,7 @@ describe('BacklinkFilterBuilder', () => {
       renderBuilder()
 
       // Open the add-filter form
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
 
       // The filter category select should have data-size="sm" (from SelectTrigger size prop)
       const categorySelect = screen.getByLabelText('Filter category')
@@ -1291,7 +1297,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder({ tags: tagsData })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
 
       expect(screen.getByTestId('tag-search-popover')).toBeInTheDocument()
@@ -1307,7 +1313,7 @@ describe('BacklinkFilterBuilder', () => {
       } as never)
       renderBuilder({ tags: tagsData })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
 
       // Open the popover
@@ -1356,7 +1362,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ tags: tagsData, onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
 
       await user.click(screen.getByRole('button', { name: 'Project' }))
@@ -1376,7 +1382,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ tags: tagsData, onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
 
       await user.click(screen.getByRole('button', { name: 'Project' }))
@@ -1400,7 +1406,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder({ tags: [] })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
 
       expect(screen.getByRole('button', { name: 'Select tag' })).toBeInTheDocument()
@@ -1417,7 +1423,7 @@ describe('BacklinkFilterBuilder', () => {
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
 
       const input = screen.getByLabelText('Contains text') as HTMLInputElement
@@ -1438,7 +1444,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder({ propertyKeys: ['todo', 'priority', 'due'] })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
 
       const valueInput = screen.getByLabelText('Property value') as HTMLInputElement
@@ -1457,7 +1463,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder({ propertyKeys: [] })
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'property')
 
       const keyInput = screen.getByLabelText('Property key') as HTMLInputElement
@@ -1474,7 +1480,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       renderBuilder()
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'tag-prefix')
 
       const prefixInput = screen.getByLabelText('Tag prefix') as HTMLInputElement
@@ -1492,7 +1498,7 @@ describe('BacklinkFilterBuilder', () => {
       const user = userEvent.setup()
       const { container } = renderBuilder()
 
-      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+      await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'contains')
       await user.type(screen.getByLabelText('Contains text'), 'hello')
 

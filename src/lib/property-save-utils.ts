@@ -220,8 +220,7 @@ export function carriedRenameDefinition(
  * A compensating delete alone cannot deliver that.
  * `delete_property_def_inner` (`src-tauri/src/commands/properties.rs`)
  * refuses to remove a definition while ANY `block_properties` row references
- * the key ("Clear them first via set_property(value=None) on each affected
- * block"), and refuses every `is_builtin_property_key` outright. The case
+ * the key, and refuses every `is_builtin_property_key` outright. The case
  * where the leftover hurts most — a key other blocks already use — is
  * precisely the case the delete refuses, so the cleanup would be missing
  * exactly where it is needed. Worse, that state is not reachable only on

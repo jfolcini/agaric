@@ -20,13 +20,13 @@ import { makePage } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   __resetCalendarPageDatesForTests,
-  fetchPageMap,
   invalidateCalendarPageDates,
   PAGE_DATES_TTL_MS,
   samePageMap,
   useCalendarPageDates,
 } from '@/hooks/useCalendarPageDates'
 import type { BlockRow } from '@/lib/bindings'
+import { fetchPageMap } from '@/lib/calendar-page-dates-cache'
 import { logger } from '@/lib/logger'
 import { useSpaceStore } from '@/stores/space'
 

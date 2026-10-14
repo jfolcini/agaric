@@ -344,7 +344,7 @@ export const VERDICT_PREFIX = 'SESSION_LOG_PR_COLLISION_VERDICT='
  * into recommending numbers the other rejects.
  */
 export const NUMBERING_GUARD = 'scripts/check-session-log-numbering.sh'
-export const GAP_BOUND = 10
+export const GAP_BOUND = 25
 
 /**
  * Write the machine-readable verdict as the process's last output and exit.

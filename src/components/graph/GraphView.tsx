@@ -207,10 +207,6 @@ export function GraphView(): React.ReactElement {
   )
   const [localMode, setLocalMode] = useState(storedLocal.active)
   const [localHops, setLocalHops] = useState<LocalGraphHops>(storedLocal.hops)
-  useEffect(() => {
-    if (currentSpaceId == null) return
-    writePreference(PREFERENCES.graphLocal, { active: localMode, hops: localHops }, currentSpaceId)
-  }, [currentSpaceId, localMode, localHops])
 
   // The "current page" = the top of the active tab's page stack. `null` when
   // the active tab has no page open (e.g. a view tab), which disables the
@@ -406,6 +402,13 @@ export function GraphView(): React.ReactElement {
     // oxlint-disable-next-line react/set-state-in-effect -- clears local-graph mode when the active tab loses its seed page (#1752), so the flag cannot silently reactivate when a page reopens; see #4407
     if (seedPageId === null && localMode) setLocalMode(false)
   }, [seedPageId, localMode])
+
+  // With no page open the controls are disabled and the reset above is not the
+  // user's choice, so writing would erase the mode remembered for the space.
+  useEffect(() => {
+    if (currentSpaceId == null || seedPageId === null) return
+    writePreference(PREFERENCES.graphLocal, { active: localMode, hops: localHops }, currentSpaceId)
+  }, [currentSpaceId, seedPageId, localMode, localHops])
 
   const { displayNodes, displayEdges } = useMemo(() => {
     if (!localActive || seedPageId === null) {

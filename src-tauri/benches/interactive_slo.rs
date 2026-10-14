@@ -2085,8 +2085,7 @@ fn bench_list_projected_agenda_past_day(c: &mut Criterion) {
 
     // `seed_repeating_blocks` bases block `i` at `today - k`, `k = i % 30 + 1`,
     // weekly. `today - 10` is an occurrence of the bases `k = 17` and `k = 24`
-    // (`k - 10` a positive multiple of 7): ~6.7K rows at 100K, so the page is
-    // full.
+    // (`k - 10` a positive multiple of 7), enough rows that the page is full.
     let day = (chrono::Local::now().date_naive() - chrono::Duration::days(10))
         .format("%Y-%m-%d")
         .to_string();
