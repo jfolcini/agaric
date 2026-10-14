@@ -537,8 +537,9 @@ const LIST_VIEWS: ListView[] = [
   {
     name: 'Agenda',
     rows: '[data-testid="agenda-results-item"]',
-    // filtered_blocks_query, get_batch_properties, batch_resolve
-    ipcOnOpen: 3,
+    // filtered_blocks_query, get_batch_properties; page titles come from the
+    // resolve store's boot preload (#5439)
+    ipcOnOpen: 2,
     seed: (page) =>
       page.evaluate((n) => {
         ;(
