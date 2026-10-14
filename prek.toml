@@ -753,26 +753,19 @@ pass_filenames = false
 files = "^(src-tauri/.*\\.rs|scripts/bulk-equivalence-baseline\\.json)$"
 stages = ["pre-commit"]
 
-# strict-invoke-optout ratchet (#3332): `src/test-setup.ts` installs the
-# #3225 strict `invoke` mock — an unstubbed IPC REJECTS and `afterEach`
-# names the command — but a file-level
-# `vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))` replaces
-# the module wholesale, so the fallback never installs and the guard reads
-# an empty record and passes vacuously. Inside such a file an unstubbed
-# command resolves `undefined` → `{ status: 'ok' }` → SUCCESS, which is the
-# #3217 phantom-success inversion verbatim. The rule ("Don't add another")
-# lived only in src/__tests__/AGENTS.md prose; this is its baseline. Keyed
-# to scripts/strict-invoke-optout-baseline.json, fails on a NEW opt-out AND
-# on a STALE entry (so the count ratchets down as files migrate to
-# `mockInvokeCommands`). pass_filenames=false — the script walks src/ itself.
+# strict-invoke-optout (#3332): a file-level `vi.mock('@tauri-apps/api/core', …)`
+# replaces the module wholesale, so the #3225 strict `invoke` fallback never
+# installs and an unstubbed IPC resolves `undefined` → `{ status: 'ok' }`
+# (the #3217 phantom success). The script fails on any such mock that does not
+# thread `strictInvokeFallback`. pass_filenames=false — it walks src/ itself.
 # WHY: a file-level vi.mock of @tauri-apps/api/core silently opts out of the strict invoke mock — #3332 (#3225)
 [[repos.hooks]]
 id = "strict-invoke-optout"
-name = "strict-invoke guard opt-out ratchet"
+name = "strict-invoke guard opt-out"
 entry = "node scripts/check-strict-invoke-optout.mjs"
 language = "system"
 pass_filenames = false
-files = "^(src/.*\\.test\\.(ts|tsx)|scripts/strict-invoke-optout-baseline\\.json)$"
+files = "^(src/.*\\.test\\.(ts|tsx)|scripts/check-strict-invoke-optout\\.mjs)$"
 stages = ["pre-commit"]
 
 # axe-presence: every `src/components/__tests__/*.test.tsx` must include

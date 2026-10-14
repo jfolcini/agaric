@@ -5,9 +5,7 @@
  * variant in a single interaction. Selecting "Warning" applies a warning callout
  * to the focused block (verified against the static render).
  */
-import { expect, test } from '@playwright/test'
-
-import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 test.describe('Callout type picker (#215)', () => {
   test.beforeEach(async ({ page }) => {

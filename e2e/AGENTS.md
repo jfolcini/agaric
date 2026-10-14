@@ -102,7 +102,7 @@ Ctrl+Z depends on focus:
 
 ## Console errors are asserted automatically
 
-The `test` fixture from `./helpers` collects console + `pageerror` output and fails the spec in a global `afterEach` on anything not in its shared ignore list — so don't write a "no console errors" test or a hand-rolled `page.on('console', …)` listener. A spec that deliberately provokes an error asserts on `getConsoleErrors(page)` then calls `clearConsoleErrors(page)`; a benign error shared across specs goes in the ignore list in `e2e/helpers.ts`. Reference: `error-scenarios.spec.ts`.
+The `test` from `./helpers` carries an auto fixture, `consoleErrorGate`, that collects console + `pageerror` output and fails the test at teardown on anything not in its shared ignore list — so don't write a "no console errors" test or a hand-rolled `page.on('console', …)` listener. A spec that deliberately provokes an error asserts on `getConsoleErrors(page)` then calls `clearConsoleErrors(page)`; a benign error shared across specs goes in the ignore list in `e2e/helpers.ts`. Reference: `error-scenarios.spec.ts`.
 
 ## Horizontal-overflow assertion and the `data-overflow-clip` escape hatch
 

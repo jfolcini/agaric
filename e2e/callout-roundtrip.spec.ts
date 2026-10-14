@@ -4,9 +4,7 @@
  * editor's stock Blockquote dropped `calloutType`), so no `callout-block`
  * rendered after save.
  */
-import { expect, test } from '@playwright/test'
-
-import { focusBlock, openPage, saveBlock, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 test.describe('Callout round-trip (#258)', () => {
   test.beforeEach(async ({ page }) => {

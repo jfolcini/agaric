@@ -3,9 +3,7 @@
  * rules added to index.css actually apply (collapsed, bordered cells)
  * rather than falling back to raw browser defaults.
  */
-import { expect, test } from '@playwright/test'
-
-import { focusBlock, openPage, typeSlashCommand, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, test, typeSlashCommand, waitForBoot } from './helpers'
 
 test.describe('Editor table styling', () => {
   test.beforeEach(async ({ page }) => {

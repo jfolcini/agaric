@@ -14,9 +14,7 @@
  * and a bare text, not a list node.
  */
 
-import { expect, test } from '@playwright/test'
-
-import { focusBlock, openPage, reopenPage, saveBlock, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, reopenPage, saveBlock, test, waitForBoot } from './helpers'
 
 /** Open the Turn into popover from the focused block's toolbar. */
 async function openTurnInto(page: import('@playwright/test').Page) {

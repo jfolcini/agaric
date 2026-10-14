@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { expect, test } from './helpers'
 
 // #366 — pdfjs-dist v5 → v6 major bump. The worker is hand-vendored at
 // public/pdf.worker.min.mjs and pdfjs requires the API and worker versions

@@ -7,9 +7,7 @@
  * table-cell blur race: insert a table via `/table`, confirm the trigger
  * appears, then insert a row and assert the editor's table grew.
  */
-import { expect, test } from '@playwright/test'
-
-import { focusBlock, openPage, typeSlashCommand, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, test, typeSlashCommand, waitForBoot } from './helpers'
 
 test.describe('Table ops toolbar (#215)', () => {
   test.beforeEach(async ({ page }) => {
