@@ -108,15 +108,21 @@ impl McpSurface {
                  `list_journal`, `list_trash`.\n\
                  - tags: `list_tags`, one space at a time.\n\
                  Spaces: where a tool takes `space_id`, pass one from `list_spaces`; nothing \
-                 picks a space for you. `list_backlinks` and `get_agenda` span every space \
-                 when it is omitted.\n\
+                 picks a space for you.\n\
                  Dates are YYYY-MM-DD; `get_journal` also takes `today` or `yesterday`, on \
                  this device's clock.\n\
                  History: `page_history` and `block_history` show who changed what, and \
                  when.\n\
                  Names: in a tool that takes `space_id`, a page or tag argument that is not \
                  a ULID is a page's title or alias, or a tag's name, in that space; \
-                 `resolve` looks many up at once.\n",
+                 `resolve` looks many up at once.\n\
+                 Query: `query` filters one space's blocks with a `where` tree (its ids are \
+                 ULIDs, not names), then sorts, groups (`group_by`) or counts (`aggregate`); \
+                 its description has the grammar. E.g. LastEdited {spec: Range {start, end}}, \
+                 DueDate {predicate: Between {from, to}}, HasProperty {key, predicate: Gt \
+                 {value: {type: Num, value: 3}}}, State {values: [TODO]} with group_by \
+                 {type: Page}. Tag matches attached tags, TagOrRef also inline #refs; neither \
+                 matches inherited ones.\n",
             ),
             McpSurface::ReadWrite => concat!(
                 "Agaric MCP read-write server: writes to a local, block-based notes vault. \

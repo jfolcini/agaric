@@ -42,7 +42,7 @@ use super::registry::{
     TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
     TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS,
     TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE,
-    TOOL_PAGE_HISTORY, TOOL_REMOVE_TAG, TOOL_RESOLVE, TOOL_RESTORE_BLOCK, TOOL_SEARCH,
+    TOOL_PAGE_HISTORY, TOOL_QUERY, TOOL_REMOVE_TAG, TOOL_RESOLVE, TOOL_RESTORE_BLOCK, TOOL_SEARCH,
     TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
 };
 
@@ -105,6 +105,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_LIST_JOURNAL => summarise_list_journal(args, result),
         TOOL_LIST_TRASH => summarise_list_trash(args, result),
         TOOL_RESOLVE => summarise_resolve(args, result),
+        TOOL_QUERY => summarise_query(args, result),
         // ---- read-write (tools_rw) ----
         TOOL_APPEND_BLOCK => summarise_append_block(args, result),
         TOOL_APPEND_MARKDOWN => summarise_append_markdown(args, result),
@@ -268,6 +269,19 @@ pub fn summarise_resolve(_args: &Value, result: &Value) -> String {
         "resolve — {n} {}, {matched} matched",
         if n == 1 { "name" } else { "names" }
     )
+}
+
+/// `query — N row(s)`, or `N group(s)` for a grouped query (`(more)` if
+/// `has_more`). Never includes the predicates, which carry user text.
+pub fn summarise_query(_args: &Value, result: &Value) -> String {
+    let groups = array_len(result, "groups").unwrap_or(0);
+    let (n, one, many) = if groups > 0 {
+        (groups, "group", "groups")
+    } else {
+        (array_len(result, "rows").unwrap_or(0), "row", "rows")
+    };
+    let suffix = if has_more(result) { " (more)" } else { "" };
+    format!("query — {n} {}{suffix}", if n == 1 { one } else { many })
 }
 
 /// `list_property_defs — N def(s)`. The keys themselves are schema and
@@ -1373,6 +1387,14 @@ mod tests {
     }
 
     #[test]
+    fn query_counts_rows_or_groups() {
+        let rows = json!({ "rows": [{}, {}], "groups": [], "has_more": true });
+        assert_eq!(summarise_query(&json!({}), &rows), "query — 2 rows (more)");
+        let groups = json!({ "rows": [], "groups": [{ "key": "none", "count": 3 }] });
+        assert_eq!(summarise_query(&json!({}), &groups), "query — 1 group");
+    }
+
+    #[test]
     fn history_counts_ops_with_target_prefix_and_omits_row_text() {
         let result = json!({
             "items": [
@@ -1443,6 +1465,8 @@ mod tests {
             // #5396 — `list_journal`'s range.
             "from": "2025-01-01",
             "to": "2025-01-31",
+            // #5398 — `query`'s predicates carry user text.
+            "where": { "type": "Leaf", "primitive": { "type": "Tag", "tag": "SECRET_TAG_NAME" } },
         });
 
         // Per-tool result shapes. Some summarisers expect a result
@@ -1482,6 +1506,13 @@ mod tests {
                 "aliases": ["SECRET_ALIAS"],
             },
             "children": [{ "id": ULID_B, "content": "SECRET_BLOCK_CONTENT" }],
+            // #5398 — `query` rows carry content, the page title and property values.
+            "rows": [{
+                "id": ULID_A,
+                "page_title": "SECRET_TITLE",
+                "content": "SECRET_BLOCK_CONTENT",
+                "properties": [{ "key": "notes", "value_text": "SECRET_TEXT_VALUE" }],
+            }],
             // #5377 — `get_block` carries the block's properties, tags and aliases.
             "properties": [{ "key": "notes", "value_text": "SECRET_TEXT_VALUE" }],
             "tags": [ULID_TAG],
