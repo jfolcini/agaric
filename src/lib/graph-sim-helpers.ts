@@ -35,8 +35,8 @@ const EDGE_WIDTH = 1
 const EDGE_OPACITY_BASE = 0.2
 const EDGE_OPACITY_STEP = 0.05
 const EDGE_OPACITY_MAX = 0.45
-const DIMMED_NODE_OPACITY = '0.3'
-const DIMMED_EDGE_OPACITY = '0.15'
+const DIMMED_OPACITY = '0.15'
+const HIGHLIGHTED_EDGE_OPACITY = '0.8'
 const LABEL_TRUNCATE_LEN = 20
 const LABEL_GAP = 4
 export const ZOOM_BUTTON_DURATION_MS = 200
@@ -113,11 +113,29 @@ function countDegrees(simEdges: GraphEdge[]): Map<string, number> {
   const degrees = new Map<string, number>()
   for (const { source, target } of simEdges) {
     for (const end of [source, target]) {
-      const id = typeof end === 'string' ? end : end.id
+      const id = endId(end)
       degrees.set(id, (degrees.get(id) ?? 0) + 1)
     }
   }
   return degrees
+}
+
+function endId(end: string | GraphNode): string {
+  return typeof end === 'string' ? end : end.id
+}
+
+function buildAdjacency(simEdges: GraphEdge[]): Map<string, Set<string>> {
+  const neighbours = new Map<string, Set<string>>()
+  const link = (from: string, to: string): void => {
+    const set = neighbours.get(from) ?? new Set<string>()
+    set.add(to)
+    neighbours.set(from, set)
+  }
+  for (const { source, target } of simEdges) {
+    link(endId(source), endId(target))
+    link(endId(target), endId(source))
+  }
+  return neighbours
 }
 
 /**
@@ -327,54 +345,87 @@ function attachNodeClickAndKeyboard(
   })
 }
 
-function attachNodeFocusStyles(node: NodeSel): void {
-  node.on('focus', function () {
+interface NeighbourhoodHighlight {
+  hover: (id: string | null) => void
+  focus: (id: string | null) => void
+}
+
+/**
+ * Hover wins over focus while both are set, and leaving a hovered node falls
+ * back to the focused one's neighbourhood instead of clearing it. The focused
+ * node itself is never dimmed, so its focus ring stays legible. The opacity
+ * easing is a CSS transition in `index.css`, so reduced motion zeroes it.
+ */
+function createNeighbourhoodHighlight(
+  node: NodeSel,
+  link: LinkSel,
+  simEdges: GraphEdge[],
+): NeighbourhoodHighlight {
+  const neighbours = buildAdjacency(simEdges)
+  let hovered: string | null = null
+  let focused: string | null = null
+
+  const apply = (): void => {
+    const centre = hovered ?? focused
+    const lit = centre === null ? null : (neighbours.get(centre) ?? new Set<string>())
+    const touchesCentre = (d: GraphEdge): boolean =>
+      endId(d.source) === centre || endId(d.target) === centre
+    node.style('opacity', (d) =>
+      lit === null || d.id === centre || d.id === focused || lit.has(d.id) ? null : DIMMED_OPACITY,
+    )
+    link
+      .style('opacity', (d) => (lit === null || touchesCentre(d) ? null : DIMMED_OPACITY))
+      .style('stroke-opacity', (d) =>
+        lit !== null && touchesCentre(d) ? HIGHLIGHTED_EDGE_OPACITY : null,
+      )
+  }
+
+  return {
+    hover: (id) => {
+      hovered = id
+      apply()
+    },
+    focus: (id) => {
+      focused = id
+      apply()
+    },
+  }
+}
+
+/** The label keeps its size and weight, so focus never moves the text. */
+function attachNodeFocusStyles(node: NodeSel, highlight: NeighbourhoodHighlight): void {
+  node.on('focus', function (_event, d) {
     select(this).select('circle:nth-child(2)').attr('stroke', 'var(--ring)').attr('stroke-width', 2)
-    select(this).select('text').attr('font-size', '14px').attr('font-weight', '600')
+    highlight.focus(d.id)
   })
   node.on('blur', function () {
     select(this).select('circle:nth-child(2)').attr('stroke', null).attr('stroke-width', null)
-    select(this).select('text').attr('font-size', '12px').attr('font-weight', null)
+    highlight.focus(null)
   })
 }
 
 /** Hover and press radii are relative to the node's own, so hover never shrinks a hub. */
-function attachNodeHover(node: NodeSel, link: LinkSel, radiusOf: (d: GraphNode) => number): void {
+function attachNodeHover(
+  node: NodeSel,
+  highlight: NeighbourhoodHighlight,
+  radiusOf: (d: GraphNode) => number,
+): void {
   node.on('mouseenter', function (_event, hovered) {
     const self = select(this)
     self.select('circle:nth-child(2)').attr('r', radiusOf(hovered) + NODE_HOVER_GROWTH)
     self
       .select('text')
-      .attr('font-size', '14px')
-      .attr('font-weight', '600')
       .style('paint-order', 'stroke')
       .attr('stroke', 'var(--background)')
       .attr('stroke-width', '3px')
-    node
-      .filter(function () {
-        return this !== self.node()
-      })
-      .style('opacity', DIMMED_NODE_OPACITY)
-    link.style('opacity', (d: GraphEdge) => {
-      const src = typeof d.source === 'string' ? d.source : (d.source as GraphNode).id
-      const tgt = typeof d.target === 'string' ? d.target : (d.target as GraphNode).id
-      const nodeId = self.datum() as GraphNode
-      return src === nodeId.id || tgt === nodeId.id ? '1' : DIMMED_EDGE_OPACITY
-    })
+    highlight.hover(hovered.id)
   })
 
   node.on('mouseleave', function (_event, d) {
     const self = select(this)
     self.select('circle:nth-child(2)').attr('r', radiusOf(d))
-    self
-      .select('text')
-      .attr('font-size', '12px')
-      .attr('font-weight', null)
-      .style('paint-order', null)
-      .attr('stroke', null)
-      .attr('stroke-width', null)
-    node.style('opacity', null)
-    link.style('opacity', null)
+    self.select('text').style('paint-order', null).attr('stroke', null).attr('stroke-width', null)
+    highlight.hover(null)
   })
 
   node.on('pointerdown', function (_event, d) {
@@ -416,8 +467,9 @@ export function patchGraphSelections(
 
   attachNodeClickAndKeyboard(node, navigateToPage)
   attachNodeRovingKeys(node)
-  attachNodeFocusStyles(node)
-  attachNodeHover(node, link, radiusOf)
+  const highlight = createNeighbourhoodHighlight(node, link, simEdges)
+  attachNodeFocusStyles(node, highlight)
+  attachNodeHover(node, highlight, radiusOf)
 
   return { link, node }
 }

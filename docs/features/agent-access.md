@@ -36,7 +36,7 @@ To give an agent the write tools, add a second server entry pointing `AGARIC_MCP
 
 The MCP surface is split into:
 
-- **Read-only tools** (always available when MCP is enabled): list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, list spaces, fetch a journal page by date. One carve-out: `journal_for_date` **creates** the journal page if it doesn't exist yet and the date is near today — the only read-registry tool with a write side effect.
+- **Read-only tools** (always available when MCP is enabled): list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, list spaces, fetch a journal page by date. One carve-out: `journal_for_date` **creates** the journal page if it doesn't exist yet and the date is near today — the only read-registry tool with a write side effect. A day it creates gets the space's journal template, as a day the journal creates does.
 - **Read-write tools**: append block, append markdown, update block content, set property, add tag, create page, delete block, move page to space, create tag, delete property. Append markdown lands a whole Markdown outline under a parent in one call and one undo, exactly as a paste in the app does: list items nest, headings own what follows them, `key:: value` lines become properties, and a `[[Page]]` or `#tag` that matches nothing in the parent's space creates that page or tag there. Separate from read-only so you can disable writes while keeping reads on.
 
 What the page reads return:

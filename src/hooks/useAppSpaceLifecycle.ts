@@ -99,7 +99,16 @@ export function useAppSpaceLifecycle(): void {
   // into the cache-flush effect above) so the two concerns stay
   // decoupled. `setWindowTitle` is a no-op in non-Tauri runtimes
   // (vitest jsdom, storybook).
+  const lastTitleWrite = useRef<Promise<void>>(Promise.resolve())
   useEffect(() => {
+    // Each title write starts once the previous one has landed. Two writes
+    // issued together (the bare title, then the full one as the spaces
+    // load) otherwise reach the window in either order, and the last to
+    // land wins (#5442).
+    const writeTitle = (title: string): void => {
+      lastTitleWrite.current = lastTitleWrite.current.then(() => setWindowTitle(title))
+    }
+
     const accentToken = useSpaceStore.getState().getCurrentAccent()
     document.documentElement.style.setProperty('--accent-current', `var(--${accentToken})`)
 
@@ -108,7 +117,7 @@ export function useAppSpaceLifecycle(): void {
     // hydrates) keeps the original bare-Agaric title: there's no space to
     // qualify the view/page label against.
     if (activeSpace == null || activeSpace.name === '') {
-      void setWindowTitle('Agaric')
+      writeTitle('Agaric')
       return
     }
 
@@ -130,6 +139,6 @@ export function useAppSpaceLifecycle(): void {
       viewLabel != null && viewLabel !== ''
         ? `${viewLabel} \u00B7 ${activeSpace.name} \u00B7 Agaric`
         : `${activeSpace.name} \u00B7 Agaric`
-    void setWindowTitle(titleText)
+    writeTitle(titleText)
   }, [currentSpaceId, availableSpaces, currentView, pageStack, t])
 }

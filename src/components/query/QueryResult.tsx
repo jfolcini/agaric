@@ -1,12 +1,11 @@
 import type { TFunction } from 'i18next'
 import { Pencil, Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
-import { QueryBuilderModal } from '@/components/dialogs/QueryBuilderModal'
 import { QueryResultList } from '@/components/query/QueryResultList'
 import type { TableColumn } from '@/components/query/QueryResultTable'
 import { QueryResultTable } from '@/components/query/QueryResultTable'
@@ -24,6 +23,11 @@ import { buildCustomPropsMap, deriveCustomColumns } from '@/lib/query-result-col
 import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { usePageBlockStoreOptional } from '@/stores/page-blocks'
+
+// #5441 — lazy: the builder loads when "edit query" is first used, not with every query block.
+const QueryBuilderModal = lazy(() =>
+  import('@/components/dialogs/QueryBuilderModal').then((m) => ({ default: m.QueryBuilderModal })),
+)
 
 /**
  * Known block property keys that can become table columns. Holds i18n KEYS,
@@ -426,13 +430,15 @@ export function QueryResult({
         </div>
       )}
 
-      {blockId && (
-        <QueryBuilderModal
-          open={builderOpen}
-          onOpenChange={setBuilderOpen}
-          initialExpression={expression}
-          onSave={handleBuilderSave}
-        />
+      {blockId && builderOpen && (
+        <Suspense fallback={null}>
+          <QueryBuilderModal
+            open={builderOpen}
+            onOpenChange={setBuilderOpen}
+            initialExpression={expression}
+            onSave={handleBuilderSave}
+          />
+        </Suspense>
       )}
     </div>
   )

@@ -213,7 +213,7 @@ jobs:
         # No package-manager cache on a publishing lane (#3573). The
         # explicit opt-out also prevents setup-node v7 from enabling its
         # default npm cache after an unrelated package.json edit.
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           package-manager-cache: false
@@ -1849,7 +1849,7 @@ jobs:
         # action's documented opt-out and is what actually holds the line.
         # `npm ci` below is unaffected — it installs from the lockfile
         # either way; only the ~/.npm download cache is skipped.
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           package-manager-cache: false
@@ -2198,7 +2198,7 @@ jobs:
         # a publishing lane and must not take a repo-wide-writable cache as
         # an input. Pinning the opt-out here keeps that true regardless of
         # what a future package.json edit does.
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           package-manager-cache: false
