@@ -9,8 +9,9 @@ import { DaySection } from '@/components/journal/DaySection'
 import { RescheduleDropZone } from '@/components/journal/RescheduleDropZone'
 import { useBatchCounts } from '@/hooks/useBatchCounts'
 import { RescheduleDragSourceProvider } from '@/hooks/useRescheduleDragSource'
+import { useToday } from '@/hooks/useToday'
 import type { DayEntry } from '@/lib/date-utils'
-import { formatDate, getWeekDays } from '@/lib/date-utils'
+import { getWeekDays } from '@/lib/date-utils'
 import { useJournalStore } from '@/stores/journal'
 
 interface WeeklyViewProps {
@@ -27,7 +28,7 @@ export function WeeklyView({
   onPageDeleted,
 }: WeeklyViewProps): React.ReactElement {
   const currentDate = useJournalStore((s) => s.currentDate)
-  const todayStr = formatDate(new Date())
+  const todayStr = useToday()
 
   const entries = useMemo(
     () => getWeekDays(currentDate).map(makeDayEntry),

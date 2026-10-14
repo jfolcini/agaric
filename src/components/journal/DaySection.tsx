@@ -22,9 +22,9 @@ import { Button } from '@/components/ui/button'
 import { useEnteredViewport } from '@/hooks/useEnteredViewport'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
+import { useToday } from '@/hooks/useToday'
 import { getSourceColor, getSourceLabel } from '@/lib/date-property-colors'
 import type { DayEntry } from '@/lib/date-utils'
-import { formatDate } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
 import type { JournalMode } from '@/stores/journal'
 import { useJournalStore } from '@/stores/journal'
@@ -163,7 +163,7 @@ function DaySectionInner({
   const [sectionEl, setSectionEl] = useState<HTMLElement | null>(null)
   const navigateToDate = useJournalStore((s) => s.navigateToDate)
   const goToDateAndPanel = useJournalStore((s) => s.goToDateAndPanel)
-  const todayStr = formatDate(new Date())
+  const todayStr = useToday()
   const isToday = entry.dateStr === todayStr
   const Heading = headingLevel === 'h2' ? 'h2' : 'h3'
   const isClickable = mode !== 'daily'

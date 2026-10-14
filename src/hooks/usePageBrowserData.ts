@@ -501,7 +501,6 @@ export function usePageBrowserData({
     confirmDialog: deleteConfirmDialog,
   } = usePageDelete(setPagesForDelete, reload)
 
-  // oxlint-disable-next-line react/refs -- `pages` is derived from the same-render `lastGoodPagesRef` memo cache above and carries its finding by construction; see #4406
   return {
     pages,
     loading,
