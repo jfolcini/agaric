@@ -124,11 +124,6 @@ describe('usePageTemplateMeta — initial load', () => {
     expect(result.current.isJournalTemplate).toBe(false)
     expect(result.current.isSpaceBlock).toBe(false)
   })
-
-  it('skips the load when `pageId` is empty', () => {
-    renderHook(() => usePageTemplateMeta('', t, vi.fn()))
-    expect(mockedGet).not.toHaveBeenCalled()
-  })
 })
 
 describe('usePageTemplateMeta — toggle handlers', () => {

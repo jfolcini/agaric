@@ -59,6 +59,7 @@
 //!   such a query could never execute anyway; the boundary check turns
 //!   the failure into an actionable `-32602`.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -1532,13 +1533,20 @@ async fn history_result(
         })
         .collect();
     let origins = fetch_op_origins(pool, &refs).await?;
+    let payloads = resp
+        .items
+        .iter()
+        .map(|e| serde_json::from_str::<Value>(&e.payload))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut before_texts = prior_texts(pool, &resp.items, &payloads).await?;
     let mut items = Vec::with_capacity(resp.items.len());
-    for entry in resp.items {
+    for (entry, payload) in resp.items.into_iter().zip(payloads) {
         let origin = origins
             .iter()
             .find(|o| o.device_id == entry.device_id && o.seq == entry.seq)
             .map(|o| o.origin.clone());
-        items.push(history_row(pool, entry, origin).await?);
+        let before = before_texts.remove(&(entry.device_id.clone(), entry.seq));
+        items.push(history_row(entry, &payload, origin, before));
     }
     to_tool_result(&json!({
         "items": items,
@@ -1547,39 +1555,76 @@ async fn history_result(
     }))
 }
 
-async fn history_row(
+fn payload_block_id(payload: &Value) -> Option<&str> {
+    payload.get("block_id").and_then(Value::as_str)
+}
+
+/// The text each `edit_block` entry replaced, keyed by `(device_id, seq)`:
+/// `agaric_engine::reverse::find_prior_text` for the whole page in one query.
+async fn prior_texts(
     pool: &SqlitePool,
+    entries: &[HistoryEntry],
+    payloads: &[Value],
+) -> Result<HashMap<(String, i64), String>, AppError> {
+    let keys: Vec<Value> = entries
+        .iter()
+        .zip(payloads)
+        .filter(|(e, _)| e.op_type == "edit_block")
+        .filter_map(|(e, p)| {
+            Some(json!({
+                "block_id": payload_block_id(p)?,
+                "created_at": e.created_at,
+                "seq": e.seq,
+                "device_id": e.device_id,
+            }))
+        })
+        .collect();
+    let keys_json = serde_json::to_string(&keys)?;
+    let rows = sqlx::query!(
+        r#"WITH k AS (
+             SELECT upper(json_extract(value, '$.block_id')) AS block_id,
+                    json_extract(value, '$.created_at') AS created_at,
+                    json_extract(value, '$.seq') AS seq,
+                    json_extract(value, '$.device_id') AS device_id
+               FROM json_each(?))
+           SELECT k.device_id AS "device_id!: String", k.seq AS "seq!: i64",
+                  (SELECT CASE o.op_type WHEN 'edit_block' THEN json_extract(o.payload, '$.to_text')
+                                         ELSE json_extract(o.payload, '$.content') END
+                     FROM op_log o
+                    WHERE o.block_id = k.block_id
+                      AND o.op_type IN ('edit_block', 'create_block')
+                      AND o.is_replicated = 0
+                      AND (o.created_at, o.seq, o.device_id) < (k.created_at, k.seq, k.device_id)
+                    ORDER BY o.created_at DESC, o.seq DESC, o.device_id DESC
+                    LIMIT 1) AS "before?: String"
+             FROM k"#,
+        keys_json,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| Some(((r.device_id, r.seq), r.before?)))
+        .collect())
+}
+
+fn history_row(
     entry: HistoryEntry,
+    payload: &Value,
     origin: Option<String>,
-) -> Result<HistoryRow, AppError> {
-    let payload: Value = serde_json::from_str(&entry.payload)?;
-    let block_id = payload
-        .get("block_id")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
-    let before = match (entry.op_type.as_str(), &block_id) {
-        ("edit_block", Some(id)) => agaric_engine::reverse::find_prior_text(
-            pool,
-            id,
-            entry.created_at,
-            entry.seq,
-            &entry.device_id,
-        )
-        .await?
-        .map(|text| clip_history_text(&text)),
-        _ => None,
-    };
-    Ok(HistoryRow {
-        after: history_after(&entry.op_type, &payload),
+    before: Option<String>,
+) -> HistoryRow {
+    HistoryRow {
+        after: history_after(&entry.op_type, payload),
         device_id: entry.device_id,
         seq: entry.seq,
         origin,
         op_type: entry.op_type,
         created_at: entry.created_at,
         is_replicated: entry.is_replicated,
-        block_id,
-        before,
-    })
+        block_id: payload_block_id(payload).map(str::to_owned),
+        before: before.map(|text| clip_history_text(&text)),
+    }
 }
 
 /// The text or property value an op leaves behind, clipped.

@@ -1,0 +1,35 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH k AS (\n             SELECT upper(json_extract(value, '$.block_id')) AS block_id,\n                    json_extract(value, '$.created_at') AS created_at,\n                    json_extract(value, '$.seq') AS seq,\n                    json_extract(value, '$.device_id') AS device_id\n               FROM json_each(?))\n           SELECT k.device_id AS \"device_id!: String\", k.seq AS \"seq!: i64\",\n                  (SELECT CASE o.op_type WHEN 'edit_block' THEN json_extract(o.payload, '$.to_text')\n                                         ELSE json_extract(o.payload, '$.content') END\n                     FROM op_log o\n                    WHERE o.block_id = k.block_id\n                      AND o.op_type IN ('edit_block', 'create_block')\n                      AND o.is_replicated = 0\n                      AND (o.created_at, o.seq, o.device_id) < (k.created_at, k.seq, k.device_id)\n                    ORDER BY o.created_at DESC, o.seq DESC, o.device_id DESC\n                    LIMIT 1) AS \"before?: String\"\n             FROM k",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "seq!: i64",
+        "ordinal": 1,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "before?: String",
+        "ordinal": 2,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      null,
+      true
+    ]
+  },
+  "hash": "1f8d09c7b0ce526912b5b5d716b9ded68f6a28c8fea40b0f272d4aab114baaf1"
+}
