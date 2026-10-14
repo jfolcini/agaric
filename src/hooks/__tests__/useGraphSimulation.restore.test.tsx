@@ -59,6 +59,7 @@ function makeNode(id: string, label: string): GraphNode {
 const A = makeNode('a', 'Alpha')
 const B = makeNode('b', 'Beta')
 const C = makeNode('c', 'Gamma')
+const D = makeNode('d', 'Delta')
 const EDGES: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 1 }]
 
 function memoryLayout(initial: GraphLayout | null = null): GraphLayoutStore & {
@@ -223,15 +224,27 @@ describe('useGraphSimulation — coming back to the graph (#5434)', () => {
     })
   })
 
-  it('a filter that brings back a node never placed starts it at the centre, not the corner', () => {
-    const { rerender } = render(<Graph nodes={[A, B]} layout={memoryLayout(KEPT)} />)
-    rerender(<Graph nodes={[A, B, C]} layout={memoryLayout(KEPT)} />)
+  it('a kept layout that placed none of the nodes on screen lays them out from scratch', () => {
+    render(<Graph nodes={[A, B]} layout={memoryLayout({ ...KEPT, positions: new Map() })} />)
 
-    expect(updateMessage().nodes).toEqual([
+    expect(startMessage().nodes).toEqual([
+      { id: 'a', label: 'Alpha', degree: 1 },
+      { id: 'b', label: 'Beta', degree: 1 },
+    ])
+  })
+
+  it('a filter that brings back nodes never placed starts them around the centre, not the corner', () => {
+    const { rerender } = render(<Graph nodes={[A, B]} layout={memoryLayout(KEPT)} />)
+    rerender(<Graph nodes={[A, B, C, D]} layout={memoryLayout(KEPT)} />)
+
+    const [a, b, c, d] = updateMessage().nodes
+    expect([a, b, c]).toEqual([
       { id: 'a', label: 'Alpha', degree: 1, x: 120, y: 80 },
       { id: 'b', label: 'Beta', degree: 1, x: 300, y: 210 },
       { id: 'c', label: 'Gamma', degree: 0, x: 400, y: 300 },
     ])
+    // Not on Gamma: d3 kicks coincident nodes apart harder the more there are.
+    expect(Math.hypot((d?.x ?? 0) - 400, (d?.y ?? 0) - 300)).toBeCloseTo(10)
   })
 
   it('a filter before anything is placed leaves every node for d3 to lay out', () => {

@@ -53,6 +53,7 @@ import {
   patchGraphSelections,
   type RenderResult,
   seedPositions,
+  seedUnplaced,
   type SimulationCtx,
   type SimulationHandle,
 } from '@/lib/graph-sim-helpers'
@@ -349,14 +350,7 @@ export function useGraphSimulation({
       const prev = prevById.get(n.id)
       return prev ? { ...n, x: prev.x, y: prev.y, vx: prev.vx, vy: prev.vy } : { ...n }
     })
-    // A node new to a placed layout starts at the centre, not the corner; with
-    // nothing placed yet, d3 lays every node out from scratch.
-    if (simNodes.some((n) => n.x !== undefined)) {
-      for (const n of simNodes) {
-        n.x ??= width / 2
-        n.y ??= height / 2
-      }
-    }
+    seedUnplaced(simNodes, width, height)
     const simEdges: GraphEdge[] = edges.map((e) => ({ ...e }))
     const nodeById = new Map<string, GraphNode>()
     for (const n of simNodes) {
