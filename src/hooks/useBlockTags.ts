@@ -214,11 +214,17 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       // block; a tag created for the page (or when `addTag` failed) could
       // stay orphaned and vanish from the space-scoped Tags view (#3081).
       const spaceId = useSpaceStore.getState().currentSpaceId
+      // #5415 — no active space means no space to create the tag in.
+      if (spaceId == null) {
+        logger.error('useBlockTags', 'No active space; cannot create tag', {
+          blockId,
+          name: trimmed,
+        })
+        notify.error(i18n.t('tags.createFailed'))
+        return
+      }
       let tagId: string
       try {
-        // #5415 — no active space means no space to create the tag in; refuse
-        // through the catch below rather than create a space-less tag.
-        if (spaceId == null) throw new Error('No active space; cannot create tag')
         const resp = unwrap(
           await commands.createBlock('tag', trimmed, null, null, requireActiveScope(spaceId), null),
         )
@@ -234,7 +240,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         prev.some((tag) => tag.id === tagId) ? prev : [...prev, { id: tagId, name: trimmed }],
       )
       useResolveStore.getState().set(tagId, trimmed, false)
-      if (spaceId != null) notifyTagAdded(tagId, trimmed, spaceId)
+      notifyTagAdded(tagId, trimmed, spaceId)
       // `add_tag` rejects a tag that is already applied.
       if (!appliedTagIds.has(tagId)) await handleAddTag(tagId)
     },

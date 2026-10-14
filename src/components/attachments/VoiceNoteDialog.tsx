@@ -89,22 +89,21 @@ function formatElapsed(totalSeconds: number): string {
 }
 
 export interface VoiceNoteDialogProps {
-  /** The block the recording attaches to; `null` keeps the dialog closed. */
-  blockId: string | null
+  /** The block the recording attaches to. */
+  blockId: string
   onClose: () => void
 }
 
+/** Open while mounted: closing unmounts the recorder, whose cleanup releases the microphone. */
 export function VoiceNoteDialog({ blockId, onClose }: VoiceNoteDialogProps): React.ReactElement {
   return (
     <Dialog
-      open={blockId !== null}
+      open
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
     >
-      {/* Mounted only while open, so closing the dialog unmounts the recorder
-          and its cleanup releases the microphone. */}
-      {blockId !== null && <VoiceNoteRecorder blockId={blockId} onClose={onClose} />}
+      <VoiceNoteRecorder blockId={blockId} onClose={onClose} />
     </Dialog>
   )
 }
