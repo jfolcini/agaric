@@ -15,9 +15,17 @@ A `/batch-issues` batch, built while the #5387 and #5399 builders ran.
     reason, so a lane that loses focus reds instead of passing focus-gated
     specs vacuously.
   - Both specs are re-enabled.
+- **The second cause.** With focus fixed, both controls still failed. A one-run
+  diagnostic showed focus true and all four metadata probes empty, and the
+  blank block was the OLDER id: the caret sat at the line start when the spec
+  pressed Enter, so the split kept the source blank, which the cleanup skips by
+  design (`preserveEmptyBlockIds`). Both controls now press End before Enter.
 
 ### Verified
 
 - `tsc -p tsconfig.wdio.json`, oxlint and oxfmt are clean on `e2e-tauri/`.
 - Not run locally: the lane needs the native build. The PR's own run of the
   lane is the check, since the workflow file is in its path filter.
+- Not done: reverting each survive-arm's fix to watch it go red. That needs a
+  native-build run per revert; the controls passing is what makes the
+  survive arms meaningful.

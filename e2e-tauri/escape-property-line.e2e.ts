@@ -54,6 +54,9 @@ describe('Agaric real-backend Escape on a property-only block (#5448)', () => {
     await navigateTo('Journal')
     await openJournalBlockEditor()
     await typeMarkerVerified(CONTROL_MARKER)
+    // Enter splits at the caret, and a split at the line START keeps the
+    // source blank on purpose (the cleanup skips it), so go to the end first.
+    await browser.keys(['End'])
     await browser.keys(['Enter'])
     await browser.keys(['Escape'])
 
