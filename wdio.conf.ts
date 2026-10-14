@@ -904,6 +904,9 @@ export const config: WebdriverIO.Config = {
   waitforTimeout: 20_000,
   connectionRetryTimeout: 120_000,
   connectionRetryCount: 3,
+  // v10 made `$()` throw when it matches more than one element; the specs were
+  // written against v9's first-match semantics.
+  strictSelectors: false,
 
   framework: 'mocha',
   reporters: ['spec'],
