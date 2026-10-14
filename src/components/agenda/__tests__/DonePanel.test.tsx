@@ -130,6 +130,7 @@ vi.mock('@/components/pages/PageLink', () => ({
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { DonePanel } from '@/components/agenda/DonePanel'
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { logger } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 
@@ -148,6 +149,7 @@ beforeEach(() => {
   mockNavigateToPage.mockClear()
   mockedQueryByProperty.mockResolvedValue(emptyResponse)
   mockedBatchResolve.mockResolvedValue([])
+  vi.mocked(useBlockPropertyEvents).mockReturnValue({ invalidationKey: 0 })
   // An ACTIVE space, so the scope assertions below distinguish
   // `toSpaceScope(currentSpaceId)` from a hardcoded `{ kind: 'global' }`.
   useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
@@ -461,6 +463,33 @@ describe('DonePanel', () => {
 
     // Content should be visible again
     expect(section.querySelector('.done-panel-content')).toBeInTheDocument()
+  })
+
+  // #5445 — a TODO toggle elsewhere bumps the property counter; the panel
+  // refetches but keeps the user's collapse.
+  it('stays collapsed across a block-property change', async () => {
+    const user = userEvent.setup()
+    mockedQueryByProperty.mockResolvedValue({
+      items: [makeBlock({ id: 'B1', content: 'visible block' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    const { rerender } = render(<DonePanel date="2025-06-15" />)
+    expect(await screen.findByText('visible block')).toBeInTheDocument()
+    const section = screen.getByLabelText(t('donePanel.completedItems'))
+    await user.click(screen.getByText(t('donePanel.headerOne')))
+    expect(section.querySelector('.done-panel-content')).not.toBeInTheDocument()
+    expect(mockedQueryByProperty).toHaveBeenCalledTimes(1)
+
+    vi.mocked(useBlockPropertyEvents).mockReturnValue({ invalidationKey: 1 })
+    rerender(<DonePanel date="2025-06-15" />)
+
+    await waitFor(() => {
+      expect(mockedQueryByProperty).toHaveBeenCalledTimes(2)
+    })
+    await act(async () => {})
+    expect(section.querySelector('.done-panel-content')).not.toBeInTheDocument()
   })
 
   // 11. Re-fetches on date prop change

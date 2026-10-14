@@ -14,7 +14,7 @@
 
 import type { TFunction } from 'i18next'
 import type React from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BacklinkDateFilterForm } from '@/components/backlink-filter/categories/BacklinkDateFilterForm'
@@ -36,8 +36,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { unwrap } from '@/lib/app-error'
 import type { BacklinkFilter } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { requireActiveScope } from '@/lib/space-scope'
+import { useSpaceStore } from '@/stores/space'
 
 type FilterCategory =
   | 'type'
@@ -197,7 +202,6 @@ function buildFilterForCategory(
 
 export interface AddFilterRowProps {
   propertyKeys: string[]
-  tags: Array<{ id: string; name: string }>
   onApply: (filter: BacklinkFilter) => void
   onCancel: () => void
 }
@@ -221,13 +225,34 @@ const DEFAULT_BUILD_STATE: Omit<BuildState, 'propertyKeys'> = {
 
 export function AddFilterRow({
   propertyKeys,
-  tags,
   onApply,
   onCancel,
 }: AddFilterRowProps): React.ReactElement {
   const { t } = useTranslation()
+  const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const [category, setCategory] = useState<FilterCategory | ''>('')
+  const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
   const formRef = useRef<FilterFormHandle | null>(null)
+
+  // Loaded when the row opens, not with the panel that hosts it (#5445).
+  useEffect(() => {
+    if (currentSpaceId == null) return
+    let cancelled = false
+    commands
+      .listTagsByPrefix('', null, requireActiveScope(currentSpaceId))
+      .then(unwrap)
+      .then((rows) => {
+        if (!cancelled) setTags(rows.map((tag) => ({ id: tag.tag_id, name: tag.name })))
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        logger.error('AddFilterRow', 'Failed to load tags', undefined, err)
+        notify.error(t('references.loadTagsFailed'), { id: 'references-load-tags-failed' })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [currentSpaceId, t])
 
   const handleApply = useCallback(() => {
     if (!category) return

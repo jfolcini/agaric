@@ -39,7 +39,7 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 import { makeBlockRow } from '@/__tests__/fixtures'
-import { mockInvokeCommands, strictInvokeFallback } from '@/__tests__/helpers/invoke'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { LinkedReferencesProps } from '@/components/backlinks/LinkedReferences'
 import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -1772,33 +1772,12 @@ describe('LinkedReferences', () => {
     expect(toast.error).not.toHaveBeenCalledWith('Failed to load property keys')
   })
 
-  // 38. tags load failure: shows toast
-  it('error: tags load failure shows toast', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
-      if (cmd === 'list_tags_by_prefix') return Promise.reject(new Error('tags service down'))
-      if (cmd === 'list_backlinks_grouped') return emptyGrouped
-      if (cmd === 'batch_resolve') return []
-      if (cmd === 'list_property_keys') return []
-      return emptyGrouped
-    })
-
-    renderLinkedReferences({ targetId: 'PAGE1' })
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        'Failed to load tags',
-        expect.objectContaining({ id: 'references-load-tags-failed' }),
-      )
-    })
-  })
-
-  // 39. simultaneous failures: backlinks + tags toast; property-keys
+  // 39. simultaneous failures: backlinks toast; property-keys
   // Failure is now handled silently by the shared cache.
-  it('error: simultaneous failures show backlinks + tags toasts (property keys handled by shared cache)', async () => {
+  it('error: simultaneous failures show the backlinks toast (property keys handled by shared cache)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backlinks failed'))
       if (cmd === 'list_property_keys') return Promise.reject(new Error('properties failed'))
-      if (cmd === 'list_tags_by_prefix') return Promise.reject(new Error('tags failed'))
       if (cmd === 'batch_resolve') return []
       return emptyGrouped
     })
@@ -1810,16 +1789,30 @@ describe('LinkedReferences', () => {
         'Failed to load references',
         expect.objectContaining({ id: 'references-load-failed' }),
       )
-      expect(toast.error).toHaveBeenCalledWith(
-        'Failed to load tags',
-        expect.objectContaining({ id: 'references-load-tags-failed' }),
-      )
     })
 
-    // Two distinct toasts fired; the property-keys failure is logged
+    // One toast fired; the property-keys failure is logged
     // (logger.warn) by `usePropertyKeysCache` instead of toasted.
-    expect(toast.error).toHaveBeenCalledTimes(2)
+    expect(toast.error).toHaveBeenCalledTimes(1)
     expect(toast.error).not.toHaveBeenCalledWith('Failed to load property keys')
+  })
+
+  // #5445 — the tag list belongs to the add-filter row, which loads it on open.
+  it('does not list tags at page open', async () => {
+    mockInvokeWith({
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    })
+
+    renderLinkedReferences({ targetId: 'PAGE1' })
+
+    await screen.findByText('Page One (1)')
+    expect(mockedInvoke).toHaveBeenCalledWith('list_backlinks_grouped', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_tags_by_prefix', expect.anything())
   })
 
   // ---------------------------------------------------------------------------
@@ -1961,53 +1954,6 @@ describe('LinkedReferences', () => {
     expect(screen.getByText('Page Three (1)')).toBeInTheDocument()
     // No duplicate "Page One" headers.
     expect(screen.queryAllByText(/^Page One/)).toHaveLength(1)
-  })
-
-  // ---------------------------------------------------------------------------
-  // B-6: cancellation flag on the `listTagsByPrefix` effect
-  // ---------------------------------------------------------------------------
-
-  it('cancels the listTagsByPrefix promise on unmount (B-6)', async () => {
-    let rejectTags!: (err: unknown) => void
-    let listTagsCalled = false
-    mockedInvoke.mockImplementation((cmd: string, _args?: any) => {
-      if (cmd === 'list_tags_by_prefix') {
-        listTagsCalled = true
-        return new Promise((_, reject) => {
-          rejectTags = reject
-        })
-      }
-      if (cmd === 'list_backlinks_grouped') return Promise.resolve(emptyGrouped)
-      if (cmd === 'batch_resolve') return Promise.resolve([])
-      if (cmd === 'list_property_keys') return Promise.resolve([])
-      return strictInvokeFallback(cmd)
-    })
-
-    const { unmount } = renderLinkedReferences({ targetId: 'PAGE1' })
-
-    // Wait until the tag-load effect has fired the IPC call.
-    await waitFor(() => {
-      expect(listTagsCalled).toBe(true)
-    })
-
-    // Clear any toast.error calls that fired during the initial fetch
-    // (e.g. for `list_backlinks_grouped` returning empty is fine, but
-    // we want to assert the unmounted-rejection path specifically).
-    vi.mocked(toast.error).mockClear()
-
-    // Unmount before the promise settles — cleanup sets cancelled=true.
-    unmount()
-
-    // Reject the still-pending promise post-unmount and let the microtask
-    // chain settle inside an `act(async)` boundary so React would surface
-    // any setState-on-unmounted warning.
-    await act(async () => {
-      rejectTags(new Error('post-unmount rejection'))
-    })
-
-    // Cancellation flag short-circuits the catch — no toast fires for the
-    // dead component.
-    expect(toast.error).not.toHaveBeenCalledWith('Failed to load tags')
   })
 
   // #3316 item 1 — the panel used to hand BacklinkFilterBuilder

@@ -33,6 +33,8 @@ import type { BacklinkFilterBuilderProps } from '@/components/BacklinkFilterBuil
 import { BacklinkFilterBuilder } from '@/components/BacklinkFilterBuilder'
 import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
 import type { BacklinkFilter } from '@/lib/bindings'
+import { i18n } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { useSpaceStore } from '@/stores/space'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
@@ -66,10 +68,20 @@ const defaultProps: BacklinkFilterBuilderProps = {
   totalCount: 10,
   filteredCount: 10,
   propertyKeys: ['todo', 'priority', 'due'],
-  tags: [],
 }
 
-function renderBuilder(overrides?: Partial<BacklinkFilterBuilderProps>) {
+type RenderOptions = Partial<BacklinkFilterBuilderProps> & {
+  /** What the add-filter row's tag load returns; pass only when the test opens the row. */
+  tags?: Array<{ id: string; name: string }>
+}
+
+function renderBuilder({ tags, ...overrides }: RenderOptions = {}) {
+  if (tags) {
+    mockListTagsByPrefix.mockResolvedValueOnce({
+      status: 'ok',
+      data: tags.map((tag) => ({ tag_id: tag.id, name: tag.name, usage_count: 0, updated_at: '' })),
+    })
+  }
   const props = { ...defaultProps, ...overrides }
   return render(<BacklinkFilterBuilder {...props} />)
 }
@@ -82,10 +94,52 @@ async function openAddFilterRow(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockListTagsByPrefix.mockReset()
+  mockListTagsByPrefix.mockResolvedValue({ status: 'ok', data: [] })
   useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
 })
 
 describe('BacklinkFilterBuilder', () => {
+  // #5445 — the hosting reference panels used to list every tag at page open.
+  describe('tag list loads when the add-filter row opens', () => {
+    it('is not requested until "Add filter" is clicked, then once for the active space', async () => {
+      const user = userEvent.setup()
+      renderBuilder()
+      expect(mockListTagsByPrefix).not.toHaveBeenCalled()
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+
+      await waitFor(() => {
+        expect(mockListTagsByPrefix).toHaveBeenCalledWith('', null, {
+          kind: 'active',
+          space_id: 'SPACE_TEST',
+        })
+      })
+      expect(mockListTagsByPrefix).toHaveBeenCalledTimes(1)
+    })
+
+    it('logs and toasts when the tag list fails to load', async () => {
+      const user = userEvent.setup()
+      const error = new Error('tags down')
+      mockListTagsByPrefix.mockRejectedValueOnce(error)
+      renderBuilder()
+
+      await user.click(screen.getByRole('button', { name: /Add filter/i }))
+
+      await waitFor(() => {
+        expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+          'AddFilterRow',
+          'Failed to load tags',
+          undefined,
+          error,
+        )
+      })
+      expect(toast.error).toHaveBeenCalledWith(i18n.t('references.loadTagsFailed'), {
+        id: 'references-load-tags-failed',
+      })
+    })
+  })
+
   it('renders "Add filter" button', () => {
     renderBuilder()
     expect(screen.getByRole('button', { name: /Add filter/i })).toBeInTheDocument()
@@ -986,7 +1040,6 @@ describe('BacklinkFilterBuilder', () => {
         return tag ? tag.name : id
       }
       renderBuilder({
-        tags: tagsData,
         tagResolver,
         filters: [{ type: 'HasTag', tag_id: '01ARZTAGAAAAAAAAAAAAAAAAAA' }],
       })

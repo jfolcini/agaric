@@ -7,7 +7,7 @@
  * creating new definitions.
  */
 
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
@@ -15,7 +15,7 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
 import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
-import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { usePageProperties } from '@/hooks/usePageProperties'
 import { usePropertySave } from '@/hooks/usePropertySave'
 import { unwrap } from '@/lib/app-error'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
@@ -42,7 +42,7 @@ interface PagePropertyTableProps {
 export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTableProps) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [definitionsLoading, setDefinitionsLoading] = useState(true)
   const [properties, setProperties] = useState<PropertyRow[]>([])
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
   const [showAddPopover, setShowAddPopover] = useState(false)
@@ -55,71 +55,77 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   // user leaves it empty.
   const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set())
 
-  // #5287 — sync, MCP and undo change page properties behind this table.
-  const { invalidationKey } = useBlockPropertyEvents()
+  const { data: storedRows, error: storedRowsError, isPending } = usePageProperties(pageId)
+  const loading = isPending || definitionsLoading
 
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- marks the per-page properties/definitions IPC load below pending; `loading` tracks that async round-trip, not a value derivable during render; see #4407
-    setLoading(true)
-    // #2792 — drop any unsaved draft rows from a previous page so they can't
-    // leak into this page's table (drafts are transient, never persisted).
-    // Mirrors `BlockPropertyDrawer`'s per-blockId draft reset (#2656).
-    setDraftKeys((prev) => (prev.size > 0 ? new Set() : prev))
+    // oxlint-disable-next-line react/set-state-in-effect -- marks the per-page definitions IPC load below pending; `definitionsLoading` tracks that async round-trip, not a value derivable during render; see #4407
+    setDefinitionsLoading(true)
   }, [pageId])
 
+  // Adopted during render, not in an effect: a frame with the fetch settled but
+  // `properties` still empty renders nothing and swallows a click on the header.
   // A refetch keeps this page's unsaved draft rows: the backend has no row for them.
-  const replaceStoredRows = useEffectEvent((stored: PropertyRow[]) => {
-    setProperties((prev) => [
-      ...stored,
-      ...prev.filter((p) => draftKeys.has(p.key) && !stored.some((s) => s.key === p.key)),
-    ])
+  // #2792 — a page switch drops them, in this same render: a cached page's rows
+  // are adopted at once and must not carry the previous page's drafts.
+  const [adopted, setAdopted] = useState<{ pageId: string; rows: PropertyRow[] | undefined }>({
+    pageId,
+    rows: undefined,
   })
+  if (adopted.pageId !== pageId || adopted.rows !== storedRows) {
+    const samePage = adopted.pageId === pageId
+    setAdopted({ pageId, rows: storedRows })
+    if (!samePage) setDraftKeys((prev) => (prev.size > 0 ? new Set() : prev))
+    if (storedRows) {
+      setProperties((prev) => [
+        ...storedRows,
+        ...(samePage
+          ? prev.filter((p) => draftKeys.has(p.key) && !storedRows.some((s) => s.key === p.key))
+          : []),
+      ])
+    }
+  }
 
-  // Load properties and definitions in parallel.
-  // `listPropertyDefs` is paginated; this surface is
-  // single-page-by-design — the seeded property vocabulary fits
-  // well under one page, so we destructure `.items` and ignore the cursor.
-  // FE-H-17: use `Promise.allSettled` so a single rejection no longer fails
-  // the whole load. Each fetch reports its own failure via `reportIpcError`,
-  // and the failed slice falls back to an empty array so the user still sees
-  // the half that loaded.
+  // FE-H-17: a failed slice falls back to an empty array so the user still
+  // sees the half that loaded.
   useEffect(() => {
-    // A property event can start this load just before a page switch; the
-    // older page's answer must not land in the new page's table.
+    if (!storedRowsError) return
+    reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', storedRowsError, t, {
+      pageId,
+      fetch: 'getProperties',
+    })
+    // oxlint-disable-next-line react/set-state-in-effect -- clears the table when the shared properties fetch fails; see #4407
+    setProperties([])
+  }, [storedRowsError, pageId, t])
+
+  // `listPropertyDefs` is paginated; this surface is single-page-by-design —
+  // the seeded property vocabulary fits well under one page, so we
+  // destructure `.items` and ignore the cursor.
+  useEffect(() => {
+    // A page switch can land before this answer; the older page's load must
+    // not clear the new page's pending state.
     let active = true
-    // `allSettled` never rejects; the handler below reports each slice's own
-    // failure through `reportIpcError`.
-    void Promise.allSettled([
-      commands.getProperties(pageId).then(unwrap),
-      commands.listPropertyDefs(null, null).then(unwrap),
-    ]).then(([propsResult, defsResult]) => {
-      if (!active) return
-      if (propsResult.status === 'fulfilled') {
-        const props = propsResult.value
-        replaceStoredRows(Array.isArray(props) ? props : [])
-      } else {
-        reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', propsResult.reason, t, {
-          pageId,
-          fetch: 'getProperties',
-        })
-        setProperties([])
-      }
-      if (defsResult.status === 'fulfilled') {
-        const defsPage = defsResult.value
-        setDefinitions(Array.isArray(defsPage?.items) ? defsPage.items : [])
-      } else {
-        reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', defsResult.reason, t, {
+    commands
+      .listPropertyDefs(null, null)
+      .then(unwrap)
+      .then((defsPage) => {
+        if (active) setDefinitions(Array.isArray(defsPage?.items) ? defsPage.items : [])
+      })
+      .catch((err: unknown) => {
+        if (!active) return
+        reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', err, t, {
           pageId,
           fetch: 'listPropertyDefs',
         })
         setDefinitions([])
-      }
-      setLoading(false)
-    })
+      })
+      .finally(() => {
+        if (active) setDefinitionsLoading(false)
+      })
     return () => {
       active = false
     }
-  }, [pageId, t, invalidationKey])
+  }, [pageId, t])
 
   // Auto-expand and open add-popover when forceExpanded transitions to true
   const prevForceRef = useRef(false)

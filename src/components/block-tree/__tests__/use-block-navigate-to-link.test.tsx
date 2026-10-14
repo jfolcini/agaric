@@ -9,8 +9,10 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { TFunction } from 'i18next'
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { StoreApi } from 'zustand'
 
 // #2927 phase 5 — the hook now calls the generated `commands.getBlock`, so
 // mocking only the hand-written wrapper no longer intercepts. Back the
@@ -54,10 +56,13 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+import { makeBlock as makeFlatBlock } from '@/__tests__/fixtures'
+import { deferred } from '@/__tests__/helpers/invoke'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import type { BlockRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -66,6 +71,7 @@ const mockedLoggerError = vi.mocked(logger.error)
 const TEST_SPACE_ID = 'SPACE_TEST'
 
 interface HarnessParams {
+  pageStore?: StoreApi<PageBlockState>
   rovingEditor: RovingEditorHandle | null
   handleFlush: () => string | null
   load: () => Promise<void>
@@ -78,6 +84,7 @@ interface HarnessParams {
 function useHarness(params: HarnessParams) {
   const rovingEditorRef = useRef<RovingEditorHandle | null>(params.rovingEditor)
   const handleFlushRef = useRef<() => string | null>(params.handleFlush)
+  const [defaultPageStore] = useState(() => createPageBlockStore('HARNESS_PAGE'))
   useLayoutEffect(() => {
     rovingEditorRef.current = params.rovingEditor
     handleFlushRef.current = params.handleFlush
@@ -86,6 +93,7 @@ function useHarness(params: HarnessParams) {
   return useBlockNavigateToLink({
     rovingEditorRef,
     handleFlushRef,
+    pageStore: params.pageStore ?? defaultPageStore,
     load: params.load,
     setFocused: params.setFocused,
     rootParentId: params.rootParentId,
@@ -260,6 +268,125 @@ describe('useBlockNavigateToLink', () => {
     expect(load).toHaveBeenCalledTimes(1)
     expect(setFocused).toHaveBeenCalledWith(CONTENT_ID)
     expect(mount).toHaveBeenCalledWith(CONTENT_ID, 'block text')
+  })
+
+  it('skips load when the same-page target is already in the page store', async () => {
+    const CONTENT_ID = '01TESTCONT0000000000LOADED'
+    const ROOT_ID = '01TESTPAGE0000000000ROOTLD'
+    const pageStore = createPageBlockStore(ROOT_ID)
+    pageStore.setState({ blocks: [makeFlatBlock({ id: CONTENT_ID, parent_id: ROOT_ID })] })
+    const load = vi.fn().mockResolvedValue(undefined)
+    const setFocused = vi.fn()
+    const mount = vi.fn()
+    mockedGetBlock.mockResolvedValueOnce(
+      makeBlock({ id: CONTENT_ID, content: 'block text', parent_id: ROOT_ID }),
+    )
+
+    const { result } = renderHook(() =>
+      useHarness({
+        pageStore,
+        rovingEditor: {
+          editor: null,
+          mount,
+          updateListMarker: vi.fn(),
+          listMarker: vi.fn(() => ({ style: 'none' as const, ordinal: undefined })),
+          unmount: vi.fn(() => null),
+          activeBlockId: null,
+          getMarkdown: () => null,
+          splitAtCaret: () => null,
+          originalMarkdown: '',
+          setOnUpdate: vi.fn(),
+          markCommitted: vi.fn(),
+        },
+        handleFlush: () => null,
+        load,
+        setFocused,
+        rootParentId: ROOT_ID,
+        onNavigateToPage: vi.fn(),
+        t: (k) => k,
+      }),
+    )
+
+    await act(async () => {
+      await result.current.handleNavigate(CONTENT_ID)
+    })
+
+    expect(load).not.toHaveBeenCalled()
+    expect(setFocused).toHaveBeenCalledWith(CONTENT_ID)
+    expect(mount).toHaveBeenCalledWith(CONTENT_ID, 'block text')
+  })
+
+  it('issues getBlock and the space check in the same round', async () => {
+    const PAGE_ID = '01TESTPAGE0000000000PARALL'
+    const onNavigateToPage = vi.fn()
+    const block = deferred<BlockRow>()
+    const resolved = deferred<Array<{ id: string; title: string | null }>>()
+    mockedGetBlock.mockImplementation(() => block.promise)
+    mockedBatchResolve.mockImplementation(() => resolved.promise)
+
+    const { result } = renderHook(() =>
+      useHarness({
+        rovingEditor: null,
+        handleFlush: () => null,
+        load: vi.fn().mockResolvedValue(undefined),
+        setFocused: vi.fn(),
+        rootParentId: 'ROOT',
+        onNavigateToPage,
+        t: (k) => k,
+      }),
+    )
+
+    let navigation!: Promise<void>
+    act(() => {
+      navigation = result.current.handleNavigate(PAGE_ID)
+    })
+
+    expect(mockedGetBlock).toHaveBeenCalledWith(PAGE_ID)
+    expect(mockedBatchResolve).toHaveBeenCalledWith([PAGE_ID], {
+      kind: 'active',
+      space_id: TEST_SPACE_ID,
+    })
+
+    await act(async () => {
+      block.resolve(makeBlock({ id: PAGE_ID, block_type: 'page', content: 'Target Page' }))
+      resolved.resolve([{ id: PAGE_ID, title: 'Target Page' }])
+      await navigation
+    })
+    expect(onNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Target Page')
+  })
+
+  it('logs and toasts without navigating when the space check rejects', async () => {
+    const PAGE_ID = '01TESTPAGE0000000000SPCERR'
+    const onNavigateToPage = vi.fn()
+    mockedGetBlock.mockResolvedValueOnce(
+      makeBlock({ id: PAGE_ID, block_type: 'page', content: 'Target Page' }),
+    )
+    mockedBatchResolve.mockRejectedValueOnce(new Error('resolve failed'))
+
+    const { result } = renderHook(() =>
+      useHarness({
+        rovingEditor: null,
+        handleFlush: () => null,
+        load: vi.fn().mockResolvedValue(undefined),
+        setFocused: vi.fn(),
+        rootParentId: 'ROOT',
+        onNavigateToPage,
+        t: (k) => k,
+      }),
+    )
+
+    await act(async () => {
+      await result.current.handleNavigate(PAGE_ID)
+    })
+
+    expect(mockedLoggerError).toHaveBeenCalledWith(
+      'BlockTree',
+      'Failed to navigate to block link target',
+      { targetId: PAGE_ID },
+      expect.any(Error),
+    )
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.linkTargetNotFound')
+    expect(onNavigateToPage).not.toHaveBeenCalled()
   })
 
   it('logs and surfaces a toast when getBlock throws (missing/deleted target)', async () => {
