@@ -2993,67 +2993,73 @@ async fn list_unlinked_references_with_nonexistent_space_id_returns_empty_feat3p
     assert!(resp.groups.is_empty());
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_unlinked_references_disjointness_feat3p4() {
-    let (pool, _dir) = test_pool().await;
-    ensure_test_space(&pool).await;
-    ensure_test_space_b(&pool).await;
+/// `LUR_TGT` ('fnordzazz') with two unlinked mentions under a page in space
+/// A and one under a page in space B.
+async fn seed_unlinked_mentions_in_two_spaces(pool: &SqlitePool) {
+    ensure_test_space(pool).await;
+    ensure_test_space_b(pool).await;
 
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
          VALUES ('LUR_TGT', 'page', 'fnordzazz', NULL, NULL, NULL)",
     )
-    .execute(&pool)
+    .execute(pool)
     .await
     .unwrap();
     sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
         .bind("LUR_TGT")
         .bind("fnordzazz")
-        .execute(&pool)
+        .execute(pool)
         .await
         .unwrap();
 
     // Two A-side sources (under one page), one B-side source.
-    seed_block_under_page(&pool, "LUR_PA", "Page A", "LUR_SRC_A1").await;
+    seed_block_under_page(pool, "LUR_PA", "Page A", "LUR_SRC_A1").await;
     sqlx::query("UPDATE blocks SET content = 'fnordzazz x1' WHERE id = ?")
         .bind("LUR_SRC_A1")
-        .execute(&pool)
+        .execute(pool)
         .await
         .unwrap();
     sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
         .bind("LUR_SRC_A1")
         .bind("fnordzazz x1")
-        .execute(&pool)
+        .execute(pool)
         .await
         .unwrap();
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
          VALUES ('LUR_SRC_A2', 'content', 'fnordzazz x2', 'LUR_PA', 1, 'LUR_PA')",
     )
-    .execute(&pool)
+    .execute(pool)
     .await
     .unwrap();
     sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
         .bind("LUR_SRC_A2")
         .bind("fnordzazz x2")
-        .execute(&pool)
+        .execute(pool)
         .await
         .unwrap();
-    assign_to_space(&pool, "LUR_PA", TEST_SPACE_ID).await;
+    assign_to_space(pool, "LUR_PA", TEST_SPACE_ID).await;
 
-    seed_block_under_page(&pool, "LUR_PB", "Page B", "LUR_SRC_B1").await;
+    seed_block_under_page(pool, "LUR_PB", "Page B", "LUR_SRC_B1").await;
     sqlx::query("UPDATE blocks SET content = 'fnordzazz y' WHERE id = ?")
         .bind("LUR_SRC_B1")
-        .execute(&pool)
+        .execute(pool)
         .await
         .unwrap();
     sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
         .bind("LUR_SRC_B1")
         .bind("fnordzazz y")
-        .execute(&pool)
+        .execute(pool)
         .await
         .unwrap();
-    assign_to_space(&pool, "LUR_PB", TEST_SPACE_B_ID).await;
+    assign_to_space(pool, "LUR_PB", TEST_SPACE_B_ID).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_unlinked_references_disjointness_feat3p4() {
+    let (pool, _dir) = test_pool().await;
+    seed_unlinked_mentions_in_two_spaces(&pool).await;
 
     let collect_ids = |resp: &agaric_store::backlink::GroupedBacklinkResponse| {
         resp.groups
@@ -3088,6 +3094,59 @@ async fn list_unlinked_references_disjointness_feat3p4() {
     assert!(a_ids.is_disjoint(&b_ids));
     assert_eq!(a_ids.len(), 2);
     assert_eq!(b_ids.len(), 1);
+}
+
+// ----------------------------------------------------------------------
+// count_unlinked_references_inner — the collapsed panel's count (#5422)
+// ----------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_unlinked_references_counts_only_the_scoped_space_5422() {
+    let (pool, _dir) = test_pool().await;
+    seed_unlinked_mentions_in_two_spaces(&pool).await;
+    let target = agaric_core::ulid::PageId::from("LUR_TGT");
+
+    for (space_id, expected) in [(TEST_SPACE_ID, 2), (TEST_SPACE_B_ID, 1)] {
+        let scope = SpaceScope::Active(SpaceId::from_trusted(space_id));
+        let listed = list_unlinked_references_inner(&pool, &target, None, None, None, None, &scope)
+            .await
+            .unwrap();
+        let counted = count_unlinked_references_inner(&pool, &target, &scope)
+            .await
+            .unwrap();
+        assert_eq!(
+            counted.total_count, expected,
+            "space {space_id} must count only its own mentions"
+        );
+        assert_eq!(
+            (
+                counted.total_count,
+                counted.filtered_count,
+                counted.truncated
+            ),
+            (listed.total_count, listed.filtered_count, listed.truncated),
+            "space {space_id}: the count must answer the list's counts"
+        );
+        assert!(
+            counted.groups.is_empty() && !counted.has_more,
+            "space {space_id}: the count carries no groups"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn count_unlinked_references_rejects_an_empty_page_id_5422() {
+    let (pool, _dir) = test_pool().await;
+    let result = count_unlinked_references_inner(
+        &pool,
+        &agaric_core::ulid::PageId::from(""),
+        &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "an empty page id must be rejected, got {result:?}"
+    );
 }
 
 // ======================================================================

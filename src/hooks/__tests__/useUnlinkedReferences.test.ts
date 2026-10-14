@@ -369,18 +369,32 @@ describe('useUnlinkedReferences', () => {
   // #3316 item 2 — `UnlinkedReferences` is mounted for every page and starts
   // collapsed, so the full 20-group page (up to 20 x MAX_BLOCKS_PER_GROUP block
   // rows, fetched + JSON-serialised over IPC) was paid for on every page open
-  // for a list nobody had opened. A collapsed panel needs only the counts, which
-  // the backend computes over the whole match set before pagination.
-  it('#3316 item 2: a collapsed panel requests one group, an expanded one the full page', async () => {
+  // for a list nobody had opened. #5422 — a collapsed panel with no filters
+  // needs only the counts, which `count_unlinked_references` answers without
+  // resolving or grouping a single match.
+  it('#5422: a collapsed, unfiltered panel asks for the count only; expanding lists the full page', async () => {
+    const countOnly = {
+      groups: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: 40,
+      filtered_count: 40,
+      truncated: true,
+    }
     const resp = {
       groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
       next_cursor: null,
       has_more: false,
       total_count: 40,
       filtered_count: 40,
-      truncated: false,
+      truncated: true,
     }
-    mockedInvoke.mockImplementation(mockInvokeCommands({ list_unlinked_references: () => resp }))
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({
+        count_unlinked_references: () => countOnly,
+        list_unlinked_references: () => resp,
+      }),
+    )
 
     const { result, rerender } = renderHook(
       ({ collapsed }: { collapsed: boolean }) => useUnlinkedReferences(baseParams({ collapsed })),
@@ -391,20 +405,66 @@ describe('useUnlinkedReferences', () => {
       expect(result.current.loading).toBe(false)
     })
 
-    const limitOf = (call: unknown[]): unknown => (call[1] as { limit?: unknown }).limit
-    const unlinkedCalls = () =>
-      mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unlinked_references')
-
-    // Collapsed: one group only — but the counts are still exact.
-    expect(unlinkedCalls().map(limitOf)).toEqual([1])
+    const callsOf = (cmd: string) => mockedInvoke.mock.calls.filter((c) => c[0] === cmd)
+    expect(callsOf('count_unlinked_references')).toEqual([
+      [
+        'count_unlinked_references',
+        { pageId: 'PAGE1', scope: { kind: 'active', space_id: 'SPACE_1' } },
+      ],
+    ])
+    expect(callsOf('list_unlinked_references')).toHaveLength(0)
     expect(result.current.totalCount).toBe(40)
+    expect(result.current.filteredCount).toBe(40)
+    expect(result.current.truncated).toBe(true)
+    expect(result.current.groups).toEqual([])
 
     // Expanding re-keys the query and pulls the real page size.
     rerender({ collapsed: false })
     await waitFor(() => {
-      expect(unlinkedCalls()).toHaveLength(2)
+      expect(callsOf('list_unlinked_references')).toHaveLength(1)
     })
-    expect(unlinkedCalls().map(limitOf)).toEqual([1, 20])
+    expect(callsOf('list_unlinked_references')).toEqual([
+      ['list_unlinked_references', expect.objectContaining({ filters: null, limit: 20 })],
+    ])
+    expect(callsOf('count_unlinked_references')).toHaveLength(1)
+  })
+
+  // #3316 item 2 — a filtered panel's header shows the POST-filter count, which
+  // only the list path computes, so a collapsed panel with filters still asks
+  // for one group rather than the count.
+  it('#3316 item 2: a collapsed panel with filters requests one group, not the count', async () => {
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 40,
+      filtered_count: 4,
+      truncated: false,
+    }
+    mockedInvoke.mockImplementation(mockInvokeCommands({ list_unlinked_references: () => resp }))
+    const filters = [{ type: 'Contains' as const, query: 'needle' }]
+
+    const { result } = renderHook(() =>
+      useUnlinkedReferences(baseParams({ collapsed: true, filters })),
+    )
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+
+    expect(mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unlinked_references')).toEqual([
+      [
+        'list_unlinked_references',
+        {
+          pageId: 'PAGE1',
+          filters,
+          sort: null,
+          cursor: null,
+          limit: 1,
+          scope: { kind: 'active', space_id: 'SPACE_1' },
+        },
+      ],
+    ])
+    expect(result.current.filteredCount).toBe(4)
   })
 
   // #3738 note 2 — the counts already survive the `groupLimit` re-key (#3733
@@ -413,8 +473,8 @@ describe('useUnlinkedReferences', () => {
   // the same "two adjacent statements about the same fetch disagree" defect the
   // carry was introduced to remove.
   it('#3738 note 2: truncated survives the collapsed→expanded re-key with the counts', async () => {
-    const collapsedPage = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+    const collapsedCount = {
+      groups: [],
       next_cursor: null,
       has_more: false,
       total_count: 12,
@@ -425,8 +485,8 @@ describe('useUnlinkedReferences', () => {
     // exactly the window the carry exists for.
     mockedInvoke.mockImplementation(
       mockInvokeCommands({
-        list_unlinked_references: (args) =>
-          Number(args['limit']) === 1 ? collapsedPage : new Promise(() => {}),
+        count_unlinked_references: () => collapsedCount,
+        list_unlinked_references: () => new Promise(() => {}),
       }),
     )
 
@@ -446,7 +506,7 @@ describe('useUnlinkedReferences', () => {
     await waitFor(() => {
       expect(
         mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unlinked_references'),
-      ).toHaveLength(2)
+      ).toHaveLength(1)
     })
     // Mid-re-key: the counts are carried…
     expect(result.current.totalCount).toBe(12)
@@ -459,8 +519,8 @@ describe('useUnlinkedReferences', () => {
   // `undefined` for an errored key exactly as it is for a pending one. Dropping
   // it would make the whole panel disappear under the click that expanded it.
   it('#3738 note 1: a failed expand keeps the count already known for that identity', async () => {
-    const collapsedPage = {
-      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'block 1' }])],
+    const collapsedCount = {
+      groups: [],
       next_cursor: null,
       has_more: false,
       total_count: 12,
@@ -469,8 +529,8 @@ describe('useUnlinkedReferences', () => {
     }
     mockedInvoke.mockImplementation(
       mockInvokeCommands({
-        list_unlinked_references: (args) => {
-          if (Number(args['limit']) === 1) return collapsedPage
+        count_unlinked_references: () => collapsedCount,
+        list_unlinked_references: () => {
           throw new Error('expand failed')
         },
       }),

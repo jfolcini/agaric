@@ -2857,6 +2857,80 @@ fn bench_list_backlinks_grouped_5k(c: &mut Criterion) {
     report_measurement_only(CMD, &acc);
 }
 
+/// #5422 — the collapsed unlinked panel's count-only read, on the fixture
+/// `bench_list_unlinked_references_collapsed` measures, so one run prints
+/// both. PROBLEM TIER, measurement only.
+fn bench_count_unlinked_references(c: &mut Criterion) {
+    const CMD: &str = "count_unlinked_references (capped FTS) @ 100K";
+    if problem_skipped(CMD) {
+        return;
+    }
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_unlinked_count"));
+    rt.block_on(seed_unlinked_panel_fixture(&pool));
+
+    let target = agaric_core::ulid::PageId::from(UNLINKED_PANEL_TARGET);
+    let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
+    let listed = rt
+        .block_on(list_unlinked_references_inner(
+            &pool,
+            &target,
+            None,
+            None,
+            None,
+            Some(1),
+            &scope,
+        ))
+        .unwrap();
+    let counted = rt
+        .block_on(agaric_lib::commands::count_unlinked_references_inner(
+            &pool, &target, &scope,
+        ))
+        .unwrap();
+    assert_eq!(
+        (counted.total_count, counted.truncated),
+        (listed.total_count, listed.truncated),
+        "{CMD}: the count path must agree with the list path"
+    );
+    assert_eq!(
+        counted.total_count, UNLINKED_FTS_ROW_CAP,
+        "{CMD}: untimed probe must count the whole capped match set"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("count_unlinked_references_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = agaric_lib::commands::count_unlinked_references_inner(
+                        &pool,
+                        &agaric_core::ulid::PageId::from(UNLINKED_PANEL_TARGET),
+                        &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    report_measurement_only(CMD, &acc);
+}
+
 // ===========================================================================
 // Harness
 // ===========================================================================
@@ -2890,6 +2964,7 @@ criterion_group!(
     bench_pages_mostlinked_sort_live,
     bench_list_unlinked_references_collapsed,
     bench_list_backlinks_grouped_5k,
+    bench_count_unlinked_references,
     problem_tier_verdict,
 );
 
