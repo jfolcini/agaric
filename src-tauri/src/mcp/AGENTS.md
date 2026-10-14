@@ -72,9 +72,9 @@ Separate sockets let an agent connect to RO only and let the user disable RW ind
 
 `handle_journal_for_date` is the one RO tool with a write side-effect: on a miss it creates the journal page, but only when `date` is within today ± `JOURNAL_CREATE_WINDOW_MONTHS` (`within_journal_create_window`); outside it a missing page is `AppError::NotFound`. The bound keeps the RO socket from appending unbounded, unreclaimable ops. If you touch this, update the Settings tooltip (`agentAccess.roToggleDescription` in `src/lib/i18n/settings.ts`).
 
-### Full-vault RO scope (no per-space isolation)
+### Space scoping (no per-space isolation)
 
-The RO surface is vault-wide by design: `list_spaces` returns every space and RO readers accept any `space_id`, except `page_history` / `block_history`, which reject a target outside it.
+Every tool requires `space_id` except `list_spaces` and `list_property_defs` (property definitions are vault-wide), and confines the call to that space: listings return its rows, and a tool that addresses a block or page by id rejects a target in another space (`validate_block_in_space`, or `get_page_inner` for `get_page`). It is not isolation: `list_spaces` returns every space and any tool accepts any of them.
 
 ## Testing
 

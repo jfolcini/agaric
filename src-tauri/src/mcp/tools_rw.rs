@@ -615,10 +615,9 @@ fn tool_desc_delete_block() -> ToolDescription {
 fn tool_desc_list_spaces() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_SPACES.to_string(),
-        description: "List every space as { id, name, is_default }. Every read-write tool (and \
-             search / journal_for_date) requires a space_id — call this first to discover \
-             one. is_default marks the seeded Personal space, the sensible fallback when \
-             no space has been chosen."
+        description: "List every space as { id, name, is_default }. Every other tool except \
+             list_property_defs requires a space_id — call this first to discover one. \
+             is_default marks the seeded Personal space."
             .to_string(),
         input_schema: json!({
             "type": "object",

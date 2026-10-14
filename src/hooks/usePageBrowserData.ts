@@ -90,10 +90,10 @@ function isInvalidFilterError(err: unknown): err is TypedAppError {
 const PAGE_BROWSER_QUERY_ROOT = 'pageBrowserData'
 
 /**
- * #5258 — re-fetch the Pages list after an out-of-band write (a synced peer or
- * an MCP agent) created, renamed or deleted pages; the local create and delete
- * paths update it themselves. TanStack refetches every loaded page in order
- * from page 1, recomputing each cursor from the fresh rows.
+ * Mark the Pages list stale: after any local write (`watchLocalWrites`, #5446)
+ * or an out-of-band one (a synced peer or an MCP agent, #5258). A mounted list
+ * refetches now, an unmounted one on its next mount; TanStack refetches every
+ * loaded page in order from page 1, recomputing each cursor from the fresh rows.
  */
 export function invalidatePageBrowserData(): void {
   void queryClient.invalidateQueries({ queryKey: [PAGE_BROWSER_QUERY_ROOT] })
@@ -130,10 +130,10 @@ interface UsePageBrowserDataResult {
    * 5,000 pages was told their vault was empty and invited to start over, the
    * only error signal being a ~4s toast.
    *
-   * Gated on `!isFetching` for the same reason the toast is: `refetchOnMount:
-   * 'always'` puts a remount straight into `isFetching`, so a stale cached
-   * failure must not paint the error card before the fresh fetch settles
-   * (#2639).
+   * Gated on `!isFetching` for the same reason the toast is: a failure
+   * invalidates the query, so a remount goes straight into `isFetching`, and a
+   * stale cached failure must not paint the error card before the fresh fetch
+   * settles (#2639).
    */
   isError: boolean
   hasMore: boolean
@@ -233,8 +233,9 @@ export function usePageBrowserData({
       initialPageParam: undefined as string | undefined,
       getNextPageParam: (lastPage) => (lastPage?.has_more ? lastPage.next_cursor : undefined),
       enabled: spaceIsReady,
-      // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
-      refetchOnMount: 'always',
+      // #5446 — returning to an unchanged list sends no IPC. A write or a
+      // failed fetch invalidates the query, and only then does a mount refetch.
+      refetchOnMount: (query) => query.state.isInvalidated,
       // usePaginatedQuery ALSO re-ran the IPC on every deps change, even when
       // switching back to a previously-fetched basis (e.g. removing a filter
       // chip returns to the earlier `filters: []` query). Under the client's
@@ -333,9 +334,9 @@ export function usePageBrowserData({
   // failures, so `errorUpdatedAt` (which advances per failure) is the
   // fire-once-per-load signal. A cancellation-shaped rejection (the suppressed
   // `InvalidFilter` re-throw) must NOT toast — the specific toast already fired.
-  // The `!isFetching` gate makes a cached error safe on remount:
-  // `refetchOnMount: 'always'` puts the query straight into `isFetching` while it
-  // re-validates, so a stale cached failure can't toast before the fresh fetch
+  // The `!isFetching` gate makes a cached error safe on remount: a failure
+  // invalidates the query, so a remount goes straight into `isFetching` while it
+  // re-validates, and a stale cached failure can't toast before the fresh fetch
   // settles — only a genuinely settled error does (#2639). The first-render ref
   // still de-dupes the same settled error across unrelated re-renders.
   const lastToastedErrorAtRef = useRef(errorUpdatedAt)

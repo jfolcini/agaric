@@ -323,4 +323,66 @@ describe('usePageBrowserData', () => {
     expect(mockedList.mock.calls[2]?.[1]).toBeNull()
     expect(mockedList.mock.calls[3]?.[1]).toBe('C2')
   })
+
+  /** Load pages A then B over two calls, then unmount the view. */
+  async function loadTwoPagesAndLeave(): Promise<void> {
+    mockedList
+      .mockResolvedValueOnce(resp([page('A')], { cursor: 'C1', hasMore: true, total: 2 }))
+      .mockResolvedValueOnce(resp([page('B')]))
+    const { result, unmount } = renderHook(() => usePageBrowserData(BASE))
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['A']))
+    await act(async () => {
+      result.current.loadMore()
+    })
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['A', 'B']))
+    unmount()
+    mockedList.mockClear()
+  }
+
+  // #5446 — returning to the Pages view when nothing changed.
+  it('a remount with no write since the last fetch sends no list call', async () => {
+    await loadTwoPagesAndLeave()
+
+    const { result } = renderHook(() => usePageBrowserData(BASE))
+
+    expect(result.current.pages.map((row) => row.id)).toEqual(['A', 'B'])
+    expect(result.current.loading).toBe(false)
+    expect(mockedList).not.toHaveBeenCalled()
+  })
+
+  it('a remount after a write while unmounted refetches every loaded page', async () => {
+    await loadTwoPagesAndLeave()
+    invalidatePageBrowserData()
+    mockedList
+      .mockResolvedValueOnce(
+        resp([page('NEW'), page('A')], { cursor: 'C2', hasMore: true, total: 3 }),
+      )
+      .mockResolvedValueOnce(resp([page('B')]))
+
+    const { result } = renderHook(() => usePageBrowserData(BASE))
+
+    await waitFor(() =>
+      expect(result.current.pages.map((row) => row.id)).toEqual(['NEW', 'A', 'B']),
+    )
+    expect(mockedList).toHaveBeenCalledTimes(2)
+    expect(mockedList.mock.calls[0]?.[1]).toBeNull()
+    expect(mockedList.mock.calls[1]?.[1]).toBe('C2')
+  })
+
+  it('switching back to an already-fetched sort refetches it', async () => {
+    mockedList.mockResolvedValueOnce(resp([page('A')]))
+    const { result, rerender } = renderHook((props) => usePageBrowserData(props), {
+      initialProps: BASE,
+    })
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['A']))
+    mockedList.mockResolvedValueOnce(resp([page('Z')]))
+    rerender({ ...BASE, sortOption: 'alphabetical' })
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['Z']))
+
+    mockedList.mockResolvedValueOnce(resp([page('A2')]))
+    rerender(BASE)
+
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['A2']))
+    expect(mockedList).toHaveBeenCalledTimes(3)
+  })
 })

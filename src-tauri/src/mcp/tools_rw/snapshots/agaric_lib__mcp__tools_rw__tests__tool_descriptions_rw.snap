@@ -127,7 +127,7 @@ expression: wire
       - space_id
     type: object
   name: delete_block
-- description: "List every space as { id, name, is_default }. Every read-write tool (and search / journal_for_date) requires a space_id — call this first to discover one. is_default marks the seeded Personal space, the sensible fallback when no space has been chosen."
+- description: "List every space as { id, name, is_default }. Every other tool except list_property_defs requires a space_id — call this first to discover one. is_default marks the seeded Personal space."
   inputSchema:
     additionalProperties: false
     properties: {}
