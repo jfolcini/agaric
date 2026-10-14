@@ -41,8 +41,9 @@ use super::registry::{
     TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_GET_AGENDA,
     TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
     TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS,
-    TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_MOVE_PAGE_TO_SPACE, TOOL_PAGE_HISTORY, TOOL_SEARCH,
-    TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE,
+    TOOL_PAGE_HISTORY, TOOL_REMOVE_TAG, TOOL_RESTORE_BLOCK, TOOL_SEARCH, TOOL_SET_PROPERTY,
+    TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
 };
 
 /// Number of leading characters of a ULID we expose in summary strings.
@@ -102,6 +103,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_BLOCK_HISTORY => summarise_history(TOOL_BLOCK_HISTORY, "block_id", args, result),
         TOOL_GET_JOURNAL => summarise_get_journal(args, result),
         TOOL_LIST_JOURNAL => summarise_list_journal(args, result),
+        TOOL_LIST_TRASH => summarise_list_trash(args, result),
         // ---- read-write (tools_rw) ----
         TOOL_APPEND_BLOCK => summarise_append_block(args, result),
         TOOL_APPEND_MARKDOWN => summarise_append_markdown(args, result),
@@ -115,6 +117,9 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_DELETE_PROPERTY => summarise_delete_property(args, result),
         TOOL_UNDO => summarise_undo(args, result),
         TOOL_CAPTURE => summarise_capture(args, result),
+        TOOL_MOVE_BLOCKS => summarise_move_blocks(args, result),
+        TOOL_REMOVE_TAG => summarise_remove_tag(args, result),
+        TOOL_RESTORE_BLOCK => summarise_restore_block(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
         // pre-existing behaviour for every entry. The privacy
@@ -237,6 +242,16 @@ pub fn summarise_list_backlinks(args: &Value, result: &Value) -> String {
 pub fn summarise_list_tags(_args: &Value, result: &Value) -> String {
     let n = array_len(result, "items").unwrap_or_else(|| root_array_len(result));
     format!("list_tags — {n} {}", if n == 1 { "tag" } else { "tags" })
+}
+
+/// `list_trash — N block(s)` (`(more)` if `has_more`).
+pub fn summarise_list_trash(_args: &Value, result: &Value) -> String {
+    let n = array_len(result, "items").unwrap_or(0);
+    let suffix = if has_more(result) { " (more)" } else { "" };
+    format!(
+        "list_trash — {n} {}{suffix}",
+        if n == 1 { "block" } else { "blocks" }
+    )
 }
 
 /// `list_property_defs — N def(s)`. The keys themselves are schema and
@@ -573,6 +588,45 @@ pub fn summarise_delete_property(args: &Value, _result: &Value) -> String {
 pub fn summarise_undo(_args: &Value, result: &Value) -> String {
     let n = array_len(result, "undone").unwrap_or(0);
     format!("undo — reverted {n} {}", if n == 1 { "op" } else { "ops" })
+}
+
+/// `move_blocks — moved N block(s) under <parent-prefix>`.
+pub fn summarise_move_blocks(args: &Value, result: &Value) -> String {
+    let n = array_len(result, "moves").unwrap_or(0);
+    let parent = ulid_prefix(str_field(args, "parent_id").unwrap_or(""));
+    let noun = if n == 1 { "block" } else { "blocks" };
+    if parent.is_empty() {
+        format!("move_blocks — moved {n} {noun}")
+    } else {
+        format!("move_blocks — moved {n} {noun} under {parent}")
+    }
+}
+
+/// `remove_tag — removed <tag-prefix> from <block-prefix>`.
+pub fn summarise_remove_tag(args: &Value, _result: &Value) -> String {
+    let block = ulid_prefix(str_field(args, "block_id").unwrap_or(""));
+    let tag = ulid_prefix(str_field(args, "tag_id").unwrap_or(""));
+    match (tag.is_empty(), block.is_empty()) {
+        (false, false) => format!("remove_tag — removed {tag} from {block}"),
+        (false, true) => format!("remove_tag — removed {tag}"),
+        (true, false) => format!("remove_tag — from {block}"),
+        (true, true) => "remove_tag".to_string(),
+    }
+}
+
+/// `restore_block — restored <block-prefix> (N block(s))`.
+pub fn summarise_restore_block(args: &Value, result: &Value) -> String {
+    let block = ulid_prefix(str_field(args, "block_id").unwrap_or(""));
+    let n = result
+        .get("restored_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let noun = if n == 1 { "block" } else { "blocks" };
+    if block.is_empty() {
+        format!("restore_block — {n} {noun}")
+    } else {
+        format!("restore_block — restored {block} ({n} {noun})")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1239,6 +1293,52 @@ mod tests {
                 &ULID_A[..ULID_PREFIX_LEN]
             ),
         );
+    }
+
+    #[test]
+    fn move_blocks_counts_moves_under_parent_prefix() {
+        let args = json!({ "block_ids": [ULID_A, ULID_REF], "parent_id": ULID_B });
+        let result = json!({ "moves": [{ "block_id": ULID_A }, { "block_id": ULID_REF }] });
+        let s = summarise_move_blocks(&args, &result);
+        assert_eq!(
+            s,
+            format!(
+                "move_blocks — moved 2 blocks under {}",
+                &ULID_B[..ULID_PREFIX_LEN]
+            ),
+        );
+    }
+
+    #[test]
+    fn remove_tag_includes_both_prefixes() {
+        // The shared fixtures all start `01HZTEST`, which would hide a swap.
+        let args = json!({
+            "block_id": "01BLOCK0000000000000000000",
+            "tag_id": "01TAG00000000000000000000T",
+        });
+        let s = summarise_remove_tag(&args, &json!({}));
+        assert_eq!(s, "remove_tag — removed 01TAG000 from 01BLOCK0");
+    }
+
+    #[test]
+    fn restore_block_counts_restored_blocks() {
+        let args = json!({ "block_id": ULID_A, "deleted_at": 1 });
+        let result = json!({ "block_id": ULID_A, "restored_count": 3 });
+        let s = summarise_restore_block(&args, &result);
+        assert_eq!(
+            s,
+            format!(
+                "restore_block — restored {} (3 blocks)",
+                &ULID_A[..ULID_PREFIX_LEN]
+            ),
+        );
+    }
+
+    #[test]
+    fn list_trash_counts_items_and_flags_more() {
+        let result = json!({ "items": [{ "content": "SECRET_BLOCK_CONTENT" }], "has_more": true });
+        let s = summarise_list_trash(&json!({}), &result);
+        assert_eq!(s, "list_trash — 1 block (more)");
     }
 
     #[test]

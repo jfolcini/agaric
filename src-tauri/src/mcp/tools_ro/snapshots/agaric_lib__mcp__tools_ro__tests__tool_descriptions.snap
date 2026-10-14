@@ -342,3 +342,22 @@ expression: wire
       - to
     type: object
   name: list_journal
+- description: "List the soft-deleted blocks of a space, newest deletion first, with cursor pagination. A block deleted with its parent is not listed: restoring the parent restores it. Pass a row's id and deleted_at to restore_block."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      cursor:
+        description: Opaque pagination cursor from a prior response.
+        type: string
+      limit:
+        description: Max blocks per response (capped at 100).
+        maximum: 100
+        minimum: 1
+        type: integer
+      space_id:
+        description: ULID of the space whose trash to list.
+        type: string
+    required:
+      - space_id
+    type: object
+  name: list_trash

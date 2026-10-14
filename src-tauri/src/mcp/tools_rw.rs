@@ -24,6 +24,9 @@
 //! | `delete_property` | [`delete_property_inner`] | Rejects `space`; the inner refuses system-managed keys. |
 //! | `undo` | [`revert_ops_inner`] | Reverts `op_refs` as one op group. Refuses an op another origin wrote. |
 //! | `capture` | [`capture_to_journal_inner`] | #5396 — a Markdown outline at the end of a day's journal page, creating the day with its template, in one transaction. `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. |
+//! | `move_blocks` | [`move_blocks_batch_inner`] | One transaction; ids kept. Every block and the parent must be in `space_id`. |
+//! | `remove_tag` | [`remove_tag_inner`] | |
+//! | `restore_block` | [`restore_block_inner`] | Takes the `deleted_at` that `delete_block` / `list_trash` returned. |
 //!
 //! Every write tool's result carries the `op_refs` it appended, added by the
 //! adapter (`rmcp_adapter::with_op_refs`), not by these handlers.
@@ -61,16 +64,17 @@ use super::handler_utils::{
 };
 use super::registry::{
     TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_CAPTURE, TOOL_CREATE_PAGE,
-    TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_LIST_SPACES,
-    TOOL_MOVE_PAGE_TO_SPACE, TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
-    ToolDescription, ToolRegistry,
+    TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_LIST_SPACES, TOOL_MOVE_BLOCKS,
+    TOOL_MOVE_PAGE_TO_SPACE, TOOL_REMOVE_TAG, TOOL_RESTORE_BLOCK, TOOL_SET_PROPERTY, TOOL_UNDO,
+    TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
-    DeletePropertyResponse, add_tag_inner, append_markdown_inner, capture_to_journal_inner,
-    create_block_inner, create_block_inner_with_space, delete_block_inner, delete_property_inner,
-    edit_block_inner, get_active_block_inner, list_spaces_registry_inner,
-    move_blocks_to_space_inner, revert_ops_inner, set_property_inner,
+    DeletePropertyResponse, MovedBlocks, add_tag_inner, append_markdown_inner,
+    capture_to_journal_inner, create_block_inner, create_block_inner_with_space,
+    delete_block_inner, delete_property_inner, edit_block_inner, get_active_block_inner,
+    list_spaces_registry_inner, move_blocks_batch_inner, move_blocks_to_space_inner,
+    remove_tag_inner, restore_block_inner, revert_ops_inner, set_property_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
@@ -216,6 +220,32 @@ struct CaptureArgs {
     date: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MoveBlocksArgs {
+    block_ids: Vec<String>,
+    parent_id: String,
+    #[serde(default)]
+    position: Option<i64>,
+    space_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RemoveTagArgs {
+    block_id: String,
+    tag_id: String,
+    space_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoreBlockArgs {
+    block_id: String,
+    deleted_at: i64,
+    space_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // ReadWriteTools
 // ---------------------------------------------------------------------------
@@ -295,6 +325,9 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_delete_property(),
         tool_desc_undo(),
         tool_desc_capture(),
+        tool_desc_move_blocks(),
+        tool_desc_remove_tag(),
+        tool_desc_restore_block(),
     ]
 }
 
@@ -354,6 +387,15 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_CAPTURE => {
                     let today = chrono::Local::now().date_naive();
                     handle_capture(&pool, &materializer, &device_id, emitter, args, today).await
+                }
+                TOOL_MOVE_BLOCKS => {
+                    handle_move_blocks(&pool, &materializer, &device_id, emitter, args).await
+                }
+                TOOL_REMOVE_TAG => {
+                    handle_remove_tag(&pool, &materializer, &device_id, emitter, args).await
+                }
+                TOOL_RESTORE_BLOCK => {
+                    handle_restore_block(&pool, &materializer, &device_id, emitter, args).await
                 }
                 other => Err(unknown_tool_error(other)),
             }
@@ -700,6 +742,85 @@ fn tool_desc_capture() -> ToolDescription {
                 "date": {
                     "type": "string",
                     "description": "`today` (the default), `yesterday`, or YYYY-MM-DD, on this device's clock.",
+                },
+            },
+        }),
+    }
+}
+
+fn tool_desc_move_blocks() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_MOVE_BLOCKS.to_string(),
+        description: "Move blocks, with their children, under a new parent in one transaction. \
+                      Ids, backlinks and history are kept. The blocks land in the given order \
+                      as one run. Moving a block under itself or its own descendant is refused."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["block_ids", "parent_id", "space_id"],
+            "properties": {
+                "block_ids": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "minItems": 1,
+                    "maxItems": agaric_store::pagination::MAX_BATCH_BLOCK_IDS,
+                    "description": "ULIDs of the blocks to move, in the order they should land.",
+                },
+                "parent_id": { "type": "string", "description": "ULID of the new parent block or page." },
+                "position": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional 1-based position among the parent's other children. Defaults to append (end).",
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the agent is operating in. The move is rejected with a Validation error if any block or `parent_id` lives in a different space.",
+                },
+            },
+        }),
+    }
+}
+
+fn tool_desc_remove_tag() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_REMOVE_TAG.to_string(),
+        description: "Remove a tag from a block. Reversible via page history.".to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["block_id", "tag_id", "space_id"],
+            "properties": {
+                "block_id": { "type": "string", "description": "ULID of the tagged block." },
+                "tag_id":   { "type": "string", "description": "ULID of the tag to remove." },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the agent is operating in. The removal is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
+                },
+            },
+        }),
+    }
+}
+
+fn tool_desc_restore_block() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_RESTORE_BLOCK.to_string(),
+        description: "Restore a soft-deleted block and the descendants deleted with it. \
+                      list_trash lists what can be restored."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["block_id", "deleted_at", "space_id"],
+            "properties": {
+                "block_id": { "type": "string", "description": "ULID of the deleted block." },
+                "deleted_at": {
+                    "type": "integer",
+                    "description": "The block's `deleted_at`, as delete_block or list_trash returned it. A block deleted again since is refused.",
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the agent is operating in. The restore is rejected with a Validation error if `block_id` lives in a different space.",
                 },
             },
         }),
@@ -1192,6 +1313,96 @@ async fn handle_capture(
     )
     .await?;
     emit_blocks_changed_for(pool, emitter, resp.page.id.clone()).await;
+    to_tool_result(&resp)
+}
+
+async fn handle_move_blocks(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: MoveBlocksArgs = parse_args(TOOL_MOVE_BLOCKS, args)?;
+    let parent_id = BlockId::from_trusted(&normalize_ulid_arg(&args.parent_id));
+    let space_id = normalize_ulid_arg(&args.space_id);
+    let block_ids: Vec<BlockId> = args
+        .block_ids
+        .iter()
+        .map(|id| BlockId::from_trusted(&normalize_ulid_arg(id)))
+        .collect();
+    validate_block_in_space(pool, parent_id.as_str(), &space_id).await?;
+    for block_id in &block_ids {
+        validate_block_in_space(pool, block_id.as_str(), &space_id).await?;
+    }
+    // The same 1-based contract and refusal as `append_block` (#1606, #400).
+    if let Some(p) = args.position
+        && p < 1
+    {
+        return Err(AppError::validation(format!(
+            "tool `{TOOL_MOVE_BLOCKS}`: position must be >= 1 (1-based), got {p}"
+        )));
+    }
+    // The inner clamps an index past the last sibling to an append.
+    let index = args.position.map_or(i64::MAX, |p| p - 1);
+    // Resolved before the move: the blocks leave these pages, which reload too.
+    let old_pages =
+        agaric_sync::sync_protocol::loro_sync::resolve_changed_page_ids(pool, &block_ids).await?;
+    let moves = move_blocks_batch_inner(
+        pool,
+        device_id,
+        materializer,
+        block_ids,
+        Some(parent_id.clone()),
+        index,
+    )
+    .await?;
+    let mut seeds: Vec<BlockId> = old_pages
+        .iter()
+        .map(|id| BlockId::from_trusted(id))
+        .collect();
+    seeds.push(parent_id);
+    emit_blocks_changed_for_all(pool, emitter, &seeds).await;
+    to_tool_result(&MovedBlocks { moves })
+}
+
+async fn handle_remove_tag(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: RemoveTagArgs = parse_args(TOOL_REMOVE_TAG, args)?;
+    let block_id = BlockId::from_trusted(&normalize_ulid_arg(&args.block_id));
+    let tag_id = BlockId::from_trusted(&normalize_ulid_arg(&args.tag_id));
+    let space_id = normalize_ulid_arg(&args.space_id);
+    validate_block_in_space(pool, block_id.as_str(), &space_id).await?;
+    let resp = remove_tag_inner(pool, device_id, materializer, block_id.clone(), tag_id).await?;
+    emit_blocks_changed_for(pool, emitter, block_id).await;
+    to_tool_result(&resp)
+}
+
+async fn handle_restore_block(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: RestoreBlockArgs = parse_args(TOOL_RESTORE_BLOCK, args)?;
+    let block_id = BlockId::from_trusted(&normalize_ulid_arg(&args.block_id));
+    let space_id = normalize_ulid_arg(&args.space_id);
+    validate_block_in_space(pool, block_id.as_str(), &space_id).await?;
+    let resp = restore_block_inner(
+        pool,
+        device_id,
+        materializer,
+        block_id.clone(),
+        args.deleted_at,
+    )
+    .await?;
+    emit_blocks_changed_for(pool, emitter, block_id).await;
     to_tool_result(&resp)
 }
 

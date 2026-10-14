@@ -253,3 +253,68 @@ expression: wire
       - space_id
     type: object
   name: capture
+- description: "Move blocks, with their children, under a new parent in one transaction. Ids, backlinks and history are kept. The blocks land in the given order as one run. Moving a block under itself or its own descendant is refused."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_ids:
+        description: "ULIDs of the blocks to move, in the order they should land."
+        items:
+          type: string
+        maxItems: 1000
+        minItems: 1
+        type: array
+      parent_id:
+        description: ULID of the new parent block or page.
+        type: string
+      position:
+        description: "Optional 1-based position among the parent's other children. Defaults to append (end)."
+        minimum: 1
+        type: integer
+      space_id:
+        description: "ULID of the space the agent is operating in. The move is rejected with a Validation error if any block or `parent_id` lives in a different space."
+        type: string
+    required:
+      - block_ids
+      - parent_id
+      - space_id
+    type: object
+  name: move_blocks
+- description: Remove a tag from a block. Reversible via page history.
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_id:
+        description: ULID of the tagged block.
+        type: string
+      space_id:
+        description: "ULID of the space the agent is operating in. The removal is rejected with a Validation error if `block_id`'s owning page lives in a different space."
+        type: string
+      tag_id:
+        description: ULID of the tag to remove.
+        type: string
+    required:
+      - block_id
+      - tag_id
+      - space_id
+    type: object
+  name: remove_tag
+- description: Restore a soft-deleted block and the descendants deleted with it. list_trash lists what can be restored.
+  inputSchema:
+    additionalProperties: false
+    properties:
+      block_id:
+        description: ULID of the deleted block.
+        type: string
+      deleted_at:
+        description: "The block's `deleted_at`, as delete_block or list_trash returned it. A block deleted again since is refused."
+        type: integer
+      space_id:
+        description: "ULID of the space the agent is operating in. The restore is rejected with a Validation error if `block_id` lives in a different space."
+        type: string
+    required:
+      - block_id
+      - deleted_at
+      - space_id
+    type: object
+  name: restore_block
