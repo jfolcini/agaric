@@ -83,3 +83,23 @@ The perf gates, debug build, same box:
   already cheap on main, so it gains little from its index and pays the
   slower `COUNT`. The release `bench-slo` first-page probe is the number to
   check before merging.
+
+## Filters that list their pages
+
+The first push's `bench-slo` failed the `Notes/*` namespace probe at 41 ms.
+Under a tag or an include path glob, every sort still read the space's sort
+index and tested each page against the filter's id list, walking the whole
+space. Such a filter now writes the space term as `+pc.space_id`, which keeps
+the space indexes out of the plan, so the id list reads `pages_cache` by its
+key. The glob tests `pc.page_id` instead of `b.id`: SQLite carries the join
+equality into a single `IN`, not into an OR of them, so a brace pattern
+needs the `pages_cache` key itself.
+
+`page_list_filters_seek_their_pages_instead_of_walking_the_space` pins the
+plan for both globs and both tag primitives under every sort. It also checks
+that an exclude glob and a property filter, which list no pages, keep the
+sort's index.
+
+This push skipped the local verify at the maintainer's request. The lane's
+pages, glob and conformance tests, three falsifications of the plan test, and
+clippy run after it.
