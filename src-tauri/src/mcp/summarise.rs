@@ -21,6 +21,9 @@
 //!   `bool` property values, and eight-character ULID/reference prefixes are
 //!   allowed to appear.** Full identifier/reference values are never included;
 //!   property keys are emitted verbatim as schema strings.
+//! - **Ids come from the result.** A page, parent or tag argument may be a
+//!   name (#5397), so a summariser reads the resolved id from the result, or
+//!   an argument through `id_arg_prefix`.
 //! - **Property keys are schema, not content.** A property key like
 //!   `effort` or `due_date` is fine to include; the corresponding
 //!   `value_text` is not.
@@ -34,6 +37,7 @@
 //! "default to `name.clone()`" path therefore never has to guard against
 //! a panic from this module.
 
+use agaric_core::ulid::BlockId;
 use serde_json::Value;
 
 use super::registry::{
@@ -57,6 +61,14 @@ const ULID_PREFIX_LEN: usize = 8;
 /// short strings (returns the whole input) and on multi-byte chars.
 fn ulid_prefix(id: &str) -> String {
     id.chars().take(ULID_PREFIX_LEN).collect()
+}
+
+/// [`ulid_prefix`] of `args[key]` when it is a ULID, else empty: since #5397 a
+/// page, parent or tag argument may be a title or tag name.
+fn id_arg_prefix(args: &Value, key: &str) -> String {
+    str_field(args, key)
+        .filter(|arg| BlockId::from_string(*arg).is_ok())
+        .map_or_else(String::new, ulid_prefix)
 }
 
 /// Borrow `result[key]` as a string.
@@ -364,7 +376,7 @@ pub fn summarise_get_page_markdown(_args: &Value, result: &Value) -> String {
 /// `page_history — N op(s) on <id-prefix>` (`(more)` if `has_more`), and the
 /// same for `block_history`. Never the rows' before / after text.
 pub fn summarise_history(tool: &str, id_key: &str, args: &Value, result: &Value) -> String {
-    let prefix = ulid_prefix(str_field(args, id_key).unwrap_or(""));
+    let prefix = id_arg_prefix(args, id_key);
     let n = array_len(result, "items").unwrap_or(0);
     let ops = if n == 1 { "op" } else { "ops" };
     let suffix = if has_more(result) { " (more)" } else { "" };
@@ -409,8 +421,8 @@ pub fn summarise_list_journal(args: &Value, result: &Value) -> String {
 
 /// `append_block — added <id-prefix> under <parent-prefix>`. Never
 /// embeds the new block's `content`.
-pub fn summarise_append_block(args: &Value, result: &Value) -> String {
-    let parent = str_field(args, "parent_id").unwrap_or("");
+pub fn summarise_append_block(_args: &Value, result: &Value) -> String {
+    let parent = str_field(result, "parent_id").unwrap_or("");
     let parent_prefix = ulid_prefix(parent);
     let id = str_field(result, "id").unwrap_or("");
     let id_prefix = ulid_prefix(id);
@@ -426,7 +438,7 @@ pub fn summarise_append_block(args: &Value, result: &Value) -> String {
 /// tags its names created counted. Never embeds the markdown, a block's
 /// content, a created page's or tag's name, or a warning (which names them).
 pub fn summarise_append_markdown(args: &Value, result: &Value) -> String {
-    let parent_prefix = ulid_prefix(str_field(args, "parent_id").unwrap_or(""));
+    let parent_prefix = id_arg_prefix(args, "parent_id");
     let place = if parent_prefix.is_empty() {
         String::new()
     } else {
@@ -537,9 +549,9 @@ pub fn summarise_set_property(args: &Value, _result: &Value) -> String {
 
 /// `add_tag — applied <tag-prefix> to <block-prefix>`. ULIDs only — the
 /// tag's display name is user content.
-pub fn summarise_add_tag(args: &Value, _result: &Value) -> String {
-    let block_id = str_field(args, "block_id").unwrap_or("");
-    let tag_id = str_field(args, "tag_id").unwrap_or("");
+pub fn summarise_add_tag(_args: &Value, result: &Value) -> String {
+    let block_id = str_field(result, "block_id").unwrap_or("");
+    let tag_id = str_field(result, "tag_id").unwrap_or("");
     let block_prefix = ulid_prefix(block_id);
     let tag_prefix = ulid_prefix(tag_id);
     match (tag_prefix.is_empty(), block_prefix.is_empty()) {
@@ -584,8 +596,8 @@ pub fn summarise_delete_block(args: &Value, result: &Value) -> String {
 }
 
 /// `move_page_to_space — moved <page-prefix> to <space-prefix>`.
-pub fn summarise_move_page_to_space(args: &Value, _result: &Value) -> String {
-    let page = ulid_prefix(str_field(args, "page_id").unwrap_or(""));
+pub fn summarise_move_page_to_space(args: &Value, result: &Value) -> String {
+    let page = ulid_prefix(str_field(result, "page_id").unwrap_or(""));
     let target = ulid_prefix(str_field(args, "target_space_id").unwrap_or(""));
     match (page.is_empty(), target.is_empty()) {
         (false, false) => format!("move_page_to_space — moved {page} to {target}"),
@@ -619,8 +631,7 @@ pub fn summarise_delete_property(args: &Value, _result: &Value) -> String {
 }
 
 /// `set_page_aliases — <page-prefix>: N alias(es)`. Never the alias text — it
-/// is user content. The page id comes from the result: the argument may be a
-/// title.
+/// is user content.
 pub fn summarise_set_page_aliases(_args: &Value, result: &Value) -> String {
     let page = ulid_prefix(str_field(result, "page_id").unwrap_or(""));
     let n = array_len(result, "aliases").unwrap_or(0);
@@ -639,9 +650,14 @@ pub fn summarise_undo(_args: &Value, result: &Value) -> String {
 }
 
 /// `move_blocks — moved N block(s) under <parent-prefix>`.
-pub fn summarise_move_blocks(args: &Value, result: &Value) -> String {
+pub fn summarise_move_blocks(_args: &Value, result: &Value) -> String {
     let n = array_len(result, "moves").unwrap_or(0);
-    let parent = ulid_prefix(str_field(args, "parent_id").unwrap_or(""));
+    let parent = ulid_prefix(
+        result
+            .pointer("/moves/0/new_parent_id")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+    );
     let noun = if n == 1 { "block" } else { "blocks" };
     if parent.is_empty() {
         format!("move_blocks — moved {n} {noun}")
@@ -651,9 +667,9 @@ pub fn summarise_move_blocks(args: &Value, result: &Value) -> String {
 }
 
 /// `remove_tag — removed <tag-prefix> from <block-prefix>`.
-pub fn summarise_remove_tag(args: &Value, _result: &Value) -> String {
-    let block = ulid_prefix(str_field(args, "block_id").unwrap_or(""));
-    let tag = ulid_prefix(str_field(args, "tag_id").unwrap_or(""));
+pub fn summarise_remove_tag(_args: &Value, result: &Value) -> String {
+    let block = ulid_prefix(str_field(result, "block_id").unwrap_or(""));
+    let tag = ulid_prefix(str_field(result, "tag_id").unwrap_or(""));
     match (tag.is_empty(), block.is_empty()) {
         (false, false) => format!("remove_tag — removed {tag} from {block}"),
         (false, true) => format!("remove_tag — removed {tag}"),
@@ -761,10 +777,12 @@ mod tests {
         "SECRET_ALIAS",
     ];
 
+    /// Checks each secret's first [`ULID_PREFIX_LEN`] characters: a name
+    /// passed where an id goes (#5397) leaks as its prefix.
     fn assert_no_secrets(summary: &str) {
         for s in SECRETS {
             assert!(
-                !summary.contains(s),
+                !summary.contains(&ulid_prefix(s)),
                 "summary {summary:?} leaked secret {s:?}",
             );
         }
@@ -1166,11 +1184,16 @@ mod tests {
             )
         );
         assert_no_secrets(&s);
+        let by_title = summarise_append_markdown(&json!({ "parent_id": "SECRET_TITLE" }), &result);
+        assert_eq!(
+            by_title,
+            "append_markdown — 2 blocks (created 1 page, 1 tag)"
+        );
     }
 
     #[test]
     fn append_block_includes_both_prefixes_and_omits_content() {
-        let args = json!({ "parent_id": ULID_B, "content": "SECRET_BLOCK_CONTENT" });
+        let args = json!({ "parent_id": "SECRET_TITLE", "content": "SECRET_BLOCK_CONTENT" });
         let result = json!({
             "id": ULID_A,
             "block_type": "content",
@@ -1300,7 +1323,7 @@ mod tests {
 
     #[test]
     fn add_tag_includes_both_prefixes() {
-        let args = json!({ "block_id": ULID_A, "tag_id": ULID_TAG });
+        let args = json!({ "block_id": ULID_A, "tag_id": "SECRET_TAG_NAME" });
         let result = json!({ "block_id": ULID_A, "tag_id": ULID_TAG });
         let s = summarise_add_tag(&args, &result);
         assert_eq!(
@@ -1359,7 +1382,11 @@ mod tests {
 
     #[test]
     fn move_page_to_space_includes_both_prefixes() {
-        let args = json!({ "page_id": ULID_A, "space_id": ULID_REF, "target_space_id": ULID_B });
+        let args = json!({
+            "page_id": "SECRET_TITLE",
+            "space_id": ULID_REF,
+            "target_space_id": ULID_B,
+        });
         let result = json!({ "page_id": ULID_A, "space_id": ULID_B });
         let s = summarise_move_page_to_space(&args, &result);
         assert_eq!(
@@ -1370,6 +1397,7 @@ mod tests {
                 &ULID_B[..ULID_PREFIX_LEN],
             ),
         );
+        assert_no_secrets(&s);
     }
 
     #[test]
@@ -1417,8 +1445,11 @@ mod tests {
 
     #[test]
     fn move_blocks_counts_moves_under_parent_prefix() {
-        let args = json!({ "block_ids": [ULID_A, ULID_REF], "parent_id": ULID_B });
-        let result = json!({ "moves": [{ "block_id": ULID_A }, { "block_id": ULID_REF }] });
+        let args = json!({ "block_ids": [ULID_A, ULID_REF], "parent_id": "SECRET_TITLE" });
+        let result = json!({ "moves": [
+            { "block_id": ULID_A, "new_parent_id": ULID_B, "new_position": 0 },
+            { "block_id": ULID_REF, "new_parent_id": ULID_B, "new_position": 1 },
+        ] });
         let s = summarise_move_blocks(&args, &result);
         assert_eq!(
             s,
@@ -1432,11 +1463,12 @@ mod tests {
     #[test]
     fn remove_tag_includes_both_prefixes() {
         // The shared fixtures all start `01HZTEST`, which would hide a swap.
-        let args = json!({
+        let args = json!({ "block_id": "01BLOCK0000000000000000000", "tag_id": "SECRET_TAG_NAME" });
+        let result = json!({
             "block_id": "01BLOCK0000000000000000000",
             "tag_id": "01TAG00000000000000000000T",
         });
-        let s = summarise_remove_tag(&args, &json!({}));
+        let s = summarise_remove_tag(&args, &result);
         assert_eq!(s, "remove_tag — removed 01TAG000 from 01BLOCK0");
     }
 
@@ -1493,8 +1525,14 @@ mod tests {
             ],
             "has_more": true,
         });
-        let page = summarise(TOOL_PAGE_HISTORY, &json!({ "page_id": ULID_A }), &result);
+        let page = summarise(TOOL_PAGE_HISTORY, &json!({ "page_id": ULID_B }), &result);
         assert_eq!(page, "page_history — 2 ops on 01HZTEST (more)");
+        let by_title = summarise(
+            TOOL_PAGE_HISTORY,
+            &json!({ "page_id": "SECRET_TITLE" }),
+            &result,
+        );
+        assert_eq!(by_title, "page_history — 2 ops (more)");
         let block = summarise(TOOL_BLOCK_HISTORY, &json!({ "block_id": ULID_B }), &result);
         assert_eq!(block, "block_history — 2 ops on 01HZTEST (more)");
         assert_no_secrets(&page);
@@ -1578,9 +1616,10 @@ mod tests {
             "markdown": "- SECRET_BLOCK_CONTENT [[SECRET_TITLE]] #SECRET_TAG_NAME",
             "value_text": "SECRET_TEXT_VALUE",
             "block_id": ULID_A,
-            "parent_id": ULID_B,
-            "tag_id": ULID_TAG,
-            "page_id": ULID_A,
+            // #5397 — a page, parent or tag argument may be a name.
+            "parent_id": "SECRET_TITLE",
+            "tag_id": "SECRET_TAG_NAME",
+            "page_id": "SECRET_TITLE",
             // #5378 — `create_tag` / `move_page_to_space` / `set_page_aliases` args.
             "name": "SECRET_TAG_NAME",
             "aliases": ["SECRET_ALIAS"],
@@ -1665,6 +1704,7 @@ mod tests {
             "descendants_affected": 3,
             "block_id": ULID_A,
             "tag_id": ULID_TAG,
+            "moves": [{ "block_id": ULID_A, "new_parent_id": ULID_B, "new_position": 0 }],
             "deleted_at": "2025-01-01",
         });
         let result_tags = json!([
