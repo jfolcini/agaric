@@ -2229,8 +2229,11 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
 /// `list_page_links` — graph-view roll-up, read for one space: the only form
 /// the graph sends, and since #5415 the only one the command has. PROBLEM
 /// TIER: the 84 ms @ 100K that promoted it to the green tier (#2178) was the
-/// unscoped read; the scoped read checks both endpoints of every edge against
-/// the space's pages and is over budget on this fixture (#5426).
+/// unscoped read; the scoped read that checked both endpoints of every edge
+/// against the space's pages was over budget on this fixture. It now ranges
+/// `page_link_cache.space_id` (#5426) and stays gated until CI measures that.
+/// The fixture stamps every block's space before the rebuild that copies it
+/// into the cache.
 fn bench_list_page_links(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
 
