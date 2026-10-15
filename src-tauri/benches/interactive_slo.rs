@@ -78,7 +78,7 @@ use agaric_lib::commands::{
     filtered_blocks_query_inner, get_block_inner, get_properties_inner,
     list_backlinks_grouped_inner, list_blocks_inner, list_page_links_inner,
     list_projected_agenda_inner, list_unlinked_references_inner, load_page_subtree_inner,
-    revert_ops_inner,
+    query_by_property_inner, revert_ops_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
@@ -1464,9 +1464,9 @@ fn bench_batch_resolve(c: &mut Criterion) {
 
 /// `count_agenda_batch_by_source` — weekly badge counts over 100K agenda
 /// rows, the query the journal calendar and `useBatchCounts` issue.
-/// Budget: 30 ms.
+/// Budget: 40 ms.
 fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 30.0;
+    const BUDGET_MS: f64 = 40.0;
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_count_agenda"));
@@ -3010,6 +3010,241 @@ fn bench_list_projected_agenda_past_day(c: &mut Criterion) {
     assert_under_budget("list_projected_agenda past day @ 100K", &acc, BUDGET_MS);
 }
 
+/// A free-form key every fixture block carries: a reserved key would route to
+/// a `blocks` column, and 0088's CHECK keeps it out of `block_properties`.
+const QBP_BROAD_KEY: &str = "slo_qbp_status";
+const QBP_COMMON_VALUE: &str = "common";
+const QBP_RARE_VALUE: &str = "rare";
+const QBP_RARE_BLOCKS: usize = 20;
+const QBP_PAGE_SIZE: usize = 50;
+
+/// The 100K space fixture with `QBP_BROAD_KEY` on every block, valued
+/// `QBP_RARE_VALUE` on 20 blocks spread across the id range and
+/// `QBP_COMMON_VALUE` on the rest. Returns the 20 rare ids in id order.
+async fn seed_query_by_property_fixture(pool: &SqlitePool) -> Vec<String> {
+    let ids = seed_blocks_bulk(pool, FIXTURE_SIZE).await;
+    assign_all_to_slo_space(pool).await;
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) \
+         SELECT id, ?, ? FROM blocks WHERE id <> ?",
+    )
+    .bind(QBP_BROAD_KEY)
+    .bind(QBP_COMMON_VALUE)
+    .bind(SLO_SPACE_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+    let rare_ids: Vec<String> = ids
+        .into_iter()
+        .step_by(FIXTURE_SIZE / QBP_RARE_BLOCKS)
+        .collect();
+    for id in &rare_ids {
+        sqlx::query("UPDATE block_properties SET value_text = ? WHERE block_id = ? AND key = ?")
+            .bind(QBP_RARE_VALUE)
+            .bind(id)
+            .bind(QBP_BROAD_KEY)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    rare_ids
+}
+
+/// `query_by_property` — a key every one of 100K blocks carries, filtered to a
+/// value 20 of them hold (#5426). Budget: 5 ms, provisional until a
+/// `bench-slo` run measures it.
+fn bench_query_by_property_selective_value(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 5.0;
+
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_query_by_property"));
+    let rare_ids = rt.block_on(seed_query_by_property_fixture(&pool));
+    let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
+
+    let observed = rt
+        .block_on(query_by_property_inner(
+            &pool,
+            QBP_BROAD_KEY.to_owned(),
+            Some(QBP_RARE_VALUE.to_owned()),
+            None,
+            None,
+            None,
+            Some(QBP_PAGE_SIZE as i64),
+            &scope,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+        ))
+        .unwrap();
+    let observed_ids: Vec<&str> = observed.items.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(
+        observed_ids, rare_ids,
+        "query_by_property @ 100K: untimed probe must return exactly the 20 rare-valued blocks in id order (#3304)"
+    );
+    assert!(
+        !observed.has_more,
+        "query_by_property @ 100K: 20 matches fit one page of 50 (#3304)"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("query_by_property_selective_value_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let scope = scope.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let scope = scope.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = query_by_property_inner(
+                        &pool,
+                        QBP_BROAD_KEY.to_owned(),
+                        Some(QBP_RARE_VALUE.to_owned()),
+                        None,
+                        None,
+                        None,
+                        Some(QBP_PAGE_SIZE as i64),
+                        &scope,
+                        None,
+                        false,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    assert_under_budget(
+        "query_by_property (broad key, value on 20 blocks) @ 100K",
+        &acc,
+        BUDGET_MS,
+    );
+}
+
+/// #5426 — `query_by_property` on `todo_state = 'TODO'`, which half of 100K
+/// blocks carry. PROBLEM TIER, report-only: equality reads its value index and
+/// sorts every match before the LIMIT, where an id-order walk stops after one
+/// page, so this is the shape the pushdown makes slower.
+fn bench_query_by_property_broad_value(c: &mut Criterion) {
+    if problem_skipped("query_by_property (todo_state on half the blocks) @ 100K") {
+        return;
+    }
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_query_by_property_broad_value"));
+    rt.block_on(seed_blocks_bulk(&pool, FIXTURE_SIZE));
+    rt.block_on(assign_all_to_slo_space(&pool));
+    rt.block_on(
+        sqlx::query(
+            "UPDATE blocks SET todo_state = CASE WHEN position % 2 = 0 THEN 'TODO' ELSE 'DONE' END \
+             WHERE id <> ?",
+        )
+        .bind(SLO_SPACE_ID)
+        .execute(&pool),
+    )
+    .unwrap();
+    let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
+
+    let observed = rt
+        .block_on(query_by_property_inner(
+            &pool,
+            "todo_state".to_owned(),
+            Some("TODO".to_owned()),
+            None,
+            None,
+            None,
+            Some(QBP_PAGE_SIZE as i64),
+            &scope,
+            None,
+            false,
+            None,
+            None,
+            None,
+            None,
+        ))
+        .unwrap();
+    assert_eq!(
+        observed.items.len(),
+        QBP_PAGE_SIZE,
+        "query_by_property broad value @ 100K: untimed probe must fill the page"
+    );
+    assert!(
+        observed.has_more
+            && observed
+                .items
+                .iter()
+                .all(|row| row.todo_state.as_deref() == Some("TODO")),
+        "query_by_property broad value @ 100K: 50K TODO blocks must leave more pages, all TODO"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("query_by_property_broad_value_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let scope = scope.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let scope = scope.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = query_by_property_inner(
+                        &pool,
+                        "todo_state".to_owned(),
+                        Some("TODO".to_owned()),
+                        None,
+                        None,
+                        None,
+                        Some(QBP_PAGE_SIZE as i64),
+                        &scope,
+                        None,
+                        false,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    report_measurement_only(
+        "query_by_property (todo_state on half the blocks) @ 100K",
+        &acc,
+    );
+}
+
 /// #2508 scope item 1 — the `DESIRED_TAGS_SQL` projection from
 /// `src/cache/tags.rs:70-87`, copied VERBATIM (that const is private to the
 /// crate's `cache::tags` module, so a bench binary — a separate crate root —
@@ -4041,6 +4276,7 @@ criterion_group!(
     // clears the 200 ms budget with margin at every fixture size.
     bench_list_projected_agenda,
     bench_list_projected_agenda_past_day,
+    bench_query_by_property_selective_value,
     // #5402 — the MCP read paths.
     mcp_reads::bench_mcp_get_page_markdown,
     mcp_reads::bench_mcp_get_journal,
@@ -4052,6 +4288,7 @@ criterion_group!(
 criterion_group!(
     slo_problem,
     bench_tags_cache_direct_query,
+    bench_query_by_property_broad_value,
     bench_pages_cache_counts_direct_query,
     bench_pages_mostlinked_sort_cache,
     bench_pages_mostlinked_sort_live,

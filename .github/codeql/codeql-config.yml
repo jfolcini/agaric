@@ -70,9 +70,24 @@ queries:
 # after a scan rather than trusting this file to still be doing anything.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Why js/superfluous-trailing-arguments is excluded below
+#
+# CodeQL resolves DOM constructors to its own bundled externs, which give
+# `StorageEvent`, `ResizeObserver` and `IntersectionObserver` fewer parameters
+# than the spec, so every spec-correct `new StorageEvent('storage', init)` is
+# flagged. Every alert this rule has raised here was dismissed as a false
+# positive, and moving a file re-raises them. `npm run typecheck` (the prek
+# `tsc` hook, run in CI) rejects a real extra argument as TS2554 in every
+# TypeScript file. The plain `.mjs` scripts outside tsc lose the check; an
+# extra argument there is ignored at runtime.
+# ---------------------------------------------------------------------------
+
 # Filter order matters: the FIRST filter after the query selection sets the
 # default. Leading with `exclude` keeps "include everything else" as the
-# default, so this subtracts one query rather than allow-listing.
+# default, so these subtract queries rather than allow-listing.
 query-filters:
   - exclude:
       id: rust/unused-variable
+  - exclude:
+      id: js/superfluous-trailing-arguments

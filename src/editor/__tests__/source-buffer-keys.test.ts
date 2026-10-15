@@ -131,6 +131,14 @@ describe('indent and dedent', () => {
     expect(lines(ed)[0]).toEqual(['- a', A])
   })
 
+  it('Shift+Tab as WebKitGTK reports it (key Unidentified, code Tab) dedents too', () => {
+    const ed = build([['  - a', A]])
+    caret(ed, 0, 0)
+
+    expect(press(ed, 'Unidentified', { code: 'Tab', keyCode: 9, shiftKey: true })).toBe(true)
+    expect(lines(ed)).toEqual([['- a', A]])
+  })
+
   it('Tab on a block takes its further lines and its children with it, ids where they were', () => {
     const ed = build([
       ['- a', A],

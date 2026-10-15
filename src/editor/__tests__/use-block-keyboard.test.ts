@@ -1156,6 +1156,41 @@ describe('useBlockKeyboard — Tab-indent accessibility opt-out', () => {
     expect(preventDefaultSpy).not.toHaveBeenCalled()
     cleanup()
   })
+
+  // WebKitGTK (the Linux webview) reports Shift+Tab, keysym `ISO_Left_Tab`, this way.
+  const webkitGtkShiftTab = (): KeyboardEvent =>
+    new KeyboardEvent('keydown', {
+      key: 'Unidentified',
+      code: 'Tab',
+      keyCode: 9,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+
+  it('Shift+Tab as WebKitGTK reports it dedents by default', () => {
+    const { callbacks, target, cleanup } = setup()
+
+    const event = webkitGtkShiftTab()
+    target.dispatchEvent(event)
+
+    expect(callbacks._calls['onDedent']).toBe(1)
+    expect(callbacks._calls['onIndent']).toBeUndefined()
+    expect(event.defaultPrevented).toBe(true)
+    cleanup()
+  })
+
+  it('Shift+Tab as WebKitGTK reports it passes through when the opt-out is off', () => {
+    localStorage.setItem('agaric-tab-indents-blocks', 'false')
+    const { callbacks, target, cleanup } = setup()
+
+    const event = webkitGtkShiftTab()
+    target.dispatchEvent(event)
+
+    expect(callbacks._calls['onDedent']).toBeUndefined()
+    expect(event.defaultPrevented).toBe(false)
+    cleanup()
+  })
 })
 
 // A focused control inside a node view (an image's collapse toggle or resize

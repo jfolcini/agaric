@@ -338,7 +338,7 @@ pub async fn query_by_property_inner(
         value_date.as_deref(),
         op,
         &page,
-        Some(scope.space_id().as_str()),
+        scope.space_id().as_str(),
         exclude_parent_id.as_deref(),
         content_non_empty,
         block_type.as_deref(),
