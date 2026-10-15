@@ -71,11 +71,12 @@ async fn seed_glob_page(pool: &SqlitePool, row: &Row) {
     assign_to_space(pool, &row.id, TEST_SPACE_ID).await;
     sqlx::query(
         "INSERT OR IGNORE INTO pages_cache \
-             (page_id, title, updated_at, inbound_link_count, child_block_count) \
-         VALUES (?, ?, 1735689600000, 0, 0)",
+             (page_id, title, updated_at, inbound_link_count, child_block_count, space_id) \
+         VALUES (?, ?, 1735689600000, 0, 0, ?)",
     )
     .bind(&row.id)
     .bind(&row.title)
+    .bind(TEST_SPACE_ID)
     .execute(pool)
     .await
     .unwrap();

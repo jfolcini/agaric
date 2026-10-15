@@ -182,7 +182,7 @@ pub use page_links::{
 };
 pub use pages::{
     raise_pages_last_edited_ms, rebuild_pages_cache, rebuild_pages_cache_counts,
-    rebuild_pages_cache_split,
+    rebuild_pages_cache_split, sync_pages_cache_space_ids,
 };
 // #417: the production RESET path recomputes the two `pages_cache` count
 // columns full-table via the dedicated `rebuild_pages_cache_counts` entry

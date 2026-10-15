@@ -78,7 +78,7 @@
 //! | `tags_cache.usage_count` (#3345) | `blocks`, `block_tags` **and** `block_tag_refs` (explicit + inline, so it rides on Artefact 12) | `rebuild_tags_cache(_split)` / `refresh_tag_usage_count` — audited by [`reconcile_tags_cache`], NOT by [`reconcile`] |
 //! | `agenda_cache` (the date roll-up, #3345) | `blocks`, `block_properties` **and** `block_tags` | `rebuild_agenda_cache(_split)` (the `RebuildAgendaCache` task) — audited by [`reconcile_agenda_cache`], NOT by [`reconcile`] |
 //! | `projected_agenda_cache` (the recurrence horizon, #3345) | `blocks` **and** `block_properties`, plus a `today` the caller supplies | `rebuild_projected_agenda_cache(_split)` (the `RebuildProjectedAgendaCache` task) — audited by [`reconcile_projected_agenda`], NOT by [`reconcile`] |
-//! | `pages_cache.{title_sort_key,last_edited_ms}` (the Pages sort keys, #5371) | the cached `pages_cache.title`; `op_log` and `blocks.page_id` for a floor | the page-row rebuild and the page-create INSERT (key) / `raise_pages_last_edited_ms` on every op-landing path (last edited) — audited by [`reconcile_pages_cache_sort_keys`], NOT by [`reconcile`] |
+//! | `pages_cache.{title_sort_key,last_edited_ms,space_id}` (the Pages sort keys, #5371) | the cached `pages_cache.title`; `op_log` and `blocks.page_id` for a floor; the page's `blocks.space_id` | the page-row rebuild and the page-create INSERT (key, space) / `raise_pages_last_edited_ms` on every op-landing path (last edited) / `sync_pages_cache_space_ids` in a `space` op's projection (space) — audited by [`reconcile_pages_cache_sort_keys`], NOT by [`reconcile`] |
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
 //!
@@ -2677,7 +2677,14 @@ const PAGES_CACHE_LAST_EDITED_OWNER: &str = "cache::raise_pages_last_edited_ms, 
      dag::ingest_remote_record (a peer's replicated op); a row the rebuild inserts is born \
      from the op log";
 
-/// The two Pages sort keys on `pages_cache` (#5371), for every row.
+const PAGES_CACHE_SPACE_OWNER: &str = "the page-create INSERT in apply::pages_cache, \
+     cache::sync_pages_cache_space_ids (a `space` op's projection, the boot placement of \
+     space-less pages) and cache::pages' rebuild (every other path that moves a page) — \
+     the Pages list filters on this column, so a stale value lists the page in a space it \
+     left and hides it from the one it is in";
+
+/// The Pages sort keys on `pages_cache` (#5371), for every row, and the
+/// `space_id` every sort's index leads with.
 ///
 /// `title_sort_key` must be the key of the title the row holds. The rule is
 /// `agaric_core::title_sort::title_sort_key` itself, pinned by its own
@@ -2690,14 +2697,17 @@ const PAGES_CACHE_LAST_EDITED_OWNER: &str = "cache::raise_pages_last_edited_ms, 
 /// `blocks.page_id`, the ownership the raise reads; the per-block newest op
 /// is the one aggregate pushed into SQLite, because a raw `op_log` dump does
 /// not fit a phone's heap.
+///
+/// `space_id` must be the dumped page's own `blocks.space_id`.
 pub async fn reconcile_pages_cache_sort_keys(
     pool: &SqlitePool,
     blocks: &[BaseBlock],
 ) -> Result<Vec<Divergence>, AppError> {
-    let rows =
-        sqlx::query!("SELECT page_id, title, title_sort_key, last_edited_ms FROM pages_cache")
-            .fetch_all(pool)
-            .await?;
+    let rows = sqlx::query!(
+        "SELECT page_id, title, title_sort_key, last_edited_ms, space_id FROM pages_cache"
+    )
+    .fetch_all(pool)
+    .await?;
     let newest_ops = sqlx::query!(
         r#"SELECT block_id AS "block_id!", MAX(created_at) AS "newest!: i64"
              FROM op_log WHERE block_id IS NOT NULL GROUP BY block_id"#
@@ -2708,6 +2718,10 @@ pub async fn reconcile_pages_cache_sort_keys(
     let page_of: BTreeMap<&str, &str> = blocks
         .iter()
         .filter_map(|b| b.page_id.as_deref().map(|page| (b.id.as_str(), page)))
+        .collect();
+    let space_of: BTreeMap<&str, Option<&str>> = blocks
+        .iter()
+        .map(|b| (b.id.as_str(), b.space_id.as_deref()))
         .collect();
     let mut newest_by_page: BTreeMap<&str, i64> = BTreeMap::new();
     for op in &newest_ops {
@@ -2738,6 +2752,19 @@ pub async fn reconcile_pages_cache_sort_keys(
                 expected: format!("at least {floor} (the newest op on the page's blocks)"),
                 actual: row.last_edited_ms.to_string(),
                 owner: PAGES_CACHE_LAST_EDITED_OWNER,
+            });
+        }
+        let want_space = space_of.get(row.page_id.as_str()).copied().flatten();
+        if row.space_id.as_deref() != want_space {
+            out.push(Divergence {
+                artefact: "pages_cache.space_id",
+                key: row.page_id.clone(),
+                expected: want_space.map_or_else(
+                    || "NULL (the page carries no space_id)".to_owned(),
+                    |space| format!("{space} (the page's space_id)"),
+                ),
+                actual: row.space_id.clone().unwrap_or_else(|| "NULL".to_owned()),
+                owner: PAGES_CACHE_SPACE_OWNER,
             });
         }
     }

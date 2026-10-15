@@ -242,14 +242,18 @@ impl<'a> SqlBind<'a> {
 /// Per-sort descriptor extracted from the body of
 /// `list_pages_with_metadata_inner`: each arm of `keyset_for` is one of
 /// these variants and the IPC consumes the descriptor via a single shared
-/// `apply` method.
+/// `compose` method.
 ///
 /// **Bind contract:** `?1 = filter.space_id` always. splices
 /// compound-filter clauses (with their own `?` binds) into the WHERE
-/// between space_id and the keyset; `SortKeyset::apply` therefore numbers
+/// between space_id and the keyset; `SortKeyset::compose` therefore numbers
 /// its placeholders from a runtime `base` offset (`1 + filter_bind_count`)
 /// rather than the hardcoded `?2`. With no filters, `base = 1` reproduces
 /// the original `?2 .. ?N` numbering.
+///
+/// Every sort reads its rows in order from an index (migration 0124): each
+/// `key_expr` is the bare `pages_cache` column a `(space_id, key, page_id)`
+/// index holds, in the sort's own direction.
 enum SortKeyset {
     /// `(key_expr, id) ASC` keyset. Cursor stashes the last row's key
     /// in the `deleted_at` slot (string). Used by `Alphabetical`.
@@ -258,42 +262,27 @@ enum SortKeyset {
         /// keyset predicate and ORDER BY.
         key_expr: &'static str,
     },
-    /// `key_expr DESC` over an i64 column, ties broken by id in `ties`.
-    /// Cursor stashes the last row's key in the `seq` slot.
-    I64Desc {
-        /// A column reached through the `pages_cache pc` / `page_opens po`
-        /// LEFT JOINs, COALESCE'd so a missing row still has a key.
-        key_expr: &'static str,
-        ties: IdOrder,
-    },
-    /// `b.id DESC` only. No extra sort-key slot. Used by `Created`.
+    /// `key_expr DESC, id ASC` over an i64 column. Cursor stashes the last
+    /// row's key in the `seq` slot.
+    I64Desc { key_expr: &'static str },
+    /// `pc.page_id DESC` only. No extra sort-key slot. Used by `Created`.
     IdDesc,
-}
-
-/// Direction of the `b.id` tiebreaker.
-#[derive(Clone, Copy)]
-enum IdOrder {
-    Asc,
-    Desc,
+    /// `opened_ms DESC, id DESC`, with a page never opened here at `-1`
+    /// (see [`compose_last_opened_sql`]). Cursor stashes the key in `seq`.
+    LastOpened,
 }
 
 /// Map a [`PageSort`] to its [`SortKeyset`] descriptor.
 fn keyset_for(sort: PageSort) -> SortKeyset {
     match sort {
         PageSort::Alphabetical => SortKeyset::StringAsc {
-            key_expr: "COALESCE(pc.title_sort_key, '')",
+            key_expr: "pc.title_sort_key",
         },
         PageSort::Created => SortKeyset::IdDesc,
         PageSort::RecentlyModified => SortKeyset::I64Desc {
-            key_expr: "COALESCE(pc.last_edited_ms, 0)",
-            ties: IdOrder::Asc,
+            key_expr: "pc.last_edited_ms",
         },
-        // A page never opened here keys as -1, below every real open, and
-        // the id tiebreaker then orders those pages newest first.
-        PageSort::LastOpened => SortKeyset::I64Desc {
-            key_expr: "COALESCE(po.opened_ms, -1)",
-            ties: IdOrder::Desc,
-        },
+        PageSort::LastOpened => SortKeyset::LastOpened,
         // Read from the materialised `pages_cache` column
         // instead of the per-row `COUNT(DISTINCT bl.source_id) FROM
         // block_links` correlated subquery. The materializer keeps
@@ -301,21 +290,19 @@ fn keyset_for(sort: PageSort) -> SortKeyset {
         // SELECT on every block-lifecycle op; see
         // `pages_cache_count_parity` for the guarding test.
         PageSort::MostLinked => SortKeyset::I64Desc {
-            key_expr: "COALESCE(pc.inbound_link_count, 0)",
-            ties: IdOrder::Asc,
+            key_expr: "pc.inbound_link_count",
         },
-        // See above; reads `pc.child_block_count` via the
-        // same LEFT JOIN.
+        // See above; reads `pc.child_block_count`.
         PageSort::MostContent => SortKeyset::I64Desc {
-            key_expr: "COALESCE(pc.child_block_count, 0)",
-            ties: IdOrder::Asc,
+            key_expr: "pc.child_block_count",
         },
     }
 }
 
 impl SortKeyset {
-    /// Append the keyset predicate + ORDER BY + LIMIT and return the
-    /// keyset binds in order.
+    /// The fetch statement: the base SELECT, the compiled compound-filter
+    /// fragment `filter_sql`, then the keyset predicate + ORDER BY + LIMIT;
+    /// and the keyset binds in order.
     ///
     /// `cursor` is the decoded keyset position from the prior page (None
     /// for first-page requests). `limit_plus_one` is the LIMIT bind value
@@ -327,29 +314,35 @@ impl SortKeyset {
     /// consumed (`1` for space_id plus the filter-bind count); the keyset
     /// numbers its own placeholders from `base + 1` so SQLite's positional
     /// binding stays aligned regardless of how many filter binds preceded it.
-    fn apply<'a>(
+    fn compose<'a>(
         self,
-        sql: &mut String,
+        filter_sql: &str,
         cursor: Option<&'a Cursor>,
         limit_plus_one: i64,
         base: usize,
-    ) -> Vec<SqlBind<'a>> {
-        match self {
+    ) -> (String, Vec<SqlBind<'a>>) {
+        let mut sql = format!("{PAGES_METADATA_COLUMNS}{PAGES_METADATA_FROM}{filter_sql}");
+        let binds = match self {
             SortKeyset::StringAsc { key_expr } => {
-                push_string_asc_keyset(sql, key_expr, cursor, limit_plus_one, base)
+                push_string_asc_keyset(&mut sql, key_expr, cursor, limit_plus_one, base)
             }
-            SortKeyset::I64Desc { key_expr, ties } => {
-                push_i64_desc_keyset(sql, key_expr, ties, cursor, limit_plus_one, base)
+            SortKeyset::I64Desc { key_expr } => {
+                push_i64_desc_keyset(&mut sql, key_expr, cursor, limit_plus_one, base)
             }
-            SortKeyset::IdDesc => push_id_desc_keyset(sql, cursor, limit_plus_one, base),
-        }
+            SortKeyset::IdDesc => push_id_desc_keyset(&mut sql, cursor, limit_plus_one, base),
+            SortKeyset::LastOpened => {
+                return compose_last_opened_sql(sql, filter_sql, cursor, limit_plus_one, base);
+            }
+        };
+        (sql, binds)
     }
 }
 
 /// `(key_expr, id) ASC` keyset for [`SortKeyset::StringAsc`]: appends the
 /// predicate, ORDER BY and LIMIT to `sql` and returns the binds in
 /// placeholder order. Placeholders are numbered from `base + 1` (see
-/// [`SortKeyset::apply`] for the offset contract).
+/// [`SortKeyset::compose`] for the offset contract). The row-value comparison
+/// is what lets the cursor page seek into the index rather than scan to it.
 fn push_string_asc_keyset<'a>(
     sql: &mut String,
     key_expr: &str,
@@ -363,46 +356,43 @@ fn push_string_asc_keyset<'a>(
         let last_key = c.deleted_at.clone().unwrap_or_default();
         // Binds: last_key, last_id, limit.
         sql.push_str(&format!(
-            " AND ( {key_expr} > ?{p1} \
-                            OR ({key_expr} = ?{p1} AND b.id > ?{p2}) ) \
-                       ORDER BY {key_expr} ASC, b.id ASC \
-                       LIMIT ?{p3}"
+            " AND ({key_expr}, pc.page_id) > (?{p1}, ?{p2}) \
+              ORDER BY {key_expr} ASC, pc.page_id ASC LIMIT ?{p3}"
         ));
         binds.push(SqlBind::OwnedStr(last_key));
         binds.push(SqlBind::Str(c.id.as_str()));
         binds.push(SqlBind::I64(limit_plus_one));
     } else {
         // Binds: limit.
-        sql.push_str(&format!(" ORDER BY {key_expr} ASC, b.id ASC LIMIT ?{p1}"));
+        sql.push_str(&format!(
+            " ORDER BY {key_expr} ASC, pc.page_id ASC LIMIT ?{p1}"
+        ));
         binds.push(SqlBind::I64(limit_plus_one));
     }
     binds
 }
 
-/// `key_expr DESC` keyset over an i64 column, for [`SortKeyset::I64Desc`],
-/// with the id tiebreaker running in `ties`. The cursor carries the last
-/// row's key in its `seq` slot.
+/// `key_expr DESC, id ASC` keyset over an i64 column, for
+/// [`SortKeyset::I64Desc`]. The cursor carries the last row's key in its
+/// `seq` slot. The key and the id run in opposite directions, so no row value
+/// spans both; the leading `key_expr <= last_key` is the term the index seeks
+/// on.
 fn push_i64_desc_keyset<'a>(
     sql: &mut String,
     key_expr: &str,
-    ties: IdOrder,
     cursor: Option<&'a Cursor>,
     limit_plus_one: i64,
     base: usize,
 ) -> Vec<SqlBind<'a>> {
     let (p1, p2, p3) = (base + 1, base + 2, base + 3);
-    let (id_after, id_order) = match ties {
-        IdOrder::Asc => (">", "ASC"),
-        IdOrder::Desc => ("<", "DESC"),
-    };
     let mut binds: Vec<SqlBind<'a>> = Vec::new();
     if let Some(c) = cursor {
         let last_key = c.seq.unwrap_or(0);
         // Binds: last_key, last_id, limit.
         sql.push_str(&format!(
-            " AND ( {key_expr} < ?{p1} \
-                            OR ({key_expr} = ?{p1} AND b.id {id_after} ?{p2}) ) \
-                       ORDER BY {key_expr} DESC, b.id {id_order} LIMIT ?{p3}"
+            " AND {key_expr} <= ?{p1} \
+              AND ({key_expr} < ?{p1} OR pc.page_id > ?{p2}) \
+              ORDER BY {key_expr} DESC, pc.page_id ASC LIMIT ?{p3}"
         ));
         binds.push(SqlBind::I64(last_key));
         binds.push(SqlBind::Str(c.id.as_str()));
@@ -410,15 +400,15 @@ fn push_i64_desc_keyset<'a>(
     } else {
         // Binds: limit.
         sql.push_str(&format!(
-            " ORDER BY {key_expr} DESC, b.id {id_order} LIMIT ?{p1}"
+            " ORDER BY {key_expr} DESC, pc.page_id ASC LIMIT ?{p1}"
         ));
         binds.push(SqlBind::I64(limit_plus_one));
     }
     binds
 }
 
-/// `b.id DESC` keyset for [`SortKeyset::IdDesc`] (the `Created` sort): no
-/// sort-key slot, just the id.
+/// `pc.page_id DESC` keyset for [`SortKeyset::IdDesc`] (the `Created` sort):
+/// no sort-key slot, just the id.
 fn push_id_desc_keyset<'a>(
     sql: &mut String,
     cursor: Option<&'a Cursor>,
@@ -429,15 +419,65 @@ fn push_id_desc_keyset<'a>(
     let mut binds: Vec<SqlBind<'a>> = Vec::new();
     if let Some(c) = cursor {
         // Binds: last_id, limit.
-        sql.push_str(&format!(" AND b.id < ?{p1} ORDER BY b.id DESC LIMIT ?{p2}"));
+        sql.push_str(&format!(
+            " AND pc.page_id < ?{p1} ORDER BY pc.page_id DESC LIMIT ?{p2}"
+        ));
         binds.push(SqlBind::Str(c.id.as_str()));
         binds.push(SqlBind::I64(limit_plus_one));
     } else {
         // Binds: limit.
-        sql.push_str(&format!(" ORDER BY b.id DESC LIMIT ?{p1}"));
+        sql.push_str(&format!(" ORDER BY pc.page_id DESC LIMIT ?{p1}"));
         binds.push(SqlBind::I64(limit_plus_one));
     }
     binds
+}
+
+/// [`SortKeyset::LastOpened`] from two indexes instead of a sort of the
+/// space: the pages opened here, newest open first (`idx_page_opens_opened`),
+/// then the pages never opened here, newest first
+/// (`idx_pages_cache_space_created`). Every open sorts above every
+/// never-opened page, so a cursor in that tail (`seq` is `-1`) reads its arm
+/// alone; otherwise the outer ORDER BY merges two `LIMIT`s of rows. The
+/// opened arm walks every space's opens, as `page_opens` has no space.
+///
+/// `never_opened` is the base SELECT with `filter_sql` already appended.
+fn compose_last_opened_sql<'a>(
+    mut never_opened: String,
+    filter_sql: &str,
+    cursor: Option<&'a Cursor>,
+    limit_plus_one: i64,
+    base: usize,
+) -> (String, Vec<SqlBind<'a>>) {
+    let (p1, p2, p3) = (base + 1, base + 2, base + 3);
+    never_opened.push_str(" AND po.page_id IS NULL");
+    if let Some(c) = cursor.filter(|c| c.seq.unwrap_or(0) < 0) {
+        // Binds: last_id, limit.
+        never_opened.push_str(&format!(
+            " AND pc.page_id < ?{p1} ORDER BY pc.page_id DESC LIMIT ?{p2}"
+        ));
+        return (
+            never_opened,
+            vec![SqlBind::Str(c.id.as_str()), SqlBind::I64(limit_plus_one)],
+        );
+    }
+    let mut opened = format!("{PAGES_METADATA_COLUMNS}{PAGES_METADATA_FROM_OPENS}{filter_sql}");
+    let mut binds: Vec<SqlBind<'a>> = Vec::new();
+    let limit = if let Some(c) = cursor {
+        // Binds: last_key, last_id, limit.
+        opened.push_str(&format!(" AND (po.opened_ms, po.page_id) < (?{p1}, ?{p2})"));
+        binds.push(SqlBind::I64(c.seq.unwrap_or(0)));
+        binds.push(SqlBind::Str(c.id.as_str()));
+        p3
+    } else {
+        p1
+    };
+    binds.push(SqlBind::I64(limit_plus_one));
+    let sql = format!(
+        "SELECT * FROM ({opened} ORDER BY po.opened_ms DESC, po.page_id DESC LIMIT ?{limit}) \
+         UNION ALL SELECT * FROM ({never_opened} ORDER BY pc.page_id DESC LIMIT ?{limit}) \
+         ORDER BY opened_ms DESC, id DESC LIMIT ?{limit}"
+    );
+    (sql, binds)
 }
 
 /// Phase 3 — compile the compound-filter primitives for the Pages
@@ -629,76 +669,23 @@ fn compile_path_glob_clause(
     Ok(Some(WhereClause::new(frag, frag_binds)))
 }
 
-/// The base SELECT for `list_pages_with_metadata_inner` (everything up to
-/// but NOT including the compound-filter fragment, the keyset, the ORDER BY,
-/// and the LIMIT). A `const` so the test-only
-/// [`compose_list_pages_with_metadata_sql`] accessor composes
-/// the SAME real SQL the IPC emits rather than a hand-rebuilt copy — a plan
-/// regression in the IPC's actual query is then caught by the EXPLAIN tests.
-///
-/// `?1` is the space_id bind. The compound-filter fragment (its `?` binds
-/// renumbered from `?2`) is appended after this, then the keyset / ORDER BY
-/// / LIMIT.
-///
-/// # #424 — temp-B-tree + per-row subqueries on every sort mode (measured)
-///
-/// The space-filter IN-subquery makes the planner drive off the
-/// space-membership set, so output order never matches the requested
-/// ORDER BY: every sort mode (incl. `Created`/`Alphabetical`) gets
-/// `USE TEMP B-TREE FOR ORDER BY`, the LIMIT cannot short-circuit, and
-/// the per-row `has_*` EXISTS subqueries are evaluated across the whole
-/// filtered set first. The remedy (a materialised per-page `space` column /
-/// folding `has_*` into `pages_cache`) is a **schema promotion gated by
-/// AGENTS.md "Architectural Stability"** and was deferred pending a
-/// measurement. MEASURED 2026-06-05 at 20k pages, before #5371: id order
-/// ~38 ms, alphabetical ~67 ms first-page — comfortably within budget, so
-/// the promotion is not justified at this scale and stays deferred behind
-/// the `created_and_alphabetical_sort_perf_gate_20k_pages` gate (alongside
-/// the MostLinked / RecentlyModified / filtered gates).
-///
-/// # #433 — migration-0069 header claim is stale; THIS is the real shape
-///
-/// Migration `0069`'s header still states the `MostLinked` / `MostContent`
-/// first page is a "full scan into a quick-sort top-K heap (no temp B-tree)".
-/// That is **false** and cannot be corrected in place (migrations are
-/// append-only / checksummed), so the correction lives here, where the query
-/// actually is. The sort key is `COALESCE(pc.inbound_link_count, 0)` — an
-/// expression over a LEFT JOIN keyed on `b.id`, NOT indexable — so
-/// `EXPLAIN QUERY PLAN` shows `USE TEMP B-TREE FOR ORDER BY`: SQLite
-/// materialises the whole filtered page set (not a `LIMIT`-50 top-K heap) and
-/// evaluates the surviving per-row subqueries (`has_tags` / `has_todo` /
-/// `has_scheduled` / `has_due`) across every row before the sort — `O(N)`,
-/// not top-K. What migration `0069` genuinely fixed — and what the
-/// `most_linked_query_plan_uses_pages_cache_not_block_links` test pins — is
-/// that the expensive `COUNT(DISTINCT)` over `block_links` is gone (replaced
-/// by the materialised `pages_cache` count columns); the four residual
-/// subqueries are cheap single-index probes. Severity is low at
-/// present scale (the 20k gate passes < 100 ms). Killing the temp B-tree
-/// outright (a `(inbound_link_count DESC)`-style materialised sort column) is
-/// the same gated schema promotion deferred above — revisit only if a future
-/// workload regresses past budget at 100k+ pages.
-///
-/// # #2508 — the count columns are load-bearing here, not droppable
-///
-/// The temp-B-tree sort evaluates the sort key for EVERY page in the space
-/// before the `LIMIT`, so `pc.inbound_link_count` / `pc.child_block_count`
-/// being materialised columns (not the pre-0069 `COUNT(DISTINCT) FROM
-/// block_links` subquery) is what keeps this sort within budget. The #2508
-/// audit's `interactive_slo` probe measured the direct count query at
-/// 0.96 ms @ 100K, but only over a 50-page `WHERE page_id IN (…)` sample —
-/// the badge-render cost for the visible rows, NOT this whole-space sort
-/// key. Do not read that number as license to drop the columns; see the
-/// KEEP rationale on `cache::pages::recompute_all_pages_cache_counts`.
+/// The SELECT list for `list_pages_with_metadata_inner`. With
+/// [`PAGES_METADATA_FROM`] it is the base statement every sort composes
+/// onto (then the compound-filter fragment, the keyset, the ORDER BY and the
+/// LIMIT); consts so the test-only [`compose_list_pages_with_metadata_sql`]
+/// accessor composes the SAME real SQL the IPC emits rather than a
+/// hand-rebuilt copy — a plan regression in the IPC's actual query is then
+/// caught by the EXPLAIN tests.
 ///
 /// `title_sort_key` and `opened_ms` are the Alphabetical and LastOpened
 /// keys, read back only to mint the next cursor ([`KeyedPageRow`]).
-const PAGES_METADATA_BASE_SELECT: &str = r"SELECT
+const PAGES_METADATA_COLUMNS: &str = r"SELECT
                b.id, b.block_type, b.content, b.parent_id, b.position,
                b.deleted_at, b.todo_state, b.priority, b.due_date,
                b.scheduled_date, b.page_id,
                pc.last_edited_ms AS last_modified_at,
-               COALESCE(pc.inbound_link_count, 0) AS inbound_link_count,
-               COALESCE(pc.child_block_count, 0) AS child_block_count,
+               pc.inbound_link_count,
+               pc.child_block_count,
                EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags,
                EXISTS(SELECT 1 FROM blocks descendant
                        WHERE descendant.page_id = b.id
@@ -712,15 +699,44 @@ const PAGES_METADATA_BASE_SELECT: &str = r"SELECT
                        WHERE descendant.page_id = b.id
                          AND descendant.deleted_at IS NULL
                          AND descendant.due_date IS NOT NULL) AS has_due,
-               COALESCE(pc.title_sort_key, '') AS title_sort_key,
-               COALESCE(po.opened_ms, -1) AS opened_ms
-           FROM blocks b
-           LEFT JOIN pages_cache pc ON pc.page_id = b.id
-           LEFT JOIN page_opens po ON po.page_id = b.id
-           WHERE b.block_type = 'page'
-             AND b.deleted_at IS NULL
-             AND b.space_id = ?1
-        ";
+               pc.title_sort_key,
+               COALESCE(po.opened_ms, -1) AS opened_ms";
+
+/// The rows a Pages request reads. `?1` is the space_id bind; the
+/// compound-filter fragment (its `?` binds renumbered from `?2`) is appended
+/// after this, then the keyset / ORDER BY / LIMIT.
+///
+/// # One index range per sort (#5371, migration 0124)
+///
+/// The query drives from `pages_cache`, which carries its page's `space_id`,
+/// and each sort orders by an index whose prefix is `space_id`. So the plan
+/// reads the space's rows in the requested order and stops after `LIMIT`:
+/// the `blocks` row and the four `has_*` EXISTS probes run for those rows
+/// only, and a cursor page seeks into the index at its key. `CROSS JOIN`
+/// pins `pages_cache` as the outer loop: with `blocks` free to go first the
+/// planner drives from every live page in the vault.
+///
+/// The join to `blocks` is inner: a page lists only once its cache row
+/// exists, and `b.deleted_at` hides a page the rebuild has not yet swept.
+/// Why the count columns stay materialised: the KEEP rationale on
+/// `cache::pages::recompute_all_pages_cache_counts`.
+const PAGES_METADATA_FROM: &str = r"
+           FROM pages_cache pc
+           CROSS JOIN blocks b ON b.id = pc.page_id
+           LEFT JOIN page_opens po ON po.page_id = pc.page_id
+           WHERE pc.space_id = ?1
+             AND b.block_type = 'page'
+             AND b.deleted_at IS NULL";
+
+/// [`PAGES_METADATA_FROM`] for the opened arm of
+/// [`compose_last_opened_sql`]: driven from `page_opens` in open order.
+const PAGES_METADATA_FROM_OPENS: &str = r"
+           FROM page_opens po
+           CROSS JOIN pages_cache pc ON pc.page_id = po.page_id
+           CROSS JOIN blocks b ON b.id = pc.page_id
+           WHERE pc.space_id = ?1
+             AND b.block_type = 'page'
+             AND b.deleted_at IS NULL";
 
 /// A fetched page row plus the two sort keys the wire row does not carry,
 /// so the next cursor holds exactly the key the keyset compared.
@@ -750,14 +766,11 @@ pub fn compose_list_pages_with_metadata_sql(
     filter: &ListPagesWithMetadataFilter,
     limit_plus_one: i64,
 ) -> Result<String, AppError> {
-    let mut sql = PAGES_METADATA_BASE_SELECT.to_owned();
     let (filter_sql, filter_binds) = compile_pages_filters(&filter.filters)?;
-    sql.push_str(&filter_sql);
     let base = 1 + filter_binds.len();
-    let keyset = keyset_for(filter.sort);
     // First page: no cursor. The returned binds are discarded — the test
     // only needs the SQL string for EXPLAIN QUERY PLAN.
-    let _ = keyset.apply(&mut sql, None, limit_plus_one, base);
+    let (sql, _) = keyset_for(filter.sort).compose(&filter_sql, None, limit_plus_one, base);
     Ok(sql)
 }
 
@@ -781,7 +794,7 @@ pub fn compose_list_pages_with_metadata_sql(
 ///
 /// **materialised counts:** `inbound_link_count` and
 /// `child_block_count` are read from `pages_cache.{inbound_link_count,
-/// child_block_count}` via a LEFT JOIN, NOT computed per-row via the
+/// child_block_count}`, NOT computed per-row via the
 /// `COUNT(DISTINCT …) FROM block_links` / `COUNT(*) FROM blocks`
 /// correlated subqueries the prior implementation used. The
 /// materializer keeps `pages_cache` rows byte-identical to the
@@ -789,13 +802,11 @@ pub fn compose_list_pages_with_metadata_sql(
 /// RestoreBlock / PurgeBlock op; see `materializer::tests::
 /// pages_cache_count_parity` for the guarding integration test.
 ///
-/// **Defensive contract:** the JOIN is LEFT and the sort keys are
-/// COALESCE'd. The materializer guarantees a `pages_cache` row
-/// for every live page (`apply_create_block_via_loro` for block_type
-/// = 'page' INSERTs the row), so a missing row indicates a
-/// materializer bug. The COALESCE keeps the IPC alive while the bug
-/// is investigated — the parity tests should catch the underlying
-/// drift before users see a stale `0`.
+/// **Rows come from `pages_cache`:** a page is listed in the space its cache
+/// row names. The page-create INSERT births the row and a `space` op moves
+/// it in the same transaction; a page whose row is missing (between a reset
+/// wiping the cache and its rebuild) is absent until `RebuildPagesCache`
+/// lands, and the reconciliation oracle reports it (`pages_cache.row`).
 #[instrument(skip(pool), err)]
 pub async fn list_pages_with_metadata_inner(
     pool: &SqlitePool,
@@ -827,8 +838,7 @@ pub async fn list_pages_with_metadata_inner(
     // the ORDER BY / WHERE keyset depends on the runtime sort mode;
     // the compile-time macro would force six near-identical query
     // bodies.
-    let mut sql = PAGES_METADATA_BASE_SELECT.to_owned();
-
+    //
     // Splice the compound-filter WHERE clauses BEFORE the
     // keyset/ORDER BY/LIMIT. Their `?` placeholders land at positions
     // `?2 .. ?{1 + filter_bind_count}` (right after `?1 = space_id`); the
@@ -836,19 +846,18 @@ pub async fn list_pages_with_metadata_inner(
     // positional binding stays aligned. Gate + cost-order + AND-join all
     // happen in `compile_pages_filters`.
     let (filter_sql, filter_binds) = compile_pages_filters(&filter.filters)?;
-    sql.push_str(&filter_sql);
     let base = 1 + filter_binds.len();
 
     // -D — compute a real `total_count` so the "X of Y"
     // header chip survives the `densityV1` default-on flip (the prior
     // `total_count: None` silently dropped it for every user). The COUNT
     // reuses the SAME space-membership predicate + compiled compound-filter
-    // WHERE clause as the fetch, but DROPS the keyset/cursor terms and the
-    // per-row metadata subqueries (has_*) — so
+    // WHERE clause as the fetch, but DROPS the keyset/cursor terms, the
+    // `page_opens` join and the per-row metadata subqueries (has_*) — so
     // the count stays index-served and behind the same predicates, keeping
-    // the 20k-page perf gate (`most_linked_perf_gate_20k_pages`) green.
-    // The `LEFT JOIN pages_cache pc` is retained because the Pages-only
-    // filter fragments (Orphan / Stub / HasNoInboundLinks) read `pc.*`.
+    // the 20k-page perf gate (`most_linked_perf_gate_20k_pages`) green. It
+    // counts the rows the fetch can return: `pages_cache` rows of the space
+    // whose page is live.
     //
     // The COUNT only runs on the FIRST page (`req.after`
     // is None). The total of the filtered set does not change as the user
@@ -858,11 +867,11 @@ pub async fn list_pages_with_metadata_inner(
     // the frontend retains the first page's total.
     let total_count: Option<i64> = if req.after.is_none() {
         let count_sql = format!(
-            "SELECT COUNT(*) FROM blocks b \
-             LEFT JOIN pages_cache pc ON pc.page_id = b.id \
-             WHERE b.block_type = 'page' \
-               AND b.deleted_at IS NULL \
-               AND b.space_id = ?1{filter_sql}"
+            "SELECT COUNT(*) FROM pages_cache pc \
+             CROSS JOIN blocks b ON b.id = pc.page_id \
+             WHERE pc.space_id = ?1 \
+               AND b.block_type = 'page' \
+               AND b.deleted_at IS NULL{filter_sql}"
         );
         let mut count_query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()))
             .bind(&filter.space_id);
@@ -877,13 +886,11 @@ pub async fn list_pages_with_metadata_inner(
     // Per-sort keyset + ORDER BY. The `SortKeyset` descriptor encodes
     // the SQL fragment, ORDER BY, and the per-mode bind list so the
     // composition stays in one place.
-    let keyset = keyset_for(filter.sort);
-    let cursor_ref = req.after.as_ref();
-    let keyset_binds = keyset.apply(&mut sql, cursor_ref, limit_plus_one, base);
+    let (sql, keyset_binds) =
+        keyset_for(filter.sort).compose(&filter_sql, req.after.as_ref(), limit_plus_one, base);
 
     // Bind order: ?1 = space_id, then the filter binds (?2 ..), then the
-    // keyset binds (?{base+1} ..) — exactly matching the `?` appearance
-    // order in the composed SQL.
+    // keyset binds (?{base+1} ..) — the `?N` numbers in the composed SQL.
     let mut query =
         sqlx::query_as::<_, KeyedPageRow>(sqlx::AssertSqlSafe(sql.as_str())).bind(&filter.space_id);
     for bind in filter_binds {

@@ -94,8 +94,8 @@ async fn seed_conf_page(pool: &SqlitePool, row: &Row) {
     sqlx::query(
         "INSERT INTO pages_cache \
              (page_id, title, title_sort_key, last_edited_ms, updated_at, \
-              inbound_link_count, child_block_count) \
-         VALUES (?, ?, ?, ?, 1735689600000, ?, ?)",
+              inbound_link_count, child_block_count, space_id) \
+         VALUES (?, ?, ?, ?, 1735689600000, ?, ?, ?)",
     )
     .bind(&row.id)
     .bind(&row.content)
@@ -103,6 +103,7 @@ async fn seed_conf_page(pool: &SqlitePool, row: &Row) {
     .bind(epoch_ms(&row.last_modified_at))
     .bind(row.inbound_link_count)
     .bind(row.child_block_count)
+    .bind(TEST_SPACE_ID)
     .execute(pool)
     .await
     .unwrap();

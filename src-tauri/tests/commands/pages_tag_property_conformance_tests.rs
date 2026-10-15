@@ -85,8 +85,8 @@ fn load_vectors() -> Vectors {
 /// Seed one fixture row as a page in [`TEST_SPACE_ID`]:
 /// - the page block + space assignment (so the base space-scoped SELECT sees
 ///   it);
-/// - a `pages_cache` row so the base LEFT JOIN behaves like the (a) test (the
-///   counts are irrelevant to `Tag`/`HasProperty` but keep the join populated);
+/// - a `pages_cache` row in the page's space, which the base SELECT lists
+///   by (the counts are irrelevant to `Tag`/`HasProperty`);
 /// - `block_tags` rows (read by `compile_tag`'s `b.id IN (SELECT block_id FROM
 ///   block_tags WHERE tag_id = ?)`). Each `tag_id` is FK → `blocks(id)`, so the
 ///   tag block is inserted (`block_type='tag'`) first;
@@ -99,11 +99,12 @@ async fn seed_tag_property_page(pool: &SqlitePool, row: &Row) {
     assign_to_space(pool, &row.id, TEST_SPACE_ID).await;
     sqlx::query(
         "INSERT OR IGNORE INTO pages_cache \
-             (page_id, title, updated_at, inbound_link_count, child_block_count) \
-         VALUES (?, ?, 1735689600000, 0, 0)",
+             (page_id, title, updated_at, inbound_link_count, child_block_count, space_id) \
+         VALUES (?, ?, 1735689600000, 0, 0, ?)",
     )
     .bind(&row.id)
     .bind(&row.title)
+    .bind(TEST_SPACE_ID)
     .execute(pool)
     .await
     .unwrap();

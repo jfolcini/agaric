@@ -24,22 +24,23 @@ use agaric_store::filters::{FilterPrimitive, LastEditedSpec, PropertyPredicate, 
 /// Seed a page with the given id and content into [`TEST_SPACE_ID`].
 ///
 /// Also seeds the `pages_cache` row that the materializer
-/// would write in production. The IPC reads
-/// `pc.{inbound_link_count, child_block_count}` from this row via a
-/// LEFT JOIN; without it the IPC would return 0 for both counts. The row
-/// carries the title's sort key, and `last_edited_ms` stays 0 until
-/// [`seed_op_log`] raises it.
+/// would write in production. The IPC lists pages from this row (#5371)
+/// and reads `pc.{inbound_link_count, child_block_count}` from it. The row
+/// carries the title's sort key and the page's space, and `last_edited_ms`
+/// stays 0 until [`seed_op_log`] raises it.
 async fn seed_page(pool: &SqlitePool, id: &str, content: &str) {
     insert_block(pool, id, "page", content, None, Some(0)).await;
     assign_to_space(pool, id, TEST_SPACE_ID).await;
     sqlx::query(
         "INSERT OR IGNORE INTO pages_cache \
-             (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count) \
-         VALUES (?, ?, ?, 1735689600000, 0, 0)",
+             (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count, \
+              space_id) \
+         VALUES (?, ?, ?, 1735689600000, 0, 0, ?)",
     )
     .bind(id)
     .bind(content)
     .bind(agaric_core::title_sort::title_sort_key(content))
+    .bind(TEST_SPACE_ID)
     .execute(pool)
     .await
     .unwrap();
@@ -680,33 +681,35 @@ async fn space_filter_excludes_pages_in_other_space() {
     ensure_test_space(&pool).await;
     ensure_test_space_b(&pool).await;
     seed_page(&pool, "01PAGE000000000000000000A1", "InA").await;
-    insert_block(
-        &pool,
-        "01PAGE000000000000000000B1",
-        "page",
-        "InB",
-        None,
-        Some(0),
-    )
-    .await;
+    // Seeded in A, then moved: its cache row moves with it (#5371).
+    seed_page(&pool, "01PAGE000000000000000000B1", "InB").await;
     assign_to_space(&pool, "01PAGE000000000000000000B1", TEST_SPACE_B_ID).await;
 
-    let resp =
-        list_pages_with_metadata_inner(&pool, filter(PageSort::Alphabetical), None, Some(50))
-            .await
-            .unwrap();
-    let contents: Vec<&str> = resp
-        .items
-        .iter()
-        .filter_map(|p| p.content.as_deref())
-        .collect();
-    assert!(
-        contents.contains(&"InA"),
-        "space A page must appear: {contents:?}"
+    let titles = |space_id: &str| {
+        let filter = ListPagesWithMetadataFilter {
+            space_id: space_id.to_owned(),
+            ..filter(PageSort::Alphabetical)
+        };
+        let pool = pool.clone();
+        async move {
+            list_pages_with_metadata_inner(&pool, filter, None, Some(50))
+                .await
+                .unwrap()
+                .items
+                .into_iter()
+                .filter_map(|p| p.content)
+                .collect::<Vec<String>>()
+        }
+    };
+    assert_eq!(
+        titles(TEST_SPACE_ID).await,
+        vec!["InA"],
+        "space A lists only its page"
     );
-    assert!(
-        !contents.contains(&"InB"),
-        "space B page must NOT appear: {contents:?}"
+    assert_eq!(
+        titles(TEST_SPACE_B_ID).await,
+        vec!["InB"],
+        "the moved page lists in B"
     );
 }
 
@@ -966,7 +969,7 @@ async fn soft_deleted_pages_excluded_from_results() {
 // assert that contract directly: run `EXPLAIN QUERY PLAN` on the same
 // SQL the IPC emits and check the plan mentions `pages_cache` and
 // does NOT mention `block_links`. If a future change accidentally
-// re-introduces the correlated subquery (or drops the LEFT JOIN), one
+// re-introduces the correlated subquery (or drops the join), one
 // of these asserts fires before users see the regression.
 //
 // Note: we don't snapshot the full plan string (SQLite is allowed to
@@ -981,8 +984,8 @@ async fn soft_deleted_pages_excluded_from_results() {
 /// Previously this ran EXPLAIN on a hand-rebuilt copy of the SELECT, so a plan
 /// regression in the IPC's actual query would NOT be caught. We now compose
 /// the IPC's real statement via [`compose_list_pages_with_metadata_sql`]
-/// (the same `const PAGES_METADATA_BASE_SELECT` + `compile_pages_filters` +
-/// keyset path the IPC runs) and EXPLAIN that — so any drift in the live
+/// (the same `compile_pages_filters` + `SortKeyset::compose` path the IPC
+/// runs) and EXPLAIN that — so any drift in the live
 /// query plan trips the asserts.
 ///
 /// The composed SQL uses named placeholders: `?1` = space_id, then the
@@ -1591,6 +1594,56 @@ async fn recently_modified_query_plan_reads_pages_cache_not_op_log() {
     );
 }
 
+/// #5371 — every sort reads its rows in order from an index led by the space
+/// (migration 0124), so a page costs `LIMIT` rows, not a sort of the space.
+/// Last-opened merges two index-ordered arms: its only temp B-trees order an
+/// arm's `LIMIT`ed rows, each right after that arm's `SCAN (subquery…)`.
+#[tokio::test]
+async fn every_sort_reads_an_index_instead_of_sorting_the_space_5371() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    for i in 0..10 {
+        seed_page(
+            &pool,
+            &format!("01PAGE0000000000000000X{i:02}"),
+            &format!("x{i}"),
+        )
+        .await;
+    }
+    let cases: [(PageSort, &[&str]); 6] = [
+        (PageSort::Alphabetical, &["idx_pages_cache_space_title"]),
+        (PageSort::Created, &["idx_pages_cache_space_created"]),
+        (
+            PageSort::RecentlyModified,
+            &["idx_pages_cache_space_edited"],
+        ),
+        (
+            PageSort::LastOpened,
+            &["idx_page_opens_opened", "idx_pages_cache_space_created"],
+        ),
+        (PageSort::MostLinked, &["idx_pages_cache_space_linked"]),
+        (PageSort::MostContent, &["idx_pages_cache_space_content"]),
+    ];
+    for (sort, indexes) in cases {
+        let plan = explain_query_plan_for_filter(&pool, &filter(sort), &[]).await;
+        for index in indexes {
+            assert!(
+                plan.contains(index),
+                "{sort:?} must read {index}; got:\n{plan}"
+            );
+        }
+        let lines: Vec<&str> = plan.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("TEMP B-TREE") {
+                assert!(
+                    i > 0 && lines[i - 1].starts_with("SCAN (subquery"),
+                    "{sort:?} sorts the space instead of reading an index; got:\n{plan}"
+                );
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn filtered_query_plan_explains_real_composed_ipc_sql() {
     // Assert the EXPLAIN harness now plans the IPC's REAL
@@ -1598,7 +1651,7 @@ async fn filtered_query_plan_explains_real_composed_ipc_sql() {
     // keyset), not a hand-rebuilt copy. We compose a Tag-filtered query and
     // EXPLAIN it; the plan must reference `block_tags` (proving the compiled
     // `compile_tag` fragment was actually spliced into the planned statement)
-    // and still ride `pages_cache` via the LEFT JOIN. If the IPC's real SQL
+    // and still drive from `pages_cache`. If the IPC's real SQL
     // ever stops emitting the filter fragment, this plan loses the
     // `block_tags` token and the assert fires.
     let (pool, _dir) = test_pool().await;
@@ -1626,7 +1679,7 @@ async fn filtered_query_plan_explains_real_composed_ipc_sql() {
     );
     assert!(
         plan.to_lowercase().contains("pages_cache"),
-        "filtered plan must still reference pages_cache via the LEFT JOIN; got:\n{plan}"
+        "filtered plan must still drive from pages_cache; got:\n{plan}"
     );
 }
 

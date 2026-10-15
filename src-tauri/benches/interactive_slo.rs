@@ -778,7 +778,7 @@ async fn seed_pages_cache_fixture(
 
 /// #2585 — fixture for the whole-space `MostLinked` sort probes. Reuses
 /// `seed_pages_cache_fixture` (10K pages x 9 children + cross-page links),
-/// assigns every block to `SLO_SPACE_ID` so the production `b.space_id = ?1`
+/// assigns every block to `SLO_SPACE_ID` so the production `pc.space_id = ?1`
 /// filter selects the whole set, and populates `pages_cache` for the
 /// cache-backed probe. The `pages_cache` counts are computed with the exact
 /// subqueries the columns denormalize (`recompute_all_pages_cache_counts` /
@@ -797,7 +797,8 @@ async fn seed_pages_mostlinked_fixture(pool: &SqlitePool) -> Vec<String> {
     assign_all_to_slo_space(pool).await;
     sqlx::query(
         "INSERT INTO pages_cache \
-             (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count) \
+             (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count, \
+              space_id) \
          SELECT p.id, p.content, lower(p.content), 0, \
              ( \
                  SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
@@ -814,7 +815,8 @@ async fn seed_pages_mostlinked_fixture(pool: &SqlitePool) -> Vec<String> {
                      WHERE descendant.page_id = p.id \
                        AND descendant.deleted_at IS NULL \
                        AND descendant.id != p.id \
-             ) \
+             ), \
+             p.space_id \
          FROM blocks p \
          WHERE p.block_type = 'page' AND p.deleted_at IS NULL AND p.space_id = ?",
     )
@@ -1991,8 +1993,8 @@ fn bench_list_pages_with_metadata_namespace(c: &mut Criterion) {
     rt.block_on(
         sqlx::query(
             "INSERT INTO pages_cache \
-                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
-             SELECT id, content, 0, 0, 0 FROM blocks \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count, space_id) \
+             SELECT id, content, 0, 0, 0, space_id FROM blocks \
              WHERE block_type = 'page' AND space_id = ?",
         )
         .bind(SLO_SPACE_ID)
@@ -2612,48 +2614,49 @@ const SLO_PAGES_CACHE_COUNTS_DIRECT_SQL: &str = "SELECT p.id AS page_id, \
 // `↗N` badge-render cost for one visible page. It does NOT measure the axis
 // that justifies the `pages_cache.{inbound_link_count,child_block_count}`
 // columns existing: the `MostLinked`/`MostContent` sort keys the ORDER BY on
-// the count, which runs as a `USE TEMP B-TREE FOR ORDER BY` — SQLite evaluates
-// the key for EVERY space page before the `LIMIT`. These two probes measure
-// exactly that, holding everything constant except the count source:
+// the count. These two probes measure exactly that:
 //
-//   * `_CACHE` reads the materialised `pc.inbound_link_count` (production
-//     today), and
+//   * `_CACHE` is production's `MostLinked` first page: a range of
+//     `idx_pages_cache_space_linked` (migration 0124) that stops at the
+//     `LIMIT`, and
 //   * `_LIVE` inlines the pre-0069 `COUNT(DISTINCT) FROM block_links`
-//     correlated subquery that dropping the columns would revert to (with the
-//     current keyset architecture, which inlines the sort expression, the
-//     subquery lands in BOTH the SELECT column and the ORDER BY).
+//     correlated subquery that dropping the columns would revert to: nothing
+//     to index, so SQLite evaluates it for EVERY space page and sorts them
+//     (the subquery lands in BOTH the SELECT column and the ORDER BY).
 //
 // `_LIVE` − `_CACHE` is the whole-space cost the columns actually buy — the
 // number #2508 needed and that the badge probe cannot produce.
 //
-// Both mirror `commands/pages/metadata.rs::PAGES_METADATA_BASE_SELECT` + the
-// `MostLinked` first-page (`cursor = None`) keyset; keep them in step with
-// that source (the file's hand-copied-SQL convention). `?1` = space_id,
-// `?2` = limit-plus-one. The five residual metadata subqueries
-// (`last_modified_at`, `has_*`) are carried verbatim so `_CACHE` reflects the
-// real production `MostLinked` latency, and they cancel in the delta.
+// `_CACHE` mirrors `commands/pages/metadata.rs`'s `PAGES_METADATA_COLUMNS` +
+// `PAGES_METADATA_FROM` + the `MostLinked` first-page (`cursor = None`)
+// keyset; keep it in step with that source (the file's hand-copied-SQL
+// convention). `?1` = space_id, `?2` = limit-plus-one. The `has_*` subqueries
+// ride in both probes, so they cancel in the delta.
 // ---------------------------------------------------------------------------
 
-/// #2585 — whole-space `MostLinked` first page reading the materialised
-/// `pc.inbound_link_count` (production shape today).
+/// #2585 — production's `MostLinked` first page, reading the materialised
+/// `pc.inbound_link_count` in index order.
 const SLO_PAGES_MOSTLINKED_CACHE_SQL: &str = "SELECT \
        b.id, b.block_type, b.content, b.parent_id, b.position, \
        b.deleted_at, b.todo_state, b.priority, b.due_date, \
        b.scheduled_date, b.page_id, \
-       (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) AS last_modified_at, \
-       COALESCE(pc.inbound_link_count, 0) AS inbound_link_count, \
-       COALESCE(pc.child_block_count, 0) AS child_block_count, \
+       pc.last_edited_ms AS last_modified_at, \
+       pc.inbound_link_count, \
+       pc.child_block_count, \
        EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags, \
        EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
                AND descendant.deleted_at IS NULL AND descendant.todo_state IS NOT NULL) AS has_todo, \
        EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
                AND descendant.deleted_at IS NULL AND descendant.scheduled_date IS NOT NULL) AS has_scheduled, \
        EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
-               AND descendant.deleted_at IS NULL AND descendant.due_date IS NOT NULL) AS has_due \
-   FROM blocks b \
-   LEFT JOIN pages_cache pc ON pc.page_id = b.id \
-   WHERE b.block_type = 'page' AND b.deleted_at IS NULL AND b.space_id = ?1 \
-   ORDER BY COALESCE(pc.inbound_link_count, 0) DESC, b.id ASC \
+               AND descendant.deleted_at IS NULL AND descendant.due_date IS NOT NULL) AS has_due, \
+       pc.title_sort_key, \
+       COALESCE(po.opened_ms, -1) AS opened_ms \
+   FROM pages_cache pc \
+   CROSS JOIN blocks b ON b.id = pc.page_id \
+   LEFT JOIN page_opens po ON po.page_id = pc.page_id \
+   WHERE pc.space_id = ?1 AND b.block_type = 'page' AND b.deleted_at IS NULL \
+   ORDER BY pc.inbound_link_count DESC, pc.page_id ASC \
    LIMIT ?2";
 
 /// #2585 — the same whole-space `MostLinked` first page, but with the count
@@ -2661,8 +2664,8 @@ const SLO_PAGES_MOSTLINKED_CACHE_SQL: &str = "SELECT \
 /// subquery (no `pages_cache` join) — the shape dropping the columns reverts
 /// to. The subquery is the exact one `pages_cache.inbound_link_count`
 /// denormalizes (`SLO_PAGES_CACHE_COUNTS_DIRECT_SQL` / migration 0069), rooted
-/// on `b.id`, and appears in both the SELECT and the ORDER BY (the keyset
-/// inlines the sort expression, so today's code would double-evaluate it).
+/// on `b.id`, and appears in both the SELECT and the ORDER BY, as a keyset
+/// that inlines the sort expression would evaluate it.
 const SLO_PAGES_MOSTLINKED_LIVE_SQL: &str = "SELECT \
        b.id, b.block_type, b.content, b.parent_id, b.position, \
        b.deleted_at, b.todo_state, b.priority, b.due_date, \
@@ -2831,10 +2834,10 @@ fn bench_pages_cache_counts_direct_query(c: &mut Criterion) {
     assert_under_budget_deferred("pages_cache counts direct query @ 100K", &acc, BUDGET_MS);
 }
 
-/// #2585 — whole-space `MostLinked` first-page sort reading the materialised
-/// `pages_cache` column (production shape today). PROBLEM TIER (gated behind
+/// #2585 — `MostLinked` first page reading the materialised `pages_cache`
+/// column in index order (production shape). PROBLEM TIER (gated behind
 /// `SLO_INCLUDE_PROBLEM`; see `bench_tags_cache_direct_query` doc). This is the
-/// axis that actually justifies the count columns — the temp-B-tree sort
+/// axis that actually justifies the count columns — without them the sort
 /// evaluates the key for every space page before `LIMIT` — as opposed to the
 /// 50-page badge sample `bench_pages_cache_counts_direct_query` times. Pairs
 /// with `bench_pages_mostlinked_sort_live`: the delta is the columns' value.

@@ -404,6 +404,7 @@ pub async fn project_set_property_to_sql(
         )
         .execute(&mut *conn)
         .await?;
+        agaric_store::cache::sync_pages_cache_space_ids(&mut *conn, &[block_id]).await?;
     } else {
         project_property_row(conn, payload).await?;
     }
@@ -911,6 +912,7 @@ pub async fn project_delete_property_to_sql(
         )
         .execute(&mut *conn)
         .await?;
+        agaric_store::cache::sync_pages_cache_space_ids(&mut *conn, &[block_id]).await?;
     } else {
         sqlx::query!(
             "DELETE FROM block_properties WHERE block_id = ? AND key = ?",

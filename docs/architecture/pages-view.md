@@ -20,8 +20,8 @@ Every Pages-view list render walks the same four stages. The IPC is the only asy
 
 ```text
 ┌──────────────────────────┐
-│ list_pages_with_metadata │  Tauri IPC — paginated keyset over `blocks WHERE block_type='page'`,
-│  (pages/metadata.rs)     │  joined to the metadata aggregates. Cursor carries sort-key value
+│ list_pages_with_metadata │  Tauri IPC — paginated keyset over the space's `pages_cache` rows,
+│  (pages/metadata.rs)     │  joined to their live page blocks. Cursor carries sort-key value
 └────────────┬─────────────┘  + sort-mode discriminator. Returns PageResponse<PageWithMetadataRow>.
              │
              ▼
@@ -58,14 +58,19 @@ One side hook orbits this pipeline without altering its shape:
 
 Six options, every one ordered by the server over all pages in the space behind a keyset cursor (#5371). The rows render in the order received; nothing re-sorts them in JS.
 
-| Sort option | Wire value | Order | Cursor key |
-|-------------|------------|-------|------------|
-| `alphabetical` | `alphabetical` | `pages_cache.title_sort_key` ASC, `id` ASC | `title_sort_key` in `Cursor.deleted_at` |
-| `recent` ("Last opened") | `last-opened` | `page_opens.opened_ms` DESC, `id` DESC; pages never opened on this device follow, newest first | `opened_ms` (`-1` for never) in `Cursor.seq` |
-| `created` | `created` | `id` DESC | `id` only |
-| `recently-modified` ("Last edited") | `recently-modified` | `pages_cache.last_edited_ms` DESC, `id` ASC | `last_edited_ms` in `Cursor.seq` |
-| `most-linked` | `most-linked` | `pages_cache.inbound_link_count` DESC, `id` ASC | the count in `Cursor.seq` |
-| `most-content` | `most-content` | `pages_cache.child_block_count` DESC, `id` ASC | the count in `Cursor.seq` |
+Each sort reads its rows in order from an index and stops at the page size, so a page costs the same at any vault size (migration 0124). The query drives from `pages_cache`, which carries its page's `space_id`, through the index named below; a cursor page seeks into it at the cursor's key.
+
+| Sort option | Wire value | Order | Cursor key | Index |
+|-------------|------------|-------|------------|-------|
+| `alphabetical` | `alphabetical` | `pages_cache.title_sort_key` ASC, `id` ASC | `title_sort_key` in `Cursor.deleted_at` | `idx_pages_cache_space_title` |
+| `recent` ("Last opened") | `last-opened` | `page_opens.opened_ms` DESC, `id` DESC; pages never opened on this device follow, newest first | `opened_ms` (`-1` for never) in `Cursor.seq` | `idx_page_opens_opened`, then `idx_pages_cache_space_created` |
+| `created` | `created` | `id` DESC | `id` only | `idx_pages_cache_space_created` |
+| `recently-modified` ("Last edited") | `recently-modified` | `pages_cache.last_edited_ms` DESC, `id` ASC | `last_edited_ms` in `Cursor.seq` | `idx_pages_cache_space_edited` |
+| `most-linked` | `most-linked` | `pages_cache.inbound_link_count` DESC, `id` ASC | the count in `Cursor.seq` | `idx_pages_cache_space_linked` |
+| `most-content` | `most-content` | `pages_cache.child_block_count` DESC, `id` ASC | the count in `Cursor.seq` | `idx_pages_cache_space_content` |
+
+- Last opened reads two arms: the opened pages from `page_opens` in open order, then the never-opened pages of the space in id order; a cursor in the never-opened tail reads that arm alone. `page_opens` has no space, so the opened arm skips the opens of other spaces.
+- A page lists in the space its cache row names. The page-create INSERT copies the page's space, a `space` op's projection moves the row in the same transaction (`cache::sync_pages_cache_space_ids`), and the page-row rebuild repairs any other path (inbound sync, snapshot restore, purging a space). A page without a cache row, between a reset wiping the cache and its rebuild, is absent until the rebuild lands.
 
 - `title_sort_key` is the title NFKD-decomposed, combining marks stripped, lowercased (`agaric_core::title_sort::title_sort_key`), compared as UTF-8 bytes: `Émile` sorts with `E`, `ángel` before `Zebra`.
 - `last_edited_ms` is the newest op on the page or any block on it, else the page's ULID creation time. Every path that lands an op raises it in the same transaction (`agaric_store::cache::raise_pages_last_edited_ms`), so editing a page's body moves the page up, and op-log compaction (#5286) cannot lower it.
@@ -101,22 +106,22 @@ A cursor whose `position` slot does not match the requested sort is rejected by 
 
 | Column | Definition | Index |
 |--------|------------|-------|
-| `last_modified_at` | `pages_cache.last_edited_ms`: the newest op on the page or any block on it, else the page's ULID creation time; kept when compaction prunes the ops (#5286). | `pages_cache` primary key (migration 0123) |
+| `last_modified_at` | `pages_cache.last_edited_ms`: the newest op on the page or any block on it, else the page's ULID creation time; kept when compaction prunes the ops (#5286). | `idx_pages_cache_space_edited` (migration 0124) |
 | `inbound_link_count` | Canonical definition: `COUNT(DISTINCT block_links.source_id)` where the target is the page or any of its descendants (walked via `blocks.page_id`) and the source is a live block on another page in the page's space (`src.space_id IS page.space_id` — a `block_links` row survives a move to another space, #5275). Served from `pages_cache`. | `idx_block_links_target` (migration 0001) |
 | `child_block_count` | Canonical definition: `COUNT(*)` non-deleted descendants where `page_id = page.id AND id != page.id`. Served from `pages_cache`. | `idx_blocks_page_id` |
 | `flags: PagePropertyFlags` | Typed struct with `has_tags` / `has_todo` / `has_scheduled` / `has_due` — each an `EXISTS` subquery that short-circuits on first match. Replaces the original bitmask shape (Round 1 review). | `idx_block_tags_block_id`, `idx_blocks_page_id` |
 
 ### Materialised counts
 
-`inbound_link_count` and `child_block_count` are **materialised into `pages_cache`** (migration `0069`). The IPC's SELECT LEFT JOINs `pages_cache` and reads the cached columns directly; the previous per-page `COUNT(DISTINCT bl.source_id)` / `COUNT(*)` correlated subqueries are gone.
+`inbound_link_count` and `child_block_count` are **materialised into `pages_cache`** (migration `0069`). The IPC's SELECT drives from `pages_cache` and reads the cached columns directly; the previous per-page `COUNT(DISTINCT bl.source_id)` / `COUNT(*)` correlated subqueries are gone.
 
 The materializer maintains both columns byte-identically to the canonical SELECT on every `CreateBlock` / `EditBlock` / `DeleteBlock` / `RestoreBlock` / `PurgeBlock` op (helpers live in `src-tauri/agaric-engine/src/materializer/handlers/pages_cache.rs`). The implementation uses **recompute-on-touch** (re-run the canonical aggregate for affected pages on each op) rather than delta-math — per-op cost is bounded by the affected-page count (typically 1-5) and the parity test catches any drift.
 
 The parity contract is non-negotiable: `src-tauri/agaric-engine/src/materializer/tests/pages_cache_parity.rs` (`mixed_fixture_full_lifecycle` via `assert_parity`) exercises a mixed 10-page fixture through every materializer op and asserts `pages_cache.{inbound,child}_block_count == SELECT COUNT(...) FROM block_links / blocks` after each step.
 
-Materialised columns turn the `most-linked` first-page query from a per-page correlated subquery over `block_links` into a direct read on `pages_cache` — the regression bench is `src-tauri/benches/interactive_slo.rs` (run with `cd src-tauri && cargo bench --bench interactive_slo`). `EXPLAIN QUERY PLAN` confirms the plan uses `SEARCH pc USING INDEX sqlite_autoindex_pages_cache_1` — no `block_links` scan, no `CORRELATED SCALAR SUBQUERY`. The plan terminates with `USE TEMP B-TREE FOR ORDER BY` (no secondary index on `inbound_link_count DESC` — at ≤20k pages the quick-sort-into-top-K is fast enough and an index would add maintenance cost on every link change without paying for itself).
+Materialised columns turn the `most-linked` first-page query from a per-page correlated subquery over `block_links` into a direct read on `pages_cache` — the regression bench is `src-tauri/benches/interactive_slo.rs` (run with `cd src-tauri && cargo bench --bench interactive_slo`). `EXPLAIN QUERY PLAN` shows `SEARCH pc USING INDEX idx_pages_cache_space_linked (space_id=?)` — no `block_links` scan, no count subquery, and no temp B-tree: the index rewrite a count change costs is paid on the write so the read never sorts the space (`every_sort_reads_an_index_instead_of_sorting_the_space_5371` pins every sort's plan).
 
-Migration `0123` adds the two sort keys beside them, `title_sort_key` and `last_edited_ms`. Neither is indexed: the list filters by space, which `pages_cache` does not carry, so the query drives from `blocks` and sorts with a temp B-tree. The page-row rebuild (`cache::pages::rebuild_pages_cache`) writes the title key wherever it writes the title and births `last_edited_ms` from the op log; boot schedules it while a row is still at the migration's unfilled default. `pages_cache_parity.rs` pins both keys after single ops, a batch and a cross-page move, and the reconciliation oracle checks them (`reconcile_pages_cache_sort_keys`).
+Migration `0123` adds the two sort keys beside them, `title_sort_key` and `last_edited_ms`; migration `0124` adds `space_id` and the per-sort indexes above. The page-row rebuild (`cache::pages::rebuild_pages_cache`) writes the title key wherever it writes the title and births `last_edited_ms` from the op log; boot schedules it while a row is still at the migration's unfilled default. `pages_cache_parity.rs` pins both keys after single ops, a batch and a cross-page move, and `space_id` through a page's `space` ops; the reconciliation oracle checks all three (`reconcile_pages_cache_sort_keys`).
 
 ## Open extension points
 
