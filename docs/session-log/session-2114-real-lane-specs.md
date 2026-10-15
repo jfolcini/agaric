@@ -31,3 +31,18 @@ two-device harness.
 None of these could run here (no tauri-driver); this PR's real-backend lane is
 their first run. Gates: `tsc -p tsconfig.wdio.json`, oxlint, oxfmt,
 `npx vitest run e2e-tauri`, the vault-isolation and driver-gate checks, typos.
+
+**First run: 40 of 42; one spec bug, one shipped app bug.** `due-date-agenda`'s
+second test waited for the task's static row, but the reopened page hands the
+editor back to the focused task; it now waits for the row in either state, as
+`block-duplicate` does. `block-structure-roundtrip` found a real bug: on Linux,
+Shift+Tab never dedented a block. WebKitGTK reports `ISO_Left_Tab` as
+`key: "Unidentified"` with `code: "Tab"` (checked on WebKitGTK 2.52.6, the CI
+runner's version), and the native-listener handlers tested `e.key === 'Tab'`,
+so the browser moved focus instead. React's synthetic `key` and ProseMirror
+keymaps (`w3c-keyname`) already normalise it; the native listeners did not.
+`isTabKey` in `keyboard-config/keys.ts` now treats that shape as Tab, used by
+the shortcut matcher (`previousTab`, rebindings), the block dedent rule and its
+opt-out guard, the Edit-as-Markdown buffer, and the template picker's focus
+trap. Vitest tests dispatch the WebKitGTK event shape at each site; each was
+red with its fix reverted. The Chromium mock lane could not see this.

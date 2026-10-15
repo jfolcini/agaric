@@ -23,7 +23,7 @@ import {
   openJournalBlockEditor,
   typeInputVerified,
   typeMarkerVerified,
-  typeTextVerified,
+  typeVerified,
   waitForAppReady,
   waitForToast,
 } from './helpers'
@@ -90,7 +90,7 @@ describe('Agaric real-backend page rename (#5365)', () => {
     // The header's title commits on Enter, which blurs it (PageHeader).
     await $(TITLE).click()
     await clearFocused()
-    await typeTextVerified(TITLE, NEW_TITLE)
+    await typeVerified(TITLE, NEW_TITLE, (sel) => $(sel).getText(), 'page title')
     await browser.keys(['Enter'])
     await waitForToast('Page renamed')
 

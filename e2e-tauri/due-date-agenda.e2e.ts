@@ -21,7 +21,6 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
-  blockStaticByMarker,
   navigateTo,
   openNewPage,
   openPageSource,
@@ -43,11 +42,16 @@ const DATE_PICKER = '[data-testid="date-picker-popup"]'
 let taskId = ''
 let today = ''
 
+// A row is `sortable-block` whether it renders static or holds the editor: the
+// first test leaves the editor on the task after `/due`, and the re-opened
+// page hands it back.
+const TASK_ROW = `[data-testid="sortable-block"]*=${TASK}`
+
 /** Leave the page editor and come back, so the task row is the backend's. */
 async function reopenTheNewPage(): Promise<void> {
   await navigateTo('Journal')
   await reopenPageByTitle('Untitled')
-  await blockStaticByMarker(TASK).waitForDisplayed({ timeout: NAV_TIMEOUT })
+  await $(TASK_ROW).waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
 /** The task checkbox's label (`block.taskCycle`: "Task: TODO. Click to cycle."). */
@@ -123,7 +127,7 @@ describe('Agaric real-backend due date in the agenda (#5365)', () => {
     await openNewPage()
     await typeMarkerVerified(TASK)
     await reopenTheNewPage()
-    taskId = (await blockStaticByMarker(TASK).getAttribute('data-block-id')) ?? ''
+    taskId = (await $(TASK_ROW).getAttribute('data-block-id')) ?? ''
     if (taskId === '') throw new Error('the task block has no data-block-id')
 
     const checkbox = $(`[data-block-id="${taskId}"] [data-testid="task-marker"]`)
@@ -195,8 +199,7 @@ describe('Agaric real-backend due date in the agenda (#5365)', () => {
 
     await navigateTo('Journal')
     await waitForDuePanelGroup('DOING')
-    await reopenPageByTitle('Untitled')
-    await blockStaticByMarker(TASK).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await reopenTheNewPage()
     await browser.waitUntil(async () => ((await taskLabel()) ?? '').startsWith('Task: DOING.'), {
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the re-opened task does not read DOING',
