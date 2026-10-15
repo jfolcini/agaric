@@ -2449,7 +2449,7 @@ fn bench_set_property(c: &mut Criterion) {
     let fallbacks = agaric_lib::materializer::sql_only_fallback_count();
     // The cycle's two open states: no write completes the task, so none spawns
     // a recurrence sibling or a completion stamp.
-    let state_for = |n: u64| if n % 2 == 0 { "TODO" } else { "DOING" };
+    let state_for = |n: u64| if n.is_multiple_of(2) { "TODO" } else { "DOING" };
 
     let materializer_ref = &materializer;
     let (acc, settled) = time_write_probe(
@@ -2545,7 +2545,7 @@ fn bench_move_block(c: &mut Criterion) {
     let fallbacks = agaric_lib::materializer::sql_only_fallback_count();
     // Even calls make `moved` the sibling's only child; odd calls put it back.
     let parent_for = |n: u64| {
-        if n % 2 == 0 {
+        if n.is_multiple_of(2) {
             sibling.as_str()
         } else {
             WRITE_PATH_PAGE_ID
