@@ -68,7 +68,6 @@ export default {
     'playwright-report',
     'test-results',
     'blob-report',
-    '.serena',
     '.code-review-graph',
     'worktrees',
     'public',

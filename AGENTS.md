@@ -300,4 +300,4 @@ Orchestration workflow: [the `batch-issues` skill](.claude/skills/batch-issues/S
 <!-- code navigation -->
 ## Code Navigation
 
-Prefer symbol-aware tools when the agent has them. `code-review-graph` is declared in [`.mcp.json`](.mcp.json) but optional (needs `uvx`); Serena is client-side. Neither is a prerequisite. If the tools are absent or fail on a target, use Grep/Glob/Read and move on; do not retry a missing tool. A symbol server's root is the main checkout, so edits from a git worktree must go through Read/Write/Edit with absolute paths.
+Prefer symbol-aware tools when the agent has them. `code-review-graph` is declared in [`.mcp.json`](.mcp.json) but optional (needs `uvx`) and not a prerequisite. If the tools are absent or fail on a target, use Grep/Glob/Read and move on; do not retry a missing tool. A symbol server's root is the main checkout, so edits from a git worktree must go through Read/Write/Edit with absolute paths.
