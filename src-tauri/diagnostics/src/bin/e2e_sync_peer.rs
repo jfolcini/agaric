@@ -1,6 +1,3 @@
-// Test bodies are exempt from the 70-code-line ceiling (AGENTS.md "Patterns
-// caught in review" item 6).
-#![cfg_attr(test, allow(clippy::too_many_lines))]
 //! `e2e_sync_peer` — the second device of the real-backend e2e lane (#5365).
 //!
 //! The lane drives one app through tauri-driver; this is the other device. It
@@ -126,7 +123,9 @@ struct Peer {
 }
 
 impl Peer {
-    /// The app's own vault layout (`init_persistence` in `src/lib.rs`).
+    /// The app's own vault layout (`init_persistence` in `src/lib.rs`), with the
+    /// boot step a write needs: the seeded spaces registered, so a block made
+    /// under a synced page resolves its space and enters that space's doc.
     async fn open(vault: &Path) -> Result<Self, AppError> {
         std::fs::create_dir_all(vault)?;
         let pools = init_pools(&vault.join("notes.db")).await?;
@@ -135,6 +134,7 @@ impl Peer {
             &vault.join("sync-endpoint.key"),
         )?;
         let materializer = Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+        agaric_lib::spaces::bootstrap_spaces(&pools.write, &device_id, &materializer).await?;
         let scheduler = Arc::new(SyncScheduler::with_intervals(DEBOUNCE, NO_PERIODIC_PULL));
         let daemon = SyncDaemon::start_if_peers_exist_with_lifecycle(SyncDaemonContext {
             pool: pools.write.clone(),
