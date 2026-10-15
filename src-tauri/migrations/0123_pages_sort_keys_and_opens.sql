@@ -16,12 +16,6 @@ ALTER TABLE pages_cache
 ALTER TABLE pages_cache
     ADD COLUMN last_edited_ms INTEGER NOT NULL DEFAULT 0 CHECK (last_edited_ms >= 0);
 
-CREATE INDEX IF NOT EXISTS idx_pages_cache_title_sort_key
-    ON pages_cache(title_sort_key, page_id);
-
-CREATE INDEX IF NOT EXISTS idx_pages_cache_last_edited
-    ON pages_cache(last_edited_ms, page_id);
-
 -- The Last-opened key: when this device last opened the page. Device-local
 -- like `block_drafts`: no op type, no Loro state, so nothing syncs or exports
 -- it, and a purge drops the row with its page.
@@ -29,5 +23,3 @@ CREATE TABLE page_opens (
     page_id   TEXT PRIMARY KEY NOT NULL REFERENCES blocks(id) ON DELETE CASCADE,
     opened_ms INTEGER NOT NULL CHECK (opened_ms >= 0)
 ) STRICT;
-
-CREATE INDEX IF NOT EXISTS idx_page_opens_opened ON page_opens(opened_ms);

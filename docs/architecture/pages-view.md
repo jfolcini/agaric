@@ -101,7 +101,7 @@ A cursor whose `position` slot does not match the requested sort is rejected by 
 
 | Column | Definition | Index |
 |--------|------------|-------|
-| `last_modified_at` | `pages_cache.last_edited_ms`: the newest op on the page or any block on it, else the page's ULID creation time; kept when compaction prunes the ops (#5286). | `idx_pages_cache_last_edited` (migration 0123) |
+| `last_modified_at` | `pages_cache.last_edited_ms`: the newest op on the page or any block on it, else the page's ULID creation time; kept when compaction prunes the ops (#5286). | `pages_cache` primary key (migration 0123) |
 | `inbound_link_count` | Canonical definition: `COUNT(DISTINCT block_links.source_id)` where the target is the page or any of its descendants (walked via `blocks.page_id`) and the source is a live block on another page in the page's space (`src.space_id IS page.space_id` — a `block_links` row survives a move to another space, #5275). Served from `pages_cache`. | `idx_block_links_target` (migration 0001) |
 | `child_block_count` | Canonical definition: `COUNT(*)` non-deleted descendants where `page_id = page.id AND id != page.id`. Served from `pages_cache`. | `idx_blocks_page_id` |
 | `flags: PagePropertyFlags` | Typed struct with `has_tags` / `has_todo` / `has_scheduled` / `has_due` — each an `EXISTS` subquery that short-circuits on first match. Replaces the original bitmask shape (Round 1 review). | `idx_block_tags_block_id`, `idx_blocks_page_id` |
@@ -116,7 +116,7 @@ The parity contract is non-negotiable: `src-tauri/agaric-engine/src/materializer
 
 Materialised columns turn the `most-linked` first-page query from a per-page correlated subquery over `block_links` into a direct read on `pages_cache` — the regression bench is `src-tauri/benches/interactive_slo.rs` (run with `cd src-tauri && cargo bench --bench interactive_slo`). `EXPLAIN QUERY PLAN` confirms the plan uses `SEARCH pc USING INDEX sqlite_autoindex_pages_cache_1` — no `block_links` scan, no `CORRELATED SCALAR SUBQUERY`. The plan terminates with `USE TEMP B-TREE FOR ORDER BY` (no secondary index on `inbound_link_count DESC` — at ≤20k pages the quick-sort-into-top-K is fast enough and an index would add maintenance cost on every link change without paying for itself).
 
-Migration `0123` adds the two sort keys beside them, `title_sort_key` and `last_edited_ms`, each indexed with `page_id`. The page-row rebuild (`cache::pages::rebuild_pages_cache`) writes the title key wherever it writes the title and births `last_edited_ms` from the op log; boot schedules it while a row is still at the migration's unfilled default. `pages_cache_parity.rs` pins both keys after single ops, a batch and a cross-page move, and the reconciliation oracle checks them (`reconcile_pages_cache_sort_keys`).
+Migration `0123` adds the two sort keys beside them, `title_sort_key` and `last_edited_ms`. Neither is indexed: the list filters by space, which `pages_cache` does not carry, so the query drives from `blocks` and sorts with a temp B-tree. The page-row rebuild (`cache::pages::rebuild_pages_cache`) writes the title key wherever it writes the title and births `last_edited_ms` from the op log; boot schedules it while a row is still at the migration's unfilled default. `pages_cache_parity.rs` pins both keys after single ops, a batch and a cross-page move, and the reconciliation oracle checks them (`reconcile_pages_cache_sort_keys`).
 
 ## Open extension points
 
