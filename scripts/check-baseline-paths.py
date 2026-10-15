@@ -127,7 +127,7 @@ PRUNE_DIRS = ("docs/session-log/",)
 # --- The population: data files ------------------------------------------
 # repo-relative path -> (extractor, base directory the entries are relative to)
 #
-# `base` is part of the declaration because two of these are NOT repo-root
+# `base` is part of the declaration because one of these is NOT repo-root
 # relative, and guessing would make a dangling entry look resolvable. That is
 # exactly how a guard's DENY_FILES once rotted: its single entry
 # was written relative to `src-tauri/src/` and kept resolving nowhere.
@@ -143,8 +143,6 @@ DATA_SOURCES: dict[str, tuple[str, str]] = {
     "scripts/doc-code-paths-baseline.json": ("json:file", "."),
     # `<count> <path>` text lines.
     "src-tauri/dynamic-sql-baseline.txt": ("text:count-path", "."),
-    # One migration FILENAME per line, relative to the migrations directory.
-    "src-tauri/migrations-mock-ack-baseline.txt": ("text:lines", "src-tauri/migrations"),
     # One path per line, relative to `src-tauri/` (the file's header says so).
     "src-tauri/unsafe-allowlist.txt": ("text:lines", "src-tauri"),
 }
