@@ -3222,8 +3222,7 @@ mod mcp_reads {
     }
 
     /// `search` — a trigram term in a few hundred of the 100K blocks, first
-    /// page of 50. Report-only: no run has measured it yet, so a budget would
-    /// be a guess.
+    /// page of 50.
     pub fn bench_mcp_search(c: &mut Criterion) {
         let rt = Runtime::new().unwrap();
         let (_dir, pool, tools) = fixture(&rt, "slo_mcp_search");
@@ -3240,10 +3239,7 @@ mod mcp_reads {
             "mcp search @ 100K: untimed probe must page the fixture's matches"
         );
         let acc = time(c, rt, tools, "mcp_search_100k", "search", args);
-        let mean_ms = acc.total().as_secs_f64() * 1000.0 / acc.iters() as f64;
-        println!(
-            "interactive_slo: mcp search @ 100K = {mean_ms:.2} ms (report-only, no budget yet)"
-        );
+        assert_under_budget("mcp search @ 100K", &acc, BUDGET_MS);
     }
 }
 

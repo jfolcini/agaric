@@ -3326,6 +3326,7 @@ async fn each_write_tool_opens_one_command_transaction_5402() {
     let other_page = mk_page(&pool, &mat, &space, "Q").await;
     let block = mk_child_of(&pool, &mat, &page, "x").await;
     let batched = mk_child_of(&pool, &mat, &page, "z").await;
+    let edited = mk_child_of(&pool, &mat, &page, "e").await;
     let tag = mk_tag_in(&pool, &mat, &space).await;
     settle(&mat).await;
 
@@ -3409,6 +3410,20 @@ async fn each_write_tool_opens_one_command_transaction_5402() {
         let (_, n) = command_txs_of(&tools, name, args).await;
         opened.push((name, n));
     }
+    settle(&mat).await;
+    let base = editable_source(&pool, &mat, &page, &space).await;
+    let (_, n) = command_txs_of(
+        &tools,
+        "edit_page_markdown",
+        json!({
+            "page_id": page,
+            "markdown": with_bullet_moved_last(&base, &edited),
+            "base": base,
+            "space_id": space,
+        }),
+    )
+    .await;
+    opened.push(("edit_page_markdown", n));
 
     assert_eq!(
         opened,
@@ -3426,6 +3441,7 @@ async fn each_write_tool_opens_one_command_transaction_5402() {
             ("undo", 1),
             ("move_page_to_space", 1),
             ("batch", 1),
+            ("edit_page_markdown", 1),
         ],
         "each write opens one transaction, its space check inside it"
     );
