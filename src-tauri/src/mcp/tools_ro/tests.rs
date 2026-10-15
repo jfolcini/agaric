@@ -129,8 +129,8 @@ async fn snapshot_tool_descriptions() {
 //     deserialise into the struct without an `unknown_fields`
 //     rejection (the structs use `deny_unknown_fields`).
 //
-// The asserts below cover `list_pages` (no required fields, two
-// optional) and `get_block` (one required field, no optional). When
+// The asserts below cover `list_pages` (one required field, two
+// optional) and `get_block` (two required fields, no optional). When
 // schemars lands these can be removed in favour of the
 // auto-generated schema.
 // -------------------------------------------------------------------
@@ -146,23 +146,22 @@ fn list_pages_schema_matches_args_struct() {
 
     // Every property advertised in the schema must round-trip
     // through `ListPagesArgs` without `deny_unknown_fields` firing.
-    // The schema has no required fields — an empty object must
-    // deserialize cleanly (no required-field rejection).
-    let empty: ListPagesArgs = serde_json::from_value(json!({}))
-        .expect("ListPagesArgs accepts an empty object (all fields optional)");
-    let _ = empty;
+    assert_eq!(schema["required"], json!(["space_id"]));
+    let missing: Result<ListPagesArgs, _> = serde_json::from_value(json!({}));
+    assert!(
+        missing.is_err(),
+        "ListPagesArgs must reject an object without space_id",
+    );
 
     // Build a concrete payload using every property the schema
     // advertises. If the struct lacks one of these fields, this
     // would parse but lose data; if the struct has additional
-    // fields, those would be required (currently they are all
-    // `Option<T>` with `#[serde(default)]`, so this stays valid).
+    // fields, those would be required and missing from the payload.
     let mut payload = serde_json::Map::new();
     for &name in &prop_names {
         // Pick a value-shape that matches the schema's declared
-        // type. Both fields here are typed (`string` and
-        // `integer`); extending the test would need a small type
-        // mapper.
+        // type (`string` or `integer`); extending the test would
+        // need a small type mapper.
         let ty = props[name]["type"].as_str().expect("each prop has a type");
         let value = match ty {
             "string" => json!("placeholder"),
@@ -173,6 +172,7 @@ fn list_pages_schema_matches_args_struct() {
     }
     let parsed: ListPagesArgs = serde_json::from_value(Value::Object(payload))
         .expect("ListPagesArgs accepts every property the schema advertises");
+    assert_eq!(parsed.space_id, "placeholder");
     assert_eq!(parsed.cursor.as_deref(), Some("placeholder"));
     assert_eq!(parsed.limit, Some(1));
 
@@ -199,29 +199,32 @@ fn get_block_schema_matches_args_struct() {
         .collect();
     assert_eq!(
         required,
-        vec!["block_id"],
-        "get_block schema requires exactly the `block_id` field",
+        vec!["block_id", "space_id"],
+        "get_block schema requires exactly the `block_id` and `space_id` fields",
     );
 
-    // A payload that omits `block_id` must fail deserialization
-    // (the struct field is non-optional).
-    let missing: Result<GetBlockArgs, _> = serde_json::from_value(json!({}));
-    assert!(
-        missing.is_err(),
-        "GetBlockArgs must reject an empty object — required field missing",
-    );
+    // A payload that omits a required field must fail deserialization
+    // (the struct fields are non-optional).
+    for partial in [json!({"block_id": "abc"}), json!({"space_id": "s"})] {
+        let missing: Result<GetBlockArgs, _> = serde_json::from_value(partial.clone());
+        assert!(
+            missing.is_err(),
+            "GetBlockArgs must reject {partial} — required field missing",
+        );
+    }
 
-    // A payload that includes `block_id` deserializes cleanly.
-    let parsed: GetBlockArgs = serde_json::from_value(json!({"block_id": "abc"}))
-        .expect("GetBlockArgs accepts a payload with block_id");
+    // A payload with both required fields deserializes cleanly.
+    let parsed: GetBlockArgs = serde_json::from_value(json!({"block_id": "abc", "space_id": "s"}))
+        .expect("GetBlockArgs accepts a payload with block_id and space_id");
     assert_eq!(parsed.block_id, "abc");
+    assert_eq!(parsed.space_id, "s");
 
     // A payload with an unknown property must be rejected by
     // `deny_unknown_fields` — pinning the schema/struct contract
     // even when the schema's `additionalProperties: false` is the
     // wire contract.
     let stray: Result<GetBlockArgs, _> =
-        serde_json::from_value(json!({"block_id": "abc", "extra": 1}));
+        serde_json::from_value(json!({"block_id": "abc", "space_id": "s", "extra": 1}));
     assert!(
         stray.is_err(),
         "GetBlockArgs must reject unknown fields (deny_unknown_fields)",
@@ -287,9 +290,14 @@ async fn list_pages_happy_path_returns_pages_only() {
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
     let result = tools
-        .call_tool("list_pages", json!({}), &test_ctx())
+        .call_tool(
+            "list_pages",
+            json!({"space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .expect("happy path");
     let items = result["items"].as_array().expect("items array");
@@ -303,7 +311,11 @@ async fn list_pages_happy_path_returns_pages_only() {
 async fn list_pages_rejects_unknown_field() {
     let (tools, _mat, _dir) = mk_tools().await;
     let err = tools
-        .call_tool("list_pages", json!({"bogus": 1}), &test_ctx())
+        .call_tool(
+            "list_pages",
+            json!({"space_id": TEST_SPACE_ID, "bogus": 1}),
+            &test_ctx(),
+        )
         .await
         .expect_err("must reject unknown field");
     assert!(
@@ -349,15 +361,17 @@ async fn get_page_happy_path_returns_subtree() {
     .await
     .unwrap();
     settle(&mat).await;
-    // Phase 7 — MCP `handle_get_page` looks up the page's own
-    // `space` property and threads it through `get_page_inner`. Run
-    // bootstrap so the page lands in Personal via the back-fill sweep.
+    // Bootstrap so the page lands in Personal via the back-fill sweep.
     crate::spaces::bootstrap_spaces_for_test(&tools.pool, DEV)
         .await
         .unwrap();
 
     let result = tools
-        .call_tool("get_page", json!({"page_id": page.id.clone()}), &test_ctx())
+        .call_tool(
+            "get_page",
+            json!({"page_id": page.id.clone(), "space_id": crate::spaces::SPACE_PERSONAL_ULID}),
+            &test_ctx(),
+        )
         .await
         .expect("happy path");
     assert_eq!(result["page"]["id"], page.id.as_str());
@@ -375,7 +389,7 @@ async fn get_page_not_found_returns_not_found() {
     let err = tools
         .call_tool(
             "get_page",
-            json!({"page_id": "NONEXISTENT_ULID_01HZ"}),
+            json!({"page_id": BlockId::new().into_string(), "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -412,9 +426,14 @@ async fn get_page_on_non_page_block_validation_error() {
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
     let err = tools
-        .call_tool("get_page", json!({"page_id": content.id}), &test_ctx())
+        .call_tool(
+            "get_page",
+            json!({"page_id": content.id, "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .expect_err("non-page block must error");
     assert!(
@@ -598,11 +617,19 @@ async fn search_malformed_ids_error_rather_than_empty() {
 /// `"limit"` field in.
 fn limit_validation_cases() -> Vec<(&'static str, i64, Value)> {
     vec![
-        (TOOL_LIST_PAGES, LIST_RESULT_CAP, json!({})),
+        (
+            TOOL_LIST_PAGES,
+            LIST_RESULT_CAP,
+            json!({"space_id": TEST_SPACE_ID}),
+        ),
         // page_id need not exist — `validate_limit` runs before
         // the inner lookup, so out-of-range cases fire before any
         // NotFound is possible.
-        (TOOL_GET_PAGE, LIST_RESULT_CAP, json!({"page_id": "ANY"})),
+        (
+            TOOL_GET_PAGE,
+            LIST_RESULT_CAP,
+            json!({"page_id": "ANY", "space_id": TEST_SPACE_ID}),
+        ),
         (
             TOOL_SEARCH,
             SEARCH_RESULT_CAP,
@@ -1095,11 +1122,12 @@ async fn get_block_happy_path() {
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
     let result = tools
         .call_tool(
             "get_block",
-            json!({"block_id": blk.id.clone()}),
+            json!({"block_id": blk.id.clone(), "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -1113,7 +1141,7 @@ async fn get_block_not_found_error() {
     let err = tools
         .call_tool(
             "get_block",
-            json!({"block_id": "NONEXISTENT_ID"}),
+            json!({"block_id": "NONEXISTENT_ID", "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -1140,6 +1168,7 @@ async fn get_block_accepts_lowercase_ulid_l121() {
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
     // Agaric returns uppercase ULIDs; the agent supplies the
     // *lowercase* form to exercise the boundary normalisation.
@@ -1150,7 +1179,11 @@ async fn get_block_accepts_lowercase_ulid_l121() {
     );
 
     let result = tools
-        .call_tool("get_block", json!({"block_id": lower}), &test_ctx())
+        .call_tool(
+            "get_block",
+            json!({"block_id": lower, "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .expect("lowercase ULID must be accepted at the MCP boundary");
     assert_eq!(
@@ -2336,9 +2369,14 @@ async fn list_pages_cursor_pagination_roundtrip() {
         .unwrap();
     }
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
     let page1 = tools
-        .call_tool("list_pages", json!({"limit": 2}), &test_ctx())
+        .call_tool(
+            "list_pages",
+            json!({"limit": 2, "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .unwrap();
     let items1 = page1["items"].as_array().unwrap();
@@ -2350,7 +2388,7 @@ async fn list_pages_cursor_pagination_roundtrip() {
     let page2 = tools
         .call_tool(
             "list_pages",
-            json!({"limit": 2, "cursor": cursor}),
+            json!({"limit": 2, "cursor": cursor, "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -2381,7 +2419,7 @@ async fn list_pages_cursor_pagination_roundtrip() {
     let page3 = tools
         .call_tool(
             "list_pages",
-            json!({"limit": 2, "cursor": cursor2}),
+            json!({"limit": 2, "cursor": cursor2, "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -2649,7 +2687,9 @@ async fn concurrent_clients_exact_success_count() {
                         &ctx,
                     )
                     .await;
-                let b = tools.call_tool("list_pages", json!({}), &ctx).await;
+                let b = tools
+                    .call_tool("list_pages", json!({"space_id": TEST_SPACE_ID}), &ctx)
+                    .await;
                 let d = tools
                     .call_tool(
                         "get_agenda",
@@ -2745,8 +2785,11 @@ async fn inner_list_pages_returns_only_pages() {
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&pool).await;
 
-    let resp = list_pages_inner(&pool, None, Some(10)).await.unwrap();
+    let resp = list_pages_inner(&pool, TEST_SPACE_ID, None, Some(10))
+        .await
+        .unwrap();
     assert_eq!(resp.items.len(), 1);
     assert_eq!(resp.items[0].block_type, "page");
 }
@@ -2754,9 +2797,14 @@ async fn inner_list_pages_returns_only_pages() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inner_list_pages_rejects_bogus_cursor() {
     let (pool, _dir) = test_pool().await;
-    let err = list_pages_inner(&pool, Some("not-a-real-cursor".to_string()), Some(10))
-        .await
-        .expect_err("invalid cursor");
+    let err = list_pages_inner(
+        &pool,
+        TEST_SPACE_ID,
+        Some("not-a-real-cursor".to_string()),
+        Some(10),
+    )
+    .await
+    .expect_err("invalid cursor");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
@@ -2924,8 +2972,13 @@ async fn snapshot_list_pages_response_shape() {
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
     let result = tools
-        .call_tool("list_pages", json!({}), &test_ctx())
+        .call_tool(
+            "list_pages",
+            json!({"space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .unwrap();
     insta::assert_yaml_snapshot!("tool_response_list_pages", result, {
@@ -2963,14 +3016,16 @@ async fn snapshot_get_page_response_shape() {
     .await
     .unwrap();
     settle(&mat).await;
-    // Phase 7 — bootstrap so the page lands in Personal via the
-    // back-fill sweep; otherwise `handle_get_page` rejects pages with
-    // no `space` property.
+    // Bootstrap so the page lands in Personal via the back-fill sweep.
     crate::spaces::bootstrap_spaces_for_test(&tools.pool, DEV)
         .await
         .unwrap();
     let result = tools
-        .call_tool("get_page", json!({"page_id": page.id}), &test_ctx())
+        .call_tool(
+            "get_page",
+            json!({"page_id": page.id, "space_id": crate::spaces::SPACE_PERSONAL_ULID}),
+            &test_ctx(),
+        )
         .await
         .unwrap();
     insta::assert_yaml_snapshot!("tool_response_get_page", result, {
@@ -3032,8 +3087,13 @@ async fn snapshot_get_block_response_shape() {
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
     let result = tools
-        .call_tool("get_block", json!({"block_id": blk.id}), &test_ctx())
+        .call_tool(
+            "get_block",
+            json!({"block_id": blk.id, "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .unwrap();
     insta::assert_yaml_snapshot!("tool_response_get_block", result, {
@@ -3217,7 +3277,11 @@ async fn list_pages_does_not_populate_last_append() {
     let captured = LAST_APPEND
         .scope(RefCell::new(Vec::new()), async {
             tools
-                .call_tool("list_pages", json!({}), &test_ctx())
+                .call_tool(
+                    "list_pages",
+                    json!({"space_id": TEST_SPACE_ID}),
+                    &test_ctx(),
+                )
                 .await
                 .expect("list_pages ok");
             take_appends()
@@ -3291,13 +3355,17 @@ async fn get_block_and_get_page_return_properties_tags_and_aliases_5377() {
     let block = tools
         .call_tool(
             "get_block",
-            json!({"block_id": page.id.clone()}),
+            json!({"block_id": page.id.clone(), "space_id": crate::spaces::SPACE_PERSONAL_ULID}),
             &test_ctx(),
         )
         .await
         .unwrap();
     let read = tools
-        .call_tool("get_page", json!({"page_id": page.id.clone()}), &test_ctx())
+        .call_tool(
+            "get_page",
+            json!({"page_id": page.id.clone(), "space_id": crate::spaces::SPACE_PERSONAL_ULID}),
+            &test_ctx(),
+        )
         .await
         .unwrap();
     for got in [&block, &read["page"]] {
@@ -3347,9 +3415,14 @@ async fn get_block_without_properties_tags_or_aliases_returns_empty_arrays_5377(
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
     let page_row = tools
-        .call_tool("get_block", json!({"block_id": page.id}), &test_ctx())
+        .call_tool(
+            "get_block",
+            json!({"block_id": page.id, "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .unwrap();
     assert_eq!(page_row["properties"], json!([]), "got {page_row}");
@@ -3357,7 +3430,11 @@ async fn get_block_without_properties_tags_or_aliases_returns_empty_arrays_5377(
     assert_eq!(page_row["aliases"], json!([]), "got {page_row}");
 
     let content_row = tools
-        .call_tool("get_block", json!({"block_id": content.id}), &test_ctx())
+        .call_tool(
+            "get_block",
+            json!({"block_id": content.id, "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
         .await
         .unwrap();
     assert_eq!(content_row["properties"], json!([]), "got {content_row}");
@@ -3413,8 +3490,9 @@ async fn get_page_markdown_happy_path_5375() {
         .await
         .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
-    let args = json!({"page_id": page.id.as_str().to_lowercase()});
+    let args = json!({"page_id": page.id.as_str().to_lowercase(), "space_id": TEST_SPACE_ID});
     let result = tools
         .call_tool("get_page_markdown", args.clone(), &test_ctx())
         .await
@@ -3439,7 +3517,7 @@ async fn get_page_markdown_unknown_page_is_not_found_5375() {
     let err = tools
         .call_tool(
             "get_page_markdown",
-            json!({"page_id": BlockId::new().into_string()}),
+            json!({"page_id": BlockId::new().into_string(), "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -3476,11 +3554,12 @@ async fn get_page_markdown_on_a_content_block_is_validation_5375() {
     .await
     .unwrap();
     settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
     let err = tools
         .call_tool(
             "get_page_markdown",
-            json!({"page_id": content.id}),
+            json!({"page_id": content.id, "space_id": TEST_SPACE_ID}),
             &test_ctx(),
         )
         .await
@@ -4191,6 +4270,163 @@ async fn search_takes_a_parent_page_and_tags_by_name_5397() {
     let message = err.to_string();
     assert!(
         matches!(err, AppError::Validation { .. }) && message.contains("`tag_ids` 'nope'"),
+        "got {message}"
+    );
+}
+
+// -------------------------------------------------------------------
+// #5415 — `list_pages`, `get_page`, `get_page_markdown`, `get_block`
+// read one space
+// -------------------------------------------------------------------
+
+/// The reads that took no space now refuse a call without one, naming the
+/// field.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reads_without_space_id_are_refused_5415() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let id = BlockId::new().into_string();
+    for (tool, args) in [
+        (TOOL_LIST_PAGES, json!({})),
+        (TOOL_GET_PAGE, json!({ "page_id": id })),
+        (TOOL_GET_PAGE_MARKDOWN, json!({ "page_id": id })),
+        (TOOL_GET_BLOCK, json!({ "block_id": id })),
+    ] {
+        let err = tools
+            .call_tool(tool, args, &test_ctx())
+            .await
+            .expect_err("a call without space_id must be refused");
+        let message = err.to_string();
+        assert!(
+            matches!(err, AppError::Validation { .. })
+                && message.contains("missing field `space_id`"),
+            "{tool}: got {message}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_pages_lists_only_the_pages_of_its_space_5415() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let other = mk_space(&tools.pool, "Other").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let other_page = mk_page_in(&tools, &mat, &other).await;
+    settle(&mat).await;
+
+    for (space, expected) in [(&space, &page), (&other, &other_page)] {
+        let resp = tools
+            .call_tool("list_pages", json!({ "space_id": space }), &test_ctx())
+            .await
+            .unwrap();
+        let ids: Vec<&str> = resp["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, [expected.as_str()], "pages of space {space}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_refuses_a_page_in_another_space_5415() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let other = mk_space(&tools.pool, "Other").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    settle(&mat).await;
+
+    let read = tools
+        .call_tool(
+            "get_page",
+            json!({ "page_id": page, "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .expect("a page in the named space is read");
+    assert_eq!(read["page"]["id"], page.as_str());
+
+    let err = tools
+        .call_tool(
+            "get_page",
+            json!({ "page_id": page, "space_id": other }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a page in another space must be refused");
+    let message = err.to_string();
+    assert!(
+        matches!(err, AppError::Validation { .. })
+            && message.contains(&format!("not in current space '{other}'")),
+        "got {message}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_markdown_refuses_a_page_in_another_space_5415() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let other = mk_space(&tools.pool, "Other").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    settle(&mat).await;
+
+    let read = tools
+        .call_tool(
+            "get_page_markdown",
+            json!({ "page_id": page, "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .expect("a page in the named space is read");
+    assert_eq!(read["page_id"], page.as_str());
+
+    let err = tools
+        .call_tool(
+            "get_page_markdown",
+            json!({ "page_id": page, "space_id": other }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a page in another space must be refused");
+    let message = err.to_string();
+    assert!(
+        matches!(err, AppError::Validation { .. })
+            && message.contains(&format!("belongs to space '{space}'")),
+        "got {message}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_block_refuses_a_block_in_another_space_5415() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let other = mk_space(&tools.pool, "Other").await;
+    let page = mk_page_in(&tools, &mat, &space).await;
+    let block = mk_child(&tools, &mat, &page, "text").await;
+    settle(&mat).await;
+
+    let read = tools
+        .call_tool(
+            "get_block",
+            json!({ "block_id": block, "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .expect("a block in the named space is read");
+    assert_eq!(read["id"], block.as_str());
+
+    let err = tools
+        .call_tool(
+            "get_block",
+            json!({ "block_id": block, "space_id": other }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a block in another space must be refused");
+    let message = err.to_string();
+    assert!(
+        matches!(err, AppError::Validation { .. })
+            && message.contains(&format!("belongs to space '{space}'")),
         "got {message}"
     );
 }

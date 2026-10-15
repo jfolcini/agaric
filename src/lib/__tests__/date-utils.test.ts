@@ -16,6 +16,7 @@ import {
   getWeekOptions,
   getWeekRange,
   isDateFormattedPage,
+  JOURNAL_PAGE_GLOB,
 } from '@/lib/date-utils'
 import { i18n } from '@/lib/i18n'
 import {
@@ -486,6 +487,17 @@ describe('isDateFormattedPage', () => {
     expect(isDateFormattedPage('20261-04-06')).toBe(false)
     expect(isDateFormattedPage('2026-4-06')).toBe(false)
     expect(isDateFormattedPage('2026-04-6')).toBe(false)
+  })
+})
+
+describe('JOURNAL_PAGE_GLOB', () => {
+  // The glob only uses `[0-9]` classes and `-`, which read the same as a regex.
+  const globMatches = (title: string) => new RegExp(`^${JOURNAL_PAGE_GLOB}$`).test(title)
+
+  it('matches exactly the titles isDateFormattedPage accepts', () => {
+    for (const title of ['2026-04-06', '2020-01-01', 'My Page', '2026-04', '20261-04-06', '']) {
+      expect(globMatches(title)).toBe(isDateFormattedPage(title))
+    }
   })
 })
 

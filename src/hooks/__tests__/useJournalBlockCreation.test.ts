@@ -20,11 +20,12 @@
  */
 
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
-import { act, renderHook, waitFor } from '@testing-library/react'
+import { act, render, renderHook, waitFor } from '@testing-library/react'
+import { createElement } from 'react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlockRow, withOps } from '@/__tests__/fixtures'
+import { makeBlock, makeBlockRow, withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
 import { unwrap } from '@/lib/app-error'
@@ -40,7 +41,9 @@ import {
 } from '@/lib/prefetch-page-subtree'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
+import type { FlatBlock } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
+import { getPageStore, PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -490,6 +493,70 @@ describe('useJournalBlockCreation', () => {
     expect(state.selectedBlockIds).toEqual([])
     expect(state.selectionAnchorId).toBeNull()
     expect(state.selectionFocusId).toBeNull()
+  })
+})
+
+describe('useJournalBlockCreation — blank last block', () => {
+  // PageBlockStoreProvider declares `children` as required; the cast keeps the
+  // createElement call free of an explicit children prop.
+  const Provider = PageBlockStoreProvider as unknown as (props: {
+    pageId: string
+  }) => ReturnType<typeof PageBlockStoreProvider>
+
+  /** Mount the day's page store holding `blocks`, as DaySection's provider does. */
+  function mountDay(blocks: FlatBlock[]): void {
+    render(createElement(Provider, { pageId: 'PEXIST' }))
+    const store = getPageStore('PEXIST')
+    if (!store) throw new Error('page store not registered')
+    act(() => store.setState({ blocks }))
+  }
+
+  const blank = makeBlock({ id: 'BLANK', content: '', parent_id: 'PEXIST', page_id: 'PEXIST' })
+
+  it('focuses an unfocused blank last block instead of creating another', async () => {
+    stubInvoke({ create_block: () => createdBlock('PEXIST', 1) })
+    mountDay([blank])
+    const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
+
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect(useBlockStore.getState().focusedBlockId).toBe('BLANK')
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')).toHaveLength(0)
+  })
+
+  it('creates a block when the blank last block is the focused one', async () => {
+    stubInvoke({
+      create_block: () => createdBlock('PEXIST', 1),
+      load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
+    })
+    mountDay([blank])
+    useBlockStore.getState().setFocused('BLANK')
+    const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
+
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect(useBlockStore.getState().focusedBlockId).toBe('B1')
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')).toHaveLength(1)
+  })
+
+  it('creates a block when the last block holds text', async () => {
+    stubInvoke({
+      create_block: () => createdBlock('PEXIST', 1),
+      load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
+    })
+    mountDay([{ ...blank, content: 'words' }])
+    const { result } = setup(new Map([['2025-06-15', 'PEXIST']]))
+
+    await act(async () => {
+      await result.current.handleAddBlock('2025-06-15')
+    })
+
+    expect(useBlockStore.getState().focusedBlockId).toBe('B1')
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_block')).toHaveLength(1)
   })
 })
 

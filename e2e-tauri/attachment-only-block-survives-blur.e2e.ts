@@ -26,6 +26,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  enterBlankSibling,
   expectAbsent,
   navigateTo,
   openJournalBlockEditor,
@@ -42,9 +43,6 @@ const FILENAME = 'wdio-note.txt'
 // "agaric" — a text file stays a block attachment; an image would be inlined
 // into the block's text and make it non-blank.
 const TXT_BASE64 = 'YWdhcmlj'
-// A committed blank block renders StaticBlock's placeholder span in place of
-// content (StaticBlock.tsx); a block with text never does.
-const BLANK_STATIC = '[data-testid="block-static"] .block-placeholder'
 
 /** Every attachment badge on screen, with the block row it sits in. */
 async function attachmentBadges(): Promise<
@@ -60,13 +58,13 @@ async function attachmentBadges(): Promise<
 
 /**
  * Type `marker` into a fresh journal block and press Enter, leaving the
- * roving editor in a new, blank sibling below it.
+ * roving editor in a new, blank sibling below it. Returns the sibling's id.
  */
-async function markedBlockThenBlankSibling(marker: string): Promise<void> {
+async function markedBlockThenBlankSibling(marker: string): Promise<string> {
   await navigateTo('Journal')
   await openJournalBlockEditor()
   await typeMarkerVerified(marker)
-  await browser.keys(['Enter'])
+  return enterBlankSibling()
 }
 
 /**
@@ -83,25 +81,22 @@ async function leaveBlankBlockFor(marker: string): Promise<string | null> {
   return markedId
 }
 
-// Skipped until the lane's window has focus (#5457): the cleanup is gated on
-// `document.hasFocus()`, which is false here, so the control case cannot pass and
-// the survive case would pass without the cleanup ever running.
-describe.skip('Agaric real-backend attachment-only block (#5412)', () => {
+describe('Agaric real-backend attachment-only block (#5412)', () => {
   it('control: the same sequence cleans up a blank block holding nothing', async () => {
     await waitForAppReady()
-    await markedBlockThenBlankSibling(CONTROL_MARKER)
+    const blank = `[data-block-id="${await markedBlockThenBlankSibling(CONTROL_MARKER)}"]`
     await leaveBlankBlockFor(CONTROL_MARKER)
 
     // The cleanup's delete is optimistic, so the row leaves the DOM as soon as
     // the metadata probes resolve; wait for that before the round-trip, or
     // the navigation could unmount the tree under the probes.
-    await expectAbsent(BLANK_STATIC, 'the blank control block')
+    await expectAbsent(blank, 'the blank control block')
 
     await navigateTo('Pages')
     await navigateTo('Journal')
 
     await blockStaticByMarker(CONTROL_MARKER).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(BLANK_STATIC, 'the blank control block')
+    await expectAbsent(blank, 'the blank control block')
   })
 
   it('keeps a blank block holding an attachment after focus leaves it', async () => {
