@@ -438,11 +438,9 @@ fn install_pairing_session(
 /// How long [`start_pairing_armed`] waits for this device's bound endpoint
 /// before rendering the pairing QR (#4037).
 ///
-/// Covers the interface sweep and the bind that follow the wake. It used to be
-/// slack added to `SyncScheduler::debounce_window`, back when the dormant
-/// waiter spent that window before rechecking; this change moved the waiter onto
-/// the raw counter, so the window is not spent and summing it only obscured
-/// what the budget rests on.
+/// Covers the interface sweep and the bind that follow the wake. No debounce
+/// window is in it: the dormant waiter watches the raw counter, so the wake
+/// transitions at once.
 const QR_ENDPOINT_BIND_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Start pairing AND arm the pairing window so the host's dormant daemon
@@ -490,12 +488,10 @@ pub async fn start_pairing_armed(
     // then publishes where it bound (`SyncScheduler::publish_local_endpoint`).
     //
     // So the wait below is not a poll for something that already exists; it is
-    // waiting on a transition this function just caused. Since the waiter no
-    // longer debounces (it watches the raw counter), that transition costs the
-    // bind and little else; the budget adds `debounce_window` to the slack only
-    // as headroom, not because the window is spent. Every other case — any
-    // device that has ever paired — is already active and this returns on the
-    // first `borrow`.
+    // waiting on a transition this function just caused. The waiter watches
+    // the raw counter rather than debouncing, so that transition costs the
+    // bind and little else. Every other case — any device that has ever
+    // paired — is already active and this returns on the first `borrow`.
     //
     // A timeout is not a failure: it means this device has no endpoint to
     // advertise, and the QR degrades to the passphrase-only v1 shape that mDNS
@@ -1282,10 +1278,8 @@ mod tests {
 
     /// With no endpoint published inside the budget, the QR degrades to the
     /// passphrase-only shape rather than failing or blocking indefinitely.
-    ///
-    /// The debounce window is squeezed to keep the budget (window + slack) short;
-    /// production sizes it from the real 3 s window, which is what a dormant
-    /// daemon spends before it rechecks the peer table.
+    /// Nothing here publishes one, so this waits out the whole
+    /// `QR_ENDPOINT_BIND_BUDGET`.
     #[tokio::test]
     async fn start_pairing_armed_degrades_when_no_endpoint_is_published() {
         let (pool, _dir) = agaric_store::test_support::test_pool().await;

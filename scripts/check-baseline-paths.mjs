@@ -214,7 +214,7 @@ function isFile(path) {
  */
 function stringsInLiteral(text, name) {
   let hit = -1
-  for (const lead of [`\n${name} `, `\n${name}:`, `\nconst ${name} `, `\nexport const ${name} `]) {
+  for (const lead of [`\nconst ${name} `, `\nexport const ${name} `]) {
     hit = text.indexOf(lead)
     if (hit !== -1) break
   }
@@ -403,10 +403,8 @@ function checkDataSources(findings, perSource) {
       ])
       continue
     }
-    // Dangling entries stay in this count, as the verbose listing always
-    // showed; a red run never prints the total.
-    const [, globs] = checkEntries(rel, entries, base, findings)
-    perSource.push([rel, entries.length - globs, globs])
+    const [dangling, globs] = checkEntries(rel, entries, base, findings)
+    perSource.push([rel, entries.length - dangling - globs, globs])
   }
 }
 

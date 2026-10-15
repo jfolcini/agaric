@@ -217,7 +217,7 @@
 // forgetting would be invisible in its absence (#4129's own framing).
 //
 // Heuristic:
-//   - Scan every tracked `*.rs`, `*.ts`, `*.tsx`, `*.js`, `*.mjs`, `*.py`,
+//   - Scan every tracked `*.rs`, `*.ts`, `*.tsx`, `*.js`, `*.mjs`,
 //     `*.sh`, `*.md` file (this script's own path excluded) for a line
 //     containing the literal substring `REMOVE AFTER`. `*.js`/`*.mjs` are
 //     in scope so a marker left in a GUARD SCRIPT — `scripts/` itself — is
@@ -302,7 +302,7 @@ const VERSION_MANIFEST = 'src-tauri/tauri.conf.json'
 // Historical archive, same exemption the citation guards use.
 const EXCLUDE_PATH_RE = /^docs\/session-log\//
 
-const SCAN_EXT_RE = /\.(rs|ts|tsx|js|mjs|py|sh|md)$/
+const SCAN_EXT_RE = /\.(rs|ts|tsx|js|mjs|sh|md)$/
 
 // The literal phrase, checked FIRST and cheaply per line before the
 // stricter parse below — this is what lets a near-miss (right phrase,

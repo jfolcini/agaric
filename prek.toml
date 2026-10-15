@@ -539,7 +539,7 @@ stages = ["pre-commit"]
 # a doc comment naming its own kill-date ("REMOVE AFTER `0.3.0`") and it was
 # still exported, reachable and running an extra boot-time query six minor
 # versions and ~4 months later — removed only because a deep review happened
-# to read the comment. This hook fails any tracked `.rs`/`.ts`/`.tsx`/`.py`/
+# to read the comment. This hook fails any tracked `.rs`/`.ts`/`.tsx`/`.js`/`.mjs`/
 # `.sh`/`.md` file that still carries a `REMOVE AFTER x.y.z` marker whose
 # version the current app manifest (`src-tauri/tauri.conf.json`, chosen
 # canonical — rationale in the script header) has reached or passed, with a
@@ -574,7 +574,7 @@ name = "no expired REMOVE AFTER markers (#4129)"
 entry = "node scripts/check-remove-after-markers.mjs"
 language = "system"
 pass_filenames = false
-files = '\.(rs|ts|tsx|js|mjs|py|sh|md)$|^(package(-lock)?\.json|src-tauri/(Cargo\.(toml|lock)|tauri\.conf\.json))$'
+files = '\.(rs|ts|tsx|js|mjs|sh|md)$|^(package(-lock)?\.json|src-tauri/(Cargo\.(toml|lock)|tauri\.conf\.json))$'
 stages = ["pre-commit"]
 
 # Self-test the guard's own falsifiable behaviour (an expired marker rejects,

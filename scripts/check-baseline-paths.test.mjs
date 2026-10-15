@@ -153,6 +153,26 @@ void test('a dangling entry in an embedded set exits 1 naming the set', () => {
   )
 })
 
+void test('the verbose listing counts only the entries that resolve, data file and embedded alike', () => {
+  withGuardRepo(
+    {
+      edit: ({ write }) => {
+        write(DYNAMIC_SQL, `1 ${ENTRY}\n1 src-tauri/src/moved.rs\n`)
+        write(
+          RAW_INVOKE,
+          `const EXEMPT_FILES = ['${ENTRY}', 'src/gone.ts']\nconst EXEMPT_DIR_PREFIXES = ['entry/']\n`,
+        )
+      },
+    },
+    (run) => {
+      const r = run('-v')
+      assert.equal(r.status, 1, r.stderr)
+      assert.match(r.stdout, /^ {5}1 path\(s\) {14}src-tauri\/dynamic-sql-baseline\.txt$/m)
+      assert.match(r.stdout, /^ {5}1 path\(s\) {14}scripts\/check-raw-invoke\.mjs:EXEMPT_FILES$/m)
+    },
+  )
+})
+
 void test('glob entries are skipped and counted, not resolved', () => {
   withGuardRepo({ edit: ({ write }) => write(UNSAFE, `${ENTRY}\ngone/**/*.rs\n`) }, (run) => {
     const r = run()
