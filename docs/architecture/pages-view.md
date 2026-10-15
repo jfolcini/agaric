@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Pages view architecture
 
-The shape of the Pages browser — the list view that fronts every page in the active space. This file documents the **data flow** behind the page rows, the seven sort modes, and the per-page metadata IPC. Workflow + UI conventions live with the page-browser source under `src/components/PageBrowser/`; this file is the load-bearing contract a contributor reads before touching the surface.
+The shape of the Pages browser — the list view that fronts every page in the active space. This file documents the **data flow** behind the page rows, the six sort modes, and the per-page metadata IPC. Workflow + UI conventions live with the page-browser source under `src/components/PageBrowser/`; this file is the load-bearing contract a contributor reads before touching the surface.
 
 ## Overview
 
@@ -16,7 +16,7 @@ Four strands of work compose here, and all of them hang off one seam — the `li
 
 ## Data flow
 
-Every Pages-view list render walks the same five stages. The IPC is the only async hop; everything below it is pure transformation.
+Every Pages-view list render walks the same four stages. The IPC is the only async hop; everything below it is pure transformation.
 
 ```text
 ┌──────────────────────────┐
@@ -34,18 +34,9 @@ Every Pages-view list render walks the same five stages. The IPC is the only asy
              │
              ▼
 ┌──────────────────────────┐
-│  usePageBrowserSort      │  Applies the active comparator. Three modes are frontend-only
-│   .sortPages(rows)       │  (`alphabetical`, `recent`, `created`); four ride the IPC (`recently-
-│                          │  modified`, `most-linked`, `most-content`, `default`). See
-│                          │  "Sort modes" below.
-└────────────┬─────────────┘
-             │
-             ▼
-┌──────────────────────────┐
 │  usePageBrowserGrouping  │  Folds the flat row list into the Starred + Namespace-tree +
-│   .buildMultiPageBranch  │  Pages layout. `sortTopLevelUnits` aggregates child metadata
-│                          │  for namespace roots so a tree root sorts by its descendants'
-│                          │  metric, not the root's own (always-zero) column.
+│   .buildMultiPageBranch  │  Pages layout, keeping the server's order: a namespace root
+│                          │  sits where its first page arrived.
 └────────────┬─────────────┘
              │
              ▼
@@ -65,25 +56,23 @@ One side hook orbits this pipeline without altering its shape:
 
 ## Sort modes
 
-Seven options — three evaluated in JS over the loaded page, four pushed into the IPC:
+Six options, every one ordered by the server over all pages in the space behind a keyset cursor (#5371). The rows render in the order received; nothing re-sorts them in JS.
 
-| Sort option | Comparator type | Wire value | Cursor key | Notes |
-|-------------|-----------------|------------|------------|-------|
-| `alphabetical` | Frontend-only (`localeCompare`) | `default` (IPC orders by id ASC; JS re-sorts the page) | `id` (tiebreaker only) | SQLite `COLLATE NOCASE` disagrees with V8 `localeCompare` on every non-ASCII title, so JS owns the comparator over the bounded page-of-50. |
-| `recent` | Frontend-only (`getRecentPages()` MRU lookup) | `default` | n/a — local visit history layered on top | Per-device localStorage history; never goes over the wire. |
-| `created` | Frontend-only (ULID DESC) | `default` | `id` | Treats the ULID timestamp prefix as creation order. |
-| `recently-modified` | Wire — backend `last_modified_at` DESC | `recently-modified` | `last_modified_at` (in `Cursor.deleted_at` slot) + `id` tiebreaker | NULL `last_modified_at` is COALESCE'd to `'0001-01-01'` so the keyset works uniformly across NULL + non-NULL rows. |
-| `most-linked` | Wire — `pages_cache.inbound_link_count` DESC | `most-linked` | `inbound_link_count` (in `Cursor.seq` slot) + `id` tiebreaker | Served by the materialised column. |
-| `most-content` | Wire — `pages_cache.child_block_count` DESC | `most-content` | `child_block_count` (in `Cursor.seq` slot) + `id` tiebreaker | Same materialised path as `most-linked`. |
-| `default` | Wire — backend `id ASC` | `default` | `id` | Power-user / debug; also the wire shape the three frontend-only sorts reuse. |
+| Sort option | Wire value | Order | Cursor key |
+|-------------|------------|-------|------------|
+| `alphabetical` | `alphabetical` | `pages_cache.title_sort_key` ASC, `id` ASC | `title_sort_key` in `Cursor.deleted_at` |
+| `recent` ("Last opened") | `last-opened` | `page_opens.opened_ms` DESC, `id` DESC; pages never opened on this device follow, newest first | `opened_ms` (`-1` for never) in `Cursor.seq` |
+| `created` | `created` | `id` DESC | `id` only |
+| `recently-modified` ("Last edited") | `recently-modified` | `pages_cache.last_edited_ms` DESC, `id` ASC | `last_edited_ms` in `Cursor.seq` |
+| `most-linked` | `most-linked` | `pages_cache.inbound_link_count` DESC, `id` ASC | the count in `Cursor.seq` |
+| `most-content` | `most-content` | `pages_cache.child_block_count` DESC, `id` ASC | the count in `Cursor.seq` |
 
-Cursor implications:
+- `title_sort_key` is the title NFKD-decomposed, combining marks stripped, lowercased (`agaric_core::title_sort::title_sort_key`), compared as UTF-8 bytes: `Émile` sorts with `E`, `ángel` before `Zebra`.
+- `last_edited_ms` is the newest op on the page or any block on it, else the page's ULID creation time. Every path that lands an op raises it in the same transaction (`agaric_store::cache::raise_pages_last_edited_ms`), so editing a page's body moves the page up, and op-log compaction (#5286) cannot lower it.
+- `page_opens` is device-local: `record_page_open` stamps it when a page opens (`navigateToPage`, beside the `recent-pages` visit), it appends no op, and nothing syncs or exports it. The Pages list refetches this sort on every return, since an open marks nothing stale.
+- A stored `default` sort, preference or saved view, reads as `created`.
 
-- Each wire-sort encodes its primary key into an **existing** `Cursor` slot (`deleted_at` for ISO timestamps and strings; `seq` for i64 counts). No new typed slot. Any future paginator introducing a non-id sort key must reuse those existing slots rather than growing the struct.
-- `Cursor.position` carries a sort-mode discriminator (i64 stamped by `sort_discriminator`). A cursor whose discriminator does not match the requested sort is rejected at decode — this is the recovery contract for "user changed sort mid-scroll" (see "Cursor recovery" below).
-- The three frontend-only sorts (`alphabetical`, `recent`, `created`) all map to wire value `default` and re-sort the loaded page in JS. They scroll past the loaded window in **id-ASC** order, not in comparator order — a known property of the implementation, preserved across the sort-modes rewrite.
-
-Sort comparators must not allocate per-comparison. The `sortPages` callback in `usePageBrowserSort` materialises any expensive lookup (the `getRecentPages()` `Map`, the metadata `lookupMeta` closure) **once** before `Array.sort`. The comparator body reads scalars off rows and returns an integer; no `.map`, no `new Date()`, no closure-over-row inside the comparator. Adding a sort mode follows this pattern.
+Each sort encodes its primary key into an **existing** `Cursor` slot (`deleted_at` for the string key, `seq` for an i64). `Cursor.position` carries a sort-mode discriminator (`sort_discriminator`); a cursor whose discriminator does not match the requested sort is rejected (see "Cursor recovery" below).
 
 ## Page rows
 
@@ -98,8 +87,8 @@ The legacy Pages view called `list_blocks(blockType='page')`, whose cursor encod
 The implementation **does not bump `CURRENT_CURSOR_VERSION`** (it stays at 1). Instead `list_pages_with_metadata` reuses existing `Cursor` slots:
 
 - `Cursor.position` → sort-mode discriminator (i64, one per `PageSort` variant).
-- `Cursor.deleted_at` → primary-sort key for string / ISO-timestamp sorts.
-- `Cursor.seq` → primary-sort key for i64-count sorts.
+- `Cursor.deleted_at` → primary-sort key for the string sort (the title key).
+- `Cursor.seq` → primary-sort key for i64 sorts (epoch-ms and counts).
 - `Cursor.id` → tiebreaker (always).
 
 A cursor whose `position` slot does not match the requested sort is rejected by `validate_pages_metadata_cursor` with `AppError::validation_coded(ValidationCode::RequiresRefresh, "cursor sort mismatch (expected …)")`. The frontend recognises the structured `RequiresRefresh` code (#2251 promoted the former message prefix to a `code` field; `validationCode(err) === ValidationCode.RequiresRefresh` in `withCursorRecovery`) as a recovery signal: drop the cursor, refetch from page 1, and (if the user is mid-scroll) surface a "Sort changed — refresh to continue" toast.
@@ -108,11 +97,11 @@ A cursor whose `position` slot does not match the requested sort is rejected by 
 
 ## Metadata aggregation
 
-`PageWithMetadataRow` extends `BlockRow` with four columns, projected by `list_pages_with_metadata_inner`'s SELECT. The two count columns are read from `pages_cache` (see "Materialised counts"); the other two are computed inline.
+`PageWithMetadataRow` extends `BlockRow` with four columns, projected by `list_pages_with_metadata_inner`'s SELECT. `last_modified_at` and the two count columns are read from `pages_cache` (see "Materialised counts"); the flags are computed inline.
 
 | Column | Definition | Index |
 |--------|------------|-------|
-| `last_modified_at` | `MAX(op_log.created_at)` for the page itself, else the page's ULID creation time once compaction has pruned its ops (#5286); not subtree-aware in v1 — the recursive-CTE variant is deferred (open question). | `idx_op_log_block_id` (migration 0030) |
+| `last_modified_at` | `pages_cache.last_edited_ms`: the newest op on the page or any block on it, else the page's ULID creation time; kept when compaction prunes the ops (#5286). | `pages_cache` primary key (migration 0123) |
 | `inbound_link_count` | Canonical definition: `COUNT(DISTINCT block_links.source_id)` where the target is the page or any of its descendants (walked via `blocks.page_id`) and the source is a live block on another page in the page's space (`src.space_id IS page.space_id` — a `block_links` row survives a move to another space, #5275). Served from `pages_cache`. | `idx_block_links_target` (migration 0001) |
 | `child_block_count` | Canonical definition: `COUNT(*)` non-deleted descendants where `page_id = page.id AND id != page.id`. Served from `pages_cache`. | `idx_blocks_page_id` |
 | `flags: PagePropertyFlags` | Typed struct with `has_tags` / `has_todo` / `has_scheduled` / `has_due` — each an `EXISTS` subquery that short-circuits on first match. Replaces the original bitmask shape (Round 1 review). | `idx_block_tags_block_id`, `idx_blocks_page_id` |
@@ -127,10 +116,9 @@ The parity contract is non-negotiable: `src-tauri/agaric-engine/src/materializer
 
 Materialised columns turn the `most-linked` first-page query from a per-page correlated subquery over `block_links` into a direct read on `pages_cache` — the regression bench is `src-tauri/benches/interactive_slo.rs` (run with `cd src-tauri && cargo bench --bench interactive_slo`). `EXPLAIN QUERY PLAN` confirms the plan uses `SEARCH pc USING INDEX sqlite_autoindex_pages_cache_1` — no `block_links` scan, no `CORRELATED SCALAR SUBQUERY`. The plan terminates with `USE TEMP B-TREE FOR ORDER BY` (no secondary index on `inbound_link_count DESC` — at ≤20k pages the quick-sort-into-top-K is fast enough and an index would add maintenance cost on every link change without paying for itself).
 
-`last_modified_at` is not materialised — it is served cheaply by `idx_op_log_block_id` and does not hit the same cliff at the measured scales.
+Migration `0123` adds the two sort keys beside them, `title_sort_key` and `last_edited_ms`. Neither is indexed: the list filters by space, which `pages_cache` does not carry, so the query drives from `blocks` and sorts with a temp B-tree. The page-row rebuild (`cache::pages::rebuild_pages_cache`) writes the title key wherever it writes the title and births `last_edited_ms` from the op log; boot schedules it while a row is still at the migration's unfilled default. `pages_cache_parity.rs` pins both keys after single ops, a batch and a cross-page move, and the reconciliation oracle checks them (`reconcile_pages_cache_sort_keys`).
 
 ## Open extension points
 
 - **Backend graduation of saved views** — deferred. Saved views ship today as a per-device `localStorage` shape (`agaric:pages:savedViews:v1`); that shape is the long-term contract, and syncing them is a separate decision.
 - **MCP exposure of `list_pages_with_metadata`** — deferred. Today's MCP `list_pages` serves the simpler shape; the richer surface lands only if a tool-side need emerges in the saved-views or compound-filter work.
-- **Subtree-aware `last_modified_at`** — deferred (open question). The recursive-CTE variant is a single SELECT change once benchmark evidence justifies it.

@@ -42,6 +42,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     ...actual,
     commands: {
       ...actual.commands,
+      // Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+      recordPageOpen: () => Promise.resolve({ status: 'ok', data: null }),
       listBlocks: (...args: unknown[]) =>
         mockedListBlocks(...args).then((data: unknown) => ({ status: 'ok', data })),
       batchResolve: (...args: unknown[]) =>

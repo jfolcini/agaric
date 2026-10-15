@@ -16,9 +16,8 @@
  * This file drives the REAL `useBlockStore` / `useNavigationStore` /
  * `useTabsStore` singletons (no store mocking — per `src/stores/__tests__/
  * AGENTS.md` "Global stores" convention) through every action that can touch
- * focus or selection and asserts the invariant holds after each one. None of
- * these stores call `invoke()`, so no IPC mock is needed here (see
- * `src/stores/__tests__/blocks.test.ts` for the same no-mock pattern).
+ * focus or selection and asserts the invariant holds after each one. Their
+ * one IPC call is `navigateToPage`'s page-open stamp (#5371), stubbed below.
  *
  * `blocks.test.ts` already covers each action's own behavior in isolation;
  * this suite is deliberately invariant-shaped — it asserts the CONTRACT
@@ -26,8 +25,10 @@
  * set, so a new selection-mutating action that forgets to clear focus (or
  * vice versa) fails here even before anyone writes a dedicated test for it.
  */
-import { beforeEach, describe, expect, it } from 'vitest'
+import { invoke } from '@tauri-apps/api/core'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
@@ -57,6 +58,11 @@ function assertModesExclusive(): void {
     )
   }
 }
+
+// Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+beforeEach(() => {
+  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ record_page_open: () => null }))
+})
 
 describe('cross-store invariants (#2465)', () => {
   beforeEach(() => {

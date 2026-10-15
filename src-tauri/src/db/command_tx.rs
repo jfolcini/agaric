@@ -241,6 +241,17 @@ enum PendingDispatch {
     },
 }
 
+impl PendingDispatch {
+    fn record(&self) -> &agaric_store::op_log::OpRecord {
+        match self {
+            Self::Background(record)
+            | Self::EditBackground { record, .. }
+            | Self::LifecycleBackground { record, .. }
+            | Self::MoveBackground { record, .. } => record,
+        }
+    }
+}
+
 pub struct CommandTx {
     /// The live `BEGIN IMMEDIATE` transaction. `'static` because
     /// `pool.begin_with(...)` internally clones the pool handle.
@@ -453,12 +464,28 @@ impl CommandTx {
     /// a `tracing::debug!` for observability — see the [`Drop`] impl,
     /// issue #1316.)
     ///
+    /// Before committing, raises `pages_cache.last_edited_ms` for the pages
+    /// the queued ops touched (#5371). Every local command commits its ops
+    /// here, undo and attachment ops included, so this is the one place the
+    /// LOCAL path keeps "Last edited" fresh; an error rolls the command back.
+    ///
     /// Returns the number of dispatches that fired. Dispatch failures
     /// are logged at warn level and do not surface here.
     pub async fn commit_and_dispatch(
         mut self,
         materializer: &crate::materializer::Materializer,
     ) -> Result<usize, sqlx::Error> {
+        let touched: Vec<(&str, i64)> = self
+            .pending
+            .iter()
+            .filter_map(|entry| {
+                let record = entry.record();
+                record.block_id.as_deref().map(|b| (b, record.created_at))
+            })
+            .collect();
+        if let Some(tx) = self.inner.as_mut() {
+            agaric_store::cache::raise_pages_last_edited_ms(tx, &touched).await?;
+        }
         // #2604 — detach the engine-rollback checkpoints WHILE the write lock is
         // still held (before the commit below releases it). On a commit failure
         // we rewind the in-place engine apply so it never stays ahead of the

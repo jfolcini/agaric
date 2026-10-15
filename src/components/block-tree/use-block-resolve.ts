@@ -933,9 +933,7 @@ function comparePageRows(
 }
 
 // #4057's `compareUtf8Bytes` and `NOCASE`'s ASCII-only fold now live in
-// `@/lib/sqlite-collation` — the Tauri mock's `compareMetaRows` models the
-// same two backend clauses and was carrying its own (drifted) spelling of
-// them (#3939 item 1).
+// `@/lib/sqlite-collation`.
 
 function compareTagRows(a: TagCacheRow, b: TagCacheRow): number {
   const nameCmp = compareUtf8Bytes(a.name, b.name)

@@ -95,6 +95,35 @@ describe('saved-pages-views', () => {
       expect(views[0]?.id).toBe('v1')
     })
 
+    // #5371 — the retired `default` sort reads as `created`, so a view saved
+    // under it is kept, not dropped as an unknown sort.
+    it('keeps a view saved under the retired `default` sort, as Created', () => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          schemaVersion: 1,
+          views: [
+            {
+              id: 'old',
+              name: 'Old',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              sort: 'default',
+              filters: [TAG_FILTER],
+            },
+            { id: 'v1', name: 'Valid', createdAt: '2026-01-01T00:00:00.000Z', ...BASE_TUPLE },
+          ],
+        }),
+      )
+      const views = getSavedPagesViews()
+      expect(views.map((v) => [v.id, v.sort])).toEqual([
+        ['old', 'created'],
+        ['v1', 'alphabetical'],
+      ])
+      expect(
+        findMatchingSavedPagesView(views, { sort: 'created', filters: [TAG_FILTER] })?.id,
+      ).toBe('old')
+    })
+
     it('keeps a view saved with the retired `density` field and matches it as active', () => {
       localStorage.setItem(
         STORAGE_KEY,

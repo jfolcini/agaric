@@ -116,6 +116,49 @@ async fn insert_remote_op_happy_path() {
     assert_eq!(fetched.op_type, "create_block");
 }
 
+/// #5371 — an ingested peer op moves its page up "Last edited": the ingest is
+/// the one place this device's op log sees it, and the op is never applied.
+#[tokio::test]
+async fn an_ingested_peer_edit_raises_its_pages_last_edited_5371() {
+    let (pool, _dir) = test_pool().await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) VALUES ('P5371', 'page', 'P', 'P5371')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+         VALUES ('C5371', 'content', 'c', 'P5371', 'P5371')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO pages_cache (page_id, title, updated_at) VALUES ('P5371', 'P', 0)")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let record = make_remote_record(
+        "remote-dev",
+        1,
+        None,
+        "edit_block",
+        r#"{"block_id":"C5371","to_text":"peer","prev_edit":null}"#,
+    );
+    assert!(insert_remote_op(&pool, &record).await.unwrap(), "a new row");
+
+    let last_edited: i64 =
+        sqlx::query_scalar("SELECT last_edited_ms FROM pages_cache WHERE page_id = 'P5371'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        last_edited, FIXED_TS,
+        "the child's page moves to the op's time"
+    );
+}
+
 #[tokio::test]
 async fn insert_remote_op_duplicate_is_ignored() {
     let (pool, _dir) = test_pool().await;

@@ -8,10 +8,9 @@
  * spot behind." All three fixtures below redden against `848e98679`.
  *
  *  1. `compareMetaRows`' alphabetical arm ran `toLowerCase().localeCompare()`.
- *     The backend orders `COALESCE(b.content,'') COLLATE NOCASE`
- *     (`src-tauri/src/commands/pages/metadata.rs`) — an ASCII-only fold
- *     followed by a UTF-8 BYTE memcmp. The reachable fixture the issue asked
- *     for is a non-ASCII title.
+ *     The backend orders `pages_cache.title_sort_key` (#5371): NFKD, marks
+ *     stripped, lowercased, then a UTF-8 BYTE memcmp. The reachable fixture
+ *     is a non-ASCII title.
  *  2. The regex arm applied its 1000-row pre-filter cap BEFORE dropping
  *     `content IS NULL` rows. `regex_mode_query`'s SQL carries
  *     `AND b.content IS NOT NULL` in the `WHERE`
@@ -28,14 +27,14 @@ import { describe, expect, it } from 'vitest'
 
 import { clearMock, id } from '@/lib/tauri-mock/__tests__/mock-store-helpers'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { type PageMetaRow, compareMetaRows } from '@/lib/tauri-mock/handlers/shared'
+import { type PageSortRow, compareMetaRows, titleSortKey } from '@/lib/tauri-mock/handlers/shared'
 import { blocks, makeBlock } from '@/lib/tauri-mock/seed'
 
 interface SearchResponse {
   items: Array<Record<string, unknown>>
 }
 
-function row(rowId: string, content: string): PageMetaRow {
+function row(rowId: string, content: string): PageSortRow {
   return {
     id: rowId,
     blockType: 'page',
@@ -52,7 +51,9 @@ function row(rowId: string, content: string): PageMetaRow {
     inboundLinkCount: 0,
     childBlockCount: 0,
     hasOutboundLink: false,
-  } as PageMetaRow
+    titleSortKey: titleSortKey(content),
+    openedMs: -1,
+  } as PageSortRow
 }
 
 const ALL_SPACES = { kind: 'all_spaces' }
@@ -69,27 +70,29 @@ function search(args: Record<string, unknown>): SearchResponse {
 // Item 1 — COLLATE NOCASE, not localeCompare
 // ---------------------------------------------------------------------------
 
-describe('compareMetaRows alphabetical — models COLLATE NOCASE (#3939 item 1)', () => {
+describe('compareMetaRows alphabetical — models title_sort_key (#3939 item 1, #5371)', () => {
   const A = id('CMR1')
   const B = id('CMR2')
 
-  // The reachable fixture: an accented title. ICU sorts `Ápple` next to
-  // `Apple` (before `Zebra`); NOCASE folds nothing non-ASCII and then memcmps,
-  // so `Á` (UTF-8 `C3 81`) sorts AFTER `z` (`7A`).
-  it('orders an accented title by UTF-8 bytes, not by ICU collation', () => {
-    expect(compareMetaRows(row(A, 'Ápple'), row(B, 'Zebra'), 'alphabetical')).toBeGreaterThan(0)
+  // The reachable fixture: an accented title. The key strips the accent, so
+  // `Ápple` sorts with `apple`, before `Zebra`.
+  it('orders an accented title with its base letter', () => {
+    expect(compareMetaRows(row(A, 'Ápple'), row(B, 'Zebra'), 'alphabetical')).toBeLessThan(0)
   })
 
-  // The second half of NOCASE: the fold is ASCII-only. Turkish dotted capital
-  // `İ` (U+0130) lowercases to `i̇` (two code points) under `toLowerCase()`
-  // and is untouched by NOCASE.
-  it('does not fold non-ASCII case the way toLowerCase does', () => {
-    // `İ` is `C4 B0`; `i` is `69`. Under NOCASE both stay put, so `İstanbul`
-    // sorts after `istanbul`. Under `toLowerCase()` the two collapse toward
-    // each other and ICU calls them near-equal, ordering by the tiebreak.
-    expect(compareMetaRows(row(A, 'İstanbul'), row(B, 'istanbul'), 'alphabetical')).toBeGreaterThan(
+  // Turkish dotted capital `İ` (U+0130) decomposes to `I` + U+0307; the mark
+  // goes and `I` lowercases, so the two titles tie and the id decides.
+  it('folds a decomposable non-ASCII capital to its base letter', () => {
+    expect(compareMetaRows(row(B, 'İstanbul'), row(A, 'istanbul'), 'alphabetical')).toBeGreaterThan(
       0,
     )
+    expect(compareMetaRows(row(A, 'İstanbul'), row(B, 'istanbul'), 'alphabetical')).toBeLessThan(0)
+  })
+
+  // A letter with no decomposition keeps its own UTF-8 bytes: `ø` (`C3 B8`)
+  // sorts after `z` (`7A`), as SQLite's BINARY compare of the key does.
+  it('orders an undecomposable letter by its UTF-8 bytes', () => {
+    expect(compareMetaRows(row(A, 'øre'), row(B, 'zebra'), 'alphabetical')).toBeGreaterThan(0)
   })
 
   // ASCII case still folds — the arm is case-INSENSITIVE, which is the whole

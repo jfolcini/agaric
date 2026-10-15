@@ -1056,19 +1056,19 @@ const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
       },
     ],
   },
-  // #3927 — `keyset_for`'s five-arm `match PageSort`
+  // #3927 — `keyset_for`'s six-arm `match PageSort`
   // (`src-tauri/src/commands/pages/metadata.rs`). Each arm picks a different
   // `SortKeyset`: the sort-key EXPRESSION, the keyset WHERE that resumes a
   // cursor page, and the cursor slot the anchor is stashed in. Unlike
   // `filtered_blocks_query`'s arms (which differ in WHICH rows come back),
   // these differ in WHAT ORDER — so a step that credits one of them while
   // opting out of the ordered comparison is credit for nothing. Since #4670
-  // ordered is the default, and none of the five steps in
+  // ordered is the default, and none of the six steps in
   // `query_pages_metadata_sorts.json` opts out.
   //
   // The default branch is `sort-alphabetical` because `sort` is
   // `#[serde(default)]` over a `#[default] Alphabetical` enum: an OMITTED sort
-  // key IS the alphabetical arm, not a sixth one. A step spelling
+  // key IS the alphabetical arm, not a seventh one. A step spelling
   // `"alphabetical"` explicitly falls through to the same branch.
   list_pages_with_metadata: {
     dimensions: [
@@ -1080,7 +1080,8 @@ const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
           { field: 'sort', equals: 'recently-modified', branch: 'sort-recently-modified' },
           { field: 'sort', equals: 'most-linked', branch: 'sort-most-linked' },
           { field: 'sort', equals: 'most-content', branch: 'sort-most-content' },
-          { field: 'sort', equals: 'default', branch: 'sort-default' },
+          { field: 'sort', equals: 'created', branch: 'sort-created' },
+          { field: 'sort', equals: 'last-opened', branch: 'sort-last-opened' },
         ],
         defaultBranch: 'sort-alphabetical',
       },
@@ -1137,11 +1138,7 @@ const QUERY_STEP_BRANCH_DISCRIMINATORS: Readonly<Record<string, BranchSpec>> = {
           // The lesson the old note drew stands even though its subject moved:
           // a branch whose deletion changes nothing OBSERVABLE is not the same
           // as a branch that does nothing, and the difference has to be written
-          // down or the green ratchet claims evidence it does not have. The
-          // sibling case is `list_pages_with_metadata`'s `sort-default`, whose
-          // `b.id ASC` is byte-identical to the tiebreaker and so cannot be
-          // deleted — but MISROUTING it to a sibling keyset does redden
-          // `pages_sorted_default`, so its routing is pinned.
+          // down or the green ratchet claims evidence it does not have.
           { branch: 'fts-match', when: (a) => !searchAnyToggle(a) },
         ],
         defaultBranch: 'literal-post-filter',
@@ -2941,7 +2938,7 @@ describe('#3083 conformance-coverage ratchet', () => {
     ).toBe(expected.length)
   })
 
-  // #3927 — `list_pages_with_metadata`'s five-arm `PageSort` dispatch. Two
+  // #3927 — `list_pages_with_metadata`'s six-arm `PageSort` dispatch. Two
   // things this guard does that the two above do not need to:
   //
   //   - it compares THREE Rust sites to each other (see `PAGE_SORT_MATCH_SITES`
@@ -2957,10 +2954,11 @@ describe('#3083 conformance-coverage ratchet', () => {
   it('list_pages_with_metadata branch discriminators match the Rust PageSort dispatch', () => {
     const expectedVariants = [
       'Alphabetical',
+      'Created',
       'RecentlyModified',
+      'LastOpened',
       'MostLinked',
       'MostContent',
-      'Default',
     ]
     for (const site of PAGE_SORT_MATCH_SITES) {
       const variants = variantsInOrder(
@@ -2978,17 +2976,17 @@ describe('#3083 conformance-coverage ratchet', () => {
     }
 
     // Rust variant → the wire value a query step spells. HARDCODED, mimicking
-    // `#[serde(rename_all = "kebab-case")]` (plus `Default`'s explicit
-    // `rename = "default"`); nothing here parses those attributes.
+    // `#[serde(rename_all = "kebab-case")]`; nothing here parses that attribute.
     const WIRE: Readonly<Record<string, string>> = {
       Alphabetical: 'alphabetical',
+      Created: 'created',
       RecentlyModified: 'recently-modified',
+      LastOpened: 'last-opened',
       MostLinked: 'most-linked',
       MostContent: 'most-content',
-      Default: 'default',
     }
     const dim = soleDimensionOf('list_pages_with_metadata')
-    // Four discriminators + the default; `Alphabetical` has no discriminator
+    // Five discriminators + the default; `Alphabetical` has no discriminator
     // because it IS the `#[serde(default)]` fallthrough — a step that omits
     // `sort` entirely runs that arm.
     expect(dim.discriminators.length + 1).toBe(expectedVariants.length)

@@ -9,8 +9,10 @@
  * seam zustand uses on rehydrate.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { invoke } from '@tauri-apps/api/core'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useNavigationStore } from '@/stores/navigation'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { MAX_PAGE_STACK_DEPTH, selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -27,6 +29,11 @@ interface PersistedTabs {
 function run(blob: unknown): PersistedTabs {
   return migrate?.(blob, 0) as PersistedTabs
 }
+
+// Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+beforeEach(() => {
+  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ record_page_open: () => null }))
+})
 
 describe('tabs persist migrate', () => {
   it('is wired into the persist options', () => {

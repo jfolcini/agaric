@@ -317,13 +317,17 @@ async fn affected_pages_for_create(
         // INSERT the pages_cache row if missing so the
         // `UPDATE` below sees a target. Title = content
         // (matches `rebuild_pages_cache`'s desired-state SQL).
+        // `last_edited_ms` starts unfilled: the apply path that called
+        // this raises it to the create op's time.
         let now = agaric_store::db::now_ms();
+        let title_sort_key = agaric_core::title_sort::title_sort_key(content);
         sqlx::query!(
             "INSERT OR IGNORE INTO pages_cache \
-                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
-             VALUES (?, ?, ?, 0, 0)",
+                 (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count) \
+             VALUES (?, ?, ?, ?, 0, 0)",
             block_id,
             content,
+            title_sort_key,
             now,
         )
         .execute(&mut *conn)

@@ -38,10 +38,9 @@ export const agenda: Record<string, string> = {
   // `({group.blocks.length})` — a count over the loaded window presented with
   // no qualifier. A sort-only sentence leaves that number looking authoritative.
   //
-  // Siblings covering the same "client-side sort over a loaded prefix" shape:
-  // `query.sortPartialNotice_one/_other` (properties.ts) and
-  // `pageBrowser.frontendSortHint` (pages.ts). The former DOES carry a count —
-  // of LOADED rows — with i18next plural suffixes. This key deliberately
+  // Sibling covering the same "client-side sort over a loaded prefix" shape:
+  // `query.sortPartialNotice_one/_other` (properties.ts), which DOES carry a
+  // count — of LOADED rows — with i18next plural suffixes. This key deliberately
   // carries none, so it needs no plural form: `blocks.length` is already
   // announced by the sibling `agenda.resultCount` live region two lines up in
   // AgendaResults, and repeating it here would restate the very window whose

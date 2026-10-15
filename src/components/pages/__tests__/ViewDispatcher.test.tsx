@@ -82,7 +82,8 @@ vi.mock('@/components/TrashView', () => ({
 const mockedInvoke = vi.mocked(invoke)
 
 function stubInvoke(handlers: Readonly<TypedInvokeHandlers>): void {
-  mockedInvoke.mockImplementation(mockInvokeCommands(handlers))
+  // Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+  mockedInvoke.mockImplementation(mockInvokeCommands({ record_page_open: () => null, ...handlers }))
 }
 
 function defaultProps(overrides: Partial<ViewDispatcherProps> = {}): ViewDispatcherProps {

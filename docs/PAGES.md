@@ -3,7 +3,7 @@
 
 The Pages view is the canonical "show me every page in this space" surface — a flat, sortable, paginated list of every page in the active space. Beyond the name-substring search box at the top, it offers a row of **compound filter chips** that narrow the list *server-side*: instead of scrolling, you stack a few filters ("orphaned pages edited long ago") and the backend returns exactly that set.
 
-This page documents the user-facing filter vocabulary. For the data flow behind the list (the metadata IPC, the seven sort modes, the page rows), see [Pages view architecture](architecture/pages-view.md). The same filter primitives power the find-across-pages surface — see [Search](SEARCH.md) for the query-input side of that story.
+This page documents the user-facing filter vocabulary. For the data flow behind the list (the metadata IPC, the six sort modes, the page rows), see [Pages view architecture](architecture/pages-view.md). The same filter primitives power the find-across-pages surface — see [Search](SEARCH.md) for the query-input side of that story.
 
 ## Overview
 
@@ -79,7 +79,7 @@ A quick "where did I leave off" view:
 
 1. Open **Add filter** and click the **Edited this week** bucket under **Filters**.
 
-The list collapses to pages edited in the last seven days. Pair it with the **Recently modified** sort (from the sort control) to read them newest-first.
+The list collapses to pages edited in the last seven days. The **Last edited** sort (from the sort control) does not always agree with it: the sort counts an edit to any block on the page, while the bucket counts only edits to the page block itself, such as its title. A page whose body changed this week can sort near the top yet be left out of the bucket.
 
 ## Combining filters
 

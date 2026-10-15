@@ -264,19 +264,13 @@ export const pages: Record<string, string> = {
   'pageBrowser.countMatching_one': '{{count}} matching page',
   'pageBrowser.countMatching_other': '{{count}} matching pages',
   'pageBrowser.sortLabel': 'Sort order',
-  'pageBrowser.sortRecent': 'Recent',
+  'pageBrowser.sortRecent': 'Last opened',
   'pageBrowser.sortAlphabetical': 'Alphabetical',
   'pageBrowser.sortCreated': 'Created',
-  'pageBrowser.sortRecentlyModified': 'Recently modified',
+  'pageBrowser.sortRecentlyModified': 'Last edited',
   'pageBrowser.sortMostLinked': 'Most linked',
   'pageBrowser.sortMostContent': 'Most content',
-  'pageBrowser.sortDefault': 'Default',
   'pageBrowser.sortPersistedTooltip': 'Your sort choice is saved across sessions',
-  // Cue for frontend-only sorts that reorder only the
-  // loaded pages while more remain to load.
-  'pageBrowser.frontendSortHint': 'Sorted within loaded pages',
-  'pageBrowser.frontendSortHintTooltip':
-    'This order covers the pages loaded so far. Scroll to load more pages for the full global order.',
   // #5269 — the Pages header's Trash button while its count badge shows.
   'pageBrowser.viewButtons.trashWithCount_one': 'Trash, {{count}} item',
   'pageBrowser.viewButtons.trashWithCount_other': 'Trash, {{count}} items',

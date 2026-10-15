@@ -1,5 +1,8 @@
+import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { logger } from '@/lib/logger'
 import { useJournalStore } from '@/stores/journal'
 import { selectCurrentViewForSpace, useNavigationStore } from '@/stores/navigation'
 import { useRecentPagesStore } from '@/stores/recent-pages'
@@ -42,6 +45,11 @@ function resetStore() {
   // Reset recent-pages store so hook tests start from an empty MRU.
   useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
 }
+
+// Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+beforeEach(() => {
+  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ record_page_open: () => null }))
+})
 
 describe('useNavigationStore', () => {
   beforeEach(() => {
@@ -1633,6 +1641,49 @@ describe('useNavigationStore', () => {
       expect(recentPages[0]).toEqual({ pageId: 'DATE_PAGE', title: '2026-04-20' })
 
       recordVisitSpy.mockRestore()
+    })
+
+    // #5371 — every completed open also stamps the page for the Pages view's
+    // "Last opened" sort; an aborted one does not.
+    it('a completed open stamps the page on both branches, an aborted one does not', () => {
+      const stamped = (): unknown[] =>
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([command]) => command === 'record_page_open')
+          .map(([, args]) => args)
+      vi.mocked(invoke).mockClear()
+
+      useTabsStore.getState().navigateToPage('A', 'Alpha')
+      useTabsStore.getState().navigateToPage('DATE_PAGE', '2026-04-20')
+      useTabsStore.setState({ tabs: [], activeTabIndex: 0 })
+      useTabsStore.getState().navigateToPage('GHOST', 'Never Opened')
+
+      expect(stamped()).toEqual([{ pageId: 'A' }, { pageId: 'DATE_PAGE' }])
+    })
+
+    it('a refused stamp is logged, and the open still completes', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          record_page_open: () => Promise.reject({ kind: 'not_found', message: 'page A' }),
+        }),
+      )
+
+      useTabsStore.getState().navigateToPage('A', 'Alpha')
+
+      expect(selectPageStack(useTabsStore.getState()).at(-1)).toEqual({
+        pageId: 'A',
+        title: 'Alpha',
+      })
+      await vi.waitFor(() => {
+        expect(warn).toHaveBeenCalledWith(
+          'tabs',
+          'record_page_open failed',
+          { pageId: 'A' },
+          expect.objectContaining({ kind: 'not_found' }),
+        )
+      })
+      warn.mockRestore()
     })
   })
 
