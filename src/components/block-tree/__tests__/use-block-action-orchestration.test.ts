@@ -1726,6 +1726,52 @@ describe('merge into a verbatim previous block is a no-op join', () => {
   })
 })
 
+// The by-id handlers sit in the rows' context: they must keep their identity
+// across a focus move and still treat the block focused NOW as the live one.
+describe('useBlockActionOrchestration by-id handlers read focus at call time', () => {
+  function renderFocusedOnAThenC(params: ReturnType<typeof makeDefaultParams>) {
+    const hook = renderHook((p: typeof params) => useBlockActionOrchestration(p), {
+      initialProps: params,
+    })
+    const before = hook.result.current
+    hook.rerender({ ...params, focusedBlockId: 'C' })
+    return { before, after: hook.result.current }
+  }
+
+  it.each([
+    ['handleIndentById', 'indent'],
+    ['handleDedentById', 'dedent'],
+    ['handleMoveUpById', 'moveUp'],
+    ['handleMoveDownById', 'moveDown'],
+  ] as const)('%s remounts the block focused since it was created', async (handler, op) => {
+    const params = makeDefaultParams({ focusedBlockId: 'A' })
+    params.rovingEditor.getMarkdown = vi.fn(() => 'Unsaved Charlie')
+    const { before, after } = renderFocusedOnAThenC(params)
+
+    expect(after[handler]).toBe(before[handler])
+    await act(async () => {
+      await before[handler]('C')
+    })
+
+    expect(params[op]).toHaveBeenCalledWith('C')
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('C', 'Unsaved Charlie')
+  })
+
+  it('handleMergeById unmounts the block focused since it was created', async () => {
+    const params = makeDefaultParams({ focusedBlockId: 'A' })
+    params.rovingEditor.unmount = vi.fn(() => 'Edited Charlie')
+    const { before, after } = renderFocusedOnAThenC(params)
+
+    expect(after.handleMergeById).toBe(before.handleMergeById)
+    await act(async () => {
+      await before.handleMergeById('C')
+    })
+
+    expect(params.rovingEditor.unmount).toHaveBeenCalled() // no-args by contract
+    expect(params.edit).toHaveBeenCalledWith('B', 'BetaEdited Charlie')
+  })
+})
+
 describe('useBlockActionOrchestration handleMergeById', () => {
   it('merges block by id with previous', async () => {
     const params = makeDefaultParams()

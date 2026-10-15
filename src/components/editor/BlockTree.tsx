@@ -1380,6 +1380,15 @@ export function BlockTree({
 
   // ── Action / resolver bags published via context ────────
   // Memoised so descendants only re-render when callbacks change.
+  // `void` adapts the async handlers to the bag's void-returning shape; they
+  // are memoised so the bag keeps its identity across renders.
+  const handleDuplicateAction = useCallback(
+    (blockId: string) => void handleDuplicate(blockId),
+    [handleDuplicate],
+  )
+  // Fix 6 — bulk-delete the active multi-selection from the long-press /
+  // right-click context menu (single IPC + undo toast).
+  const handleBatchDeleteAction = useCallback(() => void handleBatchDelete(), [handleBatchDelete])
   const { blockActions, blockResolvers } = useBlockTreeContextBags({
     onNavigate: handleNavigate,
     onDelete: remove,
@@ -1396,12 +1405,8 @@ export function BlockTree({
     onZoomIn: handleZoomIn,
     onSelect: handleSelect,
     onTurnInto: handleTurnInto,
-    // `void` adapts the async handler to the bag's `(blockId) => void` shape.
-    onDuplicate: (blockId: string) => void handleDuplicate(blockId),
-    // Fix 6 — bulk-delete the active multi-selection from the long-press /
-    // right-click context menu (single IPC + undo toast). `void` adapts the
-    // async handler to the bag's `() => void` shape.
-    onBatchDelete: () => void handleBatchDelete(),
+    onDuplicate: handleDuplicateAction,
+    onBatchDelete: handleBatchDeleteAction,
     resolveBlockTitle: resolve.resolveBlockTitle,
     resolveTagName: resolve.resolveTagName,
     resolveBlockStatus: resolve.resolveBlockStatus,

@@ -299,8 +299,13 @@ export function useBlockActionOrchestration({
   t,
 }: UseBlockActionOrchestrationParams): UseBlockActionOrchestrationReturn {
   const rovingEditorRef = useRef(rovingEditor)
+  // The by-id handlers sit in the rows' `BlockActions` context, so they read the
+  // focused id at call time: capturing it changed their identity on every focus
+  // move and re-rendered every row of the tree.
+  const focusedBlockIdRef = useRef(focusedBlockId)
   useLayoutEffect(() => {
     rovingEditorRef.current = rovingEditor
+    focusedBlockIdRef.current = focusedBlockId
   })
 
   // Tracks the post-merge setTextSelection setTimeout so we can cancel it on
@@ -623,7 +628,7 @@ export function useBlockActionOrchestration({
 
   const handleIndentById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? captureEditor() : null
+      const content = id === focusedBlockIdRef.current ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         indent(id).catch((err: unknown) => {
@@ -638,12 +643,12 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [captureEditor, focusedBlockId, handleFlush, indent, remountBaseline, t],
+    [captureEditor, handleFlush, indent, remountBaseline, t],
   )
 
   const handleDedentById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? captureEditor() : null
+      const content = id === focusedBlockIdRef.current ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         dedent(id).catch((err: unknown) => {
@@ -658,12 +663,12 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [captureEditor, dedent, focusedBlockId, handleFlush, remountBaseline, t],
+    [captureEditor, dedent, handleFlush, remountBaseline, t],
   )
 
   const handleMoveUpById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? captureEditor() : null
+      const content = id === focusedBlockIdRef.current ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         moveUp(id).catch((err: unknown) => {
@@ -679,12 +684,12 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [captureEditor, focusedBlockId, handleFlush, moveUp, remountBaseline, t],
+    [captureEditor, handleFlush, moveUp, remountBaseline, t],
   )
 
   const handleMoveDownById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? captureEditor() : null
+      const content = id === focusedBlockIdRef.current ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         moveDown(id).catch((err: unknown) => {
@@ -700,7 +705,7 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [captureEditor, focusedBlockId, handleFlush, moveDown, remountBaseline, t],
+    [captureEditor, handleFlush, moveDown, remountBaseline, t],
   )
 
   /**
@@ -948,7 +953,8 @@ export function useBlockActionOrchestration({
 
       mergeInProgress.current = true
       try {
-        const editorContent = focusedBlockId === blockId ? rovingEditorRef.current.unmount() : null
+        const editorContent =
+          focusedBlockIdRef.current === blockId ? rovingEditorRef.current.unmount() : null
         const currentContent = editorContent ?? collapsedVisible[idx]?.content ?? ''
 
         // #921 f2 — see handleMergeWithPrev: strip a leading block-marker so the
@@ -988,7 +994,7 @@ export function useBlockActionOrchestration({
         mergeInProgress.current = false
       }
     },
-    [collapsedVisible, blocks, moveBlocks, focusedBlockId, mergeBlocksAndHandle, setFocused],
+    [collapsedVisible, blocks, moveBlocks, mergeBlocksAndHandle, setFocused],
   )
 
   const handleEnterSave = useCallback(async () => {
