@@ -59,7 +59,7 @@ expression: wire
       - space_id
     type: object
   name: get_page
-- description: "Search one space's blocks by text. `query` is not raw FTS5: every word must appear, as a case-insensitive substring; `\"a phrase\"` matches as written; `OR` and `NOT` between terms combine them. Words and phrases under 3 characters are dropped (the index is trigram), so a query of only short words finds nothing. Hits come best match first. An empty `query` with at least one of `parent_id`, `tag_ids` or `filter` returns the blocks those match, newest first; with none it returns nothing. Rows carry `page_title` and a `snippet` with <mark> around the matches; `content` is cut to 512 chars, and null fields are left out. `filter` narrows further (state / priority / due / scheduled / last edited / property / page-name globs / block type / case-sensitive / whole-word / regex)."
+- description: "Search one space's blocks by text. `query` is not raw FTS5: every word must appear, as a case-insensitive substring; `\"a phrase\"` matches as written; `OR` and `NOT` between terms combine them. Words and phrases under 3 characters are dropped (the index is trigram), so a query of only short words finds nothing. Hits come best match first. An empty `query` with at least one of `parent_id`, `tag_ids` or `filter` returns the blocks those match, newest first; with none it returns nothing. Rows carry `page_title` (a page's own is its `content`) and a `snippet` with <mark> around the matches; `content` is cut to 512 chars, and null fields are left out. `filter` narrows further (state / priority / due / scheduled / last edited / property / page-name globs / block type / case-sensitive / whole-word / regex)."
   inputSchema:
     additionalProperties: false
     properties:
