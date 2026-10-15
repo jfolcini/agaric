@@ -76,9 +76,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # Which COPY of each file this guard judges — the staged index during a
 # commit, the working tree otherwise (#3962, swept here by #4017). Loaded by
 # PATH rather than imported, because `scripts/` is not a package and this
-# script's own name is not a legal module name; the same `importlib` shape
-# `check-command-arity.py` already uses to borrow `strip_rust_comments` from
-# here. Resolved from SCRIPT_DIR, not REPO_ROOT: the library lives beside
+# script's own name is not a legal module name. Resolved from SCRIPT_DIR, not REPO_ROOT: the library lives beside
 # this file wherever it is run from, while REPO_ROOT below is the repository
 # being JUDGED, which during a self-test is a throwaway fixture.
 _gfs_spec = importlib.util.spec_from_file_location(
@@ -384,9 +382,9 @@ ROOT_MISSING_HINT = (
     "       directory that does not exist. These prefixes decide which changed\n"
     "       files this guard is willing to police, so a stale one silently\n"
     "       exempts every file under that crate rather than narrowing a walk.\n"
-    "       Fix the LIST, and check the siblings — check-dynamic-sql.py,\n"
-    "       check-table-ownership.py and check-op-log-delete.py each keep their\n"
-    "       own hand-synchronised copy of it.\n"
+    "       Fix the LIST, and check the siblings — check-dynamic-sql.py\n"
+    "       and check-table-ownership.py each keep their own\n"
+    "       hand-synchronised copy of it.\n"
     "       If the tree under test is deliberately NOT this repository (a\n"
     "       fixture repo), the caller says so with `--synthetic-tree`."
 )
@@ -535,8 +533,7 @@ def check_file(path: Path, repo_root: Path, src=None) -> list[str]:
     """Violations in `path`, read from `src` (default: the working tree).
 
     `src` is a `guard_file_source.FileSource`. It defaults to None — i.e.
-    the working tree — so `check-elevation-tiers.py`, which reuses this
-    function, keeps its existing behaviour until it is swept too.
+    the working tree.
     """
     try:
         rel_path = str(path.resolve().relative_to(repo_root))

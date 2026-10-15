@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Falsification suite for the #4017 sweep of the three PYTHON guards —
-# check-raw-tx.py, check-dynamic-sql.py, check-command-arity.py.
+# Falsification suite for the #4017 sweep of the PYTHON guards —
+# check-raw-tx.py, check-dynamic-sql.py.
 #
 # ─── Why this is a shell script and not a Python self-test ────────────────
 #
 # It builds git fixtures, and there is no Python sibling of
 # `scripts/lib/git-scratch-guard.sh` to build them safely through. Writing
-# one just to host these tests would be a fourth copy of the scrubber by a
+# one just to host these tests would be another copy of the scrubber by a
 # different route — the exact thing #3722's shared helper and
 # `scripts/check-git-fixture-isolation.mjs` exist to prevent, and that
 # meta-guard now flags a `.py` fixture-builder for precisely this reason
@@ -90,13 +90,13 @@ _eq() { if [ "$2" = "$3" ]; then _ok "$1"; else _bad "$1" "expected [$2], got [$
 # and that derivation is exactly what broke pr-merge-result-check by making a
 # guard invoked from elsewhere reject every target and exit 0.
 #
-# check-raw-tx.py comes along unconditionally: the other two `importlib` it
-# for the comment stripper, from THEIR OWN directory.
+# check-raw-tx.py comes along unconditionally: check-dynamic-sql.py `importlib`s
+# it for the comment stripper, from ITS OWN directory.
 _seed_guards() {
   local dir="$1"
   mkdir -p "$dir/scripts/lib"
   cp "$SCRIPTS_DIR/check-raw-tx.py" "$SCRIPTS_DIR/check-dynamic-sql.py" \
-    "$SCRIPTS_DIR/check-command-arity.py" "$dir/scripts/"
+    "$dir/scripts/"
   cp "$SCRIPTS_DIR/lib/guard_file_source.py" "$dir/scripts/lib/"
   # Every declared CRATE_ROOTS directory, empty (#4501). Both seeded guards
   # now REFUSE a tree in which a declared crate root is absent, because a
@@ -240,59 +240,6 @@ _eq 'raw-tx: a misspelled --cache is an exit-2 invocation error, not a silent AU
   '2' "$(_run "$tmp/raw-tx-false-green" "$GUARD_RAW_TX" --cache "$RAW_TX_FILE")"
 
 # ---------------------------------------------------------------------------
-# 2. check-command-arity.py — the tauri-specta 10-argument ceiling (#1317)
-# ---------------------------------------------------------------------------
-GUARD_ARITY="scripts/check-command-arity.py"
-ARITY_FILE="src-tauri/src/commands/thing_4017.rs"
-ARITY_BAD='#[tauri::command]
-pub async fn too_many(a: u8, b: u8, c: u8, d: u8, e: u8, f: u8, g: u8, h: u8, i: u8, j: u8, k: u8) -> u8 { 0 }'
-ARITY_GOOD='#[tauri::command]
-pub async fn fine(a: u8, b: u8) -> u8 { 0 }'
-
-fx="$tmp/arity-clean"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src/commands"
-printf '%s\n' "$ARITY_GOOD" > "$fx/$ARITY_FILE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-_eq 'arity baseline: a clean fixture is green under --worktree' \
-  '0' "$(_run "$fx" "$GUARD_ARITY" --worktree "$ARITY_FILE")"
-_eq 'arity baseline: a clean fixture is green under --cached' \
-  '0' "$(_run "$fx" "$GUARD_ARITY" --cached "$ARITY_FILE")"
-
-fx="$tmp/arity-false-green"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src/commands"
-printf '%s\n' "$ARITY_GOOD" > "$fx/$ARITY_FILE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-printf '%s\n' "$ARITY_BAD" > "$fx/$ARITY_FILE"
-git -C "$fx" add -A
-printf '%s\n' "$ARITY_GOOD" > "$fx/$ARITY_FILE"
-_eq 'arity false green: reading the WORKING TREE passes a staged 11-arg command (the defect)' \
-  '0' "$(_run "$fx" "$GUARD_ARITY" --worktree "$ARITY_FILE")"
-_eq 'arity false green: reading the INDEX fails it (the fix)' \
-  '1' "$(_run "$fx" "$GUARD_ARITY" --cached "$ARITY_FILE")"
-_eq 'arity AUTO reads the index when git exports GIT_INDEX_FILE (a real commit)' \
-  '1' "$(_run_auto_commit "$fx" "$GUARD_ARITY" "$ARITY_FILE")"
-_eq 'arity AUTO reads the working tree when no commit is in flight' \
-  '0' "$(_run "$fx" "$GUARD_ARITY" "$ARITY_FILE")"
-
-fx="$tmp/arity-false-red"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src/commands"
-printf '%s\n' "$ARITY_BAD" > "$fx/$ARITY_FILE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-printf '%s\n' "$ARITY_GOOD" > "$fx/$ARITY_FILE"
-git -C "$fx" add -A
-printf '%s\n' "$ARITY_BAD" > "$fx/$ARITY_FILE"
-_eq 'arity false red: the WORKING TREE blocks a commit that is already fixed (the defect)' \
-  '1' "$(_run "$fx" "$GUARD_ARITY" --worktree "$ARITY_FILE")"
-_eq 'arity false red: the INDEX passes it (the fix)' \
-  '0' "$(_run "$fx" "$GUARD_ARITY" --cached "$ARITY_FILE")"
-
-# ---------------------------------------------------------------------------
 # 3. check-dynamic-sql.py — the #646 ratchet
 # ---------------------------------------------------------------------------
 # This one has a second surface its siblings do not: the BASELINE file, and
@@ -395,7 +342,7 @@ _eq 'dynamic-sql staged deletion: the INDEX reclaims it — prek never passes th
   '1' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
 
 # ---------------------------------------------------------------------------
-# 4. AN INDEX THAT CANNOT BE READ (all three)
+# 4. AN INDEX THAT CANNOT BE READ
 # ---------------------------------------------------------------------------
 # Found while wiring #4017, and the reason this section exists rather than a
 # comment: the first draft swallowed a non-zero `git ls-files` into an EMPTY
@@ -419,8 +366,6 @@ _run_broken_index() {
 }
 _eq 'raw-tx: an unreadable index is exit 2, NOT a clean exit 0 over an unread tree' \
   '2' "$(_run_broken_index "$tmp/raw-tx-false-green" "$GUARD_RAW_TX" "$RAW_TX_FILE")"
-_eq 'arity: an unreadable index is exit 2, NOT a clean exit 0 over an unread tree' \
-  '2' "$(_run_broken_index "$tmp/arity-false-green" "$GUARD_ARITY" "$ARITY_FILE")"
 _eq 'dynamic-sql: an unreadable index is exit 2, NOT a clean exit 0 over an unread tree' \
   '2' "$(_run_broken_index "$tmp/dyn-false-green" "$GUARD_DYN" "$DYN_FILE")"
 
@@ -785,30 +730,23 @@ _eq 'agreement: an UNMERGED path still reads the conflicted copy on disk' \
 # in the repository refers to it.
 fx="$tmp/damaged-object"
 _new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src/commands"
+mkdir -p "$fx/src-tauri/src"
 printf '%s\n' "$RAW_TX_GOOD" > "$fx/$RAW_TX_FILE"
-printf '%s\n' "$ARITY_GOOD" > "$fx/$ARITY_FILE"
 git -C "$fx" add -A
 git -C "$fx" commit -qm base
-printf '%s\n' "$RAW_TX_BAD" > "$fx/$RAW_TX_FILE"   # the violations are STAGED
-printf '%s\n' "$ARITY_BAD" > "$fx/$ARITY_FILE"
+printf '%s\n' "$RAW_TX_BAD" > "$fx/$RAW_TX_FILE"   # the violation is STAGED
 git -C "$fx" add -A
 printf '%s\n' "$RAW_TX_GOOD" > "$fx/$RAW_TX_FILE"  # …and clean on disk
-printf '%s\n' "$ARITY_GOOD" > "$fx/$ARITY_FILE"
 
-# THE CONTROL, before the damage: the staged violations are found, so an exit
+# THE CONTROL, before the damage: the staged violation is found, so an exit
 # 0 below can only mean the guard read the wrong copy — never "nothing to
 # find". check-dynamic-sql scans $RAW_TX_FILE too (a `sqlx::query(` site is
 # not what makes that file interesting — being STAGED is).
 _eq 'damaged object: the intact fixture fails under --cached (the control)' \
   '1' "$(_run "$fx" "$GUARD_RAW_TX" --cached "$RAW_TX_FILE")"
-_eq 'damaged object: …and the arity fixture too (the control)' \
-  '1' "$(_run "$fx" "$GUARD_ARITY" --cached "$ARITY_FILE")"
 
 staged_sha="$(git -C "$fx" rev-parse ":$RAW_TX_FILE")"
-arity_sha="$(git -C "$fx" rev-parse ":$ARITY_FILE")"
 rm -f "$fx/.git/objects/${staged_sha:0:2}/${staged_sha:2}"
-rm -f "$fx/.git/objects/${arity_sha:0:2}/${arity_sha:2}"
 
 _eq 'damaged object: an unreadable staged blob is exit 2, not a working-tree verdict' \
   '2' "$(_run "$fx" "$GUARD_RAW_TX" --cached "$RAW_TX_FILE")"
@@ -820,48 +758,12 @@ _eq 'damaged object: --worktree is unaffected — it never asks the object store
   '0' "$(_run "$fx" "$GUARD_RAW_TX" --worktree "$RAW_TX_FILE")"
 _eq 'damaged object: the same fail-closed answer in check-dynamic-sql' \
   '2' "$(_run "$fx" "$GUARD_DYN" --cached "$RAW_TX_FILE")"
-_eq 'damaged object: …and in check-command-arity' \
-  '2' "$(_run "$fx" "$GUARD_ARITY" --cached "$ARITY_FILE")"
 
 # ---------------------------------------------------------------------------
 # 8. THE WHOLE-TREE BRANCH ENUMERATES THE SOURCE (#4060 / #4047)
 # ---------------------------------------------------------------------------
-# `check-command-arity.py` with no path arguments scanned `COMMANDS_DIR.rglob`
-# — the DISK — even under `--cached`, while its path-argument branch asked
-# `src.exists()`. So the two branches disagreed about what the file set is,
-# in both directions.
-#
-# STAGED BUT ABSENT FROM DISK is the case that isolates the ENUMERATOR: with
-# the path passed explicitly the guard already judged it, so only the
-# no-arguments branch can miss it.
-fx="$tmp/arity-whole-tree-staged-absent"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src/commands"
-printf '%s\n' "$ARITY_GOOD" > "$fx/$ARITY_FILE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-printf '%s\n' "$ARITY_BAD" > "$fx/$ARITY_FILE"
-git -C "$fx" add -A
-rm "$fx/$ARITY_FILE"                                # staged, gone from disk
-_eq 'whole tree: --cached enumerates the index, so a staged-but-absent file is judged' \
-  '1' "$(_run "$fx" "$GUARD_ARITY" --cached)"
-_eq 'whole tree: --worktree does not — there is nothing on disk to enumerate (the control)' \
-  '0' "$(_run "$fx" "$GUARD_ARITY" --worktree)"
-
-# …and the other direction: on disk, but NOT in the commit.
-fx="$tmp/arity-whole-tree-uncached"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src/commands"
-printf '%s\n' "$ARITY_BAD" > "$fx/$ARITY_FILE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-git -C "$fx" rm -q --cached "$ARITY_FILE"           # leaving the commit
-_eq 'whole tree: --cached does not judge a file the commit removes' \
-  '0' "$(_run "$fx" "$GUARD_ARITY" --cached)"
-_eq 'whole tree: --worktree still judges it — it is right there on disk (the control)' \
-  '1' "$(_run "$fx" "$GUARD_ARITY" --worktree)"
-
-# `check-dynamic-sql.py`'s `all_production_files` had the same shape. Its one
+# `check-dynamic-sql.py`'s `all_production_files` scanned the DISK even under
+# `--cached`, while its path-argument branch asked `src.exists()`. Its one
 # caller is `--update-baseline`, which runs against the WORKING TREE by
 # design — so the fix has to leave that alone, and the two answers are pinned
 # side by side: the enumerator follows the source, and the source for a

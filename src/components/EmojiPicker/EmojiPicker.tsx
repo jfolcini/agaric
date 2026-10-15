@@ -418,29 +418,22 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
 
   return (
     <div className={cn('flex flex-col gap-2', className)} data-testid="emoji-picker">
-      {/* On a narrow phone sheet the 6 skin-tone swatches crowd the search box
-          (and run flush to the edge), so stack them below the full-width search
-          on small widths and only sit them inline from `sm` up. */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <Input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={t('emojiPicker.search')}
-          aria-label={t('emojiPicker.search')}
-          // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: the picker is an explicitly-invoked dialog and search-first is the primary interaction; mirrors SearchHeader. Caller can opt out via autoFocusSearch={false}.
-          autoFocus={autoFocusSearch}
-          className="flex-1"
-          onKeyDown={(e) => {
-            // ArrowDown from the search box drops into the grid.
-            if (e.key === 'ArrowDown' && focusedRowIndex !== undefined) {
-              e.preventDefault()
-              focusCell(focusedRowIndex, focused.c)
-            }
-          }}
-        />
-        <SkinToneSelector value={skinTone} onChange={setSkinTone} tonable={tonable} />
-      </div>
+      <Input
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder={t('emojiPicker.search')}
+        aria-label={t('emojiPicker.search')}
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: the picker is an explicitly-invoked dialog and search-first is the primary interaction; mirrors SearchHeader. Caller can opt out via autoFocusSearch={false}.
+        autoFocus={autoFocusSearch}
+        onKeyDown={(e) => {
+          // ArrowDown from the search box drops into the grid.
+          if (e.key === 'ArrowDown' && focusedRowIndex !== undefined) {
+            e.preventDefault()
+            focusCell(focusedRowIndex, focused.c)
+          }
+        }}
+      />
 
       {/* Category-jump tab strip (#286 polish). Hidden while searching (the
           flat ranked result list has no group structure). Each tab scrolls the
@@ -454,7 +447,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
             role="tablist"
             aria-label={t('emojiPicker.categories')}
             data-testid="emoji-categories"
-            className="flex items-center gap-0.5 border-b pb-1"
+            className="flex items-center justify-between gap-0.5 border-b pb-1 [@media(pointer:coarse)]:gap-0"
             // Not a tab stop itself; the roving tab moves the single tabindex 0.
             tabIndex={-1}
             onKeyDown={categoryRoving.onKeyDown}
@@ -498,7 +491,8 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
             ref={frequentRoving.containerRef}
             role="toolbar"
             aria-label={t('emojiPicker.frequentlyUsedRow')}
-            className="flex flex-wrap gap-0.5 [@media(pointer:coarse)]:gap-0"
+            className="grid justify-items-center"
+            style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
             // Not a tab stop itself; the roving tab moves the single tabindex 0.
             tabIndex={-1}
             onKeyDown={frequentRoving.onKeyDown}
@@ -593,7 +587,11 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                       </p>
                     ) : (
                       /* oxlint-disable jsx-a11y/prefer-tag-over-role -- ARIA grid row + gridcells inside a virtualized absolutely-positioned grid; <table>/<tr>/<td> cannot host the transform-positioned rows the virtualizer requires (mirrors MonthlyView) */
-                      <div role="row" className="flex gap-0.5 [@media(pointer:coarse)]:gap-0">
+                      <div
+                        role="row"
+                        className="grid justify-items-center"
+                        style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+                      >
                         {row.entries.map((entry, col) => {
                           const char = applySkinTone(entry.char, skinTone, tonable)
                           const isFocused = vi.index === focusedRowIndex && col === focused.c
@@ -623,6 +621,14 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
           </div>
         </div>
       )}
+
+      <div className="flex items-center justify-between gap-2 border-t pt-2">
+        {/* The radiogroup carries the accessible name; this is its visible twin. */}
+        <span aria-hidden="true" className="text-xs font-medium text-muted-foreground">
+          {t('emojiPicker.skinTone')}
+        </span>
+        <SkinToneSelector value={skinTone} onChange={setSkinTone} tonable={tonable} />
+      </div>
     </div>
   )
 }

@@ -29,7 +29,7 @@ pub async fn delete_block(
 
 ## `tauri-specta` 10-argument ceiling
 
-The IPC codegen silently truncates a command past 10 params. `State<'_, T>` params are absent from `bindings.ts` but still count, and the `check-command-arity` hook fails any command over 10.
+`State<'_, T>` params are absent from `bindings.ts` but still count toward the limit: rustc rejects a command with more than 10 arguments (specta implements `SpectaFn` up to ten).
 
 Fix by collapsing, never by `#[allow(clippy::too_many_arguments)]`:
 

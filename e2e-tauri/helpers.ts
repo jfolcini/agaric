@@ -324,6 +324,22 @@ export async function typeInputVerified(selector: string, text: string): Promise
 }
 
 /**
+ * Click `selector` to focus it, unless it already has focus. A block editor
+ * that Enter just moved into still shifts while the rows above it settle (a
+ * pasted image's static render resolving its bytes, the attachment badge), and
+ * a click at a centre WebDriver computed before the shift lands on what moved
+ * there: the formatting toolbar's "Set due date" opened the date picker, which
+ * took the rest of the keystrokes and covered the sidebar.
+ */
+async function focusForTyping(selector: string): Promise<void> {
+  const focused = await browser.execute(
+    (sel: string) => document.activeElement === document.querySelector(sel),
+    selector,
+  )
+  if (!focused) await $(selector).click()
+}
+
+/**
  * Shared implementation behind `typeMarkerVerified` / `typeInputVerified`;
  * called directly for any other text box, such as the page title.
  *
@@ -342,9 +358,8 @@ export async function typeVerified(
   const editorSelector = selector
   let lastSeen = ''
   for (let attempt = 1; attempt <= MAX_TYPE_ATTEMPTS; attempt++) {
-    const editor = $(editorSelector)
-    await editor.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-    await editor.click()
+    await $(editorSelector).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    await focusForTyping(editorSelector)
     if (attempt === 1) {
       await browser.keys(text.split(''))
     } else {
@@ -376,7 +391,7 @@ export async function typeVerified(
     if (matched) return
     if (attempt < MAX_TYPE_ATTEMPTS) {
       // Clear the mangled attempt: select-all + delete, then retype.
-      await $(editorSelector).click()
+      await focusForTyping(editorSelector)
       await browser.keys(['Control', 'a'])
       await browser.keys(['Delete'])
     }

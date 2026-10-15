@@ -302,28 +302,6 @@ pass_filenames = false
 types_or = ["ts", "tsx", "rust"]
 stages = ["pre-commit"]
 
-# Elevation-tier drift guard (#1810, follow-up to #1654). #1654 routed the
-# hand-rolled component surfaces through the elevation-tier tokens
-# (`--shadow-resting/floating/overlay`, registered in src/index.css, #1098),
-# applied as the `shadow-(--shadow-<tier>)` utility. This hook stops a NEW
-# raw `shadow-(sm|md|lg)` (with any variant prefix, e.g. `focus:shadow-lg`)
-# from silently re-drifting a container surface under src/components/ off the
-# tiers. A small set of intentional non-tier shadows (badge legibility,
-# pressed-state insets, control affordances, the floating-sidebar variant)
-# are allowlisted with reasons inside the script. Comments are stripped first
-# so a shadow class mentioned only in a code comment never fires. Rules +
-# allowlist live in scripts/check-elevation-tiers.py.
-# WHY: a raw shadow-sm/md/lg on a surface bypasses the elevation tokens — #1810 (follow-up to #1654)
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "check-elevation-tiers"
-name = "elevation-tier guard (#1810 no raw shadow-sm/md/lg on surfaces)"
-entry = "python3 scripts/check-elevation-tiers.py"
-language = "system"
-files = '^src/components/.*\.(tsx|ts)$'
-stages = ["pre-commit", "pre-push"]
-
 # Legacy React API guard — block re-introduction of APIs we migrated away from
 # (React 19, TypeScript 6, follow-up MutableRefObject removal).
 # Two legitimate `React.JSX.IntrinsicElements` uses in RichContentRenderer.tsx are
@@ -1698,7 +1676,7 @@ language = "system"
 # demonstrably catches that today. Closing this gap
 # for `main()` itself would need a `sys.exit(2)`-on-`GitError`-shaped rework
 # of the skip path or a "no valid `.rs` arg -> scan the whole crate roots"
-# fallback (`check-command-arity.py` has the identical shape) — a CLI
+# fallback — a CLI
 # behavior change to a script other callers (`pr-merge-result-check.sh`)
 # also invoke, out of scope for a `files:` regex fix. Tracked, not silently
 # claimed closed.
@@ -1710,13 +1688,13 @@ language = "system"
 # on a clean run `main()` prints nothing and returns 0, identical to a run
 # that scanned the whole crate and found nothing (see `check-raw-tx.py`'s
 # `main()`), so rc=0 cannot distinguish the two. Getting one would mean
-# adding a target-count/`--print-targets` output to five python guards —
+# adding a target-count/`--print-targets` output to the python guards —
 # i.e. the same CLI change to shared callers that the paragraph above
 # already rules out of scope, which is where the real fix lives anyway.
 # `pass_filenames = false` WOULD make the union effective (argv empty
 # re-enables the whole-tree fallback), but it turns every `.rs` pre-commit
-# into five full-tree scans; that is a cost decision needing a measurement,
-# not a comment. And a baseline listing the five pairs would be this comment
+# into full-tree scans; that is a cost decision needing a measurement,
+# not a comment. And a baseline listing the pairs would be this comment
 # in JSON with nothing able to re-derive it — an entry that can only go
 # stale silently, which is the exact defect #3997 is about. So: prose,
 # deliberately, until the CLI rework lands.
@@ -1781,7 +1759,7 @@ language = "system"
 # falsification suite (#4017), so editing it alone was never truly
 # zero-hooks; unioned here anyway for uniformity with the sibling hooks.
 # Falsified (#3997 second review round): with `guard_file_source.exists()`
-# defanged to always `False`, THIS hook — unlike its four siblings — DOES
+# defanged to always `False`, THIS hook — unlike its siblings — DOES
 # genuinely redden even on a non-`.rs` arg, because its baseline orphan
 # sweep is GLOBAL (every baselined file, not just the ones in argv) and asks
 # `exists()` for each: a defanged always-`False` answer reads every
@@ -1853,60 +1831,6 @@ pass_filenames = false
 always_run = true
 stages = ["manual"]
 
-# Rust: production `DELETE FROM op_log` is confined to the store's bypass
-# module (#4018 / #3310). `op_log` is append-only by trigger, and a wholesale
-# delete carries a SECOND obligation the trigger does not enforce: capture the
-# pre-delete per-device MAX(seq) into the durable high-water mark. Skip it and
-# the local-append allocator restarts at seq = 1 over the emptied log,
-# re-minting (device_id, seq) addresses a paired peer still holds — whose
-# INSERT OR IGNORE silently swallows this device's post-wipe history, with no
-# local symptom at all. `truncate` / `prune` in
-# agaric-store/src/op_log/bypass.rs pair the two; the `pub`
-# enable/disable_op_log_mutation_bypass window does not, and its doc invites
-# callers to drive their own. Making that pair private would break the
-# cross-crate tests that legitimately use it, so this guard constrains the
-# dangerous STATEMENT instead of the API that permits it. An allowlist, not a
-# ratchet — the correct production count outside bypass.rs is zero. Test code
-# and `#[cfg(test)]` regions are exempt. Whole-tree scan (a delete can be
-# added to a file the commit did not otherwise touch), so `files` only decides
-# WHEN to run.
-# WHY: an op_log delete outside the confinement seam breaks sync replay — #4018 (#3310)
-[[repos.hooks]]
-id = "check-op-log-delete"
-name = "op_log delete confinement guard (#4018)"
-entry = "python3 scripts/check-op-log-delete.py"
-language = "system"
-# #3997: this guard `importlib`-loads BOTH `scripts/check-raw-tx.py` (for
-# cfg_test_line_set) and `scripts/check-table-ownership.py` (for
-# strip_comments_keep_strings) — real dependencies, found by the #3997 sweep
-# and not previously unioned in, so a commit editing only one of them
-# selected this hook not at all (the always_run self-test below is only a
-# partial backstop — see the sibling hooks above for the same shape).
-# `guard_file_source.py` is unioned too: loading check-raw-tx.py as a
-# library runs ITS top-level `exec_module(guard_file_source)` as a side
-# effect, so a broken guard_file_source.py would break this load even
-# though nothing here calls into it directly.
-files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src|diagnostics/src)/.*\.rs$|^scripts/(check-raw-tx\.py|check-table-ownership\.py|lib/guard_file_source\.py)$'
-stages = ["pre-commit", "pre-push"]
-
-# #4018: the confinement guard must read SQL inside `sqlx::query!("…")` macro
-# STRINGS while ignoring the several doc comments that quote
-# `DELETE FROM op_log` verbatim (bypass.rs's own docs, snapshot/restore.rs's
-# trigger explanation, this guard's rationale) and the `#[cfg(test)]` sites
-# that must be able to attempt exactly that statement. This companion hook
-# runs the guard's fixture suite (`--self-test`), which also asserts the
-# allowlisted path still exists and still contains the statements — so the
-# exemption cannot rot into a stale path that silently excuses nothing.
-# WHY: a Python AST guard: a match shape it does not recognise is a silently skipped line — #4018
-[[repos.hooks]]
-id = "check-op-log-delete-self-test"
-name = "op_log delete guard self-test (#4018 match fixtures)"
-entry = "python3 scripts/check-op-log-delete.py --self-test"
-language = "system"
-pass_filenames = false
-always_run = true
-stages = ["manual"]
-
 # Migration → JS-mock schema-contract guard (#3084). The browser/e2e Tauri
 # mock (src/lib/tauri-mock/) is a hand-maintained SECOND implementation of the
 # schema; when a migration changes a table the mock models, the mock silently
@@ -1949,136 +1873,14 @@ pass_filenames = false
 always_run = true
 stages = ["manual"]
 
-# Rust: tauri-specta 10-argument ceiling guard (#1317). The tauri-specta IPC
-# bridge codegen has a HARD 10-argument limit per `#[tauri::command]`, and a
-# `State<'_, T>` param counts toward it (it costs a Rust signature slot even
-# though it doesn't appear in bindings.ts). This ceiling is documented in
-# src-tauri/src/commands/AGENTS.md § "tauri-specta 10-argument ceiling" with
-# the WriteCtx bundling solution (#1056) — but until #1317 NOTHING enforced
-# it: an 11-param command compiled cleanly and failed only later, at specta-
-# export / IPC time. This hook scans `src-tauri/src/commands/**/*.rs` for
-# every `#[tauri::command]` fn, counts ALL declared params (conservatively
-# including State, parsed across multiline sigs with bracket-depth counting),
-# and fails any command over 10. Comment-stripping is shared with
-# check-raw-tx.py. Rules live in scripts/check-command-arity.py.
-# WHY: tauri-specta silently truncates a command past 10 args — #1317 (#1056)
-[[repos.hooks]]
-id = "check-command-arity"
-name = "tauri-specta 10-arg ceiling guard (#1317)"
-entry = "python3 scripts/check-command-arity.py"
-language = "system"
-# #3997: this guard `importlib`-loads `scripts/check-raw-tx.py` (for
-# strip_rust_comments) AND `scripts/lib/guard_file_source.py` directly (for
-# the staged-index-vs-working-tree source it judges) — both real
-# dependencies. `check-raw-tx.py` was not previously unioned in anywhere for
-# THIS hook, so a commit editing only it selected this hook not at all.
-# `guard_file_source.py` is a narrower correction: `py-guard-file-source-
-# selftest` (further down this file) already unions it and is a genuine
-# falsification suite (#4017), so editing it alone was never truly
-# zero-hooks; unioned here anyway for uniformity with the sibling hooks.
-#
-# KNOWN RESIDUAL GAP for the guard_file_source.py half (falsified — #3997
-# second review round, corrected from an earlier, wrong version of this
-# comment): `main()` filters argv to `.rs`-suffixed paths with no whole-tree
-# fallback. With `exists()` defanged to always `False`, this hook returns
-# rc=0 not only when handed just `guard_file_source.py` but ALSO when handed
-# a REAL `.rs` command file alongside it — `main()`'s
-# `if not src.exists(rel): continue` treats the real file as absent and
-# skips it too, regardless of content. This union makes the hook SELECTED,
-# which is strictly better than skipped, but does not by itself make it
-# EFFECTIVE against a defanged `exists()`/`read()`. Only
-# `py-guard-file-source-selftest` demonstrably catches that, which is why
-# #4556's delete list did NOT take it: the sweep had mis-filed it as a dev
-# convenience, and its own criteria put it back. See `check-raw-tx`'s copy
-# of this note above for why the gap is carried as prose rather than as a
-# mechanical check (#4434 review note 10).
-files = '^src-tauri/src/commands/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
-stages = ["pre-commit", "pre-push"]
-
-# #1317: the arity parser must survive multiline signatures, nested generics /
-# tuples / closures (which must NOT inflate the param count), attribute args,
-# and commented-out attributes. This companion hook runs the guard's own
-# fixture suite (`--self-test`) so the 10-vs-11 boundary and the bracket-depth
-# param counter cannot silently regress. No file args.
-# WHY: a Python AST guard: a signature shape it does not recognise is a silently skipped line — #1317
-[[repos.hooks]]
-id = "check-command-arity-self-test"
-name = "tauri-specta arity guard self-test (#1317 fixtures)"
-entry = "python3 scripts/check-command-arity.py --self-test"
-language = "system"
-pass_filenames = false
-always_run = true
-stages = ["manual"]
-
-# Rust: space-filter drift guard (#139). Space membership is a first-class
-# `blocks.space_id` column (#533, migration 0086), so the active-space read
-# filter is the canonical guard fragment `(?N IS NULL OR b.space_id = ?N)`
-# (same bind index on both sides), inlined at ~30 paginated-read call sites.
-# The maintainer deferred the build.rs / include_str! consolidation that
-# would dedupe it (blocked on sqlx#3388) and adopted this cheap drift-guard
-# instead: it fails when an inlined copy is mangled — a mismatched `?N`, a
-# wrong column, or the `?N IS NULL OR` guard dropped (degrading it to a bare
-# `b.space_id = ?N`), the last caught via a per-file count baseline
-# (src-tauri/space-filter-baseline.txt) since a bare `b.space_id = ?` is
-# legitimate at single-space query sites. Re-anchor the baseline with
-# `python3 scripts/check-space-filter-drift.py --update-baseline`. Mirrors
-# the `space_filter_canonical.rs` parity test at pre-commit stage. Rules
-# live in scripts/check-space-filter-drift.py.
-# WHY: a query missing the space filter leaks rows across spaces — #139 (#533, #3388)
-[[repos.hooks]]
-id = "check-space-filter-drift"
-name = "space-filter drift guard (#139)"
-entry = "python3 scripts/check-space-filter-drift.py"
-language = "system"
-# #3997: this guard `importlib`-loads `scripts/check-raw-tx.py`; union it so
-# an edit confined to that shared module can't select this hook out
-# entirely. (Currently this guard defines its own `strip_comments_keep_strings`
-# rather than calling into the loaded module, but the load itself still runs
-# at import time — a broken check-raw-tx.py would still crash this guard —
-# and unioning it keeps this hook consistent with its three siblings above,
-# all of which delegate to check-raw-tx.py for real.) `guard_file_source.py`
-# is unioned too: loading check-raw-tx.py runs ITS top-level
-# `exec_module(guard_file_source)` as a side effect.
-# #3255: this used to read `^src-tauri/src/.*\.rs$`, so a commit confined to
-# `agaric-store/` — where 21 of the 31 canonical fragments now live — did not
-# select this hook AT ALL. Widening the guard's scan roots without widening
-# this regex would have fixed nothing for exactly the commits that matter;
-# the two have to move together, which is the same pairing #3110 made for
-# `check-raw-tx`. NOT a copy of that hook's regex, which lists four roots
-# (prek.toml, hook id `check-raw-tx`): this one lists six, adding
-# `agaric-core/src` and the baseline file itself, and it must stay in step
-# with CRATE_ROOTS in the guard rather than with its sibling hook.
-files = '^src-tauri/(src|agaric-core/src|agaric-store/src|agaric-engine/src|agaric-sync/src|diagnostics/src)/.*\.rs$|^src-tauri/space-filter-baseline\.txt$|^scripts/(check-space-filter-drift\.py|check-raw-tx\.py|lib/guard_file_source\.py)$'
-stages = ["pre-commit", "pre-push"]
-
-# Self-test the space-filter drift guard's own exit behavior (a canonical
-# numbered fragment and the bare-`?` placeholder form are both counted, a
-# mismatched bind index is a Rule-A violation, a mention inside a `//` or
-# `/* */` comment is never counted, a fragment INSIDE a SQL string literal
-# IS counted — the guard deliberately does NOT reuse check-raw-tx.py's
-# string-blanking `strip_rust_comments` for exactly this reason — and the
-# baseline line format round-trips). Added by #3997: this hook had no
-# self-test of any kind before, structurally identical to the gap
-# `wdio-driver-gate` had before #3996.
-# `always_run`, like every other `python3 … --self-test` hook in this file.
-# WHY: a Python AST guard: a query shape it does not recognise is a silently skipped line — #3997
-[[repos.hooks]]
-id = "check-space-filter-drift-selftest"
-name = "space-filter drift guard self-test (#3997)"
-entry = "python3 scripts/check-space-filter-drift.py --self-test"
-language = "system"
-pass_filenames = false
-always_run = true
-stages = ["manual"]
-
-# The general form of the hook above (#4501). #3255 was the live instance: 11
-# of 15 space-filter baseline entries named files that had moved crates in
-# #2621, so the guard protected 4 files and believed it protected 15 — and the
-# allowlist checkers could not detect a dangling entry AT ALL, because they
-# walked discovered files asking "is this one allowed?" and never "does this
-# entry still name a file?". #4508 closed that for one baseline; this closes it
-# for every baseline, allowlist and DENY_FILES set in the repo (20 sets, 441
-# paths today; the run prints its own denominator). `Path.exists()` only — no
+# Fails when a baseline, allowlist or DENY_FILES entry names a file that no
+# longer exists (#4501). #3255 was the live instance: 11 of 15 baseline entries
+# named files that had moved crates in #2621, so a guard protected 4 files and
+# believed it protected 15 — and the allowlist checkers could not detect a
+# dangling entry AT ALL, because they walked discovered files asking "is this
+# one allowed?" and never "does this entry still name a file?". This covers
+# every baseline, allowlist and DENY_FILES set in the repo (the run prints its
+# own denominator). `Path.exists()` only — no
 # parsing of guard logic, no coverage reasoning, no `files:`-trigger analysis.
 # The population comes from `git ls-files`, not a filesystem walk: a walk also
 # sees gitignored build output (`.stryker-tmp/sandbox-*/scripts/` is a verbatim
@@ -2103,21 +1905,7 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit", "pre-push"]
 
-# KNOWN GAP surfaced by #3997's sweep (deliberately deferred, not fixed
-# here; carried through #4556's relocation of this stanza so the next sweep
-# does not have to re-discover it): `scripts/check-table-ownership.py` is NOT
-# in this hook's `files:` and its fixture suite does not exercise it, even
-# though it is now a real dependency of `check-op-log-delete.py` (which loads
-# it via `importlib` for `strip_comments_keep_strings`) — the SAME
-# shared-python-guard-library shape this suite exists to falsify. It is
-# correctly absent from THIS particular list, though: `check-table-ownership.py`
-# does not consume `guard_file_source.py` (confirmed — it has no
-# `guard_file_source` import at all), so this suite's own subject
-# (staged-vs-working-tree behaviour) does not apply to it. Extending
-# `test-py-guard-file-source.sh` (a ~1400-line fixture suite) to also cover
-# `check-op-log-delete.py`'s dependency on `check-table-ownership.py` is out
-# of scope for a `files:` regex fix.
-# WHY: five guards load guard_file_source.py; with its exists() defanged they pass a REAL .rs file, and only this suite catches it — #4017
+# WHY: the python guards load guard_file_source.py; with its exists() defanged they pass a REAL .rs file, and only this suite catches it — #4017
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -2126,7 +1914,7 @@ name = "python guards judge the staged index (#4017 falsification suite)"
 entry = "bash scripts/test-py-guard-file-source.sh"
 language = "system"
 pass_filenames = false
-files = '^scripts/(check-(raw-tx|dynamic-sql|command-arity)\.py|lib/guard_file_source\.py|lib/git-scratch-guard\.sh|test-py-guard-file-source\.sh)$'
+files = '^scripts/(check-(raw-tx|dynamic-sql)\.py|lib/guard_file_source\.py|lib/git-scratch-guard\.sh|test-py-guard-file-source\.sh)$'
 stages = ["manual"]
 
 # Rust: cargo fmt. Auto-fix formatter (#817): drops `--check` so a

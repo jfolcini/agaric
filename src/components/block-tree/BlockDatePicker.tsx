@@ -60,7 +60,9 @@ export function BlockDatePicker({
     >
       <DialogContent
         aria-label={t('journal.datePickerLabel')}
-        className="date-picker-popup max-w-[calc(100vw-2rem)] sm:max-w-md"
+        // As wide as the calendar plus the dialog's padding; touch cells are
+        // larger, so a coarse pointer gets the next width up.
+        className="date-picker-popup max-w-[calc(100vw-2rem)] sm:max-w-xs [@media(pointer:coarse)]:sm:max-w-sm"
         data-testid="date-picker-popup"
         data-editor-portal=""
       >

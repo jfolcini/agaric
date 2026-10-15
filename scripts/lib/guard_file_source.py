@@ -1,8 +1,8 @@
 """Which COPY of a file is a Python guard judging? (#3962 / #4017)
 
-The Python sibling of `scripts/lib/guard-file-source.mjs`, for the three
+The Python sibling of `scripts/lib/guard-file-source.mjs`, for the two
 guards that take prek's changed-file list and `open()` those paths from
-disk: `check-raw-tx.py`, `check-dynamic-sql.py`, `check-command-arity.py`.
+disk: `check-raw-tx.py`, `check-dynamic-sql.py`.
 
 ─── The defect ─────────────────────────────────────────────────────────
 
@@ -117,8 +117,8 @@ prek's changed-file set OMITS deletions, which #4017 calls out as its own
 gap. It does not need a separate mechanism here, and the reason is worth
 stating so nobody adds one:
 
-  * a DELETED file cannot contain a violation, so `check-raw-tx` and
-    `check-command-arity` lose nothing by never being handed it;
+  * a DELETED file cannot contain a violation, so `check-raw-tx` loses
+    nothing by never being handed it;
   * `check-dynamic-sql`'s baseline is the one place a deletion matters —
     an entry naming a file that is going away must be reclaimed — and its
     orphan sweep is already GLOBAL over the baseline rather than over
@@ -141,8 +141,7 @@ path that is simply not in the commit.
 index, cached per path. That is affordable precisely because of the AUTO
 rule: the whole-tree runs (`prek run --all-files`, CI, a manual invocation)
 have no `GIT_INDEX_FILE` and so never take this path at all. For
-`check-raw-tx.py` and `check-command-arity.py`, and for
-`check-dynamic-sql.py`'s marker check, the index path only runs inside a
+`check-raw-tx.py` and `check-dynamic-sql.py`'s marker check, the index path only runs inside a
 real commit hook, where the file list is the commit's changed set — tens of
 files, not thousands.
 
@@ -533,7 +532,7 @@ def resolve_source(
     option parser instead of through the reader.
 
     Only arguments starting with `-` are judged: unlike the `.mjs`
-    helper's two callers, these three guards are `pass_filenames = true`
+    helper's two callers, these two guards are `pass_filenames = true`
     and every other argument is a path.
     """
     flags = [a for a in argv if a.startswith("-")]
