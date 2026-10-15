@@ -77,9 +77,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # Which COPY of each file this guard judges — the staged index during a
 # commit, the working tree otherwise (#3962, swept here by #4017). Loaded by
 # PATH rather than imported, because `scripts/` is not a package and this
-# script's own name is not a legal module name. Resolved from SCRIPT_DIR, not REPO_ROOT: the library lives beside
-# this file wherever it is run from, while REPO_ROOT below is the repository
-# being JUDGED, which during a self-test is a throwaway fixture.
+# script's own name is not a legal module name. Resolved from SCRIPT_DIR,
+# not REPO_ROOT: the library lives beside this file wherever it is run from,
+# while REPO_ROOT below is the repository being JUDGED, which during a
+# self-test is a throwaway fixture.
 _gfs_spec = importlib.util.spec_from_file_location(
     "_guard_file_source", SCRIPT_DIR / "lib" / "guard_file_source.py"
 )
