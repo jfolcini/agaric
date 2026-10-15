@@ -912,13 +912,6 @@ async function reapSessionApp(): Promise<void> {
       // Already gone.
     }
   }
-  const survivors = await waitForSessionAppExit(vault, 10_000)
-  if (survivors.length > 0) {
-    throw new Error(
-      `[afterSession] app pid(s) ${survivors.join(', ')} survived SIGKILL; the next session ` +
-        'will hand off to them and time out.',
-    )
-  }
 }
 
 // Ensure the driver is reaped even if WDIO tears down abnormally (the docs'

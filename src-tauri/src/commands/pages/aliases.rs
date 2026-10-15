@@ -146,8 +146,20 @@ pub(crate) async fn write_page_aliases_in_tx(
     .fetch_all(&mut ***tx)
     .await?;
     let page = BlockId::from_trusted(page_id);
+    // A page that lost a contested alias still holds it in the engine with no
+    // row; left there, a reprojection would hand it back.
+    let mut engine_held = Vec::new();
+    if let Some(space) = agaric_store::space::resolve_block_space(&mut ***tx, &page).await? {
+        let mut guard = state.registry.for_space(&space, device_id)?;
+        engine_held = guard
+            .engine_mut()
+            .read_page_aliases(page_id)?
+            .unwrap_or_default();
+    }
+    engine_held.retain(|alias| !held.contains(alias));
     let mut ops: Vec<OpPayload> = held
         .iter()
+        .chain(&engine_held)
         .filter(|alias| !wanted.contains(alias))
         .map(|alias| {
             OpPayload::RemovePageAlias(RemovePageAliasPayload {
