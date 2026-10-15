@@ -222,14 +222,9 @@ pub async fn list_page_links_inner_split_with_cap(
     // `[[ULID]]` token only ever resolves to a page in the markdown
     // serializer).
     //
-    // #5426: the space filter is `plc.space_id = ?1`, the space the edge's two
-    // pages share (migration 0122), NULL when they do not or when either end
-    // is not a page (every rendered endpoint is a page). Rows do cross
-    // spaces: `block_links` filters a pair only when its source has a space
-    // at write time, and a page that changes space keeps its links, so the
-    // column is what keeps them out. The read is a range of
-    // `idx_page_link_cache_space` already in `ORDER BY` order, so the capped
-    // fetch stops at the cap.
+    // #5426: the space filter is `plc.space_id = ?1` (migration 0122), a range
+    // of `idx_page_link_cache_space` already in `ORDER BY` order, so the
+    // capped fetch stops at the cap.
     //
     // The tag-EXISTS branch UNIONs `block_tags`,
     // `block_tag_inherited`, and `block_tag_refs` to mirror the
@@ -789,8 +784,9 @@ mod tests {
 
     /// #5426: both scoped reads are a range of `idx_page_link_cache_space`,
     /// answered from the index alone and, for the capped fetch, already in
-    /// `ORDER BY` order. Without `sqlite_stat1` the planner's default choice is
-    /// the plan every vault runs, so the shape is pinned. `query!` cannot hand
+    /// `ORDER BY` order. This pins the planner's choice without statistics
+    /// (`PRAGMA optimize` can move the count to a scan of a one-space cache,
+    /// still far under the old read). `query!` cannot hand
     /// its text to `EXPLAIN`, so the plans run on copies, held first to the
     /// production functions' answers on the seed.
     #[tokio::test]
