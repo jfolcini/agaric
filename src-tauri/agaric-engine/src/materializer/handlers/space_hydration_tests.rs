@@ -22,8 +22,8 @@
 use crate::loro::engine::PropertyValue;
 use agaric_core::ulid::BlockId;
 use agaric_store::op::{
-    AddTagPayload, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload,
-    OpPayload, SPACE_PROPERTY_KEY, SetPropertyPayload,
+    AddPageAliasPayload, AddTagPayload, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload,
+    MoveBlockPayload, OpPayload, SPACE_PROPERTY_KEY, SetPropertyPayload,
 };
 use agaric_store::space::SpaceId;
 use agaric_store::test_support::init_pool;
@@ -943,4 +943,64 @@ async fn reassignment_re_roots_a_nested_page_in_the_old_doc_5239() {
         .unwrap()
         .expect("K in S1 on the peer");
     assert_eq!(k.parent_id, None, "the peer sees K as a root of S1");
+}
+
+// --------------------------------------------------------------------------
+// 10. #5387 — a page's aliases are doc state like its properties and tags, so
+//     the hydration that seeds a page into a space's doc seeds them too: an
+//     alias written while the page had no space, and the aliases of a page
+//     reassigned to another space, whose old doc is pruned with the page. A
+//     doc without them tells a peer the page has none, and the page's next
+//     alias edit would replace the peer's rows with that one alias.
+// --------------------------------------------------------------------------
+
+fn add_alias_op(page_id: &str, alias: &str) -> OpPayload {
+    OpPayload::AddPageAlias(AddPageAliasPayload {
+        page_id: BlockId::from_trusted(page_id),
+        alias: alias.into(),
+    })
+}
+
+/// The aliases `space`'s doc holds for `PAGE_ID`; `None` when it has no alias
+/// map for it.
+fn doc_aliases(state: &crate::loro::shared::LoroState, space: &SpaceId) -> Option<Vec<String>> {
+    let mut guard = state
+        .registry
+        .for_space(space, DEVICE_ID)
+        .expect("for_space");
+    guard
+        .engine_mut()
+        .read_page_aliases(PAGE_ID)
+        .expect("read_page_aliases")
+}
+
+#[tokio::test]
+async fn hydration_seeds_the_pages_aliases_into_each_space_it_enters_5387() {
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    register_second_space(&pool).await;
+    let state = crate::loro::shared::LoroState::new();
+    create_no_space_subtree(&pool, &state).await;
+
+    // The page has no space yet, so this alias is projected to SQL alone.
+    apply(&pool, &state, add_alias_op(PAGE_ID, "plans")).await;
+    apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE_ID))).await;
+    assert_eq!(
+        doc_aliases(&state, &space()),
+        Some(vec!["plans".to_owned()]),
+        "the first assignment seeds the alias written before it"
+    );
+
+    // An alias written through S1's doc, then the page moves to S2.
+    apply(&pool, &state, add_alias_op(PAGE_ID, "Roadmap")).await;
+    apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE2_ID))).await;
+    assert_eq!(
+        doc_aliases(&state, &space()),
+        None,
+        "S1's doc is pruned of the page, aliases included"
+    );
+    assert_eq!(
+        doc_aliases(&state, &space2()),
+        Some(vec!["plans".to_owned(), "Roadmap".to_owned()]),
+        "S2's doc is seeded with every alias the page holds"
+    );
 }

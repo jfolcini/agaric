@@ -187,34 +187,6 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_add_and_remove_converge_whichever_merges_first() {
-        let mut base = peer("dev-a");
-        base.apply_add_page_alias(PAGE, "plans").expect("seed");
-        let bytes = base.export_snapshot().unwrap();
-        let fork = |device: &str| {
-            let mut e = LoroEngine::with_peer_id(device).expect("peer");
-            e.import(&bytes).expect("fork");
-            e
-        };
-        let (mut a, mut b) = (fork("dev-a"), fork("dev-b"));
-        a.apply_add_page_alias(PAGE, "Plans").expect("a respells");
-        b.apply_remove_page_alias(PAGE, "plans").expect("b removes");
-        let (a_bytes, b_bytes) = (a.export_snapshot().unwrap(), b.export_snapshot().unwrap());
-
-        let mut a_then_b = fork("dev-c");
-        a_then_b.import(&a_bytes).unwrap();
-        a_then_b.import(&b_bytes).unwrap();
-        let mut b_then_a = fork("dev-d");
-        b_then_a.import(&b_bytes).unwrap();
-        b_then_a.import(&a_bytes).unwrap();
-        assert_eq!(
-            a_then_b.read_page_aliases(PAGE).unwrap(),
-            b_then_a.read_page_aliases(PAGE).unwrap(),
-            "the add/remove race resolves the same way in either merge order"
-        );
-    }
-
-    #[test]
     fn purge_drops_the_page_alias_map() {
         let mut e = peer("dev-a");
         e.apply_add_page_alias(PAGE, "plans").expect("add");

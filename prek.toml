@@ -2454,9 +2454,11 @@ stages = ["pre-commit"]
 # Blocks-rebuild cascade guard (#606). `DROP TABLE blocks` under
 # `foreign_keys = ON` immediately cascade-deletes every child row
 # with an ON DELETE CASCADE FK into blocks — inside the migration
-# tx, before the `_new_blocks` rename. page_aliases (no op_log
-# entries) and block_drafts (device-local) do NOT re-materialize
-# at boot, so the shipped rebuilds 0073/0080/0085 destroyed both.
+# tx, before the `_new_blocks` rename. page_aliases (an engine
+# projection that only disaster recovery reprojects; it had no
+# op_log entries before #5387) and block_drafts (device-local) do
+# NOT re-materialize at boot, so the shipped rebuilds 0073/0080/0085
+# destroyed both.
 # Since 0089, the blocks → spaces CASCADE can also trigger
 # spaces → blocks.space_id SET NULL and wipe the registry plus
 # memberships. Any later blocks rebuild must follow the ordered

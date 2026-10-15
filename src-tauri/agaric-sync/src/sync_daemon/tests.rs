@@ -12274,3 +12274,91 @@ async fn page_alias_added_on_a_reaches_b_on_an_ordinary_sync_5387() {
     a.flush_and_shutdown().await;
     b.flush_and_shutdown().await;
 }
+
+/// Every `page_aliases` row, sorted.
+async fn all_page_aliases_5387(pool: &SqlitePool) -> Vec<(String, String)> {
+    sqlx::query_as("SELECT page_id, alias FROM page_aliases ORDER BY page_id, alias")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// #5387: two devices that give one alias to different pages before they meet
+/// end with the same `page_aliases` rows, the lower page id holding it on both.
+/// Their engines hold both claims either way; the rows are what could differ,
+/// each device keeping the claim it projected first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_contested_page_alias_goes_to_the_same_page_on_both_devices_5387() {
+    use crate::sync_protocol::SyncState;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{AddPageAliasPayload, CreateBlockPayload, OpPayload};
+
+    const LOW: &str = "01HZ5387PAGAXXXXXXXXXXXXXX";
+    const HIGH: &str = "01HZ5387PAGBXXXXXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ5387SPACEXXXXXXXXXXXXX");
+    let devices = make_n_devices_2141(&["DEV5387CC", "DEV5387DD"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+    async fn on(
+        dev: &Device2141,
+        space: &agaric_store::space::SpaceId,
+        payload: OpPayload,
+        ts: i64,
+    ) {
+        apply_local_op_602(&dev.pool, &dev.mat, &dev.state, &dev.id, space, payload, ts).await;
+    }
+    for (page, ts) in [(LOW, 1_736_942_400_000), (HIGH, 1_736_942_400_001)] {
+        on(
+            a,
+            &space,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(page),
+                block_type: "page".into(),
+                parent_id: None,
+                position: None,
+                index: Some(0),
+                content: "Planning".into(),
+            }),
+            ts,
+        )
+        .await;
+    }
+    assert_eq!(
+        run_session_2141(b, a).await,
+        SyncState::Complete,
+        "B pulls the pages"
+    );
+
+    // Neither device has seen the other's claim: one spelling each.
+    for (dev, page, alias, ts) in [
+        (a, LOW, "plans", 1_736_942_400_100),
+        (b, HIGH, "Plans", 1_736_942_400_200),
+    ] {
+        on(
+            dev,
+            &space,
+            OpPayload::AddPageAlias(AddPageAliasPayload {
+                page_id: BlockId::from_trusted(page),
+                alias: alias.into(),
+            }),
+            ts,
+        )
+        .await;
+    }
+    assert_eq!(run_session_2141(b, a).await, SyncState::Complete);
+    assert_eq!(run_session_2141(a, b).await, SyncState::Complete);
+
+    let expected = vec![(LOW.to_owned(), "plans".to_owned())];
+    assert_eq!(
+        all_page_aliases_5387(&a.pool).await,
+        expected,
+        "device A: the lower page holds the alias"
+    );
+    assert_eq!(
+        all_page_aliases_5387(&b.pool).await,
+        expected,
+        "device B: the same page holds it, though B's own claim came first"
+    );
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
+}

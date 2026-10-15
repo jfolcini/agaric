@@ -89,6 +89,11 @@ fn extract_str_field_from_payload(payload_json: &str, field: &'static str) -> Op
 /// failure logs once at warn level (not once per field) and yields
 /// `(None, None)`, leaving the indexed columns unpopulated rather than
 /// aborting ingest.
+///
+/// The indexed `block_id` is what [`OpPayload::block_id`](crate::op::OpPayload::block_id)
+/// answers for a local append, so an alias op, which names its page as `page_id`
+/// (#5387), is indexed under that page: a peer's row then lists in the page's
+/// history as a local one does.
 // #2621 (wave S3b-ii): `pub` (was `pub(crate)`) because the app-crate
 // remote-ingest path `crate::dag::insert_remote_op` calls it across the crate
 // boundary to populate the indexed columns in a single parse.
@@ -96,7 +101,10 @@ pub fn extract_indexed_ids_from_payload(payload_json: &str) -> (Option<String>, 
     match serde_json::from_str::<serde_json::Value>(payload_json) {
         Ok(value) => {
             let get = |field: &str| value.get(field).and_then(|v| v.as_str()).map(str::to_owned);
-            (get("block_id"), get("attachment_id"))
+            (
+                get("block_id").or_else(|| get("page_id")),
+                get("attachment_id"),
+            )
         }
         Err(e) => {
             // Truncate at 80 chars (UTF-8-safe via `chars().take`) so a
@@ -118,14 +126,15 @@ pub fn extract_indexed_ids_from_payload(payload_json: &str) -> (Option<String>, 
 /// `op_log.block_id` column (added in migration 0030) when the caller
 /// only has the payload as a JSON string rather than a typed [`OpPayload`].
 ///
-/// Returns `None` if the payload has no `block_id` field (the
-/// `delete_attachment` op targets an attachment_id only) or if the JSON
-/// cannot be parsed.
+/// Returns `None` if the payload has neither a `block_id` field nor the
+/// `page_id` an alias op carries in its place (the `delete_attachment` op
+/// targets an attachment_id only) or if the JSON cannot be parsed.
 ///
 /// Test-only since #2071 (see [`extract_indexed_ids_from_payload`]).
 #[cfg(test)]
 pub(crate) fn extract_block_id_from_payload(payload_json: &str) -> Option<String> {
     extract_str_field_from_payload(payload_json, "block_id")
+        .or_else(|| extract_str_field_from_payload(payload_json, "page_id"))
 }
 
 /// Extract the `attachment_id` from a serialized payload JSON string.
