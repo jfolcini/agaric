@@ -328,9 +328,8 @@ export function useBlockActionOrchestration({
   t,
 }: UseBlockActionOrchestrationParams): UseBlockActionOrchestrationReturn {
   const rovingEditorRef = useRef(rovingEditor)
-  // The by-id handlers sit in the rows' `BlockActions` context, so they read the
-  // focused id at call time: capturing it changed their identity on every focus
-  // move and re-rendered every row of the tree.
+  // The by-id handlers sit in every row's `BlockActions` context; reading focus
+  // at call time keeps a focus move from re-rendering every row.
   const focusedBlockIdRef = useRef(focusedBlockId)
   useLayoutEffect(() => {
     rovingEditorRef.current = rovingEditor

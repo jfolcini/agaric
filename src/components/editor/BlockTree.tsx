@@ -1381,8 +1381,7 @@ export function BlockTree({
 
   // ── Action / resolver bags published via context ────────
   // Memoised so descendants only re-render when callbacks change.
-  // `void` adapts the async handlers to the bag's void-returning shape; they
-  // are memoised so the bag keeps its identity across renders.
+  // `void` adapts the async handlers to the bag's void-returning shape.
   const handleDuplicateAction = useCallback(
     (blockId: string) => void handleDuplicate(blockId),
     [handleDuplicate],
