@@ -298,11 +298,6 @@ pub async fn sync_pages_cache_space_ids(
 pub(crate) async fn recompute_all_pages_cache_counts(
     write_conn: &mut sqlx::SqliteConnection,
 ) -> Result<u64, AppError> {
-    // #469 L3: use a CTE so each correlated subquery is evaluated once
-    // per pages_cache row rather than twice (once in SET, once in the
-    // change-guard WHERE). SQLite does not CSE correlated subqueries
-    // across SET and WHERE, so the pre-CTE form ran 4 subquery
-    // evaluations per row instead of 2.
     // `+src.space_id`: the unary `+` keeps the planner from driving the inbound
     // count off `idx_blocks_space_type`, a scan of the whole space per page
     // (quadratic in the vault) instead of a walk of the page's own links.
