@@ -212,7 +212,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /var/cache/apt/archives/*.deb
-          key: apt-tauri-e2e-${{ runner.os }}-v2
+          key: apt-tauri-e2e-${{ runner.os }}-v3
 
       - name: Install system dependencies
         # The Tauri Linux build deps are copied verbatim from `_validate.yml`'s
@@ -224,6 +224,7 @@ jobs:
         #   - dbus-daemon — owns `dbus-run-session` (verified in release.yml:
         #     `dpkg -S /usr/bin/dbus-run-session` on noble), for the launch
         #     step below (#4444).
+        #   - openbox — a window manager, so the app window gets focus (#5457).
         # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
         # that cannot serve the index no longer reds this job as a code
         # failure; the INSTALL decides. Measured trace + exit codes in
@@ -241,6 +242,7 @@ jobs:
             webkit2gtk-driver
             xvfb
             dbus-daemon
+            openbox
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
         # Mirrors `_validate.yml`: the repo ships `.cargo/config.toml.example`
@@ -280,7 +282,10 @@ jobs:
         # own onPrepare build. xvfb-run gives the WebKitWebView a display and
         # dbus-run-session a session bus (#4444: without one every worker boot
         # stalled a flat 30 s, consistent with the 25 s dbus default timeout),
-        # the composition release.yml uses for its boot smoke.
+        # the composition release.yml uses for its boot smoke. Bare Xvfb has no
+        # window manager, so nothing ever focuses the app window and
+        # `document.hasFocus()` stays false; openbox focuses new windows
+        # (#5457), and waitForAppReady fails the run if it did not.
         #
         # #3334 — no vault isolation is configured HERE on purpose. The runner
         # being ephemeral used to be the only thing keeping this lane off a real
@@ -292,7 +297,7 @@ jobs:
         # WDIO_KEEP_VAULT=1 to retain the sandbox for a post-mortem.
         env:
           WDIO_SKIP_TAURI_BUILD: '1'
-        run: xvfb-run -a dbus-run-session -- npm run test:e2e-tauri
+        run: xvfb-run -a dbus-run-session -- bash -c 'openbox & npm run test:e2e-tauri'
 
       - name: Upload WebdriverIO logs
         # #4428 — `**/*.log` swept `node_modules`. Every failing run's

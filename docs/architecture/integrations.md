@@ -25,7 +25,7 @@ Two separate sockets, two marker files (`mcp-ro-enabled` / `mcp-rw-enabled`):
 - **Read-only**: list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces.
 - **Read-write**: append block, update block content, set property, add tag, create page, delete block — plus `list_spaces`, which both surfaces expose.
 
-`list_spaces` returns `{ id, name, is_default }` for every space; it is the discovery surface for the `space_id` that `search` / `journal_for_date` / every mutating RW tool require. Wire names live as `TOOL_*` constants in `src-tauri/src/mcp/registry.rs`; the authoritative advertised and dispatched sets are `list_tool_descriptions()` and the `call_tool()` match arms in `tools_ro.rs` / `tools_rw.rs`.
+`list_spaces` returns `{ id, name, is_default }` for every space; it is the discovery surface for the `space_id` every tool but `list_spaces` and `list_property_defs` requires. Wire names live as `TOOL_*` constants in `src-tauri/src/mcp/registry.rs`; the authoritative advertised and dispatched sets are `list_tool_descriptions()` and the `call_tool()` match arms in `tools_ro.rs` / `tools_rw.rs`.
 
 Splitting by R/W lets users disable writes while keeping reads on.
 
@@ -45,14 +45,11 @@ Splitting by R/W lets users disable writes while keeping reads on.
 6. Refresh the matching `tool_descriptions` insta snapshot and add or refresh the tool's response
    snapshot when its test pins a response envelope.
 
-Read-only tools follow two `space_id` patterns: it is required by `search`, `journal_for_date`,
-`list_tags`, `list_backlinks`, `get_agenda` and the history, journal and trash tools, and absent
-from `list_pages`, `get_page`, `get_page_markdown`, `get_block`, `list_property_defs`, and
-`list_spaces`. Every mutating
-read-write tool requires an agent-supplied `space_id`: existing-block mutations validate that the
-target belongs to the claimed space, while `create_page` uses it to select the destination space.
-Neither use is an authorization boundary. See [Agent Access → Space scoping](../features/agent-access.md#space-scoping-reads-are-vault-wide-writes-are-space-scoped)
-for the full vault-wide read and write-scope contract.
+Every tool requires `space_id` except `list_spaces` and `list_property_defs` (property
+definitions are vault-wide). Reads are confined to that space, a tool that addresses a block or
+page by id rejects a target in another space, and `create_page` uses it to select the destination
+space. It is not an authorization boundary. See [Agent Access → Space scoping](../features/agent-access.md#space-scoping)
+for the full contract.
 
 The MCP `search` tool takes `parent_id`, `tag_ids`, and `space_id` as **top-level** arguments (alongside `query`, `cursor`, `limit`) — `space_id` is required, the other two are optional. Everything else is carried by an optional structured `filter` arg that mirrors the user-facing `SearchFilter` minus those three already-top-level slots: `include_page_globs`, `exclude_page_globs`, `state_filter`, `priority_filter`, `excluded_state_filter`, `excluded_priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters`, `block_type_filter`, `case_sensitive`, `whole_word`, `is_regex`. (`SearchFilterArgs` in `src-tauri/src/mcp/tools_ro.rs` is `deny_unknown_fields`, so passing `parent_id`/`tag_ids`/`space_id` *inside* `filter` is rejected.) Inline filter syntax (`tag:` / `state:` / `prop:`…) is **not** re-parsed from `query` at the MCP boundary — agents pass structured arguments. Omitting `filter` preserves the prior query-string-only behaviour.
 

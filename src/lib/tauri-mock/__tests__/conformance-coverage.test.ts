@@ -131,7 +131,7 @@ function takesWriteHandle(signature: string): boolean {
 // Read-only classifier
 // ---------------------------------------------------------------------------
 
-/**
+/*
  * A command is READ-ONLY (has no backend-observable persistent effect) when its
  * name begins with a query verb (`isReadOnlyCommand`, shared with the Pages
  * list's local-write watch). Everything NOT matched there is a
@@ -158,8 +158,6 @@ function takesWriteHandle(signature: string): boolean {
  * because of its verb. It is now a mutating candidate carrying an explicit
  * waiver in `NO_FIXTURE_ALLOWLIST`.
  */
-const isReadOnly = isReadOnlyCommand
-
 /**
  * #3332 — commands that DO take a Rust write handle yet stay classified
  * read-only, because the only thing they write is a DERIVED cache the
@@ -2562,8 +2560,8 @@ const REQUIRED_SCENARIOS: ReadonlyArray<ScenarioRequirement> = [
 
 describe('#3083 conformance-coverage ratchet', () => {
   const bindingsCommands = BINDINGS_COMMANDS
-  const mutatingCommands = bindingsCommands.filter((c) => !isReadOnly(c))
-  const readOnlyCommands = bindingsCommands.filter((c) => isReadOnly(c))
+  const mutatingCommands = bindingsCommands.filter((c) => !isReadOnlyCommand(c))
+  const readOnlyCommands = bindingsCommands.filter((c) => isReadOnlyCommand(c))
   const fixtures = loadFixtures()
 
   // Commands actually driven by ≥1 fixture. A conformance op IS the IPC command
@@ -2624,7 +2622,7 @@ describe('#3083 conformance-coverage ratchet', () => {
 
     const writeTakingButReadOnly = bindingsCommands.filter(
       (c) =>
-        isReadOnly(c) &&
+        isReadOnlyCommand(c) &&
         takesWriteHandle(rustSignatures.get(c) ?? '') &&
         !(c in READ_ONLY_CACHE_WRITERS),
     )
@@ -2740,7 +2738,7 @@ describe('#3083 conformance-coverage ratchet', () => {
         `${JSON.stringify(notInBindings)}. Remove the stale entries.`,
     ).toEqual([])
 
-    const misclassifiedReadOnly = allowKeys.filter((c) => isReadOnly(c))
+    const misclassifiedReadOnly = allowKeys.filter((c) => isReadOnlyCommand(c))
     expect(
       misclassifiedReadOnly,
       `NO_FIXTURE_ALLOWLIST lists read-only commands ${JSON.stringify(misclassifiedReadOnly)}; ` +
@@ -2761,7 +2759,7 @@ describe('#3083 conformance-coverage ratchet', () => {
     ).toBe(true)
   })
 
-  // #3347 — the READ half of the ratchet. `isReadOnly` used to be a blanket
+  // #3347 — the READ half of the ratchet. `isReadOnlyCommand` used to be a blanket
   // exemption: a `get_` / `list_` / `search_` command needed neither a fixture
   // nor a waiver, so the query surface the UI renders from had no differential
   // coverage at all. It now needs a query step or a reasoned waiver.
@@ -3128,7 +3126,8 @@ describe('#3083 conformance-coverage ratchet', () => {
     const collisions: string[] = []
     const notReadOnly: string[] = []
     for (const [command, spec] of Object.entries(QUERY_STEP_BRANCH_DISCRIMINATORS)) {
-      if (!isReadOnly(command) || !bindingsCommands.includes(command)) notReadOnly.push(command)
+      if (!isReadOnlyCommand(command) || !bindingsCommands.includes(command))
+        notReadOnly.push(command)
       const seen = new Set<string>()
       for (const dim of spec.dimensions) {
         for (const d of [...dim.discriminators, { branch: dim.defaultBranch }]) {
@@ -3267,7 +3266,7 @@ describe('#3083 conformance-coverage ratchet', () => {
         `Each command has exactly one classification — keep exactly one waiver.`,
     ).toEqual([])
 
-    const misclassifiedMutating = allowKeys.filter((c) => !isReadOnly(c))
+    const misclassifiedMutating = allowKeys.filter((c) => !isReadOnlyCommand(c))
     expect(
       misclassifiedMutating,
       `READ_NO_QUERY_ALLOWLIST lists commands that are NOT read-only ` +
@@ -3832,7 +3831,7 @@ describe('#3083 conformance-coverage ratchet', () => {
   // query step naming a MUTATING command would drive state inside the read
   // phase, after the snapshot has been taken, and no assertion would see it.
   it('every conformance query step drives a read-only command', () => {
-    const mutatingQuerySteps = [...fixtureQueryCommands].filter((c) => !isReadOnly(c))
+    const mutatingQuerySteps = [...fixtureQueryCommands].filter((c) => !isReadOnlyCommand(c))
     expect(
       mutatingQuerySteps,
       `These conformance query steps drive MUTATING commands ` +

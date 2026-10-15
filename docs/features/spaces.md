@@ -57,7 +57,7 @@ If you opened Agaric before spaces existed, your existing pages migrated automat
 ## Per-space integrations
 
 - **Journal & journal template** — fully per-space.
-- **MCP / agents** — agents see every space and can scope their tool calls; see [agent-access.md](agent-access.md).
+- **MCP / agents** — agents see every space and name one in each tool call; see [agent-access.md](agent-access.md).
 
 ## Pitfalls to know
 
