@@ -78,6 +78,7 @@
 //! | `tags_cache.usage_count` (#3345) | `blocks`, `block_tags` **and** `block_tag_refs` (explicit + inline, so it rides on Artefact 12) | `rebuild_tags_cache(_split)` / `refresh_tag_usage_count` — audited by [`reconcile_tags_cache`], NOT by [`reconcile`] |
 //! | `agenda_cache` (the date roll-up, #3345) | `blocks`, `block_properties` **and** `block_tags` | `rebuild_agenda_cache(_split)` (the `RebuildAgendaCache` task) — audited by [`reconcile_agenda_cache`], NOT by [`reconcile`] |
 //! | `projected_agenda_cache` (the recurrence horizon, #3345) | `blocks` **and** `block_properties`, plus a `today` the caller supplies | `rebuild_projected_agenda_cache(_split)` (the `RebuildProjectedAgendaCache` task) — audited by [`reconcile_projected_agenda`], NOT by [`reconcile`] |
+//! | `pages_cache.{title_sort_key,last_edited_ms}` (the Pages sort keys, #5371) | the cached `pages_cache.title`; `op_log` and `blocks.page_id` for a floor | the page-row rebuild and the page-create INSERT (key) / `raise_pages_last_edited_ms` on every op-landing path (last edited) — audited by [`reconcile_pages_cache_sort_keys`], NOT by [`reconcile`] |
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
 //!
@@ -2654,6 +2655,83 @@ fn diff_block_space_ids(blocks: &[BaseBlock], out: &mut Vec<Divergence>) {
     }
 }
 
+const PAGES_CACHE_SORT_KEY_OWNER: &str = "every pages_cache title writer must write the key with \
+     it: cache::pages' rebuild (the RebuildPagesCache task) and the page-create INSERT in \
+     apply::pages_cache";
+
+const PAGES_CACHE_LAST_EDITED_OWNER: &str = "cache::raise_pages_last_edited_ms, called by every path \
+     that lands an op in op_log: CommandTx::commit_and_dispatch (local commands), \
+     apply_op_projected_with_mode and apply_records_in_tx (the materializer), \
+     dag::ingest_remote_record (a peer's replicated op); a row the rebuild inserts is born \
+     from the op log";
+
+/// The two Pages sort keys on `pages_cache` (#5371), for every row.
+///
+/// `title_sort_key` must be the key of the title the row holds. The rule is
+/// `agaric_core::title_sort::title_sort_key` itself, pinned by its own
+/// vectors, so this audits that every title writer stored the key with the
+/// title, not the rule.
+///
+/// `last_edited_ms` only ever rises and outlives the ops compaction deletes,
+/// so the op log gives a floor, not the value: a row below the newest op on
+/// one of its page's blocks missed a raise. The page is the dumped
+/// `blocks.page_id`, the ownership the raise reads; the per-block newest op
+/// is the one aggregate pushed into SQLite, because a raw `op_log` dump does
+/// not fit a phone's heap.
+pub async fn reconcile_pages_cache_sort_keys(
+    pool: &SqlitePool,
+    blocks: &[BaseBlock],
+) -> Result<Vec<Divergence>, AppError> {
+    let rows =
+        sqlx::query!("SELECT page_id, title, title_sort_key, last_edited_ms FROM pages_cache")
+            .fetch_all(pool)
+            .await?;
+    let newest_ops = sqlx::query!(
+        r#"SELECT block_id AS "block_id!", MAX(created_at) AS "newest!: i64"
+             FROM op_log WHERE block_id IS NOT NULL GROUP BY block_id"#
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let page_of: BTreeMap<&str, &str> = blocks
+        .iter()
+        .filter_map(|b| b.page_id.as_deref().map(|page| (b.id.as_str(), page)))
+        .collect();
+    let mut newest_by_page: BTreeMap<&str, i64> = BTreeMap::new();
+    for op in &newest_ops {
+        if let Some(&page) = page_of.get(op.block_id.as_str()) {
+            let newest = newest_by_page.entry(page).or_insert(op.newest);
+            *newest = (*newest).max(op.newest);
+        }
+    }
+
+    let mut out = Vec::new();
+    for row in &rows {
+        let want = agaric_core::title_sort::title_sort_key(&row.title);
+        if row.title_sort_key != want {
+            out.push(Divergence {
+                artefact: "pages_cache.title_sort_key",
+                key: row.page_id.clone(),
+                expected: format!("{want:?} (the key of the cached title)"),
+                actual: format!("{:?}", row.title_sort_key),
+                owner: PAGES_CACHE_SORT_KEY_OWNER,
+            });
+        }
+        if let Some(&floor) = newest_by_page.get(row.page_id.as_str())
+            && row.last_edited_ms < floor
+        {
+            out.push(Divergence {
+                artefact: "pages_cache.last_edited_ms",
+                key: row.page_id.clone(),
+                expected: format!("at least {floor} (the newest op on the page's blocks)"),
+                actual: row.last_edited_ms.to_string(),
+                owner: PAGES_CACHE_LAST_EDITED_OWNER,
+            });
+        }
+    }
+    Ok(out)
+}
+
 const PAGES_CACHE_ROW_MISSING_OWNER: &str = "rebuild_pages_cache (the RebuildPagesCache task — row membership has \
      NO synchronous per-op arm) — the page is missing from the Pages \
      list, its title never materialises, and the count arms have no row \
@@ -2901,7 +2979,7 @@ pub async fn reconcile(
 /// behind `commands::reconciliation::compute_reconciliation_report` (#4886).
 ///
 /// [`reconcile`] is the per-op gate the drivers assert after every generated
-/// op. The six artefacts it leaves out are triaged deep checks — see
+/// op. The seven artefacts it leaves out are triaged deep checks — see
 /// [`reconcile_block_links`] for the lane decision — whose MISSING arms can
 /// fire on eventual-consistency residue (a reindex not yet drained, a loss
 /// that predates #4118, the purge window) rather than on a defect. A
@@ -2910,7 +2988,7 @@ pub async fn reconcile(
 ///
 /// `today` pins the projected-agenda rebuild. The caller records it in the
 /// report so a run that straddles local midnight is diagnosable rather than a
-/// phantom divergence. The order is [`reconcile`]'s, then the six in the
+/// phantom divergence. The order is [`reconcile`]'s, then the seven in the
 /// order the header table lists them, so `first` stays deterministic.
 ///
 /// # One `blocks` dump, not one snapshot (#4901)
@@ -2938,6 +3016,7 @@ pub async fn reconcile_all(
     out.extend(reconcile_tags_cache(pool, &blocks).await?);
     out.extend(reconcile_agenda_cache(pool, &blocks).await?);
     out.extend(reconcile_projected_agenda(pool, &blocks, today).await?);
+    out.extend(reconcile_pages_cache_sort_keys(pool, &blocks).await?);
     Ok(out)
 }
 

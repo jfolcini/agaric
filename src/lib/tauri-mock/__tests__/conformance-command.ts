@@ -252,6 +252,9 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   // attribute names the scalar. The count is narrower than the input list: an
   // id that no longer resolves to a live block is skipped, not refused.
   move_blocks_to_space: { idKey: HEADED_ID_KEY, attrs: ['moved'], lists: [] },
+  // #5371 — answers `()`; `page_opens` is outside the snapshot, so a
+  // `last-opened` query step observes it.
+  record_page_open: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
 }
 
 /** Mirror of `project_return`: the row token, then one arrow per list element. */

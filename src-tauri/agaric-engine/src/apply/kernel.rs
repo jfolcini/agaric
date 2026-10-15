@@ -141,6 +141,14 @@ pub async fn apply_op_projected_with_mode(
         // atomic. A crash before the caller commits rolls both back together;
         // the cursor never points ahead of materialised state.
         advance_apply_cursor(tx, record.seq).await?;
+        // #5371: the materializer path moves the op's page up "Last edited".
+        // The LOCAL path (`advance_cursor = false`) leaves it to the command's
+        // `CommandTx::commit_and_dispatch`, which also sees the undo and
+        // attachment ops that never come through here.
+        if let Some(block_id) = record.block_id.as_deref() {
+            agaric_store::cache::raise_pages_last_edited_ms(tx, &[(block_id, record.created_at)])
+                .await?;
+        }
     }
 
     Ok(effects)

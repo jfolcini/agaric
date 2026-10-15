@@ -1,25 +1,28 @@
 /**
  * `list_pages_with_metadata` — `last_modified_at` comes from the op-log, else
- * the page's ULID creation time, and from nowhere else (#3884 + #3898 + #5286).
+ * the page's ULID creation time, and from nowhere else (#3884 + #3898 + #5286,
+ * #5371).
  *
  * ## What this file guards
  *
- * The backend has exactly ONE last-edited source. The column
- * `list_pages_with_metadata_inner` selects is
+ * The backend has exactly ONE last-edited source per consumer, both derived
+ * from `op_log`, else the page's ULID creation time — no seed table:
  *
- *     COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), <ULID ms>)
+ *  - the IPC column and the `RecentlyModified` keyset read
+ *    `pages_cache.last_edited_ms` (#5371): the newest op on the page or any
+ *    block on it, raised as ops land, `COALESCE(…, 0)` for the keyset, so
+ *    rows with no op and an epoch id tie at the bottom and fall to the id
+ *    tiebreak. The mock derives the same value from its op log on every call
+ *    (`pagesLastEditedAt`, `shared.ts`); removing a page's rows below models a
+ *    page that never had an op, not compaction, which the backend no longer
+ *    lets lower the value;
+ *  - `compile_last_edited` (`agaric-store/src/filters/primitive.rs`) reads the
+ *    page block's own ops (`last_edited_ms_sql`), giving the documented "no
+ *    op-log ⇒ epoch" rule (Rolling EXCLUDES, OlderThan INCLUDES, Range
+ *    EXCLUDES).
  *
- * (`last_edited_ms_sql`) — no materialised stamp, no seed table. The seed's
- * ids all decode to the epoch, which this mock spells `null`, so sections 1-3
- * see only the op-log half; section 4 pins the ULID half. The two consumers
- * each apply their own epoch-sentinel rule to that value for COMPARISON only:
- *
- *  - the `RecentlyModified` keyset — `COALESCE(<that subquery>, ?{S})` with
- *    `LAST_MOD_NULL_SENTINEL = 0` (`src-tauri/src/commands/pages/metadata.rs:220,349-351`), so op-log-free
- *    rows tie at the bottom and fall to the id tiebreak;
- *  - `compile_last_edited` (`agaric-store/src/filters/primitive.rs`) — the
- *    same COALESCE, giving the documented "no op-log ⇒ epoch" rule (Rolling
- *    EXCLUDES, OlderThan INCLUDES, Range EXCLUDES).
+ * The seed's ids all decode to the epoch, which this mock spells `null`, so
+ * sections 1-3 see only the op-log half; section 4 pins the ULID half.
  *
  * The mock used to satisfy its fixtures with a `pageLastModified` map that
  * `pageLastModifiedAt` layered on top of the op-log scan. That made BOTH of
@@ -359,10 +362,9 @@ describe('list_pages_with_metadata — the recently-modified sort reads the op-l
   })
 
   it('op-log-free pages tie at the sentinel and fall to the id tiebreak', () => {
-    // The engine's `COALESCE(..., LAST_MOD_NULL_SENTINEL)` makes every
-    // never-edited row EQUAL, not merely "last": with two of them the order
-    // between the pair must be id ASC, exactly as `keyset_for`'s
-    // `StringDescNullCoalesced` + id tiebreak resolves it.
+    // The engine's `COALESCE(pc.last_edited_ms, 0)` makes every never-edited
+    // row EQUAL, not merely "last": with two of them the order between the
+    // pair must be id ASC, exactly as `keyset_for`'s id tiebreak resolves it.
     const bulk1 = pageIdByTitle('Bulk Page 001')
     const bulk2 = pageIdByTitle('Bulk Page 002')
     stripOpLogFor(bulk1)

@@ -165,7 +165,7 @@ describe('PageBrowser', () => {
 
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_pages_with_metadata', {
-        filter: { sort: 'default', spaceId: 'SPACE_TEST', filters: [] },
+        filter: { sort: 'alphabetical', spaceId: 'SPACE_TEST', filters: [] },
         cursor: null,
         limit: 50,
       })
@@ -367,7 +367,7 @@ describe('PageBrowser', () => {
     // Should call with the cursor from page 1
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('list_pages_with_metadata', {
-        filter: { sort: 'default', spaceId: 'SPACE_TEST', filters: [] },
+        filter: { sort: 'alphabetical', spaceId: 'SPACE_TEST', filters: [] },
         cursor: 'cursor_abc',
         limit: 50,
       })

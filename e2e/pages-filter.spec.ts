@@ -367,14 +367,14 @@ test.describe('Pages compound-filter chip-row', () => {
     await expect(page.getByRole('group', { name: 'Filter: Orphan' })).toHaveCount(1)
   })
 
-  test('paginates a filtered set under the recently-modified (string-keyset) sort', async ({
+  test('paginates a filtered set under the recently-modified (last-edited keyset) sort', async ({
     page,
   }) => {
     await bootPages(page, { extraPages: 80 })
-    // Switch to a string-keyset sort — the cursor path the backend review
-    // flagged as least-tested — then layer a filter and paginate across it.
+    // Switch to the last-edited keyset sort, then layer a filter and paginate
+    // across it.
     await page.getByRole('combobox', { name: 'Sort order' }).click()
-    await page.getByRole('option', { name: 'Recently modified' }).click()
+    await page.getByRole('option', { name: 'Last edited' }).click()
 
     await addBooleanFacet(page, 'No inbound links')
     await expect(page.getByRole('group', { name: 'Filter: No inbound links' })).toBeVisible()
@@ -382,7 +382,7 @@ test.describe('Pages compound-filter chip-row', () => {
     const grid = page.getByRole('grid')
     await expect(page.getByRole('button', { name: /load more/i })).toBeVisible()
     // Canonical pages sort last under recently-modified, so the template page is
-    // on a later result page; reaching it exercises the string-keyset cursor
+    // on a later result page; reaching it exercises the last-edited cursor
     // across fetches. (Bulk pages can't anchor this assertion — the mock derives
     // `lastModifiedAt` from the id prefix, which isn't monotonic with their index.)
     await expect(grid.getByText('Meeting Notes Template', { exact: true })).toHaveCount(0)

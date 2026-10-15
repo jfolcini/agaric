@@ -1,19 +1,20 @@
 /**
  * usePageBrowserGrouping — produces the unified `Starred` + `Pages` row
  * model consumed by the `PageBrowser` virtualizer. Owns the two branch
- * helpers (`buildSinglePageBranch`, `buildMultiPageBranch`) and the
- * `sortTopLevelUnits` comparator, plus a thin `useMemo` wrapper that
- * picks the right branch based on the current vault shape.
+ * helpers (`buildSinglePageBranch`, `buildMultiPageBranch`), plus a thin
+ * `useMemo` wrapper that picks the right branch based on the current vault
+ * shape.
+ *
+ * The pages arrive in the server's sort order (#5371) and every section keeps
+ * it: a namespace root sits where its first page arrived.
  *
  * Extracted from `PageBrowser.tsx`.
  */
 
 import { useMemo } from 'react'
 
-import type { SortOption } from '@/hooks/usePageBrowserSort'
 import type { BlockRow } from '@/lib/bindings'
 import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
-import { getRecentPagesForSpace } from '@/stores/recent-pages'
 
 /**
  * Unified `Starred` + `Pages` row model.
@@ -59,20 +60,13 @@ export type PageBrowserRow =
   | { kind: 'tree-page'; node: PageTreeNode; pageIndex: number; depth: number }
 
 /**
- * Top-level unit fed to the `Pages` section's sort comparator. Each
- * unit is either a flat top-level page (no `/` in its title) or a
- * namespace root (`PageTreeNode` with `name` = the first segment).
- * Sorted together by the active comparator at the top level.
+ * Top-level unit of the `Pages` section: either a flat top-level page (no
+ * `/` in its title) or a namespace root (`PageTreeNode` with `name` = the
+ * first segment).
  */
 type PagesTopLevelUnit =
   | { type: 'page'; page: BlockRow; duplicateTitle: boolean }
   | { type: 'tree'; node: PageTreeNode }
-
-/** Walk a tree node, collecting every page id reachable below it. */
-function collectDescendantPageIds(node: PageTreeNode, out: string[]): void {
-  if (node.pageId) out.push(node.pageId)
-  for (const child of node.children) collectDescendantPageIds(child, out)
-}
 
 /**
  * Return value of the row-grouping computation. Pulled to a named
@@ -105,25 +99,21 @@ export interface GroupedRowsResult {
  * the grouping memo so each helper stays under oxlint's eslint/complexity
  * threshold.
  */
-export function buildSinglePageBranch(
-  filteredPagesUnsorted: BlockRow[],
-  sortPages: (input: BlockRow[]) => BlockRow[],
-): GroupedRowsResult {
-  const sorted = sortPages(filteredPagesUnsorted)
-  const rows: PageBrowserRow[] = sorted.map((page, pageIndex) => ({
+export function buildSinglePageBranch(filteredPages: BlockRow[]): GroupedRowsResult {
+  const rows: PageBrowserRow[] = filteredPages.map((page, pageIndex) => ({
     kind: 'page',
     page,
     pageIndex,
   }))
-  const idMap = sorted.map((_, i) => i)
+  const idMap = filteredPages.map((_, i) => i)
   return {
-    filteredPages: sorted as Array<BlockRow | null>,
+    filteredPages,
     groupedRows: rows,
     pageIndexToRowIndex: idMap,
     hasStarred: false,
-    hasPages: sorted.length > 0,
+    hasPages: filteredPages.length > 0,
     // Single-page branch: every input row is a distinct flat page.
-    matchedPageCount: sorted.length,
+    matchedPageCount: filteredPages.length,
   }
 }
 
@@ -134,11 +124,11 @@ export function buildSinglePageBranch(
  * below 25 per function.
  */
 export function buildMultiPageBranch(
-  filteredPagesUnsorted: BlockRow[],
-  sortPages: (input: BlockRow[]) => BlockRow[],
-  sortOption: SortOption,
+  filteredPages: BlockRow[],
   starredSet: ReadonlySet<string>,
 ): GroupedRowsResult {
+  // `Starred` section: flat list. Renders the FULL title (e.g. `work/foo`)
+  // so a starred-and-namespaced page is recognizable at a glance.
   const starredFiltered: BlockRow[] = []
   // Pages section input. A page enters here when:
   //   - it is non-starred (always), OR
@@ -148,23 +138,18 @@ export function buildMultiPageBranch(
   // it under `Pages` too would duplicate the row without value.
   const pagesSourcePages: BlockRow[] = []
   // #3286 — `id → row` index built in the walk that already exists, so the
-  // two lookups below are O(1) instead of a `filteredPagesUnsorted.find(...)`
+  // two lookups below are O(1) instead of a `filteredPages.find(...)`
   // scan per top-level unit (the Pages browser's infinite query accumulates
   // every fetched page, so that was O(P²) in the loaded-page count). First
   // writer wins, matching `.find`'s first-match semantics.
   const byId = new Map<string, BlockRow>()
-  for (const p of filteredPagesUnsorted) {
+  for (const p of filteredPages) {
     if (!byId.has(p.id)) byId.set(p.id, p)
     const starred = starredSet.has(p.id)
     const isNamespaced = (p.content ?? '').includes('/')
     if (starred) starredFiltered.push(p)
     if (!starred || isNamespaced) pagesSourcePages.push(p)
   }
-
-  // `Starred` section: flat list, sorted independently by the
-  // active comparator. Renders the FULL title (e.g. `work/foo`) so
-  // a starred-and-namespaced page is recognizable at a glance.
-  const starredSorted = sortPages(starredFiltered)
 
   // `Pages` section: build a single tree from every input page so
   // hybrid nodes (a page named `work` with children under
@@ -174,9 +159,8 @@ export function buildMultiPageBranch(
   //     row (single-segment top-level page).
   //   - otherwise → render as a `tree-page` row (pure namespace OR
   //     hybrid). `PageTreeItem` handles the hybrid case internally.
-  // Subtree child order tracks `pagesSorted` input order.
-  const pagesSorted = sortPages(pagesSourcePages)
-  const allRoots = buildPageTree(pagesSorted)
+  // Root and subtree child order track input order.
+  const allRoots = buildPageTree(pagesSourcePages)
   const topLevelUnits: PagesTopLevelUnit[] = allRoots.map((node) => {
     if (node.pageId && node.children.length === 0) {
       const page = byId.get(node.pageId)
@@ -189,32 +173,22 @@ export function buildMultiPageBranch(
     return { type: 'tree', node }
   })
 
-  // Sort the heterogeneous top-level list. Comparator semantics
-  // mirror `sortPages`: alphabetical → name; created → newest
-  // descendant ULID (or own ULID for flat); recent → newest
-  // descendant visit time (or own for flat) with name fallback.
-  const recentMap =
-    sortOption === 'recent'
-      ? new Map(getRecentPagesForSpace().map((rp) => [rp.id, rp.visitedAt]))
-      : null
-  const sortedTopLevel = sortTopLevelUnits(topLevelUnits, sortOption, recentMap)
-
   const rows: PageBrowserRow[] = []
   const idMap: number[] = []
   const pageRows: Array<BlockRow | null> = []
   let pageIndex = 0
-  if (starredSorted.length > 0) {
-    rows.push({ kind: 'header', section: 'starred', count: starredSorted.length })
-    for (const page of starredSorted) {
+  if (starredFiltered.length > 0) {
+    rows.push({ kind: 'header', section: 'starred', count: starredFiltered.length })
+    for (const page of starredFiltered) {
       idMap.push(rows.length)
       rows.push({ kind: 'page', page, pageIndex })
       pageRows.push(page)
       pageIndex += 1
     }
   }
-  if (sortedTopLevel.length > 0) {
-    rows.push({ kind: 'header', section: 'pages', count: sortedTopLevel.length })
-    for (const unit of sortedTopLevel) {
+  if (topLevelUnits.length > 0) {
+    rows.push({ kind: 'header', section: 'pages', count: topLevelUnits.length })
+    for (const unit of topLevelUnits) {
       idMap.push(rows.length)
       if (unit.type === 'page') {
         rows.push({
@@ -238,128 +212,22 @@ export function buildMultiPageBranch(
     filteredPages: pageRows,
     groupedRows: rows,
     pageIndexToRowIndex: idMap,
-    hasStarred: starredSorted.length > 0,
-    hasPages: sortedTopLevel.length > 0,
-    // E7 — `filteredPagesUnsorted` is the distinct matched-page set the
+    hasStarred: starredFiltered.length > 0,
+    hasPages: topLevelUnits.length > 0,
+    // E7 — `filteredPages` is the distinct matched-page set the
     // grouping consumed: one entry per page, before namespace collapse
     // and before the starred+namespaced duplication. That is the
     // honest "matching pages" count. #4709 — it stays the right basis
     // now that duplicate-title pages each get their own node: the count
     // is one per input page either way, whereas deriving it from the
     // tree would have silently dropped them along with their rows.
-    matchedPageCount: filteredPagesUnsorted.length,
+    matchedPageCount: filteredPages.length,
   }
-}
-
-/**
- * Sort the heterogeneous "top-level units" list (flat page rows + tree
- * roots) under `Pages`. Comparator semantics mirror `sortPages`:
- *
- *  - alphabetical → by page.content (flat) / node.name (tree).
- *  - created → by ULID (flat = own id; tree = newest descendant id).
- *  - recent → by visit time (flat = own time; tree = newest descendant
- *    time across its subtree).
- *
- * E14 — equal-key ties break by `id ASC` (flat = own id; tree =
- * lowest descendant page id), matching the server keyset's
- * `id ASC` tiebreaker so equal-key units don't reshuffle as pages
- * stream in. (Earlier the `recent` arm fell back to a title compare,
- * which diverged from the server order on every visit-less page.)
- *
- * E17 — decorate-once (Schwartzian transform): each unit's sort key
- * (`name` / `createdId` / `recentTime`) AND its `id`-tiebreak key are
- * computed a single time into a decorated tuple, so the per-comparison
- * comparator reads scalars only — no tree walk / allocation inside
- * `.sort()`. Bounded to ≤50 loaded rows but the decorate-once form
- * keeps the comparator allocation-free per the Pages-view invariant.
- *
- * Pulled to module scope so the memo dependency list stays clean.
- */
-export function sortTopLevelUnits(
-  units: PagesTopLevelUnit[],
-  sortOption: SortOption,
-  recentMap: Map<string, string> | null,
-): PagesTopLevelUnit[] {
-  // Decorate each unit once with its precomputed keys. `tieId` is the
-  // `id ASC` tiebreak key (own id for a flat page, lowest descendant
-  // page id for a tree).
-  interface Decorated {
-    unit: PagesTopLevelUnit
-    name: string
-    createdId: string
-    recentTime: string | null
-    tieId: string
-  }
-  const decorated: Decorated[] = units.map((u) => {
-    if (u.type === 'page') {
-      const recentTime = recentMap?.get(u.page.id) ?? null
-      return {
-        unit: u,
-        name: u.page.content ?? '',
-        createdId: u.page.id,
-        recentTime,
-        tieId: u.page.id,
-      }
-    }
-    // Tree unit: walk descendants once for both the created-key (newest
-    // ULID) and the recent-key (newest visit time), and the id tiebreak
-    // (lowest ULID).
-    const ids: string[] = []
-    collectDescendantPageIds(u.node, ids)
-    let newestId = ''
-    let lowestId = ''
-    let newestTime: string | null = null
-    for (const id of ids) {
-      if (newestId === '' || id > newestId) newestId = id
-      if (lowestId === '' || id < lowestId) lowestId = id
-      if (recentMap != null) {
-        const t = recentMap.get(id)
-        if (t && (newestTime == null || t > newestTime)) newestTime = t
-      }
-    }
-    return {
-      unit: u,
-      name: u.node.name,
-      createdId: newestId,
-      recentTime: newestTime,
-      tieId: lowestId,
-    }
-  })
-
-  if (sortOption === 'alphabetical') {
-    decorated.sort((a, b) => {
-      const byName = a.name.localeCompare(b.name)
-      return byName !== 0 ? byName : a.tieId.localeCompare(b.tieId)
-    })
-  } else if (sortOption === 'created') {
-    decorated.sort((a, b) => {
-      const byCreated = b.createdId.localeCompare(a.createdId)
-      return byCreated !== 0 ? byCreated : a.tieId.localeCompare(b.tieId)
-    })
-  } else if (sortOption === 'recent') {
-    decorated.sort((a, b) => {
-      const at = a.recentTime
-      const bt = b.recentTime
-      if (at && bt) {
-        const byTime = bt.localeCompare(at)
-        if (byTime !== 0) return byTime
-      } else if (at) {
-        return -1
-      } else if (bt) {
-        return 1
-      }
-      // Both visit-less (or equal visit time): tiebreak by id ASC to
-      // match the server keyset, not by title (E14).
-      return a.tieId.localeCompare(b.tieId)
-    })
-  }
-  return decorated.map((d) => d.unit)
 }
 
 export interface UsePageBrowserGroupingArgs {
-  filteredPagesUnsorted: BlockRow[]
-  sortPages: (input: BlockRow[]) => BlockRow[]
-  sortOption: SortOption
+  /** The matched pages, in the server's sort order. */
+  filteredPages: BlockRow[]
   starredIds: ReadonlySet<string>
   isSinglePageVault: boolean
 }
@@ -370,9 +238,7 @@ export interface UsePageBrowserGroupingArgs {
  * resulting `GroupedRowsResult` against its inputs.
  */
 export function usePageBrowserGrouping({
-  filteredPagesUnsorted,
-  sortPages,
-  sortOption,
+  filteredPages,
   starredIds,
   isSinglePageVault,
 }: UsePageBrowserGroupingArgs): GroupedRowsResult {
@@ -382,8 +248,8 @@ export function usePageBrowserGrouping({
       // whenever a star toggle happens (in this view or another mounted
       // hook instance), so pages move between sections immediately.
       isSinglePageVault
-        ? buildSinglePageBranch(filteredPagesUnsorted, sortPages)
-        : buildMultiPageBranch(filteredPagesUnsorted, sortPages, sortOption, starredIds),
-    [isSinglePageVault, filteredPagesUnsorted, sortPages, sortOption, starredIds],
+        ? buildSinglePageBranch(filteredPages)
+        : buildMultiPageBranch(filteredPages, starredIds),
+    [isSinglePageVault, filteredPages, starredIds],
   )
 }

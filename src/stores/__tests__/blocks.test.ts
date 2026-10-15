@@ -1,5 +1,7 @@
+import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import { useJournalStore } from '@/stores/journal'
@@ -20,6 +22,11 @@ import { useTabsStore } from '@/stores/tabs'
  */
 const mountScoped = (ids: readonly string[]): MountedIds => ids as MountedIds
 const selectAllScoped = (ids: readonly string[]): SelectAllScopeIds => ids as SelectAllScopeIds
+
+// Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+beforeEach(() => {
+  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ record_page_open: () => null }))
+})
 
 describe('useBlockStore', () => {
   beforeEach(() => {

@@ -5,8 +5,10 @@
  * next, the way separate user actions are separated in the app.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { invoke } from '@tauri-apps/api/core'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useJournalStore } from '@/stores/journal'
 import { MAX_NAV_HISTORY, selectNavHistory, useNavigationStore } from '@/stores/navigation'
 import { navigateBack, navigateForward } from '@/stores/navigation-history'
@@ -50,6 +52,11 @@ beforeEach(async () => {
     navHistoryBySpace: {},
   })
   await settle()
+})
+
+// Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+beforeEach(() => {
+  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ record_page_open: () => null }))
 })
 
 describe('navigation history', () => {

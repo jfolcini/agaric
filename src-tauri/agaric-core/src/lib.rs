@@ -22,5 +22,6 @@ pub mod sync_status;
 pub mod tag_norm;
 pub mod text_utils;
 pub mod time;
+pub mod title_sort;
 pub mod ulid;
 pub mod word_diff;

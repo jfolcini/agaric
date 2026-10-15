@@ -24,6 +24,7 @@ import {
   type TypedHandlers,
   appErrorRejection,
   assertValidSetPropertyValue,
+  blockLastEditedAt,
   buildPageMetaRow,
   compareMetaRows,
   comparePositionThenId,
@@ -32,8 +33,12 @@ import {
   encodeNextCursor,
   metaRowMatchesFilter,
   notFoundRejection,
+  isPageSort,
   ownerSpaceOf,
+  type PageSortRow,
+  pagesLastEditedAt,
   sortDiscriminator,
+  titleSortKey,
   validationRejection,
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
@@ -50,9 +55,43 @@ import {
   fakeId,
   makeBlock,
   pageAliases,
+  pageOpens,
   properties,
   pushOp,
 } from '@/lib/tauri-mock/seed'
+
+/**
+ * The metadata-rich row for every live page in `spaceId`. Its
+ * `lastModifiedAt` is page-wide, `pages_cache.last_edited_ms`, and it carries
+ * the title key and the open stamp the sorts read (#5371).
+ */
+function pageSortRows(spaceId: string): PageSortRow[] {
+  // Block-link edges derived from `[[ULID]]` tokens (mock stand-in for the
+  // backend's `block_links` table) so the link facets and `MostLinked` sort
+  // reflect the seed's real topology.
+  const edges = deriveLinkEdges(blocks)
+  const lastEditedByPage = pagesLastEditedAt()
+  const byPage = new Map<unknown, Array<Record<string, unknown>>>()
+  for (const d of blocks.values()) {
+    if (d['deleted_at'] || d['id'] === d['page_id']) continue
+    const list = byPage.get(d['page_id'])
+    if (list) list.push(d)
+    else byPage.set(d['page_id'], [d])
+  }
+  const rows: PageSortRow[] = []
+  for (const b of blocks.values()) {
+    if (b['block_type'] !== 'page' || b['deleted_at']) continue
+    if (properties.get(b['id'] as string)?.get('space')?.['value_ref'] !== spaceId) continue
+    const id = b['id'] as string
+    rows.push({
+      ...buildPageMetaRow(b, byPage.get(id) ?? [], edges),
+      lastModifiedAt: lastEditedByPage.get(id) ?? blockLastEditedAt(id),
+      titleSortKey: titleSortKey((b['content'] as string | null) ?? ''),
+      openedMs: pageOpens.get(id) ?? -1,
+    })
+  }
+  return rows
+}
 
 /** The backend's `MCP_PAGE_LIMIT_CAP` for `list_pages_with_metadata`. */
 const LIST_PAGES_WITH_METADATA_MAX_LIMIT = 100
@@ -1021,33 +1060,20 @@ export const pagesHandlers = {
     const filter = (a['filter'] as Record<string, unknown> | undefined) ?? {}
     const spaceId = filter['spaceId'] as string
     const sort = (filter['sort'] as string | undefined) ?? 'alphabetical'
+    // The backend's serde refuses an unknown sort before the command runs.
+    if (!isPageSort(sort)) throw validationRejection(`unknown variant \`${sort}\``)
     const cursor = a['cursor'] as string | null
     const limit = listPagesWithMetadataLimit(a['limit'])
+    const rows = pageSortRows(spaceId)
 
-    // Block-link edges derived from `[[ULID]]` tokens (mock stand-in for the
-    // backend's `block_links` table) so the link facets and `MostLinked` sort
-    // reflect the seed's real topology.
-    const edges = deriveLinkEdges(blocks)
-
-    // Build the metadata-rich row for every page in the space.
-    const rows: PageMetaRow[] = []
-    const byPage = new Map<unknown, Array<Record<string, unknown>>>()
-    for (const d of blocks.values()) {
-      if (d['deleted_at'] || d['id'] === d['page_id']) continue
-      const list = byPage.get(d['page_id'])
-      if (list) list.push(d)
-      else byPage.set(d['page_id'], [d])
-    }
-    for (const b of blocks.values()) {
-      if (b['block_type'] !== 'page' || b['deleted_at']) continue
-      if (properties.get(b['id'] as string)?.get('space')?.['value_ref'] !== spaceId) continue
-      const descendants = byPage.get(b['id']) ?? []
-      rows.push(buildPageMetaRow(b, descendants, edges))
-    }
-
-    // Phase 3 — AND-compose the requested filter primitives, then sort.
+    // Phase 3 — AND-compose the requested filter primitives, then sort. The
+    // `LastEdited` filter reads the page block's own stamp, as
+    // `compile_last_edited` does, not the row's page-wide one.
     const filters = (filter['filters'] as Array<Record<string, unknown>> | undefined) ?? []
-    const matched = rows.filter((r) => filters.every((f) => metaRowMatchesFilter(r, f)))
+    const pageOnlyLastEdited = (r: PageMetaRow) => blockLastEditedAt(r.id)
+    const matched = rows.filter((r) =>
+      filters.every((f) => metaRowMatchesFilter(r, f, pageOnlyLastEdited)),
+    )
     matched.sort((x, y) => compareMetaRows(x, y, sort))
 
     // Cursor: skip rows up to AND INCLUDING the cursor's anchor.
@@ -1101,6 +1127,18 @@ export const pagesHandlers = {
     // and e2e count assertions reflecting the active filters.
     const totalCount = cursor ? null : matched.length
     return { items, next_cursor: nextCursor, has_more: hasMore, total_count: totalCount }
+  },
+
+  // #5371 — `record_page_open_inner`: stamp a live page as opened now, on
+  // this device only (no op); anything else is `NotFound`.
+  record_page_open: (args) => {
+    const pageId = (args as Record<string, unknown>)['pageId'] as string
+    const page = blocks.get(pageId)
+    if (page?.['block_type'] !== 'page' || page['deleted_at']) {
+      throw notFoundRejection(`page ${pageId}`)
+    }
+    pageOpens.set(pageId, Date.now())
+    return null
   },
 
   // Every page in the space whose `template` property is set to 'true'.
@@ -1766,6 +1804,7 @@ export const pagesHandlers = {
   | 'list_all_pages_in_space'
   | 'load_page_subtree'
   | 'list_pages_with_metadata'
+  | 'record_page_open'
   | 'list_template_page_ids_in_space'
   | 'list_undated_tasks'
   | 'list_spaces'

@@ -5,8 +5,8 @@
 //! the live vault, and reports what diverged in a shape a user can paste into
 //! a bug report. Read-and-compare only: every read goes through the reader
 //! pool and nothing is written, so a divergence is data in the return value,
-//! never a panic and never a repair. Twelve whole-table rebuilds is not a boot
-//! cost; this runs when the user asks (an opt-in setting, the follow-up
+//! never a panic and never a repair. Rebuilding every artefact whole-table is not
+//! a boot cost; this runs when the user asks (an opt-in setting, the follow-up
 //! commit), and the caller should let the app settle first — a run that
 //! overlaps a background rebuild or an inbound sync can see a state one
 //! maintainer has left and the next has not yet reached, which reads as a
@@ -269,6 +269,44 @@ mod tests {
                 sample_keys: vec![page_id],
             }],
             "named artefact, exact count, the corrupted row's key"
+        );
+        mat.shutdown();
+    }
+
+    /// #5371 — the Pages sort keys: a title key that is not the key of the
+    /// cached title, and a last edit below the newest op on the page, each
+    /// report as their own artefact.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stale_title_key_and_a_lowered_last_edit_are_each_reported_5371() {
+        let (pool, _dir, mat, page_id) = settled_vault().await;
+        // dynamic-sql: test-only corruption of one derived row.
+        sqlx::query(
+            "UPDATE pages_cache SET title_sort_key = 'zzz', last_edited_ms = 1 WHERE page_id = ?",
+        )
+        .bind(&page_id)
+        .execute(&pool)
+        .await
+        .expect("corrupt the sort keys");
+
+        let report = compute_reconciliation_report_inner(&pool, pinned_today())
+            .await
+            .expect("report");
+
+        assert_eq!(
+            report.artefacts,
+            vec![
+                ArtefactDivergences {
+                    artefact: "pages_cache.title_sort_key".to_owned(),
+                    count: 1,
+                    sample_keys: vec![page_id.clone()],
+                },
+                ArtefactDivergences {
+                    artefact: "pages_cache.last_edited_ms".to_owned(),
+                    count: 1,
+                    sample_keys: vec![page_id],
+                },
+            ],
+            "each corrupted key names its artefact and the page"
         );
         mat.shutdown();
     }

@@ -296,6 +296,9 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // narrower than the input list: an id that no longer resolves to a live
     // block is skipped, not refused.
     ("move_blocks_to_space", HEADED_ID_KEY, &["moved"], &[]),
+    // #5371 — answers `()`; `page_opens` is outside the snapshot, so a
+    // `last-opened` query step observes it.
+    ("record_page_open", HEADED_ID_KEY, &[], &[]),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -817,6 +820,13 @@ pub(super) async fn apply_op_via_command(
         "edit_block" => {
             to_json(edit_block_inner(pool, DEV, mat, block_id(), req_str("toText")).await)
         }
+        "record_page_open" => to_json(
+            agaric_lib::commands::pages::record_page_open_inner(
+                pool,
+                BlockId::from(arg_label_id("pageId").expect("pageId").as_str()),
+            )
+            .await,
+        ),
         "duplicate_block" => to_json(duplicate_block_inner(pool, DEV, mat, block_id()).await),
         // `input` and `splice` are the caller's own text or blocks, so they
         // take no label expansion; only the anchor is a label. `splice` came
@@ -1231,7 +1241,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 47;
+    const MUTATING_ARM_COUNT: usize = 48;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

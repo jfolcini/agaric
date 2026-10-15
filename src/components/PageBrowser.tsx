@@ -2,7 +2,7 @@
  * PageBrowser — lists all page blocks (p15-t22).
  *
  * WHERE block_type = 'page' AND deleted_at IS NULL.
- * Default sort: ULID ascending (oldest first) via cursor pagination.
+ * Sorted by the server behind cursor pagination; rows keep that order.
  * Includes delete with confirmation dialog and toast error feedback.
  *
  * Top-level orchestrator: it composes a set of cohesive hooks — data +
@@ -44,7 +44,7 @@ import { usePageBrowserData } from '@/hooks/usePageBrowserData'
 import { usePageBrowserGrouping } from '@/hooks/usePageBrowserGrouping'
 import { usePageBrowserKeyboard } from '@/hooks/usePageBrowserKeyboard'
 import { usePageBrowserScrollRestoration } from '@/hooks/usePageBrowserScrollRestoration'
-import { isFrontendOnlySort, usePageBrowserSort } from '@/hooks/usePageBrowserSort'
+import { usePageBrowserSort } from '@/hooks/usePageBrowserSort'
 import { usePageCreation } from '@/hooks/usePageCreation'
 import { useSavedPagesViews } from '@/hooks/useSavedPagesViews'
 import { useStarredPages } from '@/hooks/useStarredPages'
@@ -168,7 +168,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const spaceIsReady = useSpaceStore((s) => s.isReady)
 
-  const { sortOption, setSortOption, sortPages } = usePageBrowserSort()
+  const { sortOption, setSortOption } = usePageBrowserSort()
 
   // Compound/text filter state + the wire-shaped primitives the data
   // query depends on (#1263).
@@ -323,11 +323,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   }, [pages.length, t])
 
   /**
-   * Pages narrowed by the search input + alias resolver.
-   * Sort/grouping is applied below — both `Starred` and `Pages`
-   * sections consume the same filtered pool.
+   * Pages narrowed by the search input + alias resolver, still in the
+   * server's sort order. Grouping is applied below — both `Starred` and
+   * `Pages` sections consume the same filtered pool.
    */
-  const filteredPagesUnsorted = useMemo(() => {
+  const textFilteredPages = useMemo(() => {
     const trimmed = filterText.trim()
     if (!trimmed) return pages
     // Unicode-aware case- / diacritic-insensitive match so
@@ -355,9 +355,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // `PageWithMetadataRow` carry. The metadata extras (`lastModifiedAt`,
   // `inboundLinkCount`, etc.) are preserved on the row object and
   // re-read at the leaf via a typed cast in `PageBrowserRowRenderer`.
-  // Cast to `BlockRow[]` at the grouping boundary so the existing
-  // `usePageBrowserGrouping` / `sortPages` signatures stay unchanged.
-  const filteredPagesUnsortedAsBlockRows = filteredPagesUnsorted as unknown as BlockRow[]
+  // Cast to `BlockRow[]` at the grouping boundary so the
+  // `usePageBrowserGrouping` signature stays `BlockRow`-typed.
+  const textFilteredPagesAsBlockRows = textFilteredPages as unknown as BlockRow[]
   const {
     filteredPages,
     groupedRows,
@@ -366,9 +366,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     hasPages,
     matchedPageCount,
   } = usePageBrowserGrouping({
-    filteredPagesUnsorted: filteredPagesUnsortedAsBlockRows,
-    sortPages,
-    sortOption,
+    filteredPages: textFilteredPagesAsBlockRows,
     starredIds,
     isSinglePageVault,
   })
@@ -560,14 +558,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // rows. Drives both the body branch and the grid-role suppression.
   const showNoMatch = isFiltering && filteredPages.length === 0
 
-  // The frontend-only sorts (`alphabetical`, `recent`,
-  // `created`) reorder only the loaded ≤50 rows client-side; their
-  // visible order is globally accurate only once every page is loaded.
-  // When more pages remain (`hasMore`), surface a cue in the header so
-  // the user knows the order covers loaded pages only. `default` and the
-  // three server-side sorts are globally accurate, so they never trigger.
-  const frontendSortAtScale = isFrontendOnlySort(sortOption) && hasMore
-
   // E13 — keep the free-text count chip basis-consistent. The text box
   // narrows only the LOADED set client-side, so its numerator
   // (`matchedPageCount`) is loaded-basis. Pairing it with the server
@@ -607,7 +597,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           filteredCount={matchedPageCount}
           hasTextQuery={hasTextQuery}
           hasChipFilters={hasChipFilters}
-          frontendSortAtScale={frontendSortAtScale}
           savedViews={savedViews}
           activeSavedView={activeSavedView}
           onApplySavedView={handleApplySavedView}
