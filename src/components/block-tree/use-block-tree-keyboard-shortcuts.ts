@@ -324,7 +324,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // fire (or `preventDefault`) when a roving editor is focused — the browser's
   // native text copy/cut/paste owns those keystrokes inside an editor.
   //
-  // #713 ownership gate: every mounted tree (journal week/month) runs this
+  // #713 ownership gate: every mounted tree (journal week and stream) runs this
   // listener over the one GLOBAL selection, so only the tree that owns the
   // anchor (the last selected id, read at dispatch, #5447) acts. Copy and cut
   // take the whole selection across every mounted page; paste lands once,
