@@ -188,6 +188,14 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 filter = 'test(/reconcile_all_scale_sweep_4901/)'
 slow-timeout = { period = "60s", terminate-after = 10 }
 
+# The Pages 20k-page perf gates (`list_pages_with_metadata_tests`) assert the
+# median of a first-page query, but most of their wall time is seeding 20k
+# pages through `pages_cache` and its per-sort indexes, which on a debug
+# runner reaches the 2x30s kill. A kill there charges the seed to the query.
+[[profile.default.overrides]]
+filter = 'test(/_perf_gate_20k_pages$/)'
+slow-timeout = { period = "30s", terminate-after = 4 }
+
 [profile.ci]
 fail-fast = false
 retries = 2

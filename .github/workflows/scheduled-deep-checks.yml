@@ -861,6 +861,11 @@ jobs:
               elif printf '%s' "$body" | grep -q 'SKIPPED'; then
                 cmd="${body%% SKIPPED*}"
                 echo "| \`$cmd\` | — | — | SKIPPED |"
+              elif printf '%s' "$body" | grep -q '(settled, '; then
+                cmd="${body%% = *}"
+                rest="${body#* = }"
+                obs="${rest%% (settled*}"
+                echo "| \`$cmd\` | $obs | — | settled |"
               else
                 echo "| (raw) | | | FLAG |"
                 echo "| \`$body\` | | | |"

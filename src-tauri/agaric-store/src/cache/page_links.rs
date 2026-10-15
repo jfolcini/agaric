@@ -115,9 +115,8 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 7;
 ///      the rows nothing supports any more, and corrects the `edge_count` of
 ///      any row other blocks still support. #3891 gates each stale key on a
 ///      PK-prefix `page_link_cache` existence check first — a key with no
-///      cached row has nothing stranded to sweep, and the probe that would
-///      discover that costs a full `block_links` scan. See the comment at the
-///      loop for the measurement and the soundness argument.
+///      cached row has nothing stranded to sweep. See the comment at the loop
+///      for the soundness argument.
 ///
 /// Single transaction so the cache and `block_links` stay coherent under
 /// concurrent reads — `list_page_links_inner` joining `blocks` and
@@ -190,31 +189,10 @@ pub async fn reindex_page_link_cache_for_block(
     // `edge_count` of rows other blocks still support.
     recompute_rows_for_rollup_key(&mut tx, &source_page).await?;
 
-    // #3891: the stale-key sweep is gated on a PK-prefix existence check.
-    //
-    // MEASURED, not reasoned about. `recompute_rows_for_rollup_key` opens with
-    // a touched-targets query whose roll-up predicate
-    // `COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1` is not sargable, so
-    // SQLite plans it as `SCAN bl` over the whole of `block_links` (confirmed
-    // by EXPLAIN QUERY PLAN; the gate's own query plans as
-    // `SEARCH page_link_cache USING COVERING INDEX ... (source_page_id=?)`).
-    // On a 100K-block fixture (102,000 blocks / 196,000 `block_links` rows /
-    // 196,000 cached rows, release build, after `rebuild_page_link_cache` +
-    // `ANALYZE`) the whole call measured 20.8 / 23.6 / 21.2 / 20.7 ms ungated
-    // against 16.4 / 13.7 / 14.9 / 14.9 ms gated — means 21.6 vs 15.0, so the
-    // two stale keys of a nested block cost ~6.6 ms, ~30% of every
-    // `ReindexBlockLinks`. (Per-probe timing put one scan at ~4.4-4.8 ms,
-    // which would imply ~9 ms for two; the whole-call delta is the smaller and
-    // more defensible number, so quote that one.) That is spent inside this
-    // function's
-    // `BEGIN IMMEDIATE` transaction, so it is held write-lock time contending
-    // with foreground writes, not merely background CPU. The early return at
-    // `touched_targets.is_empty()` does not help: the scan has already run by
-    // the time the result is known to be empty.
-    //
-    // The gate is an index seek on `page_link_cache`'s PK prefix
-    // (`sqlite_autoindex_page_link_cache_1 (source_page_id=?)`), so it costs
-    // microseconds against the milliseconds it saves.
+    // #3891: the stale-key sweep is gated on a PK-prefix existence check, an
+    // index seek on `page_link_cache` (`sqlite_autoindex_page_link_cache_1
+    // (source_page_id=?)`) in place of a recompute run inside this function's
+    // `BEGIN IMMEDIATE`, i.e. on held write-lock time.
     //
     // Why skipping is sound. A stale key is a key this block has MOVED AWAY
     // from, and the sweep exists (#3842) to drop the rows stranded under it.
@@ -415,12 +393,35 @@ async fn read_touched_targets_for_rollup_key(
     // previously cached, now zero edges left). Soft-deleted source
     // blocks contribute zero to the count — mirrors the legacy
     // `JOIN blocks sb ON ... AND sb.deleted_at IS NULL` filter.
+    //
+    // #5423: the roll-up `COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1` is
+    // spelled as its three cases, one branch each, because SQLite cannot use
+    // an index for a COALESCE comparison: as one predicate it read the whole
+    // vault (all of `block_links`, or every block once statistics exist) on
+    // every reindex, under the write lock. Each branch is an
+    // index seek (`page_id`, `parent_id`, the primary key) followed by the
+    // source's own links. The scanning form is kept as the test oracle below.
     let touched_targets: Vec<String> = sqlx::query!(
         "SELECT target_id AS \"target_id!\" FROM (
-             SELECT DISTINCT bl.target_id
-             FROM block_links bl
-             JOIN blocks sb ON sb.id = bl.source_id
-             WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1
+             SELECT bl.target_id
+             FROM blocks sb
+             JOIN block_links bl ON bl.source_id = sb.id
+             WHERE sb.page_id = ?1
+               AND sb.deleted_at IS NULL
+             UNION
+             SELECT bl.target_id
+             FROM blocks sb
+             JOIN block_links bl ON bl.source_id = sb.id
+             WHERE sb.page_id IS NULL
+               AND sb.parent_id = ?1
+               AND sb.deleted_at IS NULL
+             UNION
+             SELECT bl.target_id
+             FROM blocks sb
+             JOIN block_links bl ON bl.source_id = sb.id
+             WHERE sb.id = ?1
+               AND sb.page_id IS NULL
+               AND sb.parent_id IS NULL
                AND sb.deleted_at IS NULL
              UNION
              SELECT target_page_id AS target_id
@@ -674,4 +675,144 @@ async fn rebuild_page_link_cache_split_impl(
 
     tx.commit().await?;
     Ok(inserted)
+}
+
+#[cfg(test)]
+mod touched_targets_tests {
+    //! #5423 — the touched-targets read against the scanning form it replaced.
+
+    use super::*;
+
+    /// `(id, block_type, parent_id, page_id, deleted_at)`.
+    type SeedBlock = (
+        &'static str,
+        &'static str,
+        Option<&'static str>,
+        Option<&'static str>,
+        Option<i64>,
+    );
+
+    /// The pre-#5423 touched-targets read: the roll-up as one `COALESCE`
+    /// comparison, which SQLite answers by scanning `block_links`. Kept as the
+    /// oracle the indexed form must agree with.
+    async fn read_touched_targets_by_scan(
+        conn: &mut sqlx::SqliteConnection,
+        source_page: &str,
+    ) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT target_id FROM (
+                 SELECT DISTINCT bl.target_id
+                 FROM block_links bl
+                 JOIN blocks sb ON sb.id = bl.source_id
+                 WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1
+                   AND sb.deleted_at IS NULL
+                 UNION
+                 SELECT target_page_id AS target_id
+                 FROM page_link_cache
+                 WHERE source_page_id = ?1
+             )",
+        )
+        .bind(source_page)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap()
+    }
+
+    /// Every case of the roll-up `COALESCE(page_id, parent_id, id)`: a source
+    /// keyed by its page (`A`), one keyed by its parent because it has no page
+    /// (`C`), one keyed by itself because it has neither (`K`), one whose page
+    /// wins over a parent naming another key (`M`), a soft-deleted source that
+    /// must not count (`D`, and `D2` / `D3` on the parent and self branches), a
+    /// paged source that must not match its own id (`Z`), and a target only
+    /// `page_link_cache` still names (`P1 → T5`). For every key the indexed
+    /// read must return the oracle's set; the literals pin that the sets are
+    /// the intended ones rather than two agreeing empties.
+    #[tokio::test]
+    async fn touched_targets_match_the_scanning_oracle_for_every_rollup_case_5423() {
+        let (pool, _dir) = crate::test_support::test_pool().await;
+        // Parents first.
+        let blocks: [SeedBlock; 15] = [
+            ("P1", "page", None, Some("P1"), None),
+            ("P2", "page", None, Some("P2"), None),
+            ("T1", "page", None, Some("T1"), None),
+            ("T2", "page", None, Some("T2"), None),
+            ("T3", "page", None, Some("T3"), None),
+            ("T4", "page", None, Some("T4"), None),
+            ("T5", "page", None, Some("T5"), None),
+            ("K", "content", None, None, None),
+            ("C", "content", Some("K"), None, None),
+            ("A", "content", Some("P1"), Some("P1"), None),
+            ("D", "content", Some("P1"), Some("P1"), Some(1)),
+            ("M", "content", Some("P1"), Some("P2"), None),
+            ("D2", "content", Some("K"), None, Some(1)),
+            ("D3", "content", None, None, Some(1)),
+            ("Z", "content", None, Some("P2"), None),
+        ];
+        for (id, block_type, parent_id, page_id, deleted_at) in blocks {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, page_id, deleted_at) \
+                 VALUES (?, ?, '', ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(block_type)
+            .bind(parent_id)
+            .bind(page_id)
+            .bind(deleted_at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        for (source, target) in [
+            ("A", "T1"),
+            ("A", "T2"),
+            ("D", "T3"),
+            ("K", "T1"),
+            ("C", "T2"),
+            ("M", "T4"),
+            ("D2", "T3"),
+            ("D3", "T3"),
+            ("Z", "T3"),
+        ] {
+            sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+                .bind(source)
+                .bind(target)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+             VALUES ('P1', 'T5', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let cases: [(&str, &[&str]); 7] = [
+            ("P1", &["T1", "T2", "T5"]),
+            ("P2", &["T3", "T4"]),
+            ("K", &["T1", "T2"]),
+            ("C", &[]),
+            ("D3", &[]),
+            ("Z", &[]),
+            ("NOT_A_KEY", &[]),
+        ];
+        let mut conn = pool.acquire().await.unwrap();
+        for (key, expected) in cases {
+            let mut indexed = read_touched_targets_for_rollup_key(&mut conn, key)
+                .await
+                .unwrap();
+            indexed.sort();
+            let mut scanned = read_touched_targets_by_scan(&mut conn, key).await;
+            scanned.sort();
+            assert_eq!(
+                indexed, scanned,
+                "key {key}: the indexed read must return the scanning oracle's targets (#5423)"
+            );
+            assert_eq!(
+                indexed, expected,
+                "key {key}: the roll-up must touch exactly these targets (#5423)"
+            );
+        }
+    }
 }

@@ -66,6 +66,24 @@ void test('a staged deletion still on disk is absent from the index only', () =>
   )
 })
 
+void test('readMany caches each staged body under its own path', () => {
+  const files = ['src/b.rs', 'src/c.rs', 'src/d.rs']
+  withFixture(
+    ({ dir, git }) => {
+      for (const rel of files) writeFileSync(join(dir, rel), `staged ${rel}\n`)
+      git('add', '-A')
+      for (const rel of files) writeFileSync(join(dir, rel), ON_DISK)
+    },
+    ({ cached }) => {
+      cached.readMany(files)
+      assert.deepEqual(
+        files.map((rel) => cached.read(rel)),
+        files.map((rel) => `staged ${rel}\n`),
+      )
+    },
+  )
+})
+
 void test('--cached outside a git repository fails closed instead of answering "absent"', () => {
   const root = mkdtempSync(join(tmpdir(), 'rust-scan-'))
   try {

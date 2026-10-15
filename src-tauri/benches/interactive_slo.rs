@@ -2427,6 +2427,458 @@ fn bench_create_block(c: &mut Criterion) {
     assert_under_budget("create_block @ 100K", &acc, BUDGET_MS);
 }
 
+// ---------------------------------------------------------------------------
+// #5423 — write-path probes: edit_block / set_property / move_block on one
+// 2K-block page of a 100K-block vault
+// ---------------------------------------------------------------------------
+
+/// The page the #5423 write-path probes write to. It and its children carry
+/// 26-character Crockford ULIDs, which every command path accepts.
+const WRITE_PATH_PAGE_ID: &str = "01SWRTPATHPG00000000000001";
+
+/// Children of [`WRITE_PATH_PAGE_ID`]: the 2K-block page #5423 names.
+const WRITE_PATH_PAGE_CHILDREN: usize = 2_000;
+
+/// Repeating tasks in the `set_property` probe's vault, so the projected-agenda
+/// rebuild each `todo_state` write enqueues has rows to rewrite (#5423 item 5).
+const WRITE_PATH_REPEATING_BLOCKS: usize = 200;
+
+/// #5423 — the write-path probes' vault: the [`FIXTURE_SIZE`] background blocks,
+/// each with one outbound `block_links` row (a vault that size carries about as
+/// many link rows as blocks, and the link maintenance a write pays reads that
+/// table), plus [`WRITE_PATH_PAGE_ID`] and its [`WRITE_PATH_PAGE_CHILDREN`]
+/// children. Everything joins [`SLO_SPACE_ID`], `pages_cache` takes its rows and
+/// counts from the production rebuilds, and the production `space` write
+/// hydrates the page into its space's Loro engine (#2326), so the timed
+/// commands take the engine path a real vault takes rather than the SQL-only
+/// fallback. Returns the page's children in position order.
+async fn seed_write_path_fixture(pool: &SqlitePool, materializer: &Materializer) -> Vec<String> {
+    let background = seed_blocks_bulk(pool, FIXTURE_SIZE).await;
+    let mut tx = pool.begin().await.unwrap();
+    for (i, source) in background.iter().enumerate() {
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(source)
+            .bind(&background[(i + 1) % background.len()])
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) \
+         VALUES (?, 'page', 'Write Path Page', ?)",
+    )
+    .bind(WRITE_PATH_PAGE_ID)
+    .bind(WRITE_PATH_PAGE_ID)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    let mut children = Vec::with_capacity(WRITE_PATH_PAGE_CHILDREN);
+    for i in 0..WRITE_PATH_PAGE_CHILDREN {
+        let id = format!("01SWRTPATHCH{i:014}");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'content', ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(format!("Write path child {i}"))
+        .bind(WRITE_PATH_PAGE_ID)
+        .bind(i as i64 + 1)
+        .bind(WRITE_PATH_PAGE_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        children.push(id);
+    }
+    tx.commit().await.unwrap();
+    assign_all_to_slo_space(pool).await;
+    agaric_store::cache::rebuild_pages_cache(pool)
+        .await
+        .unwrap();
+    agaric_store::cache::rebuild_pages_cache_counts(pool)
+        .await
+        .unwrap();
+    agaric_lib::commands::set_property_inner(
+        pool,
+        "dev-bench",
+        materializer,
+        WRITE_PATH_PAGE_ID.into(),
+        "space".into(),
+        None,
+        None,
+        None,
+        Some(SLO_SPACE_ID.into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    materializer.flush_background().await.unwrap();
+
+    // Untimed shape probe (#3304): the link rows are what a write's link
+    // maintenance reads, and the page's `pages_cache` row is what its
+    // in-transaction count recompute updates. Without either, the probes
+    // time a cheaper write than a real vault's.
+    let links: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_links")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        links, FIXTURE_SIZE as i64,
+        "write-path fixture: one link row per background block (#5423)"
+    );
+    let child_count: i64 =
+        sqlx::query_scalar("SELECT child_block_count FROM pages_cache WHERE page_id = ?")
+            .bind(WRITE_PATH_PAGE_ID)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        child_count, WRITE_PATH_PAGE_CHILDREN as i64,
+        "write-path fixture: the page's pages_cache row must count its 2K children (#5423)"
+    );
+    children
+}
+
+/// #5423 — time one write command twice in the `interactive_slo` group: alone
+/// (`id`, the interactive latency its probe budgets) and followed by
+/// `flush_background` (`{id}_settled`), which adds the write-lock work its
+/// background tasks do after it returns. `op(n)` makes the n-th call; `n`
+/// counts across both loops, so a probe derives each call's payload, and the
+/// state the last call left, from it.
+fn time_write_probe<F, Fut>(
+    c: &mut Criterion,
+    rt: &Runtime,
+    materializer: &Materializer,
+    id: &str,
+    op: F,
+) -> (Acc, Acc)
+where
+    F: Fn(u64) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let calls = &Cell::new(0_u64);
+    let op = &op;
+    let (command, settled) = (Acc::new(), Acc::new());
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    for (name, acc, settle) in [
+        (id.to_owned(), &command, false),
+        (format!("{id}_settled"), &settled, true),
+    ] {
+        group.bench_function(name, |b| {
+            b.to_async(rt).iter_custom(|iters| async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let n = calls.get();
+                    calls.set(n + 1);
+                    op(n).await;
+                    if settle {
+                        materializer.flush_background().await.unwrap();
+                    }
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            });
+        });
+    }
+    group.finish();
+    (command, settled)
+}
+
+/// #5423 — print-only reporter for a write probe's `_settled` loop, in the
+/// grep-stable `interactive_slo: {cmd} = … ms` shape. Unbudgeted: the SLO is
+/// the command's own latency, which the probe budgets beside it.
+fn report_settled(cmd: &str, acc: &Acc) {
+    let iters = acc.iters();
+    assert!(
+        iters > 0,
+        "interactive_slo: {cmd} ran zero iterations (Criterion harness bug?)"
+    );
+    let mean_ms = (acc.total().as_secs_f64() * 1000.0) / iters as f64;
+    println!("interactive_slo: {cmd} = {mean_ms:.2} ms (settled, with background — no budget)");
+}
+
+/// `edit_block` — a content save on one child of the 2K-block page (#5423).
+/// Budget: 200 ms, the interactive ceiling, until a `bench-slo` run measures
+/// it; #5423 then sets it to the measured mean × 2.
+fn bench_edit_block(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 200.0;
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_edit_block"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    let children = rt.block_on(seed_write_path_fixture(&pool, &materializer));
+    let target = children[WRITE_PATH_PAGE_CHILDREN / 2].clone();
+    let fallbacks = agaric_lib::materializer::sql_only_fallback_count();
+
+    let materializer_ref = &materializer;
+    let (acc, settled) = time_write_probe(
+        c,
+        &rt,
+        materializer_ref,
+        "edit_block_2k_page_in_100k",
+        |n| {
+            let pool = pool.clone();
+            let target = target.clone();
+            async move {
+                agaric_lib::commands::edit_block_inner(
+                    &pool,
+                    "dev-bench",
+                    materializer_ref,
+                    target.into(),
+                    format!("Write path edit {n}"),
+                )
+                .await
+                .unwrap();
+            }
+        },
+    );
+
+    let calls = acc.iters() + settled.iters();
+    let (edit_ops, content) = rt.block_on(async {
+        let ops: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log WHERE op_type = 'edit_block' AND block_id = ?",
+        )
+        .bind(&target)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(&target)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        (ops, content)
+    });
+    assert_eq!(
+        u64::try_from(edit_ops).unwrap(),
+        calls,
+        "edit_block @ 100K: every timed call must append exactly one edit_block op (#3304)"
+    );
+    assert_eq!(
+        content,
+        Some(format!("Write path edit {}", calls.saturating_sub(1))),
+        "edit_block @ 100K: the block must hold the last timed edit (#3304)"
+    );
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count(),
+        fallbacks,
+        "edit_block @ 100K: the timed edits must take the engine path, not the SQL-only fallback"
+    );
+
+    report_settled("edit_block (2K-block page) settled @ 100K", &settled);
+    assert_under_budget("edit_block (2K-block page) @ 100K", &acc, BUDGET_MS);
+}
+
+/// `set_property` — a `todo_state` write on one child of the 2K-block page
+/// (#5423): the todo cycle, which the command routes through
+/// `set_todo_state_inner` (#5394). The vault carries
+/// [`WRITE_PATH_REPEATING_BLOCKS`] repeating tasks, so the projected-agenda
+/// rebuild each write enqueues has rows to rewrite. Budget: 200 ms, the
+/// interactive ceiling, until a `bench-slo` run measures it; #5423 then sets
+/// it to the measured mean × 2.
+fn bench_set_property(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 200.0;
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_set_property"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    rt.block_on(seed_repeating_blocks(&pool, WRITE_PATH_REPEATING_BLOCKS));
+    let children = rt.block_on(seed_write_path_fixture(&pool, &materializer));
+    let projected: i64 = rt.block_on(async {
+        rebuild_projected_agenda_cache(&pool).await.unwrap();
+        sqlx::query_scalar("SELECT COUNT(*) FROM projected_agenda_cache")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    });
+    assert!(
+        projected
+            >= (WRITE_PATH_REPEATING_BLOCKS * agaric_store::cache::HORIZON_OCCURRENCES) as i64,
+        "set_property @ 100K: every repeating task must project its forward horizon, or the \
+         rebuild a todo_state write enqueues has nothing to rewrite (#5423)"
+    );
+    let target = children[WRITE_PATH_PAGE_CHILDREN / 2].clone();
+    let fallbacks = agaric_lib::materializer::sql_only_fallback_count();
+    // The cycle's two open states: no write completes the task, so none spawns
+    // a recurrence sibling or a completion stamp.
+    let state_for = |n: u64| if n.is_multiple_of(2) { "TODO" } else { "DOING" };
+
+    let materializer_ref = &materializer;
+    let (acc, settled) = time_write_probe(
+        c,
+        &rt,
+        materializer_ref,
+        "set_property_2k_page_in_100k",
+        |n| {
+            let pool = pool.clone();
+            let target = target.clone();
+            let state = state_for(n);
+            async move {
+                agaric_lib::commands::set_property_inner(
+                    &pool,
+                    "dev-bench",
+                    materializer_ref,
+                    target.into(),
+                    "todo_state".into(),
+                    Some(state.into()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            }
+        },
+    );
+
+    let calls = acc.iters() + settled.iters();
+    let (state_ops, state) = rt.block_on(async {
+        let ops: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log WHERE op_type = 'set_property' AND block_id = ? \
+             AND json_extract(payload, '$.key') = 'todo_state'",
+        )
+        .bind(&target)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let state: Option<String> =
+            sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+                .bind(&target)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        (ops, state)
+    });
+    assert_eq!(
+        u64::try_from(state_ops).unwrap(),
+        calls,
+        "set_property @ 100K: every timed call must append exactly one todo_state op (#3304)"
+    );
+    assert_eq!(
+        state.as_deref(),
+        Some(state_for(calls.saturating_sub(1))),
+        "set_property @ 100K: the block must hold the last timed state (#3304)"
+    );
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count(),
+        fallbacks,
+        "set_property @ 100K: the timed writes must take the engine path, not the SQL-only fallback"
+    );
+
+    report_settled(
+        "set_property (todo_state, 2K-block page) settled @ 100K",
+        &settled,
+    );
+    assert_under_budget(
+        "set_property (todo_state, 2K-block page) @ 100K",
+        &acc,
+        BUDGET_MS,
+    );
+}
+
+/// `move_block` — indent one child of the 2K-block page under its previous
+/// sibling, then outdent it back to its slot (#5423). Every call is a reparent
+/// inside the page: the move that still pays the in-transaction page-id and
+/// count maintenance a same-parent reorder skips (#2200). Budget: 200 ms, the
+/// interactive ceiling, until a `bench-slo` run measures it; #5423 then sets it
+/// to the measured mean × 2.
+fn bench_move_block(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 200.0;
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_move_block"));
+    let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+    let children = rt.block_on(seed_write_path_fixture(&pool, &materializer));
+    let slot = WRITE_PATH_PAGE_CHILDREN / 2;
+    let moved = children[slot].clone();
+    let sibling = children[slot - 1].clone();
+    let fallbacks = agaric_lib::materializer::sql_only_fallback_count();
+    // Even calls make `moved` the sibling's only child; odd calls put it back.
+    let parent_for = |n: u64| {
+        if n.is_multiple_of(2) {
+            sibling.as_str()
+        } else {
+            WRITE_PATH_PAGE_ID
+        }
+    };
+
+    let materializer_ref = &materializer;
+    let (acc, settled) = time_write_probe(
+        c,
+        &rt,
+        materializer_ref,
+        "move_block_2k_page_in_100k",
+        |n| {
+            let pool = pool.clone();
+            let moved = moved.clone();
+            let parent = parent_for(n).to_owned();
+            let index = if n % 2 == 0 { 0 } else { slot as i64 };
+            async move {
+                agaric_lib::commands::move_block_inner(
+                    &pool,
+                    "dev-bench",
+                    materializer_ref,
+                    moved.into(),
+                    Some(parent.into()),
+                    index,
+                )
+                .await
+                .unwrap();
+            }
+        },
+    );
+
+    let calls = acc.iters() + settled.iters();
+    let (move_ops, parent, child_count) = rt.block_on(async {
+        let ops: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log WHERE op_type = 'move_block' AND block_id = ?",
+        )
+        .bind(&moved)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let parent: Option<String> =
+            sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+                .bind(&moved)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let child_count: i64 =
+            sqlx::query_scalar("SELECT child_block_count FROM pages_cache WHERE page_id = ?")
+                .bind(WRITE_PATH_PAGE_ID)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        (ops, parent, child_count)
+    });
+    assert_eq!(
+        u64::try_from(move_ops).unwrap(),
+        calls,
+        "move_block @ 100K: every timed call must append exactly one move_block op (#3304)"
+    );
+    assert_eq!(
+        parent.as_deref(),
+        Some(parent_for(calls.saturating_sub(1))),
+        "move_block @ 100K: the block must sit where the last timed move put it (#3304)"
+    );
+    assert_eq!(
+        child_count, WRITE_PATH_PAGE_CHILDREN as i64,
+        "move_block @ 100K: a reparent inside the page leaves its child count unchanged"
+    );
+    assert_eq!(
+        agaric_lib::materializer::sql_only_fallback_count(),
+        fallbacks,
+        "move_block @ 100K: the timed moves must take the engine path, not the SQL-only fallback"
+    );
+
+    report_settled("move_block (2K-block page) settled @ 100K", &settled);
+    assert_under_budget("move_block (2K-block page) @ 100K", &acc, BUDGET_MS);
+}
+
 /// `revert_ops_inner` — 50-op batch revert against a single page with
 /// 100K total ops in its history. Aspirational budget: 200 ms.
 ///
@@ -4324,6 +4776,9 @@ criterion_group!(
     bench_list_page_links,
     bench_revert_ops_50op_at_100k,
     bench_create_block,
+    bench_edit_block,
+    bench_set_property,
+    bench_move_block,
     // #2601 — graduated from the problem tier: the bounded-horizon
     // materialization makes the warm-cache read an O(window) index scan that
     // clears the 200 ms budget with margin at every fixture size.

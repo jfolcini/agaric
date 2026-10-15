@@ -745,6 +745,7 @@ jobs:
           scripts/npm-audit-retry.test.mjs
           scripts/lib/rust-scan.test.mjs
           scripts/check-table-ownership.test.mjs
+          scripts/lib/check-dynamic-sql.test.mjs
 
       - name: Verify npm package provenance signatures
         # Requires Node 22.5+; rejects packages whose registry-side Sigstore

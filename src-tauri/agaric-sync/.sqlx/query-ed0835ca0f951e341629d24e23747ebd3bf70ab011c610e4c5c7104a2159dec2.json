@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT target_id AS \"target_id!\" FROM (\n             SELECT bl.target_id\n             FROM blocks sb\n             JOIN block_links bl ON bl.source_id = sb.id\n             WHERE sb.page_id = ?1\n               AND sb.deleted_at IS NULL\n             UNION\n             SELECT bl.target_id\n             FROM blocks sb\n             JOIN block_links bl ON bl.source_id = sb.id\n             WHERE sb.page_id IS NULL\n               AND sb.parent_id = ?1\n               AND sb.deleted_at IS NULL\n             UNION\n             SELECT bl.target_id\n             FROM blocks sb\n             JOIN block_links bl ON bl.source_id = sb.id\n             WHERE sb.id = ?1\n               AND sb.page_id IS NULL\n               AND sb.parent_id IS NULL\n               AND sb.deleted_at IS NULL\n             UNION\n             SELECT target_page_id AS target_id\n             FROM page_link_cache\n             WHERE source_page_id = ?1\n         )",
+  "describe": {
+    "columns": [
+      {
+        "name": "target_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "page_link_cache",
+            "name": "target_page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ed0835ca0f951e341629d24e23747ebd3bf70ab011c610e4c5c7104a2159dec2"
+}
