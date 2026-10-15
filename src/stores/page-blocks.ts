@@ -96,11 +96,11 @@ export function storeOwnsBlock(
  * preserved).
  *
  * The gate id is the block the caller wants ownership of (the focused block for
- * the focus-scoped chords, or the selection anchor for the range/toggle chords),
- * captured when the listener is registered — identical to reading it from the
- * closed-over render value inside a raw handler. Because `storeOwnsBlock` is a
- * `blockId is string` type guard, the owned id is handed to `handler` already
- * narrowed to `string`, so handlers can use it without re-checking for null.
+ * the focus-scoped chords), captured when the listener is registered —
+ * identical to reading it from the closed-over render value inside a raw
+ * handler. Because `storeOwnsBlock` is a `blockId is string` type guard, the
+ * owned id is handed to `handler` already narrowed to `string`, so handlers can
+ * use it without re-checking for null.
  */
 export function addOwnedBlockListener<K extends keyof DocumentEventMap>(
   store: StoreApi<PageBlockState>,

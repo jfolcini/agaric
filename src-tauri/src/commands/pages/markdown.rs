@@ -2926,6 +2926,29 @@ pub(crate) async fn append_block_resolving_names(
     let mut tx = CommandTx::begin_immediate(pool, "append_block").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
+    let (tx, block, warnings) = Box::pin(append_block_resolving_names_in_tx(
+        tx,
+        materializer,
+        device_id,
+        parent_id,
+        content,
+        index,
+    ))
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok((block, warnings))
+}
+
+/// [`append_block_resolving_names`] inside the caller's rollback-armed
+/// transaction (MCP `batch`, #5399).
+pub(crate) async fn append_block_resolving_names_in_tx(
+    tx: CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    parent_id: &BlockId,
+    content: String,
+    index: Option<i64>,
+) -> Result<(CommandTx, BlockRow, Vec<String>), AppError> {
     let (mut tx, content, warnings) = Box::pin(resolve_block_names(
         tx,
         materializer,
@@ -2946,8 +2969,7 @@ pub(crate) async fn append_block_resolving_names(
     )
     .await?;
     tx.enqueue_background(op);
-    tx.commit_and_dispatch(materializer).await?;
-    Ok((block, warnings))
+    Ok((tx, block, warnings))
 }
 
 /// Replace `block_id`'s content, as one transaction (MCP
@@ -2965,6 +2987,27 @@ pub(crate) async fn edit_block_resolving_names(
     let mut tx = CommandTx::begin_immediate(pool, "edit_block").await?;
     // #2604 — rollback-safe engine apply (rewind on tx abort).
     tx.arm_engine_rollback(materializer.loro_state());
+    let (tx, row, warnings) = Box::pin(edit_block_resolving_names_in_tx(
+        tx,
+        materializer,
+        device_id,
+        block_id,
+        content,
+    ))
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok((row, warnings))
+}
+
+/// [`edit_block_resolving_names`] inside the caller's rollback-armed
+/// transaction (MCP `batch`, #5399).
+pub(crate) async fn edit_block_resolving_names_in_tx(
+    mut tx: CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    block_id: &BlockId,
+    content: String,
+) -> Result<(CommandTx, BlockRow, Vec<String>), AppError> {
     // A missing or deleted block is left to `edit_block_in_tx`, which refuses
     // it as the edit always has.
     let is_content = matches!(
@@ -2991,8 +3034,7 @@ pub(crate) async fn edit_block_resolving_names(
         content,
     )
     .await?;
-    tx.commit_and_dispatch(materializer).await?;
-    Ok((row, warnings))
+    Ok((tx, row, warnings))
 }
 
 /// `content`, one block's text, with the names it writes resolved in

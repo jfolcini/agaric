@@ -434,25 +434,41 @@ export async function ctrlClick(element: ReturnType<typeof $>): Promise<void> {
 }
 
 /**
- * The id of the block the roving editor is in, asserting the editor is blank.
- * A control that proves the empty-block cleanup fires must target the block it
- * leaves: the journal can hold a seeded blank block of its own that no focus
- * change ever visits.
+ * Press End and Enter in the roving editor's block, and return the id of the
+ * blank sibling Enter created once the editor is in it. Enter's create is a
+ * round-trip, and until it answers the editor still sits, emptied, in the
+ * block it left, so the wait is for a blank block with a different id: acting
+ * any sooner (a paste, an Escape) lands on the wrong block.
  */
-export async function focusedBlankBlockId(): Promise<string> {
+export async function enterBlankSibling(): Promise<string> {
   const editor = '[data-testid="block-editor"] [contenteditable="true"]'
-  await $(editor).waitForDisplayed({ timeout: ACTION_TIMEOUT })
-  const focused = await browser.execute((sel: string) => {
-    const el = document.querySelector(sel)
-    return {
-      id: el?.closest('[data-block-id]')?.getAttribute('data-block-id') ?? null,
-      text: el?.textContent ?? null,
-    }
-  }, editor)
-  if (focused.id === null || focused.text !== '') {
-    throw new Error(`expected the editor in a blank block, got ${JSON.stringify(focused)}`)
-  }
-  return focused.id
+  const readEditor = () =>
+    browser.execute((sel: string) => {
+      const el = document.querySelector(sel)
+      return {
+        id: el?.closest('[data-block-id]')?.getAttribute('data-block-id') ?? null,
+        text: el?.textContent ?? null,
+      }
+    }, editor)
+  const source = (await readEditor()).id
+  if (source === null) throw new Error('enterBlankSibling: no block editor is open')
+  await browser.keys(['End'])
+  await browser.keys(['Enter'])
+  let last: { id: string | null; text: string | null } = { id: null, text: null }
+  const blank = await browser
+    .waitUntil(
+      async () => {
+        last = await readEditor()
+        return last.id !== null && last.id !== source && last.text === '' ? last.id : false
+      },
+      { timeout: ACTION_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(
+        `expected the editor in a new blank block below ${source}, got ${JSON.stringify(last)}`,
+      )
+    })
+  return blank
 }
 
 /**

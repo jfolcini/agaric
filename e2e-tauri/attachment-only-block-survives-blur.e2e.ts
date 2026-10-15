@@ -26,8 +26,8 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  enterBlankSibling,
   expectAbsent,
-  focusedBlankBlockId,
   navigateTo,
   openJournalBlockEditor,
   pasteFileIntoFocusedBlock,
@@ -58,14 +58,13 @@ async function attachmentBadges(): Promise<
 
 /**
  * Type `marker` into a fresh journal block and press Enter, leaving the
- * roving editor in a new, blank sibling below it.
+ * roving editor in a new, blank sibling below it. Returns the sibling's id.
  */
-async function markedBlockThenBlankSibling(marker: string): Promise<void> {
+async function markedBlockThenBlankSibling(marker: string): Promise<string> {
   await navigateTo('Journal')
   await openJournalBlockEditor()
   await typeMarkerVerified(marker)
-  await browser.keys(['End'])
-  await browser.keys(['Enter'])
+  return enterBlankSibling()
 }
 
 /**
@@ -85,8 +84,7 @@ async function leaveBlankBlockFor(marker: string): Promise<string | null> {
 describe('Agaric real-backend attachment-only block (#5412)', () => {
   it('control: the same sequence cleans up a blank block holding nothing', async () => {
     await waitForAppReady()
-    await markedBlockThenBlankSibling(CONTROL_MARKER)
-    const blank = `[data-block-id="${await focusedBlankBlockId()}"]`
+    const blank = `[data-block-id="${await markedBlockThenBlankSibling(CONTROL_MARKER)}"]`
     await leaveBlankBlockFor(CONTROL_MARKER)
 
     // The cleanup's delete is optimistic, so the row leaves the DOM as soon as

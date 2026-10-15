@@ -55,7 +55,32 @@ import { logger } from '@/lib/logger'
 import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
 import { type FlatBlock, getDragDescendants } from '@/lib/tree-utils'
+import { useBlockStore } from '@/stores/blocks'
 import { settlePendingSaves } from '@/stores/unmount-flush'
+
+/**
+ * The page's last block when it is blank, childless and unfocused: "Add block"
+ * puts the caret there, because a second blank block would strand it. The
+ * blur cleanup only looks at the block focus leaves, so it never revisits this
+ * one; a focused blank tail it drops when the new block takes focus. The flat
+ * tree's tail is a direct child of the page only when it is childless.
+ */
+export function unfocusedBlankTail(blocks: readonly FlatBlock[], pageId: string): string | null {
+  const last = blocks.at(-1)
+  if (
+    last?.parent_id === pageId &&
+    last.id !== useBlockStore.getState().focusedBlockId &&
+    last.block_type === 'content' &&
+    (last.content ?? '').trim() === '' &&
+    last.todo_state === null &&
+    last.priority === null &&
+    last.due_date === null &&
+    last.scheduled_date === null
+  ) {
+    return last.id
+  }
+  return null
+}
 
 export interface EmptyBlockGuardInput {
   /** The page store's full flat tree (NOT the zoom/collapse projection). */
