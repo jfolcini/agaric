@@ -311,6 +311,34 @@ mod tests {
         mat.shutdown();
     }
 
+    /// #5371 — a cache row whose space is not its page's reports as its own
+    /// artefact: the Pages list would show the page in the wrong space.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_cache_row_in_the_wrong_space_is_reported_5371() {
+        let (pool, _dir, mat, page_id) = settled_vault().await;
+        // dynamic-sql: test-only corruption of one derived row.
+        sqlx::query("UPDATE pages_cache SET space_id = 'ELSEWHERE' WHERE page_id = ?")
+            .bind(&page_id)
+            .execute(&pool)
+            .await
+            .expect("corrupt the space");
+
+        let report = compute_reconciliation_report_inner(&pool, pinned_today())
+            .await
+            .expect("report");
+
+        assert_eq!(
+            report.artefacts,
+            vec![ArtefactDivergences {
+                artefact: "pages_cache.space_id".to_owned(),
+                count: 1,
+                sample_keys: vec![page_id],
+            }],
+            "the row in the wrong space, nothing else"
+        );
+        mat.shutdown();
+    }
+
     #[tokio::test]
     async fn a_read_failure_propagates_instead_of_reporting_a_clean_vault() {
         let dir = TempDir::new().expect("tempdir");

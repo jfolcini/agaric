@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT page_id, title, title_sort_key, last_edited_ms FROM pages_cache",
+  "query": "SELECT page_id, title, title_sort_key, last_edited_ms, space_id FROM pages_cache",
   "describe": {
     "columns": [
       {
@@ -46,6 +46,17 @@
             "name": "last_edited_ms"
           }
         }
+      },
+      {
+        "name": "space_id",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "space_id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -55,8 +66,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "d20c69eb3b1c17d85ba2319cba83c1b2d8f286a8ea0803ca7d985ed032e860ad"
+  "hash": "f96290b83d0cecfd9140c41f8d594629ff6e2ad42aca4664d97df1b0c09a6ac8"
 }

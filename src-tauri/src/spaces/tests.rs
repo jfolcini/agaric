@@ -552,6 +552,36 @@ async fn bootstrap_re_runs_pages_without_space_after_marker_set() {
     );
 }
 
+/// #5371 — the backfill writes `blocks.space_id` in bulk, not through the
+/// `space` projection, so it moves the page's `pages_cache` row itself: the
+/// Pages list reads the space from that row, and no rebuild of it is queued.
+#[tokio::test]
+async fn bootstrap_placement_moves_the_pages_cache_row_with_the_page_5371() {
+    let (pool, _dir) = test_pool().await;
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+    let page = "01JABCD0000000000000005371";
+    insert_page(&pool, page, "Leaked page").await;
+    // The row a rebuild births while the page has no space.
+    sqlx::query(
+        "INSERT INTO pages_cache (page_id, title, title_sort_key, last_edited_ms, updated_at) \
+         VALUES (?, 'Leaked page', 'leaked page', 1, 1)",
+    )
+    .bind(page)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    let cached: Option<String> =
+        sqlx::query_scalar("SELECT space_id FROM pages_cache WHERE page_id = ?")
+            .bind(page)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(cached.as_deref(), Some(SPACE_PERSONAL_ULID));
+}
+
 /// The seeded-block fast path is intentionally
 /// preserved. `is_space = "true"` SetProperty ops must fire ONLY on
 /// the first boot (invariant). This test pins the fact

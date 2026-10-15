@@ -1059,6 +1059,44 @@ pub static SEARCH_ALLOWED_KEYS: std::sync::LazyLock<HashSet<&'static str>> =
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PagesProjection;
 
+impl PagesProjection {
+    /// [`Projection::compile_path_glob`] tested on `column`, a page id,
+    /// instead of `{alias}.id`.
+    pub fn compile_path_glob_on(&self, column: &str, pattern: &str, exclude: bool) -> WhereClause {
+        // #1320-A — Pages now uses the SAME `LOWER(title) GLOB ?` dialect as
+        // Search (after #1320), so both surfaces share `GLOB` + brace +
+        // `[class]` semantics. This is the SINGLE-pattern fragment for ONE
+        // already-prepared pattern: the caller (`compile_pages_filters`)
+        // runs `prepare_globs` to brace-expand / substring-wrap /
+        // ASCII-lowercase the raw pattern, then OR/AND-joins the per-pattern
+        // fragments this method emits. The `pattern` is therefore bound
+        // VERBATIM (`Bind::Text(pattern.to_string())`, NO `glob_to_like`).
+        //
+        // A pattern with a literal head also gets a `title COLLATE NOCASE`
+        // range, so the sub-select searches `idx_pages_cache_title_nocase`
+        // instead of scanning `pages_cache` (#5426); the GLOB stays the
+        // predicate.
+        let op = if exclude { "NOT IN" } else { "IN" };
+        let glob = Bind::Text(pattern.to_string());
+        match glob_literal_prefix_range(pattern) {
+            Some((lo, hi)) => WhereClause::new(
+                format!(
+                    "{column} {op} (SELECT page_id FROM pages_cache \
+                     WHERE title COLLATE NOCASE >= ? AND title COLLATE NOCASE < ? \
+                     AND LOWER(title) GLOB ?)"
+                ),
+                vec![Bind::Text(lo), Bind::Text(hi), glob],
+            ),
+            None => WhereClause::new(
+                format!(
+                    "{column} {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"
+                ),
+                vec![glob],
+            ),
+        }
+    }
+}
+
 impl Projection for PagesProjection {
     fn allowed_keys() -> &'static HashSet<&'static str> {
         &PAGES_ALLOWED_KEYS
@@ -1085,37 +1123,8 @@ impl Projection for PagesProjection {
         )
     }
     fn compile_path_glob(&self, pattern: &str, exclude: bool, alias: &str) -> WhereClause {
-        // #1320-A — Pages now uses the SAME `LOWER(title) GLOB ?` dialect as
-        // Search (after #1320), so both surfaces share `GLOB` + brace +
-        // `[class]` semantics. This is the SINGLE-pattern fragment for ONE
-        // already-prepared pattern: the caller (`compile_pages_filters`)
-        // runs `prepare_globs` to brace-expand / substring-wrap /
-        // ASCII-lowercase the raw pattern, then OR/AND-joins the per-pattern
-        // fragments this method emits. The `pattern` is therefore bound
-        // VERBATIM (`Bind::Text(pattern.to_string())`, NO `glob_to_like`).
-        //
-        // Pages keeps the `b.id` alias (Search uses `b.page_id`). A pattern
-        // with a literal head also gets a `title COLLATE NOCASE` range, so
-        // the sub-select searches `idx_pages_cache_title_nocase` instead of
-        // scanning `pages_cache` (#5426); the GLOB stays the predicate.
-        let op = if exclude { "NOT IN" } else { "IN" };
-        let glob = Bind::Text(pattern.to_string());
-        match glob_literal_prefix_range(pattern) {
-            Some((lo, hi)) => WhereClause::new(
-                format!(
-                    "{alias}.id {op} (SELECT page_id FROM pages_cache \
-                     WHERE title COLLATE NOCASE >= ? AND title COLLATE NOCASE < ? \
-                     AND LOWER(title) GLOB ?)"
-                ),
-                vec![Bind::Text(lo), Bind::Text(hi), glob],
-            ),
-            None => WhereClause::new(
-                format!(
-                    "{alias}.id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"
-                ),
-                vec![glob],
-            ),
-        }
+        // Pages keeps the `b.id` alias (Search uses `b.page_id`).
+        self.compile_path_glob_on(&format!("{alias}.id"), pattern, exclude)
     }
     fn compile_has_property(
         &self,
@@ -1257,8 +1266,8 @@ impl Projection for PagesProjection {
     }
     /// D17 — **intentionally redundant on the Pages surface.** The Pages
     /// IPC (`commands::pages::list_pages_with_metadata_inner`) is already
-    /// space-scoped: its base SELECT filters `b.space_id = ?1` (#533,
-    /// migration 0086 — `space_id` is a first-class column)
+    /// space-scoped: its base SELECT filters `pc.space_id = ?1` (the page's
+    /// `blocks.space_id`, mirrored onto `pages_cache` by migration 0124)
     /// against the request's `space_id` before any compiled filter runs.
     /// A `Space` primitive therefore re-applies the same predicate the
     /// request already enforces — a no-op for the request's own space, and
@@ -1818,7 +1827,7 @@ mod tests {
     /// the three Pages-only grooming primitives. These reference the
     /// materialised `pages_cache` columns, not live correlated
     /// subqueries. The composition site MUST
-    /// have `LEFT JOIN pages_cache pc ON pc.page_id = b.id` in scope.
+    /// have `pages_cache pc` joined on `pc.page_id = b.id` in scope.
     #[test]
     fn pages_only_primitives_emit_materialised_pages_cache_sql() {
         let p = PagesProjection;
@@ -2909,10 +2918,10 @@ mod explain_query_plan_tests {
         let sql = format!(
             "EXPLAIN QUERY PLAN \
              SELECT b.id \
-             FROM blocks b \
-             LEFT JOIN pages_cache pc ON pc.page_id = b.id \
-             WHERE b.block_type = 'page' AND b.deleted_at IS NULL \
-               AND b.space_id = ? \
+             FROM pages_cache pc \
+             CROSS JOIN blocks b ON b.id = pc.page_id \
+             WHERE pc.space_id = ? \
+               AND b.block_type = 'page' AND b.deleted_at IS NULL \
                AND {fragment}"
         );
         let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))

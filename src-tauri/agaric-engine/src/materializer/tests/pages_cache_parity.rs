@@ -976,3 +976,219 @@ async fn a_page_create_writes_its_title_key_without_a_rebuild_5371() {
         "the create's INSERT writes the key, and the apply raises the row to the create"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #5371 — `pages_cache.space_id` parity
+// ---------------------------------------------------------------------------
+
+const SP_SPACE_A: &str = "01ARZ3NDEKTSV4RRFFQ69G5371";
+const SP_SPACE_B: &str = "01ARZ3NDEKTSV4RRFFQ69G5372";
+const SP_PAGE: &str = "01HZ00000000000000000P5371";
+
+/// Every row's `space_id` is its page's `blocks.space_id`: the Pages list
+/// reads the space from the cache row.
+async fn assert_space_parity(pool: &SqlitePool, context: &str) {
+    let drift: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT pc.page_id, pc.space_id, b.space_id FROM pages_cache pc \
+           JOIN blocks b ON b.id = pc.page_id \
+          WHERE pc.space_id IS NOT b.space_id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        drift,
+        Vec::new(),
+        "[{context}] (page, cached space, page's space)"
+    );
+}
+
+async fn cached_space(pool: &SqlitePool, page_id: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT space_id FROM pages_cache WHERE page_id = ?")
+        .bind(page_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// A registered space: its block (a `tag`, so it has no cache row of its
+/// own) and its `spaces` row, which a `space` op's projection requires.
+async fn seed_space(pool: &SqlitePool, id: &str) {
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'tag', 'space')")
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+fn set_space(block_id: &str, space: &str) -> OpPayload {
+    OpPayload::SetProperty(SetPropertyPayload {
+        block_id: BlockId::from_trusted(block_id),
+        key: "space".into(),
+        value_text: None,
+        value_num: None,
+        value_date: None,
+        value_ref: Some(BlockId::from_trusted(space)),
+        value_bool: None,
+    })
+}
+
+fn create_page(block_id: &str, title: &str) -> OpPayload {
+    OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::from_trusted(block_id),
+        block_type: "page".into(),
+        parent_id: None,
+        position: Some(0),
+        index: None,
+        content: title.into(),
+    })
+}
+
+/// #5371 — a page's cache row follows its space in the transaction that
+/// moves the page: born with the page's space, moved by each `space` op,
+/// cleared with it. No `RebuildPagesCache` runs between an op and its
+/// assertion, so each one sees the in-transaction write alone.
+#[tokio::test]
+async fn space_id_follows_the_page_through_its_space_ops_5371() {
+    let (pool, _dir) = test_pool().await;
+    let state = LoroState::new();
+    seed_space(&pool, SP_SPACE_A).await;
+    seed_space(&pool, SP_SPACE_B).await;
+    let apply = async |payload: OpPayload, at: i64| {
+        let record = make_op_record_at(&pool, payload, at).await;
+        handle_foreground_task(
+            &pool,
+            &MaterializeTask::ApplyOp(StdArc::new(record)),
+            &state,
+        )
+        .await
+        .unwrap();
+    };
+
+    apply(create_page(SP_PAGE, "Spaced"), FIXED_TS + 1).await;
+    assert_eq!(cached_space(&pool, SP_PAGE).await, None, "born space-less");
+
+    apply(set_space(SP_PAGE, SP_SPACE_A), FIXED_TS + 2).await;
+    assert_eq!(
+        cached_space(&pool, SP_PAGE).await.as_deref(),
+        Some(SP_SPACE_A),
+        "the first space op"
+    );
+
+    apply(set_space(SP_PAGE, SP_SPACE_B), FIXED_TS + 3).await;
+    assert_eq!(
+        cached_space(&pool, SP_PAGE).await.as_deref(),
+        Some(SP_SPACE_B),
+        "a move to another space"
+    );
+    assert_space_parity(&pool, "after the move").await;
+
+    let mut conn = pool.acquire().await.unwrap();
+    crate::loro::projection::project_delete_property_to_sql(&mut conn, SP_PAGE, "space")
+        .await
+        .unwrap();
+    drop(conn);
+    assert_eq!(
+        cached_space(&pool, SP_PAGE).await,
+        None,
+        "a DeleteProperty(space)"
+    );
+    assert_space_parity(&pool, "after the clear").await;
+}
+
+/// #5371 — the two other writers: a page row born where the page already has
+/// a space (a create re-applied after a reset wiped the cache) copies it,
+/// and the page-row rebuild repairs a row any other path left behind.
+#[tokio::test]
+async fn space_id_is_born_from_the_page_and_repaired_by_the_rebuild_5371() {
+    let (pool, _dir) = test_pool().await;
+    seed_space(&pool, SP_SPACE_A).await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id, space_id) \
+         VALUES (?, 'page', 'Spaced', ?, ?)",
+    )
+    .bind(SP_PAGE)
+    .bind(SP_PAGE)
+    .bind(SP_SPACE_A)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let create = make_op_record_at(&pool, create_page(SP_PAGE, "Spaced"), FIXED_TS + 1).await;
+    run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(create)), &[]).await;
+    assert_eq!(
+        cached_space(&pool, SP_PAGE).await.as_deref(),
+        Some(SP_SPACE_A),
+        "the create's INSERT copies the page's space"
+    );
+
+    sqlx::query("UPDATE pages_cache SET space_id = NULL WHERE page_id = ?")
+        .bind(SP_PAGE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    handle_background_task(&pool, &MaterializeTask::RebuildPagesCache, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        cached_space(&pool, SP_PAGE).await.as_deref(),
+        Some(SP_SPACE_A),
+        "the rebuild restores a stale space"
+    );
+    assert_space_parity(&pool, "after the rebuild").await;
+}
+
+/// #5371 — a `RestoreBlock` the materializer applies (a peer's, or a replay)
+/// gives the page back the cache row the rebuild swept while it sat in the
+/// trash, in the op's own transaction: the Pages list reads its rows from the
+/// cache. The row is born as the rebuild births one, the restore its newest op.
+#[tokio::test]
+async fn a_restore_gives_the_page_back_its_swept_row_5371() {
+    let (pool, _dir) = test_pool().await;
+    seed_space(&pool, SP_SPACE_A).await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id, space_id, deleted_at) \
+         VALUES (?, 'page', 'Émile', ?, ?, ?)",
+    )
+    .bind(SP_PAGE)
+    .bind(SP_PAGE)
+    .bind(SP_SPACE_A)
+    .bind(FIXED_TS)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let restore = OpPayload::RestoreBlock(RestoreBlockPayload {
+        block_id: BlockId::from_trusted(SP_PAGE),
+        deleted_at_ref: FIXED_TS,
+    });
+    let record = make_op_record_at(&pool, restore, FIXED_TS + 1).await;
+    handle_foreground_task(
+        &pool,
+        &MaterializeTask::ApplyOp(StdArc::new(record)),
+        &LoroState::new(),
+    )
+    .await
+    .unwrap();
+
+    let row: Option<(String, Option<String>, i64)> = sqlx::query_as(
+        "SELECT title_sort_key, space_id, last_edited_ms FROM pages_cache WHERE page_id = ?",
+    )
+    .bind(SP_PAGE)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        Some((
+            "emile".to_owned(),
+            Some(SP_SPACE_A.to_owned()),
+            FIXED_TS + 1
+        ))
+    );
+}
