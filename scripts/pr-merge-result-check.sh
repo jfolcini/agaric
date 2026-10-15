@@ -353,14 +353,13 @@ for r in roots:
 # is the more fundamental diagnosis) rather than a prerequisite one.
 RATCHET_PREREQS=(
   'check-unsafe-allowlist.sh|src-tauri/unsafe-allowlist.txt|the allowlist it ratchets against'
-  # All three Python guards load this by PATH at import time (#4017). Absent,
+  # Both Python guards load this by PATH at import time (#4017). Absent,
   # they die with a FileNotFoundError traceback — exit 1, which this script
   # would otherwise read as "the guard FAILED on the merged tree": a content
   # verdict about a merge, from a guard that never ran. Same shape as the
   # unsafe-allowlist.txt entry above, and the same remedy.
   'check-raw-tx.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
   'check-dynamic-sql.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
-  'check-command-arity.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
 )
 
 # Returns 0 if every prerequisite of every PRESENT guard exists in the merged

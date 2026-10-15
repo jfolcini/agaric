@@ -76,7 +76,7 @@
 // `scripts/pr-merge-result-check.sh` is built on — it runs each ratchet guard
 // out of the MERGED WORKTREE's own `scripts/` precisely so the copy's
 // location states which tree to judge. `check-table-ownership.py`,
-// `check-raw-tx.py`, `check-dynamic-sql.py` and `check-command-arity.py` are
+// `check-raw-tx.py` and `check-dynamic-sql.py` are
 // all spelled this way.
 //
 // THE EXCEPTION, also stated once, here rather than a paragraph apiece in the
