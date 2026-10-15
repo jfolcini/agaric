@@ -225,7 +225,7 @@ mod tests {
     ///
     /// Split the runtime-select const into an unprefixed form
     /// (used at 3 sites covered by Test C) and a `b.`-aliased form (used
-    /// at the 2 `pagination/properties.rs` sites). Stripping the `b.`
+    /// in `pagination/properties.rs`). Stripping the `b.`
     /// alias from every column of the aliased const — using the same
     /// `strip_blocks_alias` helper Test B uses to normalize JOIN-style
     /// macro sites — must yield exactly the unprefixed const after
