@@ -206,8 +206,8 @@ ROOT_MISSING_HINT = (
     "       destroyed by the command prescribed to fix it. If the crate was\n"
     "       genuinely retired, remove its root in the same commit, then\n"
     "       re-anchor. The sibling guards (check-raw-tx.py,\n"
-    "       check-table-ownership.py, check-op-log-delete.py) each keep their\n"
-    "       own hand-synchronised copy of this list — check them too.\n"
+    "       check-table-ownership.py) each keep their own\n"
+    "       hand-synchronised copy of this list — check them too.\n"
     "       If the tree under test is deliberately NOT this repository (a\n"
     "       fixture repo), the caller says so with `--synthetic-tree`."
 )
