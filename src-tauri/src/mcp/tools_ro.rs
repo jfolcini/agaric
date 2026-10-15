@@ -13,7 +13,7 @@
 //! |------|-------------------|-------|
 //! | `list_pages` | [`list_pages_with_metadata_inner`] | The pages of one space, sorted and filtered as the Pages view does, with their link and block counts. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
 //! | `get_page` | [`get_page_inner`] | Composes `get_active_block_inner` + paginated subtree via `page_id`; `page` carries its properties, tags and aliases (#5377). soft-deleted pages → `NotFound`. `space_id` required; a page in another space is rejected. Children stop at [`RESPONSE_BYTES_CAP`] (#5402). |
-//! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. Rows add `page_title`; `tag_ids` match attached, inline and inherited tags (#5398). |
+//! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. Rows add `page_title` (not on a page, whose `content` is it); `tag_ids` match attached, inline and inherited tags (#5398). |
 //! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags, its page's title and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. `space_id` required; a block in another space is rejected. |
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. `space_id` required. Groups stop at [`RESPONSE_BYTES_CAP`] (#5402). |
 //! | `list_tags` | [`list_tags_inner`] | The tags of one space. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
@@ -885,9 +885,9 @@ fn tool_desc_search() -> ToolDescription {
              are dropped (the index is trigram), so a query of only short words finds \
              nothing. Hits come best match first. An empty `query` with at least one of \
              `parent_id`, `tag_ids` or `filter` returns the blocks those match, newest \
-             first; with none it returns nothing. Rows carry `page_title` and a `snippet` \
-             with <mark> around the matches; `content` is cut to 512 chars, and null fields \
-             are left out. `filter` narrows further (state / priority / due / scheduled / \
+             first; with none it returns nothing. Rows carry `page_title` (a page's own is its \
+             `content`) and a `snippet` with <mark> around the matches; `content` is cut to \
+             512 chars, and null fields are left out. `filter` narrows further (state / priority / due / scheduled / \
              last edited / property / page-name globs / block type / case-sensitive / \
              whole-word / regex)."
             .to_string(),
@@ -1408,22 +1408,10 @@ struct PageListRow {
 impl From<PageWithMetadataRow> for PageListRow {
     fn from(row: PageWithMetadataRow) -> Self {
         Self {
-            block: BlockRow {
-                id: row.id,
-                block_type: row.block_type,
-                content: row.content,
-                parent_id: row.parent_id,
-                position: row.position,
-                deleted_at: row.deleted_at,
-                todo_state: row.todo_state,
-                priority: row.priority,
-                due_date: row.due_date,
-                scheduled_date: row.scheduled_date,
-                page_id: row.page_id.map(BlockId::from),
-            },
             last_modified_at: row.last_modified_at,
             inbound_link_count: row.inbound_link_count,
             child_block_count: row.child_block_count,
+            block: row.into(),
         }
     }
 }
@@ -1751,10 +1739,12 @@ async fn search_result(
         if !include_match_offsets {
             row.remove("match_offsets");
         }
-        let title = block
+        // A page's title is its own `content`, as in `get_block`.
+        let page_id = block
             .page_id
             .as_ref()
-            .and_then(|id| titles.get(id).cloned().flatten());
+            .filter(|_| block.block_type != "page");
+        let title = page_id.and_then(|id| titles.get(id).cloned().flatten());
         if let Some(title) = title {
             row.insert("page_title".into(), Value::String(title));
         }
