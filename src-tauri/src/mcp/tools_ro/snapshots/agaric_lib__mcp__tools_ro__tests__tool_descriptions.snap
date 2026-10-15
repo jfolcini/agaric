@@ -20,13 +20,14 @@ expression: wire
         minimum: 1
         type: integer
       sort:
-        description: "Title A-Z (the default), last edit newest first, most inbound links, most blocks, or creation order (`default`). A cursor only continues the sort it came from."
+        description: "Title A-Z (the default), newest page first, last edit newest first, last opened on this device, most inbound links, or most blocks. A cursor only continues the sort it came from."
         enum:
           - alphabetical
+          - created
           - recently-modified
+          - last-opened
           - most-linked
           - most-content
-          - default
         type: string
       space_id:
         description: ULID of the space whose pages to list.

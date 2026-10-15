@@ -735,8 +735,8 @@ fn tool_desc_list_pages() -> ToolDescription {
                 },
                 "sort": {
                     "type": "string",
-                    "enum": ["alphabetical", "recently-modified", "most-linked", "most-content", "default"],
-                    "description": "Title A-Z (the default), last edit newest first, most inbound links, most blocks, or creation order (`default`). A cursor only continues the sort it came from.",
+                    "enum": ["alphabetical", "created", "recently-modified", "last-opened", "most-linked", "most-content"],
+                    "description": "Title A-Z (the default), newest page first, last edit newest first, last opened on this device, most inbound links, or most blocks. A cursor only continues the sort it came from.",
                 },
                 "filters": {
                     "type": "array",
