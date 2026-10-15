@@ -27,5 +27,6 @@
 4 src-tauri/src/commands/agenda.rs
 2 src-tauri/src/commands/blocks/queries.rs
 2 src-tauri/src/commands/pages/aliases.rs
-2 src-tauri/src/commands/queries.rs
+1 src-tauri/src/commands/queries.rs
+1 src-tauri/src/commands/queries_filtered_blocks_tests.rs
 1 src-tauri/src/db/tests.rs

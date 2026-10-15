@@ -240,7 +240,7 @@ export const commands = {
 	 * 
 	 *  Replaces the FE pattern of fan-out IPCs (one `query_by_property` /
 	 *  `query_by_tags` per sub-filter, each capped at 200 rows) followed by
-	 *  JS-side intersection capped at 50 rows. The composed-EXISTS shape
+	 *  JS-side intersection capped at 50 rows. The SQL-side intersection
 	 *  fixes the silent-cap regression where any AND-set member outside
 	 *  the top-200 of any one sub-query was dropped before the
 	 *  intersection ran.
@@ -3229,9 +3229,9 @@ export type PropertyDefinition = {
  *  Mirrors the per-call shape of [`query_by_property_inner`] so a caller
  *  migrating from the JS-side AND-intersection (`Promise.all` over N
  *  `query_by_property` IPCs) can replay each sub-filter unchanged. Each
- *  instance becomes ONE `EXISTS (SELECT 1 FROM block_properties bp …)`
- *  subquery in the composed SQL — the AND-intersection is the
- *  structural conjunction of the EXISTS clauses (no JS post-filter, no
+ *  instance becomes ONE `b.id IN (SELECT block_id FROM block_properties …)`
+ *  id set in the composed SQL — the AND-intersection is the
+ *  structural conjunction of those id sets (no JS post-filter, no
  *  silent row cap).
  * 
  *  At most one of `value_text` / `value_text_in` / `value_date` /
@@ -4442,8 +4442,8 @@ export type TagExpr = { type: "Tag"; value: string } | { type: "Prefix"; value: 
  * 
  *  Mirrors the [`query_by_tags_inner`] arg shape. When `mode = "and"`
  *  every supplied tag (id or prefix) must match; `"or"` (default) is
- *  the union. The predicate is composed into ONE `AND EXISTS (…)`
- *  subquery in the parent SQL — the JS-side AND-intersection between
+ *  the union. The predicate is composed into `b.id IN (…)` id sets in
+ *  the parent SQL — the JS-side AND-intersection between
  *  property and tag sub-results disappears.
  */
 export type TagFilterExpr = {
