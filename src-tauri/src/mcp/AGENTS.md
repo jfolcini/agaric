@@ -84,7 +84,6 @@ No single test drives the full production stack:
 - `rmcp_adapter::tests` — wire framing over `tokio::io::duplex`, mostly against `MockRoRegistry`.
 - `server/tests.rs`, `server/tests_rmcp.rs` — `run_connection`, shutdown gate, grace period against a real `UnixListener` with stub registries. **Every new protocol-error path needs a test in `server/tests_rmcp.rs`.**
 - `stub_binary_roundtrips_initialize_over_uds` (`mod.rs`, `ci-smoke` feature) spawns the real `agaric-mcp` binary but only round-trips `initialize`.
-- `scripts/mcp_smoke.py` — the only real `tools/call` through the full stack, against a live `cargo tauri dev`. Manual only; never in CI.
 
 ```sh
 cd src-tauri && cargo nextest run -p agaric -E 'test(mcp::)'

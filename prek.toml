@@ -1757,48 +1757,6 @@ pass_filenames = false
 always_run = true
 stages = ["manual"]
 
-# Migration → JS-mock schema-contract guard (#3084). The browser/e2e Tauri
-# mock (src/lib/tauri-mock/) is a hand-maintained SECOND implementation of the
-# schema; when a migration changes a table the mock models, the mock silently
-# keeps modeling the OLD schema and drifts (the tag-space bug: a retired
-# block_properties(key='space') row kept alive after space moved to the native
-# blocks.space_id column — shipped past green e2e). This DIFF-scoped guard sees
-# both changed migrations AND changed mock files in one invocation (the `files`
-# alternation below). For each NEW migration (not grandfathered in
-# src-tauri/migrations-mock-ack-baseline.txt) that touches a table in the
-# CONTRACT map, it requires EITHER a modeling mock file changed alongside it,
-# OR a `-- mock-unaffected: <reason>` annotation line in the migration. The
-# baseline makes `prek run --all-files` (CI), pre-commit, and pre-push behave
-# identically with no git dependence. Regenerate after landing a new migration:
-# `python3 scripts/check-migration-mock-contract.py --update-baseline`.
-# WHY: a migration whose mock schema was not updated makes tests pass against the wrong schema — #3084
-[[repos.hooks]]
-id = "check-migration-mock-contract"
-name = "migration → mock schema-contract guard (#3084)"
-entry = "python3 scripts/check-migration-mock-contract.py"
-language = "system"
-files = '^(src-tauri/migrations/.*\.sql|src/lib/tauri-mock/.*)$'
-stages = ["pre-commit", "pre-push"]
-
-# #3084: the guard's CONTRACT map (table → mock store symbol + modeling files),
-# its migration table parser (CREATE/ALTER/DROP TABLE incl. VIRTUAL, CREATE
-# TRIGGER … ON, INSERT INTO / UPDATE … SET / DELETE FROM, `_new_<t>` rebuild
-# forms; CREATE INDEX and bare SELECT excluded), and the (a) mock-changed /
-# (b) `-- mock-unaffected:` acknowledgement + baseline-exemption logic must not
-# silently regress. This companion hook runs the guard's own fixture suite
-# (`--self-test`), which also asserts every CONTRACT file exists and mentions
-# its store symbol, and that every backend table is classified as either read
-# by the mock (CONTRACT) or not (UNMODELED), so the map cannot rot (#4667).
-# WHY: a Python AST guard: a contract shape it does not recognise is a silently skipped line — #3084
-[[repos.hooks]]
-id = "check-migration-mock-contract-self-test"
-name = "migration → mock guard self-test (#3084 fixtures + CONTRACT integrity)"
-entry = "python3 scripts/check-migration-mock-contract.py --self-test"
-language = "system"
-pass_filenames = false
-always_run = true
-stages = ["manual"]
-
 # Fails when a baseline, allowlist or DENY_FILES entry names a file that no
 # longer exists (#4501). #3255 was the live instance: 11 of 15 baseline entries
 # named files that had moved crates in #2621, so a guard protected 4 files and

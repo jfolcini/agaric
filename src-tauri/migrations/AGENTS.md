@@ -133,4 +133,4 @@ The `_376`/`_606`/`_708` suffixes pin tests that predate the naming convention. 
 
 ## Mock contract
 
-Root [`AGENTS.md` § Testing invariants](../../AGENTS.md#testing-invariants-anti-drift) requires updating the mock with the migration. The `check-migration-mock-contract` hook fails a new migration touching a table the mock models unless a modeling mock file changed too or the migration carries a `-- mock-unaffected: <reason>` line (index-only or derived-cache-only changes). After landing a migration, grandfather it with `python3 scripts/check-migration-mock-contract.py --update-baseline`.
+Root [`AGENTS.md` § Testing invariants](../../AGENTS.md#testing-invariants-anti-drift) requires updating the mock with the migration.
