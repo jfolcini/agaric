@@ -205,7 +205,16 @@ function DaySectionInner({
   // reads matchMedia once on mount and subscribes to changes, so the value
   // is not re-evaluated in this render body on every WeeklyView re-render.
   const prefersReducedMotion = usePrefersReducedMotion()
-  const shouldLazyMount = lazyMount && !prefersReducedMotion
+  // "Add block" on a day with no page asks for a block right here: the tree
+  // mounts as soon as the page exists and seeds its first block. Multi-day
+  // views otherwise neither seed on mount (every empty day would get a block)
+  // nor mount a page born after the lazy observer armed.
+  const [firstBlockRequested, setFirstBlockRequested] = useState(false)
+  const handleAddFirstBlock = () => {
+    setFirstBlockRequested(true)
+    onAddBlock(entry.dateStr)
+  }
+  const shouldLazyMount = lazyMount && !prefersReducedMotion && !firstBlockRequested
   const isWindowControlled = shouldLazyMount && onVisible != null
 
   // Self-managed one-shot path (WeeklyView, no `onVisible`) —
@@ -418,7 +427,7 @@ function DaySectionInner({
               <BlockTree
                 parentId={entry.pageId}
                 onNavigateToPage={onNavigateToPage}
-                autoCreateFirstBlock={mode === 'daily'}
+                autoCreateFirstBlock={mode === 'daily' || firstBlockRequested}
               />
             </PageBlockStoreProvider>
           </div>
@@ -436,7 +445,7 @@ function DaySectionInner({
                 variant="ghost"
                 size="sm"
                 className="mt-2 mx-auto flex items-center gap-1"
-                onClick={() => onAddBlock(entry.dateStr)}
+                onClick={handleAddFirstBlock}
               >
                 <Plus className="h-4 w-4" />
                 {t('agenda.day.addBlock')}
@@ -454,7 +463,7 @@ function DaySectionInner({
                   variant="ghost"
                   size="sm"
                   className="mt-3 mx-auto flex items-center gap-1"
-                  onClick={() => onAddBlock(entry.dateStr)}
+                  onClick={handleAddFirstBlock}
                 >
                   <Plus className="h-4 w-4" />
                   {t('journal.addFirstBlock')}
