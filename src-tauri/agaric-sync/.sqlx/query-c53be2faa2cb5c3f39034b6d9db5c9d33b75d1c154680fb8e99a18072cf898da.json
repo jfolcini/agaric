@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT pa.page_id AS \"page_id!: String\", pa.alias, b.space_id AS \"space_id!: String\"\n           FROM page_aliases pa\n           JOIN blocks b ON b.id = pa.page_id\n           WHERE b.space_id IS NOT NULL\n           ORDER BY pa.page_id, pa.alias",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "page_aliases",
+            "name": "page_id"
+          }
+        }
+      },
+      {
+        "name": "alias",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "page_aliases",
+            "name": "alias"
+          }
+        }
+      },
+      {
+        "name": "space_id!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "c53be2faa2cb5c3f39034b6d9db5c9d33b75d1c154680fb8e99a18072cf898da"
+}

@@ -348,9 +348,13 @@ async fn assert_inverse_law(
         }
         // #2681: `PurgeBlock` reaches `compute_reverse` but is unconditionally
         // NonReversible, so it is handled by the early `Err(NonReversible)` arm
-        // above and never lands here. `RenameAttachment` is not emitted by the
-        // generator. Either arriving here (as an `Ok` reverse) is a real bug.
-        OpPayload::PurgeBlock(_) | OpPayload::RenameAttachment(_) => {
+        // above and never lands here. `RenameAttachment` and the alias ops are
+        // not emitted by the generator. Any of them arriving here (as an `Ok`
+        // reverse) is a real bug.
+        OpPayload::PurgeBlock(_)
+        | OpPayload::RenameAttachment(_)
+        | OpPayload::AddPageAlias(_)
+        | OpPayload::RemovePageAlias(_) => {
             return Err(TestCaseError::fail(format!(
                 "harness emitted an op whose reverse should not reach here: {payload:?}"
             )));
@@ -449,6 +453,8 @@ fn is_reversible(op_type: &OpType) -> bool {
         OpType::DeleteAttachment => true,
         // RenameAttachment is always reversible — swap old/new filename.
         OpType::RenameAttachment => true,
+        // Alias ops swap Add <-> Remove.
+        OpType::AddPageAlias | OpType::RemovePageAlias => true,
         // The ONLY unconditionally non-reversible op.
         OpType::PurgeBlock => false,
     }
@@ -487,6 +493,8 @@ fn every_op_type_is_classified() {
         OpType::AddAttachment,
         OpType::DeleteAttachment,
         OpType::RenameAttachment,
+        OpType::AddPageAlias,
+        OpType::RemovePageAlias,
     ];
 
     // Exactly one non-reversible variant today: PurgeBlock.

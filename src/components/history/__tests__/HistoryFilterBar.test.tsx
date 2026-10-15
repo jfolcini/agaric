@@ -119,8 +119,8 @@ describe('HistoryFilterBar', () => {
     const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
     const options = select.querySelectorAll('option')
 
-    // __all__ + 13 op types = 14 options
-    expect(options).toHaveLength(14)
+    // __all__ + 15 op types = 16 options
+    expect(options).toHaveLength(16)
     expect(options[0]).toHaveTextContent('All types')
     expect(options[1]).toHaveTextContent('Edit')
     expect(options[2]).toHaveTextContent('Create')
@@ -130,6 +130,9 @@ describe('HistoryFilterBar', () => {
     const values = Array.from(options).map((o) => o.getAttribute('value'))
     expect(values).toContain('rename_attachment')
     expect(values).toContain('delete_attachment')
+    // #5387 — alias edits are ops, listed in page history.
+    expect(values).toContain('add_page_alias')
+    expect(values).toContain('remove_page_alias')
   })
 
   it('calls onFilterChange(null) when "All types" is selected', async () => {
@@ -235,7 +238,7 @@ describe('HistoryFilterBar', () => {
       // Title.
       expect(content).toHaveTextContent('What do these mean?')
 
-      // Spot-check a handful of descriptions across the 13 op types — these
+      // Spot-check a handful of descriptions across the 15 op types — these
       // are the values supplied by the i18n keys
       // `history.opTypeDescription.<op_type>`.
       expect(content).toHaveTextContent('A new block was created')
@@ -248,10 +251,12 @@ describe('HistoryFilterBar', () => {
       // both carry a legend entry rather than a raw key echo.
       expect(content).toHaveTextContent('An attachment was removed from a block')
       expect(content).toHaveTextContent('An attachment was renamed')
+      expect(content).toHaveTextContent('An alias was added to a page')
+      expect(content).toHaveTextContent('An alias was removed from a page')
 
-      // All 13 op types render as <dt>/<dd> rows inside the legend's <dl>.
+      // All 15 op types render as <dt>/<dd> rows inside the legend's <dl>.
       const rows = content.querySelectorAll('dl > div')
-      expect(rows).toHaveLength(13)
+      expect(rows).toHaveLength(15)
     })
   })
 })

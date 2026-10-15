@@ -27,6 +27,8 @@ async fn set_and_get_page_aliases() {
     // Set aliases
     let inserted = set_page_aliases_inner(
         &pool,
+        DEV,
+        &mat,
         page.id.as_str(),
         vec!["my-alias".into(), "another".into()],
     )
@@ -72,7 +74,7 @@ async fn resolve_page_by_alias() {
     .unwrap();
     settle(&mat).await;
 
-    set_page_aliases_inner(&pool, page.id.as_str(), vec!["my-alias".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, page.id.as_str(), vec!["my-alias".into()])
         .await
         .unwrap();
 
@@ -138,22 +140,35 @@ async fn alias_collision_returns_error() {
     settle(&mat).await;
 
     // Page A claims the alias first
-    let inserted_a = set_page_aliases_inner(&pool, page_a.id.as_str(), vec!["shared-alias".into()])
-        .await
-        .unwrap();
+    let inserted_a = set_page_aliases_inner(
+        &pool,
+        DEV,
+        &mat,
+        page_a.id.as_str(),
+        vec!["shared-alias".into()],
+    )
+    .await
+    .unwrap();
     assert_eq!(
         inserted_a,
         vec!["shared-alias"],
         "page A must own the alias"
     );
 
-    // Page B tries to claim the same alias — INSERT OR IGNORE silently skips it
-    let inserted_b = set_page_aliases_inner(&pool, page_b.id.as_str(), vec!["shared-alias".into()])
-        .await
-        .unwrap();
-    assert!(
-        inserted_b.is_empty(),
-        "duplicate alias must be silently ignored (INSERT OR IGNORE)"
+    // Page B tries to claim the same alias — refused, not silently dropped
+    let err = set_page_aliases_inner(
+        &pool,
+        DEV,
+        &mat,
+        page_b.id.as_str(),
+        vec!["shared-alias".into()],
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::DuplicatePageAlias),
+        "a taken alias must be refused with its code, got {err:?}"
     );
 
     // The alias still resolves to page A

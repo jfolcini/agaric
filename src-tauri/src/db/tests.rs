@@ -4062,7 +4062,8 @@ async fn blocks_deleted_at_ms_backfill_handles_null_and_value_376() {
 // `page_aliases.page_id` (0061) and `block_drafts.block_id` (0038) carry
 // `REFERENCES blocks(id) ON DELETE CASCADE`. Unlike attachments /
 // properties / tags, NEITHER re-materializes from the op log at boot:
-// page_aliases emits no op_log entries (#110) and block_drafts is
+// page_aliases is an engine projection only disaster recovery reprojects
+// (it had no op_log entries before #5387) and block_drafts is
 // device-local. So the `DROP TABLE blocks` in each shipped rebuild
 // (0073, 0080, 0085) permanently destroyed both tables for upgrading
 // users — the cascade fires as part of the DROP itself, inside the
@@ -4411,7 +4412,7 @@ async fn page_aliases_and_block_drafts_survive_migrations_after_0085_606() {
     assert_eq!(
         (aliases, drafts),
         (1, 1),
-        "page_aliases and block_drafts are AUTHORITATIVE (no op-log recovery; \
+        "page_aliases and block_drafts are AUTHORITATIVE (no boot recovery; \
              #606) and must survive every migration after 0085. A future blocks \
              rebuild must copy them aside before DROP TABLE blocks and restore them \
              after the rename — see migrations/AGENTS.md §Table-rebuild"

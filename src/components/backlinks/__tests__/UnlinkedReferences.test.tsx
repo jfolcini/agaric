@@ -2029,7 +2029,7 @@ describe('UnlinkedReferences — title and alias writes (#5249)', () => {
     mockedGetPageAliases.mockImplementation(async () => [...aliases])
     mockSetPageAliases.mockImplementation(async (_pageId: string, next: string[]) => {
       aliases = [...next]
-      return next
+      return { aliases: next, op_refs: [] }
     })
     mockedListUnlinked.mockImplementation(async () => {
       const terms = [title, ...aliases]

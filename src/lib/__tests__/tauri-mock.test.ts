@@ -2740,6 +2740,46 @@ describe('page alias commands', () => {
     expect(aliases).toEqual(['intro', 'welcome'])
   })
 
+  // #5387 — an alias edit is ops, as `write_page_aliases_in_tx` appends them.
+  it('set_page_aliases removes then adds, as alias ops, and answers their refs', () => {
+    const page = SEED_IDS.PAGE_GETTING_STARTED
+    const before = opLog.length
+    const resp = invoke('set_page_aliases', { pageId: page, aliases: ['GS', 'intro'] }) as {
+      aliases: string[]
+      op_refs: Array<{ device_id: string; seq: number }>
+    }
+    expect(resp.aliases).toEqual(['GS', 'intro'])
+    const appended = opLog.slice(before).map((op) => [op.op_type, JSON.parse(op.payload).alias])
+    expect(appended).toEqual([
+      ['remove_page_alias', 'getting-started'],
+      ['remove_page_alias', 'gs'],
+      ['add_page_alias', 'GS'],
+      ['add_page_alias', 'intro'],
+    ])
+    expect(resp.op_refs.map((ref) => ref.seq)).toEqual(opLog.slice(before).map((op) => op.seq))
+  })
+
+  it('set_page_aliases refuses an alias another page holds and writes nothing', () => {
+    const before = opLog.length
+    expect(() =>
+      invoke('set_page_aliases', { pageId: SEED_IDS.PAGE_GETTING_STARTED, aliases: ['PROJ'] }),
+    ).toThrow(expect.objectContaining({ kind: 'validation', code: 'DuplicatePageAlias' }))
+    expect(opLog.length).toBe(before)
+    expect(invoke('get_page_aliases', { pageId: SEED_IDS.PAGE_GETTING_STARTED })).toEqual([
+      'getting-started',
+      'gs',
+    ])
+  })
+
+  it('undoing an alias edit restores the aliases it replaced', () => {
+    const page = SEED_IDS.PAGE_GETTING_STARTED
+    const resp = invoke('set_page_aliases', { pageId: page, aliases: ['intro'] }) as {
+      op_refs: Array<{ device_id: string; seq: number }>
+    }
+    invoke('undo_ops', { ops: resp.op_refs })
+    expect(invoke('get_page_aliases', { pageId: page })).toEqual(['getting-started', 'gs'])
+  })
+
   it('resolve_page_by_alias finds page by alias', () => {
     const result = invoke('resolve_page_by_alias', { alias: 'gs' }) as
       | [string, string | null]

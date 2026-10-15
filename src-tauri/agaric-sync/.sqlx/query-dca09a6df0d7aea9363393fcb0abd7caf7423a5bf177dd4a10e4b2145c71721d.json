@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT page_id FROM page_aliases WHERE alias = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "page_aliases",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "dca09a6df0d7aea9363393fcb0abd7caf7423a5bf177dd4a10e4b2145c71721d"
+}

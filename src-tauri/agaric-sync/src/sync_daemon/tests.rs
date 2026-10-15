@@ -12194,3 +12194,171 @@ async fn a_legacy_joiners_unusable_head_is_not_bound_4451() {
         bound_ids(&long)
     );
 }
+
+/// `page_id`'s `page_aliases` rows, sorted.
+async fn page_aliases_5387(pool: &SqlitePool, page_id: &str) -> Vec<String> {
+    sqlx::query_scalar("SELECT alias FROM page_aliases WHERE page_id = ? ORDER BY alias")
+        .bind(page_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// #5387 (acceptance): an alias added on A is on B after an ordinary sync
+/// session over a real socket — `Complete`, no snapshot fallback — and its
+/// removal follows the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn page_alias_added_on_a_reaches_b_on_an_ordinary_sync_5387() {
+    use crate::sync_protocol::SyncState;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{
+        AddPageAliasPayload, CreateBlockPayload, OpPayload, RemovePageAliasPayload,
+    };
+
+    const PAGE: &str = "01HZ5387PAGEXXXXXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ5387SPACEXXXXXXXXXXXXX");
+    let devices = make_n_devices_2141(&["DEV5387AA", "DEV5387BB"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+    let on_a =
+        |payload, ts| apply_local_op_602(&a.pool, &a.mat, &a.state, &a.id, &space, payload, ts);
+    on_a(
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(PAGE),
+            block_type: "page".into(),
+            parent_id: None,
+            position: None,
+            index: Some(0),
+            content: "Planning".into(),
+        }),
+        1_736_942_400_000,
+    )
+    .await;
+    assert_eq!(
+        run_session_2141(b, a).await,
+        SyncState::Complete,
+        "B pulls the page"
+    );
+
+    on_a(
+        OpPayload::AddPageAlias(AddPageAliasPayload {
+            page_id: BlockId::from_trusted(PAGE),
+            alias: "Plans".into(),
+        }),
+        1_736_942_400_100,
+    )
+    .await;
+    assert_eq!(
+        run_session_2141(b, a).await,
+        SyncState::Complete,
+        "an ordinary session, no snapshot fallback"
+    );
+    assert_eq!(
+        page_aliases_5387(&b.pool, PAGE).await,
+        vec!["Plans".to_owned()]
+    );
+
+    on_a(
+        OpPayload::RemovePageAlias(RemovePageAliasPayload {
+            page_id: BlockId::from_trusted(PAGE),
+            alias: "plans".into(),
+        }),
+        1_736_942_400_200,
+    )
+    .await;
+    assert_eq!(run_session_2141(b, a).await, SyncState::Complete);
+    assert!(
+        page_aliases_5387(&b.pool, PAGE).await.is_empty(),
+        "the removal reaches B the same way"
+    );
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
+}
+
+/// Every `page_aliases` row, sorted.
+async fn all_page_aliases_5387(pool: &SqlitePool) -> Vec<(String, String)> {
+    sqlx::query_as("SELECT page_id, alias FROM page_aliases ORDER BY page_id, alias")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// #5387: two devices that give one alias to different pages before they meet
+/// end with the same `page_aliases` rows, the lower page id holding it on both.
+/// Their engines hold both claims either way; the rows are what could differ,
+/// each device keeping the claim it projected first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_contested_page_alias_goes_to_the_same_page_on_both_devices_5387() {
+    use crate::sync_protocol::SyncState;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{AddPageAliasPayload, CreateBlockPayload, OpPayload};
+
+    const LOW: &str = "01HZ5387PAGAXXXXXXXXXXXXXX";
+    const HIGH: &str = "01HZ5387PAGBXXXXXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ5387SPACEXXXXXXXXXXXXX");
+    let devices = make_n_devices_2141(&["DEV5387CC", "DEV5387DD"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+    async fn on(
+        dev: &Device2141,
+        space: &agaric_store::space::SpaceId,
+        payload: OpPayload,
+        ts: i64,
+    ) {
+        apply_local_op_602(&dev.pool, &dev.mat, &dev.state, &dev.id, space, payload, ts).await;
+    }
+    for (page, ts) in [(LOW, 1_736_942_400_000), (HIGH, 1_736_942_400_001)] {
+        on(
+            a,
+            &space,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::from_trusted(page),
+                block_type: "page".into(),
+                parent_id: None,
+                position: None,
+                index: Some(0),
+                content: "Planning".into(),
+            }),
+            ts,
+        )
+        .await;
+    }
+    assert_eq!(
+        run_session_2141(b, a).await,
+        SyncState::Complete,
+        "B pulls the pages"
+    );
+
+    // Neither device has seen the other's claim: one spelling each.
+    for (dev, page, alias, ts) in [
+        (a, LOW, "plans", 1_736_942_400_100),
+        (b, HIGH, "Plans", 1_736_942_400_200),
+    ] {
+        on(
+            dev,
+            &space,
+            OpPayload::AddPageAlias(AddPageAliasPayload {
+                page_id: BlockId::from_trusted(page),
+                alias: alias.into(),
+            }),
+            ts,
+        )
+        .await;
+    }
+    assert_eq!(run_session_2141(b, a).await, SyncState::Complete);
+    assert_eq!(run_session_2141(a, b).await, SyncState::Complete);
+
+    let expected = vec![(LOW.to_owned(), "plans".to_owned())];
+    assert_eq!(
+        all_page_aliases_5387(&a.pool).await,
+        expected,
+        "device A: the lower page holds the alias"
+    );
+    assert_eq!(
+        all_page_aliases_5387(&b.pool).await,
+        expected,
+        "device B: the same page holds it, though B's own claim came first"
+    );
+
+    a.flush_and_shutdown().await;
+    b.flush_and_shutdown().await;
+}
