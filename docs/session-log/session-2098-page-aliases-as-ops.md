@@ -1,4 +1,4 @@
-# Session 2091 — Page aliases are ops, undoable and synced like tags
+# Session 2098 — Page aliases are ops, undoable and synced like tags
 
 Aliases used to live only in `page_aliases`, written in place with no op, so
 they could not be undone and never reached another device. Two op types,
