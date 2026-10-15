@@ -1,5 +1,5 @@
 {
-  "description": "#5057 — the WRITER the `query_page_aliases` fixture left waived: `set_page_aliases`, the only thing that puts rows in `page_aliases`. That table is outside the snapshot's five arrays, so what each op wrote is observed by the `get_page_aliases` steps rather than by the settled state — and the RETURN carries evidence of its own, because the command answers with the rows it actually INSERTED, which is narrower than what the caller passed. Four behaviours the mock got wrong, all found here: it stored the caller's array verbatim, so `  spaced  ` kept its padding, the two empty entries became alias rows, an alias another page already held was stolen from it, and a page id naming no live page was accepted instead of refused. The backend trims, skips what trims to nothing, and writes `INSERT OR IGNORE` against a `UNIQUE ... COLLATE NOCASE` index, so a taken alias is silently dropped from both the table and the answer; the page probe runs inside the `BEGIN IMMEDIATE` and raises `NotFound` (#661). The replacement is TOTAL — a DELETE precedes the inserts — which is why S1's seeded `keep-me` is gone after the first op and why re-listing an alias the page already held is not a self-conflict with itself. `S2` is the conflict owner and never writes, so the `aliases_of_conflict_owner_unchanged` step is what separates 'skipped' from 'stolen': a mock that let the claim through leaves S2 empty. The `replacement_reclaims_its_own_alias` op is where the DELETE-before-INSERT ordering is pinned rather than merely implied: S3 re-lists the alias it already holds, which only survives because its old row is gone by then. NOT pinned: an EMPTY alias list, whose whole correct answer is `[]` — the #4670 guard refuses a command-leg record carrying neither a return nor a refusal, because such a record compares nothing, and no input makes this command answer non-empty while clearing. The DELETE it would pin is covered twice over by `keep-me` vanishing and by the self-reclaim above. Also not pinned: alias propagation between devices — `page_aliases` is deliberately outside the op log (there is no `SetPageAliases` `OpPayload`), so the digest below stays empty and a sync test is the wrong shape for it.",
+  "description": "#5057 / #5387 — the WRITER the `query_page_aliases` fixture left waived: `set_page_aliases`, the only command that puts rows in `page_aliases`. That table is outside the snapshot's five arrays, so what each op wrote is observed by the `get_page_aliases` steps — while the op-log digest pins the ops themselves: since #5387 an alias edit is a `remove_page_alias` per alias that goes, then an `add_page_alias` per alias that comes, in one transaction. The RETURN is the alias list the page holds after the write: trimmed, an entry that trims to nothing skipped, and a second spelling of one alias (the ASCII fold `COLLATE NOCASE` compares with) dropped, in the order given. An alias ANOTHER page holds refuses the whole edit (`validation`, `DuplicatePageAlias`) and writes nothing; before #5387 the `INSERT OR IGNORE` dropped it silently. `S2` is the conflict owner and never writes, so `aliases_of_conflict_owner_unchanged` separates 'refused' from 'stolen', and `aliases_after_replacement` shows the refused op left S1 as the first op wrote it. S1's seeded `keep-me` is gone after the first op: the edit is total, so an alias the list leaves out is removed. S3 re-lists the `stale` it holds, which writes nothing for it — only `extra` is added. NOT pinned: an EMPTY alias list, whose whole correct answer is `[]` — the #4670 guard refuses a command-leg record carrying neither a return nor a refusal; `keep-me` vanishing covers the removal it would pin. Alias propagation between devices is the sync tests' (`page_alias_added_on_a_reaches_b_on_an_ordinary_sync_5387`), not this fixture's.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -70,8 +70,30 @@
       }
     ],
     "op_log_digest": {
-      "count": 0,
-      "ops": []
+      "count": 7,
+      "ops": [
+        {
+          "op_type": "remove_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
+        }
+      ]
     },
     "page_links": [],
     "properties": []
@@ -80,14 +102,20 @@
     {
       "code": null,
       "error": null,
-      "name": "trims_skips_empties_and_drops_taken",
-      "returns": ["set_page_aliases#inserted=spaced", "set_page_aliases#inserted=fresh"]
+      "name": "trims_skips_empties_and_dedups",
+      "returns": ["set_page_aliases#alias=spaced", "set_page_aliases#alias=fresh"]
+    },
+    {
+      "code": "DuplicatePageAlias",
+      "error": "validation",
+      "name": "refuses_an_alias_another_page_holds",
+      "returns": []
     },
     {
       "code": null,
       "error": null,
-      "name": "replacement_reclaims_its_own_alias",
-      "returns": ["set_page_aliases#inserted=stale", "set_page_aliases#inserted=extra"]
+      "name": "replacement_keeps_its_own_alias",
+      "returns": ["set_page_aliases#alias=stale", "set_page_aliases#alias=extra"]
     },
     {
       "code": null,
@@ -100,9 +128,9 @@
       "error": null,
       "name": "in_call_dedup_is_the_ascii_fold_not_a_unicode_one",
       "returns": [
-        "set_page_aliases#inserted=Ärger",
-        "set_page_aliases#inserted=ärger",
-        "set_page_aliases#inserted=ARGER"
+        "set_page_aliases#alias=Ärger",
+        "set_page_aliases#alias=ärger",
+        "set_page_aliases#alias=ARGER"
       ]
     }
   ],
@@ -160,12 +188,24 @@
   "ops": [
     {
       "args": {
-        "aliases": ["  spaced  ", "", "   ", "taken", "fresh", "FRESH"],
+        "aliases": ["  spaced  ", "", "   ", "fresh", "FRESH"],
         "pageId": "S1"
       },
       "command": "set_page_aliases",
-      "comment": "Six entries, two rows. `  spaced  ` is trimmed to `spaced`; `` and `   ` trim to nothing and are skipped; `taken` belongs to S2 and the `INSERT OR IGNORE` drops it; `fresh` lands and `FRESH` then collides with it under the NOCASE index, so only the first spelling survives. The answer is `spaced`, `fresh` — in the order given, not sorted. A mock echoing its argument answers all six and reddens on the first token.",
-      "name": "trims_skips_empties_and_drops_taken",
+      "comment": "Five entries, two aliases. `  spaced  ` is trimmed to `spaced`; `` and `   ` trim to nothing and are skipped; `fresh` lands and `FRESH`, a second spelling of it under the NOCASE fold, is dropped. The seeded `keep-me` is removed. The answer is `spaced`, `fresh` — in the order given, not sorted. A mock echoing its argument answers all five and reddens on the first token.",
+      "name": "trims_skips_empties_and_dedups",
+      "via": "command"
+    },
+    {
+      "args": {
+        "aliases": ["spaced", "fresh", "taken"],
+        "pageId": "S1"
+      },
+      "command": "set_page_aliases",
+      "comment": "`taken` belongs to S2, so the whole edit is refused with `DuplicatePageAlias` and nothing is written — the step below shows S1 as the first op left it. A mock that dropped the taken alias silently answers `spaced`, `fresh` instead of refusing.",
+      "expect_code": "DuplicatePageAlias",
+      "expect_error": "validation",
+      "name": "refuses_an_alias_another_page_holds",
       "via": "command"
     },
     {
@@ -174,8 +214,8 @@
         "pageId": "S3"
       },
       "command": "set_page_aliases",
-      "comment": "S3 already holds `stale`, and re-listing it is NOT a self-conflict: the DELETE runs before the inserts, so the row is gone by the time it is re-claimed. A backend that inserted without deleting first answers `extra` alone. `STALE` then collides with the `stale` this very call just took, so the in-call dedup is the same NOCASE index, not a separate rule. The answer is `stale`, `extra`.",
-      "name": "replacement_reclaims_its_own_alias",
+      "comment": "S3 already holds `stale`, and re-listing it is not a self-conflict: the page's own row is not another page's. `STALE` is a second spelling of it and is dropped. The answer is `stale`, `extra`; only `extra` is appended.",
+      "name": "replacement_keeps_its_own_alias",
       "via": "command"
     },
     {
@@ -184,7 +224,7 @@
         "pageId": "S4"
       },
       "command": "set_page_aliases",
-      "comment": "S4 is a `content` block, not a `page`. The probe is `block_type = 'page' AND deleted_at IS NULL`, so this is `NotFound` and nothing is written — the step below shows `orphan` reached no page. The mock accepted it and filed the aliases under a non-page id.",
+      "comment": "S4 is a `content` block, not a `page`. The probe is `block_type = 'page' AND deleted_at IS NULL`, so this is `NotFound` and nothing is written — the step below shows `orphan` reached no page.",
       "expect_error": "not_found",
       "name": "refuses_a_non_page_id",
       "via": "command"
@@ -195,7 +235,7 @@
         "pageId": "S5"
       },
       "command": "set_page_aliases",
-      "comment": "Four entries, three rows. The in-call dedup is nothing but `INSERT OR IGNORE` against `UNIQUE(alias COLLATE NOCASE)`, and NOCASE folds `A`-`Z` only: `Ärger` and `ärger` are DIFFERENT rows and both land, while `arger` collides with the `ARGER` this same call just took. The answer is `Ärger`, `ärger`, `ARGER` — in the order given. A dedup keyed on `toLowerCase()` merges the umlaut pair and answers two entries.",
+      "comment": "Four entries, three aliases. The fold is NOCASE's, `A`-`Z` only: `Ärger` and `ärger` are DIFFERENT aliases and both land, while `arger` is a second spelling of `ARGER`. The answer is `Ärger`, `ärger`, `ARGER` — in the order given. A dedup keyed on `toLowerCase()` merges the umlaut pair and answers two entries.",
       "name": "in_call_dedup_is_the_ascii_fold_not_a_unicode_one",
       "via": "command"
     }
@@ -206,7 +246,7 @@
         "pageId": "S1"
       },
       "command": "get_page_aliases",
-      "comment": "`fresh`, `spaced` — sorted, so this is not the return order re-read. The seeded `keep-me` is GONE: the write replaces the whole set. `  spaced  ` is here trimmed; `taken`, `FRESH` and the two empties never landed.",
+      "comment": "`fresh`, `spaced` — sorted, so this is not the return order re-read. The seeded `keep-me` is GONE: the edit replaces the whole set. `  spaced  ` is here trimmed; `FRESH` and the two empties never landed, and the refused second op changed nothing.",
       "name": "aliases_after_replacement"
     },
     {
@@ -214,7 +254,7 @@
         "pageId": "S2"
       },
       "command": "get_page_aliases",
-      "comment": "S2 never wrote, and still holds `taken`: S1's claim was SKIPPED, not honoured. A mock that let the claim through moves the row and answers empty here.",
+      "comment": "S2 never wrote, and still holds `taken`: S1's claim was REFUSED, not honoured. A mock that let the claim through moves the row and answers empty here.",
       "name": "aliases_of_conflict_owner_unchanged"
     },
     {
@@ -222,7 +262,7 @@
         "pageId": "S3"
       },
       "command": "get_page_aliases",
-      "comment": "`extra`, `stale` — sorted. The seed gave S3 `stale` alone, so `extra` is new and `stale` survived being re-listed exactly once: no duplicate row, and none lost to a self-conflict.",
+      "comment": "`extra`, `stale` — sorted. The seed gave S3 `stale` alone, so `extra` is new and `stale` survived being re-listed: no duplicate row, and none lost to a self-conflict.",
       "name": "aliases_after_self_reclaim"
     },
     {

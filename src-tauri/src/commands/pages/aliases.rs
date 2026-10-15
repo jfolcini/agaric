@@ -3,102 +3,177 @@
 //! `set_page_aliases`, `get_page_aliases`, `resolve_page_by_alias`,
 //! `list_page_aliases_by_prefix` and their `*_inner` cores plus the
 //! prefix-picker helpers.
+//!
+//! An alias edit is ops (#5387): `AddPageAlias` / `RemovePageAlias`, applied
+//! to the page's Loro doc and projected into `page_aliases`, so it undoes,
+//! lists in page history and reaches other devices on an ordinary sync. See
+//! `docs/architecture/data-and-events.md § Op log`.
 
+use serde::Serialize;
+use specta::Type;
 use sqlx::SqlitePool;
 use tracing::instrument;
 
 use tauri::State;
 
-use crate::db::{ReadPool, WritePool};
-use agaric_core::error::AppError;
-use agaric_core::ulid::PageId;
+use crate::db::{CommandTx, ReadPool, WriteCtx};
+use crate::materializer::Materializer;
+use agaric_core::error::{AppError, ValidationCode};
+use agaric_core::ulid::{BlockId, PageId};
+use agaric_engine::loro::engine::page_alias_key;
+use agaric_store::op::{AddPageAliasPayload, OpPayload, RemovePageAliasPayload};
+use agaric_store::op_log;
 use agaric_store::space::SpaceScope;
 
 use super::super::*;
 
-/// Replace the full set of aliases for a page. Returns the aliases that were
-/// actually inserted (empty/whitespace-only entries are skipped; duplicates
-/// across different pages are silently ignored via INSERT OR IGNORE).
+/// The aliases a page holds after [`set_page_aliases`], under the key its
+/// `WithOps` envelope flattens.
+#[derive(Debug, Clone, Serialize, Type)]
+pub struct PageAliases {
+    pub aliases: Vec<String>,
+}
+
+/// Replace the full set of aliases for a page with `aliases`, trimmed, with
+/// empty entries skipped and a second spelling of one alias (ASCII case fold,
+/// as `page_aliases.alias COLLATE NOCASE`) dropped. Returns that list, in the
+/// order given.
 ///
-/// **Sync semantics (I-CommandsCRUD-4):** the `page_aliases` table is
-/// intentionally maintained outside the op log. There is no
-/// `SetPageAliases` `OpPayload` variant, so day-to-day op-log replay does
-/// **not** propagate alias edits to peers; aliases reach other devices only
-/// when a snapshot is exchanged. Aliases are treated as local-display
-/// metadata for case-insensitive page lookup, and promoting them to a
-/// fully sync-replicated entity would require a new op type, which is
-/// gated by AGENTS.md "Architectural Stability". See `docs/architecture/data-and-events.md § Op log`
-/// (op-log invariant) and `docs/architecture/crdt-and-recovery.md § What's in a snapshot` for the page-aliases bullet.
-#[instrument(skip(pool, aliases), err)]
+/// One `CommandTx` appends a `RemovePageAlias` per alias that goes and then an
+/// `AddPageAlias` per alias that comes, so one Undo reverts the edit.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — `page_id` names no live page.
+/// - [`AppError::Validation`] coded [`ValidationCode::DuplicatePageAlias`] —
+///   another page, in any space or the Trash, holds one of the aliases.
+#[instrument(skip(pool, device_id, materializer, aliases), err)]
 pub async fn set_page_aliases_inner(
     pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
     page_id: &str,
     aliases: Vec<String>,
 ) -> Result<Vec<String>, AppError> {
-    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
-    // invariant #8 requires ULID uppercase for blake3 hash determinism;
-    // SQLite text comparison is byte-exact, so a lowercase caller would
-    // silently get NotFound. BlockId::from_trusted normalises on
-    // construction (op_log path), but raw String args from MCP tools /
-    // sync replay / scripted imports must be normalised here.
+    // Raw strings from MCP tools / scripts are normalised to the uppercase
+    // ULID the byte-exact `blocks.id` comparison needs (invariant #8).
     let page_id = page_id.to_ascii_uppercase();
+    let mut tx = CommandTx::begin_immediate(pool, "set_page_aliases").await?;
+    tx.arm_engine_rollback(materializer.loro_state());
+    let wanted = wanted_aliases(&aliases);
+    let taken = write_page_aliases_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        &page_id,
+        &wanted,
+    )
+    .await?;
+    if let Some(alias) = taken.first() {
+        return Err(AppError::validation_coded(
+            ValidationCode::DuplicatePageAlias,
+            format!("alias '{alias}' is already used by another page"),
+        ));
+    }
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(wanted)
+}
 
-    // Wrap the DELETE + per-alias INSERT loop in a single
-    // `BEGIN IMMEDIATE` transaction so that a crash, pool-acquire
-    // failure, or per-row INSERT error mid-loop rolls the page back to
-    // its prior alias set instead of leaving a partial replacement.
-    // Concurrent callers for the same page also serialize on the
-    // immediate write lock instead of interleaving their phases.
-    // allow-raw-tx: page_aliases is its own table, emits no op_log entries (#110)
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+/// `aliases` trimmed, without empty entries or a second spelling of one alias.
+pub(crate) fn wanted_aliases<S: AsRef<str>>(aliases: &[S]) -> Vec<String> {
+    let mut keys = std::collections::HashSet::new();
+    aliases
+        .iter()
+        .map(|alias| alias.as_ref().trim())
+        .filter(|alias| !alias.is_empty() && keys.insert(page_alias_key(alias)))
+        .map(str::to_owned)
+        .collect()
+}
 
-    // #661 — verify the page exists and is a live page block INSIDE the
-    // IMMEDIATE tx (the F01/F02/F03 sibling-command pattern). Pre-fix the
-    // probe ran on the pool BEFORE `BEGIN IMMEDIATE`; a concurrent
-    // `delete_block` landing in the gap between the probe and the write
-    // lock would leave the freshly-inserted aliases attached to a
-    // tombstoned page (TOCTOU). Running it under the writer lock makes
-    // the existence check and the alias writes atomic against any
-    // concurrent delete.
+/// `NotFound` unless `page_id` is a live page.
+pub(crate) async fn require_live_page(
+    conn: &mut sqlx::SqliteConnection,
+    page_id: &str,
+) -> Result<(), AppError> {
     let exists: bool = sqlx::query_scalar!(
         r#"SELECT COUNT(*) > 0 AS "exists!: bool" FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL"#,
         page_id,
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *conn)
     .await?;
-
-    if !exists {
-        return Err(AppError::NotFound("page not found".into()));
+    if exists {
+        Ok(())
+    } else {
+        Err(AppError::NotFound("page not found".into()))
     }
+}
 
-    // Delete existing aliases
-    sqlx::query!("DELETE FROM page_aliases WHERE page_id = ?1", page_id)
-        .execute(&mut *tx)
-        .await?;
+/// The page other than `page_id` that holds `alias`, if any.
+pub(crate) async fn alias_holder_other_than(
+    conn: &mut sqlx::SqliteConnection,
+    page_id: &str,
+    alias: &str,
+) -> Result<Option<String>, AppError> {
+    Ok(sqlx::query_scalar!(
+        "SELECT page_id FROM page_aliases WHERE alias = ?1 AND page_id <> ?2",
+        alias,
+        page_id,
+    )
+    .fetch_optional(&mut *conn)
+    .await?)
+}
 
-    // Insert new aliases (skip empty, trim whitespace, deduplicate)
-    let mut inserted = Vec::new();
-    for alias in aliases {
-        let trimmed = alias.trim().to_string();
-        if trimmed.is_empty() {
+/// Make `page_id`'s aliases `wanted` (already [`wanted_aliases`]) in the
+/// caller's transaction: a `RemovePageAlias` for each alias that goes, then an
+/// `AddPageAlias` for each that comes, each applied and enqueued for dispatch.
+/// Returns the wanted aliases another page holds, which are not added.
+///
+/// # Errors
+///
+/// [`AppError::NotFound`] when `page_id` is not a live page.
+pub(crate) async fn write_page_aliases_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    page_id: &str,
+    wanted: &[String],
+) -> Result<Vec<String>, AppError> {
+    require_live_page(tx, page_id).await?;
+    let held = sqlx::query_scalar!(
+        "SELECT alias FROM page_aliases WHERE page_id = ?1 ORDER BY alias",
+        page_id,
+    )
+    .fetch_all(&mut ***tx)
+    .await?;
+    let page = BlockId::from_trusted(page_id);
+    let mut ops: Vec<OpPayload> = held
+        .iter()
+        .filter(|alias| !wanted.contains(alias))
+        .map(|alias| {
+            OpPayload::RemovePageAlias(RemovePageAliasPayload {
+                page_id: page.clone(),
+                alias: alias.clone(),
+            })
+        })
+        .collect();
+    let mut taken = Vec::new();
+    for alias in wanted.iter().filter(|alias| !held.contains(alias)) {
+        if alias_holder_other_than(tx, page_id, alias).await?.is_some() {
+            taken.push(alias.clone());
             continue;
         }
-        // INSERT OR IGNORE handles duplicate alias across different pages
-        let result = sqlx::query!(
-            "INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)",
-            page_id,
-            trimmed,
-        )
-        .execute(&mut *tx)
-        .await?;
-        if result.rows_affected() > 0 {
-            inserted.push(trimmed);
-        }
+        ops.push(OpPayload::AddPageAlias(AddPageAliasPayload {
+            page_id: page.clone(),
+            alias: alias.clone(),
+        }));
     }
-
-    tx.commit().await?;
-
-    Ok(inserted)
+    for payload in ops {
+        let record =
+            op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
+        crate::materializer::apply_op_projected(tx, &record, state, false).await?;
+        tx.enqueue_background(record);
+    }
+    Ok(taken)
 }
 
 /// Return all aliases for a page, sorted alphabetically.
@@ -230,17 +305,28 @@ pub async fn list_page_aliases_by_prefix_inner(
         .collect())
 }
 
-/// Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`].
+/// Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`];
+/// the response carries the op refs it appended, for the undo stack (#2468).
 #[tauri::command]
 #[specta::specta]
 pub async fn set_page_aliases(
-    write_pool: State<'_, WritePool>,
+    ctx: State<'_, WriteCtx>,
     page_id: PageId,
     aliases: Vec<String>,
-) -> Result<Vec<String>, AppError> {
-    set_page_aliases_inner(&write_pool.0, page_id.as_str(), aliases)
+) -> Result<WithOps<PageAliases>, AppError> {
+    capture_op_refs(async {
+        set_page_aliases_inner(
+            ctx.pool(),
+            ctx.device_id(),
+            ctx.materializer(),
+            page_id.as_str(),
+            aliases,
+        )
         .await
-        .map_err(sanitize_internal_error)
+        .map(|aliases| PageAliases { aliases })
+    })
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`].

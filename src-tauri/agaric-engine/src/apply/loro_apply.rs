@@ -673,8 +673,8 @@ struct SubtreeRow {
     scheduled_date: Option<String>,
 }
 
-/// A [`SubtreeRow`] with its properties and tags read, ready for the engine
-/// seed in [`hydrate_page_subtree_into_engine`].
+/// A [`SubtreeRow`] with its properties, tags and page aliases read, ready for
+/// the engine seed in [`hydrate_page_subtree_into_engine`].
 struct SeedNode {
     id: String,
     block_type: String,
@@ -683,11 +683,12 @@ struct SeedNode {
     position: i64,
     properties: Vec<(String, crate::loro::engine::PropertyValue)>,
     tags: Vec<String>,
+    aliases: Vec<String>,
 }
 
 /// [`hydrate_page_subtree_into_engine`]'s per-row read: the node's
 /// `block_properties` and `block_tags` rows plus the four reserved keys from
-/// its `blocks` columns.
+/// its `blocks` columns, and a page's `page_aliases` rows.
 async fn read_seed_node(
     conn: &mut sqlx::SqliteConnection,
     row: SubtreeRow,
@@ -750,6 +751,13 @@ async fn read_seed_node(
         .fetch_all(&mut *conn)
         .await?;
     let tags = tag_rows.into_iter().map(|r| r.tag_id).collect();
+    let aliases = if block_type == "page" {
+        sqlx::query_scalar!("SELECT alias FROM page_aliases WHERE page_id = ?", id)
+            .fetch_all(&mut *conn)
+            .await?
+    } else {
+        Vec::new()
+    };
     Ok(SeedNode {
         id,
         block_type,
@@ -758,6 +766,7 @@ async fn read_seed_node(
         position,
         properties,
         tags,
+        aliases,
     })
 }
 
@@ -791,6 +800,9 @@ fn seed_nodes_into_engine(
         for tag_id in &n.tags {
             engine.apply_add_tag(&n.id, tag_id)?;
         }
+        for alias in &n.aliases {
+            engine.apply_add_page_alias(&n.id, alias)?;
+        }
         if !touched_parents.contains(&n.parent_id) {
             touched_parents.push(n.parent_id.clone());
         }
@@ -821,7 +833,7 @@ fn seed_nodes_into_engine(
 /// page (#5239): a page keeps its own space (#4480) and enters a doc only
 /// through its own `space` op.
 ///
-/// ## Full seed (nodes + properties + tags)
+/// ## Full seed (nodes + properties + tags + aliases)
 /// Seeding only tree nodes would zero the `EngineMissingTarget` counter but
 /// leave the exported CRDT missing this subtree's properties/tags — a peer
 /// importing the export would not receive them. We therefore also replay each
@@ -829,7 +841,10 @@ fn seed_nodes_into_engine(
 /// four reserved keys (`todo_state`, `priority`, `due_date`, `scheduled_date`)
 /// from their `blocks` columns: the engine holds them like any other key, and
 /// a peer's import replaces all four columns from the doc, NULL for a key the
-/// doc lacks (#4801). `space` stays out: membership is the doc itself.
+/// doc lacks (#4801). `space` stays out: membership is the doc itself. A
+/// page's `page_aliases` rows go in too (#5387): a reassignment prunes the old
+/// doc's alias map with the page, and a doc without one tells a peer the page
+/// has none.
 ///
 /// ## Idempotency
 /// Each node is skipped (`read_block(...).is_some()`) if already present, so the
@@ -1792,6 +1807,55 @@ pub async fn apply_remove_tag_via_loro(
     tag_inheritance::remove_inherited_tag(&mut *conn, p.block_id.as_str(), p.tag_id.as_str())
         .await?;
     Ok(())
+}
+
+/// Apply AddPageAlias through the page's engine, then project it to SQL
+/// (#5387). A page whose space does not resolve is projected without the
+/// engine, as the other ops' SQL-only fallback is.
+pub async fn apply_add_page_alias_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    p: &AddPageAliasPayload,
+) -> Result<(), AppError> {
+    let page_id = p.page_id.as_str();
+    if let Some(space_id) = resolve_doc_space(&mut *conn, &p.page_id).await? {
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
+        guard.engine_mut().apply_add_page_alias(page_id, &p.alias)?;
+    } else {
+        super::sql_only_fallback::record(
+            "add_page_alias",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
+    }
+    crate::loro::projection::project_add_page_alias_to_sql(conn, page_id, &p.alias).await
+}
+
+/// Apply RemovePageAlias through the page's engine, then project it to SQL
+/// (#5387). Same fallback as [`apply_add_page_alias_via_loro`].
+pub async fn apply_remove_page_alias_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    p: &RemovePageAliasPayload,
+) -> Result<(), AppError> {
+    let page_id = p.page_id.as_str();
+    if let Some(space_id) = resolve_doc_space(&mut *conn, &p.page_id).await? {
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
+        guard
+            .engine_mut()
+            .apply_remove_page_alias(page_id, &p.alias)?;
+    } else {
+        super::sql_only_fallback::record(
+            "remove_page_alias",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
+    }
+    crate::loro::projection::project_remove_page_alias_to_sql(conn, page_id, &p.alias).await
 }
 
 /// Apply DeleteProperty through the engine then project to SQL.

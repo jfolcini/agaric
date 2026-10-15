@@ -15,11 +15,14 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { announce } from '@/lib/announcer'
-import { unwrap } from '@/lib/app-error'
+import { unwrap, validationCode } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { logger } from '@/lib/logger'
+import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { ValidationCode } from '@/lib/search-query/validation-codes'
+import { useUndoStore } from '@/stores/undo'
 
 export interface UsePageAliasesReturn {
   /** Current alias list (sorted in the order the user added them). */
@@ -48,6 +51,10 @@ export interface UsePageAliasesReturn {
  * A committed write bumps the graph-structure counter (#5249): aliases are
  * unlinked-reference search terms, and that panel refreshes on the counter.
  *
+ * A write is ops (#5387), so it lands on the page's undo stack, and the list
+ * reloads on an `invalidated` name change — the one an Undo, a sync or an
+ * MCP write emits.
+ *
  * `t` is the `react-i18next` translator. Callers pass it through so the
  * hook stays framework-agnostic at the import boundary (it doesn't pull
  * in `useTranslation` itself, which would force every renderHook test
@@ -57,8 +64,16 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
   const [aliases, setAliases] = useState<string[]>([])
   const [editingAliases, setEditingAliases] = useState(false)
   const [aliasInput, setAliasInput] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
+  useEffect(
+    () =>
+      subscribeToNameChanges((change) => {
+        if (change.kind === 'invalidated') setReloadKey((key) => key + 1)
+      }),
+    [],
+  )
 
-  // Fetch aliases on mount / page change. Tolerates non-array backend
+  // Fetch aliases on mount / page change / reload. Tolerates non-array backend
   // payloads (older SQLite migrations stored aliases as a JSON blob and
   // a few rows may still return `null` until they're rewritten).
   useEffect(() => {
@@ -71,7 +86,7 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
         logger.error('PageHeader', 'Failed to load page aliases', { pageId }, err)
         notify.error(t('pageHeader.loadAliasesFailed'))
       })
-  }, [pageId, t])
+  }, [pageId, t, reloadKey])
 
   const startEditing = useCallback(() => setEditingAliases(true), [])
   const stopEditing = useCallback(() => setEditingAliases(false), [])
@@ -86,28 +101,28 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
         .setPageAliases(pageId, next)
         .then(unwrap)
         .then((saved) => {
-          // The write silently skips an alias another page holds, in any space or the
-          // Trash, and returns only what it stored (#5280).
-          setAliases((current) => (current === next ? saved : current))
+          setAliases((current) => (current === next ? saved.aliases : current))
           recordGraphStructureChange()
-          if (!saved.some((a) => a.toLowerCase() === alias.toLowerCase())) {
-            notify.error(t('pageHeader.aliasTaken'))
-            announce(t('pageHeader.aliasTaken'))
-            return
-          }
+          if (saved.op_refs.length > 0) useUndoStore.getState().onNewAction(pageId, saved.op_refs)
           setAliasInput('')
           announce(t('announce.aliasAdded'))
         })
         .catch((err: unknown) => {
-          logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
-          notify.error(t('pageHeader.aliasUpdateFailed'))
-          announce(t('announce.aliasFailed'))
           // Guard against clobbering a later, already-successful mutation:
           // if a second add/remove landed (and possibly resolved) while
           // this write was in flight, `aliases` has moved on from `next`
           // and rolling back to `previous` here would silently discard
           // that later state. Only roll back if nothing has superseded us.
           setAliases((current) => (current === next ? previous : current))
+          // Another page holds the alias, in any space or the Trash (#5280).
+          if (validationCode(err) === ValidationCode.DuplicatePageAlias) {
+            notify.error(t('pageHeader.aliasTaken'))
+            announce(t('pageHeader.aliasTaken'))
+            return
+          }
+          logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
+          notify.error(t('pageHeader.aliasUpdateFailed'))
+          announce(t('announce.aliasFailed'))
         })
     }
   }, [aliasInput, aliases, pageId, t])
@@ -121,7 +136,10 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
       commands
         .setPageAliases(pageId, next)
         .then(unwrap)
-        .then(() => recordGraphStructureChange())
+        .then((saved) => {
+          recordGraphStructureChange()
+          if (saved.op_refs.length > 0) useUndoStore.getState().onNewAction(pageId, saved.op_refs)
+        })
         .catch((err: unknown) => {
           logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
           notify.error(t('pageHeader.aliasUpdateFailed'))

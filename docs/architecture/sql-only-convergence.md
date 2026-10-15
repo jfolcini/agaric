@@ -76,6 +76,7 @@ that the engine arm calls after its apply:
 | `move_block` | `project_move_block_to_sql` |
 | `add_tag` / `remove_tag` | `project_add_tag_to_sql` / `project_remove_tag_to_sql` (+ the same inheritance fan-out after) |
 | `set_property` / `delete_property` | `project_set_property_to_sql` / `project_delete_property_to_sql` |
+| `add_page_alias` / `remove_page_alias` | `project_add_page_alias_to_sql` / `project_remove_page_alias_to_sql` (one handler per op, the engine apply skipped when the page's space does not resolve) |
 
 So the write *shape* — column list, `page_id` stamping, `OR IGNORE`, the
 descendant CTE, the `deleted_at` value — cannot drift between the arms; there

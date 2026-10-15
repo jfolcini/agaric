@@ -544,8 +544,11 @@ export const commands = {
 	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppError>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
 	/**  Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`]. */
 	countBacklinksBatch: (pageIds: PageId[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppError>(__TAURI_INVOKE("count_backlinks_batch", { pageIds, scope })),
-	/**  Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`]. */
-	setPageAliases: (pageId: PageId, aliases: string[]) => typedError<string[], AppError>(__TAURI_INVOKE("set_page_aliases", { pageId, aliases })),
+	/**
+	 *  Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`];
+	 *  the response carries the op refs it appended, for the undo stack (#2468).
+	 */
+	setPageAliases: (pageId: PageId, aliases: string[]) => typedError<WithOps<PageAliases>, AppError>(__TAURI_INVOKE("set_page_aliases", { pageId, aliases })),
 	/**  Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`]. */
 	getPageAliases: (pageId: PageId) => typedError<string[], AppError>(__TAURI_INVOKE("get_page_aliases", { pageId })),
 	/**
@@ -2727,6 +2730,14 @@ export type OsNetworkBlockStatus = {
 };
 
 /**
+ *  The aliases a page holds after [`set_page_aliases`], under the key its
+ *  `WithOps` envelope flattens.
+ */
+export type PageAliases = {
+	aliases: string[],
+};
+
+/**
  *  A page's source buffer as the ids-beside-the-text editor reads it (#5160
  *  A): the anchored `source`, which a save sends back as its `base_source`,
  *  and the same buffer as `text`, its anchors removed, with the id each line
@@ -4556,7 +4567,13 @@ export type ValidationCode =
  *  opens as a page, its name the title). Coded so the title editor can
  *  name the clash instead of the generic rename failure.
  */
-"DuplicatePageTitle";
+"DuplicatePageTitle" | 
+/**
+ *  Giving a page an alias another page already holds, in any space or the
+ *  Trash (`set_page_aliases`, its undo; #5387). Coded so the alias editor
+ *  can name the clash instead of the generic save failure.
+ */
+"DuplicatePageAlias";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

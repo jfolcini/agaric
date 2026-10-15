@@ -47,7 +47,7 @@ With `foreign_keys = ON`, `DROP TABLE <parent>` deletes every row of every `ON D
 
 Most cascade children of `blocks` re-materialize from the op log at boot. These do not, so a rebuild destroys them:
 
-- `page_aliases`: no op_log entries.
+- `page_aliases`: a projection of the Loro engine's `page_aliases` root that only disaster recovery reprojects, not boot.
 - `block_drafts`: device-local, never synced.
 - `spaces` and every non-NULL `blocks.space_id` (since 0089): the DROP cascades into `spaces`, and deleting a space `SET NULL`s its members.
 

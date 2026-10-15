@@ -316,6 +316,12 @@ const SNAPSHOT_OPS_INERT: ReadonlyMap<string, string> = new Map<string, string>(
       '`get_page_aliases` / `resolve_page_by_alias` steps carry the claim',
   ],
   [
+    'page_alias_undo',
+    'the same table again (#5387): the alias ops and their reverses move ' +
+      '`op_log_digest`, which this guard excludes, and the `get_page_aliases` ' +
+      'steps carry the rest',
+  ],
+  [
     'attachment_writes',
     'the two writers touch `attachments` only, which is not one of the ' +
       "snapshot's five arrays, so no op sequence can move the DOMAIN half; " +
