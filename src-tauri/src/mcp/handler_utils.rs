@@ -171,8 +171,9 @@ pub(crate) async fn resolve_id_arg(
 /// chain). The page's space comes from the page block's own
 /// `blocks.space_id` column (Phase 2, #533).
 ///
-/// A read checks on the reader pool; a write checks through
-/// [`with_space_guard`], inside its own transaction (#5402).
+/// A read checks on the reader pool; a write checks inside its own
+/// transaction (#5402): a single-op tool through [`with_space_guard`], and
+/// `batch` per op on the batch's connection.
 ///
 /// # Returns
 ///
