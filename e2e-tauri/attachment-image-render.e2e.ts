@@ -102,6 +102,19 @@ describe('Agaric real-backend pasted image render (#5365)', () => {
     await typeMarkerVerified(IMAGE_BLOCK)
     await pasteFileIntoFocusedBlock(PNG_BASE64, FILENAME, 'image/png')
     await waitForToast(`Attached "${FILENAME}"`)
+    // The image decoding after the paste re-renders the block and moves the
+    // layout under the next keystrokes; typing below it before then dropped
+    // characters and left the editor non-interactable.
+    await browser.waitUntil(
+      () =>
+        browser.execute(() => {
+          const img = document.querySelector<HTMLImageElement>(
+            '[data-testid="block-editor"] [data-testid="image-rendered"]',
+          )
+          return img !== null && img.complete && img.naturalWidth > 0
+        }),
+      { timeout: NAV_TIMEOUT, timeoutMsg: 'the pasted image never rendered in the editor' },
+    )
     await enterBlankSibling()
     await typeMarkerVerified(BELOW)
     // The sidebar click commits the block below by blurring the editor.
