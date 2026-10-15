@@ -84,6 +84,18 @@
       "expectedMatchingIds": []
     },
     {
+      "name": "literal head + ASCII fold (#5426) — PROJ* matches Projects",
+      "pattern": "PROJ*",
+      "exclude": false,
+      "expectedMatchingIds": ["01GLOB0000000000000000000F"]
+    },
+    {
+      "name": "literal head ending in non-ASCII (#5426) — Café* matches Café",
+      "pattern": "Café*",
+      "exclude": false,
+      "expectedMatchingIds": ["01GLOB0000000000000000000J"]
+    },
+    {
       "name": "whitespace-only — trimmed to nothing, constrains nothing",
       "pattern": "   ",
       "exclude": false,

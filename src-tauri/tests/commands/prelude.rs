@@ -71,5 +71,6 @@ pub fn search_filter(scope: SearchScope) -> SearchFilter {
         excluded_state_filter: Vec::new(),
         excluded_priority_filter: Vec::new(),
         last_edited: None,
+        tags_match_inline_and_inherited: false,
     }
 }

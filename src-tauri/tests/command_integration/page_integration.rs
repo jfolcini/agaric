@@ -994,6 +994,16 @@ async fn restore_page_to_op_skips_non_reversible_and_completes() {
 // list_page_links — graph view page relationship query
 // ======================================================================
 
+/// [`assign_all_to_test_space`] for a graph fixture whose links are already
+/// cached: the raw space stamp skips the `RebuildPageLinkCache` a `space` op
+/// dispatches, and the graph read filters on the cached `space_id` (#5426).
+async fn assign_all_to_test_space_for_graph(pool: &SqlitePool) {
+    assign_all_to_test_space(pool).await;
+    agaric_store::cache::rebuild_page_link_cache(pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_links_returns_empty_with_no_links() {
     let (pool, _dir) = test_pool().await;
@@ -1097,7 +1107,7 @@ async fn list_page_links_rolls_up_content_block_links_to_pages() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
@@ -1178,7 +1188,7 @@ async fn list_page_links_excludes_deleted_blocks() {
         .unwrap();
     settle(&mat).await;
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
@@ -1238,7 +1248,7 @@ async fn list_page_links_excludes_self_links() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
@@ -1329,7 +1339,7 @@ async fn list_page_links_deduplicates() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(
         &pool,
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
