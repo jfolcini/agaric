@@ -73,9 +73,10 @@ use agaric_lib::commands::pages::{
     ListPagesWithMetadataFilter, PageSort, list_pages_with_metadata_inner,
 };
 use agaric_lib::commands::{
-    PAGE_LINKS_EDGE_CAP, batch_resolve_inner, count_agenda_batch_by_source_inner,
-    count_backlinks_batch_inner, create_block_inner, export_page_markdown_inner, get_block_inner,
-    get_properties_inner, list_backlinks_grouped_inner, list_blocks_inner, list_page_links_inner,
+    PAGE_LINKS_EDGE_CAP, PropertyFilter, batch_resolve_inner, count_agenda_batch_by_source_inner,
+    count_backlinks_batch_inner, create_block_inner, export_page_markdown_inner,
+    filtered_blocks_query_inner, get_block_inner, get_properties_inner,
+    list_backlinks_grouped_inner, list_blocks_inner, list_page_links_inner,
     list_projected_agenda_inner, list_unlinked_references_inner, load_page_subtree_inner,
     revert_ops_inner,
 };
@@ -1834,8 +1835,6 @@ fn bench_list_pages_with_metadata(c: &mut Criterion) {
         BUDGET_MS,
     );
 }
-
-use agaric_lib::commands::{PropertyFilter, filtered_blocks_query_inner};
 
 /// Free-form keys for the `filtered_blocks_query` probes: a reserved key would
 /// route to a `blocks` column, and 0088's CHECK keeps it out of `block_properties`.

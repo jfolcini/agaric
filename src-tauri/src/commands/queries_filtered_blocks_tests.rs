@@ -270,8 +270,8 @@ async fn seed_content_block(pool: &SqlitePool, i: u32) {
     let id = id.as_str();
     insert_block(pool, id, "content", id, Some(PAGE), Some(i64::from(i) + 1)).await;
 
-    if i % 2 == 0 {
-        let status = if i % 4 == 0 { "open" } else { "done" };
+    if i.is_multiple_of(2) {
+        let status = if i.is_multiple_of(4) { "open" } else { "done" };
         exec(pool, TEXT_PROP, &[id, "status", status]).await;
     }
     // `kind` holds a different value type per block, for the `neq` semantics.
@@ -293,7 +293,7 @@ async fn seed_content_block(pool: &SqlitePool, i: u32) {
         }
         _ => {}
     }
-    if i % 3 == 0 {
+    if i.is_multiple_of(3) {
         let deadline = format!("2025-01-{:02}", i + 1);
         exec(pool, DATE_PROP, &[id, "deadline", deadline.as_str()]).await;
     }
@@ -308,8 +308,8 @@ async fn seed_content_block(pool: &SqlitePool, i: u32) {
         2 => Some("2"),
         _ => None,
     };
-    let due_date = (i % 6 == 0).then(|| format!("2025-02-{:02}", i + 1));
-    let scheduled_date = (i % 7 == 0).then_some("2025-04-01");
+    let due_date = i.is_multiple_of(6).then(|| format!("2025-02-{:02}", i + 1));
+    let scheduled_date = i.is_multiple_of(7).then_some("2025-04-01");
     sqlx::query(
         "UPDATE blocks SET todo_state = ?, priority = ?, due_date = ?, scheduled_date = ? \
          WHERE id = ?",
@@ -324,18 +324,18 @@ async fn seed_content_block(pool: &SqlitePool, i: u32) {
     .unwrap();
 
     for (applies, sql, tag) in [
-        (i % 3 == 0, DIRECT_TAG, TAG_WORK),
-        (i % 4 == 0, DIRECT_TAG, TAG_HOME),
+        (i.is_multiple_of(3), DIRECT_TAG, TAG_WORK),
+        (i.is_multiple_of(4), DIRECT_TAG, TAG_HOME),
         (i == 5, DIRECT_TAG, TAG_PERCENT),
         (i == 6, DIRECT_TAG, TAG_FIFTY),
-        (i % 5 == 0, TAG_REF, TAG_WORK),
-        (i % 7 == 0, TAG_REF, TAG_WORKOUT),
+        (i.is_multiple_of(5), TAG_REF, TAG_WORK),
+        (i.is_multiple_of(7), TAG_REF, TAG_WORKOUT),
     ] {
         if applies {
             exec(pool, sql, &[id, tag]).await;
         }
     }
-    for (applies, tag) in [(i % 2 == 1, TAG_HOME), (i % 6 == 0, TAG_PERCENT)] {
+    for (applies, tag) in [(i % 2 == 1, TAG_HOME), (i.is_multiple_of(6), TAG_PERCENT)] {
         if applies {
             exec(pool, INHERITED_TAG, &[id, tag, PAGE]).await;
         }

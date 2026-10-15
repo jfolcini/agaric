@@ -122,7 +122,7 @@ macro_rules! agaric_commands {
             $crate::commands::tags::query_by_tag_expr,
             $crate::commands::queries::query_by_property,
             // AND-intersected property + tag query
-            // resolved entirely in SQL via composed `EXISTS` subqueries.
+            // resolved entirely in SQL, each filter a candidate id set.
             // Replaces the FE `useQueryExecution.fetchFilteredQuery` shape
             // that fanned out one IPC per sub-filter (each capped at 200
             // rows) and intersected in JS — silently dropping any AND-set
