@@ -279,8 +279,8 @@ async fn seed_content_block(pool: &SqlitePool, i: u32) {
     )
     .await;
 
-    if i % 2 == 0 {
-        let status = if i % 4 == 0 { "open" } else { "done" };
+    if i.is_multiple_of(2) {
+        let status = if i.is_multiple_of(4) { "open" } else { "done" };
         exec(pool, TEXT_PROP, &[id, "status", status]).await;
     }
     // `kind` holds a different value type per block, for the `neq` semantics.
@@ -302,7 +302,7 @@ async fn seed_content_block(pool: &SqlitePool, i: u32) {
         }
         _ => {}
     }
-    if i % 3 == 0 {
+    if i.is_multiple_of(3) {
         let deadline = format!("2025-01-{:02}", i + 1);
         exec(pool, DATE_PROP, &[id, "deadline", deadline.as_str()]).await;
     }
@@ -322,8 +322,8 @@ async fn seed_content_block(pool: &SqlitePool, i: u32) {
         2 => Some("2"),
         _ => None,
     };
-    let due_date = (i % 2 == 0).then(|| format!("2025-02-{:02}", i + 1));
-    let scheduled_date = (i % 5 == 0).then(|| format!("2025-04-{:02}", i + 1));
+    let due_date = i.is_multiple_of(2).then(|| format!("2025-02-{:02}", i + 1));
+    let scheduled_date = i.is_multiple_of(5).then(|| format!("2025-04-{:02}", i + 1));
     sqlx::query(
         "UPDATE blocks SET todo_state = ?, priority = ?, due_date = ?, scheduled_date = ? \
          WHERE id = ?",
