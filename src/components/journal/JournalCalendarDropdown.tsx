@@ -268,7 +268,7 @@ export function JournalCalendarDropdown({
         {/* Color dot legend */}
         <ul
           aria-label={t('journal.legendLabel')}
-          className="flex flex-wrap items-center gap-3 px-3 pb-2 text-xs text-muted-foreground"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-2 text-xs text-muted-foreground"
           data-testid="calendar-legend"
         >
           <li className="flex items-center gap-1">
