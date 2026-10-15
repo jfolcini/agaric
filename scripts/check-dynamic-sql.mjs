@@ -41,7 +41,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { join } from 'node:path'
 
 import { describeSource, gitEnv } from './lib/guard-file-source.mjs'
 import {
@@ -49,10 +49,15 @@ import {
   WS,
   cfgTestLineSet,
   isExcludedFile,
+  lineIndexer,
+  missingCrateRoots,
   openFileSource,
+  repoRelative,
   splitLines,
   stripRustComments,
   trimSpace,
+  underCrateRoot,
+  write,
 } from './lib/rust-scan.mjs'
 
 export { CRATE_ROOTS }
@@ -60,7 +65,7 @@ export { CRATE_ROOTS }
 const REPO_ROOT = realpathSync(join(import.meta.dirname, '..'))
 const BASELINE_REL = 'src-tauri/dynamic-sql-baseline.txt'
 
-// `[^\n]` is Python's `.`; a JS `.` also stops at `\r`, U+2028 and U+2029.
+// `[^\n]`, not `.`: a JS `.` also stops at `\r`, U+2028 and U+2029.
 // The turbofish body is lazy so nested generics close at the OUTER `>`
 // (`::<_, Option<i64>>(`); missing the turbofish form was #1188.
 const DYN_SQL_RE = new RegExp(`sqlx::query(?:_as|_scalar)?${WS}*(?:::<[^\\n]*?>)?${WS}*\\(`, 'gu')
@@ -96,8 +101,7 @@ const ROOT_MISSING_HINT = [
   '       drop every entry under it and report success — the finding',
   '       destroyed by the command prescribed to fix it. If the crate was',
   '       genuinely retired, remove its root in the same commit, then',
-  '       re-anchor. check-raw-tx shares this list; check-table-ownership',
-  '       keeps its own hand-synchronised copy — check it too.',
+  '       re-anchor. check-raw-tx and check-table-ownership share this list.',
   '       If the tree under test is deliberately NOT this repository (a',
   '       fixture repo), the caller says so with `--synthetic-tree`.',
 ].join('\n')
@@ -116,26 +120,6 @@ const SOURCE_FLAGS = [
 // `--update-baseline` and the self-test keep this working-tree default:
 // re-anchoring is about the tree you are editing, not a commit in flight.
 let src = openFileSource(['--worktree'], process.env, { repoRoot: REPO_ROOT })
-
-const write = (stream) => (line) => stream.write(`${line}\n`)
-
-// A root that names no directory makes the walk yield nothing beneath it, and
-// a re-anchor would then delete every entry under it (#4501).
-function missingCrateRoots(crateRoots) {
-  return crateRoots
-    .filter((root) => {
-      try {
-        return !statSync(join(REPO_ROOT, root)).isDirectory()
-      } catch {
-        return true
-      }
-    })
-    .map((root) => root.replace(/\/+$/, ''))
-}
-
-function underCrateRoot(rel) {
-  return CRATE_ROOTS.some((root) => rel.startsWith(root))
-}
 
 /** True iff the file opens with an inner `#![cfg(test)]` (#3653). */
 function isTestOnlyModule(text) {
@@ -160,16 +144,6 @@ function scanText(text) {
     if (!testLines.has(idx)) indices.push(idx)
   }
   return indices
-}
-
-// 0-based line of each offset, counting `\n` only, for ascending offsets.
-function lineIndexer(text) {
-  let pos = 0
-  let line = 0
-  return (offset) => {
-    for (; pos < offset; pos++) if (text[pos] === '\n') line += 1
-    return line
-  }
 }
 
 // The lines a marker for the site at `idx` may live on. `cargo fmt` owns
@@ -354,32 +328,7 @@ function readBaseline() {
   return baseline
 }
 
-// `Path.resolve()`: symlinks resolved as far as the path exists, the rest
-// appended, so a staged file deleted from disk still maps into the repo.
-function resolveExisting(arg) {
-  let head = resolve(arg)
-  const tail = []
-  for (;;) {
-    try {
-      return join(realpathSync(head), ...tail)
-    } catch {
-      const parent = dirname(head)
-      if (parent === head) return resolve(arg)
-      tail.unshift(basename(head))
-      head = parent
-    }
-  }
-}
-
-// The repo-relative spelling of `arg`, or null when it lies outside the repo.
-function repoRelative(arg) {
-  const rel = relative(REPO_ROOT, resolveExisting(arg))
-  if (rel === '') return '.'
-  if (rel === '..' || rel.startsWith('../') || isAbsolute(rel)) return null
-  return rel
-}
-
-// `PurePath(arg).suffix`.
+// The extension of the last real path segment, with its dot.
 function suffixOf(arg) {
   const name = arg.split('/').findLast((seg) => seg !== '' && seg !== '.') ?? ''
   const dot = name.lastIndexOf('.')
@@ -387,7 +336,7 @@ function suffixOf(arg) {
 }
 
 function toScopedRel(arg) {
-  const rel = repoRelative(arg)
+  const rel = repoRelative(arg, REPO_ROOT)
   if (rel === null || !rel.endsWith('.rs') || !underCrateRoot(rel)) return null
   return rel
 }
@@ -523,7 +472,7 @@ function main(argv, overrides = {}) {
     )
     return 2
   }
-  const missing = synthetic ? [] : missingCrateRoots(deps.crateRoots)
+  const missing = synthetic ? [] : missingCrateRoots(deps.crateRoots, REPO_ROOT)
   if (missing.length > 0) {
     if (argv.includes('--update-baseline')) {
       err('Refusing to re-anchor: a declared CRATE_ROOTS entry is missing.\n')
@@ -569,7 +518,7 @@ function check(argv, baseline, { err }) {
   const targets = []
   for (const arg of argv) {
     if (suffixOf(arg) !== '.rs') continue
-    const rel = repoRelative(arg)
+    const rel = repoRelative(arg, REPO_ROOT)
     if (rel === null || !underCrateRoot(rel)) continue
     if (isExcludedFile(rel)) continue
     // Asked of the judged source: a file `git add`ed then deleted from disk
@@ -963,7 +912,7 @@ function rootSelfTest(failures) {
   const savedSource = src
 
   cases += 1
-  const reported = missingCrateRoots(misspelled)
+  const reported = missingCrateRoots(misspelled, REPO_ROOT)
   if (reported.length !== 1 || reported[0] !== 'src-tauri/agaric-stores/src') {
     failures.push(`a misspelled crate root was not reported: ${JSON.stringify(reported)}`)
   }
@@ -1018,7 +967,7 @@ function rootSelfTest(failures) {
     '`--allow-reductions` without `--update-baseline --all` was swallowed instead of ' +
       `refused (exit ${strayFlagRc})`,
   )
-  const realMissing = missingCrateRoots(CRATE_ROOTS)
+  const realMissing = missingCrateRoots(CRATE_ROOTS, REPO_ROOT)
   expect(
     realMissing.length === 0,
     `the real CRATE_ROOTS reported a missing root: ${JSON.stringify(realMissing)}`,

@@ -420,14 +420,12 @@ function verifyBatchStreamFraming(check) {
 // because it is the longest of them; `fixture`, `run`, `check` and
 // `namesFile` are the runner's own helpers, passed in.
 //
-// Scenario 9 pins "the two helpers answer the same question the same way"
-// using a FOREIGN repository's index, which is the one situation where every
-// plausible implementation answers "not mine". So it held the claim in the
-// only place that could not tell an implementation from a wrong one, and the
-// two duly diverged: for a linked worktree's OWN index — which lives under
-// the MAIN repository's `.git`, at `…/.git/worktrees/<name>/index` — Python
-// said "mine" and Node said "somebody else's", so all four citation guards
-// exited 2 on every commit made from a worktree. Verbatim:
+// Scenario 9 uses a FOREIGN repository's index, the one situation where every
+// plausible implementation answers "not mine", so it cannot tell a correct
+// ownership check from a wrong one. For a linked worktree's OWN index — which
+// lives under the MAIN repository's `.git`, at `…/.git/worktrees/<name>/index`
+// — the helper said "somebody else's", so all four citation guards exited 2
+// on every commit made from a worktree. Verbatim:
 //
 //   check-md-link-targets: invocation error: a commit is in flight
 //   (GIT_INDEX_FILE=…/.git/worktrees/wt-b21b-crlf/index) but it belongs to a
@@ -830,11 +828,8 @@ function verifyLeakedGitContext({
   // verifies an object's body against the hash it was asked for on read
   // would make this exit non-zero instead — and an unwrapped `execFileSync`
   // would then THROW out of `runScenarios`, a stack trace across all five
-  // consuming guards' self-tests instead of a named red. The shell twin
-  // (`test-py-guard-file-source.sh` section 5c) degrades gracefully for the
-  // same case: its `$(...)` failure just captures empty stdout and compares
-  // unequal. Catching here and forcing the same "does not match" outcome
-  // keeps the two behaving alike.
+  // consuming guards' self-tests instead of a named red. Catching here forces
+  // the "does not match" outcome instead.
   let gitHonoursForgery = ''
   let gitHonoursForgeryError = ''
   try {
@@ -1330,16 +1325,11 @@ function runScenarios({ scriptPath, file, badLine, goodLine, root }) {
   }
 
   // ── 9. A COMMIT IN FLIGHT IN ANOTHER REPOSITORY — the fail-closed half of
-  // the ownership rule (#4017), ported here from `guard_file_source.py` so
-  // the two helpers cannot answer the same situation differently.
+  // the ownership rule (#4017).
   //
-  // `GIT_INDEX_FILE` merely being SET used to be the whole AUTO test on the
-  // Node side, so an index belonging to a DIFFERENT repository selected
-  // "the staged index" and the guard reported a verdict about content it was
-  // not judging. Measured before the port, against a two-fixture pair:
-  // Python raised `AmbiguousSourceError`, Node answered
-  // `{source: 'index', why: 'auto: git is running a commit hook, …'}` — for
-  // the same tree, the same variable and the same value.
+  // `GIT_INDEX_FILE` merely being SET used to be the whole AUTO test, so an
+  // index belonging to a DIFFERENT repository selected "the staged index" and
+  // the guard reported a verdict about content it was not judging.
   //
   // The fixture is scenario 1's shape (VIOLATION STAGED, working tree clean),
   // so every "exit 0" below can only mean the guard failed to look. All four

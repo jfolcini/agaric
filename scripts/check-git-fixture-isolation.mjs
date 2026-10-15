@@ -47,15 +47,9 @@
 //    matches.
 //
 //    Scrubbing some OTHER program's environment is NOT a fixture scrub and is
-//    not matched. `scripts/test-py-guard-file-source.sh` runs
-//    `env -u GIT_INDEX_FILE python3 <guard>` six times: that is pinning the
-//    INPUT of the guard under test (these guards resolve their source FROM
-//    `GIT_INDEX_FILE`, so a leaked one would turn every "auto" assertion into
-//    an index read and the suite would pass without testing the default), on
-//    top of a `git_scratch_guard` it already calls. No git command runs under
-//    that environment, so nothing about it is a copy of the fixture scrub.
-//    Requiring `git` on the same logical line is what draws that line, and it
-//    is the reason that file needs no exemption.
+//    not matched: `env -u GIT_INDEX_FILE node <guard>` pins the INPUT of a
+//    guard under test, and no git command runs under that environment.
+//    Requiring `git` on the same logical line is what draws that line.
 //
 // 2. A DYNAMIC `import()` COUNTS AS WIRING (#4044). `await import('…/
 //    git-scratch-guard.mjs')` was reported as "without wiring itself … at
@@ -72,9 +66,6 @@
 //    'py')` is `false` unconditionally and rule 1 for Python read as "no
 //    Python file may touch a `GIT_` variable", with nothing to point at as
 //    the remedy — a rule no file can satisfy is not a rule, it is a tax.
-//    `scripts/lib/guard_file_source.py` paid it: removing a foreign
-//    `GIT_INDEX_FILE` from a subprocess environment is the one place that
-//    decides which INDEX a guard reads, and it needed an exemption for it.
 //    Rule 1 for `.py` is therefore scoped to files that ALSO build a fixture
 //    — where the message rule 2 already prints ("write it in Node or shell,
 //    or add the Python sibling") is the remedy, and the hand-rolled scrub is
@@ -284,8 +275,8 @@ export function blankPyDocstrings(text) {
  * PYTHON'S PROSE IS THE DOCSTRING, not the `#` line, so stripping only `#`
  * gave `.py` — the language #4015 added to the scan — the exact treatment
  * the paragraph above says is not cosmetic. Measured: adding two lines of
- * ordinary prose naming `git` and `init` to `scripts/lib/guard_file_source.py`
- * (a file that spawns no fixture at all) made this guard fail the commit,
+ * ordinary prose naming `git` and `init` to a `.py` docstring (in a file
+ * that spawns no fixture at all) made this guard fail the commit,
  * advising the author to "write the fixture in Node or shell" — and unlike
  * the other two languages there was no way to comment the sentence out,
  * because the comment form IS the thing being scanned. Both existing `.py`

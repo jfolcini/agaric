@@ -1831,18 +1831,6 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit", "pre-push"]
 
-# WHY: the python guards load guard_file_source.py; with its exists() defanged they pass a REAL .rs file, and only this suite catches it — #4017
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "py-guard-file-source-selftest"
-name = "python guards judge the staged index (#4017 falsification suite)"
-entry = "bash scripts/test-py-guard-file-source.sh"
-language = "system"
-pass_filenames = false
-files = '^scripts/(check-raw-tx\.py|lib/guard_file_source\.py|lib/git-scratch-guard\.sh|test-py-guard-file-source\.sh)$'
-stages = ["manual"]
-
 # Rust: cargo fmt. Auto-fix formatter (#817): drops `--check` so a
 # formatting miss is rewritten in place + re-staged mechanically instead
 # of aborting the commit with a manual `cargo fmt` step. Matches the prek
@@ -2609,8 +2597,7 @@ pass_filenames = false
 files = '^(\.github/workflows/pr-overlap\.yml|scripts/check-pr-overlap-trust-boundary\.mjs)$'
 stages = ["pre-commit"]
 
-# Kept for the same reason `py-guard-file-source-selftest` was kept in this
-# same commit: it is the only thing making criterion 5 (fails CLOSED) true
+# Kept because it is the only thing making criterion 5 (fails CLOSED) true
 # here. The guard's second condition walks pr-overlap.yml's job list looking
 # for checkout steps; if a restructure stops it reaching any, it passes
 # vacuously and silently — a check that inspects nothing passes just as

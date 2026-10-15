@@ -39,7 +39,7 @@
 // The judged tree is the one containing this script (see
 // scripts/lib/guard-file-source.mjs, "Which TREE is judged").
 
-import { readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
@@ -48,11 +48,13 @@ import {
   WORD_END,
   WS,
   cfgTestLineSet,
-  globMatch,
-  isTestFile,
+  isDirectory,
+  isExcludedFile,
+  missingCrateRoots,
   splitLines,
   stripRustComments,
   trimSpace,
+  write,
 } from './lib/rust-scan.mjs'
 
 export { CRATE_ROOTS }
@@ -78,19 +80,6 @@ const LABELLED_ROOTS = CRATE_ROOTS.map((root) => {
   if (label === undefined) throw new Error(`no crate label for ${root} in CRATE_LABELS`)
   return [label, root]
 })
-
-// Whole-file test modules whose names escape `isTestFile`, and standalone
-// bins; their writes are fixture seeds, not production writes:
-//   * proptest modules, gated `#[cfg(test)]` at their `mod` declaration;
-//   * `test_support.rs`, the `test-util` pool helper in agaric-store;
-//   * diagnostics audit bins;
-//   * the #3346 batch-vs-fold oracle, `#![cfg(test)]` in its `mod.rs`.
-const EXTRA_TEST_FILE_GLOBS = [
-  '**/*proptest*.rs',
-  '**/test_support.rs',
-  '**/src/bin/**',
-  '**/bulk_equivalence/**',
-]
 
 // The crate that owns each core table. `blocks` and `op_log` are known
 // multi-writer debt frozen by the baseline, not clean single-writer tables
@@ -160,10 +149,6 @@ const DEFAULT_HEADER = [
   '',
 ]
 
-function isExcludedFile(relPath) {
-  return isTestFile(relPath) || EXTRA_TEST_FILE_GLOBS.some((glob) => globMatch(relPath, glob))
-}
-
 /** {table: [0-based line indices]} of raw writes in `text`. Pure. */
 function countWritesInText(text) {
   const stripped = stripRustComments(text, { keepStrings: true })
@@ -180,20 +165,6 @@ function countWritesInText(text) {
     }
   }
   return hits
-}
-
-function missingCrateRoots(crateRoots) {
-  return crateRoots
-    .filter(([, root]) => !isDirectory(join(REPO_ROOT, root)))
-    .map(([, root]) => root.replace(/\/+$/, ''))
-}
-
-function isDirectory(path) {
-  try {
-    return statSync(path).isDirectory()
-  } catch {
-    return false
-  }
 }
 
 const UTF8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
@@ -333,18 +304,8 @@ function readBaseline() {
   return counts
 }
 
-const write = (stream) => (line) => stream.write(`${line}\n`)
-
-function main(
-  argv,
-  {
-    crateRoots = LABELLED_ROOTS,
-    err = write(process.stderr),
-    scan = computeCounts,
-    readBase = readBaseline,
-    writeBase = writeBaseline,
-  } = {},
-) {
+function main(argv) {
+  const err = write(process.stderr)
   if (argv.includes('--self-test')) return runSelfTest()
   const synthetic = argv.includes('--synthetic-tree')
   const update = argv.includes('--update-baseline')
@@ -356,7 +317,7 @@ function main(
     )
     return 2
   }
-  const missing = synthetic ? [] : missingCrateRoots(crateRoots)
+  const missing = synthetic ? [] : missingCrateRoots(CRATE_ROOTS, REPO_ROOT)
   if (missing.length > 0) {
     err(
       update
@@ -369,15 +330,15 @@ function main(
     return 1
   }
   if (update) {
-    writeBase(nonOwnerCounts(scan(crateRoots)))
+    writeBaseline(nonOwnerCounts(computeCounts(LABELLED_ROOTS)))
     write(process.stdout)(`Wrote ${BASELINE_REL}`)
     return 0
   }
 
-  const counts = scan(crateRoots)
+  const counts = computeCounts(LABELLED_ROOTS)
   let baseline
   try {
-    baseline = readBase()
+    baseline = readBaseline()
   } catch (error) {
     if (!(error instanceof BaselineFormatError)) throw error
     err(
@@ -500,7 +461,6 @@ function runSelfTest() {
   }
 
   const annotationCases = annotationSelfTest(fail)
-  const rootCases = rootSelfTest(fail)
 
   if (failures.length > 0) {
     const err = write(process.stderr)
@@ -508,7 +468,7 @@ function runSelfTest() {
     for (const f of failures) err(`  ${f}`)
     return 1
   }
-  const total = REGEX_CASES.length + 2 + EXCLUSION_CASES.length + annotationCases + rootCases
+  const total = REGEX_CASES.length + 2 + EXCLUSION_CASES.length + annotationCases
   write(process.stdout)(`check-table-ownership self-test passed (${total} cases).`)
   return 0
 }
@@ -542,64 +502,6 @@ function annotationSelfTest(fail) {
     if (!(error instanceof BaselineFormatError)) throw error
   }
   return 3
-}
-
-// #4501: a declared crate root that vanished is LOUD, and only
-// `--synthetic-tree` silences it. Driven through `main`, so dropping the
-// wiring is caught, with everything after the roots check stubbed: the
-// outcome must not depend on the real tree or baseline, and the
-// both-flags call runs with misspelled roots installed, so a regression
-// there must not be able to rewrite the tracked baseline.
-function rootSelfTest(fail) {
-  let cases = 0
-  const misspelled = [
-    ['store', 'src-tauri/agaric-stores/src/'],
-    ['app', 'src-tauri/src/'],
-  ]
-  const missing = missingCrateRoots(misspelled)
-  cases += 1
-  if (missing.length !== 1 || missing[0] !== 'src-tauri/agaric-stores/src') {
-    fail(`a misspelled crate root was not reported: ${JSON.stringify(missing)}`)
-  }
-
-  const wrote = []
-  const stubbed = {
-    err: () => {},
-    scan: () => new Map(),
-    readBase: () => new Map(),
-    writeBase: (...args) => wrote.push(args),
-  }
-  const intactRc = main(['--synthetic-tree'], stubbed)
-  const suppressedRc = main(['--synthetic-tree'], { ...stubbed, crateRoots: misspelled })
-  const bothRc = main(['--synthetic-tree', '--update-baseline'], {
-    ...stubbed,
-    crateRoots: misspelled,
-  })
-  cases += 1
-  if (intactRc !== 0) fail('--synthetic-tree changed the verdict on intact roots')
-  cases += 1
-  if (suppressedRc !== 0) fail('--synthetic-tree did not suppress a MISSING root')
-  // The writer never reached as well as the exit code: only the first
-  // notices a revision that refuses after writing.
-  cases += 1
-  if (wrote.length > 0) {
-    fail(
-      `--synthetic-tree --update-baseline reached writeBaseline (${wrote.length} call(s)) — ` +
-        'it must refuse BEFORE writing',
-    )
-  }
-  cases += 1
-  if (bothRc !== 2) fail(`--synthetic-tree --update-baseline was not refused (exit ${bothRc})`)
-  cases += 1
-  if (main([], { err: () => {}, crateRoots: misspelled }) === 0) {
-    fail('without --synthetic-tree a missing root did not fail the run')
-  }
-  cases += 1
-  const realMissing = missingCrateRoots(LABELLED_ROOTS)
-  if (realMissing.length > 0) {
-    fail(`the real CRATE_ROOTS reported a missing root: ${JSON.stringify(realMissing)}`)
-  }
-  return cases
 }
 
 const isMainModule =

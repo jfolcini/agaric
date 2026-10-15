@@ -35,8 +35,8 @@
 // location says which tree to judge (scripts/lib/guard-file-source.mjs,
 // "Which TREE is judged").
 
-import { realpathSync, statSync } from 'node:fs'
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { basename, extname, join } from 'node:path'
 
 import { describeSource } from './lib/guard-file-source.mjs'
 import {
@@ -47,10 +47,15 @@ import {
   cfgTestLineSet,
   globMatch,
   isTestFile,
+  lineIndexer,
+  missingCrateRoots,
   openFileSource,
+  repoRelative,
   splitLines,
   stripRustComments,
   trimSpace,
+  underCrateRoot,
+  write,
 } from './lib/rust-scan.mjs'
 
 export { CRATE_ROOTS }
@@ -127,25 +132,6 @@ function isBinFile(relPath) {
   return BIN_FILE_GLOBS.some((glob) => globMatch(relPath, glob))
 }
 
-function underCrateRoot(relPath, crateRoots) {
-  return crateRoots.some((root) => relPath.startsWith(root))
-}
-
-// A root that names no directory is a broken declaration: the roots are
-// prefixes deciding which changed files are policed, so a stale one exempts
-// every file under its crate and the run still exits 0 (#4501).
-function missingCrateRoots(crateRoots) {
-  return crateRoots
-    .filter((root) => {
-      try {
-        return !statSync(join(REPO_ROOT, root)).isDirectory()
-      } catch {
-        return true
-      }
-    })
-    .map((root) => root.replace(/\/+$/, ''))
-}
-
 /** Violations in one file's text. Pure, so the self-test can drive it. */
 function scanText(relPath, text) {
   const stripped = stripRustComments(text)
@@ -183,34 +169,7 @@ function scanText(relPath, text) {
   return violations
 }
 
-// 0-based line of each offset, for offsets asked in ascending order.
-function lineIndexer(text) {
-  let pos = 0
-  let line = 0
-  return (offset) => {
-    for (; pos < offset; pos++) if (text[pos] === '\n') line += 1
-    return line
-  }
-}
-
-// `Path.resolve()`: symlinks resolved as far as the path exists, the rest
-// appended, so a staged file deleted from disk still maps into the repo.
-function resolveExisting(arg) {
-  let head = resolve(arg)
-  const tail = []
-  for (;;) {
-    try {
-      return join(realpathSync(head), ...tail)
-    } catch {
-      const parent = dirname(head)
-      if (parent === head) return resolve(arg)
-      tail.unshift(basename(head))
-      head = parent
-    }
-  }
-}
-
-// `str(PurePosixPath(arg))`: no empty or `.` segments, no trailing slash.
+// The path with no empty or `.` segments and no trailing slash.
 function purePosix(arg) {
   const body = arg
     .split('/')
@@ -221,10 +180,7 @@ function purePosix(arg) {
 }
 
 function relPathOf(arg) {
-  const rel = relative(REPO_ROOT, resolveExisting(arg))
-  if (rel === '') return '.'
-  if (rel === '..' || rel.startsWith('../') || isAbsolute(rel)) return purePosix(arg)
-  return rel
+  return repoRelative(arg, REPO_ROOT) ?? purePosix(arg)
 }
 
 function checkFile(relPath, src) {
@@ -234,8 +190,6 @@ function checkFile(relPath, src) {
   if (text === null) return []
   return scanText(relPath, text)
 }
-
-const write = (stream) => (line) => stream.write(`${line}\n`)
 
 function main(argv, { crateRoots = CRATE_ROOTS, err = write(process.stderr) } = {}) {
   if (argv.includes('--self-test')) return runSelfTest()
@@ -262,7 +216,7 @@ function main(argv, { crateRoots = CRATE_ROOTS, err = write(process.stderr) } = 
   // tell deleted crates from a foreign tree, and an env var can be inherited
   // by accident.
   if (!argv.includes('--synthetic-tree')) {
-    const missing = missingCrateRoots(crateRoots)
+    const missing = missingCrateRoots(crateRoots, REPO_ROOT)
     if (missing.length > 0) {
       err('Raw write-transaction guard (#110) — a declared CRATE_ROOTS directory does not exist:\n')
       for (const rel of missing) err(`  ${rel}`)
@@ -490,7 +444,7 @@ function runSelfTest() {
 function rootSelfTest(fail) {
   const misspelled = ['src-tauri/agaric-stores/src/', 'src-tauri/src/']
   const silent = { err: () => {} }
-  const reported = missingCrateRoots(misspelled)
+  const reported = missingCrateRoots(misspelled, REPO_ROOT)
   if (reported.length !== 1 || reported[0] !== 'src-tauri/agaric-stores/src') {
     fail(`  [FAIL] a misspelled crate root was not reported: ${JSON.stringify(reported)}`)
   }
@@ -507,7 +461,7 @@ function rootSelfTest(fail) {
   }
   if (suppressedRc !== 0) fail('  [FAIL] --synthetic-tree did not suppress a MISSING root')
   if (intactRc !== 0) fail('  [FAIL] --synthetic-tree changed the verdict on intact roots')
-  const realMissing = missingCrateRoots(CRATE_ROOTS)
+  const realMissing = missingCrateRoots(CRATE_ROOTS, REPO_ROOT)
   if (realMissing.length > 0) {
     fail(`  [FAIL] the real CRATE_ROOTS reported a missing root: ${JSON.stringify(realMissing)}`)
   }

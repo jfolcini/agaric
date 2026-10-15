@@ -25,7 +25,7 @@
 # anyway (the typecheck — see the #4078 section below): the Rust guard trio
 # that shares the five-crate-root scan (#3107) —
 # check-raw-tx, check-dynamic-sql, check-table-ownership — stdlib-only
-# Node and Python, no cargo, no node_modules; plus (#3978) the two OTHER whole-tree
+# Node, no cargo, no node_modules; plus (#3978) the two OTHER whole-tree
 # ratchets that were previously left out — `unsafe-allowlist` and
 # `migrations-immutable`, both bash. All five are invoked exactly as their own
 # prek hook would (prek.toml's `entry =`), against the merged tree's OWN copy
@@ -288,14 +288,11 @@ mr_cleanup() {
 }
 
 # Reads CRATE_ROOTS out of $1 (a path to a copy of ANY of the three guards)
-# by importing it as a module. A `.py` guard goes through importlib; only
-# module-level statements execute, and `if __name__ == "__main__":` is never
-# entered under this loader name, so `main()` never runs. A `.mjs` guard is `import()`ed
-# with the path passed in the environment rather than as an argument: as
-# `process.argv[1]` it would satisfy the guard's own entry-point check and
-# run its `main()`.
+# by `import()`ing it, with the path passed in the environment rather than as
+# an argument: as `process.argv[1]` it would satisfy the guard's own
+# entry-point check and run its `main()`. Any other guard path is an error.
 #
-# The `.mjs` guards export repo-relative strings with a trailing slash.
+# The guards export repo-relative strings with a trailing slash.
 # Output is one repo-relative root per line, no trailing slash.
 #
 # On failure it prints the CAUSE on stderr and exits non-zero (#3989 nit): a
@@ -327,29 +324,8 @@ for (const r of roots) console.log(String(r).replace(/^\/+|\/+$/g, ""))
       return
       ;;
   esac
-  python3 -c '
-import importlib.util, os, sys, traceback
-path = sys.argv[1]
-spec = importlib.util.spec_from_file_location("_pmrc_crate_roots", path)
-mod = importlib.util.module_from_spec(spec)
-try:
-    spec.loader.exec_module(mod)
-except Exception:
-    print("could not import %s to read its CRATE_ROOTS:" % path, file=sys.stderr)
-    traceback.print_exc()
-    sys.exit(1)
-roots = getattr(mod, "CRATE_ROOTS", None)
-if not roots:
-    print("%s defines no non-empty CRATE_ROOTS list" % path, file=sys.stderr)
-    sys.exit(1)
-repo_root = str(getattr(mod, "REPO_ROOT",
-                        os.path.dirname(os.path.dirname(os.path.abspath(path)))))
-for r in roots:
-    r = str(r)
-    if os.path.isabs(r):
-        r = os.path.relpath(r, repo_root)
-    print(r.strip("/"))
-' "$1"
+  echo "cannot read CRATE_ROOTS from $1: not a .mjs guard" >&2
+  return 1
 }
 
 # Prerequisites: files a guard that IS present refuses to run without, and
@@ -412,10 +388,9 @@ check_prereqs() {
 #
 # The count is computed from the guard's OWN CRATE_ROOTS — read out of the
 # merged tree by `derive_crate_roots` above — so it cannot drift from what
-# that guard accepts, which is the whole point: the three guards replicate
-# the crate-root list deliberately, and a root added to one and not the
-# others is precisely the drift that made every file this script handed the
-# other two get silently rejected.
+# that guard accepts, which is the whole point: a guard judging against a
+# different root list from the one `targets` came from is the drift that once
+# made every file this script handed it get silently rejected.
 #
 # Two counting rules, because the guards do not agree on where their input
 # comes from:
@@ -486,7 +461,7 @@ count_examined() {
 # prek hook would (prek.toml's `entry =`) — but the five guards do not share
 # one invocation shape, only a common "run against the merged tree" intent:
 #
-#   *.py, *.mjs                   — python3 / node <script> <crate-root targets>.
+#   check-*.mjs                   — node <script> <crate-root targets>.
 #   check-unsafe-allowlist.sh     — bash <script>, no args, but it calls
 #                                    `git rev-parse --show-toplevel` which
 #                                    resolves off CWD, not the script's own
@@ -529,9 +504,6 @@ run_one_guard() {
       # own crate roots off the filesystem, so it only ever reads the
       # worktree in the first place.
       node "$workdir/scripts/$guard" "$@"
-      ;;
-    *.py)
-      python3 "$workdir/scripts/$guard" "$@"
       ;;
     check-unsafe-allowlist.sh)
       ( cd "$workdir" && bash "scripts/$guard" )
@@ -1106,7 +1078,7 @@ run_merge_check() {
   # above still wins. What must not happen is the reverse — a green
   # "the ratchet guards pass on the ACTUAL merge" from a guard that read
   # nothing. #3989's measured case: an extra crate root named only by
-  # check-raw-tx.py, a genuine dynamic-SQL near-miss under it, `targets`
+  # check-raw-tx, a genuine dynamic-SQL near-miss under it, `targets`
   # non-empty (so the zero-target check above never fired) and
   # the other two guards rejecting every file
   # they were handed — exit 0, "guards pass", nothing read.
