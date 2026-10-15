@@ -21,7 +21,23 @@ is now `sm:max-w-sm`, which still fits the search box and skin tones on one
 row. On touch it stays `max-w-md`, because its 44px category tabs already
 fill that width and its skin-tone buttons squeeze the search box.
 
-Checked with Playwright screenshots against the mock: desktop with a mouse,
-and a tablet with touch. The vitest files for all three components passed, as did the dropdown's
-three `menus-popovers` e2e tests, the six `emoji-picker` e2e tests, the
-typecheck, oxlint and oxfmt.
+The maintainer then found the emoji picker's layout off. Six skin-tone
+swatches shared the search row, so the search box was squeezed: on touch it
+showed only "Search em". The grid rows and the category tabs were
+left-aligned, leaving a ragged gap on the right. Now:
+- the search box is a full-width row of its own;
+- the category tabs spread across the width, with no gap on touch so nine
+  44px tabs fit the tablet dialog;
+- the grid and frequently-used rows are a CSS grid of `columns` equal
+  tracks, so every row fills the width;
+- the skin tones sit in a footer under the grid, beside a visible "Skin
+  tone" label (the radiogroup keeps its accessible name).
+
+On a phone sheet the nine 44px tabs still scroll sideways: they cannot fit
+without going under the touch-target floor.
+
+Checked with Playwright screenshots against the mock: desktop with a
+mouse, a tablet with touch, and the emoji sheet on a phone. The vitest files
+for all three components passed, as did the dropdown's three
+`menus-popovers` e2e tests, the `emoji-picker` and settings emoji e2e tests,
+the typecheck, oxlint and oxfmt.
