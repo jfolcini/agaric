@@ -83,7 +83,7 @@ hooks = [
         "pre-commit",
     ] },
     # Catch the "I added a script but forgot chmod +x" / "I marked a non-executable as +x" class of mistake.
-    # scripts/ mixes .sh, .mjs, and .py files that all rely on shebangs + +x bits. `*.rs` is excluded
+    # scripts/ mixes .sh and .mjs files that all rely on shebangs + +x bits. `*.rs` is excluded
     # because Rust's inner-attribute syntax `#![...]` looks like a shebang to this builtin and gives
     # unactionable false positives on every test module under src-tauri/tests/commands/.
     # WHY: a script added without chmod +x fails only when something tries to run it — upstream builtin
@@ -1764,7 +1764,7 @@ stages = ["manual"]
 # dangling entry AT ALL, because they walked discovered files asking "is this
 # one allowed?" and never "does this entry still name a file?". This covers
 # every baseline, allowlist and DENY_FILES set in the repo (the run prints its
-# own denominator). `Path.exists()` only — no
+# own denominator). `existsSync()` only — no
 # parsing of guard logic, no coverage reasoning, no `files:`-trigger analysis.
 # The population comes from `git ls-files`, not a filesystem walk: a walk also
 # sees gitignored build output (`.stryker-tmp/sandbox-*/scripts/` is a verbatim
@@ -1775,15 +1775,15 @@ stages = ["manual"]
 # No `--self-test`, deliberately: a defect in a path-existence
 # check is a false POSITIVE, which announces itself — see the script header.
 #
-# `always_run`, like every other `python3 …` hook in this file: an entry goes
-# dangling when a file is DELETED or MOVED, and prek does not pass deleted
-# paths, so a `files:` regex over the baselines would miss the case the check
-# exists for. 0.04s measured (best of three, `/usr/bin/time`, warm cache).
+# `always_run`: an entry goes dangling when a file is DELETED or MOVED, and
+# prek does not pass deleted paths, so a `files:` regex over the baselines
+# would miss the case the check exists for. 0.06s measured (best of three,
+# wall clock, warm cache).
 # WHY: a baseline/allowlist entry naming a moved or deleted file silently protects nothing, and no allowlist checker could see it — #4501
 [[repos.hooks]]
 id = "check-baseline-paths"
 name = "baseline/allowlist paths resolve (#4501)"
-entry = "python3 scripts/check-baseline-paths.py"
+entry = "node scripts/check-baseline-paths.mjs"
 language = "system"
 pass_filenames = false
 always_run = true
@@ -2482,11 +2482,11 @@ stages = ["manual"]
 # a throwaway fixture without the shared scrub does not fix the CLASS — four
 # scripts independently reinvented the same `unset GIT_DIR …` block, and a
 # fifth (pr-overlap-diverged.sh, #3736) shipped with NO scrub at all before
-# being migrated. This scans every `.sh`, `.mjs` and `.py` file under
+# being migrated. This scans every `.sh` and `.mjs` file under
 # scripts/ and fails a commit that either hand-rolls its own git-environment
 # scrub instead of using the shared helper for its language, or builds a git
 # fixture (`git init`, in a command line or an argv array) without wiring
-# itself to that helper at all. `.mjs` and `.py` joined the scan in #4015:
+# itself to that helper at all. `.mjs` joined the scan in #4015:
 # the scanner was `.sh`-only, and a `.mjs` self-test added in #3962 duly
 # leaked, enumerating the real repository's 4,610 paths in place of its
 # 8-file fixture with every assertion green. `always_run`
