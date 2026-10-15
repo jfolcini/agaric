@@ -1,4 +1,4 @@
-# Session 2133 — Write path: benches, then two trims
+# Session 2135 — Write path: benches, then two trims
 
 #5423, items 1 and the link roll-up behind item 2. Benches first, as the issue asks.
 
