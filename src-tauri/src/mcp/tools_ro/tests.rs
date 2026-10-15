@@ -3344,9 +3344,15 @@ async fn get_block_and_get_page_return_properties_tags_and_aliases_5377() {
     )
     .await
     .unwrap();
-    crate::commands::set_page_aliases_inner(&tools.pool, page.id.as_str(), vec!["Day".into()])
-        .await
-        .unwrap();
+    crate::commands::set_page_aliases_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        page.id.as_str(),
+        vec!["Day".into()],
+    )
+    .await
+    .unwrap();
     crate::commands::add_tag_inner(&tools.pool, DEV, &mat, page.id.clone(), tag.id.clone())
         .await
         .unwrap();
@@ -3486,9 +3492,15 @@ async fn get_page_markdown_happy_path_5375() {
     )
     .await
     .unwrap();
-    crate::commands::set_page_aliases_inner(&tools.pool, page.id.as_str(), vec!["Plan B".into()])
-        .await
-        .unwrap();
+    crate::commands::set_page_aliases_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        page.id.as_str(),
+        vec!["Plan B".into()],
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
     crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
 
@@ -4101,7 +4113,7 @@ async fn resolve_matches_a_title_in_any_case_an_alias_and_a_tag_5397() {
     let other = mk_space(&tools.pool, "Other").await;
     let page = mk_named(&tools, &mat, &space, "page", "Project X").await;
     mk_named(&tools, &mat, &other, "page", "Elsewhere").await;
-    crate::commands::set_page_aliases_inner(&tools.pool, &page, vec!["px".into()])
+    crate::commands::set_page_aliases_inner(&tools.pool, DEV, &mat, &page, vec!["px".into()])
         .await
         .unwrap();
     let tag = mk_named(&tools, &mat, &space, "tag", "work").await;

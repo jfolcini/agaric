@@ -1,5 +1,6 @@
 //! Reverse (inverse) op computation for the undo engine.
 
+mod alias_ops;
 mod attachment_ops;
 mod batch;
 mod block_ops;
@@ -47,5 +48,7 @@ pub async fn compute_reverse(
         OpType::PurgeBlock => Err(AppError::NonReversible {
             op_type: record.op_type.clone(),
         }),
+        OpType::AddPageAlias => alias_ops::reverse_add_page_alias(&record),
+        OpType::RemovePageAlias => alias_ops::reverse_remove_page_alias(&record),
     }
 }

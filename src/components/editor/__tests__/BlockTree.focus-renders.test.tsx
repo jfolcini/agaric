@@ -1,9 +1,10 @@
 /**
- * #5447 — a focus move re-renders only the trees it touches.
+ * #5447 — a focus move re-renders only the trees and rows it touches.
  *
  * The journal week view mounts one BlockTree per day, all reading the GLOBAL
  * focus and selection. A tree that neither owns the focused block nor held it
- * has nothing to update, so a focus move must not re-render it.
+ * has nothing to update, so a focus move must not re-render it. Inside a tree,
+ * only the rows losing and gaining focus change.
  *
  * Probes: a `<Profiler>` per tree counts tree commits; the mocked leaf
  * `SortableBlock` counts row renders. Like the real one it reads the block
@@ -141,8 +142,8 @@ async function renderWeek(): Promise<HTMLElement> {
 
 /**
  * Which days `move` re-rendered: per day, whether its tree committed and
- * whether any of its rows rendered. The owning tree's own commit and row
- * counts are not pinned here.
+ * whether any of its rows rendered; and how often each row rendered. The
+ * owning tree's own commit count is not pinned here.
  */
 function rerenderedDays(move: () => void) {
   treeCommits.clear()
@@ -153,6 +154,7 @@ function rerenderedDays(move: () => void) {
   return {
     trees: Array.from({ length: DAYS }, (_, day) => (treeCommits.get(`PAGE_${day}`) ?? 0) > 0),
     rows: Array.from({ length: DAYS }, (_, day) => rowsOf(day) > 0),
+    renders: Object.fromEntries(rowRenders),
   }
 }
 
@@ -175,24 +177,26 @@ beforeEach(() => {
 })
 
 describe('BlockTree focus-move re-renders (#5447)', () => {
-  it('a focus move within a day (ArrowDown) re-renders only that day of the week', async () => {
+  it('a focus move within a day (ArrowDown) re-renders only its two rows', async () => {
     await renderWeek()
     act(() => setFocused(blockId(2, 0)))
 
-    const { trees, rows } = rerenderedDays(() => setFocused(blockId(2, 1)))
+    const { trees, rows, renders } = rerenderedDays(() => setFocused(blockId(2, 1)))
 
     expect(trees).toEqual(only(2))
     expect(rows).toEqual(only(2))
+    expect(renders).toEqual({ [blockId(2, 0)]: 1, [blockId(2, 1)]: 1 })
   })
 
-  it('moving focus to another day re-renders only the day losing and the day gaining it', async () => {
+  it('moving focus to another day re-renders only the row losing and the row gaining it', async () => {
     await renderWeek()
     act(() => setFocused(blockId(2, 4)))
 
-    const { trees, rows } = rerenderedDays(() => setFocused(blockId(3, 0)))
+    const { trees, rows, renders } = rerenderedDays(() => setFocused(blockId(3, 0)))
 
     expect(trees).toEqual(only(2, 3))
     expect(rows).toEqual(only(2, 3))
+    expect(renders).toEqual({ [blockId(2, 4)]: 1, [blockId(3, 0)]: 1 })
   })
 
   it('selecting a block re-renders only the day that owns it', async () => {

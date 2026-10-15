@@ -738,14 +738,15 @@ async fn read_attachment_blobs(pool: &SqlitePool) -> Result<BTreeMap<String, Str
 /// The payload of one `page_link_cache` row; its `(source_page, target)` PK is
 /// the map key.
 ///
-/// All four columns are diffed, not just `edge_count`. The three flags
-/// (migration 0096) exist so the hot unscoped read in `list_page_links_inner`
-/// can filter with a partial index and ZERO `blocks` joins — which means a
-/// stale flag is not cosmetic: it is a link the Graph view silently drops
-/// (`src_deleted`/`tgt_deleted` stuck at 1) or a link to a non-page block it
-/// silently shows (`tgt_is_page` stuck at 1). Auditing `edge_count` alone
-/// would leave the entire reason the denormalisation exists unchecked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// All five columns are diffed, not just `edge_count`. The three flags
+/// (migration 0096) and `space_id` (0122) exist so `list_page_links_inner`
+/// can filter with an index and ZERO `blocks` joins — which means a stale
+/// value is not cosmetic: it is a link the Graph view silently drops
+/// (`src_deleted`/`tgt_deleted` stuck at 1, `space_id` left behind by a
+/// page that changed space) or a link it silently shows (`tgt_is_page` stuck
+/// at 1, a cross-space `space_id`). Auditing `edge_count` alone would leave
+/// the entire reason the denormalisation exists unchecked.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageLinkEdge {
     /// Live `block_links` rows whose source block rolls up to this page.
     pub edge_count: i64,
@@ -755,6 +756,8 @@ pub struct PageLinkEdge {
     pub tgt_deleted: bool,
     /// Is the target block a `page`?
     pub tgt_is_page: bool,
+    /// The space both ends share, when both are pages (#5426).
+    pub space_id: Option<String>,
 }
 
 /// Recompute the whole `page_link_cache` from `blocks` + `block_links` alone.
@@ -788,7 +791,9 @@ pub struct PageLinkEdge {
 ///   at all yields NO row (#3894): `source_page_id` is `NOT NULL REFERENCES
 ///   blocks(id)` with foreign keys ON, so such a row is unstorable and the
 ///   writers' `EXISTS` guard skips the group;
-/// * `tgt_deleted` / `tgt_is_page` come from the single target block.
+/// * `tgt_deleted` / `tgt_is_page` come from the single target block;
+/// * `space_id` is the `space_id` the source and the target share when both
+///   are pages, and none otherwise (#5426).
 ///
 /// Folded in Rust over two flat row dumps: no `GROUP BY`, no `COUNT`, no
 /// `COALESCE`, no `LEFT JOIN` is delegated to SQLite. Both production writers
@@ -851,6 +856,11 @@ pub async fn rebuild_page_link_cache_from_base(
             continue;
         };
         let src_deleted = source_page_block.deleted_at.is_some();
+        let space_id = source_page_block.space_id.clone().filter(|space| {
+            source_page_block.block_type == PAGE_BLOCK_TYPE
+                && target.block_type == PAGE_BLOCK_TYPE
+                && target.space_id.as_ref() == Some(space)
+        });
 
         let entry = out
             .entry((source_page, target_id.clone()))
@@ -859,6 +869,7 @@ pub async fn rebuild_page_link_cache_from_base(
                 src_deleted,
                 tgt_deleted: target.deleted_at.is_some(),
                 tgt_is_page: target.block_type == PAGE_BLOCK_TYPE,
+                space_id,
             });
         entry.edge_count += 1;
     }
@@ -871,7 +882,7 @@ async fn read_page_link_cache(
 ) -> Result<BTreeMap<(String, String), PageLinkEdge>, AppError> {
     let rows = sqlx::query!(
         "SELECT source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, \
-         tgt_is_page FROM page_link_cache"
+         tgt_is_page, space_id FROM page_link_cache"
     )
     .fetch_all(pool)
     .await?;
@@ -885,6 +896,7 @@ async fn read_page_link_cache(
                     src_deleted: r.src_deleted != 0,
                     tgt_deleted: r.tgt_deleted != 0,
                     tgt_is_page: r.tgt_is_page != 0,
+                    space_id: r.space_id,
                 },
             )
         })

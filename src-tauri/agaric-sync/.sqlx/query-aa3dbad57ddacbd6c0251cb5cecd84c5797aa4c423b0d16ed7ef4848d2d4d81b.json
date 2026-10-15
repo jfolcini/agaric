@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH desired AS ( SELECT bl.target_id AS target, COUNT(*) AS edge_count, MAX(tb.deleted_at IS NOT NULL) AS tgt_deleted, MIN(tb.block_type = 'page') AS tgt_is_page, MAX(CASE WHEN tb.block_type = 'page' THEN tb.space_id END) AS tgt_page_space_id FROM block_links bl JOIN blocks sb ON sb.id = bl.source_id JOIN blocks tb ON tb.id = bl.target_id WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1 AND sb.deleted_at IS NULL AND EXISTS ( SELECT 1 FROM blocks fk WHERE fk.id = COALESCE(sb.page_id, sb.parent_id, sb.id) ) AND bl.target_id IN (SELECT value FROM json_each(?2)) GROUP BY 1 ) INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page, space_id) SELECT ?1, target, edge_count, COALESCE((SELECT (b.deleted_at IS NOT NULL) FROM blocks b WHERE b.id = ?1), 1), tgt_deleted, tgt_is_page, (SELECT b.space_id FROM blocks b WHERE b.id = ?1 AND b.block_type = 'page' AND b.space_id = tgt_page_space_id) FROM desired WHERE true ON CONFLICT(source_page_id, target_page_id) DO UPDATE SET edge_count = excluded.edge_count, src_deleted = excluded.src_deleted, tgt_deleted = excluded.tgt_deleted, tgt_is_page = excluded.tgt_is_page, space_id = excluded.space_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "aa3dbad57ddacbd6c0251cb5cecd84c5797aa4c423b0d16ed7ef4848d2d4d81b"
+}

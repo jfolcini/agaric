@@ -10,6 +10,8 @@
  *  5. `handleAddAlias` is a no-op when the draft is whitespace only.
  *  6. `handleRemoveAlias` filters the list and persists the new array.
  *  7. `startEditing` / `stopEditing` flip `editingAliases`.
+ *  8. A committed write lands on the page's undo stack, and an `invalidated`
+ *     name change reloads the list (#5387).
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react'
@@ -65,15 +67,23 @@ import { toast } from 'sonner'
 import { usePageAliases } from '@/hooks/usePageAliases'
 import { announce } from '@/lib/announcer'
 import { getGraphStructureKey } from '@/lib/graph-structure-events'
+import { invalidateNameCaches } from '@/lib/name-change-bus'
+import { useUndoStore } from '@/stores/undo'
 
 const mockedAnnounce = vi.mocked(announce)
 const t = (key: string) => key
 
+const OP_REF = { device_id: 'dev-1', seq: 7 }
+
 beforeEach(() => {
   vi.clearAllMocks()
+  useUndoStore.setState({ pages: new Map() })
   mockedGet.mockResolvedValue([])
-  // `setPageAliases` returns the aliases it stored; by default it stores all of them.
-  mockedSet.mockImplementation(async (_pageId: string, aliases: string[]) => aliases)
+  // `setPageAliases` answers the aliases it stored and the op it appended.
+  mockedSet.mockImplementation(async (_pageId: string, aliases: string[]) => ({
+    aliases,
+    op_refs: [OP_REF],
+  }))
 })
 
 describe('usePageAliases — initial fetch', () => {
@@ -142,10 +152,14 @@ describe('usePageAliases — add / remove', () => {
     expect(mockedAnnounce).toHaveBeenCalledWith('announce.aliasAdded')
   })
 
-  it('drops an alias another page holds and says so instead of announcing it (#5280)', async () => {
+  it('says an alias another page holds is taken instead of announcing it (#5280)', async () => {
     mockedGet.mockResolvedValueOnce(['own'])
-    // The backend's INSERT OR IGNORE skips 'standup' and returns what it stored.
-    mockedSet.mockResolvedValueOnce(['own'])
+    // The backend refuses the whole edit with the alias's code (#5387).
+    mockedSet.mockRejectedValueOnce({
+      kind: 'validation',
+      code: 'DuplicatePageAlias',
+      message: "alias 'standup' is already used by another page",
+    })
     const { result } = renderHook(() => usePageAliases('page-1', t))
     await waitFor(() => {
       expect(result.current.aliases).toEqual(['own'])
@@ -164,13 +178,14 @@ describe('usePageAliases — add / remove', () => {
     expect(vi.mocked(toast.error).mock.calls.map((c) => c[0])).toEqual(['pageHeader.aliasTaken'])
     expect(mockedAnnounce).toHaveBeenCalledWith('pageHeader.aliasTaken')
     expect(mockedAnnounce).not.toHaveBeenCalledWith('announce.aliasAdded')
+    expect(mockedAnnounce).not.toHaveBeenCalledWith('announce.aliasFailed')
     expect(result.current.aliasInput).toBe('standup')
   })
 
   it("does not call a case variant of the page's own alias taken (#5280)", async () => {
     mockedGet.mockResolvedValueOnce(['Standup'])
-    // NOCASE uniqueness keeps the existing row and skips the variant.
-    mockedSet.mockResolvedValueOnce(['Standup'])
+    // The write keeps the page's own spelling and drops the variant: no op.
+    mockedSet.mockResolvedValueOnce({ aliases: ['Standup'], op_refs: [] })
     const { result } = renderHook(() => usePageAliases('page-1', t))
     await waitFor(() => {
       expect(result.current.aliases).toEqual(['Standup'])
@@ -289,7 +304,7 @@ describe('usePageAliases — add / remove', () => {
     })
 
     let rejectFirst!: (err: unknown) => void
-    let resolveSecond!: (value: string[]) => void
+    let resolveSecond!: (value: { aliases: string[]; op_refs: never[] }) => void
     mockedSet
       .mockImplementationOnce(
         () =>
@@ -316,7 +331,7 @@ describe('usePageAliases — add / remove', () => {
 
     // Later call's write settles first.
     await act(async () => {
-      resolveSecond(['alpha'])
+      resolveSecond({ aliases: ['alpha'], op_refs: [] })
     })
     expect(result.current.aliases).toEqual(['alpha'])
 
@@ -355,6 +370,78 @@ describe('usePageAliases — graph-structure counter', () => {
     await waitFor(() => {
       expect(getGraphStructureKey()).toBe(before + 2)
     })
+  })
+})
+
+// #5387 — an alias edit is ops: it lands on the page's undo stack, and the list
+// reloads when an Undo (or a sync / MCP write) invalidates the name caches.
+describe('usePageAliases — undo', () => {
+  it('a committed add and a committed remove each push their op refs onto the undo stack', async () => {
+    const { result } = renderHook(() => usePageAliases('page-1', t))
+    await waitFor(() => {
+      expect(mockedGet).toHaveBeenCalled()
+    })
+
+    act(() => {
+      result.current.setAliasInput('Nickname')
+    })
+    act(() => {
+      result.current.handleAddAlias()
+    })
+    await waitFor(() => {
+      expect(useUndoStore.getState().pages.get('page-1')?.undoStack.at(-1)?.refs).toEqual([OP_REF])
+    })
+
+    mockedSet.mockResolvedValueOnce({ aliases: [], op_refs: [{ device_id: 'dev-1', seq: 8 }] })
+    act(() => {
+      result.current.handleRemoveAlias('Nickname')
+    })
+    await waitFor(() => {
+      const refs = useUndoStore
+        .getState()
+        .pages.get('page-1')
+        ?.undoStack.flatMap((entry) => entry.refs ?? [])
+      expect(refs).toEqual([OP_REF, { device_id: 'dev-1', seq: 8 }])
+    })
+  })
+
+  it('a write that appended nothing pushes no undo entry', async () => {
+    mockedGet.mockResolvedValueOnce(['Standup'])
+    mockedSet.mockResolvedValueOnce({ aliases: ['Standup'], op_refs: [] })
+    const { result } = renderHook(() => usePageAliases('page-1', t))
+    await waitFor(() => {
+      expect(result.current.aliases).toEqual(['Standup'])
+    })
+
+    act(() => {
+      result.current.setAliasInput('standup')
+    })
+    act(() => {
+      result.current.handleAddAlias()
+    })
+
+    await waitFor(() => {
+      expect(result.current.aliasInput).toBe('')
+    })
+    expect(useUndoStore.getState().pages.get('page-1')).toBeUndefined()
+  })
+
+  it('reloads the list on an invalidated name change, as an Undo emits', async () => {
+    mockedGet.mockResolvedValueOnce(['alpha', 'beta'])
+    const { result } = renderHook(() => usePageAliases('page-1', t))
+    await waitFor(() => {
+      expect(result.current.aliases).toEqual(['alpha', 'beta'])
+    })
+
+    mockedGet.mockResolvedValueOnce(['alpha'])
+    act(() => {
+      invalidateNameCaches()
+    })
+
+    await waitFor(() => {
+      expect(result.current.aliases).toEqual(['alpha'])
+    })
+    expect(mockedGet).toHaveBeenCalledTimes(2)
   })
 })
 

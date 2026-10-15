@@ -73,9 +73,10 @@ use agaric_lib::commands::pages::{
     ListPagesWithMetadataFilter, PageSort, list_pages_with_metadata_inner,
 };
 use agaric_lib::commands::{
-    PAGE_LINKS_EDGE_CAP, batch_resolve_inner, count_agenda_batch_by_source_inner,
-    count_backlinks_batch_inner, create_block_inner, export_page_markdown_inner, get_block_inner,
-    get_properties_inner, list_backlinks_grouped_inner, list_blocks_inner, list_page_links_inner,
+    PAGE_LINKS_EDGE_CAP, PropertyFilter, batch_resolve_inner, count_agenda_batch_by_source_inner,
+    count_backlinks_batch_inner, create_block_inner, export_page_markdown_inner,
+    filtered_blocks_query_inner, get_block_inner, get_properties_inner,
+    list_backlinks_grouped_inner, list_blocks_inner, list_page_links_inner,
     list_projected_agenda_inner, list_unlinked_references_inner, load_page_subtree_inner,
     revert_ops_inner,
 };
@@ -1845,6 +1846,236 @@ fn bench_list_pages_with_metadata(c: &mut Criterion) {
     );
 }
 
+/// Free-form keys for the `filtered_blocks_query` probes: a reserved key would
+/// route to a `blocks` column, and 0088's CHECK keeps it out of `block_properties`.
+const FILTERED_RARE_KEY: &str = "slo_rare_key";
+const FILTERED_RARE_KEY_BLOCKS: usize = 20;
+const FILTERED_BROAD_KEY: &str = "slo_broad_key";
+const FILTERED_PAGE_SIZE: usize = 50;
+
+/// The 100K space fixture with `FILTERED_RARE_KEY` on 20 blocks spread across
+/// the id range. Returns those 20 ids in id order.
+async fn seed_filtered_blocks_fixture(pool: &SqlitePool) -> Vec<String> {
+    let ids = seed_blocks_bulk(pool, FIXTURE_SIZE).await;
+    assign_all_to_slo_space(pool).await;
+    let keyed_ids: Vec<String> = ids
+        .into_iter()
+        .step_by(FIXTURE_SIZE / FILTERED_RARE_KEY_BLOCKS)
+        .collect();
+    for id in &keyed_ids {
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, 'v')")
+            .bind(id)
+            .bind(FILTERED_RARE_KEY)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    keyed_ids
+}
+
+fn key_presence_filter(key: &str) -> PropertyFilter {
+    PropertyFilter {
+        key: key.to_owned(),
+        value_text: None,
+        value_text_in: Vec::new(),
+        value_date: None,
+        value_date_range: None,
+        operator: "eq".to_owned(),
+    }
+}
+
+/// `filtered_blocks_query` — the agenda / query-block filter on a key present
+/// on 20 of 100K blocks (#5426). Budget: 10 ms, provisional until a
+/// `bench-slo` run measures it.
+fn bench_filtered_blocks_query(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 10.0;
+
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_filtered_blocks_query"));
+    let keyed_ids = rt.block_on(seed_filtered_blocks_fixture(&pool));
+    let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
+
+    let observed = rt
+        .block_on(filtered_blocks_query_inner(
+            &pool,
+            vec![key_presence_filter(FILTERED_RARE_KEY)],
+            None,
+            None,
+            &scope,
+            None,
+            Some(FILTERED_PAGE_SIZE as i64),
+        ))
+        .unwrap();
+    let observed_ids: Vec<&str> = observed.items.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(
+        observed_ids, keyed_ids,
+        "filtered_blocks_query @ 100K: untimed probe must return exactly the 20 keyed blocks in id order (#3304)"
+    );
+    assert!(
+        !observed.has_more,
+        "filtered_blocks_query @ 100K: 20 matches fit one page of 50 (#3304)"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("filtered_blocks_query_rare_key_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let scope = scope.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let scope = scope.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = filtered_blocks_query_inner(
+                        &pool,
+                        vec![key_presence_filter(FILTERED_RARE_KEY)],
+                        None,
+                        None,
+                        &scope,
+                        None,
+                        Some(FILTERED_PAGE_SIZE as i64),
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    assert_under_budget(
+        "filtered_blocks_query (key on 20 blocks) @ 100K",
+        &acc,
+        BUDGET_MS,
+    );
+}
+
+/// `list_pages_with_metadata` with `PathGlob "Notes/*"` — `PagesTreeSection`'s
+/// descendant lookup on every page open (no sort, so `Alphabetical`; the
+/// 100-row page limit), over 100K pages of which 20 sit under `Notes/`. The
+/// first page also runs the COUNT. Budget: 10 ms, provisional until a
+/// `bench-slo` run measures it (#5426).
+fn bench_list_pages_with_metadata_namespace(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 10.0;
+    const PAGE_SIZE: i64 = 100;
+    const NAMESPACE_CHILDREN: usize = 20;
+
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_list_pages_with_metadata_namespace"));
+    let page_ids = rt.block_on(seed_pages_cache_fixture(&pool, FIXTURE_SIZE, 0));
+    rt.block_on(assign_all_to_slo_space(&pool));
+    let stride = FIXTURE_SIZE / NAMESPACE_CHILDREN;
+    let mut child_ids: Vec<String> = Vec::with_capacity(NAMESPACE_CHILDREN);
+    for n in 0..NAMESPACE_CHILDREN {
+        let id = &page_ids[n * stride];
+        rt.block_on(
+            sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+                .bind(format!("Notes/child {n}"))
+                .bind(id)
+                .execute(&pool),
+        )
+        .unwrap();
+        child_ids.push(id.clone());
+    }
+    rt.block_on(
+        sqlx::query(
+            "INSERT INTO pages_cache \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
+             SELECT id, content, 0, 0, 0 FROM blocks \
+             WHERE block_type = 'page' AND space_id = ?",
+        )
+        .bind(SLO_SPACE_ID)
+        .execute(&pool),
+    )
+    .unwrap();
+    let filter = ListPagesWithMetadataFilter {
+        sort: PageSort::Alphabetical,
+        space_id: SLO_SPACE_ID.to_owned(),
+        filters: vec![agaric_store::filters::FilterPrimitive::PathGlob {
+            pattern: "Notes/*".to_owned(),
+            exclude: false,
+        }],
+    };
+
+    let observed = rt
+        .block_on(list_pages_with_metadata_inner(
+            &pool,
+            filter.clone(),
+            None,
+            Some(PAGE_SIZE),
+        ))
+        .unwrap();
+    let mut observed_ids: Vec<String> = observed
+        .items
+        .iter()
+        .map(|row| row.id.as_str().to_owned())
+        .collect();
+    observed_ids.sort();
+    assert_eq!(
+        observed_ids, child_ids,
+        "list_pages_with_metadata Notes/* @ 100K: untimed probe must return exactly the 20 Notes/ pages"
+    );
+    assert!(
+        !observed.has_more,
+        "list_pages_with_metadata Notes/* @ 100K: 20 rows fit one page"
+    );
+    assert_eq!(
+        observed.total_count,
+        Some(NAMESPACE_CHILDREN as i64),
+        "list_pages_with_metadata Notes/* @ 100K: untimed probe must count the 20 Notes/ pages"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("list_pages_with_metadata_namespace_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let filter = filter.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let filter = filter.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = list_pages_with_metadata_inner(
+                        &pool,
+                        filter.clone(),
+                        None,
+                        Some(PAGE_SIZE),
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    assert_under_budget(
+        "list_pages_with_metadata (Notes/* namespace) @ 100K",
+        &acc,
+        BUDGET_MS,
+    );
+}
+
 /// `create_block` — one new content block on top of a 100K DB. Budget: 60 ms.
 fn bench_create_block(c: &mut Criterion) {
     const BUDGET_MS: f64 = 60.0;
@@ -2008,8 +2239,11 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
 /// `list_page_links` — graph-view roll-up, read for one space: the only form
 /// the graph sends, and since #5415 the only one the command has. PROBLEM
 /// TIER: the 84 ms @ 100K that promoted it to the green tier (#2178) was the
-/// unscoped read; the scoped read checks both endpoints of every edge against
-/// the space's pages and is over budget on this fixture (#5426).
+/// unscoped read; the scoped read that checked both endpoints of every edge
+/// against the space's pages was over budget on this fixture. It now ranges
+/// `page_link_cache.space_id` (#5426) and stays gated until CI measures that.
+/// The fixture stamps every block's space before the rebuild that copies it
+/// into the cache.
 fn bench_list_page_links(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
 
@@ -2947,6 +3181,93 @@ fn bench_count_unlinked_references(c: &mut Criterion) {
     report_measurement_only(CMD, &acc);
 }
 
+/// #5426 — `filtered_blocks_query` filtering on mere presence of a key every
+/// block carries. PROBLEM TIER, report-only: an id-set pushdown reads every
+/// row with the key before its LIMIT, where a per-row `EXISTS` stops after one
+/// page, so this is the shape the pushdown makes slower.
+fn bench_filtered_blocks_query_broad_key(c: &mut Criterion) {
+    if problem_skipped("filtered_blocks_query (broad key, presence only) @ 100K") {
+        return;
+    }
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_filtered_blocks_broad_key"));
+    rt.block_on(seed_filtered_blocks_fixture(&pool));
+    rt.block_on(
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             SELECT id, ?, 'v' FROM blocks WHERE id <> ?",
+        )
+        .bind(FILTERED_BROAD_KEY)
+        .bind(SLO_SPACE_ID)
+        .execute(&pool),
+    )
+    .unwrap();
+    let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
+
+    let observed = rt
+        .block_on(filtered_blocks_query_inner(
+            &pool,
+            vec![key_presence_filter(FILTERED_BROAD_KEY)],
+            None,
+            None,
+            &scope,
+            None,
+            Some(FILTERED_PAGE_SIZE as i64),
+        ))
+        .unwrap();
+    assert_eq!(
+        observed.items.len(),
+        FILTERED_PAGE_SIZE,
+        "filtered_blocks_query broad key @ 100K: untimed probe must fill the page"
+    );
+    assert!(
+        observed.has_more,
+        "filtered_blocks_query broad key @ 100K: 100K matches must leave more pages"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("filtered_blocks_query_broad_key_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let scope = scope.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let scope = scope.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = filtered_blocks_query_inner(
+                        &pool,
+                        vec![key_presence_filter(FILTERED_BROAD_KEY)],
+                        None,
+                        None,
+                        &scope,
+                        None,
+                        Some(FILTERED_PAGE_SIZE as i64),
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    report_measurement_only(
+        "filtered_blocks_query (broad key, presence only) @ 100K",
+        &acc,
+    );
+}
+
 // ===========================================================================
 // Harness
 // ===========================================================================
@@ -2962,6 +3283,8 @@ criterion_group!(
     bench_export_page_markdown,
     bench_load_page_subtree,
     bench_list_pages_with_metadata,
+    bench_list_pages_with_metadata_namespace,
+    bench_filtered_blocks_query,
     bench_revert_ops_50op_at_100k,
     bench_create_block,
     // #2601 — graduated from the problem tier: the bounded-horizon
@@ -2981,6 +3304,7 @@ criterion_group!(
     bench_list_unlinked_references_collapsed,
     bench_list_backlinks_grouped_5k,
     bench_count_unlinked_references,
+    bench_filtered_blocks_query_broad_key,
     problem_tier_verdict,
 );
 

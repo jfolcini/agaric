@@ -2657,7 +2657,7 @@ export const searchHandlers = {
   },
 
   // AND-intersected property + tag query that the
-  // backend resolves entirely in SQL via composed `EXISTS` subqueries.
+  // backend resolves entirely in SQL, each filter a candidate id set.
   // The mock exists so FE tests can assert the IPC fires and observe
   // the post-intersection result; cursor pagination is intentionally
   // skipped (the backend semantic the audit cares about is "no silent

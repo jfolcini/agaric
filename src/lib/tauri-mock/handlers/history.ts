@@ -20,6 +20,7 @@ import {
   assertDeletePropertyHasPrior,
   notFoundRejection,
   pageRequestLimit,
+  payloadBlockId,
   resolveUndoTarget,
   reverseOpTypeFor,
   reversePayloadFor,
@@ -34,6 +35,7 @@ import {
   blockTags,
   blocks,
   opLog,
+  pageAliases,
   properties,
   pushOp,
 } from '@/lib/tauri-mock/seed'
@@ -118,7 +120,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000
 function opBlockId(entry: MockOpLogEntry): string | null {
   try {
     const payload = JSON.parse(entry.payload) as Record<string, unknown>
-    const id = payload['block_id']
+    const id = payloadBlockId(payload)
     return typeof id === 'string' ? id : null
   } catch {
     return null
@@ -411,7 +413,7 @@ export const historyHandlers = {
       // payload was a stash with no `from_text`, and the `edit_block` arm would
       // have WIPED the block's content.
       const reversePayload = reversePayloadFor(target)
-      applyRevertForOp(target, blocks, { properties, blockTags, attachments })
+      applyRevertForOp(target, blocks, { properties, blockTags, attachments, pageAliases })
 
       // #4868 — the genuine reverse type flagged `is_undo`, matching
       // `revert_ops_in_tx`'s `append_local_undo_op_in_tx`.
@@ -486,7 +488,7 @@ export const historyHandlers = {
     // `restore_block` on the target row alone where the backend cascades the
     // cohort. Two paths with different coverage is what produced that.
     const reversePayload = reversePayloadFor(target)
-    applyRevertForOp(target, blocks, { properties, blockTags, attachments })
+    applyRevertForOp(target, blocks, { properties, blockTags, attachments, pageAliases })
 
     // #4868 — the GENUINE reverse op type with `is_undo`, the way the backend
     // appends it, over a genuine reverse payload (#4870) whose `block_id` is
@@ -546,7 +548,7 @@ export const historyHandlers = {
     // thing the per-type chain this replaces spelled out for five op types and
     // stayed silent on for the property and tag ones.
     const redoPayload = reversePayloadFor(undoOp)
-    applyRevertForOp(undoOp, blocks, { properties, blockTags, attachments })
+    applyRevertForOp(undoOp, blocks, { properties, blockTags, attachments, pageAliases })
 
     // #4868 — `is_undo = 0`: a redo's effect is forward-equivalent
     // (`src-tauri/src/commands/history.rs:2401`), so it is itself undoable.
@@ -811,7 +813,7 @@ export const historyHandlers = {
       }
       const reverseOpType = reverseOpTypeFor(op)
       const reversePayload = reversePayloadFor(op)
-      applyRevertForOp(op, blocks, { properties, blockTags, attachments })
+      applyRevertForOp(op, blocks, { properties, blockTags, attachments, pageAliases })
       const newOp = pushOp(reverseOpType, { ...reversePayload, reverted: op }, true)
       results.push({
         reversed_op: { device_id: op.device_id, seq: op.seq },

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page FROM page_link_cache",
+  "query": "SELECT source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page, space_id FROM page_link_cache",
   "describe": {
     "columns": [
       {
@@ -68,6 +68,17 @@
             "name": "tgt_is_page"
           }
         }
+      },
+      {
+        "name": "space_id",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "page_link_cache",
+            "name": "space_id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -79,8 +90,9 @@
       false,
       false,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "14910de5c1314bdc8c2ababc96b2bc33eda2551ebbffec17dcb64467e6a0f391"
+  "hash": "cbb93e09b9d1fb140be11ebb8d189922e8fb732e6364a7cd3c68a754982b6a20"
 }

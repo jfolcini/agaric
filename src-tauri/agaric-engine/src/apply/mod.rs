@@ -30,10 +30,10 @@
 // old `crate::…` ones.
 use agaric_core::error::AppError;
 use agaric_store::op::{
-    AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
-    DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpType,
-    PurgeBlockPayload, RemoveTagPayload, RenameAttachmentPayload, RestoreBlockPayload,
-    SetPropertyPayload,
+    AddAttachmentPayload, AddPageAliasPayload, AddTagPayload, CreateBlockPayload,
+    DeleteAttachmentPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
+    MoveBlockPayload, OpType, PurgeBlockPayload, RemovePageAliasPayload, RemoveTagPayload,
+    RenameAttachmentPayload, RestoreBlockPayload, SetPropertyPayload,
 };
 use agaric_store::op_log::OpRecord;
 use agaric_store::tag_inheritance;

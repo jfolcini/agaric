@@ -7,7 +7,7 @@ use agaric_core::error::AppError;
 // ---------------------------------------------------------------------------
 
 /// Push the diff down to SQLite: find the page rows that are new, retitled,
-/// or still at migration 0122's unfilled defaults, compute their keys in Rust
+/// or still at migration 0123's unfilled defaults, compute their keys in Rust
 /// (an NFKD `title_sort_key` has no SQL spelling), UPSERT them, then sweep
 /// orphans. Only the stale rows cross the process boundary.
 ///
@@ -265,7 +265,7 @@ pub(crate) async fn recompute_all_pages_cache_counts(
 /// Incremental rebuild of `pages_cache`.
 ///
 /// 1. UPSERT the rows that are new, retitled, or still unfilled since
-///    migration 0122 (see `apply_sort_merge_rebuild`). Unchanged hits are
+///    migration 0123 (see `apply_sort_merge_rebuild`). Unchanged hits are
 ///    no-ops, so their `updated_at` is preserved.
 /// 2. `DELETE FROM pages_cache WHERE page_id NOT IN (live page IDs)` —
 ///    sweeps cache rows whose source block was soft-deleted, hard

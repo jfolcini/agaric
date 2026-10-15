@@ -40,6 +40,8 @@ const OP_TYPES = [
   { value: 'move_block', labelKey: 'history.opTypeMove' },
   { value: 'add_tag', labelKey: 'history.opTypeAddTag' },
   { value: 'remove_tag', labelKey: 'history.opTypeRemoveTag' },
+  { value: 'add_page_alias', labelKey: 'history.opTypeAddPageAlias' },
+  { value: 'remove_page_alias', labelKey: 'history.opTypeRemovePageAlias' },
   { value: 'set_property', labelKey: 'history.opTypeSetProperty' },
   { value: 'delete_property', labelKey: 'history.opTypeDeleteProperty' },
   { value: 'add_attachment', labelKey: 'history.opTypeAddAttachment' },

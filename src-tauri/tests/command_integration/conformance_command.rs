@@ -261,11 +261,10 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     ),
     // #5057 — `page_aliases` is outside the snapshot's five arrays too, so the
     // `get_page_aliases` step observes the table. The RETURN is its own
-    // evidence: a LIST OF BARE STRINGS naming the rows the write actually
-    // INSERTED, which is narrower than what the caller passed — an entry that
-    // trims to nothing, and one another page already holds, are both dropped
-    // by the command and so never appear here.
-    ("set_page_aliases", HEADED_ID_KEY, &["inserted"], &[]),
+    // evidence: a LIST OF BARE STRINGS naming the aliases the page holds after
+    // the write, which is narrower than what the caller passed — an entry that
+    // trims to nothing, and a second spelling of one alias, are dropped.
+    ("set_page_aliases", HEADED_ID_KEY, &["alias"], &[]),
     // #5057 — op-log maintenance. `CompactionResult` is one count, and on this
     // corpus it is deterministically zero: the cutoff is `now() - retention`
     // with a seven-day floor, and every op a fixture replays is minted during
@@ -750,6 +749,8 @@ pub(super) async fn apply_op_via_command(
         "set_page_aliases" => to_json(
             set_page_aliases_inner(
                 pool,
+                DEV,
+                mat,
                 arg_label_id("pageId")
                     .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'pageId'"))
                     .as_str(),

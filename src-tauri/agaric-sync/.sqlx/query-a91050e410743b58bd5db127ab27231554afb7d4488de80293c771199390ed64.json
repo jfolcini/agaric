@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE page_aliases SET alias = ?1 WHERE page_id = ?2 AND alias = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a91050e410743b58bd5db127ab27231554afb7d4488de80293c771199390ed64"
+}

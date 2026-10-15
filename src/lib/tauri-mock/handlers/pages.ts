@@ -341,6 +341,67 @@ function frontMatterWrites(
   }
 }
 
+/** `aliases` trimmed, without empty entries or a second spelling of one alias (`wanted_aliases`). */
+function wantedAliases(aliases: readonly string[]): string[] {
+  const keys = new Set<string>()
+  const out: string[] = []
+  for (const raw of aliases) {
+    const alias = raw.trim()
+    if (alias === '' || keys.has(foldAsciiUppercase(alias))) continue
+    keys.add(foldAsciiUppercase(alias))
+    out.push(alias)
+  }
+  return out
+}
+
+/** The page other than `pageId` holding `alias` (`page_aliases.alias` is NOCASE), if any. */
+function aliasHolder(alias: string, pageId: string): string | null {
+  for (const [owner, held] of pageAliases) {
+    if (owner === pageId) continue
+    if (held.some((h) => foldAsciiUppercase(h) === foldAsciiUppercase(alias))) return owner
+  }
+  return null
+}
+
+/** `require_live_page`: the alias writes probe for a live page block first (#661). */
+function requireLivePage(pageId: string): void {
+  const page = blocks.get(pageId)
+  if (!page || page['block_type'] !== 'page' || page['deleted_at']) {
+    throw notFoundRejection('page not found')
+  }
+}
+
+/** The aliases a write of `wanted` removes (in `ORDER BY alias` order) and adds. */
+function aliasEdit(pageId: string, wanted: readonly string[]) {
+  const held = (pageAliases.get(pageId) ?? []).toSorted(compareNocase)
+  return {
+    removed: held.filter((alias) => !wanted.includes(alias)),
+    added: wanted.filter((alias) => !held.includes(alias)),
+  }
+}
+
+/**
+ * `write_page_aliases_in_tx`: a `remove_page_alias` op per alias that goes,
+ * then an `add_page_alias` per alias that comes, skipping one another page
+ * holds. Returns the ops and the skipped aliases.
+ */
+function writePageAliases(pageId: string, wanted: readonly string[]) {
+  requireLivePage(pageId)
+  const { removed, added } = aliasEdit(pageId, wanted)
+  const taken = added.filter((alias) => aliasHolder(alias, pageId) !== null)
+  const ops = [
+    ...removed.map((alias) => pushOp('remove_page_alias', { page_id: pageId, alias })),
+    ...added
+      .filter((alias) => !taken.includes(alias))
+      .map((alias) => pushOp('add_page_alias', { page_id: pageId, alias })),
+  ]
+  pageAliases.set(
+    pageId,
+    wanted.filter((alias) => !taken.includes(alias)),
+  )
+  return { opRefs: ops.map((op) => ({ device_id: op.device_id, seq: op.seq })), taken }
+}
+
 /**
  * Write `writes` to `pageId` through the property, alias and tag commands: a
  * tag name no tag of the space has is created. Returns the counts.
@@ -369,8 +430,9 @@ function writeFrontMatter(
     out.opRefs.push(...(row?.op_refs ?? []))
   }
   if (writes.aliases !== null) {
-    const kept = pagesHandlers.set_page_aliases({ pageId, aliases: writes.aliases }) as string[]
-    for (const alias of writes.aliases.filter((wanted) => !kept.includes(wanted))) {
+    const written = writePageAliases(pageId, wantedAliases(writes.aliases))
+    out.opRefs.push(...written.opRefs)
+    for (const alias of written.taken) {
       out.warnings.push(`alias '${alias}' is already used by another page; not applied to the page`)
     }
   }
@@ -1313,33 +1375,19 @@ export const pagesHandlers = {
   set_page_aliases: (args) => {
     const a = args as Record<string, unknown>
     const pid = a['pageId'] as string
-    const page = blocks.get(pid)
-    if (!page || page['block_type'] !== 'page' || page['deleted_at']) {
-      // `set_page_aliases_inner` probes for a live page block inside its
-      // `BEGIN IMMEDIATE` and answers `NotFound` (#661).
-      throw notFoundRejection('page not found')
+    const wanted = wantedAliases(a['aliases'] as string[])
+    requireLivePage(pid)
+    // `set_page_aliases_inner` refuses the whole edit, nothing written, when
+    // another page holds one of the aliases.
+    const taken = aliasEdit(pid, wanted).added.find((alias) => aliasHolder(alias, pid) !== null)
+    if (taken !== undefined) {
+      throw appErrorRejection({
+        kind: 'validation',
+        code: 'DuplicatePageAlias',
+        message: `alias '${taken}' is already used by another page`,
+      })
     }
-    // `page_aliases.alias` is UNIQUE COLLATE NOCASE across ALL pages and the
-    // write is `INSERT OR IGNORE`, so an alias another page already holds is
-    // skipped SILENTLY and left out of the returned list. This page's own rows
-    // are excluded because the backend DELETEs them first, which is also why
-    // re-listing an alias the page already had is not a self-conflict.
-    const taken = new Set<string>()
-    for (const [owner, held] of pageAliases) {
-      if (owner === pid) continue
-      for (const alias of held) taken.add(foldAsciiUppercase(alias))
-    }
-    const kept: string[] = []
-    for (const raw of a['aliases'] as string[]) {
-      // Trimmed, and an entry that trims to nothing is skipped — so neither
-      // reaches the table nor the answer.
-      const alias = raw.trim()
-      if (alias === '' || taken.has(foldAsciiUppercase(alias))) continue
-      taken.add(foldAsciiUppercase(alias))
-      kept.push(alias)
-    }
-    pageAliases.set(pid, kept)
-    return kept
+    return { aliases: wanted, op_refs: writePageAliases(pid, wanted).opRefs }
   },
 
   get_page_aliases: (args) => {

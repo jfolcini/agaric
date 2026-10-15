@@ -108,10 +108,14 @@ ULIDs are normalised to uppercase Crockford-Base32 in the preimage (and in every
 | `delete_property` | Removes a property. |
 | `add_tag` | Adds a tag association. |
 | `remove_tag` | Removes a tag association. |
+| `add_page_alias` | Gives a page an alias; refused on the write path when another page holds it. |
+| `remove_page_alias` | Takes an alias off a page. |
 | `add_attachment` | Records an attachment binding (file blob managed separately). |
 | `delete_attachment` | Removes the binding. |
 
 `block_links`, `page_link_cache`, `block_tag_refs`, `block_tag_inherited` are caches, **never op types** — they are rebuilt deterministically from the underlying op-induced state.
+
+**Page aliases are ops (#5387).** `set_page_aliases` keeps its full-list signature: it diffs the list against the page's aliases and appends a `remove_page_alias` per alias that goes, then an `add_page_alias` per alias that comes, in one `CommandTx`, so one Undo reverts the edit and page history lists it; *Edit as Markdown* and import write the same ops. `page_aliases` is the projection of the engine's alias map, unique across pages under `NOCASE`: an alias another page holds is refused on the write path, and when a merge leaves two pages claiming one alias the lower page id (the older page) holds the row on every device, the other page's engine entry staying unprojected and logged. Rows written before #5387 are backfilled at boot as `add_page_alias` ops under the housekeeping origin (`repair::page_aliases`).
 
 **Draft lifecycle.** `block_drafts` is the only mutable scratch table — it stores the in-flight content of focused blocks so a crash mid-edit doesn't lose work. `INSERT OR REPLACE` semantics; entries are reconciled at boot (see Recovery).
 
@@ -157,7 +161,7 @@ Rebuilt by the materializer; never read-through:
 | Cache | What it stores | Triggered by | Serves stale during retry window? |
 | --- | --- | --- | --- |
 | `block_links` | `[[ULID]]` (page-link) and `((ULID))` (block-ref) tokens parsed out of block content; `kind` (`page_link` / `block_ref`) records which form (0119). `#[ULID]` inline tag refs are NOT here — they go to `block_tag_refs`. | `edit_block`, `create_block` (content scan) | Yes — `ReindexBlockLinks` is a persisted per-block task |
-| `page_link_cache` | Page-level rollup `(source_page, target_page, edge_count)` | derived from `block_links` | Yes — `RebuildPageLinkCache` is a persisted global task |
+| `page_link_cache` | Page-level rollup `(source_page, target_page, edge_count)`, plus the liveness flags and the `space_id` both pages share (NULL across spaces) that the graph read filters on | derived from `block_links`; a `space` op rebuilds it | Yes — `RebuildPageLinkCache` is a persisted global task |
 | `block_tag_refs` | Inline `#[ULID]` references | content scan, separate from explicit tag membership | Yes — `ReindexBlockTagRefs` is a persisted per-block task |
 | `block_tag_inherited` | Materialized ancestor-tag inheritance | `add_tag` / `remove_tag` + tree moves | Yes — `RebuildTagInheritanceCache` is a persisted global task |
 | `tags_cache` | Per-tag aggregate (usage, descendant count) | tag-touching ops | Yes — `RebuildTagsCache` is a persisted global task |

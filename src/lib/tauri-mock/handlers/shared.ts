@@ -42,6 +42,7 @@ import {
   fakeId,
   type MockOpLogEntry,
   opLog,
+  pageAliases,
   properties,
   propertyDefs,
   pushOp,
@@ -1321,7 +1322,7 @@ function rawOpLogLastEditedAt(blockId: string): string | null {
       } catch {
         continue
       }
-      const id = payload['block_id']
+      const id = payloadBlockId(payload)
       if (typeof id !== 'string') continue
       const cur = map.get(id)
       if (cur === undefined || o.created_at > cur) map.set(id, o.created_at)
@@ -1914,6 +1915,14 @@ function hasPriorPropertyValue(op: MockOpLogEntry): boolean {
 }
 
 /**
+ * The `op_log.block_id` an op's payload names, as `OpPayload::block_id()`
+ * reads it: an alias op names its page as `page_id` (#5387).
+ */
+export function payloadBlockId(payload: Record<string, unknown>): unknown {
+  return payload['block_id'] ?? payload['page_id']
+}
+
+/**
  * Reverse op_type stamped on the appended reverse op. Mirrors the per-type
  * mapping in `undo_page_op` (block-row ops), extended to the property/tag ops
  * the #2468 migration makes undoable by ref.
@@ -1952,6 +1961,12 @@ export function reverseOpTypeFor(op: MockOpLogEntry): string {
     }
     case 'remove_tag': {
       return 'add_tag'
+    }
+    case 'add_page_alias': {
+      return 'remove_page_alias'
+    }
+    case 'remove_page_alias': {
+      return 'add_page_alias'
     }
     // #5057 — the attachment add/delete pair reverses into each other, which
     // is what makes an undone add redoable. Without these arms both fell to
@@ -2079,6 +2094,10 @@ export function reversePayloadFor(target: MockOpLogEntry): Record<string, unknow
     case 'remove_tag': {
       return { block_id: blockId, tag_id: p['tag_id'] }
     }
+    case 'add_page_alias':
+    case 'remove_page_alias': {
+      return { page_id: p['page_id'], alias: p['alias'] }
+    }
     default: {
       // The soft-delete lifecycle trio reverses into `delete_block` /
       // `restore_block`, both of which carry the id alone.
@@ -2204,7 +2223,7 @@ export function applyUndoForTarget(effective: MockOpLogEntry): Record<string, un
   const reverseOpType = reverseOpTypeFor(effective)
   // Before the revert: see `reversePayloadFor`.
   const reversePayload = reversePayloadFor(effective)
-  applyRevertForOp(effective, blocks, { properties, blockTags, attachments })
+  applyRevertForOp(effective, blocks, { properties, blockTags, attachments, pageAliases })
   const newOp = pushOp(reverseOpType, { ...reversePayload, reversed: effective }, true)
   return {
     reversed_op: { device_id: effective.device_id, seq: effective.seq },

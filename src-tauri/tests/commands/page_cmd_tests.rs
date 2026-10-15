@@ -9,12 +9,19 @@ use agaric_store::space::{SpaceId, SpaceScope};
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_page_aliases_creates_and_returns_aliases() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE-1", "page", "My Page", None, Some(0)).await;
 
-    let inserted = set_page_aliases_inner(&pool, "PAGE-1", vec!["Alpha".into(), "Beta".into()])
-        .await
-        .unwrap();
+    let inserted = set_page_aliases_inner(
+        &pool,
+        DEV,
+        &mat,
+        "PAGE-1",
+        vec!["Alpha".into(), "Beta".into()],
+    )
+    .await
+    .unwrap();
 
     assert_eq!(inserted.len(), 2, "should insert 2 aliases");
     assert!(
@@ -38,17 +45,26 @@ async fn set_page_aliases_creates_and_returns_aliases() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_page_aliases_replaces_existing() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE-2", "page", "Page Two", None, Some(0)).await;
 
     // Set initial aliases
-    set_page_aliases_inner(&pool, "PAGE-2", vec!["Old1".into(), "Old2".into()])
-        .await
-        .unwrap();
+    set_page_aliases_inner(
+        &pool,
+        DEV,
+        &mat,
+        "PAGE-2",
+        vec!["Old1".into(), "Old2".into()],
+    )
+    .await
+    .unwrap();
 
     // Replace with new aliases
     let inserted = set_page_aliases_inner(
         &pool,
+        DEV,
+        &mat,
         "PAGE-2",
         vec!["New1".into(), "New2".into(), "New3".into()],
     )
@@ -74,11 +90,14 @@ async fn set_page_aliases_replaces_existing() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_page_aliases_skips_empty_and_duplicates() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE-3", "page", "Page Three", None, Some(0)).await;
 
     let inserted = set_page_aliases_inner(
         &pool,
+        DEV,
+        &mat,
         "PAGE-3",
         vec![
             "  ".into(),   // whitespace only — skipped
@@ -103,7 +122,7 @@ async fn set_page_aliases_skips_empty_and_duplicates() {
     );
 }
 
-// `set_page_aliases_inner` wraps DELETE + INSERT in a single
+// `set_page_aliases_inner` appends its removes and adds in a single
 // `BEGIN IMMEDIATE` transaction so that a mid-loop failure rolls the
 // page back to its prior alias set instead of leaving a partial
 // replacement. The three tests below exercise:
@@ -113,20 +132,28 @@ async fn set_page_aliases_skips_empty_and_duplicates() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_page_aliases_atomic_replaces_full_set() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE-TX-1", "page", "Page Tx 1", None, Some(0)).await;
 
     // Initial set: A, B, C
-    set_page_aliases_inner(&pool, "PAGE-TX-1", vec!["A".into(), "B".into(), "C".into()])
-        .await
-        .unwrap();
+    set_page_aliases_inner(
+        &pool,
+        DEV,
+        &mat,
+        "PAGE-TX-1",
+        vec!["A".into(), "B".into(), "C".into()],
+    )
+    .await
+    .unwrap();
     let initial = get_page_aliases_inner(&pool, "PAGE-TX-1").await.unwrap();
     assert_eq!(initial, vec!["A", "B", "C"], "initial set should be A,B,C");
 
     // Replace with: D, E
-    let inserted = set_page_aliases_inner(&pool, "PAGE-TX-1", vec!["D".into(), "E".into()])
-        .await
-        .unwrap();
+    let inserted =
+        set_page_aliases_inner(&pool, DEV, &mat, "PAGE-TX-1", vec!["D".into(), "E".into()])
+            .await
+            .unwrap();
     assert_eq!(inserted.len(), 2, "should insert exactly 2 new aliases");
 
     // Final state must be EXACTLY D, E — no leftovers from the prior set.
@@ -152,10 +179,11 @@ async fn set_page_aliases_atomic_replaces_full_set() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_page_aliases_empty_clears_all() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE-TX-2", "page", "Page Tx 2", None, Some(0)).await;
 
-    set_page_aliases_inner(&pool, "PAGE-TX-2", vec!["A".into(), "B".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE-TX-2", vec!["A".into(), "B".into()])
         .await
         .unwrap();
     assert_eq!(
@@ -165,7 +193,7 @@ async fn set_page_aliases_empty_clears_all() {
     );
 
     // Pass an empty list — should clear the set entirely.
-    let inserted = set_page_aliases_inner(&pool, "PAGE-TX-2", vec![])
+    let inserted = set_page_aliases_inner(&pool, DEV, &mat, "PAGE-TX-2", vec![])
         .await
         .unwrap();
     assert!(inserted.is_empty(), "empty input should insert nothing");
@@ -180,16 +208,17 @@ async fn set_page_aliases_empty_clears_all() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_page_aliases_in_transaction() {
     // Regression for if a per-row INSERT fails mid-loop, the
-    // entire DELETE + INSERT sequence must roll back so the page
+    // entire remove + add sequence must roll back so the page
     // retains its original alias set. We force the failure with a
     // temporary BEFORE-INSERT trigger that calls RAISE(ABORT) on a
     // sentinel alias value.
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE-TX-3", "page", "Page Tx 3", None, Some(0)).await;
 
     // Prior set: A, B
-    set_page_aliases_inner(&pool, "PAGE-TX-3", vec!["A".into(), "B".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE-TX-3", vec!["A".into(), "B".into()])
         .await
         .unwrap();
     let before = get_page_aliases_inner(&pool, "PAGE-TX-3").await.unwrap();
@@ -214,6 +243,8 @@ async fn set_page_aliases_in_transaction() {
     // and the page would be left with just C (or empty).
     let result = set_page_aliases_inner(
         &pool,
+        DEV,
+        &mat,
         "PAGE-TX-3",
         vec!["C".into(), "__FAIL__".into(), "D".into()],
     )
@@ -263,10 +294,18 @@ async fn set_page_aliases_in_transaction() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_page_aliases_rejects_nonexistent_page() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     // No block with this id exists. The in-tx existence probe must
     // reject it before any DELETE/INSERT runs.
-    let result = set_page_aliases_inner(&pool, "PAGE-NONE-1", vec!["X".into(), "Y".into()]).await;
+    let result = set_page_aliases_inner(
+        &pool,
+        DEV,
+        &mat,
+        "PAGE-NONE-1",
+        vec!["X".into(), "Y".into()],
+    )
+    .await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
@@ -300,12 +339,13 @@ async fn set_page_aliases_rejects_tombstoned_page() {
     // probe inside the IMMEDIATE tx, the deleted page is never a valid
     // target and no aliases are written.
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE-TOMB-1", "page", "Doomed", None, Some(0)).await;
 
     // Seed a prior alias set so we can prove the DELETE never runs either
     // (the probe aborts the tx before touching `page_aliases`).
-    set_page_aliases_inner(&pool, "PAGE-TOMB-1", vec!["before".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE-TOMB-1", vec!["before".into()])
         .await
         .unwrap();
 
@@ -316,7 +356,8 @@ async fn set_page_aliases_rejects_tombstoned_page() {
         .unwrap();
 
     // Attempt to replace aliases on the now-deleted page.
-    let result = set_page_aliases_inner(&pool, "PAGE-TOMB-1", vec!["after".into()]).await;
+    let result =
+        set_page_aliases_inner(&pool, DEV, &mat, "PAGE-TOMB-1", vec!["after".into()]).await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
@@ -336,11 +377,14 @@ async fn set_page_aliases_rejects_tombstoned_page() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_page_aliases_returns_sorted_list() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE-4", "page", "Page Four", None, Some(0)).await;
 
     set_page_aliases_inner(
         &pool,
+        DEV,
+        &mat,
         "PAGE-4",
         vec!["Zulu".into(), "Alpha".into(), "Mike".into()],
     )
@@ -358,10 +402,11 @@ async fn get_page_aliases_returns_sorted_list() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn resolve_page_by_alias_case_insensitive() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE-5", "page", "Page Five", None, Some(0)).await;
 
-    set_page_aliases_inner(&pool, "PAGE-5", vec!["MyAlias".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE-5", vec!["MyAlias".into()])
         .await
         .unwrap();
 
@@ -420,18 +465,19 @@ async fn resolve_page_by_alias_case_insensitive() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_aliases_by_prefix_inner_returns_matching() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE_W1", "page", "Work One", None, Some(0)).await;
     insert_block(&pool, "PAGE_W2", "page", "Work Two", None, Some(0)).await;
     insert_block(&pool, "PAGE_P", "page", "Personal", None, Some(0)).await;
 
-    set_page_aliases_inner(&pool, "PAGE_W1", vec!["work-meeting".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_W1", vec!["work-meeting".into()])
         .await
         .unwrap();
-    set_page_aliases_inner(&pool, "PAGE_W2", vec!["work-email".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_W2", vec!["work-email".into()])
         .await
         .unwrap();
-    set_page_aliases_inner(&pool, "PAGE_P", vec!["personal".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_P", vec!["personal".into()])
         .await
         .unwrap();
 
@@ -454,9 +500,10 @@ async fn list_page_aliases_by_prefix_inner_returns_matching() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_aliases_by_prefix_inner_case_insensitive() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE_CI", "page", "Case Page", None, Some(0)).await;
-    set_page_aliases_inner(&pool, "PAGE_CI", vec!["MyAlias".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_CI", vec!["MyAlias".into()])
         .await
         .unwrap();
 
@@ -473,14 +520,15 @@ async fn list_page_aliases_by_prefix_inner_case_insensitive() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_aliases_by_prefix_inner_excludes_deleted_pages() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE_LIVE", "page", "Alive", None, Some(0)).await;
     insert_block(&pool, "PAGE_GONE", "page", "Tombstoned", None, Some(0)).await;
 
-    set_page_aliases_inner(&pool, "PAGE_LIVE", vec!["zoo".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_LIVE", vec!["zoo".into()])
         .await
         .unwrap();
-    set_page_aliases_inner(&pool, "PAGE_GONE", vec!["zoom".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_GONE", vec!["zoom".into()])
         .await
         .unwrap();
 
@@ -508,13 +556,14 @@ async fn list_page_aliases_by_prefix_inner_excludes_deleted_pages() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_aliases_by_prefix_inner_respects_limit() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     for i in 0..5 {
         let id = format!("PAGE_L{i}");
         insert_block(&pool, &id, "page", &format!("Limit {i}"), None, Some(0)).await;
         // Suffix the index so the aliases sort deterministically by
         // `length, alias` (all length 7 → alphabetical secondary).
-        set_page_aliases_inner(&pool, &id, vec![format!("limit-{i}")])
+        set_page_aliases_inner(&pool, DEV, &mat, &id, vec![format!("limit-{i}")])
             .await
             .unwrap();
     }
@@ -533,8 +582,9 @@ async fn list_page_aliases_by_prefix_inner_respects_limit() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_aliases_by_prefix_inner_rejects_out_of_range_limit_r1() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
     insert_block(&pool, "PAGE_R1", "page", "R1", None, Some(0)).await;
-    set_page_aliases_inner(&pool, "PAGE_R1", vec!["r1-alias".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_R1", vec!["r1-alias".into()])
         .await
         .unwrap();
 
@@ -571,18 +621,19 @@ async fn list_page_aliases_by_prefix_inner_orders_shortest_first() {
     // ORDER BY length(alias), alias — exact-typed alias (the shortest
     // one matching the prefix) bubbles to the top, then alphabetical.
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE_A", "page", "Page A", None, Some(0)).await;
     insert_block(&pool, "PAGE_B", "page", "Page B", None, Some(0)).await;
     insert_block(&pool, "PAGE_C", "page", "Page C", None, Some(0)).await;
 
-    set_page_aliases_inner(&pool, "PAGE_A", vec!["pp".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_A", vec!["pp".into()])
         .await
         .unwrap();
-    set_page_aliases_inner(&pool, "PAGE_B", vec!["ppp".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_B", vec!["ppp".into()])
         .await
         .unwrap();
-    set_page_aliases_inner(&pool, "PAGE_C", vec!["pproject".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_C", vec!["pproject".into()])
         .await
         .unwrap();
 
@@ -607,14 +658,21 @@ async fn list_page_aliases_by_prefix_inner_matches_substring() {
     // user with an alias `personal-projects` who types `[[proj` sees the
     // page "Personal Projects" (via FTS title match) but not the alias.
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE_PP", "page", "Personal Projects", None, Some(0)).await;
     insert_block(&pool, "PAGE_X", "page", "Unrelated", None, Some(0)).await;
 
-    set_page_aliases_inner(&pool, "PAGE_PP", vec!["personal-projects".into()])
-        .await
-        .unwrap();
-    set_page_aliases_inner(&pool, "PAGE_X", vec!["other".into()])
+    set_page_aliases_inner(
+        &pool,
+        DEV,
+        &mat,
+        "PAGE_PP",
+        vec!["personal-projects".into()],
+    )
+    .await
+    .unwrap();
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_X", vec!["other".into()])
         .await
         .unwrap();
 
@@ -648,14 +706,15 @@ async fn list_page_aliases_by_prefix_inner_escapes_like_metachars() {
     // query `a_b` would also match `axb`, `a-b`, etc. — the test pins
     // the escape behaviour so a future refactor can't silently drop it.
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE_LIT", "page", "Literal", None, Some(0)).await;
     insert_block(&pool, "PAGE_OTH", "page", "Other", None, Some(0)).await;
 
-    set_page_aliases_inner(&pool, "PAGE_LIT", vec!["a_b".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_LIT", vec!["a_b".into()])
         .await
         .unwrap();
-    set_page_aliases_inner(&pool, "PAGE_OTH", vec!["axb".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_OTH", vec!["axb".into()])
         .await
         .unwrap();
 
@@ -677,14 +736,15 @@ async fn list_page_aliases_by_prefix_inner_scopes_to_active_space() {
     // Only aliases whose page lives in the scope's space may surface, so
     // cross-space aliases don't leak into the picker popup.
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "PAGE_SP_A", "page", "In Space A", None, Some(0)).await;
     insert_block(&pool, "PAGE_SP_B", "page", "In Space B", None, Some(0)).await;
 
-    set_page_aliases_inner(&pool, "PAGE_SP_A", vec!["alpha-a".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_SP_A", vec!["alpha-a".into()])
         .await
         .unwrap();
-    set_page_aliases_inner(&pool, "PAGE_SP_B", vec!["alpha-b".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, "PAGE_SP_B", vec!["alpha-b".into()])
         .await
         .unwrap();
 
@@ -8600,13 +8660,13 @@ async fn resolve_page_by_alias_active_scope_excludes_other_spaces() {
     assign_to_space(&pool, "PAGE_A_ALIAS", TEST_SPACE_ID).await;
     assign_to_space(&pool, "PAGE_B_ALIAS", TEST_SPACE_B_ID).await;
 
-    // Both pages claim the same alias text. `INSERT OR IGNORE` on the
-    // unique `page_aliases.alias` column means only the first writer
-    // lands — that's enough for this test: the scope filter must surface
-    // the matching alias's page only when it belongs to that space.
+    // Both pages claim the same alias text. The unique
+    // `page_aliases.alias` column means only one writer lands — that's
+    // enough for this test: the scope filter must surface the matching
+    // alias's page only when it belongs to that space.
     // (For the Active(B) branch we also write the alias under PAGE_B
     // directly so there's a row to match — bypass `set_page_aliases_inner`'s
-    // first-writer-wins behaviour by inserting both alias rows here.)
+    // refusal of a taken alias by inserting both alias rows here.)
     sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
         .bind("PAGE_A_ALIAS")
         .bind("shared-alias-A")
@@ -8679,6 +8739,16 @@ async fn resolve_page_by_alias_active_scope_excludes_other_spaces() {
 // list_page_links (F-33)
 // ======================================================================
 
+/// [`assign_all_to_test_space`] for a graph fixture whose links are already
+/// cached: the raw space stamp skips the `RebuildPageLinkCache` a `space` op
+/// dispatches, and the graph read filters on the cached `space_id` (#5426).
+async fn assign_all_to_test_space_for_graph(pool: &SqlitePool) {
+    assign_all_to_test_space(pool).await;
+    agaric_store::cache::rebuild_page_link_cache(pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_links_returns_edges_between_pages() {
     let (pool, _dir) = test_pool().await;
@@ -8732,7 +8802,7 @@ async fn list_page_links_returns_edges_between_pages() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -8807,7 +8877,7 @@ async fn list_page_links_excludes_deleted_pages() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -8936,7 +9006,7 @@ async fn list_page_links_excludes_self_links() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -9032,7 +9102,7 @@ async fn list_page_links_deduplicates_multiple_content_links() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -9110,7 +9180,7 @@ async fn list_page_links_single_link_has_ref_count_one() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -9181,7 +9251,7 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
         .unwrap();
 
     // Verify link exists before deletion
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links_before = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -9392,13 +9462,14 @@ async fn list_page_links_optimized_matches_oracle() {
     // With creates now maintaining the roll-up, the cache is non-empty, the lazy
     // path correctly does not fire, and the fixture has to settle its own
     // hand-written edges instead of relying on a bug to do it.
+    // The space goes on first: the rebuild copies it into each edge (#5426).
+    assign_all_to_test_space(&pool).await;
     mat.enqueue_background(agaric_lib::materializer::MaterializeTask::RebuildPageLinkCache)
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
 
     // -- Compare optimized vs oracle --
-    assign_all_to_test_space(&pool).await;
     let mut optimized = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -9588,7 +9659,7 @@ async fn list_page_links_filters_by_tag_ids() {
 
     // Filter by TAG_A — only the edge to p_a should remain.
     let tag_ids = vec![tag_a.id.to_string()];
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links = list_page_links_inner(&pool, &test_space_scope(), Some(&tag_ids))
         .await
         .unwrap()
@@ -9691,7 +9762,7 @@ async fn list_page_links_no_tag_filter_returns_all() {
         .await
         .unwrap();
 
-    assign_all_to_test_space(&pool).await;
+    assign_all_to_test_space_for_graph(&pool).await;
     let links_none = list_page_links_inner(&pool, &test_space_scope(), None)
         .await
         .unwrap()
@@ -11297,7 +11368,7 @@ async fn import_resolves_a_name_by_exact_title_then_case_then_alias_then_creates
     let mat = Materializer::new(pool.clone());
     let plan = dup_page(&pool, &mat, "Project Plan").await;
     let roadmap = dup_page(&pool, &mat, "Roadmap").await;
-    set_page_aliases_inner(&pool, roadmap.as_str(), vec!["rm".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, roadmap.as_str(), vec!["rm".into()])
         .await
         .unwrap();
     let foo = dup_page(&pool, &mat, "Foo").await;
@@ -11426,7 +11497,7 @@ async fn import_does_not_adopt_an_empty_page_matched_only_by_alias() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let roadmap = dup_page(&pool, &mat, "Roadmap").await;
-    set_page_aliases_inner(&pool, roadmap.as_str(), vec!["Plan".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, roadmap.as_str(), vec!["Plan".into()])
         .await
         .unwrap();
     settle(&mat).await;
@@ -11477,7 +11548,7 @@ async fn import_into_an_adopted_page_keeps_its_aliases_without_warning() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let b = dup_page(&pool, &mat, "B").await;
-    set_page_aliases_inner(&pool, b.as_str(), vec!["Bee".into()])
+    set_page_aliases_inner(&pool, DEV, &mat, b.as_str(), vec!["Bee".into()])
         .await
         .unwrap();
     settle(&mat).await;

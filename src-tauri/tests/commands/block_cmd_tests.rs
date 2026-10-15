@@ -8810,9 +8810,96 @@ async fn move_blocks_to_space_rescopes_link_and_tag_counts_5275() {
     );
 }
 
+/// #5426 — the graph follows a page between spaces. `page_link_cache.space_id`
+/// holds the space an edge's two pages share, and the scoped graph read filters
+/// on it alone, so the `space` op's dispatch must rebuild the cache: without
+/// that, a moved page's edges keep answering for the space it left.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_moves_the_graph_edges_5426() {
+    const SPACE_A: &str = "MBS10_SPACE_A";
+    const SPACE_B: &str = "MBS10_SPACE_B";
+
+    async fn graph(pool: &SqlitePool, space_id: &str) -> Vec<(String, String)> {
+        let mut edges: Vec<(String, String)> = list_page_links_inner(
+            pool,
+            &SpaceScope::Active(SpaceId::from_trusted(space_id)),
+            None,
+        )
+        .await
+        .unwrap()
+        .edges
+        .into_iter()
+        .map(|l| (l.source_id.into(), l.target_id.into()))
+        .collect();
+        edges.sort();
+        edges
+    }
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space(&pool, SPACE_A).await;
+    seed_space(&pool, SPACE_B).await;
+    let in_a = SpaceScope::Active(SpaceId::from_trusted(SPACE_A));
+    let create = async |block_type: &str, content: String, parent: Option<BlockId>| {
+        create_block_inner_with_space(
+            &pool,
+            DEV,
+            &mat,
+            block_type.into(),
+            content,
+            parent,
+            None,
+            &in_a,
+            None,
+        )
+        .await
+        .unwrap()
+        .id
+    };
+
+    // Page P links to page T, both in A.
+    let target = create("page", "T".into(), None).await;
+    let moving = create("page", "P".into(), None).await;
+    create("content", format!("see [[{target}]]"), Some(moving.clone())).await;
+    settle(&mat).await;
+    let p_to_t = (moving.to_string(), target.to_string());
+    assert_eq!(
+        graph(&pool, SPACE_A).await,
+        vec![p_to_t.clone()],
+        "P links to T inside A"
+    );
+
+    // P leaves for B: the edge crosses spaces and belongs to neither graph.
+    move_blocks_to_space_inner(&pool, DEV, &mat, vec![moving.clone()], SPACE_B.into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        graph(&pool, SPACE_A).await,
+        Vec::<(String, String)>::new(),
+        "P left A, so A's graph must drop P -> T"
+    );
+    assert_eq!(
+        graph(&pool, SPACE_B).await,
+        Vec::<(String, String)>::new(),
+        "T is still in A, so B's graph must not show P -> T"
+    );
+
+    // T follows: the edge is inside B now.
+    move_blocks_to_space_inner(&pool, DEV, &mat, vec![target.clone()], SPACE_B.into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        graph(&pool, SPACE_B).await,
+        vec![p_to_t],
+        "with both pages in B, B's graph must show P -> T"
+    );
+}
+
 /// #5275 — a page or tag create stamps `space` too, but that op is not
-/// dispatched: the `space` arm enqueues the two vault-wide count rebuilds a
-/// move needs, and a fresh block has nothing to re-scope.
+/// dispatched: the `space` arm enqueues the vault-wide rebuilds a move
+/// needs, and a fresh block has nothing to re-scope.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_in_space_does_not_dispatch_the_space_op_5275() {
     use std::sync::atomic::Ordering;

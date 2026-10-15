@@ -4311,52 +4311,25 @@ async fn stamp_space_property(
     Ok(())
 }
 
-/// #2722 — write the frontmatter `aliases:` items as real `page_aliases` rows in
-/// the import's own transaction.
-///
-/// Mirrors `set_page_aliases_inner`'s `INSERT OR IGNORE` (byte-identical SQL, so
-/// its offline `.sqlx` entry is reused) but shares the import's atomic write.
-/// `page_aliases` is its own table outside the op log (#110), so a direct insert
-/// here is the established pattern, and `INSERT OR IGNORE` keeps re-import
-/// idempotent (alias is globally UNIQUE NOCASE).
-///
-/// `own` (ASCII-folded to mirror the NOCASE index) holds the aliases the page
-/// already has — an adopted page (D12) may hold some — and those this call just
-/// wrote, so a repeat of either (`[Solo, Solo]`) is a benign no-op rather than
-/// a spurious collision warning. Any OTHER 0-row insert means the alias is held
-/// by a DIFFERENT page — a never-silent degradation, surfaced as a warning.
-async fn apply_frontmatter_aliases(
+/// #2722 / #5387 — make the page's aliases `aliases` through
+/// `RemovePageAlias` / `AddPageAlias` ops in the caller's transaction. An alias
+/// another page holds stays off the page, with a warning rather than silently.
+async fn apply_frontmatter_aliases<S: AsRef<str>>(
     tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
     page_id: &str,
-    aliases: Vec<&str>,
+    aliases: &[S],
     warnings: &mut Vec<String>,
 ) -> Result<(), AppError> {
-    // Byte-identical to `get_page_aliases_inner`'s, so its `.sqlx` entry is reused.
-    let mut own: std::collections::HashSet<String> = sqlx::query_scalar!(
-        "SELECT alias FROM page_aliases WHERE page_id = ?1 ORDER BY alias",
-        page_id,
-    )
-    .fetch_all(&mut ***tx)
-    .await?
-    .into_iter()
-    .map(|alias| alias.to_ascii_lowercase())
-    .collect();
-    for alias in aliases {
-        let res = sqlx::query!(
-            "INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)",
-            page_id,
-            alias,
-        )
-        .execute(&mut ***tx)
-        .await?;
-        if res.rows_affected() > 0 {
-            own.insert(alias.to_ascii_lowercase());
-        } else if !own.contains(&alias.to_ascii_lowercase()) {
-            warnings.push(format!(
-                "alias '{alias}' is already used by another page; not applied to \
-                 the page"
-            ));
-        }
+    let wanted = super::aliases::wanted_aliases(aliases);
+    let state = materializer.loro_state();
+    let taken =
+        super::aliases::write_page_aliases_in_tx(tx, state, device_id, page_id, &wanted).await?;
+    for alias in taken {
+        warnings.push(format!(
+            "alias '{alias}' is already used by another page; not applied to the page"
+        ));
     }
     Ok(())
 }
@@ -4410,6 +4383,24 @@ async fn frontmatter_ref_args(
     Ok(Some((None, None, None, Some(id), None)))
 }
 
+/// Front matter `aliases:` on import, added to the aliases the page holds: an
+/// adopted page (D12) may hold some.
+async fn import_frontmatter_aliases(
+    tx: &mut CommandTx,
+    materializer: &Materializer,
+    device_id: &str,
+    page_id: &str,
+    items: Vec<&str>,
+    warnings: &mut Vec<String>,
+) -> Result<(), AppError> {
+    let mut aliases =
+        sqlx::query_scalar!("SELECT alias FROM page_aliases WHERE page_id = ?1", page_id)
+            .fetch_all(&mut ***tx)
+            .await?;
+    aliases.extend(items.into_iter().map(str::to_owned));
+    apply_frontmatter_aliases(tx, materializer, device_id, page_id, &aliases, warnings).await
+}
+
 /// #1432 — apply the leading YAML frontmatter as page-level properties. Returns
 /// the (possibly moved-through) transaction.
 ///
@@ -4446,19 +4437,15 @@ async fn apply_frontmatter_properties(
         // named `aliases`/`tags` — silently killing alias resolution/search
         // and tag filtering on re-import. Intercept both here so neither is
         // ever persisted as a misleading text property:
-        //   * `aliases` → real `page_aliases` rows, written below in THIS tx;
+        //   * `aliases` → `AddPageAlias` ops, written below in THIS tx;
         //   * `tags`    → real `block_tags` associations, written by the
         //     dedicated frontmatter-tag pre-pass further down (it needs the
         //     tag resolve-or-create machinery, which is set up after the
         //     wiki-link pre-pass).
         if key.as_str() == "aliases" {
-            apply_frontmatter_aliases(
-                &mut tx,
-                &page_id,
-                frontmatter_items(parse_output, key, value),
-                warnings,
-            )
-            .await?;
+            let items = frontmatter_items(parse_output, key, value);
+            import_frontmatter_aliases(&mut tx, materializer, device_id, &page_id, items, warnings)
+                .await?;
             continue;
         }
         if key.as_str() == "tags" {

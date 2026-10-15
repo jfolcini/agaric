@@ -122,7 +122,7 @@ macro_rules! agaric_commands {
             $crate::commands::tags::query_by_tag_expr,
             $crate::commands::queries::query_by_property,
             // AND-intersected property + tag query
-            // resolved entirely in SQL via composed `EXISTS` subqueries.
+            // resolved entirely in SQL, each filter a candidate id set.
             // Replaces the FE `useQueryExecution.fetchFilteredQuery` shape
             // that fanned out one IPC per sub-filter (each capped at 200
             // rows) and intersected in JS — silently dropping any AND-set
@@ -1435,7 +1435,7 @@ async fn schedule_block_tag_refs_rebuild_if_empty(
 }
 
 /// [`boot_cache_gating`]'s `pages_cache` check. A row still at
-/// `last_edited_ms = 0` has not been filled since migration 0122 added the
+/// `last_edited_ms = 0` has not been filled since migration 0123 added the
 /// Pages sort keys (#5371): SQLite cannot compute the NFKD `title_sort_key`,
 /// so the page-row rebuild is the backfill. The rebuild fills every such row,
 /// so a filled vault schedules nothing.
@@ -1454,7 +1454,7 @@ async fn schedule_pages_cache_backfill_if_unfilled(
         "pages_cache_unfilled_exists",
     ) != 0;
     if unfilled {
-        tracing::info!("pages_cache sort keys unfilled (migration 0122) — scheduling rebuild");
+        tracing::info!("pages_cache sort keys unfilled (migration 0123) — scheduling rebuild");
         if let Err(e) =
             materializer_handle.try_enqueue_background(MaterializeTask::RebuildPagesCache)
         {
@@ -4085,7 +4085,7 @@ mod boot_cache_gating_tests {
         mat.shutdown();
     }
 
-    /// #5371 — a `pages_cache` row migration 0122 left unfilled is filled by
+    /// #5371 — a `pages_cache` row migration 0123 left unfilled is filled by
     /// the boot-scheduled page-row rebuild, and a filled vault schedules
     /// nothing on the next boot.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
