@@ -1238,3 +1238,53 @@ async fn a_restore_gives_the_page_back_its_swept_row_5371() {
         ))
     );
 }
+
+/// #5371 — a `MoveBlock` that carries a nested page out of its deleted parent
+/// (the concurrent delete-vs-move merge, #4204) un-sweeps it, and the page
+/// gets back the cache row the rebuild swept, in the op's own transaction.
+/// The parent it left stays trashed and off the list.
+#[tokio::test]
+async fn an_un_sweeping_move_gives_the_page_back_its_swept_row_5371() {
+    const PARENT: &str = "01HZ00000000000000000Q5371";
+    let (pool, _dir) = test_pool().await;
+    for (id, title, parent) in [(PARENT, "Parent", None), (SP_PAGE, "Émile", Some(PARENT))] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id, deleted_at) \
+             VALUES (?, 'page', ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(title)
+        .bind(parent)
+        .bind(id)
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let mv = OpPayload::MoveBlock(MoveBlockPayload {
+        block_id: BlockId::from_trusted(SP_PAGE),
+        new_parent_id: None,
+        new_position: 0,
+        new_index: Some(0),
+    });
+    let record = make_op_record_at(&pool, mv, FIXED_TS + 1).await;
+    handle_foreground_task(
+        &pool,
+        &MaterializeTask::ApplyOp(StdArc::new(record)),
+        &LoroState::new(),
+    )
+    .await
+    .unwrap();
+
+    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT page_id, title_sort_key, last_edited_ms FROM pages_cache ORDER BY page_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(SP_PAGE.to_owned(), "emile".to_owned(), FIXED_TS + 1)]
+    );
+}

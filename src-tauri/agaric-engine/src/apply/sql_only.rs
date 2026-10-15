@@ -304,6 +304,10 @@ pub async fn apply_move_block_sql_only(
     {
         tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
     }
+    // #5371: the rebuild swept a trashed page's `pages_cache` row, and the
+    // Pages list reads its rows from there. After the sweep, so a page it
+    // re-stamped stays off the list.
+    agaric_store::cache::insert_missing_pages_cache_rows(&mut *conn, &unswept).await?;
     Ok(unswept)
 }
 

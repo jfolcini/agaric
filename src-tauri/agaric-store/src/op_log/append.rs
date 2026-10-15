@@ -69,7 +69,7 @@ pub async fn append_local_op(
 /// # How the contract is enforced (#653)
 ///
 /// This was previously a doc-only contract. It is now lint-enforced by the
-/// `check-raw-tx` prek hook (`scripts/check-raw-tx.py`, the #110 CommandTx
+/// `check-raw-tx` prek hook (`scripts/check-raw-tx.mjs`, the #110 CommandTx
 /// guard): in any file that references `append_local_op_in_tx` /
 /// `append_local_undo_op_in_tx`, a bare `pool.begin()` (the sqlx default,
 /// which opens `BEGIN DEFERRED`) is flagged as a violation. The proximity
