@@ -622,6 +622,32 @@ pub async fn move_blocks_batch_inner(
     new_parent_id: Option<BlockId>,
     new_index: i64,
 ) -> Result<Vec<MoveResponse>, AppError> {
+    let mut tx = CommandTx::begin_immediate(pool, "move_blocks_batch").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    let responses = move_blocks_batch_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        block_ids,
+        new_parent_id,
+        new_index,
+    )
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(responses)
+}
+
+/// [`move_blocks_batch_inner`] inside the caller's rollback-armed transaction
+/// (MCP `batch`, #5399), each move enqueued for the caller's commit.
+pub(crate) async fn move_blocks_batch_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_ids: Vec<BlockId>,
+    new_parent_id: Option<BlockId>,
+    new_index: i64,
+) -> Result<Vec<MoveResponse>, AppError> {
     if block_ids.is_empty() {
         return Err(AppError::validation(
             "block_ids list cannot be empty".into(),
@@ -633,10 +659,6 @@ pub async fn move_blocks_batch_inner(
     // #400: `new_index` is a 0-based sibling slot; clamp a stray negative once
     // (each per-move call re-clamps its own derived slot defensively).
     let start_index = new_index.max(0);
-
-    let mut tx = CommandTx::begin_immediate(pool, "move_blocks_batch").await?;
-    // #2604 — rollback-safe engine apply (rewind on tx abort).
-    tx.arm_engine_rollback(materializer.loro_state());
 
     // PRE-VALIDATE every move against the CURRENT in-tx state BEFORE the
     // first engine apply. `move_block_in_tx` mutates the SHARED in-memory
@@ -659,7 +681,7 @@ pub async fn move_blocks_batch_inner(
     // depth-cap credit for that member moving out first (the frontend only
     // ever sends selection ROOTS, so members are never nested in practice).
     for id in &block_ids {
-        validate_move_in_tx(&mut tx, id.as_str(), new_parent_id.as_deref()).await?;
+        validate_move_in_tx(tx, id.as_str(), new_parent_id.as_deref()).await?;
     }
 
     // #2305 (Refs #914 / Closes #2305): CONTIGUOUS-RUN placement. Land the whole
@@ -670,14 +692,14 @@ pub async fn move_blocks_batch_inner(
     // engine-apply + dense-rank reproject pipeline — ONLY the destination slot each
     // op carries changes, and `contiguous_run_slots` derives those up-front from
     // the pre-batch sibling ordering.
-    let ordered_children = ordered_live_children(&mut tx, new_parent_id.as_deref()).await?;
+    let ordered_children = ordered_live_children(tx, new_parent_id.as_deref()).await?;
     let slots = contiguous_run_slots(&block_ids, &ordered_children, start_index);
 
     let mut responses = Vec::with_capacity(block_ids.len());
     for (id, slot) in block_ids.iter().zip(slots) {
         let response = move_block_in_tx(
-            &mut tx,
-            materializer.loro_state(),
+            tx,
+            state,
             device_id,
             id.clone().into_string(),
             new_parent_id.clone(),
@@ -686,7 +708,6 @@ pub async fn move_blocks_batch_inner(
         .await?;
         responses.push(response);
     }
-    tx.commit_and_dispatch(materializer).await?;
     Ok(responses)
 }
 

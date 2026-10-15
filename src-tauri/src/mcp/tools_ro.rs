@@ -21,7 +21,7 @@
 //! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. `space_id` required. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
-//! | `get_page_markdown` | [`get_page_for_agent_inner`] | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. `space_id` required; a page in another space is rejected. |
+//! | `get_page_markdown` | [`get_page_for_agent_inner`], or [`get_page_source_inner`] with `editable` | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. `editable` (#5399) returns the source buffer `edit_page_markdown` takes back instead. `space_id` required; a page in another space is rejected. |
 //! | `page_history` | [`list_page_history_inner`] | Ops on a page's blocks, newest first: device, origin, op type, time, clipped before/after. Cursor paginated. `space_id` required. |
 //! | `block_history` | [`get_block_history_inner`] | The same rows for one block. |
 //! | `get_journal` | [`get_journal_page_by_date_inner`] + [`get_page_for_agent_inner`] | #5396 — a day as `get_page_markdown` renders it; `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. Never creates: a missing day is an empty `markdown`. |
@@ -87,9 +87,9 @@ use crate::commands::pages::markdown::{NameMatch, match_page_names, match_tag_na
 use crate::commands::{
     PropertyRow, agenda_range_inner, batch_resolve_inner, get_active_block_inner,
     get_batch_properties_inner, get_block_history_inner, get_journal_page_by_date_inner,
-    get_page_aliases_inner, get_page_for_agent_inner, get_page_inner, get_properties_inner,
-    journal_for_date_inner, list_backlinks_grouped_inner, list_journal_days_inner,
-    list_page_history_inner, list_pages_inner, list_property_defs_inner,
+    get_page_aliases_inner, get_page_for_agent_inner, get_page_inner, get_page_source_inner,
+    get_properties_inner, journal_for_date_inner, list_backlinks_grouped_inner,
+    list_journal_days_inner, list_page_history_inner, list_pages_inner, list_property_defs_inner,
     list_spaces_registry_inner, list_tags_for_block_inner, list_tags_inner, list_trash_inner,
     search_blocks_inner,
 };
@@ -333,6 +333,8 @@ struct GetBlockArgs {
 struct GetPageMarkdownArgs {
     page_id: String,
     space_id: String,
+    #[serde(default)]
+    editable: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1056,7 +1058,10 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
              then the block outline with each block's `key:: value` properties under it. Links, \
              tags and ref-typed values are written as names, for reading; a name can be \
              ambiguous, so write links by ULID (`[[ULID]]`, `#[ULID]`). Each block ends with \
-             `^ULID`, the block_id update_block_content takes. No pagination."
+             `^ULID`, the block_id update_block_content takes. No pagination. With `editable: \
+             true`, `markdown` is instead the page's source, the text the read-write server's \
+             edit_page_markdown takes back: no title line, a name only where it reads back as \
+             the same link, ref-typed values as ULIDs, and each block's `^ULID`."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -1068,6 +1073,7 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
                     "type": "string",
                     "description": "ULID of the space the page belongs to. A page in another space is rejected with a Validation error.",
                 },
+                "editable": { "type": "boolean", "description": "Return the source edit_page_markdown takes instead. Defaults to false." },
             },
         }),
     }
@@ -1363,7 +1369,11 @@ async fn handle_get_page_markdown(
     let page_id = normalize_ulid_arg(&args.page_id);
     let space_id = SpaceId::from_string(args.space_id)?;
     validate_block_in_space(writer_pool, &page_id, space_id.as_str()).await?;
-    let markdown = get_page_for_agent_inner(pool, &page_id).await?;
+    let markdown = if args.editable {
+        get_page_source_inner(pool, &page_id).await?
+    } else {
+        get_page_for_agent_inner(pool, &page_id).await?
+    };
     Ok(json!({ "page_id": page_id, "markdown": markdown }))
 }
 

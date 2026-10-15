@@ -84,6 +84,8 @@ async fn list_tools_advertises_the_rw_tools() {
             "move_blocks",
             "remove_tag",
             "restore_block",
+            "batch",
+            "edit_page_markdown",
         ],
         "tool order is part of the wire contract — do not re-order; new tools are appended",
     );
@@ -3296,4 +3298,460 @@ async fn a_lowercase_ulid_argument_is_still_the_id_5397() {
         .expect_err("a page of another space is refused");
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
     assert!(child_contents(&pool, &elsewhere).await.is_empty());
+}
+
+// -------------------------------------------------------------------
+// batch / edit_page_markdown (#5399). That a batch is one activity entry
+// and one undo is `rmcp_adapter::tests::rw_batch_is_one_activity_entry_and_one_undo_5399`.
+// -------------------------------------------------------------------
+
+/// The newest op's `seq`, so a test can read what a call wrote after it.
+async fn last_seq(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// The types of the ops written after `seq`, oldest first.
+async fn op_types_after(pool: &SqlitePool, seq: i64) -> Vec<String> {
+    sqlx::query_scalar("SELECT op_type FROM op_log WHERE seq > ? ORDER BY seq")
+        .bind(seq)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+async fn property_count(pool: &SqlitePool, block_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
+        .bind(block_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// `parent`'s children in `space`'s Loro engine, in order.
+fn engine_children(mat: &Materializer, space: &str, parent: &str) -> Vec<String> {
+    let space = SpaceId::from_trusted(space);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, DEV)
+        .expect("the space's engine");
+    guard
+        .engine_mut()
+        .children_ordered_block_ids(Some(parent))
+        .expect("the engine's children")
+}
+
+/// Whether `space`'s Loro engine holds `block` deleted.
+fn engine_deleted(mat: &Materializer, space: &str, block: &str) -> bool {
+    let space = SpaceId::from_trusted(space);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, DEV)
+        .expect("the space's engine");
+    guard
+        .engine_mut()
+        .read_deleted(block)
+        .expect("the engine holds the block")
+}
+
+/// Ops that wrote in the batch's transaction are rolled back with it when a
+/// later op is refused: the refused op is one only running reveals, on the
+/// block the op before it deleted. The engine takes each op as it runs, so it
+/// is rewound too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_with_one_refused_op_writes_nothing_5399() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let a = mk_child_of(&pool, &mat, &page, "A").await;
+    let b = mk_child_of(&pool, &mat, &page, "B").await;
+    settle(&mat).await;
+    let before = op_count(&pool).await;
+    let properties_before = property_count(&pool, &a).await;
+    assert_eq!(
+        engine_children(&mat, &space, &page),
+        [a.clone(), b.clone()],
+        "the engine holds the page as the batch finds it"
+    );
+
+    let err = tools
+        .call_tool(
+            "batch",
+            json!({
+                "ops": [
+                    { "op": "append_block", "parent_id": page, "content": "new" },
+                    { "op": "update_block_content", "block_id": a, "content": "A2" },
+                    { "op": "set_property", "block_id": a, "key": "assignee", "value_text": "alice" },
+                    { "op": "delete_block", "block_id": b },
+                    { "op": "update_block_content", "block_id": b, "content": "B2" },
+                ],
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("an op on a block the batch deleted is refused");
+    assert!(
+        matches!(&err, AppError::NotFound(message) if message.starts_with("ops[4]: ")),
+        "the refusal names the op, got {err:?}"
+    );
+    settle(&mat).await;
+
+    assert_eq!(op_count(&pool).await, before, "no op was written");
+    assert_eq!(child_contents(&pool, &page).await, ["A", "B"]);
+    assert_eq!(property_count(&pool, &a).await, properties_before);
+    assert_eq!(
+        engine_children(&mat, &space, &page),
+        [a.clone(), b.clone()],
+        "the engine kept an op the batch rolled back"
+    );
+    assert!(
+        !engine_deleted(&mat, &space, &b),
+        "B is deleted in the engine"
+    );
+    assert!(emitter.blocks_changed().is_empty(), "nothing to reload");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_refuses_malformed_ops_5399() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let a = mk_child_of(&pool, &mat, &page, "A").await;
+    settle(&mat).await;
+    let before = op_count(&pool).await;
+    let delete_a = json!({ "op": "delete_block", "block_id": a });
+    let over_cap = vec![delete_a.clone(); agaric_store::pagination::MAX_BATCH_BLOCK_IDS + 1];
+
+    for (what, ops, says) in [
+        ("no ops", json!([]), "ops cannot be empty"),
+        ("over the cap", json!(over_cap), "exceeds maximum"),
+        ("no op name", json!([{ "block_id": a }]), "ops[0]: "),
+        (
+            "not a batch op",
+            json!([delete_a, { "op": "create_page", "title": "x" }]),
+            "ops[1]: tool `batch`: `create_page` is not a batch op",
+        ),
+        (
+            "an argument its tool does not take",
+            json!([{ "op": "delete_block", "block_id": a, "bogus": 1 }]),
+            "ops[0]: tool `delete_block`",
+        ),
+    ] {
+        let err = tools
+            .call_tool(
+                "batch",
+                json!({ "ops": ops, "space_id": space }),
+                &test_ctx_agent(),
+            )
+            .await
+            .expect_err(what);
+        assert!(
+            matches!(&err, AppError::Validation { message, .. } if message.contains(says)),
+            "{what}: got {err:?}"
+        );
+    }
+    // A value_ref that is no ULID is `AppError::Ulid`, which names its op too.
+    let err = tools
+        .call_tool(
+            "batch",
+            json!({
+                "ops": [
+                    delete_a,
+                    { "op": "set_property", "block_id": a, "key": "assignee", "value_ref": "nope" },
+                ],
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a value_ref that is no ULID");
+    assert!(
+        matches!(&err, AppError::Ulid(message) if message.starts_with("ops[1]: ")),
+        "got {err:?}"
+    );
+    assert_eq!(op_count(&pool).await, before, "no op was written");
+    assert!(is_live(&pool, &a).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_op_on_another_space_is_refused_5399() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let other = mk_space(&pool, "other").await;
+    let page = mk_page(&pool, &mat, &space, "Here").await;
+    let elsewhere = mk_page(&pool, &mat, &other, "There").await;
+    let a = mk_child_of(&pool, &mat, &page, "A").await;
+    let x = mk_child_of(&pool, &mat, &elsewhere, "X").await;
+    settle(&mat).await;
+    let before = op_count(&pool).await;
+
+    let err = tools
+        .call_tool(
+            "batch",
+            json!({
+                "ops": [
+                    { "op": "update_block_content", "block_id": a, "content": "A2" },
+                    { "op": "update_block_content", "block_id": x, "content": "X2" },
+                ],
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a block of another space is refused");
+    assert!(
+        matches!(&err, AppError::Validation { message, .. }
+            if message.starts_with("ops[1]: ") && message.contains("belongs to space")),
+        "got {err:?}"
+    );
+    assert_eq!(op_count(&pool).await, before, "no op was written");
+    assert_eq!(child_contents(&pool, &page).await, ["A"]);
+    assert_eq!(child_contents(&pool, &elsewhere).await, ["X"]);
+}
+
+/// A batch that would write more ops than one undo reverts is refused: each
+/// state change writes two (the state and its stamp), so the input cap alone
+/// lets this one through.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_over_one_undo_is_refused_5399() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let a = mk_child_of(&pool, &mat, &page, "A").await;
+    settle(&mat).await;
+    let before = op_count(&pool).await;
+    let ops: Vec<Value> = (0..agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
+        .map(|i| {
+            let state = if i % 2 == 0 { "TODO" } else { "DONE" };
+            json!({ "op": "set_property", "block_id": a, "key": "todo_state", "value_text": state })
+        })
+        .collect();
+
+    let err = tools
+        .call_tool(
+            "batch",
+            json!({ "ops": ops, "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("more ops than one undo reverts");
+    assert!(
+        matches!(&err, AppError::Validation { message, .. }
+            if message.starts_with("ops[") && message.contains("ops length")),
+        "got {err:?}"
+    );
+    assert_eq!(op_count(&pool).await, before, "no op was written");
+}
+
+/// A batch reloads what it wrote once, as its tools would each: the page a
+/// block left, the page it landed on, and the property set on it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_notifies_the_pages_and_properties_it_wrote_5399() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let src = mk_page(&pool, &mat, &space, "Src").await;
+    let dst = mk_page(&pool, &mat, &space, "Dst").await;
+    let a = mk_child_of(&pool, &mat, &src, "A").await;
+    settle(&mat).await;
+
+    tools
+        .call_tool(
+            "batch",
+            json!({
+                "ops": [
+                    { "op": "set_property", "block_id": a, "key": "assignee", "value_text": "alice" },
+                    { "op": "move_blocks", "block_ids": [a], "parent_id": dst },
+                ],
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("a property and a move");
+
+    let mut pages = emitter.blocks_changed();
+    pages.iter_mut().for_each(|reloaded| reloaded.sort());
+    let mut both = vec![src, dst];
+    both.sort();
+    assert_eq!(
+        (pages, emitter.property_changed()),
+        (vec![both], vec![(a, vec!["assignee".to_owned()])]),
+    );
+}
+
+/// The delete's in-transaction apply reaches only the block it names; its
+/// descendants leave the engine in the fan-out after the commit, which a
+/// batch must run as a lone `delete_block` does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_delete_takes_the_descendants_out_of_the_engine_5399() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let parent = mk_child_of(&pool, &mat, &page, "X").await;
+    let child = mk_child_of(&pool, &mat, &parent, "G").await;
+    settle(&mat).await;
+    assert!(
+        !engine_deleted(&mat, &space, &child),
+        "the engine holds G alive"
+    );
+
+    tools
+        .call_tool(
+            "batch",
+            json!({
+                "ops": [{ "op": "delete_block", "block_id": parent }],
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("delete a block with a child");
+    settle(&mat).await;
+
+    assert!(
+        !is_live(&pool, &child).await,
+        "the cascade deleted G in SQL"
+    );
+    assert!(engine_deleted(&mat, &space, &parent));
+    assert!(
+        engine_deleted(&mat, &space, &child),
+        "G is still alive in the engine"
+    );
+}
+
+/// The page's source as the RO `get_page_markdown` hands an agent to edit.
+async fn editable_source(pool: &SqlitePool, mat: &Materializer, page: &str, space: &str) -> String {
+    let ro = crate::mcp::tools_ro::ReadOnlyTools::new(
+        pool.clone(),
+        pool.clone(),
+        mat.clone(),
+        DEV.to_string(),
+    );
+    let read = ro
+        .call_tool(
+            "get_page_markdown",
+            json!({ "page_id": page, "editable": true, "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("read the page's source");
+    read["markdown"].as_str().unwrap().to_owned()
+}
+
+/// `source` with the line that ends with `block`'s anchor moved to the end.
+fn with_bullet_moved_last(source: &str, block: &str) -> String {
+    let anchor = format!("^{block}");
+    let mut lines: Vec<&str> = source.trim_end_matches('\n').split('\n').collect();
+    let at = lines
+        .iter()
+        .position(|line| line.ends_with(&anchor))
+        .expect("the block's line");
+    let line = lines.remove(at);
+    lines.push(line);
+    lines.join("\n") + "\n"
+}
+
+/// Read, move one bullet, write: one `MoveBlock`, and nothing else.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_page_markdown_round_trip_writes_one_move_5399() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let linked = mk_page(&pool, &mat, &space, "Q").await;
+    // A link the source writes as a name, which the save must not rewrite.
+    let a = mk_child_of(&pool, &mat, &page, &format!("A [[{linked}]]")).await;
+    let b = mk_child_of(&pool, &mat, &page, "B").await;
+    let c = mk_child_of(&pool, &mat, &page, "C").await;
+    settle(&mat).await;
+    let base = editable_source(&pool, &mat, &page, &space).await;
+    let since = last_seq(&pool).await;
+
+    let result = tools
+        .call_tool(
+            "edit_page_markdown",
+            json!({
+                "page_id": "P",
+                "markdown": with_bullet_moved_last(&base, &a),
+                "base": base,
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("save the moved bullet");
+    settle(&mat).await;
+
+    assert_eq!(result["page_id"], page.as_str());
+    assert_eq!(result["moved"], 1);
+    assert_eq!(op_types_after(&pool, since).await, ["move_block"]);
+    assert_eq!(live_children(&pool, &page).await, [b, c, a]);
+    assert_eq!(emitter.blocks_changed(), [vec![page]]);
+}
+
+/// A base the page has moved on from is refused as the app's source mode
+/// refuses it, so the agent reads again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_page_markdown_stale_base_is_refused_5399() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let a = mk_child_of(&pool, &mat, &page, "A").await;
+    let b = mk_child_of(&pool, &mat, &page, "B").await;
+    settle(&mat).await;
+    let base = editable_source(&pool, &mat, &page, &space).await;
+    crate::commands::edit_block_inner(&pool, DEV, &mat, BlockId::from_trusted(&b), "B2".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let before = op_count(&pool).await;
+
+    let err = tools
+        .call_tool(
+            "edit_page_markdown",
+            json!({
+                "page_id": page,
+                "markdown": with_bullet_moved_last(&base, &a),
+                "base": base,
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a stale base is refused");
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::RequiresRefresh),
+        "got {err:?}"
+    );
+    assert_eq!(op_count(&pool).await, before, "no op was written");
+    assert_eq!(live_children(&pool, &page).await, [a, b]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_page_markdown_cross_space_refused_5399() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let other = mk_space(&pool, "other").await;
+    let page = mk_page(&pool, &mat, &other, "There").await;
+    let a = mk_child_of(&pool, &mat, &page, "A").await;
+    let b = mk_child_of(&pool, &mat, &page, "B").await;
+    settle(&mat).await;
+    let base = editable_source(&pool, &mat, &page, &other).await;
+    let before = op_count(&pool).await;
+
+    let err = tools
+        .call_tool(
+            "edit_page_markdown",
+            json!({
+                "page_id": page,
+                "markdown": with_bullet_moved_last(&base, &a),
+                "base": base,
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a page of another space is refused");
+    assert!(
+        matches!(&err, AppError::Validation { message, .. } if message.contains("belongs to space")),
+        "got {err:?}"
+    );
+    assert_eq!(op_count(&pool).await, before, "no op was written");
+    assert_eq!(live_children(&pool, &page).await, [a, b]);
 }
