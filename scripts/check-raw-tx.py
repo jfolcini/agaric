@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Library only: the hook runs check-raw-tx.mjs; this stays until the Python guards that import it are ported (#5579).
 """Guard against NEW raw write-transaction sites in production Rust.
 
 Issue #110 replaced ad-hoc `pool.begin_with("BEGIN IMMEDIATE")`

@@ -1658,69 +1658,26 @@ stages = ["pre-commit"]
 # modules and whole test files are skipped — fixtures legitimately open
 # raw transactions. Runs at both pre-commit and pre-push so a raw site
 # can't slip in via either path. Allowlist + escape-hatch rules live in
-# scripts/check-raw-tx.py.
+# scripts/check-raw-tx.mjs.
 # WHY: a raw write-tx bypasses the CommandTx convention — #110
 [[repos]]
 repo = "local"
 [[repos.hooks]]
 id = "check-raw-tx"
 name = "raw write-tx guard (#110 CommandTx convention)"
-entry = "python3 scripts/check-raw-tx.py"
+entry = "node scripts/check-raw-tx.mjs"
 language = "system"
 # Four crate roots (#3110): the #2621 split moved the write-tx primitive and
 # its callers into agaric-store/agaric-engine/agaric-sync. Mirrors the sibling
 # check-table-ownership trigger regex. (diagnostics has no triggering files
 # today; its src/bin audit tools are skipped inside the script.)
 #
-# #3997: `main()` resolves which copy of each file to judge (staged index vs
-# working tree) via `scripts/lib/guard_file_source.py`, loaded by
-# `importlib.util.spec_from_file_location` — a real, directly-used
-# dependency, not a transitively-inert one. Unioned here for uniformity with
-# the sibling hooks below (all of which share this dependency). It used to
-# be belt-and-braces: `py-guard-file-source-selftest` also unions
-# `lib/guard_file_source.py` into its own `files:` and was a genuine
-# falsification suite (#4017: plants a staged violation behind a clean
-# working tree and asserts the index reader catches it). #4556 listed that
-# hook for removal in its group B and the criteria KEPT it: the failure mode
-# below is fail-open-silent, so it is not a dev-convenience self-test.
-#
-# KNOWN RESIDUAL GAP (falsified, not corrected by this union — #3997 second
-# review round): `main()` filters its argv to `.rs`-suffixed paths and has
-# no whole-tree fallback when given none. With `guard_file_source.py`'s
-# `exists()` defanged to always return `False`, this hook returns rc=0 NOT
-# ONLY when handed just `guard_file_source.py` (scans zero files — expected)
-# but ALSO when handed a REAL `.rs` file alongside it: `main()`'s
-# `if not src.exists(rel): continue` treats the real file as absent and
-# skips it too, unconditionally, regardless of its actual content. Unioning
-# `guard_file_source.py` in makes this hook SELECTED, which is strictly
-# better than skipped, but does not by itself make it EFFECTIVE against a
-# defanged `exists()`/`read()`. Only `py-guard-file-source-selftest`
-# demonstrably catches that today. Closing this gap
-# for `main()` itself would need a `sys.exit(2)`-on-`GitError`-shaped rework
-# of the skip path or a "no valid `.rs` arg -> scan the whole crate roots"
-# fallback (`check-command-arity.py` has the identical shape) — a CLI
-# behavior change to a script other callers (`pr-merge-result-check.sh`)
-# also invoke, out of scope for a `files:` regex fix. Tracked, not silently
-# claimed closed.
-#
-# WHY THIS COMMENT AND NOT A MECHANICAL CHECK (#4434 review note 10, asked
-# and answered so the next reader does not re-derive the dead end): a guard
-# that could red-flag "selected but not effective" would have to observe
-# that the run scanned ZERO files. These scripts expose no such observable —
-# on a clean run `main()` prints nothing and returns 0, identical to a run
-# that scanned the whole crate and found nothing (see `check-raw-tx.py`'s
-# `main()`), so rc=0 cannot distinguish the two. Getting one would mean
-# adding a target-count/`--print-targets` output to five python guards —
-# i.e. the same CLI change to shared callers that the paragraph above
-# already rules out of scope, which is where the real fix lives anyway.
-# `pass_filenames = false` WOULD make the union effective (argv empty
-# re-enables the whole-tree fallback), but it turns every `.rs` pre-commit
-# into five full-tree scans; that is a cost decision needing a measurement,
-# not a comment. And a baseline listing the five pairs would be this comment
-# in JSON with nothing able to re-derive it — an entry that can only go
-# stale silently, which is the exact defect #3997 is about. So: prose,
-# deliberately, until the CLI rework lands.
-files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/lib/guard_file_source\.py$'
+# The guard and the two libraries it imports are unioned so a change to any of
+# them re-runs it. KNOWN RESIDUAL GAP: `main()` reads only the `.rs` paths it
+# is handed, so a run selected by a library change alone scans nothing and
+# exits 0, exactly like a clean scan. The staged-vs-working-tree reader is
+# pinned by `scripts/lib/rust-scan.test.mjs` instead (#4017).
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-raw-tx\.mjs|lib/rust-scan\.mjs|lib/guard-file-source\.mjs)$'
 stages = ["pre-commit", "pre-push"]
 
 # #653: the raw-tx guard now also flags a bare `pool.begin()` (DEFERRED)
@@ -1729,11 +1686,11 @@ stages = ["pre-commit", "pre-push"]
 # hook runs the guard's own fixture suite (`--self-test`) so the proximity
 # logic and false-positive exemptions (CommandTx path, read-only `.begin()`,
 # `// allow-raw-tx:`, `#[cfg(test)]`) cannot silently regress. No file args.
-# WHY: a Python AST guard: a node shape it does not recognise is a silently skipped line — #653
+# WHY: a hand-written Rust scanner: a shape it does not recognise is a silently skipped line — #653
 [[repos.hooks]]
 id = "check-raw-tx-self-test"
 name = "raw write-tx guard self-test (#653 deferred-tx fixtures)"
-entry = "python3 scripts/check-raw-tx.py --self-test"
+entry = "node scripts/check-raw-tx.mjs --self-test"
 language = "system"
 pass_filenames = false
 always_run = true
