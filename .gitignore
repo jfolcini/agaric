@@ -107,9 +107,6 @@ e2e-tauri/artifacts/
 # Added by code-review-graph
 .code-review-graph/
 
-# Serena MCP server per-project cache/state
-.serena/
-
 # Per-machine active cargo config (the staged `.example` is tracked;
 # activating it makes the build depend on host-installed mold).
 # NOTE: this must stay pinned to `config.toml` — `src-tauri/.cargo/mutants.toml`
