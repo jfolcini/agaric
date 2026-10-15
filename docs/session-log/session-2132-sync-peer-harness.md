@@ -20,7 +20,11 @@ spec on it:
    spec types one into the device list, as a user without mDNS would.
 4. One edit crosses in each direction, and both sides are checked.
 
-No product change was needed.
+The spec found a product bug: "Sync now" never dialled while the peer was
+announcing on mDNS, because the debounce behind it restarted on every mDNS
+event. #5595 fixes it, and this branch carries the same change. The
+harness needed its own fix too: the peer now runs `bootstrap_spaces`, or
+its writes stay SQL-only and are never exported.
 
 `wdio.conf.ts` builds the peer before the run, and so does a new step in
 `e2e-tauri-weekly.yml`. That build recompiles the tauri crates once more,
