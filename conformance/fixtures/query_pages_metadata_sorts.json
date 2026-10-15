@@ -1,5 +1,5 @@
 {
-  "description": "#3927, #5371 — BRANCH differential over `list_pages_with_metadata`'s six-arm `PageSort` keyset (`keyset_for`, `src-tauri/src/commands/pages/metadata.rs`). Every step queries the SAME three seed pages and the six arms return the six permutations of them, so each step falsifies the other five: a keyset arm wired to the wrong sort mode reddens instead of reordering invisibly. All six steps are `ordered` — a set comparison over a SORT arm proves nothing. Titles Charlie/Alpha/Bravo (alphabetical), seed ids S1<S2<S3 (created is id DESC), descendant counts 1/0/2 (most-content), inbound links 2/1/0 (most-linked), page-wide last edits S1 newest then S3 (recently-modified), and opens of S1 then S2 (last-opened). Every tie a clock could produce falls the way the expected order already reads: two edits or two opens in one millisecond are broken by the arm's id tiebreaker in the same direction. The links arrive via `edit_block` rather than the seed insert: the seed bypasses the materializer, so only an op-driven content write populates `block_links`. The opens run through `record_page_open` itself, which appends no op; `page_opens` is device-local and outside the snapshot, so the `last-opened` step is what observes it.",
+  "description": "#3927, #5371 — BRANCH differential over `list_pages_with_metadata`'s six-arm `PageSort` keyset (`keyset_for`, `src-tauri/src/commands/pages/metadata.rs`). Every step queries the SAME three seed pages and the six arms return the six permutations of them, so each step falsifies the other five: a keyset arm wired to the wrong sort mode reddens instead of reordering invisibly. All six steps are `ordered` — a set comparison over a SORT arm proves nothing. Titles Charlie/Alpha/Bravo (alphabetical), seed ids S1<S2<S3 (created is id DESC), descendant counts 1/0/2 (most-content), inbound links 2/1/0 (most-linked), page-wide last edits S1 newest then S3 (recently-modified), and opens of S1 then S2 (last-opened). Every tie a clock could produce falls the way the expected order already reads: two edits or two opens in one millisecond are broken by the arm's id tiebreaker in the same direction. The links arrive via `edit_block` rather than the seed insert: the seed bypasses the materializer, so only an op-driven content write populates `block_links`. The opens run through `record_page_open` itself, which appends no op; `page_opens` is device-local and outside the snapshot, so the `last-opened` step is what observes it. The two `pages_last_edited_*` steps then filter the same edits by `LastEdited`, which reads the sort's page-wide `pages_cache.last_edited_ms`: no op touched a page block, so a page-only key would answer Rolling with nothing and OlderThan with all three.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -186,6 +186,22 @@
       "name": "pages_sorted_recently_modified",
       "rows": ["B1", "B3", "B2"],
       "total_count": 3
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "pages_last_edited_rolling_counts_child_edits",
+      "rows": ["B1", "B3"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "pages_last_edited_older_than_counts_child_edits",
+      "rows": ["B2"],
+      "total_count": 1
     }
   ],
   "name": "query_pages_metadata_sorts",
@@ -313,6 +329,32 @@
       "command": "list_pages_with_metadata",
       "comment": "PageSort::RecentlyModified -> I64Desc on pages_cache.last_edited_ms, the newest op on the page OR ANY OF ITS BLOCKS: S1 (its child's edit came last), S3 (its children's edits), then S2, which no op touched and whose seed-label id carries no creation time.",
       "name": "pages_sorted_recently_modified"
+    },
+    {
+      "args": {
+        "filter": {
+          "filters": [{ "spec": { "days": 7, "type": "Rolling" }, "type": "LastEdited" }],
+          "sort": "recently-modified",
+          "spaceId": "$SPACE"
+        },
+        "limit": 50
+      },
+      "command": "list_pages_with_metadata",
+      "comment": "LastEdited Rolling{7} reads the page-wide pages_cache.last_edited_ms: S1 and S3, edited only through their children just now, pass; S2, which no op touched, does not.",
+      "name": "pages_last_edited_rolling_counts_child_edits"
+    },
+    {
+      "args": {
+        "filter": {
+          "filters": [{ "spec": { "days": 7, "type": "OlderThan" }, "type": "LastEdited" }],
+          "sort": "recently-modified",
+          "spaceId": "$SPACE"
+        },
+        "limit": 50
+      },
+      "command": "list_pages_with_metadata",
+      "comment": "LastEdited OlderThan{7}, the inverse: only S2, whose seed-label id reads as the epoch.",
+      "name": "pages_last_edited_older_than_counts_child_edits"
     }
   ],
   "seed": {

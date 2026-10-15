@@ -1099,16 +1099,14 @@ export function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): 
 }
 
 /**
- * Resolve the last-edited stamp a `LastEdited` filter reads for one row:
- * {@link blockLastEditedAt} of the row's own block, the data source
- * `compile_last_edited` (`src-tauri/agaric-store/src/filters/primitive.rs`)
- * compiles to.
+ * Resolve the last-edited stamp a `LastEdited` filter reads for one row, the
+ * data source `compile_last_edited` (`src-tauri/agaric-store/src/filters/primitive.rs`)
+ * compiles to on that surface.
  *
  *  - {@link DEFAULT_LAST_EDITED_SOURCE} reads `r.lastModifiedAt`, which
- *    `buildPageMetaRow` populated from {@link blockLastEditedAt}.
- *  - `list_pages_with_metadata` passes {@link blockLastEditedAt} itself,
- *    because its rows carry the page-wide stamp the `recently-modified` sort
- *    reads (#5371).
+ *    `buildPageMetaRow` populated from {@link blockLastEditedAt} and
+ *    `list_pages_with_metadata` replaces with the page-wide stamp
+ *    (`pages_cache.last_edited_ms`) its sort and filter both read.
  *  - `run_advanced_query` passes a per-row memoizing wrapper around
  *    {@link blockLastEditedAt} (`search.ts`), because it evaluates the
  *    filter over EVERY active block rather than over pre-built page rows and
@@ -1131,10 +1129,8 @@ export const DEFAULT_LAST_EDITED_SOURCE: LastEditedSource = (r) => r.lastModifie
  * The NULL handling matches the engine's epoch-sentinel rule exactly
  * (Rolling EXCLUDES, OlderThan INCLUDES, Range EXCLUDES). `lastEditedAt` is a
  * {@link LastEditedSource} callback rather than a plain `r.lastModifiedAt`
- * read, but that seam is now a MEMOIZATION hook, not a semantic choice: both
- * callers resolve to the SAME {@link blockLastEditedAt} value — see
- * {@link LastEditedSource}'s own doc for why the fork used to be real and no
- * longer is.
+ * read, but that seam is a MEMOIZATION hook, not a semantic choice — see
+ * {@link LastEditedSource}.
  */
 export function lastEditedMatches(
   r: PageMetaRow,
@@ -1439,7 +1435,7 @@ export function buildPageMetaRow(
     pageId: (b['page_id'] as string | null) ?? null,
     // `MAX(op_log.created_at)` over this block, else its ULID creation time:
     // what the `LastEdited` filter reads. `list_pages_with_metadata` replaces
-    // it with the page-wide stamp its sort reads. `null` only for a non-ULID
+    // it with the page-wide stamp its sort and filter read. `null` only for a non-ULID
     // id with no op; `lastEditedMatches` / `compareMetaRows` apply the
     // engine's epoch-sentinel rule to that null themselves. The seeded
     // fixtures get comparable ISO timestamps by carrying real op-log rows

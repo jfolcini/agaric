@@ -3944,7 +3944,7 @@ export type SortColumn =
 "created" | 
 /**
  *  Last-edited time: `MAX(op_log.created_at)` over the block, else its
- *  ULID creation time (matching `PagesProjection::compile_last_edited`).
+ *  ULID creation time (matching `SearchProjection::compile_last_edited`).
  */
 "lastEdited" | 
 /**  Sibling position (`b.position`). NULL positions sort last. */

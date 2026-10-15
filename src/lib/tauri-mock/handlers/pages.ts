@@ -20,7 +20,6 @@ import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
 import { blocksHandlers, parseOutline } from '@/lib/tauri-mock/handlers/blocks'
 import { propertiesHandlers } from '@/lib/tauri-mock/handlers/properties'
 import {
-  type PageMetaRow,
   type TypedHandlers,
   appErrorRejection,
   assertValidSetPropertyValue,
@@ -1128,14 +1127,9 @@ export const pagesHandlers = {
     const limit = listPagesWithMetadataLimit(a['limit'])
     const rows = pageSortRows(spaceId)
 
-    // Phase 3 — AND-compose the requested filter primitives, then sort. The
-    // `LastEdited` filter reads the page block's own stamp, as
-    // `compile_last_edited` does, not the row's page-wide one.
+    // Phase 3 — AND-compose the requested filter primitives, then sort.
     const filters = (filter['filters'] as Array<Record<string, unknown>> | undefined) ?? []
-    const pageOnlyLastEdited = (r: PageMetaRow) => blockLastEditedAt(r.id)
-    const matched = rows.filter((r) =>
-      filters.every((f) => metaRowMatchesFilter(r, f, pageOnlyLastEdited)),
-    )
+    const matched = rows.filter((r) => filters.every((f) => metaRowMatchesFilter(r, f)))
     matched.sort((x, y) => compareMetaRows(x, y, sort))
 
     // Cursor: skip rows up to AND INCLUDING the cursor's anchor.

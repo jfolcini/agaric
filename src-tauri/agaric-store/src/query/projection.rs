@@ -5,8 +5,9 @@
 //! like [`PagesProjection`]. Every shared + metadata leaf therefore
 //! DELEGATES to `PagesProjection`'s compiler so the SQL is byte-shape-
 //! identical to the Pages surface (mirroring how
-//! [`crate::filters::SearchProjection`] delegates
-//! `compile_has_property` / `compile_last_edited` / `compile_space`).
+//! [`crate::filters::SearchProjection`] delegates `compile_has_property` /
+//! `compile_space`). The exception is `last-edited`, which delegates to
+//! `SearchProjection`: Pages reads `pages_cache`, which a block row lacks.
 //!
 //! What the advanced query supports:
 //!
@@ -29,13 +30,15 @@ use std::collections::HashSet;
 
 use crate::filters::primitive::{Bind, DatePredicate, FilterPrimitive};
 use crate::filters::{
-    FilterExpr, LastEditedSpec, PagesProjection, Projection, PropertyPredicate, WhereClause,
+    FilterExpr, LastEditedSpec, PagesProjection, Projection, PropertyPredicate, SearchProjection,
+    WhereClause,
 };
 
 /// The advanced-query projection. Compiles every shared + #1280-metadata
 /// leaf by delegating to [`PagesProjection`] (both compile on the `b`
-/// alias). Pages-only physical leaves and Search-only leaves fall through to
-/// the trait's `unsupported()` default.
+/// alias), except `last-edited` (see the module docs). Pages-only physical
+/// leaves and Search-only leaves fall through to the trait's `unsupported()`
+/// default.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QueryProjection;
 
@@ -98,7 +101,8 @@ impl Projection for QueryProjection {
         PagesProjection.compile_has_property(key, predicate, alias)
     }
     fn compile_last_edited(&self, spec: &LastEditedSpec, alias: &str) -> WhereClause {
-        PagesProjection.compile_last_edited(spec, alias)
+        // Pages reads the page-wide `pc.last_edited_ms`; a block row has no `pc`.
+        SearchProjection.compile_last_edited(spec, alias)
     }
     fn compile_space(&self, space_id: &str, alias: &str) -> WhereClause {
         PagesProjection.compile_space(space_id, alias)

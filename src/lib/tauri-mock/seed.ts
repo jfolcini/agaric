@@ -172,10 +172,10 @@ export function pushOp(
  * instead of stamping "now".
  *
  * The backend derives a page's last edit from its `op_log` rows, falling
- * back only to the creation time in the page's ULID: the `LastEdited` filter
- * from the page block's own rows (`last_edited_ms_sql`,
- * `agaric-store/src/filters/primitive.rs`), the Pages list from the rows of
- * every block on the page (`pages_cache.last_edited_ms`, #5371). There is no
+ * back only to the creation time in the page's ULID: the Pages list and its
+ * `LastEdited` filter from the rows of every block on the page
+ * (`pages_cache.last_edited_ms`, #5371), other surfaces from the block's own
+ * rows (`last_edited_ms_sql`, `agaric-store/src/filters/primitive.rs`). There is no
  * "seeded stamp" column, map, or fallback anywhere on the backend.
  *
  * This mock used to fake that with a mock-only `pageLastModified` map that
