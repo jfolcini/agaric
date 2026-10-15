@@ -43,8 +43,8 @@ use super::registry::{
     TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL,
     TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH,
     TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE, TOOL_PAGE_HISTORY, TOOL_QUERY, TOOL_REMOVE_TAG,
-    TOOL_RESOLVE, TOOL_RESTORE_BLOCK, TOOL_SEARCH, TOOL_SET_PROPERTY, TOOL_UNDO,
-    TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_RESOLVE, TOOL_RESTORE_BLOCK, TOOL_SEARCH, TOOL_SET_PAGE_ALIASES, TOOL_SET_PROPERTY,
+    TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
 };
 
 /// Number of leading characters of a ULID we expose in summary strings.
@@ -125,6 +125,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_RESTORE_BLOCK => summarise_restore_block(args, result),
         TOOL_BATCH => summarise_batch(args, result),
         TOOL_EDIT_PAGE_MARKDOWN => summarise_edit_page_markdown(args, result),
+        TOOL_SET_PAGE_ALIASES => summarise_set_page_aliases(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
         // pre-existing behaviour for every entry. The privacy
@@ -614,6 +615,20 @@ pub fn summarise_delete_property(args: &Value, _result: &Value) -> String {
         (false, true) => format!("delete_property — deleted {key}"),
         (true, false) => format!("delete_property — on {block}"),
         (true, true) => "delete_property".to_string(),
+    }
+}
+
+/// `set_page_aliases — <page-prefix>: N alias(es)`. Never the alias text — it
+/// is user content. The page id comes from the result: the argument may be a
+/// title.
+pub fn summarise_set_page_aliases(_args: &Value, result: &Value) -> String {
+    let page = ulid_prefix(str_field(result, "page_id").unwrap_or(""));
+    let n = array_len(result, "aliases").unwrap_or(0);
+    let word = if n == 1 { "alias" } else { "aliases" };
+    if page.is_empty() {
+        format!("set_page_aliases — {n} {word}")
+    } else {
+        format!("set_page_aliases — {page}: {n} {word}")
     }
 }
 
@@ -1384,6 +1399,23 @@ mod tests {
     }
 
     #[test]
+    fn set_page_aliases_counts_aliases_and_omits_their_text() {
+        let args = json!({ "page_id": "SECRET_TITLE", "aliases": ["SECRET_ALIAS"] });
+        let two = json!({ "page_id": ULID_A, "aliases": ["SECRET_ALIAS", "SECRET_ALIAS_2"] });
+        let s = summarise(TOOL_SET_PAGE_ALIASES, &args, &two);
+        assert_eq!(
+            s,
+            format!(
+                "set_page_aliases — {}: 2 aliases",
+                &ULID_A[..ULID_PREFIX_LEN]
+            ),
+        );
+        assert_no_secrets(&s);
+        let one = json!({ "page_id": ULID_A, "aliases": ["SECRET_ALIAS"] });
+        assert!(summarise(TOOL_SET_PAGE_ALIASES, &args, &one).ends_with(": 1 alias"));
+    }
+
+    #[test]
     fn move_blocks_counts_moves_under_parent_prefix() {
         let args = json!({ "block_ids": [ULID_A, ULID_REF], "parent_id": ULID_B });
         let result = json!({ "moves": [{ "block_id": ULID_A }, { "block_id": ULID_REF }] });
@@ -1549,8 +1581,9 @@ mod tests {
             "parent_id": ULID_B,
             "tag_id": ULID_TAG,
             "page_id": ULID_A,
-            // #5378 — `create_tag` / `move_page_to_space` args.
+            // #5378 — `create_tag` / `move_page_to_space` / `set_page_aliases` args.
             "name": "SECRET_TAG_NAME",
+            "aliases": ["SECRET_ALIAS"],
             "space_id": ULID_B,
             "target_space_id": ULID_B,
             "key": "notes",
