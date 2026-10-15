@@ -7,7 +7,7 @@
 // #3308 — `normalizeKey` lives in `keys.ts` so `validateBindingInput` can
 // derive its accepted-token set from the SAME canonicalisation the matcher
 // compares with, instead of guessing at it.
-import { normalizeKey } from '@/lib/keyboard-config/keys'
+import { isTabKey, normalizeKey } from '@/lib/keyboard-config/keys'
 import { parseChord } from '@/lib/keyboard-config/parse'
 import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 
@@ -45,7 +45,7 @@ function isSymbolKey(canonical: string): boolean {
  * modifier combo their layout uses.
  */
 export function matchesShortcutBinding(
-  e: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'key'>,
+  e: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'key'> & { code?: string },
   shortcutId: string,
 ): boolean {
   const binding = getShortcutKeys(shortcutId)
@@ -55,7 +55,7 @@ export function matchesShortcutBinding(
 }
 
 function matchesSingleBinding(
-  e: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'key'>,
+  e: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'key'> & { code?: string },
   binding: string,
 ): boolean {
   // #723 — parse with the SAME tokenizer the Settings validator and
@@ -68,7 +68,7 @@ function matchesSingleBinding(
   const parsed = parseChord(binding)
   if (!parsed) return false
   const normalizedKey = normalizeKey(parsed.key)
-  const normalizedEventKey = normalizeKey(e.key)
+  const normalizedEventKey = normalizeKey(isTabKey(e) ? 'Tab' : e.key)
   const symbolKey = isSymbolKey(normalizedKey)
   // Relax shift check for symbol punctuation keys — on many layouts
   // the same physical key produces different glyphs with/without shift
