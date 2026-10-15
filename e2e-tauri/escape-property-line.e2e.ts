@@ -27,8 +27,8 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  enterBlankSibling,
   expectAbsent,
-  focusedBlankBlockId,
   navigateTo,
   openJournalBlockEditor,
   runScopedMarker,
@@ -52,9 +52,7 @@ describe('Agaric real-backend Escape on a property-only block (#5448)', () => {
     await navigateTo('Journal')
     await openJournalBlockEditor()
     await typeMarkerVerified(CONTROL_MARKER)
-    await browser.keys(['End'])
-    await browser.keys(['Enter'])
-    const blank = `[data-block-id="${await focusedBlankBlockId()}"]`
+    const blank = `[data-block-id="${await enterBlankSibling()}"]`
     await browser.keys(['Escape'])
 
     // The cleanup's delete is optimistic, so the row leaves the DOM as soon as
