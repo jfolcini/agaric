@@ -234,7 +234,11 @@ pub(super) fn build_fts_fetch(
     // `add_tags_all` builder is retired — every search path (this one plus
     // the toggle-filter `regex_mode_query` / `filter_only_scan` builders) now
     // routes tags through `add_tags_via_projection`.
-    fb.add_tags_via_projection(PREFIX, &active_tag_ids);
+    fb.add_tags_via_projection(
+        PREFIX,
+        &active_tag_ids,
+        metadata.tags_match_inline_and_inherited,
+    );
 
     // Space filter on the first-class `b.space_id` column (#533, migration
     // 0086). Kept inline (via the builder) because the dynamic-SQL shape of

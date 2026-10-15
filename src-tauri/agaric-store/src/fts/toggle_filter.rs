@@ -1149,7 +1149,11 @@ fn apply_structural_filters(
     // main path — drop-in, result-equivalent swaps for the legacy
     // `add_tags_all` / `add_page_globs`.
     let tag_ids_active = super::filter_builder::normalize_tag_ids(inputs.tag_ids);
-    fb.add_tags_via_projection(prefix, &tag_ids_active);
+    fb.add_tags_via_projection(
+        prefix,
+        &tag_ids_active,
+        inputs.metadata.tags_match_inline_and_inherited,
+    );
 
     fb.add_space(prefix, inputs.scope);
 
