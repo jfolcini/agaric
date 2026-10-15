@@ -798,6 +798,14 @@ async fn seed_child(pool: &SqlitePool, id: &str, page_id: &str) {
     .unwrap();
 }
 
+/// An op stamped `created_at`: two ops one test compares must not share a
+/// millisecond, or an assertion that tells them apart passes vacuously.
+async fn make_op_record_at(pool: &SqlitePool, payload: OpPayload, created_at: i64) -> OpRecord {
+    agaric_store::op_log::append_local_op_at(pool, DEV, payload, created_at)
+        .await
+        .unwrap()
+}
+
 fn edit(block_id: &str, to_text: &str) -> OpPayload {
     OpPayload::EditBlock(EditBlockPayload {
         block_id: BlockId::test_id(block_id),
@@ -817,7 +825,7 @@ async fn sort_keys_follow_single_ops_5371() {
     seed_child(&pool, "SK_CHILD_A", "SK_PAGE_A").await;
     assert_sort_key_parity(&pool, "seeded").await;
 
-    let e = make_op_record(&pool, edit("SK_CHILD_A", "edited")).await;
+    let e = make_op_record_at(&pool, edit("SK_CHILD_A", "edited"), FIXED_TS + 1).await;
     run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(e.clone())), &[]).await;
     assert_eq!(
         last_edited(&pool, "SK_PAGE_A").await,
@@ -827,11 +835,12 @@ async fn sort_keys_follow_single_ops_5371() {
     assert_eq!(last_edited(&pool, "SK_PAGE_B").await, 0, "untouched page");
     assert_sort_key_parity(&pool, "after child edit").await;
 
-    let d = make_op_record(
+    let d = make_op_record_at(
         &pool,
         OpPayload::DeleteBlock(DeleteBlockPayload {
             block_id: BlockId::test_id("SK_CHILD_A"),
         }),
+        FIXED_TS + 2,
     )
     .await;
     run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(d.clone())), &[]).await;
@@ -842,7 +851,7 @@ async fn sort_keys_follow_single_ops_5371() {
     );
     assert_sort_key_parity(&pool, "after child delete").await;
 
-    let t = make_op_record(&pool, edit("SK_PAGE_B", "ángel")).await;
+    let t = make_op_record_at(&pool, edit("SK_PAGE_B", "ángel"), FIXED_TS + 3).await;
     run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(t.clone())), &[]).await;
     handle_background_task(&pool, &MaterializeTask::RebuildPagesCache, None, None)
         .await
@@ -873,9 +882,9 @@ async fn sort_keys_follow_a_batch_5371() {
     seed_child(&pool, "SK_CHILD_C2", "SK_PAGE_C").await;
     seed_child(&pool, "SK_CHILD_D", "SK_PAGE_D").await;
 
-    let c1 = make_op_record(&pool, edit("SK_CHILD_C1", "one")).await;
-    let d = make_op_record(&pool, edit("SK_CHILD_D", "two")).await;
-    let c2 = make_op_record(&pool, edit("SK_CHILD_C2", "three")).await;
+    let c1 = make_op_record_at(&pool, edit("SK_CHILD_C1", "one"), FIXED_TS + 1).await;
+    let d = make_op_record_at(&pool, edit("SK_CHILD_D", "two"), FIXED_TS + 2).await;
+    let c2 = make_op_record_at(&pool, edit("SK_CHILD_C2", "three"), FIXED_TS + 3).await;
     handle_foreground_task(
         &pool,
         &MaterializeTask::BatchApplyOps(StdArc::new(vec![c1, d.clone(), c2.clone()])),
@@ -907,9 +916,9 @@ async fn a_cross_page_move_raises_the_destination_only_5371() {
     seed_page(&pool, "SK_PAGE_DST", "Destination").await;
     seed_child(&pool, "SK_MOVED", "SK_PAGE_SRC").await;
 
-    let e = make_op_record(&pool, edit("SK_MOVED", "before the move")).await;
+    let e = make_op_record_at(&pool, edit("SK_MOVED", "before the move"), FIXED_TS + 1).await;
     run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(e.clone())), &[]).await;
-    let m = make_op_record(
+    let m = make_op_record_at(
         &pool,
         OpPayload::MoveBlock(MoveBlockPayload {
             block_id: BlockId::test_id("SK_MOVED"),
@@ -917,6 +926,7 @@ async fn a_cross_page_move_raises_the_destination_only_5371() {
             new_position: 0,
             new_index: None,
         }),
+        FIXED_TS + 2,
     )
     .await;
     run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(m.clone())), &[]).await;
@@ -932,4 +942,37 @@ async fn a_cross_page_move_raises_the_destination_only_5371() {
         "source unchanged"
     );
     assert_sort_key_parity(&pool, "after cross-page move").await;
+}
+
+/// #5371 — a page created through `ApplyOp` carries its title key from the
+/// create itself: no `RebuildPagesCache` runs before the read.
+#[tokio::test]
+async fn a_page_create_writes_its_title_key_without_a_rebuild_5371() {
+    let (pool, _dir) = test_pool().await;
+    let c = make_op_record_at(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("SK_PAGE_NEW"),
+            block_type: "page".into(),
+            parent_id: None,
+            position: Some(0),
+            index: None,
+            content: "Émile".into(),
+        }),
+        FIXED_TS + 1,
+    )
+    .await;
+    run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(c.clone())), &[]).await;
+
+    let row: (String, i64) = sqlx::query_as(
+        "SELECT title_sort_key, last_edited_ms FROM pages_cache WHERE page_id = 'SK_PAGE_NEW'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        ("emile".to_owned(), c.created_at),
+        "the create's INSERT writes the key, and the apply raises the row to the create"
+    );
 }

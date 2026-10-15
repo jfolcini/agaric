@@ -4143,6 +4143,63 @@ mod boot_cache_gating_tests {
         );
         mat.shutdown();
     }
+
+    /// #5371 — a seeded space page's ULID time is 0, and compaction can leave
+    /// it with no op. Its row is born at 1, not at the unfilled 0, so the
+    /// next boot schedules no rebuild.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_seeded_space_page_with_no_op_is_filled_once_5371() {
+        const PAGE: &str = crate::spaces::SPACE_PERSONAL_ULID;
+        let dir = tempfile::TempDir::new().unwrap();
+        let pools = db::init_pools(&dir.path().join("test.db")).await.unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'Personal', ?)",
+        )
+        .bind(PAGE)
+        .bind(PAGE)
+        .execute(&pools.write)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, 'Personal', 1)",
+        )
+        .bind(PAGE)
+        .execute(&pools.write)
+        .await
+        .unwrap();
+        let mat =
+            materializer::Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background()
+            .await
+            .expect("drain the boot rebuilds");
+        let last_edited: i64 =
+            sqlx::query_scalar("SELECT last_edited_ms FROM pages_cache WHERE page_id = ?")
+                .bind(PAGE)
+                .fetch_one(&pools.read)
+                .await
+                .unwrap();
+        assert_eq!(
+            last_edited, 1,
+            "no op and a zero ULID time: born at the floor"
+        );
+
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        let before = load();
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the second boot");
+        assert_eq!(
+            load() - before,
+            1,
+            "a row born at the floor schedules no rebuild: only the flush barrier runs"
+        );
+        mat.shutdown();
+    }
 }
 
 #[cfg(test)]

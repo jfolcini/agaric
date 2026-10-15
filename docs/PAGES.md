@@ -79,7 +79,7 @@ A quick "where did I leave off" view:
 
 1. Open **Add filter** and click the **Edited this week** bucket under **Filters**.
 
-The list collapses to pages edited in the last seven days. Pair it with the **Last edited** sort (from the sort control) to read them newest-first.
+The list collapses to pages edited in the last seven days. The **Last edited** sort (from the sort control) does not always agree with it: the sort counts an edit to any block on the page, while the bucket counts only edits to the page block itself, such as its title. A page whose body changed this week can sort near the top yet be left out of the bucket.
 
 ## Combining filters
 

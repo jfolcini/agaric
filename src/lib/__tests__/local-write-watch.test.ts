@@ -70,6 +70,7 @@ describe('watchLocalWrites', () => {
       'logFrontend',
       'fetchLinkMetadata',
       'startSync',
+      'recordPageOpen',
     ] as const) {
       expect(wrapped).not.toContain(notAWrite)
     }

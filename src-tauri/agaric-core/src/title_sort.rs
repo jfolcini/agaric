@@ -23,8 +23,9 @@ pub fn title_sort_key(title: &str) -> String {
 mod tests {
     use super::title_sort_key;
 
-    /// The vectors the tauri-mock's `titleSortKey` is pinned to
-    /// (`sort-cursor.vectors.json`); a change here is a change there.
+    /// The tauri-mock's `titleSortKey` shares only the first four titles here,
+    /// through `sort-cursor.vectors.json`; every other case is pinned on this
+    /// side only.
     #[test]
     fn pinned_known_values() {
         for (title, key) in [

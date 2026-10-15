@@ -16,7 +16,8 @@ use agaric_core::error::AppError;
 /// changes nothing at all writes nothing.
 ///
 /// A row is born with `last_edited_ms` = its page's newest op, else the
-/// page's ULID creation time; an existing row only ever has it raised (#5371).
+/// page's ULID creation time, floored at 1; an existing row only ever has it
+/// raised (#5371).
 ///
 /// Returns the rows inserted, updated, or deleted.
 async fn apply_sort_merge_rebuild(
@@ -52,8 +53,13 @@ async fn apply_sort_merge_rebuild(
             .map(|r| {
                 let key = agaric_core::title_sort::title_sort_key(&r.title);
                 // 0 leaves a filled row's value alone: the UPSERT keeps the MAX.
+                // A born value is at least 1 so 0 stays the unfilled marker: a
+                // seeded space page's ULID time is 0, and once compaction drops
+                // its ops, boot would otherwise reschedule this rebuild forever.
                 let last_edited = if r.unfilled {
-                    r.newest_op_ms.unwrap_or_else(|| ulid_created_ms(&r.id))
+                    r.newest_op_ms
+                        .unwrap_or_else(|| ulid_created_ms(&r.id))
+                        .max(1)
                 } else {
                     0
                 };
@@ -259,7 +265,7 @@ pub(crate) async fn recompute_all_pages_cache_counts(
 /// Incremental rebuild of `pages_cache`.
 ///
 /// 1. UPSERT the rows that are new, retitled, or still unfilled since
-///    migration 0122 (see [`apply_sort_merge_rebuild`]). Unchanged hits are
+///    migration 0122 (see `apply_sort_merge_rebuild`). Unchanged hits are
 ///    no-ops, so their `updated_at` is preserved.
 /// 2. `DELETE FROM pages_cache WHERE page_id NOT IN (live page IDs)` —
 ///    sweeps cache rows whose source block was soft-deleted, hard

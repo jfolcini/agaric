@@ -161,7 +161,7 @@ Rebuilt by the materializer; never read-through:
 | `block_tag_refs` | Inline `#[ULID]` references | content scan, separate from explicit tag membership | Yes — `ReindexBlockTagRefs` is a persisted per-block task |
 | `block_tag_inherited` | Materialized ancestor-tag inheritance | `add_tag` / `remove_tag` + tree moves | Yes — `RebuildTagInheritanceCache` is a persisted global task |
 | `tags_cache` | Per-tag aggregate (usage, descendant count) | tag-touching ops | Yes — `RebuildTagsCache` is a persisted global task |
-| `pages_cache` | Per-page aggregate | page-touching ops | Yes — `RebuildPagesCache` is a persisted global task |
+| `pages_cache` | Per-page aggregate. `title_sort_key` is the title NFKD-decomposed, combining marks stripped and lowercased, the key the Alphabetical sort orders by (`agaric_core::title_sort`). `last_edited_ms` is the newest op on the page or any block on it, raised in that op's own transaction and never lowered, the key the Last-edited sort orders by. | page-touching ops | Yes — `RebuildPagesCache` is a persisted global task |
 | `agenda_cache` | Per-date task index | due / scheduled / completed property writes | Yes — `RebuildAgendaCache` is a persisted global task |
 | `projected_agenda_cache` | Occurrences of repeating tasks, 90 days back through the horizon | repeat-property writes | Yes — `RebuildProjectedAgendaCache` is a persisted global task |
 | `fts_blocks` (FTS5 virtual table) | Tokenised block content for search | edit_block, materializer post-commit | Yes for incremental per-block reindex (`UpdateFtsBlock` is persisted); **no** for a full reindex — `RebuildFtsIndex` is one of the "truly non-retryable" tasks and is silently dropped on failure/saturation, not queued for a later sweep |

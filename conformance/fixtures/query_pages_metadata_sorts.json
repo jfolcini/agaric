@@ -311,7 +311,7 @@
         "limit": 50
       },
       "command": "list_pages_with_metadata",
-      "comment": "PageSort::RecentlyModified -> I64Desc on pages_cache.last_edited_ms, the newest op on the page OR ANY OF ITS BLOCKS: S1 (its child's edit came last), S3 (its children's edits), then S2 at its creation time, 0 for a seed label.",
+      "comment": "PageSort::RecentlyModified -> I64Desc on pages_cache.last_edited_ms, the newest op on the page OR ANY OF ITS BLOCKS: S1 (its child's edit came last), S3 (its children's edits), then S2, which no op touched and whose seed-label id carries no creation time.",
       "name": "pages_sorted_recently_modified"
     }
   ],
