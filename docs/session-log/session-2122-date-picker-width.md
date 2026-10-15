@@ -10,6 +10,11 @@ The dialog is now as wide as the calendar plus the dialog's padding.
   `sm:max-w-sm`; a flat `max-w-xs` would have overflowed on tablets.
 - **Phones.** Below `sm` the dialog keeps its viewport-wide cap.
 
+The Journal calendar dropdown was already sized to its calendar. On desktop,
+its legend's `gap-3` made it a few pixels too wide for one line, so
+"Property" wrapped onto a line of its own. The legend now uses `gap-x-2
+gap-y-1` and fits on one line, and the dropdown is a line shorter.
+
 Checked with Playwright screenshots against the mock: desktop with a mouse,
-and a tablet with touch. The block date picker's vitest file, the typecheck,
-oxlint and oxfmt passed.
+and a tablet with touch. Both components' vitest files, the dropdown's three `menus-popovers` e2e
+tests, the typecheck, oxlint and oxfmt passed.
