@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM pages_cache WHERE last_edited_ms = 0) AS \"unfilled!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "unfilled!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b34d1bb6d2551e84770114570909cd791dbf11a6e3fd1d7d110137086e9373b2"
+}

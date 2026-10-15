@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id AS \"block_id!\", MAX(created_at) AS \"newest!: i64\"\n             FROM op_log WHERE block_id IS NOT NULL GROUP BY block_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "block_id"
+          }
+        }
+      },
+      {
+        "name": "newest!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "48a6877dc9721803ac848c413b6431358b09b8dd40ee729d67a4b39eb578e484"
+}
