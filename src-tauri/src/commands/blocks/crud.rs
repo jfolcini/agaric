@@ -771,30 +771,7 @@ pub async fn delete_block_inner(
     )
     .await?;
     tx.commit_and_dispatch(materializer).await?;
-
-    // #2344 NEW post-commit engine cohort fan-out — the LOCAL counterpart of
-    // the `dispatch_delete_descendants` call `apply_op` runs after ITS commit.
-    // The in-tx engine apply above (`apply_delete_block_via_loro`) reached only
-    // the SEED; the per-space Loro `apply_delete_block` is per-block-id, so the
-    // DESCENDANT deletes never reach the engine without this fan-out (SQL would
-    // report them deleted while the engine still shows them alive). Drives the
-    // captured cohort (seed + descendants) onto the per-space engine using the
-    // space id captured PRE-UPDATE (post-delete `resolve_block_space` returns
-    // None for the now-tombstoned rows). Infallible / log-only, mirroring
-    // `apply_op`'s call shape exactly (args, await, no `?`).
-    crate::materializer::dispatch_delete_descendants(
-        &deleted.op_record,
-        &deleted.effects.deleted_cohort,
-        deleted.effects.delete_space_id.as_ref(),
-        materializer.loro_state(),
-    )
-    .await;
-    // #4733 POST-COMMIT FTS removal for the same cohort. `commit_and_dispatch`
-    // enqueued a `RemoveFtsBlock` for the SEED alone (`invalidations_for_op`
-    // never sees the cohort), so every descendant kept its `fts_blocks` row
-    // until the next full rebuild. Same list the soft-delete consumed, same
-    // site argument as the #4285 link repair on the restore path.
-    crate::materializer::remove_deleted_cohort_fts(pool, &deleted.effects.deleted_cohort).await;
+    dispatch_deletes(pool, materializer, std::slice::from_ref(&deleted)).await;
 
     Ok(DeleteResponse {
         block_id,
@@ -937,14 +914,26 @@ pub(crate) async fn delete_block_in_tx(
     })
 }
 
-/// The post-commit fan-out [`delete_block_inner`] runs, per delete, for a
-/// caller that ran [`delete_block_in_tx`] in its own transaction.
+/// The post-commit fan-out of each delete [`delete_block_in_tx`] ran, for the
+/// caller whose transaction held them ([`delete_block_inner`] holds one; the
+/// page source save and the MCP `batch` hold several).
 pub(crate) async fn dispatch_deletes(
     pool: &SqlitePool,
     materializer: &Materializer,
     deletes: &[DeleteInTx],
 ) {
     for deleted in deletes {
+        // #2344 NEW post-commit engine cohort fan-out — the LOCAL counterpart of
+        // the `dispatch_delete_descendants` call `apply_op` runs after ITS commit.
+        // The in-tx engine apply of `delete_block_in_tx`
+        // (`apply_delete_block_via_loro`) reached only the SEED; the per-space
+        // Loro `apply_delete_block` is per-block-id, so the DESCENDANT deletes
+        // never reach the engine without this fan-out (SQL would report them
+        // deleted while the engine still shows them alive). Drives the captured
+        // cohort (seed + descendants) onto the per-space engine using the space
+        // id captured PRE-UPDATE (post-delete `resolve_block_space` returns None
+        // for the now-tombstoned rows). Infallible / log-only, mirroring
+        // `apply_op`'s call shape exactly (args, await, no `?`).
         crate::materializer::dispatch_delete_descendants(
             &deleted.op_record,
             &deleted.effects.deleted_cohort,
@@ -952,6 +941,11 @@ pub(crate) async fn dispatch_deletes(
             materializer.loro_state(),
         )
         .await;
+        // #4733 POST-COMMIT FTS removal for the same cohort. `commit_and_dispatch`
+        // enqueued a `RemoveFtsBlock` for the SEED alone (`invalidations_for_op`
+        // never sees the cohort), so every descendant kept its `fts_blocks` row
+        // until the next full rebuild. Same list the soft-delete consumed, same
+        // site argument as the #4285 link repair on the restore path.
         crate::materializer::remove_deleted_cohort_fts(pool, &deleted.effects.deleted_cohort).await;
     }
 }

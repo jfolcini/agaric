@@ -3330,9 +3330,38 @@ async fn property_count(pool: &SqlitePool, block_id: &str) -> i64 {
         .unwrap()
 }
 
+/// `parent`'s children in `space`'s Loro engine, in order.
+fn engine_children(mat: &Materializer, space: &str, parent: &str) -> Vec<String> {
+    let space = SpaceId::from_trusted(space);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, DEV)
+        .expect("the space's engine");
+    guard
+        .engine_mut()
+        .children_ordered_block_ids(Some(parent))
+        .expect("the engine's children")
+}
+
+/// Whether `space`'s Loro engine holds `block` deleted.
+fn engine_deleted(mat: &Materializer, space: &str, block: &str) -> bool {
+    let space = SpaceId::from_trusted(space);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, DEV)
+        .expect("the space's engine");
+    guard
+        .engine_mut()
+        .read_deleted(block)
+        .expect("the engine holds the block")
+}
+
 /// Ops that wrote in the batch's transaction are rolled back with it when a
 /// later op is refused: the refused op is one only running reveals, on the
-/// block the op before it deleted.
+/// block the op before it deleted. The engine takes each op as it runs, so it
+/// is rewound too.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_with_one_refused_op_writes_nothing_5399() {
     let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
@@ -3342,6 +3371,11 @@ async fn batch_with_one_refused_op_writes_nothing_5399() {
     settle(&mat).await;
     let before = op_count(&pool).await;
     let properties_before = property_count(&pool, &a).await;
+    assert_eq!(
+        engine_children(&mat, &space, &page),
+        [a.clone(), b.clone()],
+        "the engine holds the page as the batch finds it"
+    );
 
     let err = tools
         .call_tool(
@@ -3369,6 +3403,15 @@ async fn batch_with_one_refused_op_writes_nothing_5399() {
     assert_eq!(op_count(&pool).await, before, "no op was written");
     assert_eq!(child_contents(&pool, &page).await, ["A", "B"]);
     assert_eq!(property_count(&pool, &a).await, properties_before);
+    assert_eq!(
+        engine_children(&mat, &space, &page),
+        [a.clone(), b.clone()],
+        "the engine kept an op the batch rolled back"
+    );
+    assert!(
+        !engine_deleted(&mat, &space, &b),
+        "B is deleted in the engine"
+    );
     assert!(emitter.blocks_changed().is_empty(), "nothing to reload");
 }
 
@@ -3410,6 +3453,25 @@ async fn batch_refuses_malformed_ops_5399() {
             "{what}: got {err:?}"
         );
     }
+    // A value_ref that is no ULID is `AppError::Ulid`, which names its op too.
+    let err = tools
+        .call_tool(
+            "batch",
+            json!({
+                "ops": [
+                    delete_a,
+                    { "op": "set_property", "block_id": a, "key": "assignee", "value_ref": "nope" },
+                ],
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a value_ref that is no ULID");
+    assert!(
+        matches!(&err, AppError::Ulid(message) if message.starts_with("ops[1]: ")),
+        "got {err:?}"
+    );
     assert_eq!(op_count(&pool).await, before, "no op was written");
     assert!(is_live(&pool, &a).await);
 }
@@ -3480,6 +3542,80 @@ async fn batch_over_one_undo_is_refused_5399() {
         "got {err:?}"
     );
     assert_eq!(op_count(&pool).await, before, "no op was written");
+}
+
+/// A batch reloads what it wrote once, as its tools would each: the page a
+/// block left, the page it landed on, and the property set on it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_notifies_the_pages_and_properties_it_wrote_5399() {
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let src = mk_page(&pool, &mat, &space, "Src").await;
+    let dst = mk_page(&pool, &mat, &space, "Dst").await;
+    let a = mk_child_of(&pool, &mat, &src, "A").await;
+    settle(&mat).await;
+
+    tools
+        .call_tool(
+            "batch",
+            json!({
+                "ops": [
+                    { "op": "set_property", "block_id": a, "key": "assignee", "value_text": "alice" },
+                    { "op": "move_blocks", "block_ids": [a], "parent_id": dst },
+                ],
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("a property and a move");
+
+    let mut pages = emitter.blocks_changed();
+    pages.iter_mut().for_each(|reloaded| reloaded.sort());
+    let mut both = vec![src, dst];
+    both.sort();
+    assert_eq!(
+        (pages, emitter.property_changed()),
+        (vec![both], vec![(a, vec!["assignee".to_owned()])]),
+    );
+}
+
+/// The delete's in-transaction apply reaches only the block it names; its
+/// descendants leave the engine in the fan-out after the commit, which a
+/// batch must run as a lone `delete_block` does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_delete_takes_the_descendants_out_of_the_engine_5399() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let parent = mk_child_of(&pool, &mat, &page, "X").await;
+    let child = mk_child_of(&pool, &mat, &parent, "G").await;
+    settle(&mat).await;
+    assert!(
+        !engine_deleted(&mat, &space, &child),
+        "the engine holds G alive"
+    );
+
+    tools
+        .call_tool(
+            "batch",
+            json!({
+                "ops": [{ "op": "delete_block", "block_id": parent }],
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("delete a block with a child");
+    settle(&mat).await;
+
+    assert!(
+        !is_live(&pool, &child).await,
+        "the cascade deleted G in SQL"
+    );
+    assert!(engine_deleted(&mat, &space, &parent));
+    assert!(
+        engine_deleted(&mat, &space, &child),
+        "G is still alive in the engine"
+    );
 }
 
 /// The page's source as the RO `get_page_markdown` hands an agent to edit.

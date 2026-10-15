@@ -279,10 +279,16 @@
     "reason": "IPC shim over move_blocks_batch_inner"
   },
   {
+    "fn": "src-tauri/src/commands/blocks/move_ops.rs::move_blocks_batch_in_tx",
+    "kind": "mutating",
+    "status": "converged",
+    "reason": "ONE BODY: the loop move_blocks_batch_inner runs, split out so the MCP `batch` tool can run it in its own transaction (#5399). It loops move_block_in_tx, the helper move_block_inner calls; the standalone command only opens and commits the transaction around it"
+  },
+  {
     "fn": "src-tauri/src/commands/blocks/move_ops.rs::move_blocks_batch_inner",
     "kind": "mutating",
     "status": "converged",
-    "reason": "ALREADY A FOLD: loops move_block_in_tx (move_ops.rs:604), the same helper move_block_inner calls (move_ops.rs:55), inside one tx. #2274 extracted it precisely to remove the fork"
+    "reason": "ALREADY A FOLD: opens one tx around move_blocks_batch_in_tx, which loops move_block_in_tx, the same helper move_block_inner calls. #2274 extracted it precisely to remove the fork"
   },
   {
     "fn": "src-tauri/src/commands/blocks/queries.rs::batch_resolve",
@@ -397,5 +403,59 @@
     "kind": "read-only",
     "status": "wrapper",
     "reason": "Shim over crate::commands::blocks::crud::purge_blocks_by_ids_inner, which carries the real disposition (`covered` by purge_blocks_by_ids_matches_per_block_fold). #4639 extraction of one tombstone_purge drain-loop batch; it contains no SQL of its own, so the computed kind is read-only. It fans out over nothing itself \u2014 it forwards `ids` to the inner and then only CHOOSES between the #4018 contention bail-out and the #3311 per-root fallback, and that fold arm is purge_roots_one_at_a_time, which is the deliberate non-equivalent error path rather than a second bulk implementation."
+  },
+  {
+    "fn": "src-tauri/src/mcp/summarise.rs::summarise_batch",
+    "kind": "read-only",
+    "status": "not-a-fan-out",
+    "reason": "Not a fan-out: the activity-feed summary of an MCP `batch` call, its ops counted by the tool each names. No SQL and nothing written. Caught by the name heuristic (`batch` segment) and kept in the inventory rather than regex-excluded"
+  },
+  {
+    "fn": "src-tauri/src/mcp/tools_rw.rs::apply_batch_op",
+    "kind": "read-only",
+    "status": "converged",
+    "reason": "ONE BODY per op: each arm runs the `_in_tx` half its tool's own `*_inner` wraps (append_block_resolving_names_in_tx, edit_block_resolving_names_in_tx, set_property_inner_in_tx, add_tag_in_tx, remove_tag_inner_in_tx, move_blocks_batch_in_tx, delete_block_in_tx), so a batched op writes what its tool writes alone. Computed `read-only` because every write is a call into another file; run_batch owns the transaction"
+  },
+  {
+    "fn": "src-tauri/src/mcp/tools_rw.rs::batch_op_descriptions",
+    "kind": "read-only",
+    "status": "not-a-fan-out",
+    "reason": "Not a fan-out: the descriptions of the write tools a `batch` op can name, for the tool's input schema and the refusal that lists them. Pure data, no I/O"
+  },
+  {
+    "fn": "src-tauri/src/mcp/tools_rw.rs::batch_op_schema",
+    "kind": "read-only",
+    "status": "not-a-fan-out",
+    "reason": "Not a fan-out: one tool's input schema as a `batch` op's (an `op` tag in, `space_id` out). Pure, one schema in and one out"
+  },
+  {
+    "fn": "src-tauri/src/mcp/tools_rw.rs::handle_batch",
+    "kind": "mutating",
+    "status": "wrapper",
+    "reason": "Handler over run_batch, which carries the real disposition (`converged`): it parses the call, prepares every op, runs the batch and notifies open views. It writes nothing itself"
+  },
+  {
+    "fn": "src-tauri/src/mcp/tools_rw.rs::prepare_batch_op",
+    "kind": "read-only",
+    "status": "not-a-fan-out",
+    "reason": "Not a fan-out: one op in, one prepared op out. Each arm runs the prepare_* its tool's own handler runs, so no check has a second implementation; handle_batch owns the loop over the ops. Runs before the transaction opens, reading through its own connections"
+  },
+  {
+    "fn": "src-tauri/src/mcp/tools_rw.rs::run_batch",
+    "kind": "mutating",
+    "status": "converged",
+    "reason": "ALREADY A FOLD: loops apply_batch_op over the ops inside one tx, each arm the `_in_tx` half its tool's own `*_inner` wraps, and fans out after a delete through dispatch_deletes, which delete_block_inner runs too. What it adds is the product: one tx, one activity entry and one undo, and the cap on the ops one undo reverts"
+  },
+  {
+    "fn": "src-tauri/src/mcp/tools_rw.rs::set_property_in_batch",
+    "kind": "read-only",
+    "status": "converged",
+    "reason": "ONE BODY: a batch's set_property arm runs verify_active_in_tx and set_property_inner_in_tx, the two steps handle_set_property and set_property_inner run (the first through the pool, the second in its own transaction). Computed `read-only` because the write is a call into another file"
+  },
+  {
+    "fn": "src-tauri/src/mcp/tools_rw.rs::tool_desc_batch",
+    "kind": "read-only",
+    "status": "not-a-fan-out",
+    "reason": "Not a fan-out: the `batch` tool's description and input schema, built from the op tools'. Pure data, no I/O"
   }
 ]

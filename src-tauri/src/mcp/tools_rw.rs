@@ -1964,6 +1964,7 @@ fn at_op(index: usize, err: AppError) -> AppError {
         },
         AppError::NotFound(message) => AppError::NotFound(at(message)),
         AppError::InvalidOperation(message) => AppError::InvalidOperation(at(message)),
+        AppError::Ulid(message) => AppError::Ulid(at(message)),
         err => err,
     }
 }
