@@ -57,7 +57,7 @@ GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` an
 Splitting a file breaks path-keyed guards even for a verbatim move. Rebase onto `origin/main` first so the guards run locally, then:
 
 - Re-anchor only the moved files: `python3 scripts/check-dynamic-sql.py --update-baseline <path>...`. Never `--all`, and never hand-edit the baseline: both launder unrelated drift into your diff.
-- Swap `check-raw-tx.py` allowlist globs.
+- Swap `check-raw-tx.mjs` allowlist globs.
 - Repoint `AGENTS.md` and `docs/architecture/*` citations, and the path strings in `vi.mock` / `vi.doMock` / `importActual`, which tsc does not check and which silently stop intercepting.
 
 ## Shell
