@@ -32,6 +32,8 @@ pub fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, AppErro
         OpPayload::AddAttachment(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
         OpPayload::DeleteAttachment(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
         OpPayload::RenameAttachment(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::AddPageAlias(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
+        OpPayload::RemovePageAlias(p) => Ok(serde_json::to_string(&serde_json::to_value(p)?)?),
     }
 }
 

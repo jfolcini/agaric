@@ -1794,6 +1794,55 @@ pub async fn apply_remove_tag_via_loro(
     Ok(())
 }
 
+/// Apply AddPageAlias through the page's engine, then project it to SQL
+/// (#5387). A page whose space does not resolve is projected without the
+/// engine, as the other ops' SQL-only fallback is.
+pub async fn apply_add_page_alias_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    p: &AddPageAliasPayload,
+) -> Result<(), AppError> {
+    let page_id = p.page_id.as_str();
+    if let Some(space_id) = resolve_doc_space(&mut *conn, &p.page_id).await? {
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
+        guard.engine_mut().apply_add_page_alias(page_id, &p.alias)?;
+    } else {
+        super::sql_only_fallback::record(
+            "add_page_alias",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
+    }
+    crate::loro::projection::project_add_page_alias_to_sql(conn, page_id, &p.alias).await
+}
+
+/// Apply RemovePageAlias through the page's engine, then project it to SQL
+/// (#5387). Same fallback as [`apply_add_page_alias_via_loro`].
+pub async fn apply_remove_page_alias_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    p: &RemovePageAliasPayload,
+) -> Result<(), AppError> {
+    let page_id = p.page_id.as_str();
+    if let Some(space_id) = resolve_doc_space(&mut *conn, &p.page_id).await? {
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
+        guard
+            .engine_mut()
+            .apply_remove_page_alias(page_id, &p.alias)?;
+    } else {
+        super::sql_only_fallback::record(
+            "remove_page_alias",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
+    }
+    crate::loro::projection::project_remove_page_alias_to_sql(conn, page_id, &p.alias).await
+}
+
 /// Apply DeleteProperty through the engine then project to SQL.
 ///
 /// Engine apply removes the key from the block's properties map

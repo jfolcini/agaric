@@ -1244,6 +1244,8 @@ impl WriteSlot {
             //   keyed by `attachment_id`, not `block_id` — `DeleteAttachment`
             //   carries no `block_id` at all — so they are outside this gate's
             //   `block_id`-scoped predicate entirely.
+            // * `AddPageAlias` / `RemovePageAlias`: no slot family models an
+            //   alias yet, so a retried one re-applies.
             OpType::CreateBlock
             | OpType::EditBlock
             | OpType::DeleteBlock
@@ -1251,7 +1253,9 @@ impl WriteSlot {
             | OpType::PurgeBlock
             | OpType::AddAttachment
             | OpType::DeleteAttachment
-            | OpType::RenameAttachment => None,
+            | OpType::RenameAttachment
+            | OpType::AddPageAlias
+            | OpType::RemovePageAlias => None,
         }
     }
 }

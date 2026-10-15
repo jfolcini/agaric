@@ -114,9 +114,8 @@ impl LoroEngine {
         }
         // v in [0, supported): an older-but-stamped format. v == 1 is the
         // retired flat-map model, which `reject_legacy_v1_snapshot` already
-        // catches by structure; any other sub-current value is accepted here and
-        // left to the existing structural checks (no historical stamped formats
-        // below the current one exist, so this is a defensive no-op today).
+        // catches by structure. A v2 doc is a v3 doc with no page aliases, so
+        // it is accepted as is.
         Ok(())
     }
     /// Import bytes previously produced by `export_snapshot` (or any
@@ -886,7 +885,7 @@ struct DiffCapture {
     /// Tree nodes whose meta-map / content changed (from `Index::Node` in the
     /// diff path) — resolved to block_ids after import.
     node_ids: std::collections::HashSet<TreeID>,
-    /// Block ids touched via the `block_properties` / `block_tags` roots.
+    /// Block ids touched via the `block_properties` / `block_tags` / `page_aliases` roots.
     block_id_keys: std::collections::HashSet<String>,
     /// Subset of `block_id_keys` whose `block_tags` changed (drives tag scope).
     tag_changed: std::collections::HashSet<String>,
@@ -986,7 +985,7 @@ fn classify_import_diff(cd: &loro::event::ContainerDiff, cap: &mut DiffCapture) 
                 cap.fallback = true;
             }
         }
-        BLOCK_PROPERTIES_ROOT => {
+        BLOCK_PROPERTIES_ROOT | PAGE_ALIASES_ROOT => {
             collect_block_id_keys(cd, &mut cap.block_id_keys, &mut cap.fallback);
         }
         BLOCK_TAGS_ROOT => {

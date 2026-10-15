@@ -15,6 +15,8 @@ export const history: Record<string, string> = {
   'history.opTypeMove': 'Move',
   'history.opTypeAddTag': 'Add tag',
   'history.opTypeRemoveTag': 'Remove tag',
+  'history.opTypeAddPageAlias': 'Add alias',
+  'history.opTypeRemovePageAlias': 'Remove alias',
   'history.opTypeSetProperty': 'Set property',
   'history.opTypeDeleteProperty': 'Delete property',
   'history.opTypeAddAttachment': 'Add attachment',
@@ -28,6 +30,8 @@ export const history: Record<string, string> = {
   'history.opTypeDescription.moveBlock': 'A block was moved or reordered',
   'history.opTypeDescription.addTag': 'A tag was added to a block',
   'history.opTypeDescription.removeTag': 'A tag was removed from a block',
+  'history.opTypeDescription.addPageAlias': 'An alias was added to a page',
+  'history.opTypeDescription.removePageAlias': 'An alias was removed from a page',
   'history.opTypeDescription.setProperty': 'A property was set on a block',
   'history.opTypeDescription.deleteProperty': 'A property was removed from a block',
   'history.opTypeDescription.addAttachment': 'An attachment was added to a block',
@@ -186,6 +190,8 @@ export const history: Record<string, string> = {
   // `useUndoShortcuts.performPageUndo`; without it the rename fell back to
   // the generic "Undone".
   'undo.op.renameAttachment': 'Undid attachment rename',
+  'undo.op.addPageAlias': 'Undid alias',
+  'undo.op.removePageAlias': 'Undid alias',
   'redo.op.createBlock': 'Redid create block',
   'redo.op.editBlock': 'Redid edit',
   'redo.op.deleteBlock': 'Redid delete',
@@ -198,6 +204,8 @@ export const history: Record<string, string> = {
   'redo.op.addAttachment': 'Redid attachment',
   'redo.op.deleteAttachment': 'Redid attachment',
   'redo.op.renameAttachment': 'Redid attachment rename',
+  'redo.op.addPageAlias': 'Redid alias',
+  'redo.op.removePageAlias': 'Redid alias',
   'history.errorServer':
     'The local backend returned an error while fetching history. Retry, or restart the app if it persists.',
   'history.errorUnknown':

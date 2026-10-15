@@ -13,6 +13,7 @@
  */
 
 import type { AppError } from '@/lib/bindings'
+import { foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { deleteCohort, nextCohortMarker, restoreCohort } from '@/lib/tauri-mock/cohort'
 import { type MockOpLogEntry, opLog } from '@/lib/tauri-mock/seed'
 
@@ -136,6 +137,8 @@ export interface RevertState {
   blockTags?: BlockTags
   /** #5057 — the attachments map, for the three attachment reverses. */
   attachments?: Map<string, Record<string, unknown>>
+  /** #5387 — the page aliases map, for the two alias reverses. */
+  pageAliases?: Map<string, string[]>
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +261,52 @@ function revertTagSet(
   if (!blockTags.has(blockId)) blockTags.set(blockId, new Set())
   blockTags.get(blockId)?.add(tagId)
   return true
+}
+
+// ---------------------------------------------------------------------------
+// Page alias reverts (mutate the `pageAliases` map)
+// ---------------------------------------------------------------------------
+
+/**
+ * #5387 — `add_page_alias` and `remove_page_alias` reverse into each other
+ * (`reverse/alias_ops.rs`). The apply arms in `apply_reverse_in_tx` refuse a
+ * page that is no longer live, and a re-add of an alias another page holds now.
+ * Any other op type is left alone.
+ */
+function revertPageAlias(
+  opType: string,
+  payload: Record<string, unknown>,
+  blocks: Blocks,
+  state: RevertState,
+): void {
+  const pageAliases = state.pageAliases
+  if ((opType !== 'add_page_alias' && opType !== 'remove_page_alias') || !pageAliases) return
+  const pageId = payload['page_id'] as string
+  const alias = payload['alias'] as string
+  const page = blocks.get(pageId)
+  if (!page || page['block_type'] !== 'page' || page['deleted_at']) {
+    throw Object.assign(new Error('page not found'), {
+      kind: 'not_found',
+      message: 'page not found',
+    }) as Error & AppError
+  }
+  const folded = foldAsciiUppercase(alias)
+  const others = (pageAliases.get(pageId) ?? []).filter((h) => foldAsciiUppercase(h) !== folded)
+  if (opType === 'add_page_alias') {
+    pageAliases.set(pageId, others)
+    return
+  }
+  for (const [owner, held] of pageAliases) {
+    if (owner !== pageId && held.some((h) => foldAsciiUppercase(h) === folded)) {
+      const message = `alias '${alias}' is already used by another page`
+      throw Object.assign(new Error(message), {
+        kind: 'validation',
+        code: 'DuplicatePageAlias',
+        message,
+      }) as Error & AppError
+    }
+  }
+  pageAliases.set(pageId, [...others, alias])
 }
 
 // ---------------------------------------------------------------------------
@@ -474,4 +523,7 @@ export function applyRevertForOp(
   if (state.blockTags && revertTagSet(target.op_type, payload, blockId, state.blockTags)) {
     return
   }
+  // An alias op names its page as `page_id`, so every block-keyed arm above
+  // passed it by.
+  revertPageAlias(target.op_type, payload, blocks, state)
 }

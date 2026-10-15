@@ -1,7 +1,7 @@
 //! Boot-time repairs of damage a since-closed write-side defect left behind
-//! (#4728, #4715, #5074).
+//! (#4728, #4715, #5074, #5387).
 //!
-//! Three populations were measured on a real vault:
+//! The populations it repairs:
 //!
 //! * [`orphans`](crate::repair::orphans) — live `content` blocks with neither a parent nor a page,
 //!   promoted to top level by the recovery orphan cleanup (#4728). They are in
@@ -16,6 +16,9 @@
 //!   timestamp writer did not cover (#5074). A DONE task with no stamp gets
 //!   its `created_at`, or the day its ULID was minted; a block that is not
 //!   DONE loses the stamp it kept.
+//! * [`page_aliases`](crate::repair::page_aliases) — `page_aliases` rows
+//!   written before aliases were ops (#5387), which no other device and no
+//!   engine reprojection can see. Each gets its `AddPageAlias`.
 //!
 //! # Every change is an op
 //!
@@ -58,6 +61,7 @@ use crate::spaces::SPACE_PERSONAL_ULID;
 pub mod completed_at;
 pub mod journal_duplicates;
 pub mod orphans;
+pub mod page_aliases;
 
 /// Title of the per-space page that re-homed content lands under. Looked up
 /// by title within the space on every run, so one page per space accumulates
