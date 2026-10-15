@@ -4,7 +4,7 @@
  * Validates:
  *  - Renders PageHeader with correct props
  *  - Renders BlockTree with correct parentId
- *  - Add block button creates a new block
+ *  - Add block button creates a new block, or focuses an unfocused blank tail
  *  - a11y compliance
  *  - Reloads blocks when pageId prop changes
  */
@@ -555,6 +555,50 @@ describe('PageEditor', () => {
     await waitFor(() => {
       expect(useBlockStore.getState().focusedBlockId).toBe(newId)
     })
+  })
+
+  it('Add block focuses an unfocused blank last block instead of creating another', async () => {
+    const user = userEvent.setup()
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    act(() => {
+      getPageStore('PAGE_1')?.setState({
+        blocks: [makeBlock({ id: 'BLANK', content: '', parent_id: 'PAGE_1', position: 0 })],
+      })
+    })
+
+    await user.click(screen.getByRole('button', { name: /add block/i }))
+
+    expect(useBlockStore.getState().focusedBlockId).toBe('BLANK')
+    expect(
+      getPageStore('PAGE_1')
+        ?.getState()
+        .blocks.map((b) => b.id),
+    ).toEqual(['BLANK'])
+  })
+
+  it('Add block creates a block when the blank last block is the focused one', async () => {
+    const user = userEvent.setup()
+    stubInvoke({
+      create_block: () =>
+        withOps(makeBlockRow({ id: 'B2', content: '', parent_id: 'PAGE_1', position: 1 })),
+    })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    act(() => {
+      getPageStore('PAGE_1')?.setState({
+        blocks: [makeBlock({ id: 'BLANK', content: '', parent_id: 'PAGE_1', position: 0 })],
+      })
+      useBlockStore.getState().setFocused('BLANK')
+    })
+
+    await user.click(screen.getByRole('button', { name: /add block/i }))
+
+    await waitFor(() => {
+      expect(getPageStore('PAGE_1')?.getState().blocks).toHaveLength(2)
+    })
+    const newId = getPageStore('PAGE_1')
+      ?.getState()
+      .blocks.find((b) => b.id !== 'BLANK')?.id
+    expect(useBlockStore.getState().focusedBlockId).toBe(newId)
   })
 
   it('Add block button shows toast on failure when no blocks exist', async () => {

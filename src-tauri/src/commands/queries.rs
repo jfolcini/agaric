@@ -457,6 +457,25 @@ pub async fn list_unlinked_references_inner(
     .await
 }
 
+/// Count a page's unlinked references without listing them: the
+/// `total_count` and `truncated` [`list_unlinked_references_inner`] answers
+/// with no filters, for the collapsed panel. `groups` is always empty.
+///
+/// # Errors
+/// - [`AppError::Validation`] — `page_id` is empty
+#[instrument(skip(pool), err)]
+pub async fn count_unlinked_references_inner(
+    pool: &SqlitePool,
+    page_id: &PageId,
+    scope: &SpaceScope,
+) -> Result<GroupedBacklinkResponse, AppError> {
+    if page_id.as_str().trim().is_empty() {
+        return Err(AppError::validation("page_id must not be empty".into()));
+    }
+    backlink::count_unlinked_references(pool, page_id.as_str(), Some(scope.space_id().as_str()))
+        .await
+}
+
 /// Count backlinks per target page for a batch of page IDs in a single query.
 ///
 /// Returns a `HashMap<page_id, count>` for pages that have at least one
@@ -1002,6 +1021,19 @@ pub async fn list_unlinked_references(
     scope: SpaceScope,
 ) -> Result<GroupedBacklinkResponse, AppError> {
     list_unlinked_references_inner(&read_pool.0, &page_id, filters, sort, cursor, limit, &scope)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: count unlinked references. Delegates to [`count_unlinked_references_inner`].
+#[tauri::command]
+#[specta::specta]
+pub async fn count_unlinked_references(
+    read_pool: State<'_, ReadPool>,
+    page_id: PageId,
+    scope: SpaceScope,
+) -> Result<GroupedBacklinkResponse, AppError> {
+    count_unlinked_references_inner(&read_pool.0, &page_id, &scope)
         .await
         .map_err(sanitize_internal_error)
 }

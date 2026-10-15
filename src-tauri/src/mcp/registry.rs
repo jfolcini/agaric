@@ -91,6 +91,8 @@ pub(crate) const TOOL_CAPTURE: &str = "capture";
 pub(crate) const TOOL_MOVE_BLOCKS: &str = "move_blocks";
 pub(crate) const TOOL_REMOVE_TAG: &str = "remove_tag";
 pub(crate) const TOOL_RESTORE_BLOCK: &str = "restore_block";
+pub(crate) const TOOL_BATCH: &str = "batch";
+pub(crate) const TOOL_EDIT_PAGE_MARKDOWN: &str = "edit_page_markdown";
 
 /// Metadata returned by [`ToolRegistry::list_tools`] — one entry per
 /// advertised tool. The JSON shape matches MCP's `tools/list` response:
