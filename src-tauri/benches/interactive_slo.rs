@@ -3259,6 +3259,312 @@ fn bench_filtered_blocks_query_broad_key(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// MCP read paths (#5402) — each tool as an agent calls it, through the
+// read-only registry: argument parsing, the space check, the read and the
+// JSON result.
+// ===========================================================================
+
+mod mcp_reads {
+    use super::*;
+    use agaric_lib::mcp::registry::ToolRegistry;
+    use agaric_lib::mcp::tools_ro::ReadOnlyTools;
+    use agaric_store::task_locals::{Actor, ActorContext};
+    use serde_json::{Value, json};
+
+    /// The MCP tools parse `space_id` strictly, so the space is a valid ULID,
+    /// unlike [`SLO_SPACE_ID`].
+    const SPACE_ID: &str = "01MCPSPACE0000000000000001";
+    const PAGE_ID: &str = "01MCPPAGE00000000000000001";
+    /// Under the read's byte cap, so the shape probe sees the whole page.
+    const PAGE_CHILDREN: usize = 250;
+    const JOURNAL_ID: &str = "01MCPJRNA00000000000000001";
+    const JOURNAL_DATE: &str = "2025-07-01";
+    const JOURNAL_CHILDREN: usize = 50;
+    const TAG_COUNT: usize = 20;
+    /// Every this-many seeded block is a `TODO`: the `query` probe's matches.
+    const TODO_EVERY: usize = 100;
+    /// The 30 ms tier #5366 sets for interactive reads.
+    const BUDGET_MS: f64 = 30.0;
+
+    fn tag_id(i: usize) -> String {
+        format!("01MCPTAG{i:018}")
+    }
+
+    fn agent() -> ActorContext {
+        ActorContext {
+            actor: Actor::Agent {
+                name: "slo-bench".into(),
+            },
+            request_id: "slo".into(),
+        }
+    }
+
+    /// The 100K vault, plus a 250-block page, a journal day, tags and
+    /// `TODO`s, all in [`SPACE_ID`].
+    async fn seed(pool: &SqlitePool) {
+        seed_blocks_bulk(pool, FIXTURE_SIZE).await;
+        seed_export_page(pool, PAGE_ID, PAGE_CHILDREN).await;
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, page_id) \
+             VALUES (?, 'page', ?, 2, ?)",
+        )
+        .bind(JOURNAL_ID)
+        .bind(JOURNAL_DATE)
+        .bind(JOURNAL_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        for i in 0..JOURNAL_CHILDREN {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'content', ?, ?, ?, ?)",
+            )
+            .bind(format!("MJ{i:024}"))
+            .bind(format!("Journal note {i}"))
+            .bind(JOURNAL_ID)
+            .bind(i as i64 + 1)
+            .bind(JOURNAL_ID)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        for i in 0..TAG_COUNT {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'tag', ?, ?)",
+            )
+            .bind(tag_id(i))
+            .bind(format!("mcp-tag-{i}"))
+            .bind(i as i64 + 1)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "UPDATE blocks SET todo_state = 'TODO' \
+             WHERE id LIKE 'SEED%' AND CAST(substr(id, 5) AS INTEGER) % ? = 0",
+        )
+        .bind(TODO_EVERY as i64)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        // The space owner, its `spaces` row, then every block's `space_id`, as
+        // `assign_all_to_slo_space` does.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'McpSpace', NULL, NULL, ?)",
+        )
+        .bind(SPACE_ID)
+        .bind(SPACE_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(SPACE_ID)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id <> ?")
+            .bind(SPACE_ID)
+            .bind(SPACE_ID)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    /// The seeded vault behind a read-only registry. The `TempDir` must
+    /// outlive the bench.
+    fn fixture(rt: &Runtime, name: &str) -> (TempDir, SqlitePool, Rc<ReadOnlyTools>) {
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, name));
+        rt.block_on(seed(&pool));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+        let tools = ReadOnlyTools::new(pool.clone(), pool.clone(), materializer, "slo".into());
+        (dir, pool, Rc::new(tools))
+    }
+
+    fn call(rt: &Runtime, tools: &ReadOnlyTools, tool: &str, args: &Value) -> Value {
+        rt.block_on(tools.call_tool(tool, args.clone(), &agent()))
+            .unwrap()
+    }
+
+    /// Lines that start a block in a page's Markdown.
+    fn bullets(result: &Value) -> usize {
+        result["markdown"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .filter(|line| line.starts_with("- "))
+            .count()
+    }
+
+    /// Time `tool` with `args`, one call per iteration.
+    fn time(
+        c: &mut Criterion,
+        rt: Runtime,
+        tools: Rc<ReadOnlyTools>,
+        id: &str,
+        tool: &'static str,
+        args: Value,
+    ) -> Acc {
+        let mut group = c.benchmark_group("interactive_slo");
+        group.sample_size(SAMPLE_SIZE);
+        let acc = Acc::new();
+        let acc_for_bench = acc.clone();
+        group.bench_function(id, move |b| {
+            let acc = acc_for_bench.clone();
+            let tools = tools.clone();
+            let args = args.clone();
+            b.to_async(&rt).iter_custom(move |iters| {
+                let acc = acc.clone();
+                let tools = tools.clone();
+                let args = args.clone();
+                async move {
+                    let ctx = agent();
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        tools.call_tool(tool, args.clone(), &ctx).await.unwrap();
+                    }
+                    let elapsed = start.elapsed();
+                    acc.record(elapsed, iters);
+                    elapsed
+                }
+            });
+        });
+        group.finish();
+        acc
+    }
+
+    /// `get_page_markdown` — a 250-block page as Markdown on top of 100K
+    /// blocks. Budget: 30 ms.
+    pub fn bench_mcp_get_page_markdown(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let (_dir, _pool, tools) = fixture(&rt, "slo_mcp_page_markdown");
+        let args = json!({"page_id": PAGE_ID, "space_id": SPACE_ID});
+        let observed = call(&rt, &tools, "get_page_markdown", &args);
+        assert!(
+            observed["markdown"]
+                .as_str()
+                .unwrap()
+                .starts_with("# SLO Export Page\n"),
+            "mcp get_page_markdown @ 100K: untimed probe must read the fixture page"
+        );
+        assert_eq!(
+            bullets(&observed),
+            PAGE_CHILDREN,
+            "mcp get_page_markdown @ 100K: untimed probe must read every fixture block"
+        );
+        let acc = time(
+            c,
+            rt,
+            tools,
+            "mcp_get_page_markdown_250_in_100k",
+            "get_page_markdown",
+            args,
+        );
+        assert_under_budget("mcp get_page_markdown (250 blocks) @ 100K", &acc, BUDGET_MS);
+    }
+
+    /// `get_journal` — one day's page as Markdown. Budget: 30 ms.
+    pub fn bench_mcp_get_journal(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let (_dir, _pool, tools) = fixture(&rt, "slo_mcp_journal");
+        let args = json!({"space_id": SPACE_ID, "date": JOURNAL_DATE});
+        let observed = call(&rt, &tools, "get_journal", &args);
+        assert_eq!(
+            observed["page_id"],
+            json!(JOURNAL_ID),
+            "mcp get_journal @ 100K: untimed probe must find the fixture day"
+        );
+        assert_eq!(
+            bullets(&observed),
+            JOURNAL_CHILDREN,
+            "mcp get_journal @ 100K: untimed probe must read every block of the day"
+        );
+        let acc = time(c, rt, tools, "mcp_get_journal_100k", "get_journal", args);
+        assert_under_budget("mcp get_journal @ 100K", &acc, BUDGET_MS);
+    }
+
+    /// `resolve` — a page title, a journal day, a tag name and a miss.
+    /// Budget: 30 ms.
+    pub fn bench_mcp_resolve(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let (_dir, _pool, tools) = fixture(&rt, "slo_mcp_resolve");
+        let args = json!({
+            "names": ["SLO Export Page", JOURNAL_DATE, "mcp-tag-7", "No such page"],
+            "space_id": SPACE_ID,
+        });
+        let observed = call(&rt, &tools, "resolve", &args);
+        let answers: Vec<(Value, Value)> = observed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| (a["page_id"].clone(), a["tag_id"].clone()))
+            .collect();
+        assert_eq!(
+            answers,
+            vec![
+                (json!(PAGE_ID), Value::Null),
+                (json!(JOURNAL_ID), Value::Null),
+                (Value::Null, json!(tag_id(7))),
+                (Value::Null, Value::Null),
+            ],
+            "mcp resolve @ 100K: untimed probe must resolve each fixture name"
+        );
+        let acc = time(c, rt, tools, "mcp_resolve_100k", "resolve", args);
+        assert_under_budget("mcp resolve @ 100K", &acc, BUDGET_MS);
+    }
+
+    /// `query` — the space's open tasks, first page of 50 of 1K.
+    /// Budget: 30 ms.
+    pub fn bench_mcp_query(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let (_dir, _pool, tools) = fixture(&rt, "slo_mcp_query");
+        let args = json!({
+            "space_id": SPACE_ID,
+            "where": { "type": "Leaf", "primitive": { "type": "State", "values": ["TODO"] } },
+            "limit": 50,
+        });
+        let observed = call(&rt, &tools, "query", &args);
+        assert_eq!(
+            (
+                observed["rows"].as_array().map(Vec::len),
+                observed["total_count"].as_u64()
+            ),
+            (
+                Some(50),
+                Some(u64::try_from(FIXTURE_SIZE / TODO_EVERY).unwrap())
+            ),
+            "mcp query @ 100K: untimed probe must page the fixture's open tasks"
+        );
+        let acc = time(c, rt, tools, "mcp_query_100k", "query", args);
+        assert_under_budget("mcp query @ 100K", &acc, BUDGET_MS);
+    }
+
+    /// `search` — a trigram term in a few hundred of the 100K blocks, first
+    /// page of 50.
+    pub fn bench_mcp_search(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let (_dir, pool, tools) = fixture(&rt, "slo_mcp_search");
+        rt.block_on(agaric_store::fts::rebuild_fts_index(&pool))
+            .unwrap();
+        let args = json!({"query": "777", "space_id": SPACE_ID});
+        let observed = call(&rt, &tools, "search", &args);
+        assert_eq!(
+            (
+                observed["items"].as_array().map(Vec::len),
+                &observed["has_more"]
+            ),
+            (Some(50), &json!(true)),
+            "mcp search @ 100K: untimed probe must page the fixture's matches"
+        );
+        let acc = time(c, rt, tools, "mcp_search_100k", "search", args);
+        assert_under_budget("mcp search @ 100K", &acc, BUDGET_MS);
+    }
+}
+
+// ===========================================================================
 // Harness
 // ===========================================================================
 
@@ -3282,6 +3588,12 @@ criterion_group!(
     // clears the 200 ms budget with margin at every fixture size.
     bench_list_projected_agenda,
     bench_list_projected_agenda_past_day,
+    // #5402 — the MCP read paths.
+    mcp_reads::bench_mcp_get_page_markdown,
+    mcp_reads::bench_mcp_get_journal,
+    mcp_reads::bench_mcp_resolve,
+    mcp_reads::bench_mcp_query,
+    mcp_reads::bench_mcp_search,
 );
 
 criterion_group!(
