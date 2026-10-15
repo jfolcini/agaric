@@ -145,8 +145,7 @@ pub async fn list_blocks_inner(
     let page = pagination::PageRequest::new(cursor, limit)?;
 
     // Phase 4: `space_id` is required, so every dispatch path
-    // forwards `Some(&space_id)` to its pagination helper. The helpers
-    // keep the `Option<&str>` shape so other callers can still pass `None`.
+    // forwards `Some(&space_id)` to its pagination helper.
     let space_id_opt: Option<&str> = Some(space_id.as_str());
     if has_agenda_range {
         // `has_agenda_range` is computed from both being `Some`, so this is an

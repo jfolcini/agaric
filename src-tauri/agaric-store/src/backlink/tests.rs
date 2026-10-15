@@ -2,7 +2,9 @@ use super::filters::{
     compile_backlink_filter, crockford_decode_char, ms_to_ulid_prefix, parse_iso_to_ms,
     resolve_filter, resolve_filter_with_candidates, ulid_to_ms,
 };
-use super::grouped::{eval_backlink_query_grouped, eval_unlinked_references};
+use super::grouped::{
+    count_unlinked_references, eval_backlink_query_grouped, eval_unlinked_references,
+};
 use super::query::{
     eval_backlink_query, fetch_block_rows_by_ids, list_property_keys, resolve_root_pages,
     resolve_root_pages_cte,
@@ -6142,6 +6144,152 @@ async fn eval_unlinked_references_does_not_truncate_at_exactly_fts_row_cap() {
         resp.groups[0].truncated,
         "the over-cap group must be flagged truncated (#380)"
     );
+}
+
+// ======================================================================
+// #5422 — `count_unlinked_references`, the collapsed panel's count-only
+// read. The list path is its oracle: every case asserts the count path
+// answers the list path's unfiltered counts, and that the list path saw the
+// shape the case claims, so the two cannot agree on an empty fixture.
+// ======================================================================
+
+async fn assert_count_matches_list(
+    pool: &SqlitePool,
+    page_id: &str,
+    space_id: Option<&str>,
+    expected_total_and_truncated: (usize, bool),
+    case: &str,
+) {
+    let listed = eval_unlinked_references(pool, page_id, None, None, &default_page(), space_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        (listed.total_count, listed.truncated),
+        expected_total_and_truncated,
+        "{case}: the list path must see the fixture's shape"
+    );
+    let counted = count_unlinked_references(pool, page_id, space_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            counted.total_count,
+            counted.filtered_count,
+            counted.truncated
+        ),
+        (listed.total_count, listed.filtered_count, listed.truncated),
+        "{case}: the count path must answer the list path's counts"
+    );
+    assert!(
+        counted.groups.is_empty() && !counted.has_more && counted.next_cursor.is_none(),
+        "{case}: the count path carries no page of groups"
+    );
+}
+
+/// Make `space_id` a space and move `block_id` and every block paged to it
+/// into it.
+async fn move_page_into_space(pool: &SqlitePool, space_id: &str, block_id: &str) {
+    insert_block_with_parent(pool, space_id, "page", "A space", None, None).await;
+    sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+        .bind(space_id)
+        .bind(block_id)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A content block under `parent_id`, indexed in FTS with its own content.
+async fn insert_indexed_child(pool: &SqlitePool, id: &str, content: &str, parent_id: &str) {
+    insert_block_with_parent(pool, id, "content", content, Some(parent_id), Some(1)).await;
+    insert_fts(pool, id, content).await;
+}
+
+#[tokio::test]
+async fn count_unlinked_references_matches_list_path_on_mixed_fixture() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Project Alpha", None, None).await;
+    insert_alias(&pool, "TARGET", "Codename Zeta").await;
+
+    // Counted: two plain mentions on PAGE_B, one alias mention on PAGE_D.
+    insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+    insert_indexed_child(&pool, "BLK_B1", "check Project Alpha", "PAGE_B").await;
+    insert_indexed_child(&pool, "BLK_B2", "Project Alpha again", "PAGE_B").await;
+    insert_block_with_parent(&pool, "PAGE_D", "page", "Page D", None, None).await;
+    insert_indexed_child(&pool, "BLK_D1", "about Codename Zeta", "PAGE_D").await;
+
+    // Not counted: a linked mention, a mention on the target's own page, an
+    // orphan, a title block, and a soft-deleted mention.
+    insert_block_with_parent(&pool, "PAGE_C", "page", "Page C", None, None).await;
+    insert_indexed_child(&pool, "BLK_C1", "See Project Alpha", "PAGE_C").await;
+    insert_block_link(&pool, "BLK_C1", "TARGET").await;
+    insert_indexed_child(&pool, "BLK_SELF", "this is Project Alpha", "TARGET").await;
+    insert_block(&pool, "ORPHAN", "content", "orphan Project Alpha").await;
+    insert_fts(&pool, "ORPHAN", "orphan Project Alpha").await;
+    insert_block_with_parent(&pool, "SUBPAGE", "page", "Project Alpha/2026", None, None).await;
+    insert_fts(&pool, "SUBPAGE", "Project Alpha/2026").await;
+    insert_indexed_child(&pool, "BLK_B3", "deleted Project Alpha", "PAGE_B").await;
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = 'BLK_B3'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    move_page_into_space(&pool, "SPACE_B", "PAGE_B").await;
+    move_page_into_space(&pool, "SPACE_D", "PAGE_D").await;
+
+    assert_count_matches_list(&pool, "TARGET", None, (3, false), "every space").await;
+    assert_count_matches_list(&pool, "TARGET", Some("SPACE_B"), (2, false), "space B").await;
+    assert_count_matches_list(&pool, "TARGET", Some("SPACE_D"), (1, false), "space D").await;
+}
+
+#[tokio::test]
+async fn count_unlinked_references_matches_list_path_at_the_fts_row_cap() {
+    let over = test_pool().await;
+    insert_block_with_parent(&over.0, "TARGET", "page", "Foobar", None, None).await;
+    insert_block_with_parent(&over.0, "PARENT_PAGE", "page", "Parent Page", None, None).await;
+    bulk_insert_unlinked_match_blocks(&over.0, "PARENT_PAGE", "Foobar", 10_001).await;
+    assert_count_matches_list(&over.0, "TARGET", None, (10_000, true), "over the cap").await;
+
+    let exact = test_pool().await;
+    insert_block_with_parent(&exact.0, "TARGET", "page", "Foobar", None, None).await;
+    insert_block_with_parent(&exact.0, "PARENT_PAGE", "page", "Parent Page", None, None).await;
+    bulk_insert_unlinked_match_blocks(&exact.0, "PARENT_PAGE", "Foobar", 10_000).await;
+    assert_count_matches_list(&exact.0, "TARGET", None, (10_000, false), "exactly the cap").await;
+
+    // Five self-references sort ahead of the bulk rows, so the capped window
+    // keeps them and drops two bulk rows: a count that ignored the window
+    // would answer 9,996, one that kept self-references 10,000.
+    let window = test_pool().await;
+    insert_block_with_parent(&window.0, "TARGET", "page", "Foobar", None, None).await;
+    insert_block_with_parent(&window.0, "PARENT_PAGE", "page", "Parent Page", None, None).await;
+    for i in 1..=5 {
+        insert_indexed_child(&window.0, &format!("AAA_SELF_{i}"), "self Foobar", "TARGET").await;
+    }
+    bulk_insert_unlinked_match_blocks(&window.0, "PARENT_PAGE", "Foobar", 10_001).await;
+    assert_count_matches_list(&window.0, "TARGET", None, (9_995, true), "window").await;
+}
+
+#[tokio::test]
+async fn count_unlinked_references_is_zero_without_matches_or_title() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Unmentioned", None, None).await;
+    insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+    insert_indexed_child(&pool, "BLK_B1", "nothing relevant", "PAGE_B").await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) \
+         VALUES ('NO_TITLE', 'page', NULL, 'NO_TITLE')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    assert_count_matches_list(&pool, "TARGET", None, (0, false), "no matches").await;
+    assert_count_matches_list(&pool, "NO_TITLE", None, (0, false), "no title").await;
 }
 
 // ======================================================================

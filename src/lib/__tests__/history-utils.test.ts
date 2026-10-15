@@ -131,6 +131,12 @@ describe('getPayloadRawContent', () => {
     expect(getPayloadRawContent(entry)).toBeNull()
   })
 
+  it('returns the alias of an add_page_alias or remove_page_alias payload', () => {
+    const payload = JSON.stringify({ page_id: 'PG1', alias: '#plans' })
+    expect(getPayloadRawContent(makeEntry(payload, 'add_page_alias'))).toBe('#plans')
+    expect(getPayloadRawContent(makeEntry(payload, 'remove_page_alias'))).toBe('#plans')
+  })
+
   it('returns the old → new transition for a rename_attachment payload', () => {
     const entry = makeEntry(
       JSON.stringify({

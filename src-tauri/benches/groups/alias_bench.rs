@@ -12,6 +12,7 @@ use agaric_lib::commands::{
     get_page_aliases_inner, resolve_page_by_alias_inner, set_page_aliases_inner,
 };
 use agaric_lib::db::init_pool;
+use agaric_lib::materializer::Materializer;
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -133,6 +134,7 @@ fn bench_set_page_aliases(c: &mut Criterion) {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("set_alias_{n_pages}")));
         let ids = rt.block_on(seed_pages_bare(&pool, n_pages));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
 
         group.throughput(Throughput::Elements(n_pages as u64));
         group.bench_with_input(
@@ -141,20 +143,38 @@ fn bench_set_page_aliases(c: &mut Criterion) {
             |b, _| {
                 // Pick the last page so we're not always hitting the same row cache
                 let target_id = ids[n_pages - 1].clone();
-                let aliases = vec![
-                    "bench-a".to_string(),
-                    "bench-b".to_string(),
-                    "bench-c".to_string(),
+                // Alternate two sets so every iteration removes three aliases
+                // and adds three.
+                let sets = [
+                    vec![
+                        "bench-a".to_string(),
+                        "bench-b".to_string(),
+                        "bench-c".to_string(),
+                    ],
+                    vec![
+                        "bench-d".to_string(),
+                        "bench-e".to_string(),
+                        "bench-f".to_string(),
+                    ],
                 ];
+                let mut turn = 0usize;
 
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
+                    let materializer = materializer.clone();
                     let target_id = target_id.clone();
-                    let aliases = aliases.clone();
+                    turn += 1;
+                    let aliases = sets[turn % 2].clone();
                     async move {
-                        set_page_aliases_inner(&pool, &target_id, aliases)
-                            .await
-                            .unwrap()
+                        set_page_aliases_inner(
+                            &pool,
+                            "bench-device",
+                            &materializer,
+                            &target_id,
+                            aliases,
+                        )
+                        .await
+                        .unwrap()
                     }
                 });
             },

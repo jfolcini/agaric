@@ -44,6 +44,10 @@
 //     view actually switched — no per-view anchor or timing race required.
 //   - `button*=Add block`                   JournalPage "Add block" action
 //     (`agenda.day.addBlock`), the same selector smoke.e2e.ts committed to.
+//   - `#journal-tab-weekly`                 JournalControls week tab
+//     (`journalTabId('weekly')`); `section[id="journal-<date>"]` is a
+//     DaySection, and "No blocks for" (`agenda.day.empty`) marks a day with
+//     no page.
 //   - `[data-testid="block-editor"]`        the roving TipTap editor box.
 //   - `[data-testid="block-static"]`        a committed (non-focused) block row
 //     (StaticBlock; carries `data-block-id`).
@@ -87,6 +91,13 @@ export async function waitForAppReady(): Promise<void> {
   await dismissWelcomeModalIfPresent()
   const journalNav = sidebarNavButton('Journal')
   await journalNav.waitForDisplayed({ timeout: NAV_TIMEOUT })
+  // Focus-gated behaviour (the empty-block cleanup) is a silent no-op in an
+  // unfocused window, so a lane without focus must fail here, not pass those
+  // specs vacuously (#5457).
+  await browser.waitUntil(() => browser.execute(() => document.hasFocus()), {
+    timeout: NAV_TIMEOUT,
+    timeoutMsg: 'document.hasFocus() is false: run the lane under a window manager (#5457)',
+  })
 }
 
 /**
@@ -424,6 +435,44 @@ export async function ctrlClick(element: ReturnType<typeof $>): Promise<void> {
       .down()
       .up(),
   ])
+}
+
+/**
+ * Press End and Enter in the roving editor's block, and return the id of the
+ * blank sibling Enter created once the editor is in it. Enter's create is a
+ * round-trip, and until it answers the editor still sits, emptied, in the
+ * block it left, so the wait is for a blank block with a different id: acting
+ * any sooner (a paste, an Escape) lands on the wrong block.
+ */
+export async function enterBlankSibling(): Promise<string> {
+  const editor = '[data-testid="block-editor"] [contenteditable="true"]'
+  const readEditor = () =>
+    browser.execute((sel: string) => {
+      const el = document.querySelector(sel)
+      return {
+        id: el?.closest('[data-block-id]')?.getAttribute('data-block-id') ?? null,
+        text: el?.textContent ?? null,
+      }
+    }, editor)
+  const source = (await readEditor()).id
+  if (source === null) throw new Error('enterBlankSibling: no block editor is open')
+  await browser.keys(['End'])
+  await browser.keys(['Enter'])
+  let last: { id: string | null; text: string | null } = { id: null, text: null }
+  const blank = await browser
+    .waitUntil(
+      async () => {
+        last = await readEditor()
+        return last.id !== null && last.id !== source && last.text === '' ? last.id : false
+      },
+      { timeout: ACTION_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(
+        `expected the editor in a new blank block below ${source}, got ${JSON.stringify(last)}`,
+      )
+    })
+  return blank
 }
 
 /**

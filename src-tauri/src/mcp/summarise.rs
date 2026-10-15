@@ -37,13 +37,14 @@
 use serde_json::Value;
 
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_BLOCK_HISTORY, TOOL_CAPTURE,
-    TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY, TOOL_GET_AGENDA,
-    TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE, TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE,
-    TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS,
-    TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE,
-    TOOL_PAGE_HISTORY, TOOL_QUERY, TOOL_REMOVE_TAG, TOOL_RESOLVE, TOOL_RESTORE_BLOCK, TOOL_SEARCH,
-    TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_BATCH, TOOL_BLOCK_HISTORY,
+    TOOL_CAPTURE, TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY,
+    TOOL_EDIT_PAGE_MARKDOWN, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE,
+    TOOL_GET_PAGE_MARKDOWN, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_JOURNAL,
+    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_LIST_TRASH,
+    TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE, TOOL_PAGE_HISTORY, TOOL_QUERY, TOOL_REMOVE_TAG,
+    TOOL_RESOLVE, TOOL_RESTORE_BLOCK, TOOL_SEARCH, TOOL_SET_PROPERTY, TOOL_UNDO,
+    TOOL_UPDATE_BLOCK_CONTENT,
 };
 
 /// Number of leading characters of a ULID we expose in summary strings.
@@ -122,6 +123,8 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_MOVE_BLOCKS => summarise_move_blocks(args, result),
         TOOL_REMOVE_TAG => summarise_remove_tag(args, result),
         TOOL_RESTORE_BLOCK => summarise_restore_block(args, result),
+        TOOL_BATCH => summarise_batch(args, result),
+        TOOL_EDIT_PAGE_MARKDOWN => summarise_edit_page_markdown(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
         // pre-existing behaviour for every entry. The privacy
@@ -657,6 +660,61 @@ pub fn summarise_restore_block(args: &Value, result: &Value) -> String {
     } else {
         format!("restore_block — restored {block} ({n} {noun})")
     }
+}
+
+/// `batch — N op(s) (k <tool>, …)`, the ops counted by the write tool each
+/// names, in first-seen order: a batch with any other `op` is refused, so a
+/// summarised one names only tools.
+pub fn summarise_batch(args: &Value, _result: &Value) -> String {
+    let ops = args.get("ops").and_then(Value::as_array);
+    let mut counts: Vec<(&str, usize)> = Vec::new();
+    for tool in ops
+        .into_iter()
+        .flatten()
+        .filter_map(|op| str_field(op, "op"))
+    {
+        match counts.iter_mut().find(|(seen, _)| *seen == tool) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((tool, 1)),
+        }
+    }
+    let n = ops.map_or(0, Vec::len);
+    let noun = if n == 1 { "op" } else { "ops" };
+    if counts.is_empty() {
+        return format!("batch — {n} {noun}");
+    }
+    let tools: Vec<String> = counts.iter().map(|(t, k)| format!("{k} {t}")).collect();
+    format!("batch — {n} {noun} ({})", tools.join(", "))
+}
+
+/// `edit_page_markdown — <page-prefix>: N created, …`, the save's non-zero
+/// counts, or `no change`.
+pub fn summarise_edit_page_markdown(_args: &Value, result: &Value) -> String {
+    let page = ulid_prefix(str_field(result, "page_id").unwrap_or(""));
+    let changes: Vec<String> = [
+        ("created", "created", "created"),
+        ("edited", "edited", "edited"),
+        ("moved", "moved", "moved"),
+        ("deleted", "deleted", "deleted"),
+        ("properties_set", "property set", "properties set"),
+        (
+            "properties_deleted",
+            "property deleted",
+            "properties deleted",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(key, one, many)| {
+        let n = result.get(key).and_then(Value::as_u64).filter(|n| *n > 0)?;
+        Some(format!("{n} {}", if n == 1 { one } else { many }))
+    })
+    .collect();
+    let changes = if changes.is_empty() {
+        "no change".to_owned()
+    } else {
+        changes.join(", ")
+    };
+    format!("edit_page_markdown — {page}: {changes}")
 }
 
 // ---------------------------------------------------------------------------
@@ -1422,6 +1480,43 @@ mod tests {
         assert_eq!(
             summarise(TOOL_UNDO, &json!({}), &none),
             "undo — reverted 0 ops"
+        );
+    }
+
+    #[test]
+    fn batch_counts_its_ops_by_tool_5399() {
+        let args = json!({ "ops": [
+            { "op": "set_property", "block_id": ULID_A, "key": "notes", "value_text": "SECRET_TEXT_VALUE" },
+            { "op": "delete_block", "block_id": ULID_B },
+            { "op": "set_property", "block_id": ULID_B, "key": "notes", "value_text": "SECRET_TEXT_VALUE" },
+        ]});
+        let s = summarise(TOOL_BATCH, &args, &json!({ "results": [] }));
+        assert_eq!(s, "batch — 3 ops (2 set_property, 1 delete_block)");
+        assert_no_secrets(&s);
+    }
+
+    #[test]
+    fn edit_page_markdown_lists_what_changed_5399() {
+        let report = json!({
+            "page_id": ULID_A, "created": 1, "edited": 0, "moved": 2, "deleted": 0,
+            "properties_set": 1, "properties_deleted": 0,
+            "names_created": [{ "id": ULID_B, "content": "SECRET_TITLE" }],
+            "warnings": ["SECRET_TAG_NAME"],
+        });
+        let s = summarise(
+            TOOL_EDIT_PAGE_MARKDOWN,
+            &json!({ "page_id": "SECRET_TITLE" }),
+            &report,
+        );
+        assert_eq!(
+            s,
+            "edit_page_markdown — 01HZTEST: 1 created, 2 moved, 1 property set"
+        );
+        assert_no_secrets(&s);
+        let unchanged = json!({ "page_id": ULID_A, "created": 0 });
+        assert_eq!(
+            summarise(TOOL_EDIT_PAGE_MARKDOWN, &json!({}), &unchanged),
+            "edit_page_markdown — 01HZTEST: no change"
         );
     }
 

@@ -99,6 +99,7 @@ import { mountedScopedIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import { deleteBlockIfLeakedEmpty } from '@/stores/empty-block-cleanup'
 import { storeOwnsBlock, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
+import type { DeleteBlockOptions } from '@/stores/page-blocks-types'
 import { getRecentCommands, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
 import { useSpaceStore } from '@/stores/space'
 
@@ -233,9 +234,16 @@ export function BlockTree({
       truncatedTotal: s.truncatedTotal,
     })),
   )
-  // Global focus/selection
-  const { focusedBlockId, selectedBlockIds } = useBlockStore(
-    useShallow((s) => ({ focusedBlockId: s.focusedBlockId, selectedBlockIds: s.selectedBlockIds })),
+  // #5447 — this tree's share of the GLOBAL focus and selection: the focused id
+  // only while this store owns it, the selected ids it owns. The journal week
+  // view mounts one tree per day, and subscribing to the raw values re-rendered
+  // every day on each focus move. Handlers that need the global values read
+  // them from the store at dispatch.
+  const focusedBlockId = useBlockStore((s) =>
+    s.focusedBlockId != null && blocksById.has(s.focusedBlockId) ? s.focusedBlockId : null,
+  )
+  const selectedBlockIds = useBlockStore(
+    useShallow((s) => s.selectedBlockIds.filter((id) => blocksById.has(id))),
   )
 
   // Per-page store API for imperative access
@@ -407,7 +415,6 @@ export function BlockTree({
   })
   useEffect(() => {
     if (!focusedBlockId) return
-    if (!blocksById.has(focusedBlockId)) return
     expandAncestors(focusedBlockId)
     if (mountedVisible.some((b) => b.id === focusedBlockId)) {
       onRevealSettledRef.current?.(focusedBlockId, true)
@@ -716,7 +723,6 @@ export function BlockTree({
   // rendered when the user clicked, not a fresh read after the IPC settles.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const {
-    ownedSelectedIds,
     batchDeleteConfirm,
     batchInProgress,
     setBatchDeleteConfirm,
@@ -907,17 +913,17 @@ export function BlockTree({
   // #4550 phase 2 — is an unlocked embed borrowing this tree's editable row
   // right now, for a block that is not ours?
   //
-  // BOTH terms are load-bearing. `storeOwnsBlock` alone is false for any
-  // focused id this store has not loaded yet, which is an ordinary state
-  // during an async page load and would disarm the page's own chords and
-  // slash commands while it lasts. `activeEmbed` alone is true for an embed
-  // unlocked anywhere, including one whose rows THIS tree owns (a same-page
-  // embed) — where the callbacks are correct and must keep working. Together
-  // they name exactly the case: an embed is hosting the roving row, and the
-  // block under it belongs to another page's store.
+  // BOTH terms are load-bearing. `focusedBlockId` is already narrowed to ids
+  // this store holds, so it is null for a focus on another page's block AND for
+  // one this store has not loaded yet, which is an ordinary state during an
+  // async page load and would disarm the page's own chords and slash commands
+  // while it lasts. `activeEmbed` alone is true for an embed unlocked anywhere,
+  // including one whose rows THIS tree owns (a same-page embed) — where the
+  // callbacks are correct and must keep working. Together they name exactly the
+  // case: an embed is hosting the roving row, and the block under it belongs to
+  // another page's store.
   const rovingBlockIsForeign =
-    useSyncExternalStore(subscribeActiveEmbed, getActiveEmbed) != null &&
-    !storeOwnsBlock(pageStore, focusedBlockId)
+    useSyncExternalStore(subscribeActiveEmbed, getActiveEmbed) != null && focusedBlockId == null
   const ownsRovingBlock = !rovingBlockIsForeign
   // The three content handlers write through the HOST page store, so on a
   // foreign block the IPC commits while the optimistic update no-ops (that
@@ -1030,8 +1036,8 @@ export function BlockTree({
     // seam as the `moveBlocks` wrapper below: verify the block actually left
     // the store and THROW if not, so the hook's failure paths are live.
     remove: useCallback(
-      async (id: string) => {
-        await remove(id)
+      async (id: string, options?: DeleteBlockOptions) => {
+        await remove(id, options)
         if (pageStore.getState().blocksById.has(id)) {
           throw new Error('remove incomplete: block still present after delete')
         }
@@ -1230,7 +1236,6 @@ export function BlockTree({
   useBlockTreeKeyboardShortcuts({
     focusedBlockId,
     pageStore,
-    selectedBlockIds,
     hasChildrenSet,
     selectAllIds,
     // #922 — Shift+Arrow keyboard range-select steps through the RENDERED list
@@ -1374,6 +1379,14 @@ export function BlockTree({
 
   // ── Action / resolver bags published via context ────────
   // Memoised so descendants only re-render when callbacks change.
+  // `void` adapts the async handlers to the bag's void-returning shape.
+  const handleDuplicateAction = useCallback(
+    (blockId: string) => void handleDuplicate(blockId),
+    [handleDuplicate],
+  )
+  // Fix 6 — bulk-delete the active multi-selection from the long-press /
+  // right-click context menu (single IPC + undo toast).
+  const handleBatchDeleteAction = useCallback(() => void handleBatchDelete(), [handleBatchDelete])
   const { blockActions, blockResolvers } = useBlockTreeContextBags({
     onNavigate: handleNavigate,
     onDelete: remove,
@@ -1390,12 +1403,8 @@ export function BlockTree({
     onZoomIn: handleZoomIn,
     onSelect: handleSelect,
     onTurnInto: handleTurnInto,
-    // `void` adapts the async handler to the bag's `(blockId) => void` shape.
-    onDuplicate: (blockId: string) => void handleDuplicate(blockId),
-    // Fix 6 — bulk-delete the active multi-selection from the long-press /
-    // right-click context menu (single IPC + undo toast). `void` adapts the
-    // async handler to the bag's `() => void` shape.
-    onBatchDelete: () => void handleBatchDelete(),
+    onDuplicate: handleDuplicateAction,
+    onBatchDelete: handleBatchDeleteAction,
     resolveBlockTitle: resolve.resolveBlockTitle,
     resolveTagName: resolve.resolveTagName,
     resolveBlockStatus: resolve.resolveBlockStatus,
@@ -1502,7 +1511,7 @@ export function BlockTree({
               </div>
             )}
             <BlockBatchActionMenu
-              selectedBlockIds={ownedSelectedIds}
+              selectedBlockIds={selectedBlockIds}
               batchInProgress={batchInProgress}
               batchDeleteConfirm={batchDeleteConfirm}
               onBatchSetTodo={handleBatchSetTodo}

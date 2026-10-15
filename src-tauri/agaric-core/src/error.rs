@@ -89,6 +89,10 @@ pub enum ValidationCode {
     /// opens as a page, its name the title). Coded so the title editor can
     /// name the clash instead of the generic rename failure.
     DuplicatePageTitle,
+    /// Giving a page an alias another page already holds, in any space or the
+    /// Trash (`set_page_aliases`, its undo; #5387). Coded so the alias editor
+    /// can name the clash instead of the generic save failure.
+    DuplicatePageAlias,
 }
 
 /// Helper struct matching the `{ kind, message, code? }` JSON shape that
@@ -782,7 +786,7 @@ mod tests {
         // The exact strings the old `"<Code>: …"` message prefixes spelled —
         // and the strings the TS `ValidationCode` union in bindings.ts (and
         // its runtime mirror in validation-codes.ts) discriminates on.
-        let cases: [(ValidationCode, &str); 8] = [
+        let cases: [(ValidationCode, &str); 9] = [
             (ValidationCode::InvalidGlob, "InvalidGlob"),
             (ValidationCode::InvalidRegex, "InvalidRegex"),
             (ValidationCode::InvalidDateFilter, "InvalidDateFilter"),
@@ -791,6 +795,7 @@ mod tests {
             (ValidationCode::PageNotInSpace, "PageNotInSpace"),
             (ValidationCode::InvalidRepeatRule, "InvalidRepeatRule"),
             (ValidationCode::DuplicatePageTitle, "DuplicatePageTitle"),
+            (ValidationCode::DuplicatePageAlias, "DuplicatePageAlias"),
         ];
         for (code, expected) in cases {
             assert_eq!(
@@ -829,6 +834,7 @@ mod tests {
                 ValidationCode::PageNotInSpace => "PageNotInSpace",
                 ValidationCode::InvalidRepeatRule => "InvalidRepeatRule",
                 ValidationCode::DuplicatePageTitle => "DuplicatePageTitle",
+                ValidationCode::DuplicatePageAlias => "DuplicatePageAlias",
             }
         }
         for code in [
@@ -840,6 +846,7 @@ mod tests {
             ValidationCode::PageNotInSpace,
             ValidationCode::InvalidRepeatRule,
             ValidationCode::DuplicatePageTitle,
+            ValidationCode::DuplicatePageAlias,
         ] {
             assert_eq!(
                 serde_json::to_value(code).expect("code serializes"),

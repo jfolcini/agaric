@@ -16,7 +16,9 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import type { FlatBlock } from '@/lib/tree-utils'
 import type { MountedBlocks } from '@/lib/zoom-scope'
+import { useBlockStore } from '@/stores/blocks'
 import type { usePageBlockStoreApi } from '@/stores/page-blocks'
+import type { DeleteBlockOptions } from '@/stores/page-blocks-types'
 
 /**
  * Scroll the block's DOM node into view after a reorder so the
@@ -164,6 +166,33 @@ interface EditorCapture {
   loaded: string
 }
 
+/**
+ * Escape or a click left `sourceId` while Enter's create was in flight.
+ * Focusing the new block then would override that gesture and strand it
+ * blank, since no later focus change would leave it for BlockTree's
+ * empty-block cleanup; drop it the way that cleanup would. Resolves `false`
+ * when focus is still on the source or already in the new block.
+ */
+async function dropBlankIfFocusLeft(
+  sourceId: string,
+  newBlockId: string,
+  remove: (id: string, options?: DeleteBlockOptions) => Promise<void>,
+): Promise<boolean> {
+  const focusNow = useBlockStore.getState().focusedBlockId
+  if (focusNow === sourceId || focusNow === newBlockId) return false
+  try {
+    await remove(newBlockId, { undoable: false })
+  } catch (err) {
+    logger.warn(
+      'useBlockActionOrchestration',
+      'Enter left a blank block behind after focus moved during its create',
+      { blockId: sourceId, newBlockId },
+      err,
+    )
+  }
+  return true
+}
+
 export interface UseBlockActionOrchestrationParams {
   focusedBlockId: string | null
   /**
@@ -214,7 +243,7 @@ export interface UseBlockActionOrchestrationParams {
    * {@link useBlockActionOrchestration}'s `remountBaseline`).
    */
   pageStore: ReturnType<typeof usePageBlockStoreApi>
-  remove: (id: string) => Promise<void>
+  remove: (id: string, options?: DeleteBlockOptions) => Promise<void>
   /**
    * #1342 — reparent a contiguous run of blocks (in document order) under a
    * new parent, landing at the given 0-based sibling slot. Used by the merge
@@ -299,8 +328,12 @@ export function useBlockActionOrchestration({
   t,
 }: UseBlockActionOrchestrationParams): UseBlockActionOrchestrationReturn {
   const rovingEditorRef = useRef(rovingEditor)
+  // The by-id handlers sit in every row's `BlockActions` context; reading focus
+  // at call time keeps a focus move from re-rendering every row.
+  const focusedBlockIdRef = useRef(focusedBlockId)
   useLayoutEffect(() => {
     rovingEditorRef.current = rovingEditor
+    focusedBlockIdRef.current = focusedBlockId
   })
 
   // Tracks the post-merge setTextSelection setTimeout so we can cancel it on
@@ -623,7 +656,7 @@ export function useBlockActionOrchestration({
 
   const handleIndentById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? captureEditor() : null
+      const content = id === focusedBlockIdRef.current ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         indent(id).catch((err: unknown) => {
@@ -638,12 +671,12 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [captureEditor, focusedBlockId, handleFlush, indent, remountBaseline, t],
+    [captureEditor, handleFlush, indent, remountBaseline, t],
   )
 
   const handleDedentById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? captureEditor() : null
+      const content = id === focusedBlockIdRef.current ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         dedent(id).catch((err: unknown) => {
@@ -658,12 +691,12 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [captureEditor, dedent, focusedBlockId, handleFlush, remountBaseline, t],
+    [captureEditor, dedent, handleFlush, remountBaseline, t],
   )
 
   const handleMoveUpById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? captureEditor() : null
+      const content = id === focusedBlockIdRef.current ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         moveUp(id).catch((err: unknown) => {
@@ -679,12 +712,12 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [captureEditor, focusedBlockId, handleFlush, moveUp, remountBaseline, t],
+    [captureEditor, handleFlush, moveUp, remountBaseline, t],
   )
 
   const handleMoveDownById = useCallback(
     (id: string) => {
-      const content = id === focusedBlockId ? captureEditor() : null
+      const content = id === focusedBlockIdRef.current ? captureEditor() : null
       handleFlush()
       const result = announceMoveResult(
         moveDown(id).catch((err: unknown) => {
@@ -700,7 +733,7 @@ export function useBlockActionOrchestration({
       }
       return result
     },
-    [captureEditor, focusedBlockId, handleFlush, moveDown, remountBaseline, t],
+    [captureEditor, handleFlush, moveDown, remountBaseline, t],
   )
 
   /**
@@ -948,7 +981,8 @@ export function useBlockActionOrchestration({
 
       mergeInProgress.current = true
       try {
-        const editorContent = focusedBlockId === blockId ? rovingEditorRef.current.unmount() : null
+        const editorContent =
+          focusedBlockIdRef.current === blockId ? rovingEditorRef.current.unmount() : null
         const currentContent = editorContent ?? collapsedVisible[idx]?.content ?? ''
 
         // #921 f2 — see handleMergeWithPrev: strip a leading block-marker so the
@@ -988,7 +1022,7 @@ export function useBlockActionOrchestration({
         mergeInProgress.current = false
       }
     },
-    [collapsedVisible, blocks, moveBlocks, focusedBlockId, mergeBlocksAndHandle, setFocused],
+    [collapsedVisible, blocks, moveBlocks, mergeBlocksAndHandle, setFocused],
   )
 
   const handleEnterSave = useCallback(async () => {
@@ -1130,15 +1164,16 @@ export function useBlockActionOrchestration({
         return
       }
       const newBlockId = await createBelow(focusedBlockId)
-      if (newBlockId) {
-        setFocused(newBlockId)
-        announce(t('announce.blockCreated'))
-        await continueListStyle(newBlockId, listStyle)
-      } else {
+      if (!newBlockId) {
         // createBelow returned null (e.g. backend error) — re-mount editor
         // so the user isn't stuck with an unmounted block.
         rovingEditorRef.current.mount(focusedBlockId, savedContent)
+        return
       }
+      if (await dropBlankIfFocusLeft(focusedBlockId, newBlockId, remove)) return
+      setFocused(newBlockId)
+      announce(t('announce.blockCreated'))
+      await continueListStyle(newBlockId, listStyle)
     } finally {
       enterSaveInProgress.current = false
     }

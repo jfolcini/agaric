@@ -562,7 +562,7 @@ describe('PageSourceEditor front matter (#5160 S8)', () => {
       text: base.text.replace('gs]', 'gs, handbook]').replace(WELCOME, HELLO),
       source: expect.any(String),
     })
-    expect(opLog.slice(ops).map((op) => op.op_type)).toEqual(['edit_block'])
+    expect(opLog.slice(ops).map((op) => op.op_type)).toEqual(['edit_block', 'add_page_alias'])
   })
 })
 

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM page_aliases WHERE alias = ?1 AND page_id > ?2 AND EXISTS (SELECT 1 FROM blocks WHERE id = ?2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "12a43bdd8314692b9a5543cb9cfce678135f6fd0a730556304e4a5b7c2295e00"
+}

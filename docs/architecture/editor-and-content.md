@@ -115,6 +115,8 @@ Reverse-op table (canonical):
 | `delete_property` | `set_property` with captured previous value |
 | `add_tag` | `remove_tag` |
 | `remove_tag` | `add_tag` |
+| `add_page_alias` | `remove_page_alias` |
+| `remove_page_alias` | `add_page_alias`; refused while another page holds the alias |
 | `add_attachment` | `delete_attachment` |
 | `delete_attachment` | conditional: `add_attachment` with captured metadata if available; otherwise non-reversible |
 

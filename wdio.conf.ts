@@ -28,11 +28,15 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 
 // Directory of this config file (the repo root). Node >= 24 (see package.json
 // `engines`) provides `import.meta.dirname` natively.
@@ -847,6 +851,76 @@ function killTauriDriver(): void {
   tauriDriver = undefined
 }
 
+/**
+ * PIDs of the binary under test still running on this session's vault.
+ *
+ * Matched by executable as well as environment because `tauri-driver` and
+ * `WebKitWebDriver` carry the same `AGARIC_DATA_DIR`, and they are still
+ * exiting when this runs.
+ */
+function sessionAppPids(vault: string): number[] {
+  const binary = realpathSync(application)
+  const marker = `AGARIC_DATA_DIR=${vault}\0`
+  const pids: number[] = []
+  for (const entry of readdirSync('/proc')) {
+    if (!/^\d+$/.test(entry)) continue
+    try {
+      if (readlinkSync(`/proc/${entry}/exe`) !== binary) continue
+      if (readFileSync(`/proc/${entry}/environ`, 'latin1').includes(marker)) {
+        pids.push(Number(entry))
+      }
+    } catch {
+      // Exited mid-scan, a zombie, or another user's process: not a live app of ours.
+    }
+  }
+  return pids
+}
+
+async function waitForSessionAppExit(vault: string, timeoutMs: number): Promise<number[]> {
+  const deadline = Date.now() + timeoutMs
+  let pids = sessionAppPids(vault)
+  while (pids.length > 0 && Date.now() < deadline) {
+    await sleep(100)
+    pids = sessionAppPids(vault)
+  }
+  return pids
+}
+
+/**
+ * Make sure this session's app is dead before the next session starts.
+ *
+ * `tauri-driver` answers SIGTERM by SIGKILLing `WebKitWebDriver`, so an app
+ * that driver had not yet closed is orphaned. The orphan keeps the
+ * single-instance D-Bus name on the run's one shared session bus, and every
+ * later app hands its launch to the orphan and exits during plugin setup, so
+ * `WebKitWebDriver` waits forever and `POST /session` times out for every
+ * remaining spec.
+ */
+async function reapSessionApp(): Promise<void> {
+  const vault = sandboxVaultDir
+  if (!vault) return
+  const leftovers = await waitForSessionAppExit(vault, 2_000)
+  if (leftovers.length === 0) return
+  console.warn(
+    `[afterSession] app pid(s) ${leftovers.join(', ')} outlived the session; killing them so ` +
+      'they cannot hold the single-instance D-Bus name and wedge the next session.',
+  )
+  for (const pid of leftovers) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // Already gone.
+    }
+  }
+  const survivors = await waitForSessionAppExit(vault, 10_000)
+  if (survivors.length > 0) {
+    throw new Error(
+      `[afterSession] app pid(s) ${survivors.join(', ')} survived SIGKILL; the next session ` +
+        'will hand off to them and time out.',
+    )
+  }
+}
+
 // Ensure the driver is reaped even if WDIO tears down abnormally (the docs'
 // `onShutdown` safety net) so a crashed run never leaves an orphan holding the
 // port for the next weekly execution.
@@ -902,8 +976,11 @@ export const config: WebdriverIO.Config = {
   logLevel: 'info',
   bail: 0,
   waitforTimeout: 20_000,
-  connectionRetryTimeout: 120_000,
-  connectionRetryCount: 3,
+  // A hung request does not recover on retry, so these only bound how long a
+  // wedged session takes to fail. The ceiling stays far above the slowest real
+  // request, session creation with the app's boot.
+  connectionRetryTimeout: 30_000,
+  connectionRetryCount: 1,
   // v10 made `$()` throw when it matches more than one element; the specs were
   // written against v9's first-match semantics.
   strictSelectors: false,
@@ -1018,8 +1095,8 @@ export const config: WebdriverIO.Config = {
   //
   // Two properties this must keep, in order:
   //
-  //   * `removeSandbox()` runs from `finally`, so a rescue that throws can
-  //     never leak the throwaway vault. Diagnostics that leak sandbox
+  //   * `removeSandbox()` runs from `finally`, so neither a rescue nor a reap
+  //     that throws can leak the throwaway vault. Diagnostics that leak sandbox
   //     directories are a worse trade than no diagnostics — the leak is
   //     permanent litter in `$TMPDIR`, the missing log costs one re-run.
   //   * `rescueAppLogs` is idempotent per label, so this call and every
@@ -1029,12 +1106,15 @@ export const config: WebdriverIO.Config = {
   //     comment) — so a per-test label can never sanitize to it and steal
   //     this rescue's directory out from under it (#4457).
   // -------------------------------------------------------------------------
-  afterSession: () => {
+  afterSession: async () => {
     killTauriDriver()
     try {
       console.warn(`[afterSession] app logs: ${rescueAppLogs(SESSION_LOG_LABEL)}`)
     } catch (error) {
       console.warn(`[afterSession] app log rescue failed: ${String(error)}`)
+    }
+    try {
+      await reapSessionApp()
     } finally {
       removeSandbox()
     }

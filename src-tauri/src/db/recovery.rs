@@ -744,11 +744,13 @@ async fn load_engine_snapshots(
 }
 
 /// One block's engine-side derived state as [`reproject_space_from_engine`]
-/// reads it: typed properties, tag ids, and the soft-delete stamp.
+/// reads it: typed properties, tag ids, the soft-delete stamp, and the page
+/// aliases (`None` for a block that never held one).
 type EngineBlockState = (
     Vec<(String, agaric_engine::loro::engine::PropertyValue)>,
     Vec<String>,
     Option<String>,
+    Option<Vec<String>>,
 );
 
 /// [`reproject_space_from_engine`]'s core read.
@@ -799,7 +801,7 @@ fn read_engine_core_rows(
 }
 
 /// [`reproject_space_from_engine`]'s per-block derived reads (properties /
-/// tags / deleted_at), each non-fatal (#2920). Aligned with `block_ids` by
+/// tags / deleted_at / page aliases), each non-fatal (#2920). Aligned with `block_ids` by
 /// index; a skipped block holds `None`.
 fn read_engine_block_states(
     engine: &agaric_engine::loro::engine::LoroEngine,
@@ -850,7 +852,19 @@ fn read_engine_block_states(
                 continue;
             }
         };
-        states.push(Some((props, tags, deleted_at)));
+        let aliases = match engine.read_page_aliases(block_id.as_str()) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!(
+                    space_id = %space_id_str, block_id = %block_id.as_str(), error = %e,
+                    "recovery (#2920): engine page-alias read failed for block; skipping it"
+                );
+                skipped[i] = true;
+                states.push(None);
+                continue;
+            }
+        };
+        states.push(Some((props, tags, deleted_at, aliases)));
     }
     states
 }
@@ -912,12 +926,12 @@ async fn project_engine_derived_rows(
 ) -> Result<(), agaric_core::error::AppError> {
     use agaric_engine::loro::projection::{
         reproject_block_deleted_at_from_engine, reproject_block_properties_from_engine,
-        reproject_block_tags_from_engine,
+        reproject_block_tags_from_engine, reproject_page_aliases_from_engine,
     };
     use sqlx::Acquire;
 
-    // Pass B/C/D — properties, then tags (FK-ordered after every Pass A core
-    // row exists), then soft-delete state. Grouped per block under one
+    // Pass B/C/D — properties, then tags and page aliases (FK-ordered after
+    // every Pass A core row exists), then soft-delete state. Grouped per block under one
     // savepoint (#2920): all Pass A rows are already present, so the
     // intra-block grouping preserves the cross-block FK ordering while still
     // isolating a per-block failure.
@@ -925,13 +939,16 @@ async fn project_engine_derived_rows(
         if skipped[i] {
             continue;
         }
-        let Some((props, tags, deleted_at)) = states[i].as_ref() else {
+        let Some((props, tags, deleted_at, aliases)) = states[i].as_ref() else {
             continue;
         };
         let mut sp = tx.begin().await?;
         let res = async {
             reproject_block_properties_from_engine(&mut sp, block_id, props, value_types).await?;
             reproject_block_tags_from_engine(&mut sp, block_id, tags).await?;
+            if let Some(aliases) = aliases {
+                reproject_page_aliases_from_engine(&mut sp, block_id.as_str(), aliases).await?;
+            }
             reproject_block_deleted_at_from_engine(&mut sp, block_id, deleted_at.as_deref())
                 .await?;
             Ok::<(), agaric_core::error::AppError>(())
@@ -3513,6 +3530,25 @@ async fn replay_derived_op(
             // reconstructed by its own recompute path, not this loop).
             agaric_engine::loro::projection::project_remove_tag_to_sql(
                 &mut *conn, block_id, tag_id,
+            )
+            .await?;
+        }
+        // #5387: the alias arms route through the forward projections, which
+        // skip a page with no `blocks` row and keep an alias with the page
+        // that claimed it first in this replay order.
+        "add_page_alias" => {
+            let page_id = payload["page_id"].as_str().unwrap_or("");
+            let alias = payload["alias"].as_str().unwrap_or("");
+            agaric_engine::loro::projection::project_add_page_alias_to_sql(
+                &mut *conn, page_id, alias,
+            )
+            .await?;
+        }
+        "remove_page_alias" => {
+            let page_id = payload["page_id"].as_str().unwrap_or("");
+            let alias = payload["alias"].as_str().unwrap_or("");
+            agaric_engine::loro::projection::project_remove_page_alias_to_sql(
+                &mut *conn, page_id, alias,
             )
             .await?;
         }
@@ -6931,6 +6967,72 @@ mod tests {
         );
     }
 
+    /// #5387: after a disaster-recovery reprojection, a page's `page_aliases`
+    /// rows are exactly its aliases in the engine, while a page the engine
+    /// holds no alias map for keeps the rows the boot backfill has not reached.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recovery_projects_page_aliases_equal_to_the_engine_5387() {
+        const PAGE: &str = "01HZ0000000000000000000P01";
+        const LEGACY: &str = "01HZ0000000000000000000P02";
+        let (pool, _dir) = test_pool().await;
+        let mut engine = agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+        engine
+            .apply_create_block(PAGE, "page", "Planning", None, 0)
+            .unwrap();
+        engine
+            .apply_create_block(LEGACY, "page", "Old", None, 1)
+            .unwrap();
+        for alias in ["Plans", "roadmap", "gone"] {
+            engine.apply_add_page_alias(PAGE, alias).unwrap();
+        }
+        engine.apply_remove_page_alias(PAGE, "gone").unwrap();
+        sqlx::query(
+            "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count) \
+             VALUES ('space-1', ?, 0, 5)",
+        )
+        .bind(engine.export_snapshot().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, page_id) \
+             VALUES (?1, 'page', 'Planning', 1, ?1), (?2, 'page', 'Old', 2, ?2)",
+        )
+        .bind(PAGE)
+        .bind(LEGACY)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO page_aliases (page_id, alias) VALUES (?1, 'stale'), (?2, 'legacy')",
+        )
+        .bind(PAGE)
+        .bind(LEGACY)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            reproject_blocks_from_engine(&pool).await.unwrap(),
+            "reprojection fired"
+        );
+
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT page_id, alias FROM page_aliases ORDER BY page_id, alias")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let mut held = engine.read_page_aliases(PAGE).unwrap().unwrap();
+        held.sort();
+        let mut expected: Vec<(String, String)> =
+            held.into_iter().map(|a| (PAGE.to_owned(), a)).collect();
+        expected.push((LEGACY.to_owned(), "legacy".to_owned()));
+        assert_eq!(
+            rows, expected,
+            "the page's rows are the engine's aliases; the legacy row stays"
+        );
+    }
+
     /// #2504: with no persisted engine snapshots (a device that never synced, or
     /// an ancient DB) the engine reprojection is a no-op returning `false`, so
     /// the caller keeps the op-log pass's local-only content — the documented
@@ -7586,6 +7688,50 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(marker, 0, "nothing to retire, nothing written");
+    }
+
+    /// #5387: the derived replay rebuilds `page_aliases` from the local alias
+    /// ops in replay order — a later remove wins over its add, and an alias two
+    /// pages claimed stays with the first claim.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn derived_replay_rebuilds_page_aliases_from_alias_ops_5387() {
+        let (pool, _dir) = test_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, page_id) \
+             VALUES ('P1', 'page', 'One', 1, 'P1'), ('P2', 'page', 'Two', 2, 'P2')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let ops = [
+            ("add_page_alias", "P1", "x"),
+            ("add_page_alias", "P1", "y"),
+            ("remove_page_alias", "P1", "X"),
+            ("add_page_alias", "P2", "Y"),
+            ("add_page_alias", "P2", "z"),
+        ];
+        for (seq, (op_type, page_id, alias)) in (1..).zip(ops) {
+            let payload = serde_json::json!({ "page_id": page_id, "alias": alias });
+            seed_op(&pool, seq, op_type, &payload, 0).await;
+        }
+
+        recover_derived_state_from_op_log(&pool, /* blocks_recovered_this_boot */ true)
+            .await
+            .unwrap();
+
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT page_id, alias FROM page_aliases ORDER BY page_id, alias")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("P1".to_owned(), "y".to_owned()),
+                ("P2".to_owned(), "z".to_owned())
+            ],
+            "`x` was removed, and `y` stays with P1, which claimed it first"
+        );
     }
 
     /// #5420: a healthy boot (no this-boot signal, no marker) returns before

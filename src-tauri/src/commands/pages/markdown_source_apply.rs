@@ -16,7 +16,7 @@ use serde::Serialize;
 
 use super::*;
 use crate::commands::blocks::crud::{
-    DeleteInTx, delete_block_in_tx, delete_property_in_tx, edit_block_in_tx,
+    DeleteInTx, delete_block_in_tx, delete_property_in_tx, dispatch_deletes, edit_block_in_tx,
 };
 use crate::commands::blocks::move_ops::{move_block_in_tx, ordered_live_children};
 use crate::commands::pages::inline_query_md::{query_page_names, query_tag_names};
@@ -203,20 +203,6 @@ async fn resolve_value_refs(
     lines
         .resolve_refs(tx, space, values.chain(front.values()))
         .await
-}
-
-/// The post-commit fan-out `delete_block_inner` runs, per delete.
-async fn dispatch_deletes(pool: &SqlitePool, materializer: &Materializer, deletes: &[DeleteInTx]) {
-    for deleted in deletes {
-        crate::materializer::dispatch_delete_descendants(
-            &deleted.op_record,
-            &deleted.effects.deleted_cohort,
-            deleted.effects.delete_space_id.as_ref(),
-            materializer.loro_state(),
-        )
-        .await;
-        crate::materializer::remove_deleted_cohort_fts(pool, &deleted.effects.deleted_cohort).await;
-    }
 }
 
 /// The page's current source as the save reads it: the ids of the blocks the
