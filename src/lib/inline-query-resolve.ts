@@ -165,8 +165,8 @@ function propertyFilterToExpr(pf: PropertyFilter, dateInfer: boolean): FilterExp
     ? { type: 'Date', value: date }
     : { type: 'Text', value: pf.value }
 
-  // `!=` needs PRESENCE: legacy `filtered_blocks_query` compiles it as
-  // `EXISTS(value != ?)` (the property must exist), but the bare rich
+  // `!=` needs PRESENCE: legacy `filtered_blocks_query` matches only blocks
+  // holding the key with another value (the property must exist), but the bare rich
   // `HasProperty { Ne }` is `NOT EXISTS(value = ?)` — which also matches blocks
   // that LACK the property. Compose presence + inequality: `Exists AND Ne`
   // (properties are single-valued per key, so this is exact).
