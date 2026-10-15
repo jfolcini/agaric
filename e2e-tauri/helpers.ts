@@ -434,25 +434,34 @@ export async function ctrlClick(element: ReturnType<typeof $>): Promise<void> {
 }
 
 /**
- * The id of the block the roving editor is in, asserting the editor is blank.
- * A control that proves the empty-block cleanup fires must target the block it
- * leaves: the journal can hold a seeded blank block of its own that no focus
- * change ever visits.
+ * The id of the block the roving editor is in, once that block is blank.
+ * Enter's new block takes focus after a create round-trip, so the editor can
+ * still be in the block above when this is called; acting on it then (a paste,
+ * a leave) lands on the wrong block. A control that proves the empty-block
+ * cleanup fires must also target the block it leaves: the journal can hold a
+ * seeded blank block of its own that no focus change ever visits.
  */
 export async function focusedBlankBlockId(): Promise<string> {
   const editor = '[data-testid="block-editor"] [contenteditable="true"]'
-  await $(editor).waitForDisplayed({ timeout: ACTION_TIMEOUT })
-  const focused = await browser.execute((sel: string) => {
-    const el = document.querySelector(sel)
-    return {
-      id: el?.closest('[data-block-id]')?.getAttribute('data-block-id') ?? null,
-      text: el?.textContent ?? null,
-    }
-  }, editor)
-  if (focused.id === null || focused.text !== '') {
-    throw new Error(`expected the editor in a blank block, got ${JSON.stringify(focused)}`)
-  }
-  return focused.id
+  let last: { id: string | null; text: string | null } = { id: null, text: null }
+  const blank = await browser
+    .waitUntil(
+      async () => {
+        last = await browser.execute((sel: string) => {
+          const el = document.querySelector(sel)
+          return {
+            id: el?.closest('[data-block-id]')?.getAttribute('data-block-id') ?? null,
+            text: el?.textContent ?? null,
+          }
+        }, editor)
+        return last.id !== null && last.text === '' ? last.id : false
+      },
+      { timeout: ACTION_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(`expected the editor in a blank block, got ${JSON.stringify(last)}`)
+    })
+  return blank
 }
 
 /**

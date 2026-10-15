@@ -103,6 +103,7 @@ describe('Agaric real-backend attachment-only block (#5412)', () => {
 
   it('keeps a blank block holding an attachment after focus leaves it', async () => {
     await markedBlockThenBlankSibling(MARKER)
+    await focusedBlankBlockId()
 
     await pasteFileIntoFocusedBlock(TXT_BASE64, FILENAME, 'text/plain')
     await waitForToast(`Attached "${FILENAME}"`)
