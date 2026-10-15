@@ -114,6 +114,7 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "url",
+ "webkit2gtk",
 ]
 
 [[package]]

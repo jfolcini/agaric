@@ -20,10 +20,10 @@ import { format as formatDateFns, getISOWeek } from 'date-fns'
 import { enUS } from 'date-fns/locale'
 
 import { utf8ToBase64Url } from '@/lib/base64url'
-import type { AppError, PageResponse, commands } from '@/lib/bindings'
+import type { AppError, PageResponse, PageSort, commands } from '@/lib/bindings'
 import { ulidToDate } from '@/lib/format'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
-import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
+import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import { TASK_STATES } from '@/lib/task-states'
 import {
   type MockLinkEdge,
@@ -715,6 +715,22 @@ export interface PageMetaRow {
   flags: { hasTags: boolean; hasTodo: boolean; hasScheduled: boolean; hasDue: boolean }
 }
 
+/** A {@link PageMetaRow} plus the two keys only the Pages sorts read (#5371). */
+export interface PageSortRow extends PageMetaRow {
+  /** `pages_cache.title_sort_key` — see {@link titleSortKey}. */
+  titleSortKey: string
+  /** `page_opens.opened_ms`; `-1` for a page never opened on this device. */
+  openedMs: number
+}
+
+/**
+ * `agaric_core::title_sort::title_sort_key`: NFKD, combining marks dropped,
+ * lowercased. Compared as UTF-8 bytes, SQLite's `BINARY`.
+ */
+export function titleSortKey(title: string): string {
+  return title.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase()
+}
+
 /**
  * Does a page row satisfy one compound-filter primitive? The mock evaluates
  * `Stub` / `HasNoInboundLinks` / `Orphan` / `Tag` / `Priority` / `PathGlob` /
@@ -724,8 +740,7 @@ export interface PageMetaRow {
  * mock at the IPC boundary directly).
  *
  * `lastEditedAt` selects which last-edited stamp the `LastEdited` arm reads;
- * it defaults to `list_pages_with_metadata`'s seeded-fallback source. See
- * {@link LastEditedSource}.
+ * it defaults to the row's own `lastModifiedAt`. See {@link LastEditedSource}.
  */
 export function metaRowMatchesFilter(
   r: PageMetaRow,
@@ -1084,26 +1099,20 @@ export function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): 
 }
 
 /**
- * Resolve the last-edited stamp a `LastEdited` filter reads for one row.
- *
- * Both answers in this mock are now the SAME VALUE — {@link blockLastEditedAt},
- * exactly the data source `compile_last_edited`
- * (`src-tauri/agaric-store/src/filters/primitive.rs`) compiles to.
- * This seam survives only as a MEMOIZATION hook, not a semantic choice:
+ * Resolve the last-edited stamp a `LastEdited` filter reads for one row:
+ * {@link blockLastEditedAt} of the row's own block, the data source
+ * `compile_last_edited` (`src-tauri/agaric-store/src/filters/primitive.rs`)
+ * compiles to.
  *
  *  - {@link DEFAULT_LAST_EDITED_SOURCE} reads `r.lastModifiedAt`, which
- *    `buildPageMetaRow` already populated from {@link blockLastEditedAt}.
- *    This is what `list_pages_with_metadata` uses.
+ *    `buildPageMetaRow` populated from {@link blockLastEditedAt}.
+ *  - `list_pages_with_metadata` passes {@link blockLastEditedAt} itself,
+ *    because its rows carry the page-wide stamp the `recently-modified` sort
+ *    reads (#5371).
  *  - `run_advanced_query` passes a per-row memoizing wrapper around
  *    {@link blockLastEditedAt} (`search.ts`), because it evaluates the
  *    filter over EVERY active block rather than over pre-built page rows and
  *    would otherwise rescan `opLog` per comparison.
- *
- * It used to be a real fork: the default source was `pageLastModifiedAt`,
- * which layered a mock-only seeded stamp on top of the op-log MAX (#3884 /
- * #3898). That fallback and its seed map are gone — the seed writes real
- * `op_log` rows instead — so a caller can no longer pick a divergent source
- * by accident.
  */
 export type LastEditedSource = (r: PageMetaRow) => string | null
 
@@ -1161,131 +1170,100 @@ export function lastEditedMatches(
 }
 
 /**
- * Comparator mirroring the backend's per-sort keyset (id is the tiebreaker).
+ * Comparator mirroring the backend's per-sort keyset (`keyset_for`,
+ * `src-tauri/src/commands/pages/metadata.rs`). The id tiebreaker is `b.id`
+ * under SQLite's `BINARY` collation, ascending except under `last-opened`,
+ * whose never-opened pages follow newest first.
  *
- * `'recently-modified'` reads `lastModifiedAt`, i.e. the
- * {@link blockLastEditedAt} value {@link buildPageMetaRow} stored (#3884). Its
- * `?? ''` is the mock's spelling of the engine's `LAST_MOD_NULL_SENTINEL`
- * COALESCE (`src-tauri/src/commands/pages/metadata.rs:220,349-351`): under a
- * DESC compare, the empty string sorts below every ISO timestamp exactly as
- * `0` sorts below every epoch-ms value, so rows with no stamp tie at the
- * sentinel and fall to the id tiebreaker — the engine's behaviour, not a
- * seeded ordering.
- *
- * #3939 item 1 — the `'alphabetical'` arm ran `toLowerCase().localeCompare()`
- * where the backend orders `COALESCE(b.content,'') COLLATE NOCASE`. Both
- * halves were wrong, and for the two reasons #4131 already fixed in the
- * picker's `comparePageRows`: `NOCASE` folds ASCII `A`-`Z` ONLY (so a Turkish
- * `İ` or a Greek `Σ` folded here and not there), and it then memcmps UTF-8
- * BYTES, where `localeCompare` applies an ICU collation that reorders
- * accented and non-Latin titles wholesale (`Ápple` sorts before `Zebra` under
- * ICU and after it under `NOCASE`). {@link compareNocase} is the same code
- * that comparator uses, so the two cannot drift apart again.
- *
- * The id tiebreaker moves with it: the backend's is `b.id ASC`, SQLite's
- * default `BINARY` collation — #4138 item 2's finding, inert while ids are
- * Crockford-base32 ULIDs but not enforced to be.
+ * `'recently-modified'` reads `lastModifiedAt`, whose `?? ''` is the engine's
+ * `COALESCE(pc.last_edited_ms, 0)`: under a DESC compare the empty string
+ * sorts below every ISO timestamp exactly as `0` sorts below every epoch-ms.
  */
-export function compareMetaRows(x: PageMetaRow, y: PageMetaRow, sort: string): number {
-  let primary = 0
+export function compareMetaRows(x: PageSortRow, y: PageSortRow, sort: string): number {
   switch (sort) {
     case 'alphabetical': {
-      primary = compareNocase(x.content ?? '', y.content ?? '')
-      break
+      return compareUtf8Bytes(x.titleSortKey, y.titleSortKey) || compareUtf8Bytes(x.id, y.id)
+    }
+    case 'created': {
+      return compareUtf8Bytes(y.id, x.id)
     }
     case 'recently-modified': {
-      primary = (y.lastModifiedAt ?? '').localeCompare(x.lastModifiedAt ?? '')
-      break
+      const primary = compareUtf8Bytes(y.lastModifiedAt ?? '', x.lastModifiedAt ?? '')
+      return primary || compareUtf8Bytes(x.id, y.id)
+    }
+    case 'last-opened': {
+      return y.openedMs - x.openedMs || compareUtf8Bytes(y.id, x.id)
     }
     case 'most-linked': {
-      primary = y.inboundLinkCount - x.inboundLinkCount
-      break
+      return y.inboundLinkCount - x.inboundLinkCount || compareUtf8Bytes(x.id, y.id)
     }
     case 'most-content': {
-      primary = y.childBlockCount - x.childBlockCount
-      break
+      return y.childBlockCount - x.childBlockCount || compareUtf8Bytes(x.id, y.id)
     }
     default: {
-      primary = compareUtf8Bytes(x.id, y.id)
-      break
+      throw new Error(`compareMetaRows: unknown sort ${sort}`)
     }
   }
-  return primary !== 0 ? primary : compareUtf8Bytes(x.id, y.id)
 }
 
 /**
- * Map a sort mode to the cursor `position` discriminator the backend stamps
- * into the keyset cursor (mirrors `sort_discriminator` in
- * `src-tauri/src/commands/pages/metadata.rs`). The discriminator is what
- * `validate_pages_metadata_cursor` compares to reject a cursor reused across a
- * sort change (the `RequiresRefresh:` recovery path).
- *
- * #3927 — `alphabetical` used to fall through to `default`'s `5`, on the
- * stated grounds that it is "frontend-only" and "rides the `default` wire
- * keyset". Both halves are wrong: `PageSort::Alphabetical` is a real wire
- * variant (it is the `#[default]` one, so an OMITTED `sort` selects it), the
- * backend gives it its own `SortKeyset::StringAsc` over
- * `COALESCE(b.content,'') COLLATE NOCASE`, and `sort_discriminator` stamps it
- * `1`. So the mock minted alphabetical cursors carrying the `default` tag, and
- * accepted an alphabetical cursor replayed under `default` where the backend
- * answers `RequiresRefresh`. Found while enumerating this command's five sort
- * arms for the branch manifest; NOT caught by the conformance query steps,
- * because a step can only record a SUCCESSFUL response and this divergence is
- * visible only in the rejection.
+ * `sort_discriminator` (`src-tauri/src/commands/pages/metadata.rs`): the cursor
+ * `position` tag `validate_pages_metadata_cursor` compares to reject a cursor
+ * reused across a sort change (`RequiresRefresh`). 5 was the retired
+ * `default` sort.
  */
+const PAGE_SORT_DISCRIMINATOR: Readonly<Record<PageSort, number>> = {
+  alphabetical: 1,
+  'recently-modified': 2,
+  'most-linked': 3,
+  'most-content': 4,
+  created: 6,
+  'last-opened': 7,
+}
+
+/** A `PageSort` wire value; anything else the backend's serde refuses. */
+export function isPageSort(sort: string): sort is PageSort {
+  return Object.hasOwn(PAGE_SORT_DISCRIMINATOR, sort)
+}
+
+/** See {@link PAGE_SORT_DISCRIMINATOR}. */
 export function sortDiscriminator(sort: string): number {
-  switch (sort) {
-    case 'alphabetical': {
-      return 1
-    }
-    case 'recently-modified': {
-      return 2
-    }
-    case 'most-linked': {
-      return 3
-    }
-    case 'most-content': {
-      return 4
-    }
-    // `PageSort::Default`, and anything unrecognised: the backend's serde
-    // would reject an unknown value outright, so the fallthrough is only ever
-    // reached for `default` in practice.
-    default: {
-      return 5
-    }
-  }
+  if (!isPageSort(sort)) throw new Error(`sortDiscriminator: unknown sort ${sort}`)
+  return PAGE_SORT_DISCRIMINATOR[sort]
 }
 
 /**
- * Encode a next-page cursor matching the backend's per-sort shape so cursor
- * round-trips hit the same validation path. The `position` slot carries the
- * sort discriminator (see `sortDiscriminator`).
+ * Encode a next-page cursor in the backend's per-sort shape
+ * (`build_metadata_response`): `position` carries the sort discriminator, the
+ * string key rides in `deleted_at`, the i64 key in `seq`.
  *
  * Goes through `utf8ToBase64Url` (`@/lib/base64url`) rather than a bare
- * `btoa`, for the same reason `run_advanced_query`'s `encodeCursor`
- * (`search.ts`) does (#3863, extended here per #3888 review): under
- * `alphabetical` the `deleted_at` slot carries `last.content` — the raw page
- * TITLE, i.e. arbitrary USER TEXT. The backend's `Cursor::encode`
- * (`agaric-store/src/pagination/mod.rs`) is
+ * `btoa`, as `run_advanced_query`'s `encodeCursor` (`search.ts`) does (#3863,
+ * #3888): under `alphabetical` the `deleted_at` slot carries a title key,
+ * user text. The backend's `Cursor::encode` is
  * `URL_SAFE_NO_PAD.encode(json.as_bytes())`, the UTF-8 bytes of the JSON;
- * `btoa` maps each string CODE UNIT to a byte, so it threw
- * `InvalidCharacterError` out of `list_pages_with_metadata` for a title like
- * `Q3 — Roadmap` (U+2014) and silently emitted the Latin-1 byte 0xE9 for `é`
- * where UTF-8 needs 0xC3 0xA9. The URL-safe alphabet matches the backend's
- * too; {@link base64UrlToUtf8} (used to decode on the way back in, in
- * `pages.ts`) still accepts the standard-alphabet cursors older callers and
- * tests hand-roll with `btoa`, since standard base64 never emits `-` or `_`.
+ * `btoa` maps each code unit to a byte, so it throws on `—` (U+2014) and emits
+ * the Latin-1 byte 0xF8 for `ø` where UTF-8 needs 0xC3 0xB8.
+ * {@link base64UrlToUtf8} decodes it on the way back in (`pages.ts`) and still
+ * accepts the standard-alphabet cursors tests hand-roll with `btoa`.
  */
-export function encodeNextCursor(last: PageMetaRow, sort: string): string {
-  const disc = sortDiscriminator(sort)
-  const cursorObj: Record<string, unknown> = { id: last.id, version: 1, position: disc }
+export function encodeNextCursor(last: PageSortRow, sort: string): string {
+  const cursorObj: Record<string, unknown> = {
+    id: last.id,
+    version: 1,
+    position: sortDiscriminator(sort),
+  }
   switch (sort) {
     case 'alphabetical': {
-      cursorObj['deleted_at'] = last.content
+      cursorObj['deleted_at'] = last.titleSortKey
       break
     }
     case 'recently-modified': {
-      cursorObj['deleted_at'] = last.lastModifiedAt
+      cursorObj['seq'] = last.lastModifiedAt === null ? 0 : Date.parse(last.lastModifiedAt)
+      break
+    }
+    case 'last-opened': {
+      cursorObj['seq'] = last.openedMs
       break
     }
     case 'most-linked': {
@@ -1352,6 +1330,26 @@ function rawOpLogLastEditedAt(blockId: string): string | null {
     lastEditedIndex = { len: opLog.length, first, last, map }
   }
   return lastEditedIndex.map.get(blockId) ?? null
+}
+
+/**
+ * #5371 — page id → the newest op on any block now on that page, the page's
+ * own included: the op half of the engine's `pages_cache.last_edited_ms`,
+ * whose creation-time floor {@link blockLastEditedAt} adds. The engine only
+ * ever raises that column, so a block that moved away or was purged keeps the
+ * credit its ops gave; this scan of the current blocks does not model that.
+ */
+export function pagesLastEditedAt(): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const b of blocks.values()) {
+    const page = b['page_id']
+    if (typeof page !== 'string') continue
+    const at = rawOpLogLastEditedAt(b['id'] as string)
+    if (at === null) continue
+    const cur = out.get(page)
+    if (cur === undefined || at > cur) out.set(page, at)
+  }
+  return out
 }
 
 /** `ulid_created_ms_sql`'s guard, with the id's length checked beside it. */
@@ -1439,13 +1437,13 @@ export function buildPageMetaRow(
     dueDate: (b['due_date'] as string | null) ?? null,
     scheduledDate: (b['scheduled_date'] as string | null) ?? null,
     pageId: (b['page_id'] as string | null) ?? null,
-    // `last_modified_at` is `MAX(op_log.created_at)` over this block, else
-    // its ULID creation time — what `list_pages_with_metadata_inner` selects.
-    // `null` only for a non-ULID id with no op; the `last-edited:` filter and
-    // the `recently-modified` sort apply the engine's epoch-sentinel rule to
-    // that null themselves (`lastEditedMatches` / `compareMetaRows`). The
-    // seeded fixtures get comparable ISO timestamps by carrying real op-log
-    // rows (`stampPageLastEdited`, `seed.ts`), not by a fallback (#3884/#3898).
+    // `MAX(op_log.created_at)` over this block, else its ULID creation time:
+    // what the `LastEdited` filter reads. `list_pages_with_metadata` replaces
+    // it with the page-wide stamp its sort reads. `null` only for a non-ULID
+    // id with no op; `lastEditedMatches` / `compareMetaRows` apply the
+    // engine's epoch-sentinel rule to that null themselves. The seeded
+    // fixtures get comparable ISO timestamps by carrying real op-log rows
+    // (`stampPageLastEdited`, `seed.ts`), not by a fallback (#3884/#3898).
     lastModifiedAt: blockLastEditedAt(pageId),
     inboundLinkCount: inbound,
     childBlockCount: descendants.length,

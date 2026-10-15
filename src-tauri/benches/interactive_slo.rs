@@ -28,9 +28,9 @@
 //!
 //! The gated measurement tier holds the #2508 tags/pages-cache direct-query
 //! probes, the #2585 MostLinked cache/counterfactual probes, the
-//! space-scoped `list_page_links` read (over budget, #5426) and the #5422
-//! backlink-panel probes (`list_unlinked_references` at `limit = 1` on a
-//! common title, `list_backlinks_grouped` on a 5k-backlink target), behind
+//! #5422 backlink-panel probes (`list_unlinked_references` at `limit = 1` on a
+//! common title, `count_unlinked_references` on the same fixture,
+//! `list_backlinks_grouped` on a 5k-backlink target), behind
 //! `SLO_INCLUDE_PROBLEM` so they don't fail CI. `list_projected_agenda` was
 //! promoted to the green tier after the nightly lane confirmed it under
 //! budget (#2178). To run the gated probes locally:
@@ -796,8 +796,9 @@ async fn seed_pages_mostlinked_fixture(pool: &SqlitePool) -> Vec<String> {
     .await;
     assign_all_to_slo_space(pool).await;
     sqlx::query(
-        "INSERT INTO pages_cache (page_id, title, updated_at, inbound_link_count, child_block_count) \
-         SELECT p.id, p.content, 0, \
+        "INSERT INTO pages_cache \
+             (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count) \
+         SELECT p.id, p.content, lower(p.content), 0, \
              ( \
                  SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
                      JOIN blocks descendant ON bl.target_id = descendant.id \
@@ -1758,8 +1759,9 @@ fn bench_load_page_subtree(c: &mut Criterion) {
 }
 
 /// `list_pages_with_metadata` — the pages view's first page over 10K pages /
-/// 100K blocks; runs on every pages-view open. Wire sort `default`: the view's
-/// default `alphabetical` sort sends it and re-sorts client-side.
+/// 100K blocks; runs on every pages-view open, under the view's default
+/// `alphabetical` sort. The fixture's titles are ASCII, so `lower()` is their
+/// title sort key.
 /// Budget: 10 ms, 2x the worst dev-box sample (4.67-4.92 ms); provisional
 /// until a `bench-slo` run measures it.
 fn bench_list_pages_with_metadata(c: &mut Criterion) {
@@ -1771,7 +1773,7 @@ fn bench_list_pages_with_metadata(c: &mut Criterion) {
     let pool = rt.block_on(fresh_pool(&dir, "slo_list_pages_with_metadata"));
     let page_ids = rt.block_on(seed_pages_mostlinked_fixture(&pool));
     let filter = ListPagesWithMetadataFilter {
-        sort: PageSort::Default,
+        sort: PageSort::Alphabetical,
         space_id: SLO_SPACE_ID.to_owned(),
         filters: vec![],
     };
@@ -1785,10 +1787,18 @@ fn bench_list_pages_with_metadata(c: &mut Criterion) {
         ))
         .unwrap();
     let observed_ids: Vec<&str> = observed.items.iter().map(|row| row.id.as_str()).collect();
+    // The fixture titles page `i` `Page {i}`: key order is byte order of
+    // `page {i}`, so `page 10` precedes `page 2`.
+    let mut by_key: Vec<(String, &str)> = page_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (format!("page {i}"), id.as_str()))
+        .collect();
+    by_key.sort_unstable();
+    let expected_ids: Vec<&str> = by_key[..PAGE_SIZE].iter().map(|(_, id)| *id).collect();
     assert_eq!(
-        observed_ids,
-        page_ids[..PAGE_SIZE],
-        "list_pages_with_metadata @ 100K: untimed probe must return the first 50 fixture pages in id order (#3304)"
+        observed_ids, expected_ids,
+        "list_pages_with_metadata @ 100K: untimed probe must return the first 50 fixture pages in title-key order (#3304)"
     );
     assert_eq!(
         observed.total_count,
@@ -1874,6 +1884,53 @@ fn key_presence_filter(key: &str) -> PropertyFilter {
     }
 }
 
+/// Time `filtered_blocks_query_inner` presence-filtering on `key`, first page.
+fn time_filtered_blocks_query(
+    c: &mut Criterion,
+    rt: Runtime,
+    pool: SqlitePool,
+    scope: SpaceScope,
+    bench_name: &str,
+    key: &'static str,
+) -> Acc {
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function(bench_name, move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let scope = scope.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let scope = scope.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = filtered_blocks_query_inner(
+                        &pool,
+                        vec![key_presence_filter(key)],
+                        None,
+                        None,
+                        &scope,
+                        None,
+                        Some(FILTERED_PAGE_SIZE as i64),
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+    acc
+}
+
 /// `filtered_blocks_query` — the agenda / query-block filter on a key present
 /// on 20 of 100K blocks (#5426). Budget: 10 ms, provisional until a
 /// `bench-slo` run measures it.
@@ -1907,41 +1964,14 @@ fn bench_filtered_blocks_query(c: &mut Criterion) {
         "filtered_blocks_query @ 100K: 20 matches fit one page of 50 (#3304)"
     );
 
-    let mut group = c.benchmark_group("interactive_slo");
-    group.sample_size(SAMPLE_SIZE);
-    let acc = Acc::new();
-    let acc_for_bench = acc.clone();
-
-    group.bench_function("filtered_blocks_query_rare_key_100k", move |b| {
-        let acc = acc_for_bench.clone();
-        let pool = pool.clone();
-        let scope = scope.clone();
-        b.to_async(&rt).iter_custom(move |iters| {
-            let pool = pool.clone();
-            let scope = scope.clone();
-            let acc = acc.clone();
-            async move {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    let _ = filtered_blocks_query_inner(
-                        &pool,
-                        vec![key_presence_filter(FILTERED_RARE_KEY)],
-                        None,
-                        None,
-                        &scope,
-                        None,
-                        Some(FILTERED_PAGE_SIZE as i64),
-                    )
-                    .await
-                    .unwrap();
-                }
-                let elapsed = start.elapsed();
-                acc.record(elapsed, iters);
-                elapsed
-            }
-        });
-    });
-    group.finish();
+    let acc = time_filtered_blocks_query(
+        c,
+        rt,
+        pool,
+        scope,
+        "filtered_blocks_query_rare_key_100k",
+        FILTERED_RARE_KEY,
+    );
 
     assert_under_budget(
         "filtered_blocks_query (key on 20 blocks) @ 100K",
@@ -2679,19 +2709,13 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
 }
 
 /// `list_page_links` — graph-view roll-up, read for one space: the only form
-/// the graph sends, and since #5415 the only one the command has. PROBLEM
-/// TIER: the 84 ms @ 100K that promoted it to the green tier (#2178) was the
-/// unscoped read; the scoped read that checked both endpoints of every edge
-/// against the space's pages was over budget on this fixture. It now ranges
-/// `page_link_cache.space_id` (#5426) and stays gated until CI measures that.
-/// The fixture stamps every block's space before the rebuild that copies it
-/// into the cache.
+/// the graph sends, and since #5415 the only one the command has. Budget:
+/// 200 ms @ 100K. The scoped read that checked both endpoints of every edge
+/// against the space's pages was over budget on this fixture; it now ranges
+/// `page_link_cache.space_id` (#5426) and is green again. The fixture stamps
+/// every block's space before the rebuild that copies it into the cache.
 fn bench_list_page_links(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
-
-    if problem_skipped("list_page_links @ 100K") {
-        return;
-    }
 
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
@@ -2762,7 +2786,7 @@ fn bench_list_page_links(c: &mut Criterion) {
     });
     group.finish();
 
-    assert_under_budget_deferred("list_page_links @ 100K", &acc, BUDGET_MS);
+    assert_under_budget("list_page_links @ 100K", &acc, BUDGET_MS);
 }
 
 /// `list_projected_agenda` — the steady-state WARM-CACHE read (#2601).
@@ -3153,7 +3177,7 @@ const SLO_PAGES_MOSTLINKED_LIVE_SQL: &str = "SELECT \
 
 /// `tags_cache` direct query — #2508 scope item 1. PROBLEM TIER (gated
 /// behind `SLO_INCLUDE_PROBLEM`, same `#2178`-style "confirmable probe"
-/// idiom as `bench_list_page_links`/`bench_list_projected_agenda`): this is
+/// idiom as the other probes in this tier): this is
 /// a NEW measurement probe, not a known-over-budget command, but #2508
 /// notes the 100K fixture isn't runnable in this dev sandbox, so it rides
 /// the same nightly-only gate rather than claiming an unverified green
@@ -3668,46 +3692,325 @@ fn bench_filtered_blocks_query_broad_key(c: &mut Criterion) {
         "filtered_blocks_query broad key @ 100K: 100K matches must leave more pages"
     );
 
-    let mut group = c.benchmark_group("interactive_slo");
-    group.sample_size(SAMPLE_SIZE);
-    let acc = Acc::new();
-    let acc_for_bench = acc.clone();
-
-    group.bench_function("filtered_blocks_query_broad_key_100k", move |b| {
-        let acc = acc_for_bench.clone();
-        let pool = pool.clone();
-        let scope = scope.clone();
-        b.to_async(&rt).iter_custom(move |iters| {
-            let pool = pool.clone();
-            let scope = scope.clone();
-            let acc = acc.clone();
-            async move {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    let _ = filtered_blocks_query_inner(
-                        &pool,
-                        vec![key_presence_filter(FILTERED_BROAD_KEY)],
-                        None,
-                        None,
-                        &scope,
-                        None,
-                        Some(FILTERED_PAGE_SIZE as i64),
-                    )
-                    .await
-                    .unwrap();
-                }
-                let elapsed = start.elapsed();
-                acc.record(elapsed, iters);
-                elapsed
-            }
-        });
-    });
-    group.finish();
+    let acc = time_filtered_blocks_query(
+        c,
+        rt,
+        pool,
+        scope,
+        "filtered_blocks_query_broad_key_100k",
+        FILTERED_BROAD_KEY,
+    );
 
     report_measurement_only(
         "filtered_blocks_query (broad key, presence only) @ 100K",
         &acc,
     );
+}
+
+// ===========================================================================
+// MCP read paths (#5402) — each tool as an agent calls it, through the
+// read-only registry: argument parsing, the space check, the read and the
+// JSON result.
+// ===========================================================================
+
+mod mcp_reads {
+    use super::*;
+    use agaric_lib::mcp::registry::ToolRegistry;
+    use agaric_lib::mcp::tools_ro::ReadOnlyTools;
+    use agaric_store::task_locals::{Actor, ActorContext};
+    use serde_json::{Value, json};
+
+    /// The MCP tools parse `space_id` strictly, so the space is a valid ULID,
+    /// unlike [`SLO_SPACE_ID`].
+    const SPACE_ID: &str = "01MCPSPACE0000000000000001";
+    const PAGE_ID: &str = "01MCPPAGE00000000000000001";
+    /// Under the read's byte cap, so the shape probe sees the whole page.
+    const PAGE_CHILDREN: usize = 250;
+    const JOURNAL_ID: &str = "01MCPJRNA00000000000000001";
+    const JOURNAL_DATE: &str = "2025-07-01";
+    const JOURNAL_CHILDREN: usize = 50;
+    const TAG_COUNT: usize = 20;
+    /// Every this-many seeded block is a `TODO`: the `query` probe's matches.
+    const TODO_EVERY: usize = 100;
+    /// The 30 ms tier #5366 sets for interactive reads.
+    const BUDGET_MS: f64 = 30.0;
+
+    fn tag_id(i: usize) -> String {
+        format!("01MCPTAG{i:018}")
+    }
+
+    fn agent() -> ActorContext {
+        ActorContext {
+            actor: Actor::Agent {
+                name: "slo-bench".into(),
+            },
+            request_id: "slo".into(),
+        }
+    }
+
+    /// The 100K vault, plus a 250-block page, a journal day, tags and
+    /// `TODO`s, all in [`SPACE_ID`].
+    async fn seed(pool: &SqlitePool) {
+        seed_blocks_bulk(pool, FIXTURE_SIZE).await;
+        seed_export_page(pool, PAGE_ID, PAGE_CHILDREN).await;
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position, page_id) \
+             VALUES (?, 'page', ?, 2, ?)",
+        )
+        .bind(JOURNAL_ID)
+        .bind(JOURNAL_DATE)
+        .bind(JOURNAL_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        for i in 0..JOURNAL_CHILDREN {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'content', ?, ?, ?, ?)",
+            )
+            .bind(format!("MJ{i:024}"))
+            .bind(format!("Journal note {i}"))
+            .bind(JOURNAL_ID)
+            .bind(i as i64 + 1)
+            .bind(JOURNAL_ID)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        for i in 0..TAG_COUNT {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'tag', ?, ?)",
+            )
+            .bind(tag_id(i))
+            .bind(format!("mcp-tag-{i}"))
+            .bind(i as i64 + 1)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "UPDATE blocks SET todo_state = 'TODO' \
+             WHERE id LIKE 'SEED%' AND CAST(substr(id, 5) AS INTEGER) % ? = 0",
+        )
+        .bind(TODO_EVERY as i64)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        // The space owner, its `spaces` row, then every block's `space_id`, as
+        // `assign_all_to_slo_space` does.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', 'McpSpace', NULL, NULL, ?)",
+        )
+        .bind(SPACE_ID)
+        .bind(SPACE_ID)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(SPACE_ID)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id <> ?")
+            .bind(SPACE_ID)
+            .bind(SPACE_ID)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    }
+
+    /// The seeded vault behind a read-only registry. The `TempDir` must
+    /// outlive the bench.
+    fn fixture(rt: &Runtime, name: &str) -> (TempDir, SqlitePool, Rc<ReadOnlyTools>) {
+        let dir = TempDir::new().unwrap();
+        let pool = rt.block_on(fresh_pool(&dir, name));
+        rt.block_on(seed(&pool));
+        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
+        let tools = ReadOnlyTools::new(pool.clone(), pool.clone(), materializer, "slo".into());
+        (dir, pool, Rc::new(tools))
+    }
+
+    fn call(rt: &Runtime, tools: &ReadOnlyTools, tool: &str, args: &Value) -> Value {
+        rt.block_on(tools.call_tool(tool, args.clone(), &agent()))
+            .unwrap()
+    }
+
+    /// Lines that start a block in a page's Markdown.
+    fn bullets(result: &Value) -> usize {
+        result["markdown"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .filter(|line| line.starts_with("- "))
+            .count()
+    }
+
+    /// Time `tool` with `args`, one call per iteration.
+    fn time(
+        c: &mut Criterion,
+        rt: Runtime,
+        tools: Rc<ReadOnlyTools>,
+        id: &str,
+        tool: &'static str,
+        args: Value,
+    ) -> Acc {
+        let mut group = c.benchmark_group("interactive_slo");
+        group.sample_size(SAMPLE_SIZE);
+        let acc = Acc::new();
+        let acc_for_bench = acc.clone();
+        group.bench_function(id, move |b| {
+            let acc = acc_for_bench.clone();
+            let tools = tools.clone();
+            let args = args.clone();
+            b.to_async(&rt).iter_custom(move |iters| {
+                let acc = acc.clone();
+                let tools = tools.clone();
+                let args = args.clone();
+                async move {
+                    let ctx = agent();
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        tools.call_tool(tool, args.clone(), &ctx).await.unwrap();
+                    }
+                    let elapsed = start.elapsed();
+                    acc.record(elapsed, iters);
+                    elapsed
+                }
+            });
+        });
+        group.finish();
+        acc
+    }
+
+    /// `get_page_markdown` — a 250-block page as Markdown on top of 100K
+    /// blocks. Budget: 30 ms.
+    pub fn bench_mcp_get_page_markdown(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let (_dir, _pool, tools) = fixture(&rt, "slo_mcp_page_markdown");
+        let args = json!({"page_id": PAGE_ID, "space_id": SPACE_ID});
+        let observed = call(&rt, &tools, "get_page_markdown", &args);
+        assert!(
+            observed["markdown"]
+                .as_str()
+                .unwrap()
+                .starts_with("# SLO Export Page\n"),
+            "mcp get_page_markdown @ 100K: untimed probe must read the fixture page"
+        );
+        assert_eq!(
+            bullets(&observed),
+            PAGE_CHILDREN,
+            "mcp get_page_markdown @ 100K: untimed probe must read every fixture block"
+        );
+        let acc = time(
+            c,
+            rt,
+            tools,
+            "mcp_get_page_markdown_250_in_100k",
+            "get_page_markdown",
+            args,
+        );
+        assert_under_budget("mcp get_page_markdown (250 blocks) @ 100K", &acc, BUDGET_MS);
+    }
+
+    /// `get_journal` — one day's page as Markdown. Budget: 30 ms.
+    pub fn bench_mcp_get_journal(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let (_dir, _pool, tools) = fixture(&rt, "slo_mcp_journal");
+        let args = json!({"space_id": SPACE_ID, "date": JOURNAL_DATE});
+        let observed = call(&rt, &tools, "get_journal", &args);
+        assert_eq!(
+            observed["page_id"],
+            json!(JOURNAL_ID),
+            "mcp get_journal @ 100K: untimed probe must find the fixture day"
+        );
+        assert_eq!(
+            bullets(&observed),
+            JOURNAL_CHILDREN,
+            "mcp get_journal @ 100K: untimed probe must read every block of the day"
+        );
+        let acc = time(c, rt, tools, "mcp_get_journal_100k", "get_journal", args);
+        assert_under_budget("mcp get_journal @ 100K", &acc, BUDGET_MS);
+    }
+
+    /// `resolve` — a page title, a journal day, a tag name and a miss.
+    /// Budget: 30 ms.
+    pub fn bench_mcp_resolve(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let (_dir, _pool, tools) = fixture(&rt, "slo_mcp_resolve");
+        let args = json!({
+            "names": ["SLO Export Page", JOURNAL_DATE, "mcp-tag-7", "No such page"],
+            "space_id": SPACE_ID,
+        });
+        let observed = call(&rt, &tools, "resolve", &args);
+        let answers: Vec<(Value, Value)> = observed
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| (a["page_id"].clone(), a["tag_id"].clone()))
+            .collect();
+        assert_eq!(
+            answers,
+            vec![
+                (json!(PAGE_ID), Value::Null),
+                (json!(JOURNAL_ID), Value::Null),
+                (Value::Null, json!(tag_id(7))),
+                (Value::Null, Value::Null),
+            ],
+            "mcp resolve @ 100K: untimed probe must resolve each fixture name"
+        );
+        let acc = time(c, rt, tools, "mcp_resolve_100k", "resolve", args);
+        assert_under_budget("mcp resolve @ 100K", &acc, BUDGET_MS);
+    }
+
+    /// `query` — the space's open tasks, first page of 50 of 1K.
+    /// Budget: 30 ms.
+    pub fn bench_mcp_query(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let (_dir, _pool, tools) = fixture(&rt, "slo_mcp_query");
+        let args = json!({
+            "space_id": SPACE_ID,
+            "where": { "type": "Leaf", "primitive": { "type": "State", "values": ["TODO"] } },
+            "limit": 50,
+        });
+        let observed = call(&rt, &tools, "query", &args);
+        assert_eq!(
+            (
+                observed["rows"].as_array().map(Vec::len),
+                observed["total_count"].as_u64()
+            ),
+            (
+                Some(50),
+                Some(u64::try_from(FIXTURE_SIZE / TODO_EVERY).unwrap())
+            ),
+            "mcp query @ 100K: untimed probe must page the fixture's open tasks"
+        );
+        let acc = time(c, rt, tools, "mcp_query_100k", "query", args);
+        assert_under_budget("mcp query @ 100K", &acc, BUDGET_MS);
+    }
+
+    /// `search` — a trigram term in a few hundred of the 100K blocks, first
+    /// page of 50.
+    pub fn bench_mcp_search(c: &mut Criterion) {
+        let rt = Runtime::new().unwrap();
+        let (_dir, pool, tools) = fixture(&rt, "slo_mcp_search");
+        rt.block_on(agaric_store::fts::rebuild_fts_index(&pool))
+            .unwrap();
+        let args = json!({"query": "777", "space_id": SPACE_ID});
+        let observed = call(&rt, &tools, "search", &args);
+        assert_eq!(
+            (
+                observed["items"].as_array().map(Vec::len),
+                &observed["has_more"]
+            ),
+            (Some(50), &json!(true)),
+            "mcp search @ 100K: untimed probe must page the fixture's matches"
+        );
+        let acc = time(c, rt, tools, "mcp_search_100k", "search", args);
+        assert_under_budget("mcp search @ 100K", &acc, BUDGET_MS);
+    }
 }
 
 // ===========================================================================
@@ -3727,6 +4030,7 @@ criterion_group!(
     bench_list_pages_with_metadata,
     bench_list_pages_with_metadata_namespace,
     bench_filtered_blocks_query,
+    bench_list_page_links,
     bench_revert_ops_50op_at_100k,
     bench_create_block,
     bench_edit_block,
@@ -3737,6 +4041,12 @@ criterion_group!(
     // clears the 200 ms budget with margin at every fixture size.
     bench_list_projected_agenda,
     bench_list_projected_agenda_past_day,
+    // #5402 — the MCP read paths.
+    mcp_reads::bench_mcp_get_page_markdown,
+    mcp_reads::bench_mcp_get_journal,
+    mcp_reads::bench_mcp_resolve,
+    mcp_reads::bench_mcp_query,
+    mcp_reads::bench_mcp_search,
 );
 
 criterion_group!(
@@ -3745,7 +4055,6 @@ criterion_group!(
     bench_pages_cache_counts_direct_query,
     bench_pages_mostlinked_sort_cache,
     bench_pages_mostlinked_sort_live,
-    bench_list_page_links,
     bench_list_unlinked_references_collapsed,
     bench_list_backlinks_grouped_5k,
     bench_count_unlinked_references,

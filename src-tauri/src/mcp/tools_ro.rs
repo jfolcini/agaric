@@ -12,16 +12,16 @@
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
 //! | `list_pages` | [`list_pages_with_metadata_inner`] | The pages of one space, sorted and filtered as the Pages view does, with their link and block counts. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
-//! | `get_page` | [`get_page_inner`] | Composes `get_active_block_inner` + paginated subtree via `page_id`; `page` carries its properties, tags and aliases (#5377). soft-deleted pages → `NotFound`. `space_id` required; a page in another space is rejected. |
-//! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. Rows add `page_title`; `tag_ids` match attached, inline and inherited tags (#5398). |
+//! | `get_page` | [`get_page_inner`] | Composes `get_active_block_inner` + paginated subtree via `page_id`; `page` carries its properties, tags and aliases (#5377). soft-deleted pages → `NotFound`. `space_id` required; a page in another space is rejected. Children stop at [`RESPONSE_BYTES_CAP`] (#5402). |
+//! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. Rows add `page_title` (not on a page, whose `content` is it); `tag_ids` match attached, inline and inherited tags (#5398). |
 //! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags, its page's title and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. `space_id` required; a block in another space is rejected. |
-//! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. `space_id` required. |
+//! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. `space_id` required. Groups stop at [`RESPONSE_BYTES_CAP`] (#5402). |
 //! | `list_tags` | [`list_tags_inner`] | The tags of one space. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
 //! | `list_property_defs` | [`list_property_defs_inner`] | Typed property schema; cursor paginated. No `space_id`: property definitions are vault-wide. |
 //! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. `space_id` required. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
-//! | `get_page_markdown` | [`get_page_for_agent_inner`], or [`get_page_source_inner`] with `editable` | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. `editable` (#5399) returns the source buffer `edit_page_markdown` takes back instead. `space_id` required; a page in another space is rejected. |
+//! | `get_page_markdown` | [`get_page_for_agent_paged_inner`], or [`get_page_source_inner`] with `editable` | #5375 — the page as Markdown, ids written as names and every block with its `^ID`, a [`RESPONSE_BYTES_CAP`] stretch at a time from a block cursor (#5402). `editable` (#5399) returns instead the whole source buffer `edit_page_markdown` takes back, never cut: a block left out of it is deleted. `space_id` required; a page in another space is rejected. |
 //! | `page_history` | [`list_page_history_inner`] | Ops on a page's blocks, newest first: device, origin, op type, time, clipped before/after. Cursor paginated. `space_id` required. |
 //! | `block_history` | [`get_block_history_inner`] | The same rows for one block. |
 //! | `get_journal` | [`get_journal_page_by_date_inner`] + [`get_page_for_agent_inner`] | #5396 — a day as `get_page_markdown` renders it; `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. Never creates: a missing day is an empty `markdown`. |
@@ -41,7 +41,7 @@
 //!
 //! # Cap enforcement
 //!
-//! Three caps are enforced at the tool boundary:
+//! Four caps are enforced at the tool boundary:
 //!
 //! - **Result count:** `search` is capped at [`SEARCH_RESULT_CAP`] (50),
 //!   list-style tools at [`LIST_RESULT_CAP`] (100), `get_agenda` at
@@ -57,6 +57,10 @@
 //!   id. The implementation truncates at char boundaries so the output
 //!   is always valid UTF-8 even when the content contains multi-byte
 //!   codepoints (CJK, emoji, etc.).
+//! - **Response bytes (#5402):** `get_page`, `list_backlinks` and
+//!   `get_page_markdown` stop at [`RESPONSE_BYTES_CAP`] content bytes, on a
+//!   row, group or block boundary, with `truncated: true` and a
+//!   `next_cursor`. One row, group or block always comes back, however large.
 //! - **Filter-term budget (#699):** `search` rejects requests whose
 //!   combined `tag_ids` + `filter` vector element count exceeds
 //!   [`SEARCH_FILTER_TERMS_CAP`] (= SQLite's bind-parameter limit) —
@@ -74,7 +78,7 @@ use sqlx::SqlitePool;
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{
     Named, fetch_op_origins, normalize_ulid_arg, parse_args, resolve_id_arg, resolve_id_args,
-    resolve_journal_date, to_tool_result, validate_block_in_space,
+    resolve_journal_date, to_tool_result,
 };
 use super::registry::{
     TOOL_BLOCK_HISTORY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE,
@@ -90,18 +94,21 @@ use crate::commands::pages::metadata::{
 use crate::commands::{
     PropertyRow, agenda_range_inner, batch_resolve_inner, get_active_block_inner,
     get_batch_properties_inner, get_block_history_inner, get_journal_page_by_date_inner,
-    get_page_aliases_inner, get_page_for_agent_inner, get_page_inner, get_page_source_inner,
-    get_properties_inner, journal_for_date_inner, list_backlinks_grouped_inner,
-    list_journal_days_inner, list_page_history_inner, list_property_defs_inner,
-    list_spaces_registry_inner, list_tags_for_block_inner, list_tags_inner, list_trash_inner,
-    search_blocks_inner,
+    get_page_aliases_inner, get_page_for_agent_inner, get_page_for_agent_paged_inner,
+    get_page_inner, get_page_source_inner, get_properties_inner, journal_for_date_inner,
+    list_backlinks_grouped_inner, list_journal_days_inner, list_page_history_inner,
+    list_property_defs_inner, list_spaces_registry_inner, list_tags_for_block_inner,
+    list_tags_inner, list_trash_inner, search_blocks_inner,
 };
+use crate::db::validate_block_in_space;
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_store::filters::{FilterExpr, FilterPrimitive, LastEditedSpec};
 use agaric_store::op::OpRef;
-use agaric_store::pagination::{ActiveBlockRow, BlockRow, HistoryEntry, PageResponse};
+use agaric_store::pagination::{
+    ActiveBlockRow, BlockRow, Cursor, HistoryEntry, PageResponse, split_position_keyset_page,
+};
 use agaric_store::query::{
     AdvancedQueryRequest, AdvancedQueryResponse, AggregateResult, AggregateSpec, AggregateTarget,
     GroupKey, GroupSpec, SortKey, compile_and_run,
@@ -113,6 +120,12 @@ use agaric_store::task_locals::ActorContext;
 // ---------------------------------------------------------------------------
 // Caps — enforced at the tool boundary (decision)
 // ---------------------------------------------------------------------------
+
+/// Content bytes `get_page`, `list_backlinks` and `get_page_markdown` return
+/// in one response (#5402). Past it a response stops at a row, group or block
+/// boundary with `truncated: true` and a `next_cursor` that continues it, so a
+/// large page cannot overrun an agent's context.
+pub const RESPONSE_BYTES_CAP: usize = 64 * 1024;
 
 /// Maximum results returned by the `search` tool. Below
 /// [`agaric_store::pagination::MAX_PAGE_SIZE`] deliberately — agents see a narrower
@@ -346,6 +359,8 @@ struct GetPageMarkdownArgs {
     page_id: String,
     space_id: String,
     #[serde(default)]
+    cursor: Option<String>,
+    #[serde(default)]
     editable: bool,
 }
 
@@ -509,9 +524,8 @@ struct ListJournalArgs {
 /// `within_journal_create_window` / #2719). The reader pool sets
 /// `PRAGMA query_only = ON`, so feeding it to the create path raises
 /// `SQLITE_READONLY`. The struct therefore carries **both** pools: `pool`
-/// (reader) backs every read; `writer_pool` backs the in-window create
-/// branch of `journal_for_date` and the space checks
-/// (`validate_block_in_space` takes the write lock).
+/// (reader) backs every read, the space checks included; `writer_pool` backs
+/// only the in-window create branch of `journal_for_date` (#5402).
 ///
 /// Because of the carve-out, **enabling the read-only MCP server
 /// implicitly grants the agent permission to append a single
@@ -534,7 +548,7 @@ struct ListJournalArgs {
 pub struct ReadOnlyTools {
     pool: SqlitePool,
     /// Writer pool from `DbPools::write`: `journal_for_date`'s create
-    /// branch and the space checks only; every read stays on `pool`.
+    /// branch only; every read stays on `pool`.
     writer_pool: SqlitePool,
     materializer: Materializer,
     /// Local-device id used when a tool has to write (today only
@@ -666,11 +680,10 @@ impl ToolRegistry for ReadOnlyTools {
                     .await
                 }
                 TOOL_LIST_SPACES => handle_list_spaces(&pool, args).await,
-                // The space check takes the write lock, which the reader pool refuses.
-                TOOL_GET_BLOCK => handle_get_block(&pool, &writer_pool, args).await,
-                TOOL_GET_PAGE_MARKDOWN => handle_get_page_markdown(&pool, &writer_pool, args).await,
-                TOOL_PAGE_HISTORY => handle_page_history(&pool, &writer_pool, args).await,
-                TOOL_BLOCK_HISTORY => handle_block_history(&pool, &writer_pool, args).await,
+                TOOL_GET_BLOCK => handle_get_block(&pool, args).await,
+                TOOL_GET_PAGE_MARKDOWN => handle_get_page_markdown(&pool, args).await,
+                TOOL_PAGE_HISTORY => handle_page_history(&pool, args).await,
+                TOOL_BLOCK_HISTORY => handle_block_history(&pool, args).await,
                 TOOL_GET_JOURNAL => {
                     handle_get_journal(&pool, args, chrono::Local::now().date_naive()).await
                 }
@@ -735,8 +748,8 @@ fn tool_desc_list_pages() -> ToolDescription {
                 },
                 "sort": {
                     "type": "string",
-                    "enum": ["alphabetical", "recently-modified", "most-linked", "most-content", "default"],
-                    "description": "Title A-Z (the default), last edit newest first, most inbound links, most blocks, or creation order (`default`). A cursor only continues the sort it came from.",
+                    "enum": ["alphabetical", "created", "recently-modified", "last-opened", "most-linked", "most-content"],
+                    "description": "Title A-Z (the default), newest page first, last edit newest first, last opened on this device, most inbound links, or most blocks. A cursor only continues the sort it came from.",
                 },
                 "filters": {
                     "type": "array",
@@ -758,11 +771,13 @@ fn tool_desc_list_pages() -> ToolDescription {
 fn tool_desc_get_page() -> ToolDescription {
     ToolDescription {
         name: TOOL_GET_PAGE.to_string(),
-        description:
+        description: format!(
             "Fetch a page and a paginated slice of its non-conflict subtree (grandchildren \
-             included). `page` also carries `properties` (every property row, raw), `tags` \
-             (tag ULIDs; `list_tags` names them) and `aliases`; the children are plain rows."
-                .to_string(),
+                 included). `page` also carries `properties` (every property row, raw), `tags` \
+                 (tag ULIDs; `list_tags` names them) and `aliases`; the children are plain rows. \
+                 A slice whose content passes {RESPONSE_BYTES_CAP} bytes stops early with \
+                 `truncated: true`; pass `next_cursor` as `cursor` to read on."
+        ),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -870,9 +885,9 @@ fn tool_desc_search() -> ToolDescription {
              are dropped (the index is trigram), so a query of only short words finds \
              nothing. Hits come best match first. An empty `query` with at least one of \
              `parent_id`, `tag_ids` or `filter` returns the blocks those match, newest \
-             first; with none it returns nothing. Rows carry `page_title` and a `snippet` \
-             with <mark> around the matches; `content` is cut to 512 chars, and null fields \
-             are left out. `filter` narrows further (state / priority / due / scheduled / \
+             first; with none it returns nothing. Rows carry `page_title` (a page's own is its \
+             `content`) and a `snippet` with <mark> around the matches; `content` is cut to \
+             512 chars, and null fields are left out. `filter` narrows further (state / priority / due / scheduled / \
              last edited / property / page-name globs / block type / case-sensitive / \
              whole-word / regex)."
             .to_string(),
@@ -934,7 +949,11 @@ fn tool_desc_get_block() -> ToolDescription {
 fn tool_desc_list_backlinks() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_BACKLINKS.to_string(),
-        description: "List backlinks for a block, grouped by source page.".to_string(),
+        description: format!(
+            "List backlinks for a block, grouped by source page. A response whose content \
+             passes {RESPONSE_BYTES_CAP} bytes stops at a group with `truncated: true`; pass \
+             `next_cursor` as `cursor` to read on."
+        ),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -1093,16 +1112,20 @@ fn tool_desc_list_spaces() -> ToolDescription {
 fn tool_desc_get_page_markdown() -> ToolDescription {
     ToolDescription {
         name: TOOL_GET_PAGE_MARKDOWN.to_string(),
-        description: "Read a whole page as Markdown, returned as { page_id, markdown }: a \
-             `# Title` line, YAML front matter with the page's aliases, tags and properties, \
+        description: format!(
+            "Read a page as Markdown, returned as {{ page_id, markdown, truncated, next_cursor }}: \
+             a `# Title` line, YAML front matter with the page's aliases, tags and properties, \
              then the block outline with each block's `key:: value` properties under it. Links, \
              tags and ref-typed values are written as names, for reading; a name can be \
              ambiguous, so write links by ULID (`[[ULID]]`, `#[ULID]`). Each block ends with \
-             `^ULID`, the block_id update_block_content takes. No pagination. With `editable: \
-             true`, `markdown` is instead the page's source, the text the read-write server's \
-             edit_page_markdown takes back: no title line, a name only where it reads back as \
-             the same link, ref-typed values as ULIDs, and each block's `^ULID`."
-            .to_string(),
+             `^ULID`, the block_id update_block_content takes. Past {RESPONSE_BYTES_CAP} bytes \
+             the Markdown stops at a block with `truncated: true`; pass `next_cursor` as \
+             `cursor` for the rest, which carries on from that block. With `editable: true`, \
+             `markdown` is instead the page's whole source, never truncated, the text the \
+             read-write server's edit_page_markdown takes back: no title line, a name only \
+             where it reads back as the same link, ref-typed values as ULIDs, and each block's \
+             `^ULID`."
+        ),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -1112,6 +1135,10 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
                 "space_id": {
                     "type": "string",
                     "description": "ULID of the space the page belongs to. A page in another space is rejected with a Validation error.",
+                },
+                "cursor": {
+                    "type": "string",
+                    "description": "The `next_cursor` of a truncated read, to continue it.",
                 },
                 "editable": { "type": "boolean", "description": "Return the source edit_page_markdown takes instead. Defaults to false." },
             },
@@ -1381,22 +1408,10 @@ struct PageListRow {
 impl From<PageWithMetadataRow> for PageListRow {
     fn from(row: PageWithMetadataRow) -> Self {
         Self {
-            block: BlockRow {
-                id: row.id,
-                block_type: row.block_type,
-                content: row.content,
-                parent_id: row.parent_id,
-                position: row.position,
-                deleted_at: row.deleted_at,
-                todo_state: row.todo_state,
-                priority: row.priority,
-                due_date: row.due_date,
-                scheduled_date: row.scheduled_date,
-                page_id: row.page_id.map(BlockId::from),
-            },
             last_modified_at: row.last_modified_at,
             inbound_link_count: row.inbound_link_count,
             child_block_count: row.child_block_count,
+            block: row.into(),
         }
     }
 }
@@ -1408,11 +1423,49 @@ async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppErr
     let page_id = normalize_ulid_arg(&args.page_id);
     let space_id = SpaceId::from_string(args.space_id)?;
     // `get_page_inner` rejects a page outside `space_id` (Validation).
-    let resp = get_page_inner(pool, &page_id, space_id.as_str(), args.cursor, limit).await?;
+    let mut resp = get_page_inner(pool, &page_id, space_id.as_str(), args.cursor, limit).await?;
+    let cut_at = cap_children_bytes(&mut resp.children)?;
+    let truncated = cut_at.is_some();
+    if truncated {
+        resp.next_cursor = cut_at;
+        resp.has_more = true;
+    }
     let page = with_metadata(pool, resp.page.clone()).await?;
     let mut result = to_tool_result(&resp)?;
     result["page"] = to_tool_result(&page)?;
+    result["truncated"] = json!(truncated);
     Ok(result)
+}
+
+/// How many of `sizes`, from the first, fit in [`RESPONSE_BYTES_CAP`]
+/// together; never fewer than one, so a reader always moves forward.
+fn count_within_bytes_cap(sizes: impl IntoIterator<Item = usize>) -> usize {
+    let mut total = 0usize;
+    let mut count = 0;
+    for size in sizes {
+        total = total.saturating_add(size);
+        if count > 0 && total > RESPONSE_BYTES_CAP {
+            break;
+        }
+        count += 1;
+    }
+    count
+}
+
+/// Cut `children` to the rows whose content fits [`RESPONSE_BYTES_CAP`],
+/// returning the cursor that resumes after the last row kept, or `None` when
+/// all fit (#5402).
+fn cap_children_bytes(children: &mut Vec<BlockRow>) -> Result<Option<String>, AppError> {
+    let keep = count_within_bytes_cap(
+        children
+            .iter()
+            .map(|row| row.content.as_deref().map_or(0, str::len)),
+    );
+    if keep == children.len() {
+        return Ok(None);
+    }
+    let limit = i64::try_from(keep).expect("at most LIST_RESULT_CAP children");
+    Ok(split_position_keyset_page(children, limit)?.next_cursor)
 }
 
 /// A block as `get_block` and `get_page` return it (#5377): its row, every
@@ -1444,21 +1497,25 @@ async fn with_metadata(pool: &SqlitePool, block: BlockRow) -> Result<BlockWithMe
     })
 }
 
-async fn handle_get_page_markdown(
-    pool: &SqlitePool,
-    writer_pool: &SqlitePool,
-    args: Value,
-) -> Result<Value, AppError> {
+async fn handle_get_page_markdown(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetPageMarkdownArgs = parse_args(TOOL_GET_PAGE_MARKDOWN, args)?;
     let page_id = normalize_ulid_arg(&args.page_id);
     let space_id = SpaceId::from_string(args.space_id)?;
-    validate_block_in_space(writer_pool, &page_id, space_id.as_str()).await?;
-    let markdown = if args.editable {
-        get_page_source_inner(pool, &page_id).await?
+    validate_block_in_space(pool, &page_id, space_id.as_str()).await?;
+    // The source `edit_page_markdown` takes back is never cut: a block left out
+    // of it is deleted.
+    let (markdown, next_cursor) = if args.editable {
+        (get_page_source_inner(pool, &page_id).await?, None)
     } else {
-        get_page_for_agent_inner(pool, &page_id).await?
+        get_page_for_agent_paged_inner(pool, &page_id, args.cursor.as_deref(), RESPONSE_BYTES_CAP)
+            .await?
     };
-    Ok(json!({ "page_id": page_id, "markdown": markdown }))
+    Ok(json!({
+        "page_id": page_id,
+        "markdown": markdown,
+        "truncated": next_cursor.is_some(),
+        "next_cursor": next_cursor,
+    }))
 }
 
 /// The SQLite bind-parameter budget: `tag_ids` plus every filter vector.
@@ -1682,10 +1739,12 @@ async fn search_result(
         if !include_match_offsets {
             row.remove("match_offsets");
         }
-        let title = block
+        // A page's title is its own `content`, as in `get_block`.
+        let page_id = block
             .page_id
             .as_ref()
-            .and_then(|id| titles.get(id).cloned().flatten());
+            .filter(|_| block.block_type != "page");
+        let title = page_id.and_then(|id| titles.get(id).cloned().flatten());
         if let Some(title) = title {
             row.insert("page_title".into(), Value::String(title));
         }
@@ -1706,16 +1765,12 @@ async fn page_titles(
     Ok(resolved.into_iter().map(|r| (r.id, r.title)).collect())
 }
 
-async fn handle_get_block(
-    pool: &SqlitePool,
-    writer_pool: &SqlitePool,
-    args: Value,
-) -> Result<Value, AppError> {
+async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: GetBlockArgs = parse_args(TOOL_GET_BLOCK, args)?;
     // Normalise ULID-shaped IDs to uppercase at the MCP boundary.
     let block_id = normalize_ulid_arg(&args.block_id);
     let space_id = SpaceId::from_string(args.space_id)?;
-    validate_block_in_space(writer_pool, &block_id, space_id.as_str()).await?;
+    validate_block_in_space(pool, &block_id, space_id.as_str()).await?;
     // `get_active_block_inner` (not `get_block_inner`) so an
     // agent cannot fetch tombstoned rows. The MCP read surface
     // mirrors the Tauri IPC `get_block` command's contract.
@@ -1741,9 +1796,29 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
     // agent reads as "this block has no backlinks" and does not retry.
     let block_id = BlockId::from_string(args.block_id)?;
     let scope = SpaceScope::Active(SpaceId::from_string(args.space_id)?);
-    let resp =
+    let mut resp =
         list_backlinks_grouped_inner(pool, block_id, None, None, args.cursor, limit, &scope, None)
             .await?;
+    // #5402: whole groups up to the byte cap; the group cursor resumes after
+    // the last group kept, as the store's own page boundary does.
+    let keep = count_within_bytes_cap(resp.groups.iter().map(|group| {
+        group
+            .blocks
+            .iter()
+            .map(|row| row.content.as_deref().map_or(0, str::len))
+            .sum::<usize>()
+    }));
+    if keep < resp.groups.len() {
+        resp.groups.truncate(keep);
+        let last = resp
+            .groups
+            .last()
+            .expect("the cap keeps at least one group");
+        resp.next_cursor =
+            Some(Cursor::for_group(last.page_id.clone(), last.page_title.clone()).encode()?);
+        resp.has_more = true;
+        resp.truncated = true;
+    }
     to_tool_result(&resp)
 }
 
@@ -1903,11 +1978,7 @@ async fn handle_list_spaces(pool: &SqlitePool, args: Value) -> Result<Value, App
     to_tool_result(&resp)
 }
 
-async fn handle_page_history(
-    pool: &SqlitePool,
-    writer_pool: &SqlitePool,
-    args: Value,
-) -> Result<Value, AppError> {
+async fn handle_page_history(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: PageHistoryArgs = parse_args(TOOL_PAGE_HISTORY, args)?;
     let limit = validate_limit(TOOL_PAGE_HISTORY, args.limit, LIST_RESULT_CAP)?;
     let space_id = SpaceId::from_string(args.space_id)?;
@@ -1922,22 +1993,18 @@ async fn handle_page_history(
         space_id.as_str(),
     )
     .await?;
-    validate_block_in_space(writer_pool, &page_id, space_id.as_str()).await?;
+    validate_block_in_space(pool, &page_id, space_id.as_str()).await?;
     let scope = SpaceScope::Active(space_id);
     let resp = list_page_history_inner(pool, page_id, None, &scope, args.cursor, limit).await?;
     history_result(pool, resp).await
 }
 
-async fn handle_block_history(
-    pool: &SqlitePool,
-    writer_pool: &SqlitePool,
-    args: Value,
-) -> Result<Value, AppError> {
+async fn handle_block_history(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: BlockHistoryArgs = parse_args(TOOL_BLOCK_HISTORY, args)?;
     let limit = validate_limit(TOOL_BLOCK_HISTORY, args.limit, LIST_RESULT_CAP)?;
     let block_id = BlockId::from_string(&args.block_id)?;
     let space_id = SpaceId::from_string(args.space_id)?;
-    validate_block_in_space(writer_pool, block_id.as_str(), space_id.as_str()).await?;
+    validate_block_in_space(pool, block_id.as_str(), space_id.as_str()).await?;
     let resp = get_block_history_inner(pool, block_id, None, args.cursor, limit).await?;
     history_result(pool, resp).await
 }
@@ -2583,6 +2650,68 @@ mod tests_m82 {
             Some(date),
             "lookup must return the page whose content matches the requested date",
         );
+    }
+
+    /// #5402: a read's space check runs on the reader pool, so the reads
+    /// that address a block or page by id answer while another connection
+    /// holds the writer lock; a check that took it would wait out the busy
+    /// timeout.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn id_addressed_reads_never_wait_for_the_writer_5402() {
+        let (tools, mat, _dir) = mk_split_tools().await;
+        let space = mk_space(&tools.writer_pool, &mat, "Personal").await;
+        let page = create_page_in_space_inner(
+            &tools.writer_pool,
+            DEV,
+            &mat,
+            None,
+            "Read me".into(),
+            space.clone(),
+        )
+        .await
+        .unwrap();
+        let block = crate::commands::create_block_inner(
+            &tools.writer_pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "a block".into(),
+            Some(page.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let mut holder = tools.writer_pool.acquire().await.unwrap();
+        sqlx::query("BEGIN IMMEDIATE")
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        for (name, args) in [
+            (
+                "get_block",
+                json!({"block_id": block.id, "space_id": space}),
+            ),
+            (
+                "get_page_markdown",
+                json!({"page_id": page, "space_id": space}),
+            ),
+            ("page_history", json!({"page_id": page, "space_id": space})),
+            (
+                "block_history",
+                json!({"block_id": block.id, "space_id": space}),
+            ),
+        ] {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                tools.call_tool(name, args, &test_ctx()),
+            )
+            .await
+            .unwrap_or_else(|_| panic!("{name} waited for the writer lock"))
+            .unwrap_or_else(|e| panic!("{name} must succeed: {e:?}"));
+        }
+        sqlx::query("ROLLBACK").execute(&mut *holder).await.unwrap();
     }
 }
 

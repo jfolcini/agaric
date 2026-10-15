@@ -454,6 +454,12 @@ async fn ingest_remote_record(
         matches!(profile, IngestProfile::Audit),
     )
     .await?;
+    // #5371: a peer's edit moves its page up "Last edited" here, the one
+    // place its op reaches this device's op log; it is never applied.
+    if inserted && let Some(block_id) = record.block_id.as_deref() {
+        agaric_store::cache::raise_pages_last_edited_ms(&mut tx, &[(block_id, record.created_at)])
+            .await?;
+    }
 
     tx.commit().await?;
     Ok(inserted)

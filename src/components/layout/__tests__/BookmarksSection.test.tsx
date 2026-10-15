@@ -120,8 +120,11 @@ beforeEach(async () => {
   })
   useTabsStore.setState({ tabs: [{ id: '0', pageStack: [], label: '' }], activeTabIndex: 0 })
   // Default backend: it knows none of the ids the section asks about. Tests
-  // that expect a title to come back re-stub it.
-  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ batch_resolve: () => [] }))
+  // that expect a title to come back re-stub it. Opening a page stamps it for
+  // the Pages view's "Last opened" sort (#5371).
+  vi.mocked(invoke).mockImplementation(
+    mockInvokeCommands({ batch_resolve: () => [], record_page_open: () => null }),
+  )
 })
 
 afterEach(() => {

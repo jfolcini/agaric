@@ -139,6 +139,10 @@ CONTRACT: dict[str, dict[str, object]] = {
         "store": "pageAliases",
         "files": ["seed.ts", "handlers/pages.ts"],
     },
+    "page_opens": {
+        "store": "pageOpens",
+        "files": ["seed.ts", "handlers/pages.ts"],
+    },
     "attachments": {
         "store": "attachments",
         "files": ["seed.ts", "handlers/attachments.ts"],

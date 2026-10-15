@@ -356,7 +356,7 @@ export function usePreference<T>(
 // flag a cycle. Owning the type here keeps every edge pointing one way:
 // hooks → preferences.
 
-/** Pages view sort option. 3 legacy + 4 new. */
+/** Pages view sort option. `recent` is "Last opened" (`last-opened` on the wire). */
 export type SortOption =
   | 'alphabetical'
   | 'recent'
@@ -364,7 +364,6 @@ export type SortOption =
   | 'recently-modified'
   | 'most-linked'
   | 'most-content'
-  | 'default'
 
 const ALL_SORTS: ReadonlyArray<SortOption> = [
   'alphabetical',
@@ -373,8 +372,17 @@ const ALL_SORTS: ReadonlyArray<SortOption> = [
   'recently-modified',
   'most-linked',
   'most-content',
-  'default',
 ]
+
+/**
+ * A stored sort as an option. The retired `default` (id ASC) reads as
+ * `created`, so neither the preference nor a saved view holding it is reset
+ * or dropped (#5371). `undefined` for anything else unknown.
+ */
+function readSort(raw: unknown): SortOption | undefined {
+  if (raw === 'default') return 'created'
+  return (ALL_SORTS as readonly unknown[]).includes(raw) ? (raw as SortOption) : undefined
+}
 
 /**
  * Allowlist guard for the `page-browser-sort` value. The legacy storage
@@ -383,8 +391,9 @@ const ALL_SORTS: ReadonlyArray<SortOption> = [
  * so unknown/future values reset to the default.
  */
 function parseSort(raw: string): SortOption {
-  if ((ALL_SORTS as readonly string[]).includes(raw)) return raw as SortOption
-  throw new Error(`invalid sort option: ${raw}`)
+  const sort = readSort(raw)
+  if (sort === undefined) throw new Error(`invalid sort option: ${raw}`)
+  return sort
 }
 
 /** Identity serializer for the bare-string preferences. */
@@ -757,18 +766,23 @@ function isFilterPrimitiveLike(value: unknown): value is FilterPrimitive {
   )
 }
 
-function isSavedPagesViewLike(value: unknown): value is SavedPagesView {
-  if (value === null || typeof value !== 'object') return false
+/** A stored view with its sort read by {@link readSort}; `undefined` when malformed. */
+function readSavedPagesView(value: unknown): SavedPagesView | undefined {
+  if (value === null || typeof value !== 'object') return undefined
   const v = value as Record<string, unknown>
-  return (
-    typeof v['id'] === 'string' &&
-    v['id'] !== '' &&
-    typeof v['name'] === 'string' &&
-    typeof v['createdAt'] === 'string' &&
-    (ALL_SORTS as readonly string[]).includes(v['sort'] as string) &&
-    Array.isArray(v['filters']) &&
-    v['filters'].every(isFilterPrimitiveLike)
-  )
+  const sort = readSort(v['sort'])
+  if (
+    sort === undefined ||
+    typeof v['id'] !== 'string' ||
+    v['id'] === '' ||
+    typeof v['name'] !== 'string' ||
+    typeof v['createdAt'] !== 'string' ||
+    !Array.isArray(v['filters']) ||
+    !v['filters'].every(isFilterPrimitiveLike)
+  ) {
+    return undefined
+  }
+  return { ...(value as SavedPagesView), sort }
 }
 
 /**
@@ -792,7 +806,9 @@ function parseSavedPagesViewsPayload(raw: string): SavedPagesViewsPayload {
   if (p['schemaVersion'] !== SAVED_PAGES_VIEWS_SCHEMA_VERSION) {
     return { ...EMPTY_SAVED_PAGES_VIEWS_PAYLOAD }
   }
-  const views = Array.isArray(p['views']) ? p['views'].filter(isSavedPagesViewLike) : []
+  const views = Array.isArray(p['views'])
+    ? p['views'].flatMap((view: unknown) => readSavedPagesView(view) ?? [])
+    : []
   return { schemaVersion: SAVED_PAGES_VIEWS_SCHEMA_VERSION, views }
 }
 

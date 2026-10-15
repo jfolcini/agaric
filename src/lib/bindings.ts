@@ -950,6 +950,11 @@ export const commands = {
 	 */
 	listPagesWithMetadata: (filter: ListPagesWithMetadataFilter, cursor: string | null, limit: number | null) => typedError<PageResponse<PageWithMetadataRow>, AppError>(__TAURI_INVOKE("list_pages_with_metadata", { filter, cursor, limit })),
 	/**
+	 *  Tauri command: stamp a page as opened on this device, for the Pages
+	 *  view's "Last opened" sort. Delegates to [`record_page_open_inner`].
+	 */
+	recordPageOpen: (pageId: BlockId) => typedError<null, AppError>(__TAURI_INVOKE("record_page_open", { pageId })),
+	/**
 	 *  Tauri command: run a composable advanced query over the structural filter
 	 *  dimensions and return a cursor-paginated page of blocks.
 	 */
@@ -2287,8 +2292,9 @@ export type GroupedBacklinkResponse = {
 	filtered_count: number,
 	/**
 	 *  `true` when the FTS query hit the internal row cap (10 000) and results
-	 *  may be incomplete.  Only relevant for unlinked-reference queries; regular
-	 *  grouped backlink queries always set this to `false`.
+	 *  may be incomplete (unlinked-reference queries), or when MCP
+	 *  `list_backlinks` stopped at its byte budget. The app's linked-references
+	 *  query always sets it to `false`.
 	 */
 	truncated: boolean,
 };
@@ -2878,32 +2884,25 @@ export type PageResponse<T> = {
 };
 
 /**
- *  Sort mode for [`list_pages_with_metadata_inner`].
- * 
- *  These are the server-derived sort modes the IPC exposes. The
- *  frontend may layer two additional sorts that don't go over the wire:
- * 
- *    - `recent` — per-device visit history (sourced from `getRecentPages()`).
- *    - `created` — ULID DESC (just `Default` reversed in JS).
- * 
- *  Both reuse the `Default` SQL ordering and re-sort the loaded page
- *  client-side.
+ *  Sort mode for [`list_pages_with_metadata_inner`]. Every mode orders all
+ *  pages in the space behind a keyset cursor.
  */
 export type PageSort = 
-/**  Title ascending, case-insensitive. Default for "browse my pages". */
+/**  Title ascending, accent- and case-insensitive (`pages_cache.title_sort_key`). */
 "alphabetical" | 
-/**  Last-modified timestamp (max op_log.created_at) DESC. */
+/**  Newest page first (block id DESC). */
+"created" | 
+/**  Last edit to the page or any block on it, newest first. */
 "recently-modified" | 
+/**
+ *  Last opened on this device, newest first; pages never opened here
+ *  follow, newest page first.
+ */
+"last-opened" | 
 /**  Inbound-link count DESC (page + descendant link targets). */
 "most-linked" | 
 /**  Descendant-block count DESC. */
-"most-content" | 
-/**
- *  Default backend ordering — block id ASC. Useful for debugging
- *  and as the wire shape for the frontend-only `recent` / `created`
- *  sorts that re-sort client-side.
- */
-"default";
+"most-content";
 
 /**  What [`apply_page_source`] wrote. */
 export type PageSourceReport = {
@@ -2986,10 +2985,9 @@ export type PageWithMetadataRow = {
 	scheduledDate: string | null,
 	pageId: PageId | null,
 	/**
-	 *  max(`op_log.created_at`) over the page itself, else the page's ULID
-	 *  creation time once compaction has pruned its ops (#5286), as INTEGER
-	 *  epoch-milliseconds (#109 Phase 2). None only for a non-ULID id with
-	 *  no op-log entry.
+	 *  Epoch-ms of the newest op on the page or any block on it, else the
+	 *  page's ULID creation time; kept when compaction prunes the ops
+	 *  (#5286). None only while the page has no `pages_cache` row.
 	 */
 	lastModifiedAt: number | null,
 	/**

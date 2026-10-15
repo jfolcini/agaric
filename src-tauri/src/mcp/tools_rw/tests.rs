@@ -47,7 +47,7 @@ async fn mk_space(pool: &SqlitePool, name: &str) -> String {
 async fn mk_tools() -> (ReadWriteTools, Materializer, SqlitePool, String, TempDir) {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let tools = ReadWriteTools::new(pool.clone(), mat.clone(), DEV.to_string());
+    let tools = ReadWriteTools::new(pool.clone(), pool.clone(), mat.clone(), DEV.to_string());
     let space_id = mk_space(&pool, " test space").await;
     (tools, mat, pool, space_id, dir)
 }
@@ -86,6 +86,7 @@ async fn list_tools_advertises_the_rw_tools() {
             "restore_block",
             "batch",
             "edit_page_markdown",
+            "set_page_aliases",
         ],
         "tool order is part of the wire contract — do not re-order; new tools are appended",
     );
@@ -1076,7 +1077,7 @@ async fn list_spaces_happy_path_returns_spaces_with_default_flag() {
     // test exactly.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    let tools = ReadWriteTools::new(pool.clone(), mat.clone(), DEV.to_string());
+    let tools = ReadWriteTools::new(pool.clone(), pool.clone(), mat.clone(), DEV.to_string());
     crate::spaces::bootstrap_spaces_for_test(&pool, DEV)
         .await
         .unwrap();
@@ -1848,7 +1849,7 @@ async fn mk_tools_recording() -> (
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let emitter = Arc::new(RecordingViewChangeEmitter::new());
-    let tools = ReadWriteTools::new(pool.clone(), mat.clone(), DEV.to_string())
+    let tools = ReadWriteTools::new(pool.clone(), pool.clone(), mat.clone(), DEV.to_string())
         .with_view_emitter(emitter.clone());
     let space_id = mk_space(&pool, " test space").await;
     (tools, mat, pool, space_id, emitter, dir)
@@ -3301,6 +3302,189 @@ async fn a_lowercase_ulid_argument_is_still_the_id_5397() {
 }
 
 // -------------------------------------------------------------------
+// One transaction per write (#5402)
+// -------------------------------------------------------------------
+
+/// `name`'s result, and how many `CommandTx`s the call opened.
+async fn command_txs_of(tools: &ReadWriteTools, name: &str, args: Value) -> (Value, usize) {
+    let (result, opened) =
+        crate::db::count_command_tx_opens(Box::pin(tools.call_tool(name, args, &test_ctx_agent())))
+            .await;
+    (
+        result.unwrap_or_else(|e| panic!("{name} must succeed: {e:?}")),
+        opened,
+    )
+}
+
+/// Every write tool that addresses an existing block checks its space inside
+/// the write's own transaction, so a call opens exactly one; a `batch` checks
+/// each op's in its one transaction.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_write_tool_opens_one_command_transaction_5402() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let target_space = mk_space(&pool, "target").await;
+    let page = mk_page(&pool, &mat, &space, "P").await;
+    let other_page = mk_page(&pool, &mat, &space, "Q").await;
+    let block = mk_child_of(&pool, &mat, &page, "x").await;
+    let batched = mk_child_of(&pool, &mat, &page, "z").await;
+    let edited = mk_child_of(&pool, &mat, &page, "e").await;
+    let tag = mk_tag_in(&pool, &mat, &space).await;
+    settle(&mat).await;
+
+    let mut opened = Vec::new();
+    let (appended, n) = command_txs_of(
+        &tools,
+        "append_block",
+        json!({ "parent_id": page, "content": "a", "space_id": space }),
+    )
+    .await;
+    opened.push(("append_block", n));
+    let deleted_at = {
+        let calls = [
+            (
+                "append_markdown",
+                json!({ "parent_id": page, "markdown": "- m", "space_id": space }),
+            ),
+            (
+                "update_block_content",
+                json!({ "block_id": block, "content": "y", "space_id": space }),
+            ),
+            (
+                "set_property",
+                json!({ "block_id": block, "key": "assignee", "value_text": "alice", "space_id": space }),
+            ),
+            (
+                "delete_property",
+                json!({ "block_id": block, "key": "assignee", "space_id": space }),
+            ),
+            (
+                "add_tag",
+                json!({ "block_id": block, "tag_id": tag, "space_id": space }),
+            ),
+            (
+                "remove_tag",
+                json!({ "block_id": block, "tag_id": tag, "space_id": space }),
+            ),
+            (
+                "move_blocks",
+                json!({ "block_ids": [block], "parent_id": other_page, "space_id": space }),
+            ),
+            (
+                "delete_block",
+                json!({ "block_id": block, "space_id": space }),
+            ),
+        ];
+        let mut last = Value::Null;
+        for (name, args) in calls {
+            let (result, n) = command_txs_of(&tools, name, args).await;
+            opened.push((name, n));
+            last = result;
+        }
+        last["deleted_at"].clone()
+    };
+    let op_ref = create_op_ref(&pool, appended["id"].as_str().unwrap()).await;
+    let calls = [
+        (
+            "restore_block",
+            json!({ "block_id": block, "deleted_at": deleted_at, "space_id": space }),
+        ),
+        ("undo", json!({ "op_refs": [op_ref], "space_id": space })),
+        (
+            "move_page_to_space",
+            json!({ "page_id": other_page, "space_id": space, "target_space_id": target_space }),
+        ),
+        (
+            "batch",
+            json!({
+                "ops": [
+                    { "op": "append_block", "parent_id": page, "content": "b" },
+                    { "op": "update_block_content", "block_id": batched, "content": "z2" },
+                    { "op": "set_property", "block_id": batched, "key": "assignee", "value_text": "bob" },
+                    { "op": "add_tag", "block_id": batched, "tag_id": tag },
+                    { "op": "delete_block", "block_id": batched },
+                ],
+                "space_id": space,
+            }),
+        ),
+    ];
+    for (name, args) in calls {
+        let (_, n) = command_txs_of(&tools, name, args).await;
+        opened.push((name, n));
+    }
+    settle(&mat).await;
+    let base = editable_source(&pool, &mat, &page, &space).await;
+    let (_, n) = command_txs_of(
+        &tools,
+        "edit_page_markdown",
+        json!({
+            "page_id": page,
+            "markdown": with_bullet_moved_last(&base, &edited),
+            "base": base,
+            "space_id": space,
+        }),
+    )
+    .await;
+    opened.push(("edit_page_markdown", n));
+
+    assert_eq!(
+        opened,
+        [
+            ("append_block", 1),
+            ("append_markdown", 1),
+            ("update_block_content", 1),
+            ("set_property", 1),
+            ("delete_property", 1),
+            ("add_tag", 1),
+            ("remove_tag", 1),
+            ("move_blocks", 1),
+            ("delete_block", 1),
+            ("restore_block", 1),
+            ("undo", 1),
+            ("move_page_to_space", 1),
+            ("batch", 1),
+            ("edit_page_markdown", 1),
+        ],
+        "each write opens one transaction, its space check inside it"
+    );
+}
+
+/// `list_spaces` reads the reader pool, so it answers while every writer
+/// connection is taken.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_spaces_answers_while_the_writers_are_busy_5402() {
+    let dir = TempDir::new().unwrap();
+    let pools = crate::db::init_pools(&dir.path().join("split.db"))
+        .await
+        .unwrap();
+    let mat = Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+    let tools = ReadWriteTools::new(
+        pools.write.clone(),
+        pools.read.clone(),
+        mat.clone(),
+        DEV.to_string(),
+    );
+    let space = mk_space(&pools.write, "Readable").await;
+    settle(&mat).await;
+
+    let _first = pools.write.acquire().await.unwrap();
+    let _second = pools.write.acquire().await.unwrap();
+    let spaces = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tools.call_tool("list_spaces", json!({}), &test_ctx_agent()),
+    )
+    .await
+    .expect("list_spaces waited for a writer connection")
+    .expect("list_spaces must succeed");
+    let ids: Vec<&str> = spaces
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&space.as_str()), "got {spaces}");
+}
+
+// -------------------------------------------------------------------
 // batch / edit_page_markdown (#5399). That a batch is one activity entry
 // and one undo is `rmcp_adapter::tests::rw_batch_is_one_activity_entry_and_one_undo_5399`.
 // -------------------------------------------------------------------
@@ -3754,4 +3938,151 @@ async fn edit_page_markdown_cross_space_refused_5399() {
     );
     assert_eq!(op_count(&pool).await, before, "no op was written");
     assert_eq!(live_children(&pool, &page).await, [a, b]);
+}
+
+// -------------------------------------------------------------------
+// set_page_aliases (#5378)
+// -------------------------------------------------------------------
+
+async fn aliases_of(pool: &SqlitePool, page: &str) -> Vec<String> {
+    crate::commands::get_page_aliases_inner(pool, page)
+        .await
+        .unwrap()
+}
+
+/// Seed `page`'s aliases as the user would, outside any agent scope.
+async fn seed_aliases(pool: &SqlitePool, mat: &Materializer, page: &str, aliases: &[&str]) {
+    let aliases = aliases.iter().map(|a| (*a).to_owned()).collect();
+    crate::commands::set_page_aliases_inner(pool, DEV, mat, page, aliases)
+        .await
+        .unwrap();
+    settle(mat).await;
+}
+
+/// The call replaces the list, and its op refs, the ones its one activity
+/// entry carries, revert as the feed's Undo does to the list before it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_replaces_the_list_and_one_undo_restores_it_5378() {
+    use agaric_store::task_locals::{LAST_APPEND, take_appends};
+    use std::cell::RefCell;
+
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let page = mk_page(&pool, &mat, &space, "Home").await;
+    seed_aliases(&pool, &mat, &page, &["old", "keep"]).await;
+
+    let (result, op_refs) = LAST_APPEND
+        .scope(RefCell::new(Vec::new()), async {
+            let result = tools
+                .call_tool(
+                    "set_page_aliases",
+                    json!({ "page_id": page, "aliases": ["keep", " new "], "space_id": space }),
+                    &test_ctx_agent(),
+                )
+                .await
+                .expect("happy path");
+            (result, take_appends())
+        })
+        .await;
+    settle(&mat).await;
+
+    assert_eq!(
+        result,
+        json!({ "page_id": page, "aliases": ["keep", "new"] })
+    );
+    assert_eq!(aliases_of(&pool, &page).await, ["keep", "new"]);
+    assert_eq!(emitter.blocks_changed(), vec![vec![page.clone()]]);
+
+    // The activity feed's Undo: `revert_ops` on the entry's refs, as the user.
+    crate::commands::revert_ops_inner(&pool, DEV, &mat, op_refs)
+        .await
+        .expect("the call's ops revert");
+    settle(&mat).await;
+    assert_eq!(aliases_of(&pool, &page).await, ["keep", "old"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_unknown_page_is_not_found_5378() {
+    let (tools, _mat, pool, space, _dir) = mk_tools().await;
+    let missing = BlockId::new().into_string();
+    let before = op_count(&pool).await;
+
+    let err = tools
+        .call_tool(
+            "set_page_aliases",
+            json!({ "page_id": missing, "aliases": ["a"], "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("no such page");
+    assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    assert_eq!(op_count(&pool).await, before, "no op was written");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_non_page_is_not_found_5378() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "c").await;
+    settle(&mat).await;
+    let before = op_count(&pool).await;
+
+    let err = tools
+        .call_tool(
+            "set_page_aliases",
+            json!({ "page_id": block.id.as_str(), "aliases": ["a"], "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("only a page has aliases");
+    assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    assert_eq!(op_count(&pool).await, before, "no op was written");
+    assert!(aliases_of(&pool, block.id.as_str()).await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_cross_space_rejected_5378() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, " space B").await;
+    let page_b = mk_page(&pool, &mat, &space_b, "PageB").await;
+    seed_aliases(&pool, &mat, &page_b, &["b1"]).await;
+
+    let err = tools
+        .call_tool(
+            "set_page_aliases",
+            json!({ "page_id": page_b, "aliases": ["a"], "space_id": space_a }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a page of another space is refused");
+    assert!(
+        matches!(&err, AppError::Validation { message, .. } if message.contains("belongs to space")),
+        "got {err:?}"
+    );
+    assert_eq!(aliases_of(&pool, &page_b).await, ["b1"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_alias_held_by_another_page_rejected_5378() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Mine").await;
+    let other = mk_page(&pool, &mat, &space, "Theirs").await;
+    seed_aliases(&pool, &mat, &page, &["mine"]).await;
+    seed_aliases(&pool, &mat, &other, &["taken"]).await;
+    let before = op_count(&pool).await;
+
+    let err = tools
+        .call_tool(
+            "set_page_aliases",
+            json!({ "page_id": page, "aliases": ["fresh", "taken"], "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("another page holds `taken`");
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::DuplicatePageAlias),
+        "got {err:?}"
+    );
+    assert_eq!(op_count(&pool).await, before, "nothing was written");
+    assert_eq!(aliases_of(&pool, &page).await, ["mine"]);
+    assert_eq!(aliases_of(&pool, &other).await, ["taken"]);
 }

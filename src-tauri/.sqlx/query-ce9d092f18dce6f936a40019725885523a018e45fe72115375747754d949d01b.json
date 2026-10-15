@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO page_opens (page_id, opened_ms) SELECT id, ? FROM blocks WHERE id = ? AND block_type = 'page' AND deleted_at IS NULL ON CONFLICT(page_id) DO UPDATE SET opened_ms = excluded.opened_ms",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "ce9d092f18dce6f936a40019725885523a018e45fe72115375747754d949d01b"
+}

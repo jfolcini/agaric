@@ -20,13 +20,14 @@ expression: wire
         minimum: 1
         type: integer
       sort:
-        description: "Title A-Z (the default), last edit newest first, most inbound links, most blocks, or creation order (`default`). A cursor only continues the sort it came from."
+        description: "Title A-Z (the default), newest page first, last edit newest first, last opened on this device, most inbound links, or most blocks. A cursor only continues the sort it came from."
         enum:
           - alphabetical
+          - created
           - recently-modified
+          - last-opened
           - most-linked
           - most-content
-          - default
         type: string
       space_id:
         description: ULID of the space whose pages to list.
@@ -35,7 +36,7 @@ expression: wire
       - space_id
     type: object
   name: list_pages
-- description: "Fetch a page and a paginated slice of its non-conflict subtree (grandchildren included). `page` also carries `properties` (every property row, raw), `tags` (tag ULIDs; `list_tags` names them) and `aliases`; the children are plain rows."
+- description: "Fetch a page and a paginated slice of its non-conflict subtree (grandchildren included). `page` also carries `properties` (every property row, raw), `tags` (tag ULIDs; `list_tags` names them) and `aliases`; the children are plain rows. A slice whose content passes 65536 bytes stops early with `truncated: true`; pass `next_cursor` as `cursor` to read on."
   inputSchema:
     additionalProperties: false
     properties:
@@ -58,7 +59,7 @@ expression: wire
       - space_id
     type: object
   name: get_page
-- description: "Search one space's blocks by text. `query` is not raw FTS5: every word must appear, as a case-insensitive substring; `\"a phrase\"` matches as written; `OR` and `NOT` between terms combine them. Words and phrases under 3 characters are dropped (the index is trigram), so a query of only short words finds nothing. Hits come best match first. An empty `query` with at least one of `parent_id`, `tag_ids` or `filter` returns the blocks those match, newest first; with none it returns nothing. Rows carry `page_title` and a `snippet` with <mark> around the matches; `content` is cut to 512 chars, and null fields are left out. `filter` narrows further (state / priority / due / scheduled / last edited / property / page-name globs / block type / case-sensitive / whole-word / regex)."
+- description: "Search one space's blocks by text. `query` is not raw FTS5: every word must appear, as a case-insensitive substring; `\"a phrase\"` matches as written; `OR` and `NOT` between terms combine them. Words and phrases under 3 characters are dropped (the index is trigram), so a query of only short words finds nothing. Hits come best match first. An empty `query` with at least one of `parent_id`, `tag_ids` or `filter` returns the blocks those match, newest first; with none it returns nothing. Rows carry `page_title` (a page's own is its `content`) and a `snippet` with <mark> around the matches; `content` is cut to 512 chars, and null fields are left out. `filter` narrows further (state / priority / due / scheduled / last edited / property / page-name globs / block type / case-sensitive / whole-word / regex)."
   inputSchema:
     additionalProperties: false
     properties:
@@ -183,7 +184,7 @@ expression: wire
       - space_id
     type: object
   name: get_block
-- description: "List backlinks for a block, grouped by source page."
+- description: "List backlinks for a block, grouped by source page. A response whose content passes 65536 bytes stops at a group with `truncated: true`; pass `next_cursor` as `cursor` to read on."
   inputSchema:
     additionalProperties: false
     properties:
@@ -286,10 +287,13 @@ expression: wire
     properties: {}
     type: object
   name: list_spaces
-- description: "Read a whole page as Markdown, returned as { page_id, markdown }: a `# Title` line, YAML front matter with the page's aliases, tags and properties, then the block outline with each block's `key:: value` properties under it. Links, tags and ref-typed values are written as names, for reading; a name can be ambiguous, so write links by ULID (`[[ULID]]`, `#[ULID]`). Each block ends with `^ULID`, the block_id update_block_content takes. No pagination. With `editable: true`, `markdown` is instead the page's source, the text the read-write server's edit_page_markdown takes back: no title line, a name only where it reads back as the same link, ref-typed values as ULIDs, and each block's `^ULID`."
+- description: "Read a page as Markdown, returned as { page_id, markdown, truncated, next_cursor }: a `# Title` line, YAML front matter with the page's aliases, tags and properties, then the block outline with each block's `key:: value` properties under it. Links, tags and ref-typed values are written as names, for reading; a name can be ambiguous, so write links by ULID (`[[ULID]]`, `#[ULID]`). Each block ends with `^ULID`, the block_id update_block_content takes. Past 65536 bytes the Markdown stops at a block with `truncated: true`; pass `next_cursor` as `cursor` for the rest, which carries on from that block. With `editable: true`, `markdown` is instead the page's whole source, never truncated, the text the read-write server's edit_page_markdown takes back: no title line, a name only where it reads back as the same link, ref-typed values as ULIDs, and each block's `^ULID`."
   inputSchema:
     additionalProperties: false
     properties:
+      cursor:
+        description: "The `next_cursor` of a truncated read, to continue it."
+        type: string
       editable:
         description: Return the source edit_page_markdown takes instead. Defaults to false.
         type: boolean

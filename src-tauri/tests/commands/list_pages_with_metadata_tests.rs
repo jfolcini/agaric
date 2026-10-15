@@ -1,19 +1,22 @@
 //! Phase 1 — tests for `list_pages_with_metadata_inner`.
 //!
-//! Covers: the four metadata columns, all five sort modes, cursor
-//! pagination across modes, the has-property bitmask, space filtering,
-//! and strict limit validation.
+//! Covers: the four metadata columns, all six sort modes (each across a
+//! cursor boundary against an oracle over the full set, #5371),
+//! `record_page_open`, the has-property bitmask, space filtering, and strict
+//! limit validation.
 
 use sqlx::SqlitePool;
 
 use agaric_lib::commands::pages::{
     ListPagesWithMetadataFilter, PageSort, PageWithMetadataRow,
-    compose_list_pages_with_metadata_sql, list_pages_with_metadata_inner,
+    compose_list_pages_with_metadata_sql, list_pages_with_metadata_inner, record_page_open_inner,
 };
 use agaric_lib::commands::tests::common::{
-    TEST_SPACE_B_ID, TEST_SPACE_ID, assign_to_space, ensure_test_space, ensure_test_space_b,
+    DEV, TEST_SPACE_B_ID, TEST_SPACE_ID, assign_to_space, ensure_test_space, ensure_test_space_b,
     insert_block, test_pool,
 };
+use agaric_lib::commands::{edit_block_inner, purge_block_inner};
+use agaric_lib::materializer::Materializer;
 use agaric_store::filters::{FilterPrimitive, LastEditedSpec, PropertyPredicate, PropertyValue};
 
 // ── Fixture builders ──────────────────────────────────────────────────────
@@ -23,17 +26,20 @@ use agaric_store::filters::{FilterPrimitive, LastEditedSpec, PropertyPredicate, 
 /// Also seeds the `pages_cache` row that the materializer
 /// would write in production. The IPC reads
 /// `pc.{inbound_link_count, child_block_count}` from this row via a
-/// LEFT JOIN; without it the IPC would return 0 for both counts.
+/// LEFT JOIN; without it the IPC would return 0 for both counts. The row
+/// carries the title's sort key, and `last_edited_ms` stays 0 until
+/// [`seed_op_log`] raises it.
 async fn seed_page(pool: &SqlitePool, id: &str, content: &str) {
     insert_block(pool, id, "page", content, None, Some(0)).await;
     assign_to_space(pool, id, TEST_SPACE_ID).await;
     sqlx::query(
         "INSERT OR IGNORE INTO pages_cache \
-             (page_id, title, updated_at, inbound_link_count, child_block_count) \
-         VALUES (?, ?, 1735689600000, 0, 0)",
+             (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count) \
+         VALUES (?, ?, ?, 1735689600000, 0, 0)",
     )
     .bind(id)
     .bind(content)
+    .bind(agaric_core::title_sort::title_sort_key(content))
     .execute(pool)
     .await
     .unwrap();
@@ -80,7 +86,9 @@ async fn refresh_page_cache_counts(pool: &SqlitePool, page_id: &str) {
     .unwrap();
 }
 
-/// Seed an op_log row stamped with the given timestamp.
+/// Seed an op_log row stamped with the given timestamp, and raise its page's
+/// `pages_cache.last_edited_ms` through the production raise every op-landing
+/// path calls.
 ///
 /// Review Round 1 — robustness reviewer flagged the prior version
 /// reaching for the `_op_log_mutation_allowed` bypass with a misspelled
@@ -115,6 +123,10 @@ async fn seed_op_log(pool: &SqlitePool, block_id: &str, created_at: &str) {
     .execute(pool)
     .await
     .unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    agaric_store::cache::raise_pages_last_edited_ms(&mut conn, &[(block_id, created_at_ms)])
+        .await
+        .unwrap();
 }
 
 /// Seed an inbound link FROM `source` TO `target`.
@@ -448,26 +460,26 @@ async fn biggest_sort_counts_descendant_blocks() {
     assert_eq!(resp.items[0].content.as_deref(), Some("Big"));
 }
 
-// ── Sort: ulid ────────────────────────────────────────────────────────────
+// ── Sort: created ─────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn ulid_sort_returns_pages_in_id_ascending() {
+async fn created_sort_returns_pages_newest_id_first() {
     let (pool, _dir) = test_pool().await;
     ensure_test_space(&pool).await;
     seed_page(&pool, "01PAGE000000000000000000Z1", "Z").await;
     seed_page(&pool, "01PAGE000000000000000000A1", "A").await;
     seed_page(&pool, "01PAGE000000000000000000M1", "M").await;
 
-    let resp = list_pages_with_metadata_inner(&pool, filter(PageSort::Default), None, Some(50))
+    let resp = list_pages_with_metadata_inner(&pool, filter(PageSort::Created), None, Some(50))
         .await
         .unwrap();
     let ids: Vec<&str> = resp.items.iter().map(|p| p.id.as_str()).collect();
     assert_eq!(
         ids,
         vec![
-            "01PAGE000000000000000000A1",
-            "01PAGE000000000000000000M1",
             "01PAGE000000000000000000Z1",
+            "01PAGE000000000000000000M1",
+            "01PAGE000000000000000000A1",
         ]
     );
 }
@@ -643,7 +655,7 @@ async fn has_property_flags_reflects_tags_todo_scheduled_due() {
 
     seed_page(&pool, "01PAGE000000000000000000E1", "Empty").await;
 
-    let resp = list_pages_with_metadata_inner(&pool, filter(PageSort::Default), None, Some(50))
+    let resp = list_pages_with_metadata_inner(&pool, filter(PageSort::Created), None, Some(50))
         .await
         .unwrap();
     let by_id: std::collections::HashMap<&str, &PageWithMetadataRow> =
@@ -792,14 +804,13 @@ async fn legacy_cursor_without_discriminator_returns_requires_refresh() {
     );
 }
 
-// ── NULL last_modified_at via COALESCE sentinel (Review Round 1) ──────────
+// ── Pages with no op sort last under RecentlyModified ─────────────────────
 
 #[tokio::test]
 async fn recently_modified_includes_pages_without_op_log_at_tail() {
     let (pool, _dir) = test_pool().await;
     ensure_test_space(&pool).await;
     seed_page(&pool, "01PAGE000000000000000000A1", "WithOpLog").await;
-    // 25 chars: not a ULID, so no creation-time floor (#5286) — the sentinel.
     seed_page(&pool, "01PAGE00000000000000000B1", "NoOpLog").await;
     seed_op_log(&pool, "01PAGE000000000000000000A1", "2026-05-01T00:00:00Z").await;
 
@@ -812,9 +823,8 @@ async fn recently_modified_includes_pages_without_op_log_at_tail() {
         .iter()
         .filter_map(|p| p.content.as_deref())
         .collect();
-    // The COALESCE sentinel ('0001-01-01...') sorts before any real ISO
-    // date in DESC order → no-op-log page sorts to the tail (still
-    // present, just last).
+    // An unraised `last_edited_ms` is 0, below every real timestamp in DESC
+    // order → the no-op-log page sorts to the tail (still present, just last).
     assert_eq!(contents, vec!["WithOpLog", "NoOpLog"]);
 }
 
@@ -863,6 +873,9 @@ async fn recently_modified_paginates_through_no_op_log_pages() {
 
 // ── #5286: op-log compaction must not erase "last modified" ───────────────
 
+/// The sort's `pages_cache.last_edited_ms` keeps the value compaction takes
+/// from the op log (#5371); the `LastEdited` filter still reads the op log
+/// and falls back to the ULID creation time.
 #[tokio::test]
 async fn compacted_pages_fall_back_to_their_ulid_creation_time_5286() {
     let (pool, _dir) = test_pool().await;
@@ -999,13 +1012,16 @@ async fn explain_query_plan_for_filter(
         .join("\n")
 }
 
-/// Convenience wrapper for the no-filter MostLinked / MostContent plan
-/// snapshots: composes the real IPC SQL for the given sort with an empty
-/// filter set and runs EXPLAIN on it.
+/// Convenience wrapper for the no-filter plan snapshots of the sorts that
+/// read a materialised column: composes the real IPC SQL for the given sort
+/// with an empty filter set and runs EXPLAIN on it.
 async fn explain_query_plan_for(pool: &SqlitePool, sort: PageSort) -> String {
     assert!(
-        matches!(sort, PageSort::MostLinked | PageSort::MostContent),
-        "plan snapshot only meaningful for MostLinked / MostContent"
+        matches!(
+            sort,
+            PageSort::MostLinked | PageSort::MostContent | PageSort::RecentlyModified
+        ),
+        "plan snapshot only meaningful for a sort that reads a pages_cache column"
     );
     explain_query_plan_for_filter(pool, &filter(sort), &[]).await
 }
@@ -1151,9 +1167,8 @@ async fn bulk_seed_link_skew(pool: &SqlitePool, page_ids: &[String]) {
 }
 
 /// Bulk-seed `depth` op_log rows per page (realistic history) via chunked
-/// multi-row INSERTs, so the per-page `MAX(op_log.created_at)` subquery
-/// aggregates over a real index range instead of short-circuiting on the
-/// single row the old gate seeded.
+/// multi-row INSERTs, raising each chunk's pages through the production
+/// `raise_pages_last_edited_ms` as the apply paths do.
 async fn bulk_seed_op_log_depth(pool: &SqlitePool, page_ids: &[String], depth: usize) {
     // Determine the starting seq once, then assign sequential seqs locally
     // (a per-row `(SELECT MAX(seq)+1 …)` subquery would be O(n²)).
@@ -1197,6 +1212,14 @@ async fn bulk_seed_op_log_depth(pool: &SqlitePool, page_ids: &[String], depth: u
             q = q.bind(*s).bind(ts).bind(bid);
         }
         q.execute(pool).await.unwrap();
+        let touched: Vec<(&str, i64)> = chunk
+            .iter()
+            .map(|(_, ts, bid)| (bid.as_str(), *ts))
+            .collect();
+        let mut conn = pool.acquire().await.unwrap();
+        agaric_store::cache::raise_pages_last_edited_ms(&mut conn, &touched)
+            .await
+            .unwrap();
     }
 }
 
@@ -1264,26 +1287,15 @@ async fn most_linked_perf_gate_20k_pages() {
 }
 
 /// Perf gate for the `RecentlyModified` sort. Sibling of
-/// `most_linked_perf_gate_20k_pages`, but for the UN-materialised sort:
-/// `RecentlyModified` computes `MAX(op_log.created_at)` per page across
-/// the space (correlated subquery, served by `idx_op_log_block_id`)
-/// *before* the LIMIT, so it is the sort most exposed to per-row aggregate
-/// cost. This seeds the same 20k-page fixture with REALISTIC op-log depth
-/// (multiple rows per page) and times the first-page query.
-///
-/// The original gate seeded exactly ONE op_log row per page,
-/// so the per-page `MAX(created_at)` subquery short-circuited on a single
-/// index probe (no real aggregation). This now seeds several op_log rows
-/// per page via [`bulk_seed_op_log_depth`] so the subquery aggregates over
-/// a genuine index range — the cost the deferred `pages_cache.last_edited_at`
-/// materialisation would remove.
+/// `most_linked_perf_gate_20k_pages`: since #5371 the sort reads the
+/// materialised `pages_cache.last_edited_ms` instead of a per-page
+/// `MAX(op_log.created_at)` correlated subquery, so this seeds the same
+/// 20k-page fixture with REALISTIC op-log depth (several rows per page,
+/// raised into the column) and times the first-page query.
 ///
 /// `#[ignore]`'d so CI doesn't pay for 20k-row seeding on every run —
 /// invoke via
 /// `cargo nextest run --run-ignored=only recently_modified_perf_gate_20k_pages`.
-/// The ceiling is documented on `PageSort::RecentlyModified`; if a future
-/// change pushes this past the budget, materialising
-/// `pages_cache.last_edited_at` is the deferred remedy.
 #[ignore]
 #[tokio::test]
 async fn recently_modified_perf_gate_20k_pages() {
@@ -1297,9 +1309,8 @@ async fn recently_modified_perf_gate_20k_pages() {
         seed_page(&pool, &pid, &format!("p{i}")).await;
         page_ids.push(pid);
     }
-    // Realistic op-log depth: several rows per page so the
-    // per-page MAX(created_at) subquery aggregates over an index range
-    // rather than short-circuiting on a single row.
+    // Realistic op-log depth: several rows per page, so the column the sort
+    // reads holds a spread of real timestamps.
     let op_log_depth = 8;
     bulk_seed_op_log_depth(&pool, &page_ids, op_log_depth).await;
     let seed_ms = seed_start.elapsed().as_millis();
@@ -1333,15 +1344,10 @@ async fn recently_modified_perf_gate_20k_pages() {
     samples.sort_unstable();
     let median_ms = samples[samples.len() / 2];
     eprintln!("[ PERF] RecentlyModified @ 20k pages: samples={samples:?} median={median_ms} ms");
-    // Soft assertion — the un-materialised correlated MAX subquery is the
-    // motivation for the deferred `pages_cache.last_edited_at` work. We
-    // allow 250 ms here (more headroom than MostLinked's materialised 100 ms
-    // budget, since this path pays the per-row aggregate); if a future
-    // change pushes past it, the assert fires as an early warning that the
-    // deferred materialisation should be revisited.
+    // Soft assertion — the same materialised-column budget as MostLinked.
     assert!(
-        median_ms < 250,
-        "RecentlyModified @ 20k pages exceeded 250 ms budget: median={median_ms} ms (samples={samples:?})"
+        median_ms < 100,
+        "RecentlyModified @ 20k pages exceeded 100 ms budget: median={median_ms} ms (samples={samples:?})"
     );
 }
 
@@ -1431,16 +1437,13 @@ async fn filtered_query_perf_gate_20k_pages() {
     );
 }
 
-/// #424 — perf gate for the two sort modes that had NO gate: `Default`
-/// (`ORDER BY b.id`) and `Alphabetical` (`ORDER BY COALESCE(content,'')
-/// COLLATE NOCASE, b.id`). The audit's finding is that the space-filter
-/// IN-subquery forces the planner to drive off the membership set, so
-/// EVERY sort mode — including these two — gets `USE TEMP B-TREE FOR
-/// ORDER BY` and the LIMIT cannot short-circuit; the 4 `has_*` EXISTS
-/// subqueries plus the `MAX(op_log.created_at)` correlated subquery are
-/// evaluated across the whole filtered set before the first page returns.
-/// The MostLinked/RecentlyModified/filtered gates above never timed these
-/// two modes.
+/// #424 — perf gate for the sort modes the gates above do not time:
+/// `Created` (`ORDER BY b.id DESC`), `Alphabetical` (`pc.title_sort_key`) and
+/// `LastOpened` (`po.opened_ms`). The audit's finding is that the
+/// space-filter IN-subquery forces the planner to drive off the membership
+/// set, so EVERY sort mode gets `USE TEMP B-TREE FOR ORDER BY` and the LIMIT
+/// cannot short-circuit; the 4 `has_*` EXISTS subqueries are evaluated across
+/// the whole filtered set before the first page returns.
 ///
 /// This seeds the same realistic 20k fixture (link skew + op_log depth +
 /// tags on ~1/10 pages) so the per-row EXISTS / MAX subqueries do real
@@ -1452,10 +1455,10 @@ async fn filtered_query_perf_gate_20k_pages() {
 ///
 /// `#[ignore]`'d so CI doesn't pay for 20k-row seeding on every run —
 /// invoke via
-/// `cargo nextest run --run-ignored=only default_and_alphabetical_sort_perf_gate_20k_pages`.
+/// `cargo nextest run --run-ignored=only created_and_alphabetical_sort_perf_gate_20k_pages`.
 #[ignore]
 #[tokio::test]
-async fn default_and_alphabetical_sort_perf_gate_20k_pages() {
+async fn created_and_alphabetical_sort_perf_gate_20k_pages() {
     let (pool, _dir) = test_pool().await;
     ensure_test_space(&pool).await;
     let n = 20_000;
@@ -1467,9 +1470,8 @@ async fn default_and_alphabetical_sort_perf_gate_20k_pages() {
         seed_page(&pool, &pid, &format!("p{i}")).await;
         page_ids.push(pid);
     }
-    // Realistic inbound-link skew + op_log depth so the per-row
-    // correlated subqueries (last_modified MAX, has_*) aggregate over a
-    // genuine index range rather than short-circuiting on empty/single-row.
+    // Realistic inbound-link skew + op_log depth so the per-row `has_*`
+    // subqueries probe a genuine index range rather than an empty one.
     bulk_seed_link_skew(&pool, &page_ids).await;
     bulk_seed_op_log_depth(&pool, &page_ids, 8).await;
     for (i, pid) in page_ids.iter().enumerate() {
@@ -1481,8 +1483,9 @@ async fn default_and_alphabetical_sort_perf_gate_20k_pages() {
     eprintln!("[#424 PERF] seeded {n} pages (+skewed links, +op_log depth, +tags) in {seed_ms} ms");
 
     for (label, sort) in [
-        ("Default", PageSort::Default),
+        ("Created", PageSort::Created),
         ("Alphabetical", PageSort::Alphabetical),
+        ("LastOpened", PageSort::LastOpened),
     ] {
         // Warm up (3×).
         for _ in 0..3 {
@@ -1502,10 +1505,10 @@ async fn default_and_alphabetical_sort_perf_gate_20k_pages() {
         samples.sort_unstable();
         let median_ms = samples[samples.len() / 2];
         eprintln!("[#424 PERF] {label} @ 20k pages: samples={samples:?} median={median_ms} ms");
-        // Soft assertion. Both modes pay the temp B-tree + per-row EXISTS /
-        // MAX subqueries (index probes, not table scans). MEASURED (#424,
-        // 2026-06-05): Default median ~38 ms, Alphabetical median ~67 ms @
-        // 20k pages — well within budget, so the gated schema promotion
+        // Soft assertion. Every mode pays the temp B-tree + per-row EXISTS
+        // subqueries (index probes, not table scans). MEASURED (#424,
+        // 2026-06-05, before #5371): id order median ~38 ms, alphabetical
+        // median ~67 ms @ 20k pages — well within budget, so the gated schema promotion
         // (materialised per-page `space` column / folded `has_*` into
         // `pages_cache`) is NOT justified at this scale and stays deferred
         // behind this gate. Budget matches the un-materialised
@@ -1539,28 +1542,52 @@ async fn most_content_query_plan_uses_pages_cache_not_blocks_subquery() {
     );
     // This now plans the IPC's REAL SQL, which legitimately
     // carries correlated scalar subqueries for the per-row METADATA columns
-    // (`last_modified_at` over op_log, plus the four `has_*` EXISTS flags
-    // over block_tags / blocks). What the materialised-count contract forbids
-    // is the *sort key* `child_block_count` being recomputed via a
-    // Correlated `COUNT(*) FROM blocks` aggregate (the pre-existing shape).
-    // So we pin the correlated-subquery COUNT to exactly the known metadata
-    // aggregates (5): last_modified_at + has_tags + has_todo + has_scheduled
-    // + has_due. If a regression reverts the sort key to a per-row count, a
-    // 6th correlated subquery appears and this assert fires. The materialised
-    // path also means `block_links` is never scanned for the count.
+    // (the four `has_*` EXISTS flags over block_tags / blocks). What the
+    // materialised-count contract forbids is the *sort key*
+    // `child_block_count` being recomputed via a correlated
+    // `COUNT(*) FROM blocks` aggregate (the pre-existing shape). So we pin the
+    // correlated-subquery COUNT to exactly the known metadata flags (4). If a
+    // regression reverts the sort key to a per-row count, a 5th correlated
+    // subquery appears and this assert fires. The materialised path also
+    // means `block_links` is never scanned for the count.
     let correlated = plan
         .to_uppercase()
         .matches("CORRELATED SCALAR SUBQUERY")
         .count();
     assert_eq!(
-        correlated, 5,
-        "MostContent plan must carry ONLY the 5 metadata correlated subqueries \
-         (last_modified_at + 4 has_* flags) — a 6th means the child_block_count \
-         sort key regressed to a per-row COUNT; got:\n{plan}"
+        correlated, 4,
+        "MostContent plan must carry ONLY the 4 has_* correlated subqueries — a \
+         5th means a sort key or metadata column regressed to a per-row \
+         aggregate; got:\n{plan}"
     );
     assert!(
         !plan.to_lowercase().contains("block_links"),
         "MostContent plan must NOT scan block_links; got:\n{plan}"
+    );
+}
+
+/// #5371 — `RecentlyModified` reads `pages_cache.last_edited_ms`; the
+/// per-page `MAX(op_log.created_at)` subquery it replaced never reappears.
+#[tokio::test]
+async fn recently_modified_query_plan_reads_pages_cache_not_op_log() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    for i in 0..10 {
+        seed_page(
+            &pool,
+            &format!("01PAGE0000000000000000R{i:02}"),
+            &format!("r{i}"),
+        )
+        .await;
+    }
+    let plan = explain_query_plan_for(&pool, PageSort::RecentlyModified).await;
+    assert!(
+        plan.to_lowercase().contains("pages_cache"),
+        "RecentlyModified plan must reference pages_cache; got:\n{plan}"
+    );
+    assert!(
+        !plan.to_lowercase().contains("op_log"),
+        "RecentlyModified plan must NOT probe op_log per page; got:\n{plan}"
     );
 }
 
@@ -3025,10 +3052,11 @@ async fn every_sort_mode_cursor_round_trips_and_rejects_cross_mode() {
 
     let all_modes = [
         PageSort::Alphabetical,
+        PageSort::Created,
         PageSort::RecentlyModified,
+        PageSort::LastOpened,
         PageSort::MostLinked,
         PageSort::MostContent,
-        PageSort::Default,
     ];
 
     for sort in all_modes {
@@ -3238,4 +3266,258 @@ async fn pages_path_glob_whitespace_only_is_not_malformed_sql() {
     .await
     .expect("whitespace-only PathGlob must not produce malformed SQL");
     assert_eq!(resp.items.len(), 1);
+}
+
+// ── #5371 — every sort orders the whole space behind its cursor ───────────
+
+/// Page through `sort`, `limit` rows at a time, following the real cursor,
+/// and return every id in the order received.
+async fn page_through(pool: &SqlitePool, sort: PageSort, limit: i64) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = list_pages_with_metadata_inner(pool, filter(sort), cursor, Some(limit))
+            .await
+            .unwrap();
+        ids.extend(page.items.iter().map(|p| p.id.to_string()));
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => return ids,
+        }
+    }
+}
+
+/// The `RecentlyModified` order computed live: the per-page correlated
+/// `MAX(op_log.created_at)` subquery the sort ran before #5371 materialised
+/// it, widened from the page block to every block on the page. The oracle
+/// `pages_cache.last_edited_ms` is checked against.
+async fn last_edited_oracle(pool: &SqlitePool) -> Vec<String> {
+    let sql = format!(
+        "SELECT b.id FROM blocks b \
+          WHERE b.block_type = 'page' AND b.deleted_at IS NULL AND b.space_id = ?1 \
+          ORDER BY COALESCE( \
+              (SELECT MAX(o.created_at) FROM op_log o \
+                 JOIN blocks d ON d.id = o.block_id WHERE d.page_id = b.id), \
+              {}, 0) DESC, b.id ASC",
+        agaric_store::filters::primitive::ulid_created_ms_sql("b.id")
+    );
+    sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(TEST_SPACE_ID)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn alphabetical_sorts_accented_titles_with_their_base_letter_across_pages_5371() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let titles = [
+        ("01PAGE000000000000000000Z5", "Zebra"),
+        ("01PAGE000000000000000000E5", "Émile"),
+        ("01PAGE000000000000000000T5", "zeta"),
+        ("01PAGE000000000000000000A5", "ángel"),
+        ("01PAGE000000000000000000D5", "émile"),
+        ("01PAGE000000000000000000B5", "Banana"),
+    ];
+    for (id, title) in titles {
+        seed_page(&pool, id, title).await;
+    }
+    // Oracle: the whole set by key bytes, ties by id.
+    let mut by_key: Vec<(String, &str)> = titles
+        .iter()
+        .map(|(id, title)| (agaric_core::title_sort::title_sort_key(title), *id))
+        .collect();
+    by_key.sort();
+    let oracle: Vec<&str> = by_key.iter().map(|(_, id)| *id).collect();
+
+    // Three rows a page: the two `emile` keys straddle the first boundary.
+    let paged = page_through(&pool, PageSort::Alphabetical, 3).await;
+    assert_eq!(paged, oracle);
+    let by_id: std::collections::HashMap<&str, &str> = titles.into_iter().collect();
+    let order: Vec<&str> = paged.iter().map(|id| by_id[id.as_str()]).collect();
+    assert_eq!(
+        order,
+        ["ángel", "Banana", "émile", "Émile", "Zebra", "zeta"],
+        "accents sort with their base letter; `NOCASE` put them after z"
+    );
+}
+
+#[tokio::test]
+async fn created_orders_every_page_newest_first_across_pages_5371() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let mut ids: Vec<String> = (1..=5)
+        .map(|i| format!("01PAGE00000000000000000C{i:02}"))
+        .collect();
+    for (i, id) in ids.iter().enumerate() {
+        seed_page(&pool, id, &format!("Page {i}")).await;
+    }
+    ids.sort_by(|a, b| b.cmp(a));
+    assert_eq!(page_through(&pool, PageSort::Created, 2).await, ids);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn editing_a_child_block_moves_its_page_to_the_top_5371() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let mat = Materializer::new(pool.clone());
+    let pages = [
+        "01PAGE000000000000000000A6",
+        "01PAGE000000000000000000B6",
+        "01PAGE000000000000000000C6",
+        "01PAGE000000000000000000D6",
+        "01PAGE000000000000000000E6",
+    ];
+    for (i, id) in pages.iter().enumerate() {
+        seed_page(&pool, id, &format!("Page {i}")).await;
+        seed_op_log(&pool, id, &format!("2026-0{}-01T00:00:00Z", i + 1)).await;
+    }
+    let child = "01CHILD0000000000000000A6X";
+    seed_child(&pool, child, pages[0], "before").await;
+
+    edit_block_inner(&pool, DEV, &mat, child.into(), "after".to_owned())
+        .await
+        .expect("edit the oldest page's child");
+
+    let paged = page_through(&pool, PageSort::RecentlyModified, 2).await;
+    assert_eq!(paged, last_edited_oracle(&pool).await);
+    assert_eq!(
+        paged,
+        [pages[0], pages[4], pages[3], pages[2], pages[1]],
+        "the page whose body was edited leads; the rest by their own last edit"
+    );
+    mat.shutdown();
+}
+
+#[tokio::test]
+async fn last_opened_lists_opened_pages_in_open_order_then_newest_across_pages_5371() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let pages: Vec<String> = (1..=6)
+        .map(|i| format!("01PAGE00000000000000000O{i:02}"))
+        .collect();
+    for (i, id) in pages.iter().enumerate() {
+        seed_page(&pool, id, &format!("Page {i}")).await;
+    }
+    // Opened 2, then 5, then 3. The command stamps `now`; the stamps are then
+    // spread so three opens in one millisecond cannot tie.
+    for (ms, i) in [(1_000_i64, 1), (2_000, 4), (3_000, 2)] {
+        record_page_open_inner(&pool, pages[i].as_str().into())
+            .await
+            .expect("record the open");
+        sqlx::query("UPDATE page_opens SET opened_ms = ? WHERE page_id = ?")
+            .bind(ms)
+            .bind(&pages[i])
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // Four rows a page: the boundary falls inside the never-opened run.
+    let paged = page_through(&pool, PageSort::LastOpened, 4).await;
+    let expected: Vec<&str> = [2, 4, 1, 5, 3, 0]
+        .iter()
+        .map(|&i| pages[i].as_str())
+        .collect();
+    assert_eq!(
+        paged, expected,
+        "opened pages newest open first, then the never-opened ones newest page first"
+    );
+}
+
+#[tokio::test]
+async fn record_page_open_stamps_now_and_reopening_moves_the_stamp_5371() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let page = "01PAGE000000000000000000P7";
+    seed_page(&pool, page, "Opened").await;
+    let opened_ms = || {
+        sqlx::query_scalar::<_, i64>("SELECT opened_ms FROM page_opens WHERE page_id = ?")
+            .bind(page)
+            .fetch_one(&pool)
+    };
+
+    let before = agaric_store::db::now_ms();
+    record_page_open_inner(&pool, page.into()).await.unwrap();
+    let after = agaric_store::db::now_ms();
+    let first = opened_ms().await.unwrap();
+    assert!(
+        (before..=after).contains(&first),
+        "stamped with the clock at the call: {before} <= {first} <= {after}"
+    );
+
+    sqlx::query("UPDATE page_opens SET opened_ms = 1 WHERE page_id = ?")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .unwrap();
+    record_page_open_inner(&pool, page.into()).await.unwrap();
+    assert!(
+        opened_ms().await.unwrap() >= before,
+        "a second open replaces the stamp"
+    );
+}
+
+#[tokio::test]
+async fn record_page_open_refuses_what_is_not_a_live_page_5371() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let page = "01PAGE000000000000000000P8";
+    seed_page(&pool, page, "Deleted").await;
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let content = "01CHILD0000000000000000P8X";
+    seed_child(&pool, content, page, "a block").await;
+
+    for id in ["01UNKNOWN00000000000000000", content, page] {
+        let err = record_page_open_inner(&pool, id.into())
+            .await
+            .expect_err("only a live page can be opened");
+        assert!(
+            matches!(err, agaric_core::error::AppError::NotFound(_)),
+            "{id}: expected NotFound, got {err:?}"
+        );
+    }
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_opens")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "a refused open writes nothing");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purging_a_page_drops_its_open_5371() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let mat = Materializer::new(pool.clone());
+    let page = "01PAGE000000000000000000P9";
+    seed_page(&pool, page, "Purged").await;
+    record_page_open_inner(&pool, page.into()).await.unwrap();
+    let opens = || {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM page_opens WHERE page_id = ?")
+            .bind(page)
+            .fetch_one(&pool)
+    };
+
+    agaric_lib::soft_delete::cascade_soft_delete(&pool, &mat, DEV, page)
+        .await
+        .unwrap();
+    assert_eq!(
+        opens().await.unwrap(),
+        1,
+        "a trashed page keeps its open, so a restore brings it back"
+    );
+    purge_block_inner(&pool, DEV, &mat, page.into())
+        .await
+        .unwrap();
+    assert_eq!(
+        opens().await.unwrap(),
+        0,
+        "the purge cascades to page_opens"
+    );
+    mat.shutdown();
 }

@@ -96,6 +96,10 @@ export interface MockDraftRow {
 
 export const blockDrafts = new Map<string, MockDraftRow>()
 
+// Device-local `page_opens` rows: page id → `opened_ms` (#5371), written only
+// by `record_page_open`.
+export const pageOpens = new Map<string, number>()
+
 // Device-local `app_settings` rows: key → value, both TEXT as in the table.
 // `get_reminder_settings` / `set_reminder_settings` read and write the two
 // `reminders.*` keys through it the way `reminders::get_settings` /
@@ -167,11 +171,12 @@ export function pushOp(
  * Seed-time sibling of {@link pushOp} that takes an EXPLICIT `created_at`
  * instead of stamping "now".
  *
- * The backend derives a page's `last_modified_at` from
- * `(SELECT MAX(created_at) FROM op_log WHERE block_id = b.id)`, falling back
- * only to the creation time in the page's ULID (`last_edited_ms_sql`,
- * `agaric-store/src/filters/primitive.rs`). There is no "seeded stamp"
- * column, map, or fallback anywhere on the backend.
+ * The backend derives a page's last edit from its `op_log` rows, falling
+ * back only to the creation time in the page's ULID: the `LastEdited` filter
+ * from the page block's own rows (`last_edited_ms_sql`,
+ * `agaric-store/src/filters/primitive.rs`), the Pages list from the rows of
+ * every block on the page (`pages_cache.last_edited_ms`, #5371). There is no
+ * "seeded stamp" column, map, or fallback anywhere on the backend.
  *
  * This mock used to fake that with a mock-only `pageLastModified` map that
  * `pageLastModifiedAt` layered on top of the op-log scan, which is what made
@@ -368,6 +373,7 @@ export function seedBlocks(): void {
   mcpEnabled.rw = false
   appSettings.clear()
   blockDrafts.clear()
+  pageOpens.clear()
   counter = 0
   opLog.length = 0
   opSeqCounter = 0

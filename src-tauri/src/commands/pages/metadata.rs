@@ -7,7 +7,6 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use sqlx::SqlitePool;
-use std::sync::LazyLock;
 use tracing::instrument;
 
 use tauri::State;
@@ -16,9 +15,7 @@ use crate::db::ReadPool;
 use agaric_core::error::AppError;
 use agaric_core::error::ValidationCode;
 use agaric_core::ulid::{BlockId, PageId};
-use agaric_store::filters::{
-    FilterPrimitive, PagesProjection, Projection, WhereClause, last_edited_ms_sql,
-};
+use agaric_store::filters::{FilterPrimitive, PagesProjection, Projection, WhereClause};
 use agaric_store::pagination::{Cursor, PageRequest, PageResponse};
 
 use super::super::*;
@@ -28,11 +25,8 @@ use super::super::*;
 //
 // Returns the same column shape as `BlockRow` PLUS four metadata columns:
 //
-//   - `last_modified_at`: max(`op_log.created_at`) over the page itself,
-//     else its ULID creation time (`last_edited_ms_sql`).
-// Page-only (not subtree-aware) open-question 1 — the
-//     recursive-CTE variant is deferred until a benchmark says it's
-//     worth the cost.
+//   - `last_modified_at`: `pages_cache.last_edited_ms`, the newest op on the
+//     page or any block on it, else its ULID creation time (#5371).
 //   - `inbound_link_count`: COUNT of distinct source blocks linking to
 //     this page OR any of its descendants, EXCLUDING same-page/self links
 //     (a source on this same page) and deleted/orphan sources — matching
@@ -54,59 +48,37 @@ use super::super::*;
 // Cursor strategy reuses the existing `Cursor` slots per the doc
 // comment's "composite overload" guidance (see `pagination/mod.rs:285`):
 // each sort mode encodes its sort-key value into either `deleted_at`
-// (strings / ISO timestamps) or `seq` (i64 counts), with `id` as the
+// (the title key) or `seq` (i64 timestamps and counts), with `id` as the
 // tiebreaker. No new field on the `Cursor` struct.
 //
-// Sort modes:
-//   - Alphabetical: keyset (`COALESCE(content,'')` COLLATE NOCASE, id)
-//   - RecentlyModified: keyset (`last_modified_at`, id) DESC NULLS LAST
+// Sort modes (#5371: every one orders the whole space; nothing re-sorts in JS):
+//   - Alphabetical: keyset (`pc.title_sort_key`, id) ASC
+//   - Created: keyset (id) DESC
+//   - RecentlyModified: keyset (`pc.last_edited_ms` DESC, id ASC)
+//   - LastOpened: keyset (`po.opened_ms` DESC, id DESC); never opened last
 //   - MostLinked: keyset (`inbound_link_count` DESC, id ASC)
 //   - MostContent: keyset (`child_block_count` DESC, id ASC)
-//   - Default: keyset (id) ASC — power-user / debug
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Sort mode for [`list_pages_with_metadata_inner`].
-///
-/// These are the server-derived sort modes the IPC exposes. The
-/// frontend may layer two additional sorts that don't go over the wire:
-///
-///   - `recent` — per-device visit history (sourced from `getRecentPages()`).
-///   - `created` — ULID DESC (just `Default` reversed in JS).
-///
-/// Both reuse the `Default` SQL ordering and re-sort the loaded page
-/// client-side.
+/// Sort mode for [`list_pages_with_metadata_inner`]. Every mode orders all
+/// pages in the space behind a keyset cursor.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Type, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum PageSort {
-    /// Title ascending, case-insensitive. Default for "browse my pages".
+    /// Title ascending, accent- and case-insensitive (`pages_cache.title_sort_key`).
     #[default]
     Alphabetical,
-    // Perf ceiling: unlike `MostLinked` / `MostContent`
-    // (which read materialised `pages_cache` columns), `RecentlyModified`
-    // computes `MAX(op_log.created_at)` per page via a correlated subquery
-    // across the space *before* the LIMIT — it is NOT materialised. The
-    // `idx_op_log_block_id` index (migration 0030) serves each subquery,
-    // but the per-row aggregate still dominates at scale. The
-    // `recently_modified_perf_gate_20k_pages` `#[ignore]`-d test gates the
-    // first-page latency at 20k pages. Materialising a
-    // `pages_cache.last_edited_at` column (kept fresh by the materializer on
-    // every op) is the heavier alternative — DEFERRED, not done here; it
-    // would let this sort read a column like the other count sorts. Revisit
-    // if the perf gate trips. (Intentionally a non-doc `//` comment: the
-    // doc comment below is specta-exposed, so keeping the ceiling text out
-    // of it avoids drifting the committed `src/lib/bindings.ts`.)
-    //
-    /// Last-modified timestamp (max op_log.created_at) DESC.
+    /// Newest page first (block id DESC).
+    Created,
+    /// Last edit to the page or any block on it, newest first.
     RecentlyModified,
+    /// Last opened on this device, newest first; pages never opened here
+    /// follow, newest page first.
+    LastOpened,
     /// Inbound-link count DESC (page + descendant link targets).
     MostLinked,
     /// Descendant-block count DESC.
     MostContent,
-    /// Default backend ordering — block id ASC. Useful for debugging
-    /// and as the wire shape for the frontend-only `recent` / `created`
-    /// sorts that re-sort client-side.
-    #[serde(rename = "default")]
-    Default,
 }
 
 /// Filter / sort bundle for [`list_pages_with_metadata`].
@@ -164,10 +136,9 @@ pub struct PageWithMetadataRow {
     pub due_date: Option<String>,
     pub scheduled_date: Option<String>,
     pub page_id: Option<PageId>,
-    /// max(`op_log.created_at`) over the page itself, else the page's ULID
-    /// creation time once compaction has pruned its ops (#5286), as INTEGER
-    /// epoch-milliseconds (#109 Phase 2). None only for a non-ULID id with
-    /// no op-log entry.
+    /// Epoch-ms of the newest op on the page or any block on it, else the
+    /// page's ULID creation time; kept when compaction prunes the ops
+    /// (#5286). None only while the page has no `pages_cache` row.
     pub last_modified_at: Option<i64>,
     /// COUNT of `block_links` targeting this page or any of its
     /// descendants. Always emitted (zero for un-linked pages).
@@ -181,6 +152,25 @@ pub struct PageWithMetadataRow {
     pub flags: PagePropertyFlags,
 }
 
+impl From<PageWithMetadataRow> for agaric_store::pagination::BlockRow {
+    /// The page's plain block row, without the metadata columns.
+    fn from(row: PageWithMetadataRow) -> Self {
+        Self {
+            id: row.id,
+            block_type: row.block_type,
+            content: row.content,
+            parent_id: row.parent_id,
+            position: row.position,
+            deleted_at: row.deleted_at,
+            todo_state: row.todo_state,
+            priority: row.priority,
+            due_date: row.due_date,
+            scheduled_date: row.scheduled_date,
+            page_id: row.page_id.map(BlockId::from),
+        }
+    }
+}
+
 /// Build the `position` slot's encoded sort-mode tag. Stamped into every
 /// outgoing cursor and read back by `validate_pages_metadata_cursor`
 /// to refuse a cursor whose sort-mode discriminator doesn't match the
@@ -189,12 +179,14 @@ pub struct PageWithMetadataRow {
 /// independent reviewers as a BLOCKER. Per-sort i64 stamped into the
 /// already-unused `Cursor.position` slot.
 pub fn sort_discriminator(sort: PageSort) -> i64 {
+    // 5 was the retired `Default`; a cursor carrying it must never match.
     match sort {
         PageSort::Alphabetical => 1,
         PageSort::RecentlyModified => 2,
         PageSort::MostLinked => 3,
         PageSort::MostContent => 4,
-        PageSort::Default => 5,
+        PageSort::Created => 6,
+        PageSort::LastOpened => 7,
     }
 }
 
@@ -211,14 +203,6 @@ fn validate_pages_metadata_cursor(cursor: &Cursor, sort: PageSort) -> Result<(),
         )),
     }
 }
-
-/// Sentinel substituted for NULL `last_modified_at` in the
-/// `RecentlyModified` keyset (Review Round 1 HIGH #2 fix). #109 Phase 2:
-/// `last_modified_at` is INTEGER epoch-ms, so the sentinel is `0` — it
-/// sorts BEFORE any plausible timestamp in DESC order, so the keyset
-/// comparison works uniformly for NULL and non-NULL rows (sorted last in
-/// DESC).
-const LAST_MOD_NULL_SENTINEL: i64 = 0;
 
 /// Heterogeneous bind value for the runtime-composed
 /// `list_pages_with_metadata_inner` query. The IPC composes the SQL
@@ -275,10 +259,8 @@ impl<'a> SqlBind<'a> {
 }
 
 /// Per-sort descriptor extracted from the body of
-/// `list_pages_with_metadata_inner`. Collapses what used to be a
-/// 5-arm match with ~250 lines of near-duplicate SQL composition into
-/// a small lookup table; each arm of `keyset_for` is one of these
-/// variants and the IPC consumes the descriptor via a single shared
+/// `list_pages_with_metadata_inner`: each arm of `keyset_for` is one of
+/// these variants and the IPC consumes the descriptor via a single shared
 /// `apply` method.
 ///
 /// **Bind contract:** `?1 = filter.space_id` always. splices
@@ -287,68 +269,49 @@ impl<'a> SqlBind<'a> {
 /// its placeholders from a runtime `base` offset (`1 + filter_bind_count`)
 /// rather than the hardcoded `?2`. With no filters, `base = 1` reproduces
 /// the original `?2 .. ?N` numbering.
-///
-/// **Why an enum rather than a `struct` with fn pointers / closures?**
-/// The five sort modes have three distinct keyset shapes (string-ASC,
-/// string-DESC-with-null-sentinel, i64-DESC) plus a degenerate "id
-/// only" mode. A flat struct couldn't model the `RecentlyModified`
-/// null-sentinel slot without optional fields that the other variants
-/// would have to leave `None`; modelling each shape explicitly keeps
-/// the bind-position arithmetic readable and the exhaustiveness check
-/// honest.
 enum SortKeyset {
     /// `(key_expr, id) ASC` keyset. Cursor stashes the last row's key
     /// in the `deleted_at` slot (string). Used by `Alphabetical`.
     StringAsc {
-        /// SQL expression for the sort key (e.g.
-        /// `COALESCE(b.content,'') COLLATE NOCASE`). Composed verbatim
-        /// into the keyset predicate and ORDER BY.
+        /// SQL expression for the sort key, composed verbatim into the
+        /// keyset predicate and ORDER BY.
         key_expr: &'static str,
     },
-    /// `(key_expr, id) DESC` keyset where `key_expr` references a
-    /// trailing NULL-sentinel bind slot (`?S`). The composer
-    /// substitutes the runtime bind position into the placeholder.
-    /// Used by `RecentlyModified`.
-    StringDescNullCoalesced {
-        /// SQL template with `{S}` as the sentinel bind placeholder.
-        /// E.g. `COALESCE(<last edited>, ?{S})`. The composer substitutes
-        /// `{S}` with the actual bind position.
-        key_expr_template: String,
-        /// INTEGER epoch-ms written to the sentinel slot at runtime
-        /// (#109 Phase 2; `last_modified_at` is now INTEGER).
-        null_sentinel: i64,
-    },
-    /// `(key_expr, id) DESC` keyset over an i64-typed column. Cursor
-    /// stashes the last row's count in the `seq` slot. Used by
-    /// `MostLinked` and `MostContent` — both now read from
-    /// `pages_cache` (materialised by the materializer) so the
-    /// expression is a column reference, not a subquery.
+    /// `key_expr DESC` over an i64 column, ties broken by id in `ties`.
+    /// Cursor stashes the last row's key in the `seq` slot.
     I64Desc {
-        /// SQL expression for the sort key. After this is
-        /// `pc.inbound_link_count` or `pc.child_block_count` — a
-        /// materialised column reached via the LEFT JOIN to
-        /// `pages_cache pc`.
+        /// A column reached through the `pages_cache pc` / `page_opens po`
+        /// LEFT JOINs, COALESCE'd so a missing row still has a key.
         key_expr: &'static str,
+        ties: IdOrder,
     },
-    /// `b.id ASC` only. No extra sort-key slot. Used by `Default`.
-    IdOnly,
+    /// `b.id DESC` only. No extra sort-key slot. Used by `Created`.
+    IdDesc,
+}
+
+/// Direction of the `b.id` tiebreaker.
+#[derive(Clone, Copy)]
+enum IdOrder {
+    Asc,
+    Desc,
 }
 
 /// Map a [`PageSort`] to its [`SortKeyset`] descriptor.
 fn keyset_for(sort: PageSort) -> SortKeyset {
     match sort {
         PageSort::Alphabetical => SortKeyset::StringAsc {
-            key_expr: "COALESCE(b.content,'') COLLATE NOCASE",
+            key_expr: "COALESCE(pc.title_sort_key, '')",
         },
-        // Perf ceiling: this key is the UN-materialised
-        // `MAX(op_log.created_at)` correlated subquery (served by
-        // `idx_op_log_block_id`), evaluated per page before the LIMIT — the
-        // heaviest sort key. Gated by `recently_modified_perf_gate_20k_pages`
-        // (`#[ignore]`'d). Materialising `pages_cache.last_edited_at` is the
-        // deferred remedy (see the `PageSort::RecentlyModified` comment).
-        PageSort::RecentlyModified => SortKeyset::StringDescNullCoalesced {
-            key_expr_template: format!("COALESCE({}, ?{{S}})", last_edited_ms_sql("b.id")),
-            null_sentinel: LAST_MOD_NULL_SENTINEL,
+        PageSort::Created => SortKeyset::IdDesc,
+        PageSort::RecentlyModified => SortKeyset::I64Desc {
+            key_expr: "COALESCE(pc.last_edited_ms, 0)",
+            ties: IdOrder::Asc,
+        },
+        // A page never opened here keys as -1, below every real open, and
+        // the id tiebreaker then orders those pages newest first.
+        PageSort::LastOpened => SortKeyset::I64Desc {
+            key_expr: "COALESCE(po.opened_ms, -1)",
+            ties: IdOrder::Desc,
         },
         // Read from the materialised `pages_cache` column
         // instead of the per-row `COUNT(DISTINCT bl.source_id) FROM
@@ -358,43 +321,31 @@ fn keyset_for(sort: PageSort) -> SortKeyset {
         // `pages_cache_count_parity` for the guarding test.
         PageSort::MostLinked => SortKeyset::I64Desc {
             key_expr: "COALESCE(pc.inbound_link_count, 0)",
+            ties: IdOrder::Asc,
         },
         // See above; reads `pc.child_block_count` via the
         // same LEFT JOIN.
         PageSort::MostContent => SortKeyset::I64Desc {
             key_expr: "COALESCE(pc.child_block_count, 0)",
+            ties: IdOrder::Asc,
         },
-        PageSort::Default => SortKeyset::IdOnly,
     }
 }
 
-/// Append the keyset WHERE clause and ORDER BY for this descriptor.
-/// Returns the bind values (in order) that the caller must append to
-/// the `query_as` chain after the leading `?1 = space_id`.
-///
-/// `cursor` is the decoded keyset position from the prior page (None
-/// for first-page requests). `limit_plus_one` is the LIMIT bind value
-/// (probe-for-more pattern).
-///
-/// **Bind position arithmetic:** the leading bind is `?1` (space_id),
-/// and this function appends binds at positions `?2 .. ?N` in the
-/// order returned. Each variant computes the LIMIT placeholder
-/// position from the trailing bind count so the SQL stays
-/// self-consistent.
 impl SortKeyset {
     /// Append the keyset predicate + ORDER BY + LIMIT and return the
     /// keyset binds in order.
     ///
-    /// **`base` bind offset:** the keyset's placeholders used to
-    /// be hardcoded `?2 .. ?5` on the assumption that `?1 = space_id` was
-    /// the only bind before them. Phase 3 splices compound-filter clauses
-    /// (each with its own `?` binds) into the WHERE *between* the space_id
-    /// bind and the keyset. `base` is the highest placeholder position
-    /// already consumed (`1` for space_id plus the filter-bind count); the
-    /// keyset numbers its own placeholders from `base + 1` so SQLite's
-    /// positional binding stays aligned regardless of how many filter
-    /// binds preceded it. With no filters, `base = 1` reproduces the old
-    /// `?2 ..` numbering exactly.
+    /// `cursor` is the decoded keyset position from the prior page (None
+    /// for first-page requests). `limit_plus_one` is the LIMIT bind value
+    /// (probe-for-more pattern).
+    ///
+    /// **`base` bind offset:** Phase 3 splices compound-filter clauses (each
+    /// with its own `?` binds) into the WHERE *between* the space_id bind
+    /// and the keyset. `base` is the highest placeholder position already
+    /// consumed (`1` for space_id plus the filter-bind count); the keyset
+    /// numbers its own placeholders from `base + 1` so SQLite's positional
+    /// binding stays aligned regardless of how many filter binds preceded it.
     fn apply<'a>(
         self,
         sql: &mut String,
@@ -406,21 +357,10 @@ impl SortKeyset {
             SortKeyset::StringAsc { key_expr } => {
                 push_string_asc_keyset(sql, key_expr, cursor, limit_plus_one, base)
             }
-            SortKeyset::StringDescNullCoalesced {
-                key_expr_template,
-                null_sentinel,
-            } => push_null_coalesced_desc_keyset(
-                sql,
-                &key_expr_template,
-                null_sentinel,
-                cursor,
-                limit_plus_one,
-                base,
-            ),
-            SortKeyset::I64Desc { key_expr } => {
-                push_i64_desc_keyset(sql, key_expr, cursor, limit_plus_one, base)
+            SortKeyset::I64Desc { key_expr, ties } => {
+                push_i64_desc_keyset(sql, key_expr, ties, cursor, limit_plus_one, base)
             }
-            SortKeyset::IdOnly => push_id_only_keyset(sql, cursor, limit_plus_one, base),
+            SortKeyset::IdDesc => push_id_desc_keyset(sql, cursor, limit_plus_one, base),
         }
     }
 }
@@ -458,89 +398,47 @@ fn push_string_asc_keyset<'a>(
     binds
 }
 
-/// `(key_expr, id) DESC` keyset for [`SortKeyset::StringDescNullCoalesced`].
-/// The key expression is a template whose `{S}` marks the NULL-sentinel bind
-/// slot, so the sentinel's placeholder position is substituted in before the
-/// fragment is appended.
-fn push_null_coalesced_desc_keyset<'a>(
-    sql: &mut String,
-    key_expr_template: &str,
-    null_sentinel: i64,
-    cursor: Option<&'a Cursor>,
-    limit_plus_one: i64,
-    base: usize,
-) -> Vec<SqlBind<'a>> {
-    let (p1, p2, p3, p4) = (base + 1, base + 2, base + 3, base + 4);
-    let mut binds: Vec<SqlBind<'a>> = Vec::new();
-    if let Some(c) = cursor {
-        // #109 Phase 2: the keyset value is INTEGER epoch-ms. The
-        // cursor stashes it in the `deleted_at` string slot (opaque
-        // wire format), so parse it back to i64, defaulting to the
-        // integer null sentinel for a NULL/legacy cursor value.
-        let last_key = c
-            .deleted_at
-            .as_deref()
-            .and_then(|s| s.parse::<i64>().ok())
-            .unwrap_or(null_sentinel);
-        // Sentinel lives at p4; cursor binds are p1=last_key,
-        // p2=last_id, p3=limit. The template references the
-        // sentinel via `{S}` so we substitute the literal
-        // bind position before pushing.
-        let key_expr = key_expr_template.replace("{S}", &p4.to_string());
-        sql.push_str(&format!(
-            " AND ( {key_expr} < ?{p1} \
-                            OR ({key_expr} = ?{p1} AND b.id > ?{p2}) ) \
-                       ORDER BY {key_expr} DESC, b.id ASC \
-                       LIMIT ?{p3}"
-        ));
-        binds.push(SqlBind::I64(last_key));
-        binds.push(SqlBind::Str(c.id.as_str()));
-        binds.push(SqlBind::I64(limit_plus_one));
-        binds.push(SqlBind::I64(null_sentinel));
-    } else {
-        // Sentinel at p1; limit at p2.
-        let key_expr = key_expr_template.replace("{S}", &p1.to_string());
-        sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p2}"));
-        binds.push(SqlBind::I64(null_sentinel));
-        binds.push(SqlBind::I64(limit_plus_one));
-    }
-    binds
-}
-
-/// `(key_expr, id) DESC` keyset over an i64 column, for
-/// [`SortKeyset::I64Desc`]. The cursor carries the last row's count in its
-/// `seq` slot.
+/// `key_expr DESC` keyset over an i64 column, for [`SortKeyset::I64Desc`],
+/// with the id tiebreaker running in `ties`. The cursor carries the last
+/// row's key in its `seq` slot.
 fn push_i64_desc_keyset<'a>(
     sql: &mut String,
     key_expr: &str,
+    ties: IdOrder,
     cursor: Option<&'a Cursor>,
     limit_plus_one: i64,
     base: usize,
 ) -> Vec<SqlBind<'a>> {
     let (p1, p2, p3) = (base + 1, base + 2, base + 3);
+    let (id_after, id_order) = match ties {
+        IdOrder::Asc => (">", "ASC"),
+        IdOrder::Desc => ("<", "DESC"),
+    };
     let mut binds: Vec<SqlBind<'a>> = Vec::new();
     if let Some(c) = cursor {
-        let last_count = c.seq.unwrap_or(0);
-        // Binds: last_count, last_id, limit.
+        let last_key = c.seq.unwrap_or(0);
+        // Binds: last_key, last_id, limit.
         sql.push_str(&format!(
             " AND ( {key_expr} < ?{p1} \
-                            OR ({key_expr} = ?{p1} AND b.id > ?{p2}) ) \
-                       ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p3}"
+                            OR ({key_expr} = ?{p1} AND b.id {id_after} ?{p2}) ) \
+                       ORDER BY {key_expr} DESC, b.id {id_order} LIMIT ?{p3}"
         ));
-        binds.push(SqlBind::I64(last_count));
+        binds.push(SqlBind::I64(last_key));
         binds.push(SqlBind::Str(c.id.as_str()));
         binds.push(SqlBind::I64(limit_plus_one));
     } else {
         // Binds: limit.
-        sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p1}"));
+        sql.push_str(&format!(
+            " ORDER BY {key_expr} DESC, b.id {id_order} LIMIT ?{p1}"
+        ));
         binds.push(SqlBind::I64(limit_plus_one));
     }
     binds
 }
 
-/// `b.id ASC` keyset for [`SortKeyset::IdOnly`] (the `Default` sort): no
-/// sort-key slot, just the id tiebreaker.
-fn push_id_only_keyset<'a>(
+/// `b.id DESC` keyset for [`SortKeyset::IdDesc`] (the `Created` sort): no
+/// sort-key slot, just the id.
+fn push_id_desc_keyset<'a>(
     sql: &mut String,
     cursor: Option<&'a Cursor>,
     limit_plus_one: i64,
@@ -550,12 +448,12 @@ fn push_id_only_keyset<'a>(
     let mut binds: Vec<SqlBind<'a>> = Vec::new();
     if let Some(c) = cursor {
         // Binds: last_id, limit.
-        sql.push_str(&format!(" AND b.id > ?{p1} ORDER BY b.id ASC LIMIT ?{p2}"));
+        sql.push_str(&format!(" AND b.id < ?{p1} ORDER BY b.id DESC LIMIT ?{p2}"));
         binds.push(SqlBind::Str(c.id.as_str()));
         binds.push(SqlBind::I64(limit_plus_one));
     } else {
         // Binds: limit.
-        sql.push_str(&format!(" ORDER BY b.id ASC LIMIT ?{p1}"));
+        sql.push_str(&format!(" ORDER BY b.id DESC LIMIT ?{p1}"));
         binds.push(SqlBind::I64(limit_plus_one));
     }
     binds
@@ -752,7 +650,7 @@ fn compile_path_glob_clause(
 
 /// The base SELECT for `list_pages_with_metadata_inner` (everything up to
 /// but NOT including the compound-filter fragment, the keyset, the ORDER BY,
-/// and the LIMIT). Hoisted to a `const` so the test-only
+/// and the LIMIT). A `const` so the test-only
 /// [`compose_list_pages_with_metadata_sql`] accessor composes
 /// the SAME real SQL the IPC emits rather than a hand-rebuilt copy — a plan
 /// regression in the IPC's actual query is then caught by the EXPLAIN tests.
@@ -765,17 +663,16 @@ fn compile_path_glob_clause(
 ///
 /// The space-filter IN-subquery makes the planner drive off the
 /// space-membership set, so output order never matches the requested
-/// ORDER BY: every sort mode (incl. `Default`/`Alphabetical`) gets
+/// ORDER BY: every sort mode (incl. `Created`/`Alphabetical`) gets
 /// `USE TEMP B-TREE FOR ORDER BY`, the LIMIT cannot short-circuit, and
-/// the per-row `has_*` EXISTS + `MAX(op_log.created_at)` subqueries are
-/// evaluated across the whole filtered set first. The remedy (a
-/// materialised per-page `space` column / folding `has_*` into
-/// `pages_cache`) is a **schema promotion gated by AGENTS.md
-/// "Architectural Stability"** and was deferred pending a measurement.
-/// MEASURED 2026-06-05 at 20k pages: `Default` ~38 ms, `Alphabetical`
-/// ~67 ms first-page — comfortably within budget, so the promotion is
-/// not justified at this scale and stays deferred behind the
-/// `default_and_alphabetical_sort_perf_gate_20k_pages` gate (alongside
+/// the per-row `has_*` EXISTS subqueries are evaluated across the whole
+/// filtered set first. The remedy (a materialised per-page `space` column /
+/// folding `has_*` into `pages_cache`) is a **schema promotion gated by
+/// AGENTS.md "Architectural Stability"** and was deferred pending a
+/// measurement. MEASURED 2026-06-05 at 20k pages, before #5371: id order
+/// ~38 ms, alphabetical ~67 ms first-page — comfortably within budget, so
+/// the promotion is not justified at this scale and stays deferred behind
+/// the `created_and_alphabetical_sort_perf_gate_20k_pages` gate (alongside
 /// the MostLinked / RecentlyModified / filtered gates).
 ///
 /// # #433 — migration-0069 header claim is stale; THIS is the real shape
@@ -788,13 +685,13 @@ fn compile_path_glob_clause(
 /// expression over a LEFT JOIN keyed on `b.id`, NOT indexable — so
 /// `EXPLAIN QUERY PLAN` shows `USE TEMP B-TREE FOR ORDER BY`: SQLite
 /// materialises the whole filtered page set (not a `LIMIT`-50 top-K heap) and
-/// evaluates the surviving per-row subqueries (`MAX(op_log.created_at)`,
-/// `has_tags` / `has_todo` / `has_scheduled` / `has_due`) across every row
-/// before the sort — `O(N)`, not top-K. What migration `0069` genuinely fixed
-/// — and what the `most_linked_query_plan_uses_pages_cache_not_block_links`
-/// test pins — is that the expensive `COUNT(DISTINCT)` over `block_links` is
-/// gone (replaced by the materialised `pages_cache` count columns); the five
-/// residual subqueries are cheap single-index probes. Severity is low at
+/// evaluates the surviving per-row subqueries (`has_tags` / `has_todo` /
+/// `has_scheduled` / `has_due`) across every row before the sort — `O(N)`,
+/// not top-K. What migration `0069` genuinely fixed — and what the
+/// `most_linked_query_plan_uses_pages_cache_not_block_links` test pins — is
+/// that the expensive `COUNT(DISTINCT)` over `block_links` is gone (replaced
+/// by the materialised `pages_cache` count columns); the four residual
+/// subqueries are cheap single-index probes. Severity is low at
 /// present scale (the 20k gate passes < 100 ms). Killing the temp B-tree
 /// outright (a `(inbound_link_count DESC)`-style materialised sort column) is
 /// the same gated schema promotion deferred above — revisit only if a future
@@ -811,13 +708,14 @@ fn compile_path_glob_clause(
 /// the badge-render cost for the visible rows, NOT this whole-space sort
 /// key. Do not read that number as license to drop the columns; see the
 /// KEEP rationale on `cache::pages::recompute_all_pages_cache_counts`.
-static PAGES_METADATA_BASE_SELECT: LazyLock<String> = LazyLock::new(|| {
-    format!(
-        r"SELECT
+///
+/// `title_sort_key` and `opened_ms` are the Alphabetical and LastOpened
+/// keys, read back only to mint the next cursor ([`KeyedPageRow`]).
+const PAGES_METADATA_BASE_SELECT: &str = r"SELECT
                b.id, b.block_type, b.content, b.parent_id, b.position,
                b.deleted_at, b.todo_state, b.priority, b.due_date,
                b.scheduled_date, b.page_id,
-               {} AS last_modified_at,
+               pc.last_edited_ms AS last_modified_at,
                COALESCE(pc.inbound_link_count, 0) AS inbound_link_count,
                COALESCE(pc.child_block_count, 0) AS child_block_count,
                EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags,
@@ -832,16 +730,26 @@ static PAGES_METADATA_BASE_SELECT: LazyLock<String> = LazyLock::new(|| {
                EXISTS(SELECT 1 FROM blocks descendant
                        WHERE descendant.page_id = b.id
                          AND descendant.deleted_at IS NULL
-                         AND descendant.due_date IS NOT NULL) AS has_due
+                         AND descendant.due_date IS NOT NULL) AS has_due,
+               COALESCE(pc.title_sort_key, '') AS title_sort_key,
+               COALESCE(po.opened_ms, -1) AS opened_ms
            FROM blocks b
            LEFT JOIN pages_cache pc ON pc.page_id = b.id
+           LEFT JOIN page_opens po ON po.page_id = b.id
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
              AND b.space_id = ?1
-        ",
-        last_edited_ms_sql("b.id")
-    )
-});
+        ";
+
+/// A fetched page row plus the two sort keys the wire row does not carry,
+/// so the next cursor holds exactly the key the keyset compared.
+#[derive(sqlx::FromRow)]
+struct KeyedPageRow {
+    #[sqlx(flatten)]
+    row: PageWithMetadataRow,
+    title_sort_key: String,
+    opened_ms: i64,
+}
 
 /// Test-only accessor that composes the **real** first-page
 /// (no cursor) SQL `list_pages_with_metadata_inner` emits for the given
@@ -861,7 +769,7 @@ pub fn compose_list_pages_with_metadata_sql(
     filter: &ListPagesWithMetadataFilter,
     limit_plus_one: i64,
 ) -> Result<String, AppError> {
-    let mut sql = PAGES_METADATA_BASE_SELECT.clone();
+    let mut sql = PAGES_METADATA_BASE_SELECT.to_owned();
     let (filter_sql, filter_binds) = compile_pages_filters(&filter.filters)?;
     sql.push_str(&filter_sql);
     let base = 1 + filter_binds.len();
@@ -877,14 +785,18 @@ pub fn compose_list_pages_with_metadata_sql(
 /// [`PageSort`].
 ///
 /// **Cursor semantics:** the cursor carries the LAST row's sort-key
-/// value (in `deleted_at` for string / ISO-timestamp sorts; in `seq`
-/// for i64-count sorts), the last row's `id` as the tiebreaker, and
+/// value (in `deleted_at` for the string sort; in `seq` for the i64
+/// sorts), the last row's `id` as the tiebreaker, and
 /// a sort-mode discriminator in `position` (Review Round 1 — protects
 /// against cross-sort / cross-IPC cursor reuse). First-page requests
 /// pass `cursor = None`. A stale cursor (e.g. from `list_blocks`) is
 /// rejected with a `ValidationCode::RequiresRefresh` validation error so the
 /// frontend can render a "Sort changed — refresh to continue" toast
 /// (acceptance criterion #3).
+///
+/// **materialised keys (#5371):** `title_sort_key` and `last_edited_ms`
+/// are read from `pages_cache` the same way, and `opened_ms` from the
+/// device-local `page_opens`.
 ///
 /// **materialised counts:** `inbound_link_count` and
 /// `child_block_count` are read from `pages_cache.{inbound_link_count,
@@ -896,8 +808,8 @@ pub fn compose_list_pages_with_metadata_sql(
 /// RestoreBlock / PurgeBlock op; see `materializer::tests::
 /// pages_cache_count_parity` for the guarding integration test.
 ///
-/// **Defensive contract:** the JOIN is LEFT and the columns are
-/// COALESCE'd to 0. The materializer guarantees a `pages_cache` row
+/// **Defensive contract:** the JOIN is LEFT and the sort keys are
+/// COALESCE'd. The materializer guarantees a `pages_cache` row
 /// for every live page (`apply_create_block_via_loro` for block_type
 /// = 'page' INSERTs the row), so a missing row indicates a
 /// materializer bug. The COALESCE keeps the IPC alive while the bug
@@ -926,20 +838,15 @@ pub async fn list_pages_with_metadata_inner(
     }
     let limit_plus_one = req.limit + 1; // probe-for-more pattern
 
-    // SELECT shape — the two count aggregates (inbound_link_count,
-    // child_block_count) are now reads from the materialised
-    // `pages_cache` columns. The remaining metadata
-    // aggregates stay as correlated subqueries — out of scope for this
-    // refactor:
-    //   - last_modified_at via `idx_op_log_block_id` (migration 0030)
-    //   - has_property_flags: 4 EXISTS short-circuits over the
-    //     `idx_blocks_page_id` + `idx_block_tags_block_id` indexes.
+    // SELECT shape — every sort key and count is a read from `pages_cache`
+    // or `page_opens`. The `has_*` flags stay 4 EXISTS short-circuits over
+    // the `idx_blocks_page_id` + `idx_block_tags_block_id` indexes.
     //
     // The SQL is hand-written rather than `sqlx::query_as!` because
     // the ORDER BY / WHERE keyset depends on the runtime sort mode;
-    // the compile-time macro would force four near-identical query
+    // the compile-time macro would force six near-identical query
     // bodies.
-    let mut sql = PAGES_METADATA_BASE_SELECT.clone();
+    let mut sql = PAGES_METADATA_BASE_SELECT.to_owned();
 
     // Splice the compound-filter WHERE clauses BEFORE the
     // keyset/ORDER BY/LIMIT. Their `?` placeholders land at positions
@@ -956,7 +863,7 @@ pub async fn list_pages_with_metadata_inner(
     // `total_count: None` silently dropped it for every user). The COUNT
     // reuses the SAME space-membership predicate + compiled compound-filter
     // WHERE clause as the fetch, but DROPS the keyset/cursor terms and the
-    // per-row metadata aggregate subqueries (last_modified_at, has_*) — so
+    // per-row metadata subqueries (has_*) — so
     // the count stays index-served and behind the same predicates, keeping
     // the 20k-page perf gate (`most_linked_perf_gate_20k_pages`) green.
     // The `LEFT JOIN pages_cache pc` is retained because the Pages-only
@@ -988,8 +895,7 @@ pub async fn list_pages_with_metadata_inner(
 
     // Per-sort keyset + ORDER BY. The `SortKeyset` descriptor encodes
     // the SQL fragment, ORDER BY, and the per-mode bind list so the
-    // composition stays in one place rather than the 5 inline arms
-    // the prior implementation duplicated.
+    // composition stays in one place.
     let keyset = keyset_for(filter.sort);
     let cursor_ref = req.after.as_ref();
     let keyset_binds = keyset.apply(&mut sql, cursor_ref, limit_plus_one, base);
@@ -997,8 +903,8 @@ pub async fn list_pages_with_metadata_inner(
     // Bind order: ?1 = space_id, then the filter binds (?2 ..), then the
     // keyset binds (?{base+1} ..) — exactly matching the `?` appearance
     // order in the composed SQL.
-    let mut query = sqlx::query_as::<_, PageWithMetadataRow>(sqlx::AssertSqlSafe(sql.as_str()))
-        .bind(&filter.space_id);
+    let mut query =
+        sqlx::query_as::<_, KeyedPageRow>(sqlx::AssertSqlSafe(sql.as_str())).bind(&filter.space_id);
     for bind in filter_binds {
         query = bind.bind_to(query);
     }
@@ -1013,7 +919,7 @@ pub async fn list_pages_with_metadata_inner(
 /// next-page cursor. Encodes the last-row's sort-key value into the
 /// appropriate `Cursor` slot per sort mode.
 fn build_metadata_response(
-    mut rows: Vec<PageWithMetadataRow>,
+    mut rows: Vec<KeyedPageRow>,
     limit: i64,
     sort: PageSort,
     total_count: Option<i64>,
@@ -1023,67 +929,33 @@ fn build_metadata_response(
     if has_more {
         rows.truncate(limit_us);
     }
-    // Tag every cursor with the sort discriminator (Review Round 1) so
-    // `validate_pages_metadata_cursor` can reject cross-sort reuse.
-    let disc = Some(sort_discriminator(sort));
-    let next_cursor = if has_more {
-        rows.last().map(|last| -> Result<String, AppError> {
-            let cursor = match sort {
-                PageSort::Alphabetical => Cursor {
-                    id: last.id.clone().into_string(),
-                    position: disc,
-                    deleted_at: last.content.clone(),
-                    seq: None,
-                    rank: None,
-                },
-                PageSort::RecentlyModified => Cursor {
-                    id: last.id.clone().into_string(),
-                    position: disc,
-                    // RecentlyModified always stashes the COALESCE'd
-                    // value (real epoch-ms OR `LAST_MOD_NULL_SENTINEL`)
-                    // so the keyset works uniformly for NULL and
-                    // non-NULL rows — Review Round 1 HIGH #2 fix. #109
-                    // Phase 2: the value is INTEGER epoch-ms, serialised
-                    // to the opaque `deleted_at` cursor slot as a decimal
-                    // string and parsed back to i64 in the keyset.
-                    deleted_at: Some(
-                        last.last_modified_at
-                            .unwrap_or(LAST_MOD_NULL_SENTINEL)
-                            .to_string(),
-                    ),
-                    seq: None,
-                    rank: None,
-                },
-                PageSort::MostLinked => Cursor {
-                    id: last.id.clone().into_string(),
-                    position: disc,
-                    deleted_at: None,
-                    seq: Some(last.inbound_link_count),
-                    rank: None,
-                },
-                PageSort::MostContent => Cursor {
-                    id: last.id.clone().into_string(),
-                    position: disc,
-                    deleted_at: None,
-                    seq: Some(last.child_block_count),
-                    rank: None,
-                },
-                PageSort::Default => Cursor {
-                    id: last.id.clone().into_string(),
-                    position: disc,
-                    deleted_at: None,
-                    seq: None,
-                    rank: None,
-                },
+    let next_cursor = match rows.last() {
+        Some(last) if has_more => {
+            // The key the keyset compared: a string in `deleted_at`, an i64
+            // in `seq`, nothing for the id-only sort.
+            let (deleted_at, seq) = match sort {
+                PageSort::Alphabetical => (Some(last.title_sort_key.clone()), None),
+                PageSort::Created => (None, None),
+                PageSort::RecentlyModified => (None, Some(last.row.last_modified_at.unwrap_or(0))),
+                PageSort::LastOpened => (None, Some(last.opened_ms)),
+                PageSort::MostLinked => (None, Some(last.row.inbound_link_count)),
+                PageSort::MostContent => (None, Some(last.row.child_block_count)),
             };
-            cursor.encode()
-        })
-    } else {
-        None
-    }
-    .transpose()?;
+            // Tagged with the sort discriminator (Review Round 1) so
+            // `validate_pages_metadata_cursor` can reject cross-sort reuse.
+            let cursor = Cursor {
+                id: last.row.id.clone().into_string(),
+                position: Some(sort_discriminator(sort)),
+                deleted_at,
+                seq,
+                rank: None,
+            };
+            Some(cursor.encode()?)
+        }
+        _ => None,
+    };
     Ok(PageResponse {
-        items: rows,
+        items: rows.into_iter().map(|keyed| keyed.row).collect(),
         next_cursor,
         has_more,
         // -D / the COUNT over the same space +

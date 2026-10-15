@@ -172,7 +172,7 @@ describe('PageBrowser', () => {
       })
     })
 
-    it('selecting `alphabetical` sort maps to the `default` wire enum (frontend-only sort)', async () => {
+    it('selecting `alphabetical` sort passes `sort: alphabetical` to the IPC', async () => {
       const user = userEvent.setup()
       const calls: Array<Record<string, unknown>> = []
       mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
@@ -200,12 +200,12 @@ describe('PageBrowser', () => {
       await user.selectOptions(sortSelect, 'alphabetical')
 
       await waitFor(() => {
-        // The most recent IPC call should carry `sort: default` because
-        // `alphabetical` is the frontend-only re-sort mode.
+        // The most recent IPC call carries `sort: alphabetical`: every
+        // option is a server sort (#5371).
         const last = calls.at(-1)
         expect(last).toBeDefined()
         const filter = last?.['filter'] as Record<string, unknown> | undefined
-        expect(filter?.['sort']).toBe('default')
+        expect(filter?.['sort']).toBe('alphabetical')
       })
 
       localStorage.removeItem('page-browser-sort')

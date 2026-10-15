@@ -36,24 +36,34 @@ export function foldAsciiUppercase(s: string): string {
 // puts the supplementary character first (0xD800-0xDBFF < 0xE000-0xFFFF),
 // while UTF-8 byte order puts it last (its 4-byte encoding starts with
 // 0xF0-0xF4, which is greater than the 3-byte encoding's 0xE0-0xEF lead byte
-// for that BMP range). Comparing raw UTF-8 bytes sidesteps the surrogate-pair
-// encoding entirely and matches BINARY exactly.
+// for that BMP range). UTF-8 byte order is code-point order, so comparing code
+// points sidesteps the surrogate-pair encoding and matches BINARY exactly.
 //
 // `localeCompare` is further off still: it is an ICU collation, so it can
 // disagree with byte order on ASCII too (case and digit/letter weighting) and
 // on every accented or non-Latin character.
-const utf8Encoder = new TextEncoder()
 
-/** Compare two strings as SQLite's `BINARY` collation does — by UTF-8 bytes. */
+/** A lone surrogate is encoded as U+FFFD, as `TextEncoder` and Rust's lossy UTF-8 do. */
+function utf8CodePoint(s: string, i: number): number {
+  const c = s.codePointAt(i) as number
+  return c >= 0xd800 && c <= 0xdfff ? 0xfffd : c
+}
+
+/**
+ * Compare two strings as SQLite's `BINARY` collation does — by UTF-8 bytes,
+ * walked as code points so the comparators that call it per pair allocate
+ * nothing.
+ */
 export function compareUtf8Bytes(a: string, b: string): number {
-  const aBytes = utf8Encoder.encode(a)
-  const bBytes = utf8Encoder.encode(b)
-  const len = Math.min(aBytes.length, bBytes.length)
-  for (let i = 0; i < len; i++) {
-    const diff = (aBytes[i] as number) - (bBytes[i] as number)
-    if (diff !== 0) return diff < 0 ? -1 : 1
+  // Equal code points take equal UTF-16 widths, so one index walks both.
+  let i = 0
+  while (i < a.length && i < b.length) {
+    const ca = utf8CodePoint(a, i)
+    const cb = utf8CodePoint(b, i)
+    if (ca !== cb) return ca < cb ? -1 : 1
+    i += ca > 0xffff ? 2 : 1
   }
-  return aBytes.length - bBytes.length
+  return a.length - b.length
 }
 
 /** `COLLATE NOCASE` — {@link foldAsciiUppercase} then a `BINARY` memcmp. */

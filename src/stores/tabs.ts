@@ -24,7 +24,10 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { isDateFormattedPage } from '@/lib/date-utils'
+import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
@@ -460,6 +463,21 @@ function coercePersistedTabs(
   }
 }
 
+/**
+ * A completed page open: the `recent-pages` visit, and the device-local stamp
+ * the Pages view's "Last opened" sort reads (#5371). The stamp is
+ * fire-and-forget; a failed one only leaves that sort an open behind.
+ */
+function recordPageOpen(pageId: string, title: string): void {
+  useRecentPagesStore.getState().recordVisit({ pageId, title })
+  commands
+    .recordPageOpen(pageId)
+    .then(unwrap)
+    .catch((err: unknown) => {
+      logger.warn('tabs', 'record_page_open failed', { pageId }, err)
+    })
+}
+
 export const useTabsStore = create<TabsStore>()(
   persist(
     (set, get) => ({
@@ -519,7 +537,7 @@ export const useTabsStore = create<TabsStore>()(
         // below so the user can still reach the page.
         const parsedDate = parseDateTitleToLocalDate(title)
         if (parsedDate !== null) {
-          useRecentPagesStore.getState().recordVisit({ pageId, title })
+          recordPageOpen(pageId, title)
           useJournalStore.getState().navigateToDate(parsedDate, 'daily')
           // Journal view does not use pageStack at all, so we never push
           // Onto it here. Tabs / activeTabIndex are preserved.
@@ -537,7 +555,7 @@ export const useTabsStore = create<TabsStore>()(
         // #753 — aborted navigation: no tab to push onto, so the page is
         // never opened. Bail BEFORE recording the visit.
         if (!activeTab) return
-        useRecentPagesStore.getState().recordVisit({ pageId, title })
+        recordPageOpen(pageId, title)
 
         const pageStack = activeTab.pageStack
         const top = pageStack.at(-1)
