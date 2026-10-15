@@ -505,7 +505,9 @@ impl StructuralFilterBuilder {
     ///
     /// `inline_and_inherited` widens each tag to the tag query's leaf
     /// ([`tag_leaf_subquery_body`](crate::tag_query::tag_leaf_subquery_body)):
-    /// attached, inline `#tag` reference, or inherited from an ancestor.
+    /// attached, inline `#tag` reference, or inherited from an ancestor. That
+    /// leaf binds the tag once per arm, so `next_param` then advances by
+    /// `3 * tags.len()`.
     pub(super) fn add_tags_via_projection(
         &mut self,
         prefix: &str,

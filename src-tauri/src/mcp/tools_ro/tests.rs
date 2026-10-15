@@ -4872,9 +4872,9 @@ fn row_ids(result: &Value) -> Vec<String> {
 }
 
 /// A tag reaches a block attached, written inline, or inherited from its
-/// page, on the text path and the empty-query path alike; every row names
-/// its page. The app's search, which cannot set the mode, still matches
-/// attached tags only.
+/// page, on the text path and the empty-query path alike, also across a
+/// cursor; every row names its page. The app's search, which cannot set the
+/// mode, still matches attached tags only.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_tag_matches_attached_inline_and_inherited_tags_5398() {
     let (tools, mat, _dir) = mk_tools().await;
@@ -4913,6 +4913,31 @@ async fn search_tag_matches_attached_inline_and_inherited_tags_5398() {
     expected.push(tagged.clone());
     expected.sort();
     assert_eq!(row_ids(&search("").await.unwrap()), expected);
+
+    // One row per response, so each path's tag binds must line up with its
+    // cursor binds for every block to come back exactly once.
+    let text_hits: Vec<String> = expected
+        .iter()
+        .filter(|id| **id != tagged)
+        .cloned()
+        .collect();
+    for (query, want) in [("needle", text_hits), ("", expected.clone())] {
+        let mut ids = Vec::new();
+        let mut args = json!({ "query": query, "space_id": space, "tag_ids": [tag], "limit": 1 });
+        loop {
+            let resp = tools
+                .call_tool(TOOL_SEARCH, args.clone(), &ctx)
+                .await
+                .unwrap();
+            ids.extend(row_ids(&resp));
+            match resp["next_cursor"].as_str() {
+                Some(cursor) if resp["has_more"] == true => args["cursor"] = json!(cursor),
+                _ => break,
+            }
+        }
+        ids.sort();
+        assert_eq!(ids, want, "query {query:?}");
+    }
 
     let app_filter: crate::commands::SearchFilter = serde_json::from_value(json!({
         "scope": SearchScope::Spaces(vec![SpaceId::from_trusted(&space)]),
