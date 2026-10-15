@@ -164,7 +164,7 @@ pub(crate) async fn resolve_id_arg(
 }
 
 /// Validate that `block_id`'s owning page lives in
-/// `space_id`, rejecting cross-space writes at the MCP boundary.
+/// `space_id`, rejecting a target in another space at the MCP boundary.
 ///
 /// The owning page is `b.id` if `b` is itself a page block (where
 /// `page_id` is set to `id` by `create_block_in_tx`), else `b.page_id`
@@ -258,13 +258,11 @@ pub(crate) async fn validate_block_in_space(
         // page) or a corrupted page. Refuse: a space-scoped write cannot
         // be authorised against an unscoped target.
         Some(None) => Err(AppError::validation(format!(
-            "block '{block_id}' does not belong to any space; \
-             cross-space writes are denied"
+            "block '{block_id}' does not belong to any space"
         ))),
         Some(Some(found)) if found == space_id => Ok(()),
         Some(Some(found)) => Err(AppError::validation(format!(
-            "block '{block_id}' belongs to space '{found}'; \
-             cross-space write to space '{space_id}' is denied"
+            "block '{block_id}' belongs to space '{found}', not '{space_id}'"
         ))),
     }
 }
@@ -560,7 +558,7 @@ mod tests {
             .expect_err("cross-space target must be denied");
         match err {
             AppError::Validation { message: msg, .. } => assert!(
-                msg.contains(&space_b) && msg.contains("denied"),
+                msg.contains(&space_b) && msg.contains(&space_a),
                 "different-space rejection message: {msg}"
             ),
             _ => panic!("expected Validation for different-space block, got {err:?}"),

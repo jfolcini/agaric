@@ -418,6 +418,8 @@ export const commands = {
 	listBacklinksGrouped: (blockId: BlockId, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope, kind: "page_link" | "block_ref" | null) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("list_backlinks_grouped", { blockId, filters, sort, cursor, limit, scope, kind })),
 	/**  Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`]. */
 	listUnlinkedReferences: (pageId: PageId, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("list_unlinked_references", { pageId, filters, sort, cursor, limit, scope })),
+	/**  Tauri command: count unlinked references. Delegates to [`count_unlinked_references_inner`]. */
+	countUnlinkedReferences: (pageId: PageId, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("count_unlinked_references", { pageId, scope })),
 	/**  Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`]. */
 	listPropertyKeys: () => typedError<string[], AppError>(__TAURI_INVOKE("list_property_keys")),
 	/**

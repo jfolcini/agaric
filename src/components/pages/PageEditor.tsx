@@ -30,6 +30,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { scrollElementIntoView } from '@/lib/scroll-into-view'
 import { useBlockStore } from '@/stores/blocks'
+import { unfocusedBlankTail } from '@/stores/empty-block-cleanup'
 import { useNavigationStore } from '@/stores/navigation'
 import {
   PageBlockStoreProvider,
@@ -288,7 +289,10 @@ function PageEditorInner({
     // parent (the nested block's parent instead of the page).
     const topLevel = blocks.filter((b) => b.parent_id === pageId)
     const lastBlock = topLevel.at(-1)
-    if (lastBlock) {
+    const blankTail = unfocusedBlankTail(blocks, pageId)
+    if (blankTail !== null) {
+      setFocused(blankTail)
+    } else if (lastBlock) {
       const newId = await createBelow(lastBlock.id, '')
       if (newId) {
         setFocused(newId)

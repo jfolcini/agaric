@@ -921,6 +921,7 @@ for (const view of LIST_VIEWS) {
  */
 const PAGE_OPEN_IPC = [
   'batch_resolve',
+  'count_unlinked_references',
   'get_batch_properties',
   'get_block',
   'get_page_aliases',
@@ -932,7 +933,6 @@ const PAGE_OPEN_IPC = [
   'list_pages_with_metadata',
   'list_property_defs',
   'list_tags_for_block',
-  'list_unlinked_references',
   'load_page_subtree',
   'plugin:window|set_title',
   'record_page_open',
@@ -944,6 +944,7 @@ const PAGE_OPEN_IPC = [
 const LINK_CLICK_IPC = [
   'batch_resolve',
   'batch_resolve',
+  'count_unlinked_references',
   'get_batch_properties',
   'get_block',
   'get_block',
@@ -955,7 +956,6 @@ const LINK_CLICK_IPC = [
   'list_pages_with_metadata',
   'list_property_defs',
   'list_tags_for_block',
-  'list_unlinked_references',
   'load_page_subtree',
   'plugin:window|set_title',
   'record_page_open',

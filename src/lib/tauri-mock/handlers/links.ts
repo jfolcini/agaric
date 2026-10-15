@@ -126,6 +126,20 @@ function applyBacklinkFilters(
 }
 
 /**
+ * The `total_count` universe: sources whose root page exists and is not the
+ * target's own (an orphan or a self-reference counts nowhere).
+ */
+function countedSources(
+  sources: Record<string, unknown>[],
+  targetPageId: string,
+): Record<string, unknown>[] {
+  return sources.filter((b) => {
+    const pid = b['page_id'] as string | null
+    return pid !== null && pid !== targetPageId && blocks.has(pid)
+  })
+}
+
+/**
  * The `GroupedBacklinkResponse` both grouped readers answer with, built the
  * way `eval_backlink_query_grouped` and `eval_unlinked_references` build
  * theirs (`agaric-store/src/backlink/grouped.rs`).
@@ -167,10 +181,7 @@ function groupedBacklinkResponse(
   filtered_count: number
   truncated: boolean
 } {
-  const base = sources.filter((b) => {
-    const pid = b['page_id'] as string | null
-    return pid !== null && pid !== targetPageId && blocks.has(pid)
-  })
+  const base = countedSources(sources, targetPageId)
   const filterList = (a['filters'] as Array<Record<string, unknown>> | null) ?? []
   const filtered = applyBacklinkFilters(base, filterList)
   const byPage = new Map<string, Record<string, unknown>[]>()
@@ -207,6 +218,96 @@ function groupedBacklinkResponse(
     has_more: page.has_more,
     total_count: recount ? base.length : 0,
     filtered_count: recount ? filtered.length : 0,
+    truncated: false,
+  }
+}
+
+/**
+ * The unlinked-references base set before the user's filters (both unlinked
+ * readers start from it), or `null` when neither the title nor an alias yields
+ * a needle — the backend's early return.
+ */
+function unlinkedSources(pageId: string, spaceId: string): Record<string, unknown>[] | null {
+  // #4159 item 3 — the TITLE lookup is guarded:
+  // `SELECT content FROM blocks WHERE id = ?1 AND block_type = 'page' AND
+  // deleted_at IS NULL` (`agaric-store/src/backlink/grouped.rs:588-591`),
+  // and the guard is there so a conflict-copy page id never resolves to a
+  // title that drives the search. `fetch_optional` answering `None` is not
+  // an early return on the backend: `title` falls back to the empty string
+  // (`:594-598`) and the ALIAS half still runs. So a `pageId` naming a
+  // content block or a soft-deleted page contributes NO title term here,
+  // exactly as it contributes none there — while a live alias row on that
+  // same id still searches, because `SELECT alias FROM page_aliases WHERE
+  // page_id = ?1` (`:601-605`) carries neither predicate on either side.
+  //
+  // This replaces a `blocks.get(pageId)` that applied neither predicate AND
+  // early-returned on a miss, so it was wrong in both directions: a
+  // content-block id searched on that block's text, and an id with only an
+  // alias row answered empty.
+  const page = blocks.get(pageId)
+  const pageTitle =
+    page && page['block_type'] === 'page' && !page['deleted_at']
+      ? ((page['content'] as string | null) ?? '')
+      : ''
+  // #4036 item 1 — the needle set is the page TITLE **OR** every one of its
+  // `page_aliases` rows, not the title alone. `eval_unlinked_references`
+  // builds `terms` from the sanitized title and then from each sanitized,
+  // trimmed alias, and ORs them into one FTS5 query — `(t1) OR (t2) …`
+  // (`agaric-store/src/backlink/grouped.rs:598-645`). A block reading "see
+  // getting-started for setup" is an unlinked reference to the
+  // `getting-started`-aliased page on the backend; here it was a false
+  // negative, and not hypothetically — `pageAliases` is a seeded store
+  // (`src/lib/tauri-mock/seed.ts:653`).
+  //
+  // The `trim()` on each term is the backend's own (`alias.trim()`,
+  // grouped.rs:614) plus, for the title, the `sanitize_fts_query` empty
+  // check: a whitespace-only title contributes NO term, so it neither
+  // early-returns on its own nor runs as a literal substring needle that
+  // would match every block containing a space. The early return fires only
+  // when the COMBINED term list is empty (grouped.rs:625-635) — a blank
+  // title with a live alias still searches.
+  const terms = [pageTitle, ...(pageAliases.get(pageId) ?? [])]
+    .map((t) => t.trim())
+    .filter((t) => t !== '')
+  if (terms.length === 0) return null
+  // Find blocks that mention the page title as text but don't have a [[link]].
+  //
+  // #4022 — `eval_unlinked_references` runs `WHERE fts_blocks MATCH ?1`
+  // (`agaric-store/src/backlink/grouped.rs:682-697`) over the sanitized
+  // title, so the haystack is `fts_blocks.stripped` ({@link stripForFts})
+  // and the fold is the trigram tokenizer's case-only one
+  // ({@link matchesFtsIndex}) — the same index `search_blocks` reads, not a
+  // `LIKE` scan over `blocks.content`. This was `matchesSearchFolded` over
+  // raw content, which surfaced diacritic-folded mentions the backend never
+  // returns and missed mentions hidden behind markup or supplied by a
+  // resolved `[[ULID]]` title.
+  return [...blocks.values()].filter((b) => {
+    if (b['deleted_at']) return false
+    // `AND b.block_type != 'page'` (grouped.rs:688) — title blocks are
+    // dropped from the base set GLOBALLY, not just for descendants of this
+    // page. The trigram tokenizer is substring-based, so a child page
+    // `Notes/2026` would otherwise surface as an unlinked reference to
+    // `Notes` via the trigrams `Not` / `ote` / `tes`; the refs panel
+    // surfaces body matches, not title matches.
+    if (b['block_type'] === 'page') return false
+    if (!inSpaceScope(b, spaceId)) return false
+    const content = (b['content'] as string) ?? ''
+    // The FTS5 `OR` over `terms` — ANY term hitting keeps the row.
+    const stripped = stripForFts(content)
+    if (!terms.some((t) => matchesFtsIndex(stripped, t))) return false
+    // Exclude if it already has a [[link]] to this page.
+    return !contentLinksTo(content, pageId)
+  })
+}
+
+/** A no-groups `GroupedBacklinkResponse` carrying `count` in both counts. */
+function countOnlyResponse(count: number) {
+  return {
+    groups: [],
+    next_cursor: null,
+    has_more: false,
+    total_count: count,
+    filtered_count: count,
     truncated: false,
   }
 }
@@ -295,85 +396,19 @@ export const linksHandlers = {
     // Honour `scope: SpaceScope` (mirrors
     // `list_unlinked_references_inner`).
     const spaceId = readActiveSpaceScope('list_unlinked_references', a)
-    // #4159 item 3 — the TITLE lookup is guarded:
-    // `SELECT content FROM blocks WHERE id = ?1 AND block_type = 'page' AND
-    // deleted_at IS NULL` (`agaric-store/src/backlink/grouped.rs:588-591`),
-    // and the guard is there so a conflict-copy page id never resolves to a
-    // title that drives the search. `fetch_optional` answering `None` is not
-    // an early return on the backend: `title` falls back to the empty string
-    // (`:594-598`) and the ALIAS half still runs. So a `pageId` naming a
-    // content block or a soft-deleted page contributes NO title term here,
-    // exactly as it contributes none there — while a live alias row on that
-    // same id still searches, because `SELECT alias FROM page_aliases WHERE
-    // page_id = ?1` (`:601-605`) carries neither predicate on either side.
-    //
-    // This replaces a `blocks.get(pageId)` that applied neither predicate AND
-    // early-returned on a miss, so it was wrong in both directions: a
-    // content-block id searched on that block's text, and an id with only an
-    // alias row answered empty.
-    const page = blocks.get(pageId)
-    const pageTitle =
-      page && page['block_type'] === 'page' && !page['deleted_at']
-        ? ((page['content'] as string | null) ?? '')
-        : ''
-    // #4036 item 1 — the needle set is the page TITLE **OR** every one of its
-    // `page_aliases` rows, not the title alone. `eval_unlinked_references`
-    // builds `terms` from the sanitized title and then from each sanitized,
-    // trimmed alias, and ORs them into one FTS5 query — `(t1) OR (t2) …`
-    // (`agaric-store/src/backlink/grouped.rs:598-645`). A block reading "see
-    // getting-started for setup" is an unlinked reference to the
-    // `getting-started`-aliased page on the backend; here it was a false
-    // negative, and not hypothetically — `pageAliases` is a seeded store
-    // (`src/lib/tauri-mock/seed.ts:653`).
-    //
-    // The `trim()` on each term is the backend's own (`alias.trim()`,
-    // grouped.rs:614) plus, for the title, the `sanitize_fts_query` empty
-    // check: a whitespace-only title contributes NO term, so it neither
-    // early-returns on its own nor runs as a literal substring needle that
-    // would match every block containing a space. The early return fires only
-    // when the COMBINED term list is empty (grouped.rs:625-635) — a blank
-    // title with a live alias still searches.
-    const terms = [pageTitle, ...(pageAliases.get(pageId) ?? [])]
-      .map((t) => t.trim())
-      .filter((t) => t !== '')
-    if (terms.length === 0)
-      return {
-        groups: [],
-        next_cursor: null,
-        has_more: false,
-        total_count: 0,
-        filtered_count: 0,
-        truncated: false,
-      }
-    // Find blocks that mention the page title as text but don't have a [[link]].
-    //
-    // #4022 — `eval_unlinked_references` runs `WHERE fts_blocks MATCH ?1`
-    // (`agaric-store/src/backlink/grouped.rs:682-697`) over the sanitized
-    // title, so the haystack is `fts_blocks.stripped` ({@link stripForFts})
-    // and the fold is the trigram tokenizer's case-only one
-    // ({@link matchesFtsIndex}) — the same index `search_blocks` reads, not a
-    // `LIKE` scan over `blocks.content`. This was `matchesSearchFolded` over
-    // raw content, which surfaced diacritic-folded mentions the backend never
-    // returns and missed mentions hidden behind markup or supplied by a
-    // resolved `[[ULID]]` title.
-    const unlinked = [...blocks.values()].filter((b) => {
-      if (b['deleted_at']) return false
-      // `AND b.block_type != 'page'` (grouped.rs:688) — title blocks are
-      // dropped from the base set GLOBALLY, not just for descendants of this
-      // page. The trigram tokenizer is substring-based, so a child page
-      // `Notes/2026` would otherwise surface as an unlinked reference to
-      // `Notes` via the trigrams `Not` / `ote` / `tes`; the refs panel
-      // surfaces body matches, not title matches.
-      if (b['block_type'] === 'page') return false
-      if (!inSpaceScope(b, spaceId)) return false
-      const content = (b['content'] as string) ?? ''
-      // The FTS5 `OR` over `terms` — ANY term hitting keeps the row.
-      const stripped = stripForFts(content)
-      if (!terms.some((t) => matchesFtsIndex(stripped, t))) return false
-      // Exclude if it already has a [[link]] to this page.
-      return !contentLinksTo(content, pageId)
-    })
+    const unlinked = unlinkedSources(pageId, spaceId)
+    if (unlinked === null) return countOnlyResponse(0)
     return groupedBacklinkResponse(unlinked, pageId, a, 'every-page', limit)
+  },
+
+  // #5422 — `count_unlinked_references_inner`: the list reader's unfiltered
+  // counts with no groups, for the collapsed panel.
+  count_unlinked_references: (args) => {
+    const a = args as Record<string, unknown>
+    const pageId = a['pageId'] as string
+    const spaceId = readActiveSpaceScope('count_unlinked_references', a)
+    const unlinked = unlinkedSources(pageId, spaceId)
+    return countOnlyResponse(unlinked === null ? 0 : countedSources(unlinked, pageId).length)
   },
 
   // ---------------------------------------------------------------------------
@@ -495,6 +530,7 @@ export const linksHandlers = {
   | 'count_backlinks_batch'
   | 'list_backlinks_grouped'
   | 'list_unlinked_references'
+  | 'count_unlinked_references'
   | 'list_page_links'
   | 'fetch_link_metadata'
   | 'get_link_metadata'

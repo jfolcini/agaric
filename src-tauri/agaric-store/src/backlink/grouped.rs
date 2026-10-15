@@ -632,16 +632,19 @@ async fn distribute_rows_into_groups(
         .collect();
     let fetched_rows = fetch_block_rows_by_ids(pool, &fetch_ids).await?;
 
-    // Short-lived per-query map keyed on borrowed `&str`s.
-    let row_map: FxHashMap<&str, &BlockRow> =
-        fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
+    // Each row is handed to its group by move: a block has one root page, so
+    // no id appears in two groups.
+    let mut row_map: FxHashMap<String, BlockRow> = fetched_rows
+        .into_iter()
+        .map(|r| (r.id.as_str().to_owned(), r))
+        .collect();
 
     let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(capped_groups.len());
     for g in capped_groups {
         let block_rows: Vec<crate::pagination::ActiveBlockRow> = g
             .ids
             .iter()
-            .filter_map(|&bid| row_map.get(bid).map(|r| (*r).clone()))
+            .filter_map(|&bid| row_map.remove(bid))
             .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
             .collect();
 
@@ -845,14 +848,11 @@ async fn unlinked_fts_query(pool: &SqlitePool, page_id: &str) -> Result<Option<S
     Ok(Some(fts_query))
 }
 
-/// The FTS match set the unlinked-references base starts from, and whether
-/// the row cap truncated it.
-async fn unlinked_fts_matches(
-    pool: &SqlitePool,
-    fts_query: &str,
-    page_id: &str,
-    space_id: Option<&str>,
-) -> Result<(FxHashSet<String>, bool), AppError> {
+/// The FTS hits the unlinked-references base set starts from, as one
+/// `block_id` column. Binds: `?1` the FTS query, `?2` the target page id, `?3`
+/// the space id. Shared by the list and count paths so both read the same
+/// capped window.
+fn unlinked_fts_hits_sql() -> String {
     // 3. FTS5 query to find blocks mentioning the title, excluding linked blocks.
     //    Cap at FTS_ROW_CAP + 1 rows so we can detect truncation (return at most
     //    FTS_ROW_CAP). The `+ 1` literal is derived from the constant via
@@ -888,8 +888,7 @@ async fn unlinked_fts_matches(
     //    than scoping to descendants of the current page. Applied at
     //    the base-set step so pagination + `total_count` /
     //    `filtered_count` all see the post-filter universe.
-    use super::FTS_ROW_CAP;
-    let fts_sql = format!(
+    format!(
         "SELECT fb.block_id \
          FROM fts_blocks fb \
          JOIN blocks b ON b.id = fb.block_id \
@@ -902,8 +901,20 @@ async fn unlinked_fts_matches(
            AND (?3 IS NULL OR b.space_id = ?3) \
          ORDER BY fb.block_id \
          LIMIT {}",
-        FTS_ROW_CAP + 1
-    );
+        super::FTS_ROW_CAP + 1
+    )
+}
+
+/// The FTS match set the unlinked-references base starts from, and whether
+/// the row cap truncated it.
+async fn unlinked_fts_matches(
+    pool: &SqlitePool,
+    fts_query: &str,
+    page_id: &str,
+    space_id: Option<&str>,
+) -> Result<(FxHashSet<String>, bool), AppError> {
+    use super::FTS_ROW_CAP;
+    let fts_sql = unlinked_fts_hits_sql();
     let fts_rows: Vec<String> =
         sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(fts_sql.as_str()))
             .bind(fts_query)
@@ -941,6 +952,47 @@ fn unlinked_total_count(
             None => false,
         })
         .count()
+}
+
+/// The collapsed panel's read: [`eval_unlinked_references`]' unfiltered
+/// `total_count` and `truncated` in one statement, without resolving,
+/// grouping or fetching a row. `rn <= FTS_ROW_CAP` keeps the rows the list
+/// path keeps out of the same capped window, and the root-page join drops
+/// orphans and self-references as `unlinked_total_count` does.
+pub async fn count_unlinked_references(
+    pool: &SqlitePool,
+    page_id: &str,
+    space_id: Option<&str>,
+) -> Result<GroupedBacklinkResponse, AppError> {
+    use super::FTS_ROW_CAP;
+    let Some(fts_query) = unlinked_fts_query(pool, page_id).await? else {
+        return Ok(empty_grouped_response(0, 0, false));
+    };
+    let hits_sql = unlinked_fts_hits_sql();
+    let count_sql = format!(
+        "WITH hits AS ({hits_sql}), \
+         numbered AS ( \
+           SELECT block_id, ROW_NUMBER() OVER (ORDER BY block_id) AS rn FROM hits \
+         ) \
+         SELECT COUNT(*), \
+           COUNT(DISTINCT CASE WHEN n.rn <= {FTS_ROW_CAP} AND p.id != ?2 \
+                               THEN n.block_id END) \
+         FROM numbered n \
+         JOIN blocks b ON b.id = n.block_id \
+         LEFT JOIN blocks p ON p.id = b.page_id"
+    );
+    // dynamic-sql: the FTS hit window is the list path's own SQL, so both read
+    // the same capped set; the cap is a constant.
+    let (matched, counted): (i64, i64) =
+        sqlx::query_as::<_, (i64, i64)>(sqlx::AssertSqlSafe(count_sql.as_str()))
+            .bind(fts_query.as_str())
+            .bind(page_id)
+            .bind(space_id)
+            .fetch_one(pool)
+            .await?;
+    let total_count = usize::try_from(counted).unwrap_or(0);
+    let truncated = usize::try_from(matched).unwrap_or(0) > FTS_ROW_CAP;
+    Ok(empty_grouped_response(total_count, total_count, truncated))
 }
 
 /// Intersect the FTS match set with the compiled filter in SQL: the set

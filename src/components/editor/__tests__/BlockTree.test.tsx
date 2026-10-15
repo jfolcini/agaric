@@ -516,6 +516,14 @@ const BLOCK_TREE_DEFAULTS: TypedInvokeHandlers = {
 /** A successful, empty `load_page_subtree`. */
 const emptySubtree = { blocks: [], truncated: false, total: 0 }
 
+/** A page that holds `id`, before and after the mount-time load: a tree acts
+ *  only on a focused block its own store holds. */
+function seedPageWith(id: string): void {
+  const block = makeBlock({ id, parent_id: 'PAGE_1' })
+  pageStore.setState({ blocks: [block], loading: false })
+  stubBlockTree({ load_page_subtree: () => ({ blocks: [block], truncated: false, total: 1 }) })
+}
+
 /**
  * Install {@link BLOCK_TREE_DEFAULTS} with this test's overrides on top.
  * Overrides ACCUMULATE within a test, so a second call mid-test refines the
@@ -1779,7 +1787,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('onSlashCommand for /table with no dimensions inserts 3x3 table', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
+    seedPageWith('BLOCK_01')
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1798,7 +1806,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('onSlashCommand for /table 4x6 inserts 4x6 table', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
+    seedPageWith('BLOCK_01')
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1817,7 +1825,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('onSlashCommand for /table 10x2 inserts 10x2 table', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
+    seedPageWith('BLOCK_01')
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1839,7 +1847,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('slash command dialog uses standard max-sm breakpoint', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
+    seedPageWith('BLOCK_01')
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -1886,7 +1894,7 @@ describe('BlockTree slash command wiring', () => {
   })
 
   it('slash command dialog has responsive max-width', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
+    seedPageWith('BLOCK_01')
     useMockEditor = true
 
     renderBlockTree({ autoCreateFirstBlock: false })
@@ -2027,7 +2035,11 @@ describe('BlockTree query builder save (#1016)', () => {
     stubBlockTree({
       load_page_subtree: () => {
         loadCalls += 1
-        return emptySubtree
+        return {
+          blocks: [makeBlock({ id: 'BLOCK_A', parent_id: 'PAGE_1' })],
+          truncated: false,
+          total: 1,
+        }
       },
       edit_block: () =>
         withOps(makeBlockRow({ id: 'BLOCK_A', content: '{{query status = "done"}}' })),
@@ -6739,6 +6751,32 @@ describe('BlockTree batch toolbar (#657)', () => {
     await screen.findByTestId('sortable-block-A')
 
     expect(screen.getByText('2 selected')).toBeInTheDocument()
+  })
+
+  it('batch delete sends only the selected blocks this tree holds', async () => {
+    const user = userEvent.setup()
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({
+      focusedBlockId: null,
+      selectedBlockIds: ['OTHER_DAY_1', 'A', 'OTHER_DAY_2', 'B'],
+    })
+    stubBlockTree({ delete_blocks_by_ids: () => ({ deleted_count: 2, affected_page_ids: [] }) })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    await user.click(screen.getByRole('button', { name: /Delete/i }))
+    await user.click(screen.getByRole('button', { name: /Yes, delete/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: ['A', 'B'] })
+    })
   })
 
   it('hides the batch toolbar when no selected block is in this tree', async () => {

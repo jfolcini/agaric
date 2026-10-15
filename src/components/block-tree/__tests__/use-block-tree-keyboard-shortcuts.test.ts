@@ -87,14 +87,16 @@ type OptionOverrides = Partial<
 > & {
   selectAllIds?: string[]
   visibleIds?: string[]
+  /** Written to the store: the hook reads the global selection at dispatch (#5447). */
+  selectedBlockIds?: string[]
 }
 
 function makeOptions(overrides: OptionOverrides = {}): UseBlockTreeKeyboardShortcutsOptions {
-  const { selectAllIds, visibleIds, ...rest } = overrides
+  const { selectAllIds, visibleIds, selectedBlockIds, ...rest } = overrides
+  if (selectedBlockIds) useBlockStore.setState({ selectedBlockIds })
   return {
     focusedBlockId: 'BLOCK_1',
     pageStore: makePageStore(['BLOCK_1', 'BLOCK_2']),
-    selectedBlockIds: [],
     hasChildrenSet: new Set(['BLOCK_1']),
     selectAllIds: selectAllScoped(selectAllIds ?? ['BLOCK_1', 'BLOCK_2']),
     visibleIds: mountScoped(visibleIds ?? ['BLOCK_1', 'BLOCK_2']),
@@ -253,6 +255,19 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
     it('does not select all when a block is focused', () => {
       const opts = makeOptions({ focusedBlockId: 'BLOCK_1' })
+      useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
+
+      expect(opts.rawSelectAll).not.toHaveBeenCalled()
+    })
+
+    it("does not select all while another tree's block is focused", () => {
+      // BlockTree hands this hook only the focus it owns (#5447), so the global
+      // focus must come from the store.
+      const opts = makeOptions({ focusedBlockId: null })
+      useBlockStore.setState({ focusedBlockId: 'OTHER_TREE_BLOCK' })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
@@ -280,6 +295,15 @@ describe('useBlockTreeKeyboardShortcuts', () => {
         focusedBlockId: null,
         selectedBlockIds: ['BLOCK_1'],
       })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.clearSelected).toHaveBeenCalledTimes(1)
+    })
+
+    it('clears a selection held by blocks no mounted tree owns', () => {
+      const opts = makeOptions({ focusedBlockId: null, selectedBlockIds: ['STALE_DAY_BLOCK'] })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: 'Escape' })
@@ -344,6 +368,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
     it('does nothing when an editor is focused (browser owns Shift+Arrow)', () => {
       const opts = selectOpts({ focusedBlockId: 'B1' })
+      useBlockStore.setState({ focusedBlockId: 'B1' })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       const e = new KeyboardEvent('keydown', {
@@ -383,6 +408,16 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true, ctrlKey: true })
       fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true, metaKey: true })
       fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true, altKey: true })
+
+      expect(opts.extendSelection).not.toHaveBeenCalled()
+    })
+
+    it('#713 — the anchor is the last id of the GLOBAL selection, not of this tree', () => {
+      // This tree owns B1, but the anchor is another tree's block.
+      const opts = selectOpts({ selectedBlockIds: ['B1', 'OTHER'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true })
 
       expect(opts.extendSelection).not.toHaveBeenCalled()
     })
@@ -439,6 +474,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
     it('does nothing when an editor is focused', () => {
       const opts = selectOpts({ focusedBlockId: 'B1' })
+      useBlockStore.setState({ focusedBlockId: 'B1' })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       const e = new KeyboardEvent('keydown', {
@@ -467,6 +503,15 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: ' ' })
+
+      expect(opts.toggleSelected).not.toHaveBeenCalled()
+    })
+
+    it('#713 — toggles nothing when the GLOBAL anchor is in another tree', () => {
+      const opts = selectOpts({ selectedBlockIds: ['B1', 'OTHER'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: ' ', ctrlKey: true })
 
       expect(opts.toggleSelected).not.toHaveBeenCalled()
     })
@@ -659,6 +704,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
         selectedBlockIds: ['A'],
         focusedBlockId: 'A',
       })
+      useBlockStore.setState({ focusedBlockId: 'A' })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: 'c', ctrlKey: true })
