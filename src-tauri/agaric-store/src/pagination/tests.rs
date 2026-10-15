@@ -8,7 +8,7 @@
 //! seq-field backward compatibility, and all op types in history.
 
 use super::*;
-use crate::test_support::test_pool;
+use crate::test_support::{TEST_SPACE_ID, ensure_test_space, test_pool};
 use agaric_core::ulid::BlockId;
 use sqlx::SqlitePool;
 
@@ -974,6 +974,7 @@ async fn list_by_type_excludes_query_view_marker_blocks() {
     );
     assert_eq!(resp.items.len(), 2, "exactly the two non-marker blocks");
 
+    assign_all_to_test_space(&pool).await;
     // The exclusion must NOT leak into the property-query path: the
     // frontend lists saved views precisely by this marker, so
     // `query_by_property(view_type = 'query-view')` must still return it.
@@ -985,7 +986,7 @@ async fn list_by_type_excludes_query_view_marker_blocks() {
         None,
         "eq",
         &prop_page,
-        None,
+        TEST_SPACE_ID,
         None,
         false,
         None,
@@ -1766,6 +1767,17 @@ async fn insert_property_date(pool: &SqlitePool, block_id: &str, key: &str, valu
         .unwrap();
 }
 
+/// Helper: put every block in [`TEST_SPACE_ID`], the space `query_by_property`
+/// reads.
+async fn assign_all_to_test_space(pool: &SqlitePool) {
+    ensure_test_space(pool).await;
+    sqlx::query("UPDATE blocks SET space_id = ?")
+        .bind(TEST_SPACE_ID)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn query_by_property_returns_matching_blocks() {
     let (pool, _dir) = test_pool().await;
@@ -1777,6 +1789,7 @@ async fn query_by_property_returns_matching_blocks() {
     insert_property(&pool, "BLOCK001", "todo", "TODO").await;
     insert_property(&pool, "BLOCK002", "todo", "DONE").await;
 
+    assign_all_to_test_space(&pool).await;
     let page = PageRequest::new(None, Some(10)).unwrap();
     let resp = query_by_property(
         &pool,
@@ -1785,7 +1798,7 @@ async fn query_by_property_returns_matching_blocks() {
         None,
         "eq",
         &page,
-        None,
+        TEST_SPACE_ID,
         None,
         false,
         None,
@@ -1817,6 +1830,7 @@ async fn query_by_property_filters_by_value() {
     insert_property(&pool, "BLOCK001", "todo", "TODO").await;
     insert_property(&pool, "BLOCK002", "todo", "DONE").await;
 
+    assign_all_to_test_space(&pool).await;
     let page = PageRequest::new(None, Some(10)).unwrap();
     let resp = query_by_property(
         &pool,
@@ -1825,7 +1839,7 @@ async fn query_by_property_filters_by_value() {
         None,
         "eq",
         &page,
-        None,
+        TEST_SPACE_ID,
         None,
         false,
         None,
@@ -1865,6 +1879,7 @@ async fn query_by_property_neq_keeps_other_column_rows() {
     // neq against a value_date target: must return the two text rows (their
     // value_date is NULL — different column) AND the one date row whose date
     // differs, while EXCLUDING the date row equal to the target.
+    assign_all_to_test_space(&pool).await;
     let page = PageRequest::new(None, Some(10)).unwrap();
     let resp = query_by_property(
         &pool,
@@ -1873,7 +1888,7 @@ async fn query_by_property_neq_keeps_other_column_rows() {
         Some("2026-01-01"),
         "neq",
         &page,
-        None,
+        TEST_SPACE_ID,
         None,
         false,
         None,
@@ -1936,6 +1951,7 @@ async fn query_by_property_routes_each_reserved_key_to_its_own_column() {
             .unwrap();
     }
 
+    assign_all_to_test_space(&pool).await;
     for (id, key, _) in cases {
         let page = PageRequest::new(None, Some(10)).unwrap();
         let resp = query_by_property(
@@ -1945,7 +1961,7 @@ async fn query_by_property_routes_each_reserved_key_to_its_own_column() {
             None,
             "eq",
             &page,
-            None,
+            TEST_SPACE_ID,
             None,
             false,
             None,
@@ -1979,6 +1995,7 @@ async fn query_by_property_value_date_range_on_property_rows_is_half_open() {
     insert_property_date(&pool, "BLOCKRNG2", "reviewed", "2026-01-15").await;
     insert_property_date(&pool, "BLOCKRNG3", "reviewed", "2026-02-01").await;
 
+    assign_all_to_test_space(&pool).await;
     let page = PageRequest::new(None, Some(10)).unwrap();
     let resp = query_by_property(
         &pool,
@@ -1987,7 +2004,7 @@ async fn query_by_property_value_date_range_on_property_rows_is_half_open() {
         None,
         "eq",
         &page,
-        None,
+        TEST_SPACE_ID,
         None,
         false,
         None,
@@ -2016,6 +2033,7 @@ async fn query_by_property_paginates_with_cursor() {
         insert_property(&pool, &id, "status", "active").await;
     }
 
+    assign_all_to_test_space(&pool).await;
     assert_paginates_with_cursor(
         &pool,
         ["BLOCK001", "BLOCK002", "BLOCK003", "BLOCK004", "BLOCK005"],
@@ -2027,7 +2045,7 @@ async fn query_by_property_paginates_with_cursor() {
                 None,
                 "eq",
                 &page,
-                None,
+                TEST_SPACE_ID,
                 None,
                 false,
                 None,
@@ -2047,6 +2065,7 @@ async fn query_by_property_returns_empty_for_nonexistent_key() {
 
     insert_block(&pool, "BLOCK001", "content", "no props", None, None).await;
 
+    assign_all_to_test_space(&pool).await;
     let page = PageRequest::new(None, Some(10)).unwrap();
     let resp = query_by_property(
         &pool,
@@ -2055,7 +2074,7 @@ async fn query_by_property_returns_empty_for_nonexistent_key() {
         None,
         "eq",
         &page,
-        None,
+        TEST_SPACE_ID,
         None,
         false,
         None,
@@ -2088,6 +2107,7 @@ async fn query_by_property_excludes_soft_deleted() {
     insert_property(&pool, "BLOCK002", "todo", "TODO").await;
     soft_delete_block(&pool, "BLOCK002", FIXED_DELETED_AT).await;
 
+    assign_all_to_test_space(&pool).await;
     let page = PageRequest::new(None, Some(10)).unwrap();
     let resp = query_by_property(
         &pool,
@@ -2096,7 +2116,7 @@ async fn query_by_property_excludes_soft_deleted() {
         None,
         "eq",
         &page,
-        None,
+        TEST_SPACE_ID,
         None,
         false,
         None,
@@ -2133,7 +2153,7 @@ async fn query_by_property_rejects_both_value_filters() {
         Some("2025-01-01"),
         "eq",
         &page,
-        None,
+        TEST_SPACE_ID,
         None,
         false,
         None,
@@ -2161,7 +2181,7 @@ async fn query_by_property_rejects_both_value_filters() {
         Some("2025-01-01"),
         "eq",
         &page,
-        None,
+        TEST_SPACE_ID,
         None,
         false,
         None,

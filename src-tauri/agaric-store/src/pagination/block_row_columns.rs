@@ -42,7 +42,7 @@
 //! 2. Update [`BLOCK_ROW_RUNTIME_SELECT`] below.
 //! 3. Update [`BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS`] below (same column
 //!    list as [`BLOCK_ROW_RUNTIME_SELECT`] but with every column prefixed
-//!    by the `b.` alias used at the `pagination/properties.rs` sites).
+//!    by the `b.` alias used at the `pagination/properties.rs` site).
 //! 4. Update [`BLOCK_ROW_CANONICAL_FIELDS`] below.
 //! 5. Run `cargo nextest run -E 'test(block_row_canonical)'` — the
 //!    parity tests will print every drifted site so you can update
@@ -225,7 +225,7 @@ mod tests {
     ///
     /// Split the runtime-select const into an unprefixed form
     /// (used at 3 sites covered by Test C) and a `b.`-aliased form (used
-    /// at the 2 `pagination/properties.rs` sites). Stripping the `b.`
+    /// in `pagination/properties.rs`). Stripping the `b.`
     /// alias from every column of the aliased const — using the same
     /// `strip_blocks_alias` helper Test B uses to normalize JOIN-style
     /// macro sites — must yield exactly the unprefixed const after

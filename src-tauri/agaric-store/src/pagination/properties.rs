@@ -24,11 +24,9 @@ use agaric_core::error::AppError;
 /// - **Reserved keys** are stored as columns directly on the `blocks` table
 ///   (not in `block_properties`). The reserved set is exactly four keys —
 ///   `todo_state`, `priority`, `due_date`, `scheduled_date` — backed by the
-///   matching columns. The first branch below routes the query against
-///   those columns.
+///   matching columns, which the statement reads directly.
 /// - **Non-reserved keys** are stored as rows in `block_properties` with
-///   `(block_id, key)` uniqueness. The second branch joins
-///   `block_properties` to `blocks`.
+///   `(block_id, key)` uniqueness, which the statement joins to `blocks`.
 ///
 /// **Source of truth** for the reserved-key set: `op::is_reserved_property_key`.
 /// Adding a fifth reserved column (e.g., `effort`) means updating that helper
@@ -100,7 +98,7 @@ pub async fn query_by_property(
     value_date: Option<&str>,
     operator: &str,
     page: &PageRequest,
-    space_id: Option<&str>,
+    space_id: &str,
     exclude_parent_id: Option<&str>,
     content_non_empty: bool,
     block_type: Option<&str>,
@@ -110,79 +108,53 @@ pub async fn query_by_property(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     validate_value_filters(value_text, value_date, value_text_in)?;
 
-    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
-        Some(c) => (Some(1), &c.id),
-        None => (None, ""),
-    };
-    let (value_date_from, value_date_to) = match value_date_range {
-        Some((from, to)) => (Some(from), Some(to)),
-        None => (None, None),
-    };
-
     let filters = PropertyFilters {
         value_text,
         value_date,
         sql_op: sql_operator(operator),
-        fetch_limit: page.limit + 1,
-        cursor_flag,
-        cursor_id,
+        after_id: page.after.as_ref().map(|c| c.id.as_str()),
         space_id,
         exclude_parent_id,
-        content_filter_flag: i64::from(content_non_empty),
+        content_non_empty,
         block_type,
         value_text_in_json: json_array(value_text_in)?,
-        value_date_from,
-        value_date_to,
+        value_date_range,
         exclude_todo_states_json: json_array(exclude_todo_states)?,
     };
-
-    let rows = if is_reserved_property_key(key) {
-        fetch_reserved_column_rows(pool, reserved_column(key)?, &filters).await?
-    } else {
-        fetch_property_row_rows(pool, key, &filters).await?
-    };
+    let (sql, binds) = query_by_property_sql(key, &filters)?;
+    let mut query = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()));
+    for value in binds {
+        query = query.bind(value);
+    }
+    let rows = query.bind(page.limit + 1).fetch_all(pool).await?;
 
     build_page_response(rows, page.limit, |last| {
         Cursor::for_id(last.id.clone().into_string())
     })
 }
 
-/// Every value the two SQL branches bind, prepared once.
-///
-/// The branches differ in which columns they bind against, and so in their
-/// `?N` numbering — twelve slots on the reserved-column path, fourteen on the
-/// property-row path. They do not differ in what the values are, so a new
-/// filter is prepared in one place and spent in two.
+/// Every filter [`query_by_property`] was given, prepared once.
 struct PropertyFilters<'a> {
     value_text: Option<&'a str>,
     value_date: Option<&'a str>,
     sql_op: &'static str,
-    /// `page.limit + 1` — the probe row `build_page_response` trims back off.
-    fetch_limit: i64,
-    cursor_flag: Option<i64>,
-    cursor_id: &'a str,
-    /// The space clause mirrors
-    /// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`], spelled
-    /// inline because both branches interpolate `sql_op` and so cannot use the
-    /// `query_as!` macro.
-    space_id: Option<&'a str>,
-    /// Bound through `IS NOT` rather than `!=`, so blocks with a NULL parent
+    /// The previous page's last id; `None` on the first page.
+    after_id: Option<&'a str>,
+    space_id: &'a str,
+    /// Matched through `IS NOT` rather than `!=`, so blocks with a NULL parent
     /// survive the filter (the shape `pagination::list_children` uses).
     exclude_parent_id: Option<&'a str>,
-    /// Bound as `0`/`1` so the disabled filter short-circuits inside one
-    /// statement instead of forking the text. `TRIM(content, x'20090a0d')`
-    /// names space, tab, LF and CR explicitly because SQLite's bare `TRIM`
-    /// strips only spaces, and the FE predicate it replaces was `!content.trim()`.
-    content_filter_flag: i64,
+    /// `TRIM(content, x'20090a0d')` names space, tab, LF and CR explicitly
+    /// because SQLite's bare `TRIM` strips only spaces, and the FE predicate it
+    /// replaces was `!content.trim()`.
+    content_non_empty: bool,
     block_type: Option<&'a str>,
-    /// A JSON array for `json_each(?N)` — one string parameter rather than
+    /// A JSON array for `json_each(?)` — one string parameter rather than
     /// splatting the vec into `N` placeholders.
     value_text_in_json: Option<String>,
     /// Half-open `[from, to)`: a row whose date equals `to` is excluded,
-    /// matching FE date-pickers whose upper bound is exclusive. Two binds so
-    /// each side short-circuits on its own `?N IS NULL`.
-    value_date_from: Option<&'a str>,
-    value_date_to: Option<&'a str>,
+    /// matching FE date-pickers whose upper bound is exclusive.
+    value_date_range: Option<(&'a str, &'a str)>,
     /// #738 sub-2 — drops rows whose `todo_state` matches, so completed tasks
     /// stop occupying the bounded fetch window and starving overdue TODOs.
     /// `b.todo_state IS NULL OR` keeps blocks that carry a date but no state.
@@ -225,8 +197,8 @@ fn sql_operator(operator: &str) -> &'static str {
     }
 }
 
-/// `None` when empty, so the clause short-circuits on `?N IS NULL` instead of
-/// parsing an empty array per row.
+/// `None` when empty, so the clause is left out (or short-circuits on
+/// `?N IS NULL`) instead of parsing an empty array per row.
 pub(super) fn json_array(values: &[String]) -> Result<Option<String>, AppError> {
     if values.is_empty() {
         return Ok(None);
@@ -252,125 +224,157 @@ fn reserved_column(key: &str) -> Result<&'static str, AppError> {
     }
 }
 
-/// Reserved keys are columns on `blocks`, so there is no join and no `key`
-/// bind: the column name carries what `?1` carries on the other path. Twelve
-/// slots, and the `?N` order here is independent of the property-row path's.
-async fn fetch_reserved_column_rows(
-    pool: &SqlitePool,
-    col: &'static str,
-    filters: &PropertyFilters<'_>,
-) -> Result<Vec<BlockRow>, AppError> {
-    let sql = format!(
-        "SELECT {cols} \
-         FROM blocks b \
-         WHERE b.{col} IS NOT NULL \
-           AND b.deleted_at IS NULL \
-           AND (?1 IS NULL OR b.{col} {sql_op} ?1) \
-           AND (?2 IS NULL OR b.id > ?3) \
-           AND (?5 IS NULL OR b.space_id = ?5) \
-           AND (?6 IS NULL OR b.parent_id IS NOT ?6) \
-           AND (?7 = 0 OR (b.content IS NOT NULL AND TRIM(b.content, x'20090a0d') != '')) \
-           AND (?8 IS NULL OR b.block_type = ?8) \
-           AND (?9 IS NULL OR b.{col} IN (SELECT value FROM json_each(?9))) \
-           AND (?10 IS NULL OR b.{col} >= ?10) \
-           AND (?11 IS NULL OR b.{col} < ?11) \
-           AND (?12 IS NULL OR b.todo_state IS NULL OR b.todo_state NOT IN (SELECT value FROM json_each(?12))) \
-         ORDER BY b.id ASC \
-         LIMIT ?4",
-        cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
-        sql_op = filters.sql_op,
+/// The statement [`query_by_property`] runs for one call shape, with its binds
+/// in placeholder order; the caller binds the fetch limit last.
+///
+/// A filter the caller left out adds no SQL (#5426). Only the selective shapes
+/// let a value index drive the plan: equality and `value_text_in` on either
+/// path, and a range on `due_date` / `scheduled_date`. On the property path
+/// every other shape orders by `bp.block_id`, so the plan walks
+/// `idx_block_props_key` (key, block_id) in id order and stops at the LIMIT
+/// instead of sorting every row the key holds.
+fn query_by_property_sql<'a>(
+    key: &'a str,
+    filters: &'a PropertyFilters<'a>,
+) -> Result<(String, Vec<&'a str>), AppError> {
+    let cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS;
+    let mut binds: Vec<&'a str> = Vec::new();
+    let reserved = is_reserved_property_key(key);
+    // A reserved key's value lives in its one column, so both value inputs
+    // address it; a property row keeps text and dates in separate columns.
+    let (mut sql, text_col, date_col) = if reserved {
+        let col = reserved_column(key)?;
+        (
+            format!("SELECT {cols} FROM blocks b WHERE b.{col} IS NOT NULL"),
+            format!("b.{col}"),
+            format!("b.{col}"),
+        )
+    } else {
+        binds.push(key);
+        (
+            format!(
+                "SELECT {cols} FROM block_properties bp \
+                 JOIN blocks b ON b.id = bp.block_id WHERE bp.key = ?"
+            ),
+            "bp.value_text".to_owned(),
+            "bp.value_date".to_owned(),
+        )
+    };
+    let range_may_drive = matches!(key, "due_date" | "scheduled_date");
+    push_value_predicates(
+        &mut sql,
+        &mut binds,
+        filters,
+        &text_col,
+        &date_col,
+        range_may_drive,
     );
-    // One column holds the value, so the caller's two inputs collapse into one
-    // bind. No per-column precedence: the boundary has already rejected the
-    // case where both are `Some`, which is the only case a precedence could
-    // decide.
-    let filter_value: Option<&str> = filters.value_text.or(filters.value_date);
-    let rows = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
-        .bind(filter_value) // ?1
-        .bind(filters.cursor_flag) // ?2
-        .bind(filters.cursor_id) // ?3
-        .bind(filters.fetch_limit) // ?4
-        .bind(filters.space_id) // ?5
-        .bind(filters.exclude_parent_id) // ?6
-        .bind(filters.content_filter_flag) // ?7
-        .bind(filters.block_type) // ?8
-        .bind(filters.value_text_in_json.as_deref()) // ?9
-        .bind(filters.value_date_from) // ?10
-        .bind(filters.value_date_to) // ?11
-        .bind(filters.exclude_todo_states_json.as_deref()) // ?12
-        .fetch_all(pool)
-        .await?;
-    Ok(rows)
+    push_block_filters(&mut sql, &mut binds, filters);
+    let selective = filters.value_text_in_json.is_some()
+        || (filters.sql_op == "="
+            && (filters.value_text.is_some() || filters.value_date.is_some()));
+    let walk = if reserved || selective {
+        "b.id"
+    } else {
+        "bp.block_id"
+    };
+    sql.push_str(&format!(" ORDER BY {walk} ASC LIMIT ?"));
+    Ok((sql, binds))
 }
 
-/// Non-reserved keys are rows in `block_properties`, so the key is `?1` and
-/// the value predicates address `bp.*`. Fourteen slots, numbered independently
-/// of the reserved path's twelve.
-async fn fetch_property_row_rows(
-    pool: &SqlitePool,
-    key: &str,
-    filters: &PropertyFilters<'_>,
-) -> Result<Vec<BlockRow>, AppError> {
-    let (text_pred, date_pred) = value_predicates(filters.sql_op);
-    let sql = format!(
-        "SELECT {cols} \
-         FROM block_properties bp \
-         JOIN blocks b ON b.id = bp.block_id \
-         WHERE bp.key = ?1 \
-           AND b.deleted_at IS NULL \
-           AND {text_pred} \
-           AND {date_pred} \
-           AND (?4 IS NULL OR b.id > ?5) \
-           AND (?7 IS NULL OR b.space_id = ?7) \
-           AND (?8 IS NULL OR b.parent_id IS NOT ?8) \
-           AND (?9 = 0 OR (b.content IS NOT NULL AND TRIM(b.content, x'20090a0d') != '')) \
-           AND (?10 IS NULL OR b.block_type = ?10) \
-           AND (?11 IS NULL OR bp.value_text IN (SELECT value FROM json_each(?11))) \
-           AND (?12 IS NULL OR bp.value_date >= ?12) \
-           AND (?13 IS NULL OR bp.value_date < ?13) \
-           AND (?14 IS NULL OR b.todo_state IS NULL OR b.todo_state NOT IN (SELECT value FROM json_each(?14))) \
-         ORDER BY b.id ASC \
-         LIMIT ?6",
-        cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
-    );
-    let rows = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
-        .bind(key) // ?1
-        .bind(filters.value_text) // ?2
-        .bind(filters.value_date) // ?3
-        .bind(filters.cursor_flag) // ?4
-        .bind(filters.cursor_id) // ?5
-        .bind(filters.fetch_limit) // ?6
-        .bind(filters.space_id) // ?7
-        .bind(filters.exclude_parent_id) // ?8
-        .bind(filters.content_filter_flag) // ?9
-        .bind(filters.block_type) // ?10
-        .bind(filters.value_text_in_json.as_deref()) // ?11
-        .bind(filters.value_date_from) // ?12
-        .bind(filters.value_date_to) // ?13
-        .bind(filters.exclude_todo_states_json.as_deref()) // ?14
-        .fetch_all(pool)
-        .await?;
-    Ok(rows)
+/// The value predicates of [`query_by_property_sql`]. Unless
+/// `range_may_drive`, a range is written on `+col` so its index cannot drive
+/// the plan: `idx_block_props_date` has no `key` column, and a broad range read
+/// every key's dates and sorted them before the LIMIT. The `+` changes no
+/// result: both tables are STRICT, so the columns and the binds are all TEXT.
+fn push_value_predicates<'a>(
+    sql: &mut String,
+    binds: &mut Vec<&'a str>,
+    filters: &'a PropertyFilters<'a>,
+    text_col: &str,
+    date_col: &str,
+    range_may_drive: bool,
+) {
+    let range_operand = |col: &str| {
+        if range_may_drive {
+            col.to_owned()
+        } else {
+            format!("+{col}")
+        }
+    };
+    let (text_range, date_range) = (range_operand(text_col), range_operand(date_col));
+    if let Some(value) = filters.value_text {
+        sql.push_str(&value_predicate(text_col, &text_range, filters.sql_op));
+        binds.push(value);
+    }
+    if let Some(value) = filters.value_date {
+        sql.push_str(&value_predicate(date_col, &date_range, filters.sql_op));
+        binds.push(value);
+    }
+    if let Some(values) = filters.value_text_in_json.as_deref() {
+        sql.push_str(&format!(
+            " AND {text_col} IN (SELECT value FROM json_each(?))"
+        ));
+        binds.push(values);
+    }
+    if let Some((from, to)) = filters.value_date_range {
+        sql.push_str(&format!(" AND {date_range} >= ? AND {date_range} < ?"));
+        binds.extend([from, to]);
+    }
 }
 
-/// The `?2` / `?3` value predicates, special-cased for `!=` (#384).
+/// The filters on `b` itself. The unary `+` keeps `idx_blocks_space_type` and
+/// `idx_blocks_type` out of the plan: without `sqlite_stat1` the planner rates
+/// them above the key and value indexes, then reads and sorts every block in
+/// the space.
+fn push_block_filters<'a>(
+    sql: &mut String,
+    binds: &mut Vec<&'a str>,
+    filters: &'a PropertyFilters<'a>,
+) {
+    sql.push_str(" AND b.deleted_at IS NULL AND +b.space_id = ?");
+    binds.push(filters.space_id);
+    if let Some(id) = filters.after_id {
+        sql.push_str(" AND b.id > ?");
+        binds.push(id);
+    }
+    if let Some(parent_id) = filters.exclude_parent_id {
+        sql.push_str(" AND b.parent_id IS NOT ?");
+        binds.push(parent_id);
+    }
+    if filters.content_non_empty {
+        sql.push_str(" AND b.content IS NOT NULL AND TRIM(b.content, x'20090a0d') != ''");
+    }
+    if let Some(block_type) = filters.block_type {
+        sql.push_str(" AND +b.block_type = ?");
+        binds.push(block_type);
+    }
+    if let Some(states) = filters.exclude_todo_states_json.as_deref() {
+        sql.push_str(
+            " AND (b.todo_state IS NULL OR b.todo_state NOT IN (SELECT value FROM json_each(?)))",
+        );
+        binds.push(states);
+    }
+}
+
+/// `col = ?`, `range_col {sql_op} ?` for the ordering operators, and `!=`
+/// special-cased (#384).
 ///
 /// A `block_properties` row stores its value in exactly one of `value_text` /
 /// `value_date`, leaving the sibling NULL. For `!=`, `NULL != 'X'` is NULL and
 /// not TRUE, so the bare predicate would drop every row whose value lives in
-/// the other column; `col IS NULL OR` restores them. The other operators keep
-/// the bare shape, where a NULL column correctly fails the comparison. Only
-/// the queried column's predicate is ever active — the boundary guarantees at
-/// most one of `?2` / `?3` is non-NULL.
-fn value_predicates(sql_op: &str) -> (String, String) {
-    if sql_op == "!=" {
-        return (
-            "(?2 IS NULL OR bp.value_text IS NULL OR bp.value_text != ?2)".to_string(),
-            "(?3 IS NULL OR bp.value_date IS NULL OR bp.value_date != ?3)".to_string(),
-        );
+/// the other column; `col IS NULL OR` restores them. A reserved column is
+/// never NULL here, so the escape changes nothing on that path. The other
+/// operators keep the bare shape, where a NULL column correctly fails the
+/// comparison.
+fn value_predicate(col: &str, range_col: &str, sql_op: &str) -> String {
+    match sql_op {
+        "=" => format!(" AND {col} = ?"),
+        "!=" => format!(" AND ({col} IS NULL OR {col} != ?)"),
+        _ => format!(" AND {range_col} {sql_op} ?"),
     }
-    (
-        format!("(?2 IS NULL OR bp.value_text {sql_op} ?2)"),
-        format!("(?3 IS NULL OR bp.value_date {sql_op} ?3)"),
-    )
 }
+
+#[cfg(test)]
+#[path = "properties_tests.rs"]
+mod tests;
