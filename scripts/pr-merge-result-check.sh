@@ -387,7 +387,6 @@ RATCHET_PREREQS=(
   'check-dynamic-sql.py|scripts/check-raw-tx.py|the shared helpers it loads at import time'
   'check-table-ownership.py|scripts/check-raw-tx.py|the shared helpers it loads at import time'
   'check-dynamic-sql.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
-  'check-command-arity.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
 )
 
 # Returns 0 if every prerequisite of every PRESENT guard exists in the merged
