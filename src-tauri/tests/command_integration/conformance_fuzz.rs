@@ -179,6 +179,7 @@ fn chain_to_fixture(payloads: &[OpPayload], name: &str) -> Value {
                     // count are kept, not clamped here: how each side clamps a
                     // tail index is exactly what this lane is comparing.
                     "index": c.position.unwrap_or(1) - 1,
+                    "scope": { "kind": "active", "space_id": "$SPACE" },
                 }})
             }
             OpPayload::EditBlock(e) => json!({ "command": "edit_block", "args": {
