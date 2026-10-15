@@ -2292,8 +2292,9 @@ export type GroupedBacklinkResponse = {
 	filtered_count: number,
 	/**
 	 *  `true` when the FTS query hit the internal row cap (10 000) and results
-	 *  may be incomplete.  Only relevant for unlinked-reference queries; regular
-	 *  grouped backlink queries always set this to `false`.
+	 *  may be incomplete (unlinked-reference queries), or when MCP
+	 *  `list_backlinks` stopped at its byte budget. The app's linked-references
+	 *  query always sets it to `false`.
 	 */
 	truncated: boolean,
 };

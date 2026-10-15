@@ -550,6 +550,7 @@ pub async fn mcp_rw_set_enabled(
     lifecycle: tauri::State<'_, McpRwLifecycle>,
     toggle_gate: tauri::State<'_, McpRwToggleGate>,
     write_pool: tauri::State<'_, crate::db::WritePool>,
+    read_pool: tauri::State<'_, crate::db::ReadPool>,
     materializer: tauri::State<'_, crate::materializer::Materializer>,
     device_id: tauri::State<'_, agaric_sync::device::DeviceId>,
     activity_ring: tauri::State<'_, McpActivityRing>,
@@ -577,6 +578,7 @@ pub async fn mcp_rw_set_enabled(
             &app_data_dir,
             app.clone(),
             write_pool.inner().0.clone(),
+            read_pool.inner().0.clone(),
             materializer.inner().clone(),
             device_id.inner().as_str().to_string(),
             // #695 — same shared ring as the RO surface.

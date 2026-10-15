@@ -438,7 +438,7 @@
     "fn": "src-tauri/src/mcp/tools_rw.rs::prepare_batch_op",
     "kind": "read-only",
     "status": "not-a-fan-out",
-    "reason": "Not a fan-out: one op in, one prepared op out. Each arm runs the prepare_* its tool's own handler runs, so no check has a second implementation; handle_batch owns the loop over the ops. Runs before the transaction opens, reading through its own connections"
+    "reason": "Not a fan-out: one op in, one prepared op out. Each arm parses its op as its tool's own arguments, and runs that tool's prepare_* where it has one, so no check has a second implementation; handle_batch owns the loop over the ops. Runs before the transaction opens; the space check runs per op inside it"
   },
   {
     "fn": "src-tauri/src/mcp/tools_rw.rs::run_batch",
