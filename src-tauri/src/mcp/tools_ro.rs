@@ -78,7 +78,7 @@ use sqlx::SqlitePool;
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{
     Named, fetch_op_origins, normalize_ulid_arg, parse_args, resolve_id_arg, resolve_id_args,
-    resolve_journal_date, to_tool_result, validate_block_in_space,
+    resolve_journal_date, to_tool_result,
 };
 use super::registry::{
     TOOL_BLOCK_HISTORY, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_JOURNAL, TOOL_GET_PAGE,
@@ -100,6 +100,7 @@ use crate::commands::{
     list_property_defs_inner, list_spaces_registry_inner, list_tags_for_block_inner,
     list_tags_inner, list_trash_inner, search_blocks_inner,
 };
+use crate::db::validate_block_in_space;
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;

@@ -10,6 +10,7 @@ import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { isTabKey } from '@/lib/keyboard-config/keys'
 
 export interface TemplatePickerProps {
   templatePages: Array<{ id: string; content: string; preview: string | null }>
@@ -67,7 +68,7 @@ export function TemplatePicker({
       }
       const dialog = dialogRef.current
       if (!dialog) return
-      if (e.key === 'Tab') {
+      if (isTabKey(e)) {
         e.preventDefault()
         e.stopPropagation()
         trapTabFocus(dialog, e.shiftKey)

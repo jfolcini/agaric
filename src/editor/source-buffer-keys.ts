@@ -26,6 +26,7 @@ import {
 } from '@/editor/source-buffer-blocks'
 import { isTabIndentEnabled } from '@/lib/editor-preferences'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { isTabKey } from '@/lib/keyboard-config/keys'
 import { nextTaskState, TASK_STATE_TO_MARKER, taskStateFromMarker } from '@/lib/task-states'
 
 /** A child is indented two spaces under its parent (the export's indent). */
@@ -243,7 +244,7 @@ function commandFor(event: KeyboardEvent): Command | null {
   if (matchesShortcutBinding(event, 'moveBlockUp')) return moveLines(-1)
   if (matchesShortcutBinding(event, 'moveBlockDown')) return moveLines(1)
   if (matchesShortcutBinding(event, 'cycleTaskState')) return cycleTask
-  const plainTab = event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey
+  const plainTab = isTabKey(event) && !event.ctrlKey && !event.metaKey && !event.altKey
   if (plainTab && isTabIndentEnabled()) return event.shiftKey ? dedentBlocks : indentBlocks
   return null
 }

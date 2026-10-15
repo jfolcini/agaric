@@ -599,9 +599,8 @@ harness = false
 # bench that re-runs every interactive Tauri command at the 100K-scale
 # fixture and `panic!`s if any sample's mean elapsed exceeds the
 # per-command budget (sourced from ARCHITECTURE.md §25). Intended to be
-# run once in CI; the two §25 *Problem* commands (`list_page_links`,
-# `list_projected_agenda`) are gated behind `SLO_INCLUDE_PROBLEM=1`
-# until their fix plans land. MUST stay its own binary (CI invokes it by name
+# run once in CI; the probes the bench's module header lists are gated behind
+# `SLO_INCLUDE_PROBLEM=1`. MUST stay its own binary (CI invokes it by name
 # and greps its `interactive_slo:` output for the SLO gate).
 [[bench]]
 name = "interactive_slo"

@@ -28,9 +28,9 @@
 //!
 //! The gated measurement tier holds the #2508 tags/pages-cache direct-query
 //! probes, the #2585 MostLinked cache/counterfactual probes, the
-//! space-scoped `list_page_links` read (over budget, #5426) and the #5422
-//! backlink-panel probes (`list_unlinked_references` at `limit = 1` on a
-//! common title, `list_backlinks_grouped` on a 5k-backlink target), behind
+//! #5422 backlink-panel probes (`list_unlinked_references` at `limit = 1` on a
+//! common title, `count_unlinked_references` on the same fixture,
+//! `list_backlinks_grouped` on a 5k-backlink target), behind
 //! `SLO_INCLUDE_PROBLEM` so they don't fail CI. `list_projected_agenda` was
 //! promoted to the green tier after the nightly lane confirmed it under
 //! budget (#2178). To run the gated probes locally:
@@ -1886,6 +1886,53 @@ fn key_presence_filter(key: &str) -> PropertyFilter {
     }
 }
 
+/// Time `filtered_blocks_query_inner` presence-filtering on `key`, first page.
+fn time_filtered_blocks_query(
+    c: &mut Criterion,
+    rt: Runtime,
+    pool: SqlitePool,
+    scope: SpaceScope,
+    bench_name: &str,
+    key: &'static str,
+) -> Acc {
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function(bench_name, move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let scope = scope.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let scope = scope.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = filtered_blocks_query_inner(
+                        &pool,
+                        vec![key_presence_filter(key)],
+                        None,
+                        None,
+                        &scope,
+                        None,
+                        Some(FILTERED_PAGE_SIZE as i64),
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+    acc
+}
+
 /// `filtered_blocks_query` — the agenda / query-block filter on a key present
 /// on 20 of 100K blocks (#5426). Budget: 10 ms, provisional until a
 /// `bench-slo` run measures it.
@@ -1919,41 +1966,14 @@ fn bench_filtered_blocks_query(c: &mut Criterion) {
         "filtered_blocks_query @ 100K: 20 matches fit one page of 50 (#3304)"
     );
 
-    let mut group = c.benchmark_group("interactive_slo");
-    group.sample_size(SAMPLE_SIZE);
-    let acc = Acc::new();
-    let acc_for_bench = acc.clone();
-
-    group.bench_function("filtered_blocks_query_rare_key_100k", move |b| {
-        let acc = acc_for_bench.clone();
-        let pool = pool.clone();
-        let scope = scope.clone();
-        b.to_async(&rt).iter_custom(move |iters| {
-            let pool = pool.clone();
-            let scope = scope.clone();
-            let acc = acc.clone();
-            async move {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    let _ = filtered_blocks_query_inner(
-                        &pool,
-                        vec![key_presence_filter(FILTERED_RARE_KEY)],
-                        None,
-                        None,
-                        &scope,
-                        None,
-                        Some(FILTERED_PAGE_SIZE as i64),
-                    )
-                    .await
-                    .unwrap();
-                }
-                let elapsed = start.elapsed();
-                acc.record(elapsed, iters);
-                elapsed
-            }
-        });
-    });
-    group.finish();
+    let acc = time_filtered_blocks_query(
+        c,
+        rt,
+        pool,
+        scope,
+        "filtered_blocks_query_rare_key_100k",
+        FILTERED_RARE_KEY,
+    );
 
     assert_under_budget(
         "filtered_blocks_query (key on 20 blocks) @ 100K",
@@ -2239,19 +2259,13 @@ fn bench_revert_ops_50op_at_100k(c: &mut Criterion) {
 }
 
 /// `list_page_links` — graph-view roll-up, read for one space: the only form
-/// the graph sends, and since #5415 the only one the command has. PROBLEM
-/// TIER: the 84 ms @ 100K that promoted it to the green tier (#2178) was the
-/// unscoped read; the scoped read that checked both endpoints of every edge
-/// against the space's pages was over budget on this fixture. It now ranges
-/// `page_link_cache.space_id` (#5426) and stays gated until CI measures that.
-/// The fixture stamps every block's space before the rebuild that copies it
-/// into the cache.
+/// the graph sends, and since #5415 the only one the command has. Budget:
+/// 200 ms @ 100K. The scoped read that checked both endpoints of every edge
+/// against the space's pages was over budget on this fixture; it now ranges
+/// `page_link_cache.space_id` (#5426) and is green again. The fixture stamps
+/// every block's space before the rebuild that copies it into the cache.
 fn bench_list_page_links(c: &mut Criterion) {
     const BUDGET_MS: f64 = 200.0;
-
-    if problem_skipped("list_page_links @ 100K") {
-        return;
-    }
 
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
@@ -2322,7 +2336,7 @@ fn bench_list_page_links(c: &mut Criterion) {
     });
     group.finish();
 
-    assert_under_budget_deferred("list_page_links @ 100K", &acc, BUDGET_MS);
+    assert_under_budget("list_page_links @ 100K", &acc, BUDGET_MS);
 }
 
 /// `list_projected_agenda` — the steady-state WARM-CACHE read (#2601).
@@ -2714,7 +2728,7 @@ const SLO_PAGES_MOSTLINKED_LIVE_SQL: &str = "SELECT \
 
 /// `tags_cache` direct query — #2508 scope item 1. PROBLEM TIER (gated
 /// behind `SLO_INCLUDE_PROBLEM`, same `#2178`-style "confirmable probe"
-/// idiom as `bench_list_page_links`/`bench_list_projected_agenda`): this is
+/// idiom as the other probes in this tier): this is
 /// a NEW measurement probe, not a known-over-budget command, but #2508
 /// notes the 100K fixture isn't runnable in this dev sandbox, so it rides
 /// the same nightly-only gate rather than claiming an unverified green
@@ -3229,41 +3243,14 @@ fn bench_filtered_blocks_query_broad_key(c: &mut Criterion) {
         "filtered_blocks_query broad key @ 100K: 100K matches must leave more pages"
     );
 
-    let mut group = c.benchmark_group("interactive_slo");
-    group.sample_size(SAMPLE_SIZE);
-    let acc = Acc::new();
-    let acc_for_bench = acc.clone();
-
-    group.bench_function("filtered_blocks_query_broad_key_100k", move |b| {
-        let acc = acc_for_bench.clone();
-        let pool = pool.clone();
-        let scope = scope.clone();
-        b.to_async(&rt).iter_custom(move |iters| {
-            let pool = pool.clone();
-            let scope = scope.clone();
-            let acc = acc.clone();
-            async move {
-                let start = Instant::now();
-                for _ in 0..iters {
-                    let _ = filtered_blocks_query_inner(
-                        &pool,
-                        vec![key_presence_filter(FILTERED_BROAD_KEY)],
-                        None,
-                        None,
-                        &scope,
-                        None,
-                        Some(FILTERED_PAGE_SIZE as i64),
-                    )
-                    .await
-                    .unwrap();
-                }
-                let elapsed = start.elapsed();
-                acc.record(elapsed, iters);
-                elapsed
-            }
-        });
-    });
-    group.finish();
+    let acc = time_filtered_blocks_query(
+        c,
+        rt,
+        pool,
+        scope,
+        "filtered_blocks_query_broad_key_100k",
+        FILTERED_BROAD_KEY,
+    );
 
     report_measurement_only(
         "filtered_blocks_query (broad key, presence only) @ 100K",
@@ -3594,6 +3581,7 @@ criterion_group!(
     bench_list_pages_with_metadata,
     bench_list_pages_with_metadata_namespace,
     bench_filtered_blocks_query,
+    bench_list_page_links,
     bench_revert_ops_50op_at_100k,
     bench_create_block,
     // #2601 — graduated from the problem tier: the bounded-horizon
@@ -3615,7 +3603,6 @@ criterion_group!(
     bench_pages_cache_counts_direct_query,
     bench_pages_mostlinked_sort_cache,
     bench_pages_mostlinked_sort_live,
-    bench_list_page_links,
     bench_list_unlinked_references_collapsed,
     bench_list_backlinks_grouped_5k,
     bench_count_unlinked_references,

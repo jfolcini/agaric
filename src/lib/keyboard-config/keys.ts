@@ -96,3 +96,12 @@ export function isMatchableKeyToken(raw: string): boolean {
   // Counted in code points, so an astral-plane character (emoji) is one, not two.
   return Array.from(canonical).length === 1
 }
+
+/**
+ * True for Tab and Shift+Tab. WebKitGTK reports Shift+Tab (the `ISO_Left_Tab`
+ * keysym) as `key: 'Unidentified'`; only `code` still says `Tab`. Native
+ * listeners need this; React's synthetic `key` already recovers `Tab` from `keyCode`.
+ */
+export function isTabKey(e: { key: string; code?: string }): boolean {
+  return e.key === 'Tab' || (e.key === 'Unidentified' && e.code === 'Tab')
+}

@@ -957,8 +957,8 @@ fn unlinked_total_count(
 /// The collapsed panel's read: [`eval_unlinked_references`]' unfiltered
 /// `total_count` and `truncated` in one statement, without resolving,
 /// grouping or fetching a row. `rn <= FTS_ROW_CAP` keeps the rows the list
-/// path keeps out of the same capped window, and the root-page join drops
-/// orphans and self-references as `unlinked_total_count` does.
+/// path keeps out of the same capped window, and `b.page_id != ?2` drops
+/// orphans (NULL `page_id`) and self-references as `unlinked_total_count` does.
 pub async fn count_unlinked_references(
     pool: &SqlitePool,
     page_id: &str,
@@ -975,11 +975,10 @@ pub async fn count_unlinked_references(
            SELECT block_id, ROW_NUMBER() OVER (ORDER BY block_id) AS rn FROM hits \
          ) \
          SELECT COUNT(*), \
-           COUNT(DISTINCT CASE WHEN n.rn <= {FTS_ROW_CAP} AND p.id != ?2 \
+           COUNT(DISTINCT CASE WHEN n.rn <= {FTS_ROW_CAP} AND b.page_id != ?2 \
                                THEN n.block_id END) \
          FROM numbered n \
-         JOIN blocks b ON b.id = n.block_id \
-         LEFT JOIN blocks p ON p.id = b.page_id"
+         JOIN blocks b ON b.id = n.block_id"
     );
     // dynamic-sql: the FTS hit window is the list path's own SQL, so both read
     // the same capped set; the cap is a constant.
