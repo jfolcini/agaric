@@ -99,6 +99,7 @@ import { mountedScopedIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import { deleteBlockIfLeakedEmpty } from '@/stores/empty-block-cleanup'
 import { storeOwnsBlock, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
+import type { DeleteBlockOptions } from '@/stores/page-blocks-types'
 import { getRecentCommands, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
 import { useSpaceStore } from '@/stores/space'
 
@@ -1037,8 +1038,8 @@ export function BlockTree({
     // seam as the `moveBlocks` wrapper below: verify the block actually left
     // the store and THROW if not, so the hook's failure paths are live.
     remove: useCallback(
-      async (id: string) => {
-        await remove(id)
+      async (id: string, options?: DeleteBlockOptions) => {
+        await remove(id, options)
         if (pageStore.getState().blocksById.has(id)) {
           throw new Error('remove incomplete: block still present after delete')
         }
