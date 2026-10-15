@@ -2630,7 +2630,7 @@ name = "verify-ci-equivalent.sh self-test (#4424 divergence ratchet)"
 entry = "bash scripts/verify-ci-equivalent.sh --self-test"
 language = "system"
 pass_filenames = false
-files = '^(scripts/verify-ci-equivalent\.sh|\.github/workflows/_validate\.yml)$'
+files = '^(scripts/verify-ci-equivalent\.sh|scripts/lib/devdb-migration-gap\.mjs|\.github/workflows/_validate\.yml)$'
 stages = ["manual"]
 
 # ─── the cap on this file ─────────────────────────────────────────
