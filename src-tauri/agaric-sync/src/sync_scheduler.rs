@@ -124,6 +124,10 @@ pub struct SyncScheduler {
     /// completion for. Changes above it are still owed a sync round.
     debounced_through: AtomicU64,
 
+    /// The debounce window is measured from here, not from the call: a `sleep`
+    /// owned by a dropped future starts over, scheduler state does not.
+    last_change_at: std::sync::Mutex<tokio::time::Instant>,
+
     /// Debounce window for change-triggered sync.
     pub debounce_window: Duration,
 
@@ -610,6 +614,7 @@ impl SyncScheduler {
             active_sessions: AtomicUsize::new(0),
             change_count: watch::Sender::new(0),
             debounced_through: AtomicU64::new(0),
+            last_change_at: std::sync::Mutex::new(tokio::time::Instant::now()),
             debounce_window: DEFAULT_DEBOUNCE,
             resync_interval: DEFAULT_RESYNC,
             local_endpoint: watch::Sender::new(None),
@@ -1033,9 +1038,14 @@ impl SyncScheduler {
 
     // -- Change-triggered debounce (#384) ------------------------------------
 
-    /// Signal that a local change occurred.  Callers (e.g. the materializer
-    /// or command handlers) invoke this after writing ops.
+    /// Ask for a sync round: "Sync now" and the two pairing commands call
+    /// this.
     pub fn notify_change(&self) {
+        // Stamp before counting, so a waiter that sees the count sees the stamp.
+        *self
+            .last_change_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = tokio::time::Instant::now();
         self.change_count.send_modify(|count| *count += 1);
     }
 
@@ -1152,7 +1162,10 @@ impl SyncScheduler {
     /// Cancelling this future — which `daemon_loop` does on every round a
     /// sibling `select!` arm wins, including Branch C's first resync tick at
     /// startup — never loses a change: the count it is waiting on outlives the
-    /// future, so the next call picks the same change back up (#4025).
+    /// future, so the next call picks the same change back up (#4025). Nor does
+    /// it restart the window, which runs from the last `notify_change()` rather
+    /// than from the call, so a sibling arm that keeps winning cannot hold the
+    /// round off.
     pub async fn wait_for_debounced_change(&self) {
         // `self` owns the sender, so the receiver can never see it closed and
         // `changed()` cannot fail while this borrow is alive.
@@ -1166,12 +1179,17 @@ impl SyncScheduler {
 
         // Keep waiting while changes keep arriving within the window.
         loop {
+            let quiet_at = *self
+                .last_change_at
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                + self.debounce_window;
             tokio::select! {
                 _ = changes.changed() => {
-                    // Another change arrived — restart the window.
+                    // Another change arrived; its stamp moves `quiet_at`.
                     count = *changes.borrow_and_update();
                 }
-                () = tokio::time::sleep(self.debounce_window) => {
+                () = tokio::time::sleep_until(quiet_at) => {
                     // Quiet period elapsed — debounce complete.
                     break;
                 }
@@ -1829,6 +1847,64 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), sched.wait_for_debounced_change())
             .await
             .expect("#4025: a change signalled before a cancelled debounce was swallowed");
+    }
+
+    /// The debounce window survives a sibling `select!` arm that keeps
+    /// cancelling the wait: it still closes one window after the change.
+    ///
+    /// The sibling stands in for Branch A: `iroh-mdns-address-lookup` reports
+    /// every republish of a known peer as a fresh discovery, so a window that
+    /// restarted with each re-created future never closed and "Sync now"
+    /// never dialled.
+    #[tokio::test(start_paused = true)]
+    async fn debounce_window_survives_a_sibling_arm_that_keeps_winning() {
+        let window = Duration::from_secs(3);
+        let sched = SyncScheduler::with_intervals(window, DEFAULT_RESYNC);
+        let start = tokio::time::Instant::now();
+        sched.notify_change();
+
+        // Bounded well past the window, so a window that never closes fails
+        // the assertion below instead of hanging.
+        let mut fired_at = None;
+        for _ in 0..10 {
+            tokio::select! {
+                () = sched.wait_for_debounced_change() => {
+                    fired_at = Some(start.elapsed());
+                    break;
+                }
+                () = tokio::time::sleep(Duration::from_millis(800)) => {}
+            }
+        }
+
+        assert_eq!(
+            fired_at,
+            Some(window),
+            "the debounce must close one window after the change, \
+             even while a sibling arm keeps cancelling it"
+        );
+    }
+
+    /// A change landing inside a live window pushes the round out to one
+    /// window after that change.
+    #[tokio::test(start_paused = true)]
+    async fn a_change_inside_the_debounce_window_extends_it() {
+        let window = Duration::from_secs(3);
+        let second_change = Duration::from_secs(1);
+        let sched = SyncScheduler::with_intervals(window, DEFAULT_RESYNC);
+        let start = tokio::time::Instant::now();
+        sched.notify_change();
+
+        let wait = sched.wait_for_debounced_change();
+        tokio::pin!(wait);
+        tokio::select! {
+            () = &mut wait => {
+                panic!("the window closed before the second change; the test proves nothing")
+            }
+            () = tokio::time::sleep(second_change) => sched.notify_change(),
+        }
+        wait.await;
+
+        assert_eq!(start.elapsed(), second_change + window);
     }
 
     /// Test helper: build a `PeerRef` with only the two fields
