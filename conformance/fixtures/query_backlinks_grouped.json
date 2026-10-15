@@ -266,6 +266,22 @@
       "name": "unlinked_none_for_content_block_id",
       "rows": ["filtered#count=0#truncated=false"],
       "total_count": 0
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "count_unlinked",
+      "rows": ["filtered#count=2#truncated=false"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "count_unlinked_none_for_content_block_id",
+      "rows": ["filtered#count=0#truncated=false"],
+      "total_count": 0
     }
   ],
   "name": "query_backlinks_grouped",
@@ -419,6 +435,30 @@
       "command": "list_unlinked_references",
       "comment": "A `pageId` naming a CONTENT block resolves no title (`block_type = 'page' AND deleted_at IS NULL` guards the lookup, #4159 item 3), so the needle set is empty and only the trailer is recorded — not a search on that block's own text, which links to B1 and would match the resolved title 'Target' in the FTS index.",
       "name": "unlinked_none_for_content_block_id"
+    },
+    {
+      "args": {
+        "pageId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "count_unlinked_references",
+      "comment": "#5422 — the collapsed panel's count-only read answers `unlinked_all`'s counts, 2 and 2, with no groups and no cursor.",
+      "name": "count_unlinked"
+    },
+    {
+      "args": {
+        "pageId": "S3",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "count_unlinked_references",
+      "comment": "A CONTENT block id resolves no title, so the count is 0, as `unlinked_none_for_content_block_id` lists nothing. Without this step a handler that ignored `pageId` would pass `count_unlinked`.",
+      "name": "count_unlinked_none_for_content_block_id"
     }
   ],
   "seed": {

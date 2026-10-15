@@ -50,11 +50,12 @@ import { requireActiveScope } from '@/lib/space-scope'
  */
 const EXPANDED_GROUP_LIMIT = paginationLimit(20)
 /**
- * #3316 item 2 — groups requested while the panel is collapsed. One, not zero:
- * the backend rejects a limit of 0, and the counts the panel needs
- * (`total_count` / `filtered_count`) are computed over the whole match set
- * before pagination, so a single group is enough to keep the header label and
- * the `return null` decision exact.
+ * #3316 item 2 — groups requested while the panel is collapsed with filters
+ * set. One, not zero: the backend rejects a limit of 0, and the counts the
+ * panel needs (`total_count` / `filtered_count`) are computed over the whole
+ * match set before pagination, so a single group is enough to keep the header
+ * label and the `return null` decision exact. With no filters a collapsed
+ * panel asks `count_unlinked_references` instead (#5422).
  */
 const COLLAPSED_GROUP_LIMIT = paginationLimit(1)
 
@@ -74,8 +75,9 @@ export interface UseUnlinkedReferencesParams {
    * `agaric-store/src/backlink/grouped.rs`), so a collapsed panel can ask for a
    * single group and still receive exact counts. That skips `sort_ids` +
    * `fetch_block_rows_by_ids` for 19 of the 20 groups — each up to
-   * `MAX_BLOCKS_PER_GROUP = 200` rows — plus their JSON IPC serialization. The
-   * FTS scan and root-page resolve are unavoidable (they produce the count).
+   * `MAX_BLOCKS_PER_GROUP = 200` rows — plus their JSON IPC serialization.
+   * With no filters, #5422 goes further: `count_unlinked_references` answers
+   * the same counts in one SQL statement, with no root-page resolve or group.
    *
    * Part of the query key, so expanding the panel refetches with the full page.
    * Defaults to `false`, leaving any other caller on the full page.
@@ -156,6 +158,13 @@ export function useUnlinkedReferences(
           // #5415 — no active space: nothing to list, never dispatch.
           if (spaceId == null) return EMPTY_GROUPED_RESPONSE
           try {
+            // #5422 — the count path takes no filters, so a filtered panel
+            // keeps the list call for its post-filter `filtered_count`.
+            if (collapsed && filters.length === 0) {
+              return unwrap(
+                await commands.countUnlinkedReferences(pageId, requireActiveScope(spaceId)),
+              )
+            }
             return unwrap(
               await commands.listUnlinkedReferences(
                 pageId,
