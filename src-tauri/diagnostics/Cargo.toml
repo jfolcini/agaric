@@ -8,6 +8,10 @@
 # `../Cargo.toml`), and (b) proves the multi-crate workspace wiring ahead
 # of a future core carve.
 #
+# `e2e_sync_peer` (#5365) lives here for reason (a) too: it is the headless
+# second device the real-backend e2e lane pairs the app with, and must never
+# ship in the bundle.
+#
 # The bins call only the app lib's PUBLIC API
 # (`agaric_lib::{db::init_pool, error::AppError}` and the
 # `spaces::cross_space_validation` doc reference), so the crate depends on
@@ -75,7 +79,16 @@ agaric-core = { path = "../agaric-core" }
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 regex = "1"
 rustc-hash = "2.1.2"
-tokio = { version = "1", features = ["macros", "rt"] }
+# `rt-multi-thread`: the sync apply path calls `block_in_place`. `io-std`,
+# `io-util`, `time`: `e2e_sync_peer`'s stdin/stdout protocol and its waits.
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "io-std", "io-util", "time"] }
+# `e2e_sync_peer` only: the sync daemon and pairing, the peer rows it waits
+# on, its JSON line protocol, and its log on stderr.
+agaric-store = { path = "../agaric-store", version = "0.1.0" }
+agaric-sync = { path = "../agaric-sync", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing-subscriber = "0.3.23"
 
 [dev-dependencies]
 tempfile = "3.27.0"
@@ -87,6 +100,10 @@ path = "src/bin/op_log_histogram.rs"
 [[bin]]
 name = "audit_cross_space_refs"
 path = "src/bin/audit_cross_space_refs.rs"
+
+[[bin]]
+name = "e2e_sync_peer"
+path = "src/bin/e2e_sync_peer.rs"
 
 # cargo-machete name-matches `use agaric::…`, but the bins reference the lib
 # TARGET name `agaric_lib::…` (the `agaric` package renames its lib), so the

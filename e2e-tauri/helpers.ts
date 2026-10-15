@@ -51,6 +51,12 @@
 //   - `[data-testid="block-editor"]`        the roving TipTap editor box.
 //   - `[data-testid="block-static"]`        a committed (non-focused) block row
 //     (StaticBlock; carries `data-block-id`).
+//   - Settings › Sync & devices, for sync-two-device.e2e.ts: `#settings-tab-sync`,
+//     `[data-testid="settings-panel-sync"]`, "Pair new device",
+//     `[data-testid="pairing-qr-code"]` (its SVG is decoded in sync-peer.ts),
+//     `.pairing-passphrase`, `.device-peer-item`, "Edit address for …",
+//     "Address (host:port)", "Save", "Sync now with device …", and the toasts
+//     "Device paired successfully" and "Address updated".
 //   - `[data-testid="suggestion-item"]`     an item of the open `[[` / `#`
 //     picker (SuggestionList.tsx); the create item's id is
 //     `suggestion-__create__`.

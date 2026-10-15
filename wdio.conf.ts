@@ -1008,6 +1008,15 @@ export const config: WebdriverIO.Config = {
     if (result.status !== 0) {
       throw new Error(`tauri debug build failed with exit code ${String(result.status)}`)
     }
+    // The second device of sync-two-device.e2e.ts (e2e-tauri/sync-peer.ts).
+    const peer = spawnSync(
+      'cargo',
+      ['build', '-p', 'agaric-diagnostics', '--bin', 'e2e_sync_peer'],
+      { cwd: path.join(rootDir, 'src-tauri'), stdio: 'inherit' },
+    )
+    if (peer.status !== 0) {
+      throw new Error(`sync peer build failed with exit code ${String(peer.status)}`)
+    }
   },
 
   beforeSession: () => {

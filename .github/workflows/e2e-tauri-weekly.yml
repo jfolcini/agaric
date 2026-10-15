@@ -277,6 +277,14 @@ jobs:
         # VITE_E2E) → the app talks to the real backend, not the JS mock.
         run: npm run tauri -- build --debug --no-bundle
 
+      - name: Build the sync peer
+        # The second device `e2e-tauri/sync-two-device.e2e.ts` pairs the app
+        # with (#5365): a headless vault on the app's own sync daemon. Its own
+        # step because `tauri build` builds only the app crate; it recompiles
+        # the tauri crates once more, without the CLI's `custom-protocol`.
+        working-directory: src-tauri
+        run: cargo build -p agaric-diagnostics --bin e2e_sync_peer
+
       - name: Run WebdriverIO real-backend smoke (Xvfb)
         # The binary is already built above, so tell wdio.conf.ts to skip its
         # own onPrepare build. xvfb-run gives the WebKitWebView a display and

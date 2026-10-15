@@ -148,11 +148,16 @@ version = "0.5.0"
 dependencies = [
  "agaric",
  "agaric-core",
+ "agaric-store",
+ "agaric-sync",
  "regex",
  "rustc-hash",
+ "serde",
+ "serde_json",
  "sqlx",
  "tempfile",
  "tokio",
+ "tracing-subscriber",
 ]
 
 [[package]]
