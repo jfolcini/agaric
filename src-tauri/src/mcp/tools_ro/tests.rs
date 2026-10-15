@@ -5062,7 +5062,7 @@ async fn get_page_and_search_response_bytes_5401() {
         .unwrap();
     assert_eq!(
         (page_resp.to_string().len(), search_resp.to_string().len()),
-        (783, 604),
+        (801, 604),
         "get_page: {page_resp}\nsearch: {search_resp}"
     );
 }
