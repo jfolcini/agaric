@@ -115,8 +115,9 @@ defence-in-depth.
   the structural side of a search — `space`, `tag`, page-name glob,
   `last-edited`, `state`, `block-type`, `due-date`, `scheduled` — is now routed
   through `SearchProjection` rather than a parallel hand-built SQL path. After
-  #1320-A both surfaces share the `LOWER(title) GLOB ?` page-name dialect (only
-  the alias differs: Pages keys on `b.id`, Search on `b.page_id`).
+  #1320-A both surfaces share the `LOWER(title) GLOB ?` page-name dialect. Pages
+  keys on `b.id` and Search on `b.page_id`; Pages also bounds a pattern's literal
+  head on `idx_pages_cache_title_nocase` (#5426).
 - **`BacklinkProjection`** ([`backlink/projection.rs`](../../src-tauri/agaric-store/src/backlink/projection.rs))
   compiles the correlated backlink leaf fragments: `has-property`, `priority`,
   and the #1280 metadata set (`state` / `block-type` / `due-date` / `scheduled`

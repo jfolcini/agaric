@@ -1950,6 +1950,122 @@ fn bench_filtered_blocks_query(c: &mut Criterion) {
     );
 }
 
+/// `list_pages_with_metadata` with `PathGlob "Notes/*"` — `PagesTreeSection`'s
+/// descendant lookup on every page open (no sort, so `Alphabetical`; the
+/// 100-row page limit), over 100K pages of which 20 sit under `Notes/`. The
+/// first page also runs the COUNT. Budget: 10 ms, provisional until a
+/// `bench-slo` run measures it (#5426).
+fn bench_list_pages_with_metadata_namespace(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 10.0;
+    const PAGE_SIZE: i64 = 100;
+    const NAMESPACE_CHILDREN: usize = 20;
+
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_list_pages_with_metadata_namespace"));
+    let page_ids = rt.block_on(seed_pages_cache_fixture(&pool, FIXTURE_SIZE, 0));
+    rt.block_on(assign_all_to_slo_space(&pool));
+    let stride = FIXTURE_SIZE / NAMESPACE_CHILDREN;
+    let mut child_ids: Vec<String> = Vec::with_capacity(NAMESPACE_CHILDREN);
+    for n in 0..NAMESPACE_CHILDREN {
+        let id = &page_ids[n * stride];
+        rt.block_on(
+            sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+                .bind(format!("Notes/child {n}"))
+                .bind(id)
+                .execute(&pool),
+        )
+        .unwrap();
+        child_ids.push(id.clone());
+    }
+    rt.block_on(
+        sqlx::query(
+            "INSERT INTO pages_cache \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
+             SELECT id, content, 0, 0, 0 FROM blocks \
+             WHERE block_type = 'page' AND space_id = ?",
+        )
+        .bind(SLO_SPACE_ID)
+        .execute(&pool),
+    )
+    .unwrap();
+    let filter = ListPagesWithMetadataFilter {
+        sort: PageSort::Alphabetical,
+        space_id: SLO_SPACE_ID.to_owned(),
+        filters: vec![agaric_store::filters::FilterPrimitive::PathGlob {
+            pattern: "Notes/*".to_owned(),
+            exclude: false,
+        }],
+    };
+
+    let observed = rt
+        .block_on(list_pages_with_metadata_inner(
+            &pool,
+            filter.clone(),
+            None,
+            Some(PAGE_SIZE),
+        ))
+        .unwrap();
+    let mut observed_ids: Vec<String> = observed
+        .items
+        .iter()
+        .map(|row| row.id.as_str().to_owned())
+        .collect();
+    observed_ids.sort();
+    assert_eq!(
+        observed_ids, child_ids,
+        "list_pages_with_metadata Notes/* @ 100K: untimed probe must return exactly the 20 Notes/ pages"
+    );
+    assert!(
+        !observed.has_more,
+        "list_pages_with_metadata Notes/* @ 100K: 20 rows fit one page"
+    );
+    assert_eq!(
+        observed.total_count,
+        Some(NAMESPACE_CHILDREN as i64),
+        "list_pages_with_metadata Notes/* @ 100K: untimed probe must count the 20 Notes/ pages"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("list_pages_with_metadata_namespace_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let filter = filter.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let filter = filter.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = list_pages_with_metadata_inner(
+                        &pool,
+                        filter.clone(),
+                        None,
+                        Some(PAGE_SIZE),
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    assert_under_budget(
+        "list_pages_with_metadata (Notes/* namespace) @ 100K",
+        &acc,
+        BUDGET_MS,
+    );
+}
+
 /// `create_block` — one new content block on top of a 100K DB. Budget: 60 ms.
 fn bench_create_block(c: &mut Criterion) {
     const BUDGET_MS: f64 = 60.0;
@@ -3154,6 +3270,7 @@ criterion_group!(
     bench_export_page_markdown,
     bench_load_page_subtree,
     bench_list_pages_with_metadata,
+    bench_list_pages_with_metadata_namespace,
     bench_filtered_blocks_query,
     bench_revert_ops_50op_at_100k,
     bench_create_block,
