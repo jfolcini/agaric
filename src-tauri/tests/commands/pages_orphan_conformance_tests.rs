@@ -76,8 +76,9 @@ fn load_vectors() -> Vectors {
 }
 
 /// Seed one fixture row as a page in [`TEST_SPACE_ID`]:
-/// - `pages_cache` carries the materialised `inbound_link_count` (read via the
-///   LEFT JOIN by `Orphan` / `HasNoInboundLinks`); `child_block_count` is 0;
+/// - `pages_cache` carries the materialised `inbound_link_count` (read by
+///   `Orphan` / `HasNoInboundLinks`) and the page's space, which the base
+///   SELECT lists by; `child_block_count` is 0;
 /// - when `has_outbound_link` is true, a `block_links` edge whose source is
 ///   THIS page block and whose target is the off-space sentinel
 ///   [`OUTBOUND_TARGET_ID`] is inserted, so the page-wide `NOT EXISTS`
@@ -88,12 +89,13 @@ async fn seed_orphan_page(pool: &SqlitePool, row: &Row) {
     assign_to_space(pool, &row.id, TEST_SPACE_ID).await;
     sqlx::query(
         "INSERT OR IGNORE INTO pages_cache \
-             (page_id, title, updated_at, inbound_link_count, child_block_count) \
-         VALUES (?, ?, 1735689600000, ?, 0)",
+             (page_id, title, updated_at, inbound_link_count, child_block_count, space_id) \
+         VALUES (?, ?, 1735689600000, ?, 0, ?)",
     )
     .bind(&row.id)
     .bind(&row.title)
     .bind(row.inbound_link_count)
+    .bind(TEST_SPACE_ID)
     .execute(pool)
     .await
     .unwrap();

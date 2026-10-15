@@ -5,16 +5,16 @@ A path-keyed guard whose subject moves does not fail. It matches nothing,
 reports nothing, exits 0, and the invariant it protected silently stops being
 enforced. Six recorded instances (#3110, #3847, #2895, #3465, session 1299's
 `android_re`, and `check-bulk-equivalence`'s own header), plus the live one
-#3255/#4508 fixed: 11 of 15 `space-filter-baseline.txt` entries named files
-that had moved to `agaric-store` in #2621. The allowlist checkers could not
+#3255/#4508 fixed: 11 of 15 baseline entries named files that had moved to
+`agaric-store` in #2621. The allowlist checkers could not
 detect a dangling entry AT ALL — they walked discovered files and asked "is
 this one allowed?", never "does this entry still name a file?".
 
 This is the mechanical half of that class, and only that half: a DIRECTORY
 WALK. It has no opinion about hooks, about what each guard is FOR, about
-whether an entry sits inside its owner's scan roots (assertion 2, unbuilt
-outside `check-space-filter-drift`), or about `files:` triggers (assertion 4,
-likewise). Those need judgement; this needs `Path.exists()`.
+whether an entry sits inside its owner's scan roots (assertion 2, unbuilt), or
+about `files:` triggers (assertion 4, likewise). Those need judgement; this
+needs `Path.exists()`.
 
 Deliberately standalone rather than a feature of a larger hook-dependency
 guard: a directory walk must not inherit that dependency.
@@ -129,7 +129,7 @@ PRUNE_DIRS = ("docs/session-log/",)
 #
 # `base` is part of the declaration because two of these are NOT repo-root
 # relative, and guessing would make a dangling entry look resolvable. That is
-# exactly how `check-space-filter-drift`'s DENY_FILES rotted: its single entry
+# exactly how a guard's DENY_FILES once rotted: its single entry
 # was written relative to `src-tauri/src/` and kept resolving nowhere.
 DATA_SOURCES: dict[str, tuple[str, str]] = {
     # JSON array of objects; the `fn` field is `<path>::<symbol>`.
@@ -143,7 +143,6 @@ DATA_SOURCES: dict[str, tuple[str, str]] = {
     "scripts/doc-code-paths-baseline.json": ("json:file", "."),
     # `<count> <path>` text lines.
     "src-tauri/dynamic-sql-baseline.txt": ("text:count-path", "."),
-    "src-tauri/space-filter-baseline.txt": ("text:count-path", "."),
     # One migration FILENAME per line, relative to the migrations directory.
     "src-tauri/migrations-mock-ack-baseline.txt": ("text:lines", "src-tauri/migrations"),
     # One path per line, relative to `src-tauri/` (the file's header says so).
@@ -175,16 +174,9 @@ NO_PATHS: dict[str, str] = {
 # Not discoverable, so declared — but each declaration is asserted below to
 # still find its constant and still yield entries.
 EMBEDDED_SOURCES: list[tuple[str, str, str]] = [
-    # The files a guard must never police. A stale deny entry excludes
-    # nothing, and #3255's did exactly that for two years.
-    ("scripts/check-space-filter-drift.py", "DENY_FILES", "."),
-    # The one module allowed to `DELETE FROM op_log`.
-    ("scripts/check-op-log-delete.py", "ALLOWED_FILES", "."),
-    # Files whose raw shadow utility is an intentional non-tier shadow.
-    ("scripts/check-elevation-tiers.py", "ALLOWLIST", "."),
     # Sanctioned raw-transaction sites. Mixed exact paths and `**` globs;
     # the globs are skipped per-entry (see the module docstring).
-    ("scripts/check-raw-tx.py", "ALLOWLIST_GLOBS", "."),
+    ("scripts/check-raw-tx.mjs", "ALLOWLIST_GLOBS", "."),
     # Sanctioned raw `invoke(` / `localStorage` seams.
     ("scripts/check-raw-invoke.mjs", "EXEMPT_FILES", "."),
     # Directory prefixes, not files — `exists()` covers both, and a prefix
@@ -200,7 +192,7 @@ EMBEDDED_SOURCES: list[tuple[str, str, str]] = [
 # nothing true about them.
 #   check-git-fixture-isolation.mjs EXEMPT_BASENAMES  — bare basenames
 #   check-store-layering.mjs PAGE_BLOCK_STORE_*       — basenames under src/stores/
-#   check-raw-tx.py TEST_FILE_GLOBS / BIN_FILE_GLOBS  — structural patterns
+#   check-raw-tx.mjs BIN_FILE_GLOBS, lib/rust-scan.mjs TEST_FILE_GLOBS — structural patterns
 #   check-dynamic-sql.py EXTRA_TEST_FILE_GLOBS        — structural patterns
 #   check-table-ownership.py OWNER / EXTRA_TEST_...   — table names / patterns
 # Two are path-keyed exemption sets and are still excluded, for reasons that
@@ -215,7 +207,7 @@ EMBEDDED_SOURCES: list[tuple[str, str, str]] = [
 #     would fail permanently on the one state that set is allowed to be in.
 # Scan ROOTS (`CRATE_ROOTS`, `SCAN_ROOTS`) are also out of scope here: they are
 # each guard's own assertion 3, which the guards themselves now make (#4508,
-# #4540, and this change for raw-tx / dynamic-sql / op-log-delete), because
+# #4540, and this change for raw-tx / dynamic-sql), because
 # only the guard knows whether a tree is deliberately synthetic.
 
 

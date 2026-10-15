@@ -15,7 +15,9 @@ use agaric_lib::commands::tests::common::{
     DEV, TEST_SPACE_B_ID, TEST_SPACE_ID, assign_to_space, ensure_test_space, ensure_test_space_b,
     insert_block, test_pool,
 };
-use agaric_lib::commands::{edit_block_inner, purge_block_inner};
+use agaric_lib::commands::{
+    delete_block_inner, edit_block_inner, purge_block_inner, restore_blocks_by_ids_inner,
+};
 use agaric_lib::materializer::Materializer;
 use agaric_store::filters::{FilterPrimitive, LastEditedSpec, PropertyPredicate, PropertyValue};
 
@@ -24,22 +26,23 @@ use agaric_store::filters::{FilterPrimitive, LastEditedSpec, PropertyPredicate, 
 /// Seed a page with the given id and content into [`TEST_SPACE_ID`].
 ///
 /// Also seeds the `pages_cache` row that the materializer
-/// would write in production. The IPC reads
-/// `pc.{inbound_link_count, child_block_count}` from this row via a
-/// LEFT JOIN; without it the IPC would return 0 for both counts. The row
-/// carries the title's sort key, and `last_edited_ms` stays 0 until
-/// [`seed_op_log`] raises it.
+/// would write in production. The IPC lists pages from this row (#5371)
+/// and reads `pc.{inbound_link_count, child_block_count}` from it. The row
+/// carries the title's sort key and the page's space, and `last_edited_ms`
+/// stays 0 until [`seed_op_log`] raises it.
 async fn seed_page(pool: &SqlitePool, id: &str, content: &str) {
     insert_block(pool, id, "page", content, None, Some(0)).await;
     assign_to_space(pool, id, TEST_SPACE_ID).await;
     sqlx::query(
         "INSERT OR IGNORE INTO pages_cache \
-             (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count) \
-         VALUES (?, ?, ?, 1735689600000, 0, 0)",
+             (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count, \
+              space_id) \
+         VALUES (?, ?, ?, 1735689600000, 0, 0, ?)",
     )
     .bind(id)
     .bind(content)
     .bind(agaric_core::title_sort::title_sort_key(content))
+    .bind(TEST_SPACE_ID)
     .execute(pool)
     .await
     .unwrap();
@@ -680,33 +683,35 @@ async fn space_filter_excludes_pages_in_other_space() {
     ensure_test_space(&pool).await;
     ensure_test_space_b(&pool).await;
     seed_page(&pool, "01PAGE000000000000000000A1", "InA").await;
-    insert_block(
-        &pool,
-        "01PAGE000000000000000000B1",
-        "page",
-        "InB",
-        None,
-        Some(0),
-    )
-    .await;
+    // Seeded in A, then moved: its cache row moves with it (#5371).
+    seed_page(&pool, "01PAGE000000000000000000B1", "InB").await;
     assign_to_space(&pool, "01PAGE000000000000000000B1", TEST_SPACE_B_ID).await;
 
-    let resp =
-        list_pages_with_metadata_inner(&pool, filter(PageSort::Alphabetical), None, Some(50))
-            .await
-            .unwrap();
-    let contents: Vec<&str> = resp
-        .items
-        .iter()
-        .filter_map(|p| p.content.as_deref())
-        .collect();
-    assert!(
-        contents.contains(&"InA"),
-        "space A page must appear: {contents:?}"
+    let titles = |space_id: &str| {
+        let filter = ListPagesWithMetadataFilter {
+            space_id: space_id.to_owned(),
+            ..filter(PageSort::Alphabetical)
+        };
+        let pool = pool.clone();
+        async move {
+            list_pages_with_metadata_inner(&pool, filter, None, Some(50))
+                .await
+                .unwrap()
+                .items
+                .into_iter()
+                .filter_map(|p| p.content)
+                .collect::<Vec<String>>()
+        }
+    };
+    assert_eq!(
+        titles(TEST_SPACE_ID).await,
+        vec!["InA"],
+        "space A lists only its page"
     );
-    assert!(
-        !contents.contains(&"InB"),
-        "space B page must NOT appear: {contents:?}"
+    assert_eq!(
+        titles(TEST_SPACE_B_ID).await,
+        vec!["InB"],
+        "the moved page lists in B"
     );
 }
 
@@ -966,7 +971,7 @@ async fn soft_deleted_pages_excluded_from_results() {
 // assert that contract directly: run `EXPLAIN QUERY PLAN` on the same
 // SQL the IPC emits and check the plan mentions `pages_cache` and
 // does NOT mention `block_links`. If a future change accidentally
-// re-introduces the correlated subquery (or drops the LEFT JOIN), one
+// re-introduces the correlated subquery (or drops the join), one
 // of these asserts fires before users see the regression.
 //
 // Note: we don't snapshot the full plan string (SQLite is allowed to
@@ -981,8 +986,8 @@ async fn soft_deleted_pages_excluded_from_results() {
 /// Previously this ran EXPLAIN on a hand-rebuilt copy of the SELECT, so a plan
 /// regression in the IPC's actual query would NOT be caught. We now compose
 /// the IPC's real statement via [`compose_list_pages_with_metadata_sql`]
-/// (the same `const PAGES_METADATA_BASE_SELECT` + `compile_pages_filters` +
-/// keyset path the IPC runs) and EXPLAIN that — so any drift in the live
+/// (the same `compile_pages_filters` + `SortKeyset::compose` path the IPC
+/// runs) and EXPLAIN that — so any drift in the live
 /// query plan trips the asserts.
 ///
 /// The composed SQL uses named placeholders: `?1` = space_id, then the
@@ -1591,6 +1596,149 @@ async fn recently_modified_query_plan_reads_pages_cache_not_op_log() {
     );
 }
 
+/// #5371 — every sort reads its rows in order from an index led by the space
+/// (migration 0124), so a page costs `LIMIT` rows, not a sort of the space.
+/// Last-opened merges two index-ordered arms: its only temp B-trees order an
+/// arm's `LIMIT`ed rows, each right after that arm's `SCAN (subquery…)`.
+#[tokio::test]
+async fn every_sort_reads_an_index_instead_of_sorting_the_space_5371() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    for i in 0..10 {
+        seed_page(
+            &pool,
+            &format!("01PAGE0000000000000000X{i:02}"),
+            &format!("x{i}"),
+        )
+        .await;
+    }
+    let cases: [(PageSort, &[&str]); 6] = [
+        (PageSort::Alphabetical, &["idx_pages_cache_space_title"]),
+        (PageSort::Created, &["idx_pages_cache_space_created"]),
+        (
+            PageSort::RecentlyModified,
+            &["idx_pages_cache_space_edited"],
+        ),
+        (
+            PageSort::LastOpened,
+            &["idx_page_opens_opened", "idx_pages_cache_space_created"],
+        ),
+        (PageSort::MostLinked, &["idx_pages_cache_space_linked"]),
+        (PageSort::MostContent, &["idx_pages_cache_space_content"]),
+    ];
+    for (sort, indexes) in cases {
+        let plan = explain_query_plan_for_filter(&pool, &filter(sort), &[]).await;
+        for index in indexes {
+            assert!(
+                plan.contains(index),
+                "{sort:?} must read {index}; got:\n{plan}"
+            );
+        }
+        let lines: Vec<&str> = plan.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains("TEMP B-TREE") {
+                assert!(
+                    i > 0 && lines[i - 1].starts_with("SCAN (subquery"),
+                    "{sort:?} sorts the space instead of reading an index; got:\n{plan}"
+                );
+            }
+        }
+    }
+}
+
+/// A filter that lists its pages (a tag, an include path glob) drives every
+/// sort from that list: a plan that reads `pages_cache` by anything but
+/// `page_id` walks the whole space, testing each page against the filter
+/// (`PagesTreeSection`'s namespace lookup, a tag chip). A brace pair is an OR
+/// of lists, which only the `pages_cache` key serves. An exclude glob or a
+/// property filter lists no pages, so each keeps the sort's index.
+#[tokio::test]
+async fn page_list_filters_seek_their_pages_instead_of_walking_the_space() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    for i in 0..10 {
+        seed_page(
+            &pool,
+            &format!("01PAGE0000000000000000G{i:02}"),
+            &format!("Notes/child {i}"),
+        )
+        .await;
+    }
+    let glob = |pattern: &str, exclude| FilterPrimitive::PathGlob {
+        pattern: pattern.to_string(),
+        exclude,
+    };
+    let tag = "01TAG000000000000000000T1";
+    // Each filter's binds; a glob's are the title range, then the glob, per
+    // prepared pattern.
+    let notes: &[&str] = &["notes/", "notes0", "notes/*"];
+    let lists: [(FilterPrimitive, &[&str]); 4] = [
+        (glob("Notes/*", false), notes),
+        (
+            glob("{Notes,Journal}/*", false),
+            &[
+                "notes/",
+                "notes0",
+                "notes/*",
+                "journal/",
+                "journal0",
+                "journal/*",
+            ],
+        ),
+        (
+            FilterPrimitive::Tag {
+                tag: tag.to_string(),
+            },
+            &[tag],
+        ),
+        (
+            FilterPrimitive::TagOrRef {
+                tag: tag.to_string(),
+            },
+            &[tag, tag],
+        ),
+    ];
+    let sorts = [
+        PageSort::Alphabetical,
+        PageSort::Created,
+        PageSort::RecentlyModified,
+        PageSort::LastOpened,
+        PageSort::MostLinked,
+        PageSort::MostContent,
+    ];
+    for (list, binds) in &lists {
+        for sort in sorts {
+            let f = filter_with(sort, vec![list.clone()]);
+            let plan = explain_query_plan_for_filter(&pool, &f, binds).await;
+            for line in plan.lines() {
+                let reads_pc = line.starts_with("SCAN pc ") || line.starts_with("SEARCH pc ");
+                assert!(
+                    !reads_pc || line.contains("page_id=?"),
+                    "{list:?} under {sort:?} walks the space; got:\n{plan}"
+                );
+            }
+        }
+    }
+    let others: [(FilterPrimitive, &[&str]); 2] = [
+        (glob("Notes/*", true), notes),
+        (
+            FilterPrimitive::HasProperty {
+                key: "status".to_string(),
+                predicate: PropertyPredicate::Exists,
+            },
+            &["status"],
+        ),
+    ];
+    for (other, binds) in &others {
+        let f = filter_with(PageSort::Alphabetical, vec![other.clone()]);
+        let plan = explain_query_plan_for_filter(&pool, &f, binds).await;
+        assert!(
+            plan.contains("idx_pages_cache_space_title"),
+            "{other:?} must keep the sort's index; got:\n{plan}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn filtered_query_plan_explains_real_composed_ipc_sql() {
     // Assert the EXPLAIN harness now plans the IPC's REAL
@@ -1598,7 +1746,7 @@ async fn filtered_query_plan_explains_real_composed_ipc_sql() {
     // keyset), not a hand-rebuilt copy. We compose a Tag-filtered query and
     // EXPLAIN it; the plan must reference `block_tags` (proving the compiled
     // `compile_tag` fragment was actually spliced into the planned statement)
-    // and still ride `pages_cache` via the LEFT JOIN. If the IPC's real SQL
+    // and still drive from `pages_cache`. If the IPC's real SQL
     // ever stops emitting the filter fragment, this plan loses the
     // `block_tags` token and the assert fires.
     let (pool, _dir) = test_pool().await;
@@ -1626,7 +1774,7 @@ async fn filtered_query_plan_explains_real_composed_ipc_sql() {
     );
     assert!(
         plan.to_lowercase().contains("pages_cache"),
-        "filtered plan must still reference pages_cache via the LEFT JOIN; got:\n{plan}"
+        "filtered plan must still drive from pages_cache; got:\n{plan}"
     );
 }
 
@@ -3275,7 +3423,9 @@ async fn pages_path_glob_whitespace_only_is_not_malformed_sql() {
 async fn page_through(pool: &SqlitePool, sort: PageSort, limit: i64) -> Vec<String> {
     let mut ids = Vec::new();
     let mut cursor = None;
-    loop {
+    // Bounded so a cursor that stops advancing fails here instead of hanging
+    // until the runner's timeout.
+    for _ in 0..100 {
         let page = list_pages_with_metadata_inner(pool, filter(sort), cursor, Some(limit))
             .await
             .unwrap();
@@ -3285,6 +3435,7 @@ async fn page_through(pool: &SqlitePool, sort: PageSort, limit: i64) -> Vec<Stri
             None => return ids,
         }
     }
+    panic!("{sort:?} paging did not end within 100 pages: {ids:?}");
 }
 
 /// The `RecentlyModified` order computed live: the per-page correlated
@@ -3394,15 +3545,24 @@ async fn editing_a_child_block_moves_its_page_to_the_top_5371() {
 async fn last_opened_lists_opened_pages_in_open_order_then_newest_across_pages_5371() {
     let (pool, _dir) = test_pool().await;
     ensure_test_space(&pool).await;
-    let pages: Vec<String> = (1..=6)
+    let pages: Vec<String> = (1..=10)
         .map(|i| format!("01PAGE00000000000000000O{i:02}"))
         .collect();
     for (i, id) in pages.iter().enumerate() {
         seed_page(&pool, id, &format!("Page {i}")).await;
     }
-    // Opened 2, then 5, then 3. The command stamps `now`; the stamps are then
-    // spread so three opens in one millisecond cannot tie.
-    for (ms, i) in [(1_000_i64, 1), (2_000, 4), (3_000, 2)] {
+    // The command stamps `now`; the stamps are then set: 2 opened last, and
+    // 1, 3, 4, 5 and 6 in one millisecond, a tie the id breaks, newest first.
+    // The tie outnumbers a page, so each arm's own order decides what it
+    // hands the merge.
+    for (ms, i) in [
+        (2_000_i64, 1),
+        (2_000, 3),
+        (2_000, 4),
+        (2_000, 5),
+        (2_000, 6),
+        (3_000, 2),
+    ] {
         record_page_open_inner(&pool, pages[i].as_str().into())
             .await
             .expect("record the open");
@@ -3414,9 +3574,10 @@ async fn last_opened_lists_opened_pages_in_open_order_then_newest_across_pages_5
             .unwrap();
     }
 
-    // Four rows a page: the boundary falls inside the never-opened run.
-    let paged = page_through(&pool, PageSort::LastOpened, 4).await;
-    let expected: Vec<&str> = [2, 4, 1, 5, 3, 0]
+    // Three rows a page: the boundaries fall inside the tie, at its end, and
+    // inside the never-opened run.
+    let paged = page_through(&pool, PageSort::LastOpened, 3).await;
+    let expected: Vec<&str> = [2, 6, 5, 4, 3, 1, 9, 8, 7, 0]
         .iter()
         .map(|&i| pages[i].as_str())
         .collect();
@@ -3519,5 +3680,40 @@ async fn purging_a_page_drops_its_open_5371() {
         0,
         "the purge cascades to page_opens"
     );
+    mat.shutdown();
+}
+
+/// The rebuild sweeps a trashed page's cache row, and the list reads its rows
+/// from the cache: the restore itself must give the row back. Its own
+/// `RebuildPagesCache` waits on the lifecycle debounce, and nothing here
+/// flushes it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restored_page_lists_without_waiting_for_the_rebuild_5371() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let mat = Materializer::new(pool.clone());
+    let page = "01PAGE000000000000000000R1";
+    seed_page(&pool, page, "Restored").await;
+    delete_block_inner(&pool, DEV, &mat, page.into())
+        .await
+        .unwrap();
+    mat.flush().await.unwrap();
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pages_cache WHERE page_id = ?")
+        .bind(page)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "seed: the delete's rebuild swept the row");
+
+    restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![page.into()])
+        .await
+        .unwrap();
+
+    let listed =
+        list_pages_with_metadata_inner(&pool, filter(PageSort::Alphabetical), None, Some(50))
+            .await
+            .unwrap();
+    let ids: Vec<String> = listed.items.iter().map(|p| p.id.to_string()).collect();
+    assert_eq!(ids, [page], "listed straight after the restore");
     mat.shutdown();
 }

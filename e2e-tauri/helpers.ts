@@ -51,6 +51,9 @@
 //   - `[data-testid="block-editor"]`        the roving TipTap editor box.
 //   - `[data-testid="block-static"]`        a committed (non-focused) block row
 //     (StaticBlock; carries `data-block-id`).
+//   - `[data-testid="suggestion-item"]`     an item of the open `[[` / `#`
+//     picker (SuggestionList.tsx); the create item's id is
+//     `suggestion-__create__`.
 // ---------------------------------------------------------------------------
 
 // Boot of a real WebKitWebView + first live-backend IPC round-trip is slower
@@ -572,6 +575,32 @@ export async function waitForToast(text: string): Promise<void> {
       timeoutMsg: `no toast containing ${JSON.stringify(text)} appeared`,
     },
   )
+}
+
+/**
+ * Wait until the open `[[` or `#` picker offers an existing item named
+ * `name`, not only the item that would create it. Closing a typed `[[name]]`
+ * or `#name` resolves the name through the same search, which reads copies the
+ * materializer writes after a create (FTS, `tags_cache`), and a miss creates a
+ * second page or tag of that name.
+ */
+export async function waitForPickerToOffer(name: string): Promise<void> {
+  let offered: string[] = []
+  await browser
+    .waitUntil(
+      async () => {
+        offered = await browser.execute(() =>
+          [...document.querySelectorAll('[data-testid="suggestion-item"]')]
+            .filter((item) => item.id !== 'suggestion-__create__')
+            .map((item) => item.textContent ?? ''),
+        )
+        return offered.some((text) => text.includes(name))
+      },
+      { timeout: ACTION_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(`the picker never offered ${name}; it offered ${JSON.stringify(offered)}`)
+    })
 }
 
 /**

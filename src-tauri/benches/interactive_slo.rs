@@ -70,20 +70,22 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use agaric_lib::commands::pages::{
-    ListPagesWithMetadataFilter, PageSort, list_pages_with_metadata_inner,
+    ListPagesWithMetadataFilter, PageSort, PageSubtree, list_pages_with_metadata_inner,
 };
 use agaric_lib::commands::{
-    PAGE_LINKS_EDGE_CAP, PropertyFilter, batch_resolve_inner, count_agenda_batch_by_source_inner,
-    count_backlinks_batch_inner, create_block_inner, export_page_markdown_inner,
-    filtered_blocks_query_inner, get_block_inner, get_properties_inner,
-    list_backlinks_grouped_inner, list_blocks_inner, list_page_links_inner,
-    list_projected_agenda_inner, list_unlinked_references_inner, load_page_subtree_inner,
-    query_by_property_inner, revert_ops_inner,
+    PAGE_LINKS_EDGE_CAP, PropertyFilter, ResolvedBlock, batch_resolve_inner,
+    count_agenda_batch_by_source_inner, count_backlinks_batch_inner, create_block_inner,
+    export_page_markdown_inner, filtered_blocks_query_inner, get_batch_properties_inner,
+    get_block_inner, get_properties_inner, list_attachments_batch_inner,
+    list_backlinks_grouped_inner, list_blocks_inner, list_journal_pages_in_range_inner,
+    list_page_links_inner, list_projected_agenda_inner, list_unlinked_references_inner,
+    load_page_subtree_inner, query_by_property_inner, revert_ops_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
 use agaric_store::cache::rebuild_projected_agenda_cache;
 use agaric_store::op::OpRef;
+use agaric_store::pagination::BlockRow;
 use agaric_store::space::{SpaceId, SpaceScope};
 
 use sqlx::SqlitePool;
@@ -778,7 +780,7 @@ async fn seed_pages_cache_fixture(
 
 /// #2585 — fixture for the whole-space `MostLinked` sort probes. Reuses
 /// `seed_pages_cache_fixture` (10K pages x 9 children + cross-page links),
-/// assigns every block to `SLO_SPACE_ID` so the production `b.space_id = ?1`
+/// assigns every block to `SLO_SPACE_ID` so the production `pc.space_id = ?1`
 /// filter selects the whole set, and populates `pages_cache` for the
 /// cache-backed probe. The `pages_cache` counts are computed with the exact
 /// subqueries the columns denormalize (`recompute_all_pages_cache_counts` /
@@ -797,7 +799,8 @@ async fn seed_pages_mostlinked_fixture(pool: &SqlitePool) -> Vec<String> {
     assign_all_to_slo_space(pool).await;
     sqlx::query(
         "INSERT INTO pages_cache \
-             (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count) \
+             (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count, \
+              space_id) \
          SELECT p.id, p.content, lower(p.content), 0, \
              ( \
                  SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
@@ -814,7 +817,8 @@ async fn seed_pages_mostlinked_fixture(pool: &SqlitePool) -> Vec<String> {
                      WHERE descendant.page_id = p.id \
                        AND descendant.deleted_at IS NULL \
                        AND descendant.id != p.id \
-             ) \
+             ), \
+             p.space_id \
          FROM blocks p \
          WHERE p.block_type = 'page' AND p.deleted_at IS NULL AND p.space_id = ?",
     )
@@ -1758,6 +1762,253 @@ fn bench_load_page_subtree(c: &mut Criterion) {
     assert_under_budget("load_page_subtree (500 blocks) @ 100K", &acc, BUDGET_MS);
 }
 
+/// Blocks under each `seed_journal_week` day page.
+const JOURNAL_WEEK_CHILDREN_PER_DAY: usize = 20;
+
+/// The ids `seed_journal_week` wrote, in day order.
+struct JournalWeek {
+    dates: Vec<String>,
+    /// A window the size of the month grid `useCalendarPageDates` asks for.
+    grid_start: String,
+    grid_end: String,
+    page_ids: Vec<String>,
+    child_ids: Vec<Vec<String>>,
+    /// The `((ref))` target in each day's first child: the uncached link the
+    /// day's `useBlockLinkResolve` sends to `batch_resolve`.
+    ref_ids: Vec<String>,
+}
+
+/// Seven consecutive journal pages from `agenda_seed_base_date()`, so each day
+/// carries its `seed_agenda_blocks` bucket of agenda rows. Each day's first
+/// child references that day's first agenda block and, from the second day on,
+/// links the previous day's page, so the badge backlink count has rows to find.
+/// Seed before `assign_all_to_slo_space`, which puts these blocks in the space.
+async fn seed_journal_week(pool: &SqlitePool) -> JournalWeek {
+    let base = agenda_seed_base_date();
+    let ymd = |offset: i64| {
+        (base + chrono::Duration::days(offset))
+            .format("%Y-%m-%d")
+            .to_string()
+    };
+    let dates: Vec<String> = (0..7).map(ymd).collect();
+    let page_ids: Vec<String> = (0..7).map(|d| format!("01JWKPAGE{d:017}")).collect();
+    let mut child_ids = Vec::with_capacity(page_ids.len());
+    let mut ref_ids = Vec::with_capacity(page_ids.len());
+
+    let mut tx = pool.begin().await.unwrap();
+    for (d, (date, page_id)) in dates.iter().zip(&page_ids).enumerate() {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'page', ?, NULL, ?, ?)",
+        )
+        .bind(page_id)
+        .bind(date)
+        .bind(d as i64 + 1)
+        .bind(page_id)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+
+        let ref_id = format!("AGD{d:021}");
+        let mut ids = Vec::with_capacity(JOURNAL_WEEK_CHILDREN_PER_DAY);
+        for k in 0..JOURNAL_WEEK_CHILDREN_PER_DAY {
+            let id = format!("01JWKCHD{d:02}{k:016}");
+            let content = match (k, d.checked_sub(1)) {
+                (0, Some(prev)) => format!("Follow up (({ref_id})) from [[{}]]", page_ids[prev]),
+                (0, None) => format!("Follow up (({ref_id}))"),
+                _ => format!("Journal note {k} for {date}"),
+            };
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'content', ?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(&content)
+            .bind(page_id)
+            .bind(k as i64 + 1)
+            .bind(page_id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        if let Some(prev) = d.checked_sub(1) {
+            sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+                .bind(&ids[0])
+                .bind(&page_ids[prev])
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+        child_ids.push(ids);
+        ref_ids.push(ref_id);
+    }
+    tx.commit().await.unwrap();
+
+    JournalWeek {
+        grid_start: dates[0].clone(),
+        grid_end: ymd(41),
+        dates,
+        page_ids,
+        child_ids,
+        ref_ids,
+    }
+}
+
+/// The results the shape probe checks; the timed loop drops them.
+struct WeekOpenReads {
+    journal_pages: Vec<BlockRow>,
+    agenda_counts: std::collections::HashMap<String, std::collections::HashMap<String, usize>>,
+    backlink_counts: std::collections::HashMap<String, usize>,
+    subtrees: Vec<PageSubtree>,
+    resolved: Vec<Vec<ResolvedBlock>>,
+}
+
+/// Every read the journal opens a week with: once per week, the month grid's
+/// journal pages (`useCalendarPageDates`) and the badge counts
+/// (`useBatchCounts`); per day, the mounted `BlockTree`'s subtree, its
+/// windowed rows' properties and attachments, and its uncached link targets.
+async fn open_journal_week(pool: &SqlitePool, week: &JournalWeek) -> WeekOpenReads {
+    let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
+    let journal_pages =
+        list_journal_pages_in_range_inner(pool, &week.grid_start, &week.grid_end, SLO_SPACE_ID)
+            .await
+            .unwrap();
+    let agenda_counts = count_agenda_batch_by_source_inner(pool, week.dates.clone(), &scope)
+        .await
+        .unwrap();
+    let backlink_counts = count_backlinks_batch_inner(
+        pool,
+        week.page_ids.iter().cloned().map(Into::into).collect(),
+        &scope,
+    )
+    .await
+    .unwrap();
+    let mut subtrees = Vec::with_capacity(week.page_ids.len());
+    let mut resolved = Vec::with_capacity(week.page_ids.len());
+    for (page_id, ref_id) in week.page_ids.iter().zip(&week.ref_ids) {
+        let subtree = load_page_subtree_inner(pool, page_id, SLO_SPACE_ID)
+            .await
+            .unwrap();
+        let row_ids: Vec<agaric_core::ulid::BlockId> =
+            subtree.blocks.iter().map(|row| row.id.clone()).collect();
+        get_batch_properties_inner(pool, row_ids.clone())
+            .await
+            .unwrap();
+        list_attachments_batch_inner(pool, row_ids).await.unwrap();
+        resolved.push(
+            batch_resolve_inner(pool, vec![ref_id.clone().into()], &scope)
+                .await
+                .unwrap(),
+        );
+        subtrees.push(subtree);
+    }
+    WeekOpenReads {
+        journal_pages,
+        agenda_counts,
+        backlink_counts,
+        subtrees,
+        resolved,
+    }
+}
+
+/// Journal week open — every read `WeeklyView` issues for seven day pages
+/// over the 100K agenda fixture. Budget: 200 ms. #5421: bundling these reads
+/// into one IPC is warranted only if this misses its budget. The calls run
+/// serially, a conservative upper bound: the frontend fires them concurrently
+/// and lazy-mounts only the days near the viewport.
+fn bench_journal_week_open(c: &mut Criterion) {
+    const BUDGET_MS: f64 = 200.0;
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_journal_week"));
+    rt.block_on(seed_agenda_blocks(&pool, FIXTURE_SIZE));
+    let week = rt.block_on(seed_journal_week(&pool));
+    rt.block_on(assign_all_to_slo_space(&pool));
+
+    let observed = rt.block_on(open_journal_week(&pool, &week));
+    let journal_page_ids: Vec<&str> = observed
+        .journal_pages
+        .iter()
+        .map(|row| row.id.as_str())
+        .collect();
+    assert_eq!(
+        journal_page_ids, week.page_ids,
+        "journal week open @ 100K: the month grid must list exactly the seven fixture days (#3304)"
+    );
+    for (bucket, date) in week.dates.iter().enumerate() {
+        let expected_per_date = FIXTURE_SIZE / AGENDA_SEED_WINDOW_DAYS
+            + usize::from(bucket < FIXTURE_SIZE % AGENDA_SEED_WINDOW_DAYS);
+        let observed_per_date: Option<usize> = observed
+            .agenda_counts
+            .get(date)
+            .map(|by_source| by_source.values().sum());
+        assert_eq!(
+            observed_per_date,
+            Some(expected_per_date),
+            "journal week open @ 100K: wrong agenda badge count for {date} (#3304)"
+        );
+    }
+    let expected_backlinks: std::collections::HashMap<String, usize> = week.page_ids
+        [..week.page_ids.len() - 1]
+        .iter()
+        .map(|page_id| (page_id.clone(), 1))
+        .collect();
+    assert_eq!(
+        observed.backlink_counts, expected_backlinks,
+        "journal week open @ 100K: every day but the last must have one backlink (#3304)"
+    );
+    for ((subtree, child_ids), date) in observed
+        .subtrees
+        .iter()
+        .zip(&week.child_ids)
+        .zip(&week.dates)
+    {
+        let observed_ids: Vec<&str> = subtree.blocks.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(
+            observed_ids, *child_ids,
+            "journal week open @ 100K: {date} must load exactly its fixture children (#3304)"
+        );
+    }
+    for (rows, ref_id) in observed.resolved.iter().zip(&week.ref_ids) {
+        let resolved_ids: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(
+            resolved_ids,
+            vec![ref_id.as_str()],
+            "journal week open @ 100K: each day's link target must resolve (#3304)"
+        );
+    }
+
+    let week = Rc::new(week);
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("journal_week_open_7d_in_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        let week = week.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let week = week.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = open_journal_week(&pool, &week).await;
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    assert_under_budget("journal week open (7 days) @ 100K", &acc, BUDGET_MS);
+}
+
 /// `list_pages_with_metadata` — the pages view's first page over 10K pages /
 /// 100K blocks; runs on every pages-view open, under the view's default
 /// `alphabetical` sort. The fixture's titles are ASCII, so `lower()` is their
@@ -2011,8 +2262,8 @@ fn bench_list_pages_with_metadata_namespace(c: &mut Criterion) {
     rt.block_on(
         sqlx::query(
             "INSERT INTO pages_cache \
-                 (page_id, title, updated_at, inbound_link_count, child_block_count) \
-             SELECT id, content, 0, 0, 0 FROM blocks \
+                 (page_id, title, updated_at, inbound_link_count, child_block_count, space_id) \
+             SELECT id, content, 0, 0, 0, space_id FROM blocks \
              WHERE block_type = 'page' AND space_id = ?",
         )
         .bind(SLO_SPACE_ID)
@@ -3313,48 +3564,49 @@ const SLO_PAGES_CACHE_COUNTS_DIRECT_SQL: &str = "SELECT p.id AS page_id, \
 // `↗N` badge-render cost for one visible page. It does NOT measure the axis
 // that justifies the `pages_cache.{inbound_link_count,child_block_count}`
 // columns existing: the `MostLinked`/`MostContent` sort keys the ORDER BY on
-// the count, which runs as a `USE TEMP B-TREE FOR ORDER BY` — SQLite evaluates
-// the key for EVERY space page before the `LIMIT`. These two probes measure
-// exactly that, holding everything constant except the count source:
+// the count. These two probes measure exactly that:
 //
-//   * `_CACHE` reads the materialised `pc.inbound_link_count` (production
-//     today), and
+//   * `_CACHE` is production's `MostLinked` first page: a range of
+//     `idx_pages_cache_space_linked` (migration 0124) that stops at the
+//     `LIMIT`, and
 //   * `_LIVE` inlines the pre-0069 `COUNT(DISTINCT) FROM block_links`
-//     correlated subquery that dropping the columns would revert to (with the
-//     current keyset architecture, which inlines the sort expression, the
-//     subquery lands in BOTH the SELECT column and the ORDER BY).
+//     correlated subquery that dropping the columns would revert to: nothing
+//     to index, so SQLite evaluates it for EVERY space page and sorts them
+//     (the subquery lands in BOTH the SELECT column and the ORDER BY).
 //
 // `_LIVE` − `_CACHE` is the whole-space cost the columns actually buy — the
 // number #2508 needed and that the badge probe cannot produce.
 //
-// Both mirror `commands/pages/metadata.rs::PAGES_METADATA_BASE_SELECT` + the
-// `MostLinked` first-page (`cursor = None`) keyset; keep them in step with
-// that source (the file's hand-copied-SQL convention). `?1` = space_id,
-// `?2` = limit-plus-one. The five residual metadata subqueries
-// (`last_modified_at`, `has_*`) are carried verbatim so `_CACHE` reflects the
-// real production `MostLinked` latency, and they cancel in the delta.
+// `_CACHE` mirrors `commands/pages/metadata.rs`'s `PAGES_METADATA_COLUMNS` +
+// `PAGES_METADATA_FROM` + the `MostLinked` first-page (`cursor = None`)
+// keyset; keep it in step with that source (the file's hand-copied-SQL
+// convention). `?1` = space_id, `?2` = limit-plus-one. The `has_*` subqueries
+// ride in both probes, so they cancel in the delta.
 // ---------------------------------------------------------------------------
 
-/// #2585 — whole-space `MostLinked` first page reading the materialised
-/// `pc.inbound_link_count` (production shape today).
+/// #2585 — production's `MostLinked` first page, reading the materialised
+/// `pc.inbound_link_count` in index order.
 const SLO_PAGES_MOSTLINKED_CACHE_SQL: &str = "SELECT \
        b.id, b.block_type, b.content, b.parent_id, b.position, \
        b.deleted_at, b.todo_state, b.priority, b.due_date, \
        b.scheduled_date, b.page_id, \
-       (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) AS last_modified_at, \
-       COALESCE(pc.inbound_link_count, 0) AS inbound_link_count, \
-       COALESCE(pc.child_block_count, 0) AS child_block_count, \
+       pc.last_edited_ms AS last_modified_at, \
+       pc.inbound_link_count, \
+       pc.child_block_count, \
        EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags, \
        EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
                AND descendant.deleted_at IS NULL AND descendant.todo_state IS NOT NULL) AS has_todo, \
        EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
                AND descendant.deleted_at IS NULL AND descendant.scheduled_date IS NOT NULL) AS has_scheduled, \
        EXISTS(SELECT 1 FROM blocks descendant WHERE descendant.page_id = b.id \
-               AND descendant.deleted_at IS NULL AND descendant.due_date IS NOT NULL) AS has_due \
-   FROM blocks b \
-   LEFT JOIN pages_cache pc ON pc.page_id = b.id \
-   WHERE b.block_type = 'page' AND b.deleted_at IS NULL AND b.space_id = ?1 \
-   ORDER BY COALESCE(pc.inbound_link_count, 0) DESC, b.id ASC \
+               AND descendant.deleted_at IS NULL AND descendant.due_date IS NOT NULL) AS has_due, \
+       pc.title_sort_key, \
+       COALESCE(po.opened_ms, -1) AS opened_ms \
+   FROM pages_cache pc \
+   CROSS JOIN blocks b ON b.id = pc.page_id \
+   LEFT JOIN page_opens po ON po.page_id = pc.page_id \
+   WHERE pc.space_id = ?1 AND b.block_type = 'page' AND b.deleted_at IS NULL \
+   ORDER BY pc.inbound_link_count DESC, pc.page_id ASC \
    LIMIT ?2";
 
 /// #2585 — the same whole-space `MostLinked` first page, but with the count
@@ -3362,8 +3614,8 @@ const SLO_PAGES_MOSTLINKED_CACHE_SQL: &str = "SELECT \
 /// subquery (no `pages_cache` join) — the shape dropping the columns reverts
 /// to. The subquery is the exact one `pages_cache.inbound_link_count`
 /// denormalizes (`SLO_PAGES_CACHE_COUNTS_DIRECT_SQL` / migration 0069), rooted
-/// on `b.id`, and appears in both the SELECT and the ORDER BY (the keyset
-/// inlines the sort expression, so today's code would double-evaluate it).
+/// on `b.id`, and appears in both the SELECT and the ORDER BY, as a keyset
+/// that inlines the sort expression would evaluate it.
 const SLO_PAGES_MOSTLINKED_LIVE_SQL: &str = "SELECT \
        b.id, b.block_type, b.content, b.parent_id, b.position, \
        b.deleted_at, b.todo_state, b.priority, b.due_date, \
@@ -3532,10 +3784,10 @@ fn bench_pages_cache_counts_direct_query(c: &mut Criterion) {
     assert_under_budget_deferred("pages_cache counts direct query @ 100K", &acc, BUDGET_MS);
 }
 
-/// #2585 — whole-space `MostLinked` first-page sort reading the materialised
-/// `pages_cache` column (production shape today). PROBLEM TIER (gated behind
+/// #2585 — `MostLinked` first page reading the materialised `pages_cache`
+/// column in index order (production shape). PROBLEM TIER (gated behind
 /// `SLO_INCLUDE_PROBLEM`; see `bench_tags_cache_direct_query` doc). This is the
-/// axis that actually justifies the count columns — the temp-B-tree sort
+/// axis that actually justifies the count columns — without them the sort
 /// evaluates the key for every space page before `LIMIT` — as opposed to the
 /// 50-page badge sample `bench_pages_cache_counts_direct_query` times. Pairs
 /// with `bench_pages_mostlinked_sort_live`: the delta is the columns' value.
@@ -4262,6 +4514,7 @@ criterion_group!(
     bench_count_backlinks_batch,
     bench_export_page_markdown,
     bench_load_page_subtree,
+    bench_journal_week_open,
     bench_list_pages_with_metadata,
     bench_list_pages_with_metadata_namespace,
     bench_filtered_blocks_query,

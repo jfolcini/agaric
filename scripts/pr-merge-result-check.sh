@@ -24,8 +24,8 @@
 # files, PLUS one thing that is not toolchain-free and earns its keep
 # anyway (the typecheck — see the #4078 section below): the Rust guard trio
 # that shares the five-crate-root scan (#3107) —
-# check-raw-tx, check-dynamic-sql, check-table-ownership — all stdlib-only
-# Python, no cargo, no node_modules; plus (#3978) the two OTHER whole-tree
+# check-raw-tx, check-dynamic-sql, check-table-ownership — stdlib-only
+# Node and Python, no cargo, no node_modules; plus (#3978) the two OTHER whole-tree
 # ratchets that were previously left out — `unsafe-allowlist` and
 # `migrations-immutable`, both bash. All five are invoked exactly as their own
 # prek hook would (prek.toml's `entry =`), against the merged tree's OWN copy
@@ -94,33 +94,33 @@
 # this script's fetch), and if that cannot be done, it is exit 3 — verified
 # nothing — never a quiet pass against the wrong deps.
 #
-# `CRATE_ROOTS` (the five-crate-root set the Python trio scans) used to be
+# `CRATE_ROOTS` (the five-crate-root set the guard trio scans) used to be
 # hand-duplicated here as a bash array, kept in sync by hand with the SAME
-# list already declared in check-raw-tx.py. #3989: hand-duplicated copies
+# list already declared for check-raw-tx. #3989: hand-duplicated copies
 # drift, and when they did, this script's own "did we scan anything" check
-# tested the BASH list's `find` output while each Python guard re-filters
+# tested the BASH list's `find` output while each guard re-filters
 # argv against ITS OWN list — so a drift let every guard silently reject
 # every file it was handed and still exit 0, and this script printed "the
 # ratchet guards pass on the ACTUAL merge" having read nothing. `CRATE_ROOTS`
 # below is gone; `derive_crate_roots` reads the list straight out of the
-# MERGED TREE's own check-raw-tx.py instead, so THIS script's file list
-# cannot drift from what check-raw-tx.py itself accepts.
+# MERGED TREE's own check-raw-tx.mjs instead, so THIS script's file list
+# cannot drift from what check-raw-tx itself accepts.
 #
-# Reading ONE guard's list closes the bash-vs-Python drift, not ALL of it.
+# Reading ONE guard's list closes the bash-vs-guard drift, not ALL of it.
 # check-dynamic-sql.py and check-table-ownership.py each still declare their
 # OWN CRATE_ROOTS — by deliberate REPLICATION, per their own comments, to
 # avoid a dependency edge between the guards — so a crate root added to
-# check-raw-tx.py and not to those two puts files in `targets` that THEY
+# check-raw-tx and not to those two puts files in `targets` that THEY
 # silently reject, and the same fail-open returned for those two guards:
 # measured, on a fixture whose extra root `src-tauri/extra/src/` only
-# check-raw-tx.py names, a genuine dynamic-SQL near-miss under it (2 sites,
+# check-raw-tx names, a genuine dynamic-SQL near-miss under it (2 sites,
 # baseline 1) exited **0, "the ratchet guards pass"**, because `targets` was
 # non-empty and so the zero-target check below never fired.
 #
 # So #3989's OTHER suggested fix is implemented too, and it is the one that
-# covers all three: `count_examined` asserts each Python guard EXAMINED a
+# covers all three: `count_examined` asserts each of the trio EXAMINED a
 # non-zero number of files, computed from that guard's OWN CRATE_ROOTS (read
-# out of the merged tree, same importlib route as `derive_crate_roots`) —
+# out of the merged tree by `derive_crate_roots`) —
 # never from a list this script declares. A guard that examined nothing
 # cannot have verified anything, so a green verdict is refused (exit 3) when
 # any of the three examined zero files. See `count_examined` for the exact
@@ -156,7 +156,7 @@
 #      nothing that is not a required check can — but it puts the ratchet
 #      verdict on the PR BEFORE the bypass is used.
 #   2. Strict makes you pay a rebase and a full ~15-minute re-run to learn
-#      the answer. This costs a checkout, one `git merge` and three Python
+#      the answer. This costs a checkout, one `git merge` and three guard
 #      invocations, and answers the ratchet half up front.
 #
 # Neither is "closing the hole". The residual hole is the bypass actor, and
@@ -186,7 +186,7 @@
 #            that guard "FAILING on the MERGED tree", i.e. exit 1, which
 #            pr-overlap.yml renders as "a ratchet guard fails on the merge
 #            result" and tells the author to merge main — wrong advice for
-#            infrastructure breakage), one of the Python guards examined
+#            infrastructure breakage), one of the guard trio examined
 #            ZERO files, no `.rs` file exists under any known crate root,
 #            or python3 is unavailable. #4078 adds the typecheck stage's own
 #            "could not run" cases to the same code: no `node_modules` to
@@ -240,7 +240,7 @@ set -uo pipefail
 # merged tree's version is the one that matters). See `run_one_guard` for
 # how each one is actually invoked — the shape differs per guard.
 RATCHET_GUARDS=(
-  check-raw-tx.py
+  check-raw-tx.mjs
   check-dynamic-sql.py
   check-table-ownership.py
   check-unsafe-allowlist.sh
@@ -289,28 +289,52 @@ mr_cleanup() {
   rm -rf "$parent"
 }
 
-# Reads CRATE_ROOTS out of $1 (a path to a copy of ANY of the three Python
-# guards) by importing it as a Python module — importlib, exactly the
-# technique check-dynamic-sql.py and check-table-ownership.py themselves
-# already use to load check-raw-tx.py's shared helpers, so this carries no
-# new risk beyond what those two guards already do on every run. Only
-# module-level statements execute (CRATE_ROOTS' own assignment, `re.compile`,
-# function defs) — `if __name__ == "__main__":` is never entered under this
-# loader name, so `main()` never runs.
+# Reads CRATE_ROOTS out of $1 (a path to a copy of ANY of the three guards)
+# by importing it as a module. A `.py` guard goes through importlib, exactly
+# the technique check-dynamic-sql.py and check-table-ownership.py themselves
+# already use to load check-raw-tx.py's shared helpers; only module-level
+# statements execute, and `if __name__ == "__main__":` is never entered under
+# this loader name, so `main()` never runs. A `.mjs` guard is `import()`ed
+# with the path passed in the environment rather than as an argument: as
+# `process.argv[1]` it would satisfy the guard's own entry-point check and
+# run its `main()`.
 #
 # The three guards spell the SAME set three different ways, so this
-# normalises rather than assuming one shape: check-raw-tx.py declares
+# normalises rather than assuming one shape: check-raw-tx.mjs exports
 # repo-relative strings with a trailing slash, check-dynamic-sql.py absolute
 # `REPO_ROOT / …` Paths, check-table-ownership.py `(crate-label, Path)`
 # TUPLES. Output is one repo-relative root per line, no trailing slash,
 # whichever shape it came from.
 #
 # On failure it prints the CAUSE on stderr and exits non-zero (#3989 nit): a
-# check-raw-tx.py that is present but BROKEN (a syntax error, a bad import)
+# check-raw-tx that is present but BROKEN (a syntax error, a bad import)
 # used to be swallowed by a `2>/dev/null` at the call site and reported as
 # "the layout moved", which points the reader at the crate roots instead of
 # at the traceback that actually explains it.
 derive_crate_roots() {
+  case "$1" in
+    *.mjs)
+      MR_CRATE_ROOT_SCRIPT="$1" node --input-type=module -e '
+import { pathToFileURL } from "node:url"
+const path = process.env.MR_CRATE_ROOT_SCRIPT
+let mod
+try {
+  mod = await import(pathToFileURL(path).href)
+} catch (err) {
+  console.error(`could not import ${path} to read its CRATE_ROOTS:`)
+  console.error(err)
+  process.exit(1)
+}
+const roots = mod.CRATE_ROOTS
+if (!Array.isArray(roots) || roots.length === 0) {
+  console.error(`${path} defines no non-empty CRATE_ROOTS list`)
+  process.exit(1)
+}
+for (const r of roots) console.log(String(r).replace(/^\/+|\/+$/g, ""))
+'
+      return
+      ;;
+  esac
   python3 -c '
 import importlib.util, os, sys, traceback
 path = sys.argv[1]
@@ -353,14 +377,16 @@ for r in roots:
 # is the more fundamental diagnosis) rather than a prerequisite one.
 RATCHET_PREREQS=(
   'check-unsafe-allowlist.sh|src-tauri/unsafe-allowlist.txt|the allowlist it ratchets against'
-  # All three Python guards load this by PATH at import time (#4017). Absent,
-  # they die with a FileNotFoundError traceback — exit 1, which this script
-  # would otherwise read as "the guard FAILED on the merged tree": a content
-  # verdict about a merge, from a guard that never ran. Same shape as the
-  # unsafe-allowlist.txt entry above, and the same remedy.
-  'check-raw-tx.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
+  # Each guard imports these at load time (#4017). Absent, it dies before
+  # judging anything — exit 1, which this script would otherwise read as "the
+  # guard FAILED on the merged tree": a content verdict about a merge, from a
+  # guard that never ran. Same shape as the unsafe-allowlist.txt entry above,
+  # and the same remedy.
+  'check-raw-tx.mjs|scripts/lib/rust-scan.mjs|the Rust-scanning library it imports'
+  'check-raw-tx.mjs|scripts/lib/guard-file-source.mjs|the file-source helper it imports'
+  'check-dynamic-sql.py|scripts/check-raw-tx.py|the shared helpers it loads at import time'
+  'check-table-ownership.py|scripts/check-raw-tx.py|the shared helpers it loads at import time'
   'check-dynamic-sql.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
-  'check-command-arity.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
 )
 
 # Returns 0 if every prerequisite of every PRESENT guard exists in the merged
@@ -390,7 +416,7 @@ check_prereqs() {
   return 0
 }
 
-# How many files did $1 (a Python guard, by filename) actually EXAMINE in the
+# How many files did $1 (one of the guard trio, by filename) actually EXAMINE in the
 # merged tree? Prints the count; returns non-zero (having explained itself on
 # stderr) if the guard's own CRATE_ROOTS could not be read at all. #3989.
 #
@@ -418,7 +444,7 @@ check_prereqs() {
 #     EXCLUSIONS then drop all of would still count non-zero here.
 #   * "examined something" is not "examined the file that mattered". In a
 #     tree that ALSO carries .rs under the shared roots, a near-miss under a
-#     root only check-raw-tx.py names is still missed by the other two — the
+#     root only check-raw-tx names is still missed by the other two — the
 #     count is non-zero because of the other files. This closes the total
 #     fail-open (a guard reading NOTHING and reporting clean), not partial
 #     under-coverage. The single-list fix above is what closes that for
@@ -470,7 +496,7 @@ count_examined() {
 # prek hook would (prek.toml's `entry =`) — but the five guards do not share
 # one invocation shape, only a common "run against the merged tree" intent:
 #
-#   *.py                          — python3 <script> <crate-root targets>.
+#   *.py, check-raw-tx.mjs        — python3 / node <script> <crate-root targets>.
 #   check-unsafe-allowlist.sh     — bash <script>, no args, but it calls
 #                                    `git rev-parse --show-toplevel` which
 #                                    resolves off CWD, not the script's own
@@ -500,7 +526,11 @@ run_one_guard() {
   local guard="$1" workdir="$2" base_tip="$3"
   shift 3
   case "$guard" in
-    check-raw-tx.py | check-dynamic-sql.py)
+    check-raw-tx.mjs)
+      # `--worktree` for the reason given under check-dynamic-sql.py below.
+      node "$workdir/scripts/$guard" --worktree "$@"
+      ;;
+    check-dynamic-sql.py)
       # `--worktree` is EXPLICIT, never left to the guards' AUTO rule (#4017).
       # A merged tree exists only as files in a worktree and was never staged,
       # so "the staged index" has no meaning for it; AUTO keys on
@@ -798,26 +828,27 @@ run_merge_check() {
   local base_ref="$1" head_sha="$2"
   local base_tip parent workdir
 
-  # Checked BEFORE any work: the guards are stdlib-only Python, so without
-  # python3 there is nothing to run. Reported as "verified nothing" rather
+  # Checked BEFORE any work: two of the guards are stdlib-only Python, so
+  # without python3 they cannot run. Reported as "verified nothing" rather
   # than as three guards "FAILING on the MERGED tree" — which is what a
   # missing interpreter produced before, an accusation against the PR for an
   # absent tool.
   if ! command -v python3 >/dev/null 2>&1; then
-    echo "pr-merge-result-check: python3 is not on PATH — the ratchet guards are" >&2
+    echo "pr-merge-result-check: python3 is not on PATH — two ratchet guards are" >&2
     echo "  stdlib-only Python and cannot run at all. NOTHING was verified; this is" >&2
     echo "  neither a pass nor a finding against this PR." >&2
     return 3
   fi
-  # The typecheck stage probes the merged tree's package.json with `node -e`
-  # before invoking npm; without `node` that probe fails and the stage reports
-  # "the merged tree defines no typecheck script" — an accusation against the
-  # PR for an absent tool. Checked here, up front, for the same "verified
-  # nothing, not a per-stage skip" reasoning as the python3 check above.
+  # check-raw-tx.mjs is a Node guard, and the typecheck stage probes the
+  # merged tree's package.json with `node -e` before invoking npm; without
+  # `node` the guard cannot run and the probe reports "the merged tree defines
+  # no typecheck script" — an accusation against the PR for an absent tool.
+  # Checked here, up front, for the same "verified nothing, not a per-stage
+  # skip" reasoning as the python3 check above.
   if ! command -v node >/dev/null 2>&1; then
-    echo "pr-merge-result-check: node is not on PATH — the typecheck stage needs" >&2
-    echo "  it. NOTHING was verified; this is neither a pass nor a finding" >&2
-    echo "  against this PR." >&2
+    echo "pr-merge-result-check: node is not on PATH — check-raw-tx.mjs and the" >&2
+    echo "  typecheck stage need it. NOTHING was verified; this is neither a pass" >&2
+    echo "  nor a finding against this PR." >&2
     return 3
   fi
 
@@ -917,12 +948,12 @@ run_merge_check() {
     return 3
   fi
 
-  # #3989: CRATE_ROOTS is read from the MERGED TREE's own check-raw-tx.py —
+  # #3989: CRATE_ROOTS is read from the MERGED TREE's own check-raw-tx.mjs —
   # not hand-duplicated here — so the file list built below is, by
-  # construction, exactly what check-raw-tx.py's under_crate_root() itself
+  # construction, exactly what check-raw-tx's underCrateRoot() itself
   # accepts. See derive_crate_roots and the header comment above.
   local -a crate_roots=()
-  local crate_root_script="$workdir/scripts/check-raw-tx.py"
+  local crate_root_script="$workdir/scripts/check-raw-tx.mjs"
   local roots_errfile="$parent/crate-roots.err"
   : > "$roots_errfile"
   if [ -f "$crate_root_script" ]; then
@@ -937,14 +968,14 @@ run_merge_check() {
     done < <(derive_crate_roots "$crate_root_script" 2>"$roots_errfile")
   fi
 
-  # A check-raw-tx.py that is PRESENT but unreadable (a syntax error, a
+  # A check-raw-tx.mjs that is PRESENT but unreadable (a syntax error, a
   # broken import, no CRATE_ROOTS at all) is a different fault from "the
   # layout moved", and the `2>/dev/null` that used to sit on the call above
   # discarded the only evidence that said which (#3989 nit): the traceback
   # went nowhere and the reader was told the crate roots had changed.
   if [ -f "$crate_root_script" ] && [ "${#crate_roots[@]}" -eq 0 ]; then
     echo "pr-merge-result-check: could not read CRATE_ROOTS out of the merged tree's" >&2
-    echo "  own scripts/check-raw-tx.py. It is PRESENT but did not yield a crate-root" >&2
+    echo "  own scripts/check-raw-tx.mjs. It is PRESENT but did not yield a crate-root" >&2
     echo "  list — a syntax error, a broken import, or a renamed constant, NOT 'the" >&2
     echo "  layout moved'. NOTHING was verified. The cause, verbatim:" >&2
     sed 's/^/    /' "$roots_errfile" >&2
@@ -963,23 +994,23 @@ run_merge_check() {
   done
 
   # Nothing to scan is NOT a pass. If the layout moved (a crate root renamed,
-  # a new crate added and check-raw-tx.py's CRATE_ROOTS not updated) every
+  # a new crate added and check-raw-tx's CRATE_ROOTS not updated) every
   # guard below would be handed an empty file list and report clean, and
   # this script would print "the ratchet guards pass on the ACTUAL merge"
   # having read no source at all. Measured, on a fixture whose crate root is
   # `src-tauri/source`: exit 0, no output, zero files examined.
   #
-  # Skipped when check-raw-tx.py itself is ABSENT (as opposed to present but
+  # Skipped when check-raw-tx.mjs itself is ABSENT (as opposed to present but
   # genuinely matching nothing): that is not "the layout moved", it is "a
   # RATCHET_GUARDS entry is missing", and the ABSENT-guard note below — not
   # this one — must be the message that governs the exit code, so the
   # missing-guard loop below still gets to run (and still names
-  # check-raw-tx.py, and still lets check-dynamic-sql.py / check-table-
+  # check-raw-tx.mjs, and still lets check-dynamic-sql.py / check-table-
   # ownership.py's own crash-on-missing-import get invoked and diagnosed,
   # same as before #3989).
   if [ "${#targets[@]}" -eq 0 ] && [ -f "$crate_root_script" ]; then
     echo "pr-merge-result-check: the merged tree carries no .rs file under ANY crate" >&2
-    echo "  root check-raw-tx.py's own CRATE_ROOTS names in the merged tree. The" >&2
+    echo "  root check-raw-tx.mjs's own CRATE_ROOTS names in the merged tree. The" >&2
     echo "  layout moved, or this is not that repository. NOTHING was verified." >&2
     mr_cleanup "$workdir" "$parent"
     return 3
@@ -998,10 +1029,10 @@ run_merge_check() {
     fi
   done
 
-  # How many files did each Python guard actually EXAMINE? Computed BEFORE
+  # How many files did each of the trio actually EXAMINE? Computed BEFORE
   # cleanup (it needs the merged tree) and judged after, so the more
   # fundamental diagnoses below still get to win the exit code. Only the
-  # three Python guards can be probed this way — the other two do not
+  # three can be probed this way — the other two do not
   # declare a file-set constant that could be read back out of the merged
   # tree; check-unsafe-allowlist.sh discovers its own inputs by walking the
   # tree, and check-migrations-immutable.sh reads a commit range, so for
@@ -1011,7 +1042,7 @@ run_merge_check() {
   # each of them hard-errors rather than passing vacuously when the file set
   # it walks is gone.
   local -a examine_probe_guards=(
-    check-raw-tx.py
+    check-raw-tx.mjs
     check-dynamic-sql.py
     check-table-ownership.py
   )
@@ -1046,20 +1077,15 @@ run_merge_check() {
 
   mr_cleanup "$workdir" "$parent"
 
-  # The absence note wins the exit code, NOT the failure count. Originally
-  # this checked failures first on the theory that "a guard failed" is the
-  # more actionable verdict — but check-dynamic-sql.py and
-  # check-table-ownership.py both importlib-load check-raw-tx.py FROM THE
-  # MERGED TREE (shared helpers), so if check-raw-tx.py alone is missing,
-  # BOTH of the others crash (FileNotFoundError, non-zero exit) and get
-  # counted as "failures" too — failures=2, missing=check-raw-tx.py, and
-  # checking failures first returned 1: "a ratchet guard fails on the merge
+  # The absence note wins the exit code, NOT the failure count. A guard
+  # absence can cause OTHER guards to fail as a side effect (one that loads a
+  # missing sibling's helpers crashes and counts as a "failure"); a guard
+  # failure can never cause another guard to go missing. Checking failures
+  # first returned 1 in that case, "a ratchet guard fails on the merge
   # result", telling the author to merge main and re-run prek for an
-  # infrastructure problem that is not their diff. A guard absence can
-  # cause OTHER guards to fail as a side effect; a guard failure can never
-  # cause another guard to go missing. That asymmetry is why missing must
-  # be checked first — it is the more fundamental "verified nothing"
-  # regardless of how many guards crashed because of it.
+  # infrastructure problem that is not their diff. Missing is the more
+  # fundamental "verified nothing" regardless of how many guards crashed
+  # because of it.
   if [ -n "$missing" ]; then
     echo "pr-merge-result-check: guard(s) named in RATCHET_GUARDS are ABSENT from the" >&2
     echo "  merged tree: $missing" >&2
@@ -1120,12 +1146,12 @@ run_merge_check() {
   if [ -n "$examined_zero" ]; then
     echo "pr-merge-result-check: these guard(s) EXAMINED ZERO FILES and therefore" >&2
     echo "  passed vacuously: $examined_zero" >&2
-    echo "  Each Python guard re-filters what it is handed against its OWN CRATE_ROOTS," >&2
+    echo "  Each guard re-filters what it is handed against its OWN CRATE_ROOTS," >&2
     echo "  so a crate root that exists in one guard's list and not another's leaves" >&2
     echo "  the others rejecting every file — clean exit, nothing read. That is a" >&2
     echo "  fail-open, not a pass: NOTHING was verified for the guard(s) named." >&2
     echo "  Fix the crate-root lists (they are replicated by hand across" >&2
-    echo "  check-raw-tx.py, check-dynamic-sql.py and check-table-ownership.py), or" >&2
+    echo "  lib/rust-scan.mjs, check-dynamic-sql.py and check-table-ownership.py), or" >&2
     echo "  the repo layout, so every guard is handed source it accepts." >&2
     return 3
   fi

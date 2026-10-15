@@ -324,8 +324,7 @@ def missing_crate_roots() -> list[str]:
     #4501: `_crate_files()` used to `continue` past a missing root, so a
     renamed or misspelled crate segment narrowed the walk to nothing with no
     signal at all — the guard reporting success over a tree it had stopped
-    reading. That is the class this repo has now hit seven times, and it is
-    the same construct removed from `check-space-filter-drift` in #4508.
+    reading. That is the class this repo has now hit seven times.
 
     Reported rather than filtered: a root that vanished is a broken
     declaration, not an absent one, and the whole point is that it must be

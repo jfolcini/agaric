@@ -170,7 +170,7 @@ interface CallSite {
 /**
  * Every `ReactNodeViewRenderer(Component…)` call in `files`.
  *
- * This is a text scan, not a resolved-symbol search: Serena/tsserver cannot index
+ * This is a text scan, not a resolved-symbol search: tsserver cannot index
  * `node_modules`, so there is no reference search on the declaration to lean on.
  * A text scan only sees the spellings it is written to see, which is why
  * `reaches ReactNodeViewRenderer only by calling it` below refuses every OTHER

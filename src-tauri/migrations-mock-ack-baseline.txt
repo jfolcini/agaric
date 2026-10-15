@@ -128,3 +128,4 @@
 0121_tags_cache_unique_per_space.sql
 0122_page_link_cache_space_id.sql
 0123_pages_sort_keys_and_opens.sql
+0124_pages_cache_space_sort_indexes.sql

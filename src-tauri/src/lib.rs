@@ -1475,27 +1475,36 @@ async fn schedule_block_tag_refs_rebuild_if_empty(
     }
 }
 
-/// [`boot_cache_gating`]'s `pages_cache` check. A row still at
-/// `last_edited_ms = 0` has not been filled since migration 0123 added the
-/// Pages sort keys (#5371): SQLite cannot compute the NFKD `title_sort_key`,
-/// so the page-row rebuild is the backfill. The rebuild fills every such row,
-/// so a filled vault schedules nothing.
-async fn schedule_pages_cache_backfill_if_unfilled(
+/// [`boot_cache_gating`]'s `pages_cache` check (#5371): schedules the
+/// page-row rebuild when a live page's row is missing, unfilled or in another
+/// space, since the Pages list reads its rows from there. An unfilled row
+/// (`last_edited_ms = 0`) is migration 0123's, whose NFKD `title_sort_key`
+/// SQLite cannot compute; a missing or misplaced one is what recovery's
+/// engine reproject leaves, as it writes `blocks` without the cache. The
+/// rebuild repairs all three, so a sound vault schedules nothing.
+async fn schedule_pages_cache_rebuild_if_stale(
     read_pool: &sqlx::SqlitePool,
     materializer_handle: &materializer::Materializer,
 ) {
     use materializer::MaterializeTask;
 
-    let unfilled = log_or_zero(
+    let stale = log_or_zero(
         sqlx::query_scalar!(
-            r#"SELECT EXISTS (SELECT 1 FROM pages_cache WHERE last_edited_ms = 0) AS "unfilled!: i64""#
+            r#"SELECT EXISTS (
+                   SELECT 1 FROM blocks b
+                     LEFT JOIN pages_cache pc ON pc.page_id = b.id
+                    WHERE b.block_type = 'page' AND b.deleted_at IS NULL AND b.content IS NOT NULL
+                      AND (pc.page_id IS NULL
+                           OR pc.last_edited_ms = 0
+                           OR pc.space_id IS NOT b.space_id)
+               ) AS "stale!: i64""#
         )
         .fetch_one(read_pool)
         .await,
-        "pages_cache_unfilled_exists",
+        "pages_cache_stale_exists",
     ) != 0;
-    if unfilled {
-        tracing::info!("pages_cache sort keys unfilled (migration 0123) — scheduling rebuild");
+    if stale {
+        tracing::info!("pages_cache rows missing, unfilled or misplaced — scheduling rebuild");
         if let Err(e) =
             materializer_handle.try_enqueue_background(MaterializeTask::RebuildPagesCache)
         {
@@ -1526,7 +1535,7 @@ async fn boot_cache_gating(
 
     schedule_fts_rebuild_if_empty(&read_pool, &materializer_handle).await;
     schedule_block_tag_refs_rebuild_if_empty(&read_pool, &materializer_handle).await;
-    schedule_pages_cache_backfill_if_unfilled(&read_pool, &materializer_handle).await;
+    schedule_pages_cache_rebuild_if_stale(&read_pool, &materializer_handle).await;
 }
 
 /// Boot-phase 6 — best-effort boot maintenance moved off the synchronous
@@ -4193,6 +4202,85 @@ mod boot_cache_gating_tests {
             load() - before,
             1,
             "a filled pages_cache schedules no rebuild: only the flush barrier runs"
+        );
+        mat.shutdown();
+    }
+
+    /// #5371 — recovery's engine reproject writes `blocks` without the cache,
+    /// so a live page can come out of it with no row, or with a row in another
+    /// space when it writes the page's `space_id`. Boot schedules the page-row
+    /// rebuild for each, and a repaired vault schedules nothing on the next
+    /// boot. The page starts space-less, so only the missing-row term can see
+    /// it the first time.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_missing_or_misplaced_pages_cache_row_is_repaired_at_boot_5371() {
+        const SPACE: &str = "01J0000000000000000SPACE5D";
+        const PAGE: &str = "01J00000000000000000PAGE5D";
+        let dir = tempfile::TempDir::new().unwrap();
+        let pools = db::init_pools(&dir.path().join("test.db")).await.unwrap();
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'tag', 'space')")
+            .bind(SPACE)
+            .execute(&pools.write)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(SPACE)
+            .execute(&pools.write)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) \
+             VALUES (?, 'page', 'Recovered', ?)",
+        )
+        .bind(PAGE)
+        .bind(PAGE)
+        .execute(&pools.write)
+        .await
+        .unwrap();
+        let mat =
+            materializer::Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+        let row_space = || {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT space_id FROM pages_cache WHERE page_id = ?",
+            )
+            .bind(PAGE)
+            .fetch_optional(&pools.read)
+        };
+
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the first boot");
+        assert_eq!(
+            row_space().await.unwrap(),
+            Some(None),
+            "a page with no row gets one"
+        );
+
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+            .bind(SPACE)
+            .bind(PAGE)
+            .execute(&pools.write)
+            .await
+            .unwrap();
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the second boot");
+        assert_eq!(
+            row_space().await.unwrap(),
+            Some(Some(SPACE.to_owned())),
+            "a row in another space moves to the page's"
+        );
+
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        let before = load();
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the third boot");
+        assert_eq!(
+            load() - before,
+            1,
+            "a repaired pages_cache schedules no rebuild: only the flush barrier runs"
         );
         mat.shutdown();
     }
