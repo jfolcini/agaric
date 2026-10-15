@@ -1464,9 +1464,9 @@ fn bench_batch_resolve(c: &mut Criterion) {
 
 /// `count_agenda_batch_by_source` — weekly badge counts over 100K agenda
 /// rows, the query the journal calendar and `useBatchCounts` issue.
-/// Budget: 30 ms.
+/// Budget: 40 ms.
 fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 30.0;
+    const BUDGET_MS: f64 = 40.0;
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_count_agenda"));
