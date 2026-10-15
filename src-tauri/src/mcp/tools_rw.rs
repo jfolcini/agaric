@@ -933,7 +933,6 @@ fn tool_desc_batch() -> ToolDescription {
             "properties": {
                 "ops": {
                     "type": "array",
-                    "minItems": 1,
                     "maxItems": agaric_store::pagination::MAX_BATCH_BLOCK_IDS,
                     "items": { "oneOf": ops },
                     "description": "The writes, in order.",
@@ -1919,11 +1918,17 @@ async fn apply_batch_op(
         }
         BatchOp::AddTag { block, tag } => {
             add_tag_in_tx(&mut tx, loro, device_id, &block, &tag).await?;
-            tag_response(block, tag)?
+            to_tool_result(&TagResponse {
+                block_id: block.into_string(),
+                tag_id: tag.into_string(),
+            })?
         }
         BatchOp::RemoveTag { block, tag } => {
             remove_tag_inner_in_tx(&mut tx, loro, device_id, &block, &tag).await?;
-            tag_response(block, tag)?
+            to_tool_result(&TagResponse {
+                block_id: block.into_string(),
+                tag_id: tag.into_string(),
+            })?
         }
         BatchOp::MoveBlocks {
             blocks,
@@ -1938,7 +1943,12 @@ async fn apply_batch_op(
         BatchOp::DeleteBlock { block } => {
             let block_id = block.into_string();
             let deleted = delete_block_in_tx(&mut tx, loro, device_id, block_id.clone()).await?;
-            let result = delete_response(block_id, &deleted)?;
+            let result = to_tool_result(&DeleteResponse {
+                block_id,
+                deleted_at: deleted.deleted_at,
+                descendants_affected: deleted.effects.deleted_cohort.len() as u64,
+                affected_page_ids: deleted.affected_page_ids.clone(),
+            })?;
             deletes.push(deleted);
             result
         }
@@ -1974,24 +1984,6 @@ async fn set_property_in_batch(
     )
     .await?;
     to_tool_result(&row)
-}
-
-fn tag_response(block: BlockId, tag: BlockId) -> Result<Value, AppError> {
-    to_tool_result(&TagResponse {
-        block_id: block.into_string(),
-        tag_id: tag.into_string(),
-    })
-}
-
-/// What `delete_block` returns for the delete of `block_id` that `deleted`
-/// describes.
-fn delete_response(block_id: String, deleted: &DeleteInTx) -> Result<Value, AppError> {
-    to_tool_result(&DeleteResponse {
-        block_id,
-        deleted_at: deleted.deleted_at,
-        descendants_affected: deleted.effects.deleted_cohort.len() as u64,
-        affected_page_ids: deleted.affected_page_ids.clone(),
-    })
 }
 
 /// `err` naming the batch op it was refused at, `ops[i]: ` before its message.
