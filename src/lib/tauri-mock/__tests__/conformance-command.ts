@@ -241,9 +241,9 @@ const RETURN_SHAPE: Readonly<Record<string, ReturnShape>> = {
   start_pairing: { idKey: HEADED_ID_KEY, attrs: [], lists: [] },
   // #5057 — `page_aliases` is outside the snapshot's five arrays too, so a
   // `get_page_aliases` step observes the table. The RETURN is its own
-  // evidence: a LIST OF BARE STRINGS naming the rows actually INSERTED, which
-  // is narrower than what the caller passed.
-  set_page_aliases: { idKey: HEADED_ID_KEY, attrs: ['inserted'], lists: [] },
+  // evidence: a LIST OF BARE STRINGS naming the aliases the page holds after
+  // the write, which is narrower than what the caller passed.
+  set_page_aliases: { idKey: HEADED_ID_KEY, attrs: ['alias'], lists: [], rows: 'aliases' },
   // #5057 — the two space creators answer with the new block's id, which the
   // relabel maps to its canonical label like any other id-valued attribute.
   create_space: { idKey: HEADED_ID_KEY, attrs: ['space_id'], lists: [] },

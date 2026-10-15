@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM page_aliases WHERE page_id = ? AND alias = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "babe09c33ba711948bc7d8b05c2d9587b56200b087fd9f74a370270b755cd3ef"
+}

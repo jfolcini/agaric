@@ -333,6 +333,14 @@ async fn op_record_caches_extracted_block_id_l13() {
                  (oracle: cached={:?}, parsed={:?})",
             record.block_id, from_payload,
         );
+
+        // Remote ingest indexes `op_log.block_id` from the payload JSON alone,
+        // so a peer's row must carry the same id the local row does.
+        assert_eq!(
+            extract_indexed_ids_from_payload(&record.payload).0,
+            record.block_id,
+            "remote ingest must index the same block_id as the local append for {label}",
+        );
     }
 }
 

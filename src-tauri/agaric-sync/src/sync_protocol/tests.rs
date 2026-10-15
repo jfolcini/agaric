@@ -740,67 +740,70 @@ async fn orchestrator_rejects_incompatible_engine_format() {
     use crate::sync_events::{RecordingEventSink, SyncEvent};
     use std::sync::Arc;
 
-    let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool.clone());
+    // A peer one engine format ahead of us, and one behind: the previous release
+    // meets a build that bumped it (#5387). The responder must reject either up
+    // front rather than letting the bytes reach an import.
+    let local = agaric_engine::loro::engine::ENGINE_FORMAT_VERSION;
+    for incompatible in [local + 1, local - 1] {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
 
-    let sink = Arc::new(RecordingEventSink::new());
-    let mut orch = SyncOrchestrator::new(
-        pool,
-        "local-dev".into(),
-        std::sync::Arc::new(materializer.clone()),
-    )
-    .with_event_sink(Box::new(sink.clone()));
+        let sink = Arc::new(RecordingEventSink::new());
+        let mut orch = SyncOrchestrator::new(
+            pool,
+            "local-dev".into(),
+            std::sync::Arc::new(materializer.clone()),
+        )
+        .with_event_sink(Box::new(sink.clone()));
 
-    // A peer one major engine format ahead of us. The responder must reject it
-    // up front rather than letting the bytes reach an import.
-    let incompatible = agaric_engine::loro::engine::ENGINE_FORMAT_VERSION + 1;
-    let result = orch
-        .handle_message(SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "remote-dev".into(),
-                seq: 1,
-                hash: "abc".into(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: incompatible,
-            op_log_replication: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-            device_name: None,
-            sender_device_id: None,
-        })
-        .await;
+        let result = orch
+            .handle_message(SyncMessage::HeadExchange {
+                heads: vec![DeviceHead {
+                    device_id: "remote-dev".into(),
+                    seq: 1,
+                    hash: "abc".into(),
+                }],
+                loro_vvs: vec![],
+                engine_format_version: incompatible,
+                op_log_replication: false,
+                op_log_batch_chunked: false,
+                pairing_proof: None,
+                device_name: None,
+                sender_device_id: None,
+            })
+            .await;
 
-    assert!(
-        result.is_err(),
-        "an incompatible engine_format_version must be rejected with an error"
-    );
-    assert!(
-        matches!(orch.session().state, SyncState::Failed(_)),
-        "session must transition to the terminal Failed state, got {:?}",
-        orch.session().state
-    );
+        assert!(
+            result.is_err(),
+            "an incompatible engine_format_version must be rejected with an error"
+        );
+        assert!(
+            matches!(orch.session().state, SyncState::Failed(_)),
+            "session must transition to the terminal Failed state, got {:?}",
+            orch.session().state
+        );
 
-    let events = sink.events();
-    let err = events
-        .iter()
-        .find_map(|e| match e {
-            SyncEvent::Error { message, .. } => Some(message.clone()),
-            _ => None,
-        })
-        .expect("a SyncEvent::Error must be emitted on rejection");
-    assert!(
-        err.contains("engine format"),
-        "the error message must mention the engine format, got: {err:?}"
-    );
-    // No LoroSync payload is ever produced: the rejection returns Err before
-    // `head_exchange_outgoing_loro`, so there is nothing queued to drain.
-    assert!(
-        orch.next_message().is_none(),
-        "a rejected session must not queue any LoroSync (or other) payload"
-    );
+        let events = sink.events();
+        let err = events
+            .iter()
+            .find_map(|e| match e {
+                SyncEvent::Error { message, .. } => Some(message.clone()),
+                _ => None,
+            })
+            .expect("a SyncEvent::Error must be emitted on rejection");
+        assert!(
+            err.contains("engine format"),
+            "the error message must mention the engine format, got: {err:?}"
+        );
+        // No LoroSync payload is ever produced: the rejection returns Err before
+        // `head_exchange_outgoing_loro`, so there is nothing queued to drain.
+        assert!(
+            orch.next_message().is_none(),
+            "a rejected session must not queue any LoroSync (or other) payload"
+        );
 
-    materializer.shutdown();
+        materializer.shutdown();
+    }
 }
 
 /// #2130 back-compat: `engine_format_version == 0` (a legacy peer predating the

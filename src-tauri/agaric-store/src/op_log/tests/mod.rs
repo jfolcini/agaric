@@ -76,7 +76,7 @@ pub(super) fn make_create_payload(block_id: &str) -> OpPayload {
     })
 }
 
-/// Build a minimal [`OpPayload`] for each of the 12 variants.
+/// Build a minimal [`OpPayload`] for each variant.
 pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
     vec![
         (
@@ -186,6 +186,21 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
                 attachment_id: BlockId::test_id("ATT01"),
                 old_filename: "readme.txt".into(),
                 new_filename: "manual.txt".into(),
+            }),
+        ),
+        // #5387: an alias op names its page as `page_id`, not `block_id`.
+        (
+            "add_page_alias",
+            OpPayload::AddPageAlias(AddPageAliasPayload {
+                page_id: BlockId::test_id("PG001"),
+                alias: "plans".into(),
+            }),
+        ),
+        (
+            "remove_page_alias",
+            OpPayload::RemovePageAlias(RemovePageAliasPayload {
+                page_id: BlockId::test_id("PG001"),
+                alias: "plans".into(),
             }),
         ),
     ]

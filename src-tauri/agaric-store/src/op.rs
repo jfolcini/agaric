@@ -52,6 +52,8 @@ pub enum OpType {
     AddAttachment,
     DeleteAttachment,
     RenameAttachment,
+    AddPageAlias,
+    RemovePageAlias,
 }
 
 impl OpType {
@@ -87,6 +89,8 @@ impl OpType {
             OpType::AddAttachment => "add_attachment",
             OpType::DeleteAttachment => "delete_attachment",
             OpType::RenameAttachment => "rename_attachment",
+            OpType::AddPageAlias => "add_page_alias",
+            OpType::RemovePageAlias => "remove_page_alias",
         }
     }
 }
@@ -133,6 +137,8 @@ impl FromStr for OpType {
             "add_attachment" => Ok(OpType::AddAttachment),
             "delete_attachment" => Ok(OpType::DeleteAttachment),
             "rename_attachment" => Ok(OpType::RenameAttachment),
+            "add_page_alias" => Ok(OpType::AddPageAlias),
+            "remove_page_alias" => Ok(OpType::RemovePageAlias),
             other => Err(format!("unknown op type: {other}")),
         }
     }
@@ -237,6 +243,20 @@ pub struct AddTagPayload {
 pub struct RemoveTagPayload {
     pub block_id: BlockId,
     pub tag_id: BlockId,
+}
+
+/// Payload for the `add_page_alias` op — gives a page an alternative name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AddPageAliasPayload {
+    pub page_id: BlockId,
+    pub alias: String,
+}
+
+/// Payload for the `remove_page_alias` op — takes an alternative name off a page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemovePageAliasPayload {
+    pub page_id: BlockId,
+    pub alias: String,
 }
 
 /// Payload for the `set_property` op — upserts a typed key-value property on a block (exactly one value field must be set).
@@ -369,6 +389,8 @@ pub enum OpPayload {
     AddAttachment(AddAttachmentPayload),
     DeleteAttachment(DeleteAttachmentPayload),
     RenameAttachment(RenameAttachmentPayload),
+    AddPageAlias(AddPageAliasPayload),
+    RemovePageAlias(RemovePageAliasPayload),
 }
 
 impl OpPayload {
@@ -388,6 +410,8 @@ impl OpPayload {
             OpPayload::AddAttachment(_) => OpType::AddAttachment,
             OpPayload::DeleteAttachment(_) => OpType::DeleteAttachment,
             OpPayload::RenameAttachment(_) => OpType::RenameAttachment,
+            OpPayload::AddPageAlias(_) => OpType::AddPageAlias,
+            OpPayload::RemovePageAlias(_) => OpType::RemovePageAlias,
         }
     }
 
@@ -401,9 +425,9 @@ impl OpPayload {
 
     /// Returns the `block_id` from the inner payload, if present.
     ///
-    /// All payload variants except [`DeleteAttachment`](OpPayload::DeleteAttachment)
-    /// carry a `block_id`. `DeleteAttachment` identifies the target by
-    /// `attachment_id` only, so this method returns `None` for that variant.
+    /// The alias variants answer their `page_id`. `DeleteAttachment` and
+    /// `RenameAttachment` identify the target by `attachment_id` only, so this
+    /// method returns `None` for them.
     pub fn block_id(&self) -> Option<&str> {
         match self {
             OpPayload::CreateBlock(p) => Some(p.block_id.as_str()),
@@ -419,6 +443,8 @@ impl OpPayload {
             OpPayload::AddAttachment(p) => Some(p.block_id.as_str()),
             OpPayload::DeleteAttachment(_) => None,
             OpPayload::RenameAttachment(_) => None,
+            OpPayload::AddPageAlias(p) => Some(p.page_id.as_str()),
+            OpPayload::RemovePageAlias(p) => Some(p.page_id.as_str()),
         }
     }
 
@@ -446,7 +472,9 @@ impl OpPayload {
             | OpPayload::AddTag(_)
             | OpPayload::RemoveTag(_)
             | OpPayload::SetProperty(_)
-            | OpPayload::DeleteProperty(_) => None,
+            | OpPayload::DeleteProperty(_)
+            | OpPayload::AddPageAlias(_)
+            | OpPayload::RemovePageAlias(_) => None,
         }
     }
 
@@ -628,7 +656,7 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), agaric_core::
 // Tests
 // ===========================================================================
 
-/// Tests for `OpType`, `OpPayload`, and all 12 payload structs.
+/// Tests for `OpType`, `OpPayload`, and every payload struct.
 ///
 /// Covers serde round-trips, `Display`/`FromStr` consistency, `block_id()`
 /// extraction, raw-JSON deserialization, error handling for malformed or
@@ -663,6 +691,8 @@ mod tests {
             OpType::AddAttachment,
             OpType::DeleteAttachment,
             OpType::RenameAttachment,
+            OpType::AddPageAlias,
+            OpType::RemovePageAlias,
         ]
     }
 
@@ -738,18 +768,26 @@ mod tests {
                 old_filename: "old.png".into(),
                 new_filename: "new.png".into(),
             }),
+            OpPayload::AddPageAlias(AddPageAliasPayload {
+                page_id: BlockId::from_string(TEST_BID).unwrap(),
+                alias: "Plans".into(),
+            }),
+            OpPayload::RemovePageAlias(RemovePageAliasPayload {
+                page_id: BlockId::from_string(TEST_BID).unwrap(),
+                alias: "Plans".into(),
+            }),
         ]
     }
 
     // -----------------------------------------------------------------------
-    // 1. Serde roundtrip — all 12 payload types
+    // 1. Serde roundtrip — every payload type
     // -----------------------------------------------------------------------
 
     #[test]
     fn all_payload_serde_roundtrip() {
         let payloads = all_test_payloads();
-        // Sanity: we must cover all 13 variants
-        assert_eq!(payloads.len(), 13);
+        // Sanity: we must cover every variant
+        assert_eq!(payloads.len(), all_op_types().len());
 
         for payload in payloads {
             let tag = payload.op_type_str();
@@ -1409,7 +1447,11 @@ mod tests {
     #[test]
     fn normalize_block_ids_is_no_op_for_all_payload_variants() {
         let payloads = all_test_payloads();
-        assert_eq!(payloads.len(), 13, "must cover all 13 variants");
+        assert_eq!(
+            payloads.len(),
+            all_op_types().len(),
+            "must cover every variant"
+        );
 
         for mut payload in payloads {
             let tag = payload.op_type_str();
@@ -2034,7 +2076,7 @@ mod proptest_tests {
 
     // ── OpType as_str / FromStr round-trip ──────────────────────────────
 
-    /// Strategy that produces one of the 12 known OpType variants.
+    /// Strategy that produces one of the known OpType variants.
     fn arb_op_type() -> impl Strategy<Value = OpType> {
         prop_oneof![
             Just(OpType::CreateBlock),
@@ -2050,6 +2092,8 @@ mod proptest_tests {
             Just(OpType::AddAttachment),
             Just(OpType::DeleteAttachment),
             Just(OpType::RenameAttachment),
+            Just(OpType::AddPageAlias),
+            Just(OpType::RemovePageAlias),
         ]
     }
 

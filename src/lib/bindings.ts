@@ -418,6 +418,8 @@ export const commands = {
 	listBacklinksGrouped: (blockId: BlockId, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope, kind: "page_link" | "block_ref" | null) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("list_backlinks_grouped", { blockId, filters, sort, cursor, limit, scope, kind })),
 	/**  Tauri command: unlinked references query. Delegates to [`list_unlinked_references_inner`]. */
 	listUnlinkedReferences: (pageId: PageId, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("list_unlinked_references", { pageId, filters, sort, cursor, limit, scope })),
+	/**  Tauri command: count unlinked references. Delegates to [`count_unlinked_references_inner`]. */
+	countUnlinkedReferences: (pageId: PageId, scope: SpaceScope) => typedError<GroupedBacklinkResponse, AppError>(__TAURI_INVOKE("count_unlinked_references", { pageId, scope })),
 	/**  Tauri command: list distinct property keys. Delegates to [`list_property_keys_inner`]. */
 	listPropertyKeys: () => typedError<string[], AppError>(__TAURI_INVOKE("list_property_keys")),
 	/**
@@ -542,8 +544,11 @@ export const commands = {
 	countAgendaBatchBySource: (dates: string[], scope: SpaceScope) => typedError<{ [key in string]: { [key in string]: number } }, AppError>(__TAURI_INVOKE("count_agenda_batch_by_source", { dates, scope })),
 	/**  Tauri command: batch-count backlinks per target page. Delegates to [`count_backlinks_batch_inner`]. */
 	countBacklinksBatch: (pageIds: PageId[], scope: SpaceScope) => typedError<{ [key in string]: number }, AppError>(__TAURI_INVOKE("count_backlinks_batch", { pageIds, scope })),
-	/**  Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`]. */
-	setPageAliases: (pageId: PageId, aliases: string[]) => typedError<string[], AppError>(__TAURI_INVOKE("set_page_aliases", { pageId, aliases })),
+	/**
+	 *  Tauri command: set page aliases. Delegates to [`set_page_aliases_inner`];
+	 *  the response carries the op refs it appended, for the undo stack (#2468).
+	 */
+	setPageAliases: (pageId: PageId, aliases: string[]) => typedError<WithOps<PageAliases>, AppError>(__TAURI_INVOKE("set_page_aliases", { pageId, aliases })),
 	/**  Tauri command: get page aliases. Delegates to [`get_page_aliases_inner`]. */
 	getPageAliases: (pageId: PageId) => typedError<string[], AppError>(__TAURI_INVOKE("get_page_aliases", { pageId })),
 	/**
@@ -2725,6 +2730,14 @@ export type OsNetworkBlockStatus = {
 };
 
 /**
+ *  The aliases a page holds after [`set_page_aliases`], under the key its
+ *  `WithOps` envelope flattens.
+ */
+export type PageAliases = {
+	aliases: string[],
+};
+
+/**
  *  A page's source buffer as the ids-beside-the-text editor reads it (#5160
  *  A): the anchored `source`, which a save sends back as its `base_source`,
  *  and the same buffer as `text`, its anchors removed, with the id each line
@@ -4554,7 +4567,13 @@ export type ValidationCode =
  *  opens as a page, its name the title). Coded so the title editor can
  *  name the clash instead of the generic rename failure.
  */
-"DuplicatePageTitle";
+"DuplicatePageTitle" | 
+/**
+ *  Giving a page an alias another page already holds, in any space or the
+ *  Trash (`set_page_aliases`, its undo; #5387). Coded so the alias editor
+ *  can name the clash instead of the generic save failure.
+ */
+"DuplicatePageAlias";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

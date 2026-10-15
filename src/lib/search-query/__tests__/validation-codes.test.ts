@@ -104,6 +104,7 @@ describe('ValidationCode (#1061/#2251 shared contract)', () => {
       PageNotInSpace: 'PageNotInSpace',
       InvalidRepeatRule: 'InvalidRepeatRule',
       DuplicatePageTitle: 'DuplicatePageTitle',
+      DuplicatePageAlias: 'DuplicatePageAlias',
     })
   })
 

@@ -8,7 +8,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { fireEvent, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import type { UseBlockTreeKeyboardShortcutsOptions } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
@@ -27,6 +27,16 @@ const mockedInvoke = vi.mocked(invoke)
 vi.mock('@/lib/clipboard', () => ({
   writeText: (text: string) => mockWriteText(text),
   readText: () => mockReadText(),
+}))
+
+// The other mounted page stores (one per journal day) a cross-day copy or cut
+// reads through `forEachPageStore`.
+type PageStore = UseBlockTreeKeyboardShortcutsOptions['pageStore']
+const mountedStores = vi.hoisted(() => [] as PageStore[])
+vi.mock('@/stores/page-blocks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/stores/page-blocks')>()),
+  forEachPageStore: (fn: (pageId: string, store: PageStore) => void) =>
+    mountedStores.forEach((store, i) => fn(`PAGE_${i}`, store)),
 }))
 
 /** A FlatBlock-shaped row for the page-store stub. */
@@ -87,14 +97,16 @@ type OptionOverrides = Partial<
 > & {
   selectAllIds?: string[]
   visibleIds?: string[]
+  /** Written to the store: the hook reads the global selection at dispatch (#5447). */
+  selectedBlockIds?: string[]
 }
 
 function makeOptions(overrides: OptionOverrides = {}): UseBlockTreeKeyboardShortcutsOptions {
-  const { selectAllIds, visibleIds, ...rest } = overrides
+  const { selectAllIds, visibleIds, selectedBlockIds, ...rest } = overrides
+  if (selectedBlockIds) useBlockStore.setState({ selectedBlockIds })
   return {
     focusedBlockId: 'BLOCK_1',
     pageStore: makePageStore(['BLOCK_1', 'BLOCK_2']),
-    selectedBlockIds: [],
     hasChildrenSet: new Set(['BLOCK_1']),
     selectAllIds: selectAllScoped(selectAllIds ?? ['BLOCK_1', 'BLOCK_2']),
     visibleIds: mountScoped(visibleIds ?? ['BLOCK_1', 'BLOCK_2']),
@@ -124,6 +136,7 @@ beforeEach(() => {
   mockWriteText.mockResolvedValue(undefined)
   mockReadText.mockResolvedValue('')
   useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
+  mountedStores.length = 0
   // #774 — clear the last-interacted-tree registry between tests so a
   // marker from a prior test can't leak into the tie-break assertions.
   __resetLastInteractedTreeForTests()
@@ -253,6 +266,19 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
     it('does not select all when a block is focused', () => {
       const opts = makeOptions({ focusedBlockId: 'BLOCK_1' })
+      useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
+
+      expect(opts.rawSelectAll).not.toHaveBeenCalled()
+    })
+
+    it("does not select all while another tree's block is focused", () => {
+      // BlockTree hands this hook only the focus it owns (#5447), so the global
+      // focus must come from the store.
+      const opts = makeOptions({ focusedBlockId: null })
+      useBlockStore.setState({ focusedBlockId: 'OTHER_TREE_BLOCK' })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
@@ -280,6 +306,15 @@ describe('useBlockTreeKeyboardShortcuts', () => {
         focusedBlockId: null,
         selectedBlockIds: ['BLOCK_1'],
       })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.clearSelected).toHaveBeenCalledTimes(1)
+    })
+
+    it('clears a selection held by blocks no mounted tree owns', () => {
+      const opts = makeOptions({ focusedBlockId: null, selectedBlockIds: ['STALE_DAY_BLOCK'] })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: 'Escape' })
@@ -344,6 +379,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
     it('does nothing when an editor is focused (browser owns Shift+Arrow)', () => {
       const opts = selectOpts({ focusedBlockId: 'B1' })
+      useBlockStore.setState({ focusedBlockId: 'B1' })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       const e = new KeyboardEvent('keydown', {
@@ -383,6 +419,16 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true, ctrlKey: true })
       fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true, metaKey: true })
       fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true, altKey: true })
+
+      expect(opts.extendSelection).not.toHaveBeenCalled()
+    })
+
+    it('#713 — the anchor is the last id of the GLOBAL selection, not of this tree', () => {
+      // This tree owns B1, but the anchor is another tree's block.
+      const opts = selectOpts({ selectedBlockIds: ['B1', 'OTHER'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true })
 
       expect(opts.extendSelection).not.toHaveBeenCalled()
     })
@@ -439,6 +485,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
     it('does nothing when an editor is focused', () => {
       const opts = selectOpts({ focusedBlockId: 'B1' })
+      useBlockStore.setState({ focusedBlockId: 'B1' })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       const e = new KeyboardEvent('keydown', {
@@ -467,6 +514,15 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: ' ' })
+
+      expect(opts.toggleSelected).not.toHaveBeenCalled()
+    })
+
+    it('#713 — toggles nothing when the GLOBAL anchor is in another tree', () => {
+      const opts = selectOpts({ selectedBlockIds: ['B1', 'OTHER'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: ' ', ctrlKey: true })
 
       expect(opts.toggleSelected).not.toHaveBeenCalled()
     })
@@ -659,6 +715,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
         selectedBlockIds: ['A'],
         focusedBlockId: 'A',
       })
+      useBlockStore.setState({ focusedBlockId: 'A' })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: 'c', ctrlKey: true })
@@ -670,6 +727,99 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       expect(mockWriteText).not.toHaveBeenCalled()
       expect(mockReadText).not.toHaveBeenCalled()
       expect(pageStore.__pasteBlocks).not.toHaveBeenCalled()
+    })
+
+    describe('a selection across two mounted day trees', () => {
+      /**
+       * Day 1 holds D1, day 2 holds D2, rendered in that order, both mounted
+       * with this hook. The selection is [D1, D2], so day 2 holds the anchor.
+       */
+      function twoDays() {
+        const day1 = makePageStore([{ id: 'D1', depth: 0, parent_id: 'DAY_1', content: 'one' }])
+        const day2 = makePageStore([{ id: 'D2', depth: 0, parent_id: 'DAY_2', content: 'two' }])
+        mountedStores.push(day1, day2)
+        const rows = document.createElement('div')
+        rows.innerHTML = '<div data-block-id="D1"></div><div data-block-id="D2"></div>'
+        document.body.append(rows)
+        onTestFinished(() => rows.remove())
+        const opts1 = makeOptions({ pageStore: day1, focusedBlockId: null })
+        const opts2 = makeOptions({ pageStore: day2, focusedBlockId: null })
+        useBlockStore.setState({ selectedBlockIds: ['D1', 'D2'] })
+        renderHook(() => useBlockTreeKeyboardShortcuts(opts1))
+        renderHook(() => useBlockTreeKeyboardShortcuts(opts2))
+        return { day1, day2, opts1, opts2 }
+      }
+
+      /** `get_blocks_source` renders each id as one line, recording each request. */
+      function stubPerPageSource() {
+        const requests: unknown[] = []
+        stubInvoke(mockedInvoke, {
+          get_blocks_source: (args) => {
+            requests.push(args)
+            return (args as { blockIds: string[] }).blockIds.map((id) => `- ${id}\n`).join('')
+          },
+        })
+        return requests
+      }
+
+      it('Ctrl+C writes both days once, in day order', async () => {
+        const requests = stubPerPageSource()
+        twoDays()
+
+        fireEvent.keyDown(document, { key: 'c', ctrlKey: true })
+
+        await waitFor(() => expect(mockWriteText).toHaveBeenCalledWith('- D1\n- D2\n'))
+        expect(mockWriteText).toHaveBeenCalledTimes(1)
+        expect(requests).toEqual([
+          { blockIds: ['D1'], withChildren: true },
+          { blockIds: ['D2'], withChildren: true },
+        ])
+      })
+
+      it("Ctrl+X removes each day's roots from its own store once the write resolves", async () => {
+        stubPerPageSource()
+        const { day1, day2, opts1, opts2 } = twoDays()
+
+        fireEvent.keyDown(document, { key: 'x', ctrlKey: true })
+
+        await waitFor(() => expect(day1.__remove).toHaveBeenCalledWith('D1'))
+        expect(mockWriteText.mock.calls).toEqual([['- D1\n- D2\n']])
+        expect(day1.__remove).toHaveBeenCalledTimes(1)
+        expect(day2.__remove.mock.calls).toEqual([['D2']])
+        expect(opts1.clearSelected).not.toHaveBeenCalled()
+        expect(opts2.clearSelected).toHaveBeenCalledTimes(1)
+      })
+
+      it('Ctrl+X writes and removes nothing when one day fails to render', async () => {
+        stubInvoke(mockedInvoke, {
+          get_blocks_source: (args) => {
+            const [id] = (args as { blockIds: string[] }).blockIds
+            return id === 'D2' ? Promise.reject(new Error('pool closed')) : `- ${id}\n`
+          },
+        })
+        const { day1, day2 } = twoDays()
+
+        fireEvent.keyDown(document, { key: 'x', ctrlKey: true })
+
+        await waitFor(() => expect(toast.error).toHaveBeenCalledWith(t('palette.copyFailed')))
+        expect(mockWriteText).not.toHaveBeenCalled()
+        expect(day1.__remove).not.toHaveBeenCalled()
+        expect(day2.__remove).not.toHaveBeenCalled()
+      })
+
+      it('Ctrl+V pastes once, after the anchor in the day that holds it', async () => {
+        mockReadText.mockResolvedValue('- pasted')
+        const { day1, day2 } = twoDays()
+
+        fireEvent.keyDown(document, { key: 'v', ctrlKey: true })
+
+        await waitFor(() =>
+          expect(day2.__pasteBlocks).toHaveBeenCalledWith('D2', { kind: 'text', text: '- pasted' }),
+        )
+        expect(day2.__pasteBlocks).toHaveBeenCalledTimes(1)
+        expect(day1.__pasteBlocks).not.toHaveBeenCalled()
+        expect(mockReadText).toHaveBeenCalledTimes(1)
+      })
     })
 
     it('does not act when the selection belongs to another store (ownership gate)', () => {

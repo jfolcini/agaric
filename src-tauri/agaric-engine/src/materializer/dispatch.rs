@@ -1401,6 +1401,8 @@ pub fn invalidations_for_op(
         // unchanged; it is now an intentional empty arm rather than an
         // accidental silent drop.
         OpType::AddAttachment | OpType::DeleteAttachment | OpType::RenameAttachment => {}
+        // `page_aliases` feeds no cache: every reader queries it directly.
+        OpType::AddPageAlias | OpType::RemovePageAlias => {}
     }
     Ok(tasks)
 }
@@ -3507,6 +3509,8 @@ mod tests {
             OpType::AddAttachment,
             OpType::DeleteAttachment,
             OpType::RenameAttachment,
+            OpType::AddPageAlias,
+            OpType::RemovePageAlias,
         ];
         for probe in &all {
             // Round-trip guard: the dispatch parses the stored string back
@@ -3573,6 +3577,9 @@ mod tests {
                 OpType::AddAttachment | OpType::DeleteAttachment | OpType::RenameAttachment => {
                     r#"{"attachment_id":"A1","new_name":"x.png"}"#
                 }
+                OpType::AddPageAlias | OpType::RemovePageAlias => {
+                    r#"{"page_id":"B1","alias":"plans"}"#
+                }
             }
         }
 
@@ -3590,6 +3597,8 @@ mod tests {
             OpType::AddAttachment,
             OpType::DeleteAttachment,
             OpType::RenameAttachment,
+            OpType::AddPageAlias,
+            OpType::RemovePageAlias,
         ];
         let probe = MaterializeTask::SetBlockPageId {
             block_id: Arc::from("probe"),

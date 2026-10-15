@@ -57,11 +57,13 @@ const {
   mockGetPageAliases,
   mockListPropertyKeys,
   mockListUnlinkedReferences,
+  mockCountUnlinkedReferences,
   mockEditBlock,
   mockSetPageAliases,
 } = vi.hoisted(() => ({
   mockListPropertyKeys: vi.fn(),
   mockListUnlinkedReferences: vi.fn(),
+  mockCountUnlinkedReferences: vi.fn(),
   mockGetPageAliases: vi.fn(),
   mockBatchResolve: vi.fn(),
   mockEditBlock: vi.fn(),
@@ -77,6 +79,8 @@ vi.mock('@/lib/bindings', async () => {
       listPropertyKeys: mockListPropertyKeys,
       listUnlinkedReferences: (...args: unknown[]) =>
         mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
+      countUnlinkedReferences: (...args: unknown[]) =>
+        mockCountUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
       getPageAliases: (...args: unknown[]) =>
         mockGetPageAliases(...args).then((data: unknown) => ({ status: 'ok', data })),
       setPageAliases: (...args: unknown[]) =>
@@ -167,6 +171,7 @@ import { renamePage } from '@/stores/page-rename'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedListUnlinked = mockListUnlinkedReferences
+const mockedCountUnlinked = mockCountUnlinkedReferences
 const mockedEditBlock = mockEditBlock
 const mockedListPropertyKeys = mockListPropertyKeys
 const mockedGetPageAliases = mockGetPageAliases
@@ -218,6 +223,20 @@ beforeEach(() => {
   // between tests so each case fetches its own keys.
   _resetPropertyKeysCacheForTest()
   mockedListUnlinked.mockResolvedValue(emptyResponse)
+  // #5422 — the collapsed, unfiltered panel asks for the count only, which the
+  // backend answers as the list path's counts with no groups. Derived from the
+  // list stub's implementation, called directly so it records no list call.
+  mockedCountUnlinked.mockImplementation(async (pageId: unknown, scope: unknown) => {
+    const listed = await mockedListUnlinked.getMockImplementation()?.(
+      pageId,
+      null,
+      null,
+      null,
+      1,
+      scope,
+    )
+    return { ...listed, groups: [], next_cursor: null, has_more: false }
+  })
   mockedBatchResolve.mockResolvedValue([])
   mockedEditBlock.mockResolvedValue({
     id: 'BLOCK',
@@ -273,17 +292,14 @@ describe('UnlinkedReferences', () => {
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
 
-    // Wait for eager fetch to complete
+    // Wait for the collapsed panel's count-only fetch (#5422)
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledWith(
-        'PAGE1',
-        null,
-        null,
-        null,
-        expect.any(Number),
-        { kind: 'active', space_id: 'SPACE_1' },
-      )
+      expect(mockedCountUnlinked).toHaveBeenCalledWith('PAGE1', {
+        kind: 'active',
+        space_id: 'SPACE_1',
+      })
     })
+    expect(mockedListUnlinked).not.toHaveBeenCalled()
 
     // Header should be present and collapsed
     const header = await screen.findByRole('button', { name: /unlinked reference/i })
@@ -309,7 +325,7 @@ describe('UnlinkedReferences', () => {
 
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledTimes(1)
+      expect(mockedCountUnlinked).toHaveBeenCalledTimes(1)
     })
     expect(mockedListPropertyKeys).toHaveBeenCalledTimes(0)
 
@@ -963,14 +979,10 @@ describe('UnlinkedReferences', () => {
 
     // Wait for eager fetch to complete
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledWith(
-        'PAGE1',
-        null,
-        null,
-        null,
-        expect.any(Number),
-        { kind: 'active', space_id: 'SPACE_1' },
-      )
+      expect(mockedCountUnlinked).toHaveBeenCalledWith('PAGE1', {
+        kind: 'active',
+        space_id: 'SPACE_1',
+      })
     })
 
     // The whole panel section is suppressed — no header, no list, no EmptyState.
@@ -1273,14 +1285,10 @@ describe('UnlinkedReferences', () => {
 
     // Wait for eager fetch
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledWith(
-        'PAGE1',
-        null,
-        null,
-        null,
-        expect.any(Number),
-        { kind: 'active', space_id: 'SPACE_1' },
-      )
+      expect(mockedCountUnlinked).toHaveBeenCalledWith('PAGE1', {
+        kind: 'active',
+        space_id: 'SPACE_1',
+      })
     })
 
     // Collapsed by default — filter builder must not render.
@@ -1496,9 +1504,9 @@ describe('UnlinkedReferences', () => {
     })
   })
 
-  it('shows error toast when listUnlinkedReferences fetch rejects (error path)', async () => {
+  it('shows error toast when the collapsed count fetch rejects (error path)', async () => {
     const { toast } = await import('sonner')
-    mockedListUnlinked.mockRejectedValueOnce(new Error('network boom'))
+    mockedCountUnlinked.mockRejectedValueOnce(new Error('network boom'))
 
     const { container } = renderUnlinkedReferences({
       pageId: 'PAGE1',
@@ -1506,14 +1514,10 @@ describe('UnlinkedReferences', () => {
     })
 
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledWith(
-        'PAGE1',
-        null,
-        null,
-        null,
-        expect.any(Number),
-        { kind: 'active', space_id: 'SPACE_1' },
-      )
+      expect(mockedCountUnlinked).toHaveBeenCalledWith('PAGE1', {
+        kind: 'active',
+        space_id: 'SPACE_1',
+      })
     })
 
     // Error surfaces as a toast and the component does not crash.
@@ -2025,7 +2029,7 @@ describe('UnlinkedReferences — title and alias writes (#5249)', () => {
     mockedGetPageAliases.mockImplementation(async () => [...aliases])
     mockSetPageAliases.mockImplementation(async (_pageId: string, next: string[]) => {
       aliases = [...next]
-      return next
+      return { aliases: next, op_refs: [] }
     })
     mockedListUnlinked.mockImplementation(async () => {
       const terms = [title, ...aliases]
@@ -2110,21 +2114,22 @@ describe('UnlinkedReferences — count waits for the viewport (#5445)', () => {
 
   it('is not fetched at page open, and is fetched once the panel scrolls into view', async () => {
     renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
-    expect(mockedListUnlinked).not.toHaveBeenCalled()
+    expect(mockedCountUnlinked).not.toHaveBeenCalled()
     expect(screen.queryByTestId('unlinked-references')).not.toBeInTheDocument()
 
     scrollIntoView()
 
     expect(await screen.findByText('3 Unlinked References')).toBeInTheDocument()
-    expect(mockedListUnlinked).toHaveBeenCalledTimes(1)
-    expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE1', null, null, null, 1, SCOPE)
+    expect(mockedCountUnlinked).toHaveBeenCalledTimes(1)
+    expect(mockedCountUnlinked).toHaveBeenCalledWith('PAGE1', SCOPE)
+    expect(mockedListUnlinked).not.toHaveBeenCalled()
   })
 
   it('waits again for the next page, which reuses the same mounted panel', async () => {
     const { rerender } = renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'My Page' })
     scrollIntoView()
     await screen.findByText('3 Unlinked References')
-    mockedListUnlinked.mockClear()
+    mockedCountUnlinked.mockClear()
 
     rerender(
       <TooltipProvider>
@@ -2132,13 +2137,13 @@ describe('UnlinkedReferences — count waits for the viewport (#5445)', () => {
       </TooltipProvider>,
     )
     expect(screen.queryByTestId('unlinked-references')).not.toBeInTheDocument()
-    expect(mockedListUnlinked).not.toHaveBeenCalled()
+    expect(mockedCountUnlinked).not.toHaveBeenCalled()
 
     scrollIntoView()
 
     await waitFor(() => {
-      expect(mockedListUnlinked).toHaveBeenCalledWith('PAGE2', null, null, null, 1, SCOPE)
+      expect(mockedCountUnlinked).toHaveBeenCalledWith('PAGE2', SCOPE)
     })
-    expect(mockedListUnlinked).toHaveBeenCalledTimes(1)
+    expect(mockedCountUnlinked).toHaveBeenCalledTimes(1)
   })
 })

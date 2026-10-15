@@ -1104,6 +1104,17 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 &serde_json::to_value(&resp).expect("serialize GroupedBacklinkResponse"),
             )
         }
+        "count_unlinked_references" => {
+            let resp = count_unlinked_references_inner(
+                pool,
+                &arg_req::<PageId>(args, "pageId"),
+                &arg_req::<SpaceScope>(args, "scope"),
+            )
+            .await?;
+            backlink_groups_result(
+                &serde_json::to_value(&resp).expect("serialize GroupedBacklinkResponse"),
+            )
+        }
         "get_backlinks" => {
             let resp = get_backlinks_inner(
                 pool,
@@ -2749,7 +2760,11 @@ pub(super) mod reader_delegation_tests {
     // (`load_page_export_data` in a plain `pool.begin()` tx, SELECTs only)
     // plus `anchor_free`, a pure string pass (`commands/pages/markdown.rs`).
     // Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 55;
+    // #5422 wired `count_unlinked_references`: the title/alias SELECTs and
+    // one COUNT over the same `fts_blocks` scan `list_unlinked_references`
+    // runs (`count_unlinked_references` in
+    // `agaric-store/src/backlink/grouped.rs`). Writer set unchanged.
+    const SWEPT_ARM_COUNT: usize = 56;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///

@@ -1808,4 +1808,157 @@ mod tests {
             "undoing the undo restores the block"
         );
     }
+
+    /// #5399: a batch is one activity entry carrying every op it wrote, and
+    /// one undo of those refs reverts all of it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rw_batch_is_one_activity_entry_and_one_undo_5399() {
+        use crate::commands::{
+            create_block_inner, create_block_inner_with_space, create_space_inner,
+        };
+        use agaric_store::space::{SpaceId, SpaceScope};
+        const DEV: &str = "dev-5399";
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("t.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool.clone());
+        let space = create_space_inner(&pool, DEV, &mat, "S".into(), None)
+            .await
+            .unwrap()
+            .into_string();
+        let scope = SpaceScope::Active(SpaceId::from_trusted(&space));
+        let in_space = |kind: &'static str, text: &'static str| {
+            create_block_inner_with_space(
+                &pool,
+                DEV,
+                &mat,
+                kind.into(),
+                text.into(),
+                None,
+                None,
+                &scope,
+                None,
+            )
+        };
+        let page = in_space("page", "P").await.unwrap().id;
+        let tag = in_space("tag", "work").await.unwrap().id;
+        let mut children = Vec::new();
+        for text in ["A", "B", "C"] {
+            let child = create_block_inner(
+                &pool,
+                DEV,
+                &mat,
+                "content".into(),
+                text.into(),
+                Some(page.clone()),
+                None,
+            )
+            .await
+            .unwrap();
+            children.push(child.id.into_string());
+        }
+        let [a, b, c] = <[String; 3]>::try_from(children).unwrap();
+        mat.flush_background().await.unwrap();
+        let state = || async {
+            let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+                "SELECT id, content, todo_state FROM blocks \
+                 WHERE parent_id = ? AND deleted_at IS NULL ORDER BY position, id",
+            )
+            .bind(page.as_str())
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            let tagged: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tags")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            let properties: Vec<(String, String)> =
+                sqlx::query_as("SELECT block_id, key FROM block_properties ORDER BY block_id, key")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            (rows, tagged, properties)
+        };
+        let before = state().await;
+
+        let tools = crate::mcp::tools_rw::ReadWriteTools::new(
+            pool.clone(),
+            pool.clone(),
+            mat.clone(),
+            DEV.into(),
+        );
+        let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
+        let activity_ctx = ActivityContext::new(ring.clone(), Arc::new(RecordingEmitter::new()));
+        let adapter = RmcpAdapter::new(Arc::new(tools), Some(activity_ctx), McpSurface::ReadWrite);
+        let call = |name: &str, args: Value| {
+            adapter.dispatch_tool_call(name.to_string(), args, "batch-agent".to_string())
+        };
+
+        let done = result_ok(
+            call(
+                "batch",
+                json!({
+                    "ops": [
+                        { "op": "append_block", "parent_id": page.as_str(), "content": "new" },
+                        { "op": "update_block_content", "block_id": a, "content": "A2" },
+                        { "op": "set_property", "block_id": a, "key": "todo_state", "value_text": "TODO" },
+                        { "op": "add_tag", "block_id": a, "tag_id": tag.as_str() },
+                        { "op": "move_blocks", "block_ids": [c], "parent_id": page.as_str(), "position": 1 },
+                        { "op": "delete_block", "block_id": b },
+                    ],
+                    "space_id": space,
+                }),
+            )
+            .await,
+        );
+        mat.flush_background().await.unwrap();
+        assert_eq!(done["results"].as_array().map(Vec::len), Some(6));
+        let after = state().await;
+        let ids: Vec<&str> = after.0.iter().map(|(id, ..)| id.as_str()).collect();
+        assert_eq!(
+            ids[..2],
+            [c.as_str(), a.as_str()],
+            "C moved first, B deleted"
+        );
+        assert_eq!(after.0[1].1.as_deref(), Some("A2"));
+        assert_eq!(after.0[1].2.as_deref(), Some("TODO"));
+        assert_eq!(after.0[2].1.as_deref(), Some("new"));
+        assert_eq!(after.1, 1, "A is tagged");
+
+        let entries: Vec<_> = ring.lock().unwrap().entries().iter().cloned().collect();
+        assert_eq!(entries.len(), 1, "the batch is one activity entry");
+        assert_eq!(entries[0].tool_name, "batch");
+        let entry_refs: Vec<agaric_store::op::OpRef> = entries[0]
+            .op_ref
+            .clone()
+            .into_iter()
+            .chain(entries[0].additional_op_refs.clone())
+            .collect();
+        assert_eq!(
+            serde_json::to_value(&entry_refs).unwrap(),
+            done["op_refs"],
+            "the entry carries the refs the batch returned",
+        );
+        let written: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE origin LIKE 'agent:%'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            usize::try_from(written).unwrap(),
+            entry_refs.len(),
+            "every op the batch wrote"
+        );
+
+        result_ok(
+            call(
+                "undo",
+                json!({ "op_refs": done["op_refs"], "space_id": space }),
+            )
+            .await,
+        );
+        mat.flush_background().await.unwrap();
+        assert_eq!(state().await, before, "one undo reverts the whole batch");
+    }
 }

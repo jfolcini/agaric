@@ -516,6 +516,14 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: 'has_more',
     totalKey: 'total_count',
   },
+  // #5422 — the collapsed panel's count-only read answers the same envelope
+  // with no groups, so only the trailer and `total_count` are recorded.
+  count_unlinked_references: {
+    rows: { kind: 'backlink-groups' },
+    token: BLOCK_TOKEN,
+    hasMoreKey: 'has_more',
+    totalKey: 'total_count',
+  },
   // ── Op-log history (#3824) ──
   //
   // A `HistoryEntry` has no id the two stacks share: `device_id`, `seq` and

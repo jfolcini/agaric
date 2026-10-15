@@ -1041,6 +1041,34 @@ describe('DaySection', () => {
       expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     })
 
+    // An empty day's "Add block" creates only the page; the day must then
+    // mount its tree without waiting on an observer that armed before the
+    // placeholder existed, and let that tree seed the first block.
+    it('mounts a seeding BlockTree once the page an empty-day "Add block" created arrives', async () => {
+      const user = userEvent.setup()
+      const onAddBlock = vi.fn()
+      const entry = makeDayEntry({ pageId: null, dateStr: '2025-06-15' })
+
+      const { rerender } = render(
+        <DaySection entry={entry} mode="weekly" compact lazyMount onAddBlock={onAddBlock} />,
+      )
+      await user.click(screen.getByRole('button', { name: 'Add block' }))
+      expect(onAddBlock).toHaveBeenCalledWith('2025-06-15')
+
+      rerender(
+        <DaySection
+          entry={{ ...entry, pageId: 'PAGE_1' }}
+          mode="weekly"
+          compact
+          lazyMount
+          onAddBlock={onAddBlock}
+        />,
+      )
+
+      expect(screen.queryByTestId('day-section-lazy-placeholder')).not.toBeInTheDocument()
+      expect(screen.getByTestId('block-tree')).toHaveAttribute('data-auto-create', 'true')
+    })
+
     // #4407 — the no-`IntersectionObserver` fallback is a `useState`
     // initializer, not an effect write. Reddens if the initializer stops
     // opening the gate: with no observer nothing else can ever flip it, so

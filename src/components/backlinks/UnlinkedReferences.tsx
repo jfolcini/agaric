@@ -166,9 +166,9 @@ export function UnlinkedReferences({
     isError,
     refetch,
     queryKeyPrefix,
-    // #3316 item 2 — `collapsed` gates the fetch size: while the panel is shut
-    // it asks for one group instead of twenty, which is all the header count
-    // needs. Expanding re-keys the query and pulls the full page.
+    // #3316 item 2 — `collapsed` gates the fetch: while the panel is shut it
+    // asks for the count only (#5422; one group when filters are set), which is
+    // all the header needs. Expanding re-keys the query and pulls the full page.
   } = useUnlinkedReferences({
     pageId,
     filters,
