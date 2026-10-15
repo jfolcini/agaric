@@ -683,6 +683,15 @@ mod touched_targets_tests {
 
     use super::*;
 
+    /// `(id, block_type, parent_id, page_id, deleted_at)`.
+    type SeedBlock = (
+        &'static str,
+        &'static str,
+        Option<&'static str>,
+        Option<&'static str>,
+        Option<i64>,
+    );
+
     /// The pre-#5423 touched-targets read: the roll-up as one `COALESCE`
     /// comparison, which SQLite answers by scanning `block_links`. Kept as the
     /// oracle the indexed form must agree with.
@@ -715,14 +724,14 @@ mod touched_targets_tests {
     /// wins over a parent naming another key (`M`), a soft-deleted source that
     /// must not count (`D`, and `D2` / `D3` on the parent and self branches), a
     /// paged source that must not match its own id (`Z`), and a target only
-    /// `page_link_cache` still names (`P1 → T5`). For every key the indexed read must return the oracle's
-    /// set; the literals pin that the sets are the intended ones rather than
-    /// two agreeing empties.
+    /// `page_link_cache` still names (`P1 → T5`). For every key the indexed
+    /// read must return the oracle's set; the literals pin that the sets are
+    /// the intended ones rather than two agreeing empties.
     #[tokio::test]
     async fn touched_targets_match_the_scanning_oracle_for_every_rollup_case_5423() {
         let (pool, _dir) = crate::test_support::test_pool().await;
-        // (id, block_type, parent_id, page_id, deleted_at), parents first.
-        let blocks: [(&str, &str, Option<&str>, Option<&str>, Option<i64>); 15] = [
+        // Parents first.
+        let blocks: [SeedBlock; 15] = [
             ("P1", "page", None, Some("P1"), None),
             ("P2", "page", None, Some("P2"), None),
             ("T1", "page", None, Some("T1"), None),
