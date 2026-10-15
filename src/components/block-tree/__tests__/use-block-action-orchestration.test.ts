@@ -19,6 +19,7 @@ import { clearListStyle, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import type { FlatBlock } from '@/lib/tree-utils'
 import type { MountedBlocks } from '@/lib/zoom-scope'
+import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore } from '@/stores/page-blocks'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
@@ -148,6 +149,8 @@ beforeEach(() => {
   mockShouldSplitOnBlur.mockReturnValue(false)
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({ loading: false })
+  // The live focus the default params' `focusedBlockId` stands for.
+  useBlockStore.setState({ focusedBlockId: 'B' })
 })
 
 describe('useBlockActionOrchestration handleFocusPrev', () => {
@@ -1890,6 +1893,63 @@ describe('useBlockActionOrchestration handleEnterSave', () => {
     })
 
     expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockCreated')
+  })
+
+  it('drops the new blank block when Escape cleared focus during its create', async () => {
+    const params = makeDefaultParams()
+    params.createBelow = vi.fn(async () => {
+      useBlockStore.setState({ focusedBlockId: null })
+      return 'NEW_1'
+    })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.remove).toHaveBeenCalledWith('NEW_1', { undoable: false })
+    expect(params.setFocused).not.toHaveBeenCalled()
+    expect(mockedAnnounce).not.toHaveBeenCalled()
+  })
+
+  it('keeps the new block when the user clicked into it during its create', async () => {
+    const params = makeDefaultParams()
+    params.createBelow = vi.fn(async () => {
+      useBlockStore.setState({ focusedBlockId: 'NEW_1' })
+      return 'NEW_1'
+    })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.remove).not.toHaveBeenCalled()
+    expect(params.setFocused).toHaveBeenCalledWith('NEW_1')
+  })
+
+  it('logs when dropping the abandoned blank block fails', async () => {
+    const params = makeDefaultParams()
+    params.createBelow = vi.fn(async () => {
+      useBlockStore.setState({ focusedBlockId: 'A' })
+      return 'NEW_1'
+    })
+    params.remove = vi.fn(async () => {
+      throw new Error('remove incomplete')
+    })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(mockedLoggerWarn).toHaveBeenCalledWith(
+      'useBlockActionOrchestration',
+      'Enter left a blank block behind after focus moved during its create',
+      { blockId: 'B', newBlockId: 'NEW_1' },
+      expect.any(Error),
+    )
+    expect(params.setFocused).not.toHaveBeenCalled()
   })
 
   it('does not announce when createBelow returns null', async () => {
