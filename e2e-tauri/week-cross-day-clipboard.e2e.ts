@@ -99,6 +99,9 @@ async function selectAcrossDays(...rows: [string, string][]): Promise<void> {
     await $(`#${day}`).scrollIntoView()
     const row = rowIn(day, marker)
     await row.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    // scrollIntoView aligns to the window's top, under the view header, where
+    // a click lands on the header instead of the row.
+    await row.scrollIntoView({ block: 'center' })
     await ctrlClick(row)
   }
   await browser.waitUntil(
