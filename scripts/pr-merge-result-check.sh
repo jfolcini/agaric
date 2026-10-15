@@ -107,13 +107,11 @@
 # cannot drift from what check-raw-tx itself accepts.
 #
 # Reading ONE guard's list closes the bash-vs-guard drift, not ALL of it.
-# check-dynamic-sql.py and check-table-ownership.py each still declare their
-# OWN CRATE_ROOTS — by deliberate REPLICATION, per their own comments, to
-# avoid a dependency edge between the guards — so a crate root added to
-# check-raw-tx and not to those two puts files in `targets` that THEY
-# silently reject, and the same fail-open returned for those two guards:
-# measured, on a fixture whose extra root `src-tauri/extra/src/` only
-# check-raw-tx names, a genuine dynamic-SQL near-miss under it (2 sites,
+# check-dynamic-sql.mjs and check-table-ownership.mjs read the same list
+# (lib/rust-scan.mjs), so a crate root added there reaches all three. The
+# fail-open a second copy allowed was measured while check-dynamic-sql still
+# kept one: on a fixture whose extra root `src-tauri/extra/src/` only
+# check-raw-tx named, a genuine dynamic-SQL near-miss under it (2 sites,
 # baseline 1) exited **0, "the ratchet guards pass"**, because `targets` was
 # non-empty and so the zero-target check below never fired.
 #
@@ -187,8 +185,8 @@
 #            pr-overlap.yml renders as "a ratchet guard fails on the merge
 #            result" and tells the author to merge main — wrong advice for
 #            infrastructure breakage), one of the guard trio examined
-#            ZERO files, no `.rs` file exists under any known crate root,
-#            or python3 is unavailable. #4078 adds the typecheck stage's own
+#            ZERO files, or no `.rs` file exists under any known crate
+#            root. #4078 adds the typecheck stage's own
 #            "could not run" cases to the same code: no `node_modules` to
 #            borrow, the merged tree carries no `package.json` or no
 #            `typecheck` script in it, the merged tree's `package-lock.json`
@@ -241,8 +239,8 @@ set -uo pipefail
 # how each one is actually invoked — the shape differs per guard.
 RATCHET_GUARDS=(
   check-raw-tx.mjs
-  check-dynamic-sql.py
-  check-table-ownership.py
+  check-dynamic-sql.mjs
+  check-table-ownership.mjs
   check-unsafe-allowlist.sh
   check-migrations-immutable.sh
 )
@@ -290,21 +288,15 @@ mr_cleanup() {
 }
 
 # Reads CRATE_ROOTS out of $1 (a path to a copy of ANY of the three guards)
-# by importing it as a module. A `.py` guard goes through importlib, exactly
-# the technique check-dynamic-sql.py and check-table-ownership.py themselves
-# already use to load check-raw-tx.py's shared helpers; only module-level
-# statements execute, and `if __name__ == "__main__":` is never entered under
-# this loader name, so `main()` never runs. A `.mjs` guard is `import()`ed
+# by importing it as a module. A `.py` guard goes through importlib; only
+# module-level statements execute, and `if __name__ == "__main__":` is never
+# entered under this loader name, so `main()` never runs. A `.mjs` guard is `import()`ed
 # with the path passed in the environment rather than as an argument: as
 # `process.argv[1]` it would satisfy the guard's own entry-point check and
 # run its `main()`.
 #
-# The three guards spell the SAME set three different ways, so this
-# normalises rather than assuming one shape: check-raw-tx.mjs exports
-# repo-relative strings with a trailing slash, check-dynamic-sql.py absolute
-# `REPO_ROOT / …` Paths, check-table-ownership.py `(crate-label, Path)`
-# TUPLES. Output is one repo-relative root per line, no trailing slash,
-# whichever shape it came from.
+# The `.mjs` guards export repo-relative strings with a trailing slash.
+# Output is one repo-relative root per line, no trailing slash.
 #
 # On failure it prints the CAUSE on stderr and exits non-zero (#3989 nit): a
 # check-raw-tx that is present but BROKEN (a syntax error, a bad import)
@@ -353,9 +345,6 @@ if not roots:
 repo_root = str(getattr(mod, "REPO_ROOT",
                         os.path.dirname(os.path.dirname(os.path.abspath(path)))))
 for r in roots:
-    # (crate-label, Path) tuples — check-table-ownership.py.
-    if isinstance(r, (tuple, list)):
-        r = r[-1]
     r = str(r)
     if os.path.isabs(r):
         r = os.path.relpath(r, repo_root)
@@ -384,9 +373,10 @@ RATCHET_PREREQS=(
   # and the same remedy.
   'check-raw-tx.mjs|scripts/lib/rust-scan.mjs|the Rust-scanning library it imports'
   'check-raw-tx.mjs|scripts/lib/guard-file-source.mjs|the file-source helper it imports'
-  'check-dynamic-sql.py|scripts/check-raw-tx.py|the shared helpers it loads at import time'
-  'check-table-ownership.py|scripts/check-raw-tx.py|the shared helpers it loads at import time'
-  'check-dynamic-sql.py|scripts/lib/guard_file_source.py|the file-source helper it loads at import time'
+  'check-dynamic-sql.mjs|scripts/lib/rust-scan.mjs|the Rust-scanning library it imports'
+  'check-dynamic-sql.mjs|scripts/lib/guard-file-source.mjs|the file-source helper it imports'
+  'check-table-ownership.mjs|scripts/lib/rust-scan.mjs|the Rust-scanning library it imports'
+  'check-table-ownership.mjs|scripts/lib/guard-file-source.mjs|the file-source helper rust-scan.mjs imports'
 )
 
 # Returns 0 if every prerequisite of every PRESENT guard exists in the merged
@@ -429,7 +419,7 @@ check_prereqs() {
 #
 # Two counting rules, because the guards do not agree on where their input
 # comes from:
-#   check-table-ownership.py — ignores argv entirely and rescans its own
+#   check-table-ownership.mjs — ignores argv entirely and rescans its own
 #     crate roots off the filesystem (ownership is an AGGREGATE invariant;
 #     see its main()). So the count is a filesystem scan under ITS roots.
 #   the other two                — filter the argv they are handed against
@@ -463,7 +453,7 @@ count_examined() {
     return 1
   fi
   case "$guard" in
-    check-table-ownership.py)
+    check-table-ownership.mjs)
       for root in "${roots[@]}"; do
         # No `[ -d ] || continue` here. `find` on a missing directory prints
         # nothing (its error is already discarded below), so the count is
@@ -496,7 +486,7 @@ count_examined() {
 # prek hook would (prek.toml's `entry =`) — but the five guards do not share
 # one invocation shape, only a common "run against the merged tree" intent:
 #
-#   *.py, check-raw-tx.mjs        — python3 / node <script> <crate-root targets>.
+#   *.py, *.mjs                   — python3 / node <script> <crate-root targets>.
 #   check-unsafe-allowlist.sh     — bash <script>, no args, but it calls
 #                                    `git rev-parse --show-toplevel` which
 #                                    resolves off CWD, not the script's own
@@ -526,23 +516,19 @@ run_one_guard() {
   local guard="$1" workdir="$2" base_tip="$3"
   shift 3
   case "$guard" in
-    check-raw-tx.mjs)
-      # `--worktree` for the reason given under check-dynamic-sql.py below.
-      node "$workdir/scripts/$guard" --worktree "$@"
-      ;;
-    check-dynamic-sql.py)
+    check-raw-tx.mjs | check-dynamic-sql.mjs)
       # `--worktree` is EXPLICIT, never left to the guards' AUTO rule (#4017).
       # A merged tree exists only as files in a worktree and was never staged,
       # so "the staged index" has no meaning for it; AUTO keys on
       # `GIT_INDEX_FILE`, which under a commit hook names the COMMITTING
       # repository's index. The guards refuse that combination (exit 2).
-      python3 "$workdir/scripts/$guard" --worktree "$@"
+      node "$workdir/scripts/$guard" --worktree "$@"
       ;;
-    check-table-ownership.py)
+    check-table-ownership.mjs)
       # No source flags: it ignores argv for FILE selection and rescans its
       # own crate roots off the filesystem, so it only ever reads the
       # worktree in the first place.
-      python3 "$workdir/scripts/$guard" "$@"
+      node "$workdir/scripts/$guard" "$@"
       ;;
     *.py)
       python3 "$workdir/scripts/$guard" "$@"
@@ -828,25 +814,14 @@ run_merge_check() {
   local base_ref="$1" head_sha="$2"
   local base_tip parent workdir
 
-  # Checked BEFORE any work: two of the guards are stdlib-only Python, so
-  # without python3 they cannot run. Reported as "verified nothing" rather
-  # than as three guards "FAILING on the MERGED tree" — which is what a
-  # missing interpreter produced before, an accusation against the PR for an
-  # absent tool.
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "pr-merge-result-check: python3 is not on PATH — two ratchet guards are" >&2
-    echo "  stdlib-only Python and cannot run at all. NOTHING was verified; this is" >&2
-    echo "  neither a pass nor a finding against this PR." >&2
-    return 3
-  fi
-  # check-raw-tx.mjs is a Node guard, and the typecheck stage probes the
-  # merged tree's package.json with `node -e` before invoking npm; without
-  # `node` the guard cannot run and the probe reports "the merged tree defines
-  # no typecheck script" — an accusation against the PR for an absent tool.
-  # Checked here, up front, for the same "verified nothing, not a per-stage
-  # skip" reasoning as the python3 check above.
+  # Checked BEFORE any work: the three Rust-scanning guards are Node, and
+  # the typecheck stage probes the merged tree's package.json with `node -e`
+  # before invoking npm; without `node` the guards cannot run and the probe
+  # reports "the merged tree defines no typecheck script" — an accusation
+  # against the PR for an absent tool. Reported as "verified nothing", not
+  # as a per-stage skip.
   if ! command -v node >/dev/null 2>&1; then
-    echo "pr-merge-result-check: node is not on PATH — check-raw-tx.mjs and the" >&2
+    echo "pr-merge-result-check: node is not on PATH — the .mjs guards and the" >&2
     echo "  typecheck stage need it. NOTHING was verified; this is neither a pass" >&2
     echo "  nor a finding against this PR." >&2
     return 3
@@ -1005,8 +980,8 @@ run_merge_check() {
   # RATCHET_GUARDS entry is missing", and the ABSENT-guard note below — not
   # this one — must be the message that governs the exit code, so the
   # missing-guard loop below still gets to run (and still names
-  # check-raw-tx.mjs, and still lets check-dynamic-sql.py / check-table-
-  # ownership.py's own crash-on-missing-import get invoked and diagnosed,
+  # check-raw-tx.mjs, and still lets check-dynamic-sql.mjs / check-table-
+  # ownership.mjs's own crash-on-missing-import get invoked and diagnosed,
   # same as before #3989).
   if [ "${#targets[@]}" -eq 0 ] && [ -f "$crate_root_script" ]; then
     echo "pr-merge-result-check: the merged tree carries no .rs file under ANY crate" >&2
@@ -1043,8 +1018,8 @@ run_merge_check() {
   # it walks is gone.
   local -a examine_probe_guards=(
     check-raw-tx.mjs
-    check-dynamic-sql.py
-    check-table-ownership.py
+    check-dynamic-sql.mjs
+    check-table-ownership.mjs
   )
   local probe cnt examined_zero='' examined_unreadable=''
   for probe in "${examine_probe_guards[@]}"; do
@@ -1133,7 +1108,7 @@ run_merge_check() {
   # nothing. #3989's measured case: an extra crate root named only by
   # check-raw-tx.py, a genuine dynamic-SQL near-miss under it, `targets`
   # non-empty (so the zero-target check above never fired) and
-  # check-dynamic-sql.py / check-table-ownership.py rejecting every file
+  # the other two guards rejecting every file
   # they were handed — exit 0, "guards pass", nothing read.
   if [ -n "$examined_unreadable" ]; then
     echo "pr-merge-result-check: could not determine how many files these guard(s)" >&2
@@ -1150,9 +1125,9 @@ run_merge_check() {
     echo "  so a crate root that exists in one guard's list and not another's leaves" >&2
     echo "  the others rejecting every file — clean exit, nothing read. That is a" >&2
     echo "  fail-open, not a pass: NOTHING was verified for the guard(s) named." >&2
-    echo "  Fix the crate-root lists (they are replicated by hand across" >&2
-    echo "  lib/rust-scan.mjs, check-dynamic-sql.py and check-table-ownership.py), or" >&2
-    echo "  the repo layout, so every guard is handed source it accepts." >&2
+    echo "  Fix the crate-root list in lib/rust-scan.mjs, which all three" >&2
+    echo "  .mjs guards import, or the repo layout, so every guard is handed" >&2
+    echo "  source it accepts." >&2
     return 3
   fi
   return 0

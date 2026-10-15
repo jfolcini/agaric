@@ -32,7 +32,7 @@ Each core table has one owner crate, and new raw `sqlx` writes to it go there; o
 | `blocks` | `engine` | Loro→SQLite projection. `store` keeps the physical primitives beneath it (page_id/space_id materialization, soft-delete, descendant cache). app/sync writes are known debt. |
 | `op_log` | `store` | Append primitive in `src-tauri/agaric-store/src/op_log/append.rs`. app/engine/sync writes are known debt. |
 
-The `check-table-ownership` hook fails when a non-owner (crate, table) raw-write count exceeds `src-tauri/table-ownership-baseline.txt`. After adding a required cross-crate write, or removing one, run `python3 scripts/check-table-ownership.py --update-baseline` (it keeps the file's annotations).
+The `check-table-ownership` hook fails when a non-owner (crate, table) raw-write count exceeds `src-tauri/table-ownership-baseline.txt`. After adding a required cross-crate write, or removing one, run `node scripts/check-table-ownership.mjs --update-baseline` (it keeps the file's annotations).
 
 ## Table rebuilds
 

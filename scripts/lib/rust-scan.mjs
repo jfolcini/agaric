@@ -1,6 +1,5 @@
 // Shared Rust-source scanning for the guards that police `src-tauri/` (#5579):
-// check-raw-tx.mjs now, check-table-ownership and check-dynamic-sql when they
-// leave Python.
+// check-raw-tx.mjs, check-dynamic-sql.mjs and check-table-ownership.mjs.
 //
 // Whitespace, word characters and line breaks follow Python's definitions
 // (`str.isspace`, Unicode `\b`, `str.splitlines`), the ones these guards'
@@ -36,6 +35,16 @@ export const CRATE_ROOTS = Object.freeze([
 // inner `#[cfg(test)]` for `cfgTestLineSet` to find.
 const TEST_FILE_GLOBS = ['**/tests.rs', '**/tests/**', '**/*_tests.rs']
 
+// Test-only code whose filenames escape TEST_FILE_GLOBS: property-test
+// modules gated at their `mod` line, the test-util pool helper, and
+// standalone audit bins whose fixture queries are not production code.
+const EXTRA_TEST_FILE_GLOBS = [
+  '**/bulk_equivalence/**',
+  '**/*proptest*.rs',
+  '**/test_support.rs',
+  '**/src/bin/**',
+]
+
 // Python's `str.isspace()` / `\s`, which String#trim and JS `\s` are not:
 // they disagree on U+001C–U+001F, U+0085 and U+FEFF.
 const PY_SPACE =
@@ -43,7 +52,8 @@ const PY_SPACE =
 /** One Python `\s`, for building `u`-flag patterns. */
 export const WS = `[${PY_SPACE}]`
 // Python's `\b` is Unicode-aware; a JS `\b` treats `é` as a boundary.
-const WORD = '[\\p{L}\\p{N}_]'
+/** One Python `\w`, for building `u`-flag patterns. */
+export const WORD = '[\\p{L}\\p{N}_]'
 /** Python's `\b` before a word character, for `u`-flag patterns. */
 export const WORD_START = `(?<!${WORD})`
 /** Python's `\b` after a word character, for `u`-flag patterns. */
@@ -75,8 +85,12 @@ export function splitLines(text) {
  * onto `text`. A mention of a call inside a comment or string can then never
  * match, and a `//` inside a string never truncates it. A lifetime (`'a`) is
  * not a char literal because the char-literal form needs its closing quote.
+ *
+ * `keepStrings` blanks the comments only, for a guard whose match lives
+ * inside the literals (SQL in `sqlx::query!("…")`); the literals are still
+ * parsed, so a `//` inside one is not taken for a comment.
  */
-export function stripRustComments(text) {
+export function stripRustComments(text, { keepStrings = false } = {}) {
   const cps = Array.from(text)
   const out = [...cps]
   const n = cps.length
@@ -91,7 +105,8 @@ export function stripRustComments(text) {
     if (end === -1) {
       i += 1
     } else {
-      blank(i, end)
+      // Only a comment starts with `/`.
+      if (!keepStrings || cps[i] === '/') blank(i, end)
       i = end
     }
   }
@@ -203,6 +218,11 @@ export function isTestFile(relPath) {
   return TEST_FILE_GLOBS.some((glob) => globMatch(relPath, glob))
 }
 
+/** A test file, or test-only code under one of `EXTRA_TEST_FILE_GLOBS`. */
+export function isExcludedFile(relPath) {
+  return isTestFile(relPath) || EXTRA_TEST_FILE_GLOBS.some((glob) => globMatch(relPath, glob))
+}
+
 /**
  * The 0-based indices of `lines` inside a `#[cfg(test)] mod … { … }`, from
  * the line holding its opening brace through the line holding the matching
@@ -285,27 +305,43 @@ export function openFileSource(argv, env, { repoRoot, extraFlags = [] }) {
     }
     return entries
   }
+  const cache = new Map()
+  const readAll = (rels) =>
+    readContents(rels, {
+      repoRoot,
+      source,
+      entries: source === SOURCE_INDEX ? index() : undefined,
+      env: gitEnvironment,
+    })
+  const isFile = (path) => {
+    try {
+      return statSync(path).isFile()
+    } catch {
+      return false
+    }
+  }
   return {
     source,
     why,
     /** Is `rel` in the commit (index) or a file on disk (working tree)? */
     exists(rel) {
       if (source === SOURCE_INDEX) return Boolean(index().byPath.get(rel)?.sha)
-      try {
-        return statSync(join(repoRoot, rel)).isFile()
-      } catch {
-        return false
-      }
+      return isFile(join(repoRoot, rel))
     },
     /** `rel`'s text from the source, or null; an empty file is `''`. */
     read(rel) {
-      const bodies = readContents([rel], {
-        repoRoot,
-        source,
-        entries: source === SOURCE_INDEX ? index() : undefined,
-        env: gitEnvironment,
-      })
-      return bodies.get(rel) ?? null
+      if (!cache.has(rel)) cache.set(rel, readAll([rel]).get(rel) ?? null)
+      return cache.get(rel)
+    },
+    /**
+     * Read `rels` ahead into the cache: one `git cat-file --batch` per chunk
+     * under the index instead of one spawn per later `read`. The working tree
+     * has no spawn to save.
+     */
+    readMany(rels) {
+      if (source !== SOURCE_INDEX) return
+      const wanted = [...new Set(rels)].filter((rel) => !cache.has(rel))
+      for (const [rel, body] of readAll(wanted)) cache.set(rel, body)
     },
   }
 }

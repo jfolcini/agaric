@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Falsification suite for the #4017 sweep of the PYTHON guards —
-# check-raw-tx.py, check-dynamic-sql.py.
+# check-raw-tx.py. check-dynamic-sql.mjs's half lives in
+# scripts/lib/check-dynamic-sql.test.mjs.
 #
 # ─── Why this is a shell script and not a Python self-test ────────────────
 #
@@ -89,19 +90,15 @@ _eq() { if [ "$2" = "$3" ]; then _ok "$1"; else _bad "$1" "expected [$2], got [$
 # $fixture` — only worked while the guards derived their root from the cwd,
 # and that derivation is exactly what broke pr-merge-result-check by making a
 # guard invoked from elsewhere reject every target and exit 0.
-#
-# check-raw-tx.py comes along unconditionally: check-dynamic-sql.py `importlib`s
-# it for the comment stripper, from ITS OWN directory.
 _seed_guards() {
   local dir="$1"
   mkdir -p "$dir/scripts/lib"
-  cp "$SCRIPTS_DIR/check-raw-tx.py" "$SCRIPTS_DIR/check-dynamic-sql.py" \
-    "$dir/scripts/"
+  cp "$SCRIPTS_DIR/check-raw-tx.py" "$dir/scripts/"
   cp "$SCRIPTS_DIR/lib/guard_file_source.py" "$dir/scripts/lib/"
-  # Every declared CRATE_ROOTS directory, empty (#4501). Both seeded guards
-  # now REFUSE a tree in which a declared crate root is absent, because a
-  # renamed or misspelled segment used to make them exempt every file under
-  # that crate in silence; without these, 37 assertions here go red for a
+  # Every declared CRATE_ROOTS directory, empty (#4501). The seeded guard
+  # REFUSES a tree in which a declared crate root is absent, because a
+  # renamed or misspelled segment used to make it exempt every file under
+  # that crate in silence; without these, the assertions here go red for a
   # reason that has nothing to do with the file source under test.
   #
   # SEEDED, not suppressed with `--synthetic-tree` — the opposite choice from
@@ -113,9 +110,7 @@ _seed_guards() {
   # and are about which COPY of a file a guard reads; their crate topology is
   # incidental, so completing it costs nothing, keeps the roots assertion LIVE
   # here rather than switched off, and — the deciding reason — adds no second
-  # opt-out surface for something else to have to police. It also keeps
-  # `--update-baseline` usable in a fixture, which the marker cannot: the flag
-  # is mutually exclusive with re-anchoring by design.
+  # opt-out surface for something else to have to police.
   #
   # Each root gets a TRACKED `.gitkeep`, not a bare `mkdir`: section 9 builds
   # linked worktrees with `git worktree add`, which reproduces the committed
@@ -240,108 +235,6 @@ _eq 'raw-tx: a misspelled --cache is an exit-2 invocation error, not a silent AU
   '2' "$(_run "$tmp/raw-tx-false-green" "$GUARD_RAW_TX" --cache "$RAW_TX_FILE")"
 
 # ---------------------------------------------------------------------------
-# 3. check-dynamic-sql.py — the #646 ratchet
-# ---------------------------------------------------------------------------
-# This one has a second surface its siblings do not: the BASELINE file, and
-# the orphan sweep that reclaims entries whose file has gone. Both are read
-# from the judged source too, so a staged re-anchor is judged against the
-# staged baseline and a staged DELETION is seen as the deletion it is.
-GUARD_DYN="scripts/check-dynamic-sql.py"
-DYN_FILE="src-tauri/src/thing_4017.rs"
-DYN_BAD='async fn f() {
-    let rows = sqlx::query("SELECT 1").fetch_all(&pool).await?;
-}'
-DYN_GOOD='async fn f() {
-    let rows = sqlx::query!("SELECT 1").fetch_all(&pool).await?;
-}'
-
-fx="$tmp/dyn-clean"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src"
-printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-_eq 'dynamic-sql baseline: a clean fixture is green under --worktree' \
-  '0' "$(_run "$fx" "$GUARD_DYN" --worktree "$DYN_FILE")"
-_eq 'dynamic-sql baseline: a clean fixture is green under --cached' \
-  '0' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
-
-fx="$tmp/dyn-false-green"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src"
-printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-printf '%s\n' "$DYN_BAD" > "$fx/$DYN_FILE"
-git -C "$fx" add -A
-printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
-_eq 'dynamic-sql false green: the WORKING TREE passes a staged unjustified site (the defect)' \
-  '0' "$(_run "$fx" "$GUARD_DYN" --worktree "$DYN_FILE")"
-_eq 'dynamic-sql false green: the INDEX fails it (the fix)' \
-  '1' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
-_eq 'dynamic-sql AUTO reads the index when git exports GIT_INDEX_FILE (a real commit)' \
-  '1' "$(_run_auto_commit "$fx" "$GUARD_DYN" "$DYN_FILE")"
-_eq 'dynamic-sql AUTO reads the working tree when no commit is in flight' \
-  '0' "$(_run "$fx" "$GUARD_DYN" "$DYN_FILE")"
-
-fx="$tmp/dyn-false-red"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src"
-printf '%s\n' "$DYN_BAD" > "$fx/$DYN_FILE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
-git -C "$fx" add -A
-printf '%s\n' "$DYN_BAD" > "$fx/$DYN_FILE"
-_eq 'dynamic-sql false red: the WORKING TREE blocks an already-fixed commit (the defect)' \
-  '1' "$(_run "$fx" "$GUARD_DYN" --worktree "$DYN_FILE")"
-_eq 'dynamic-sql false red: the INDEX passes it (the fix)' \
-  '0' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
-
-# THE BASELINE, staged. The site is unjustified and the ONLY thing that can
-# make it legal is a baseline entry recording it. Staging that entry while
-# the on-disk baseline still says 0 is a commit that is correct and that the
-# working-tree reader rejects.
-fx="$tmp/dyn-staged-baseline"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src"
-printf '%s\n' "$DYN_BAD" > "$fx/$DYN_FILE"
-printf '# Format: <count> <path-relative-to-repo-root>\n0 %s\n' "$DYN_FILE" \
-  > "$fx/src-tauri/dynamic-sql-baseline.txt"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-printf '# Format: <count> <path-relative-to-repo-root>\n1 %s\n' "$DYN_FILE" \
-  > "$fx/src-tauri/dynamic-sql-baseline.txt"
-git -C "$fx" add -A                                        # the re-anchor is STAGED
-printf '# Format: <count> <path-relative-to-repo-root>\n0 %s\n' "$DYN_FILE" \
-  > "$fx/src-tauri/dynamic-sql-baseline.txt"               # …disk still says 0
-_eq 'dynamic-sql staged baseline: the WORKING TREE reads the stale ceiling and reddens (the defect)' \
-  '1' "$(_run "$fx" "$GUARD_DYN" --worktree "$DYN_FILE")"
-_eq 'dynamic-sql staged baseline: the INDEX reads the ceiling being committed (the fix)' \
-  '0' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
-
-# THE STAGED DELETION the issue asks to be pinned. prek's file list omits
-# deletions, which is why the orphan sweep is GLOBAL over the baseline rather
-# than over that list. `git rm --cached` removes the file from the commit
-# while leaving it on disk: `Path.is_file()` said "still there" and the
-# baseline entry that should have been reclaimed survived.
-fx="$tmp/dyn-staged-deletion"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src"
-printf '%s\n' "$DYN_BAD" > "$fx/$DYN_FILE"
-printf '# Format: <count> <path-relative-to-repo-root>\n1 %s\n' "$DYN_FILE" \
-  > "$fx/src-tauri/dynamic-sql-baseline.txt"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-_eq 'dynamic-sql staged deletion: the baselined fixture is green before the deletion' \
-  '0' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
-git -C "$fx" rm -q --cached "$DYN_FILE"
-_eq 'dynamic-sql staged deletion: the WORKING TREE misses the orphaned entry (the defect)' \
-  '0' "$(_run "$fx" "$GUARD_DYN" --worktree "$DYN_FILE")"
-_eq 'dynamic-sql staged deletion: the INDEX reclaims it — prek never passes the deleted path' \
-  '1' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
-
-# ---------------------------------------------------------------------------
 # 4. AN INDEX THAT CANNOT BE READ
 # ---------------------------------------------------------------------------
 # Found while wiring #4017, and the reason this section exists rather than a
@@ -366,8 +259,6 @@ _run_broken_index() {
 }
 _eq 'raw-tx: an unreadable index is exit 2, NOT a clean exit 0 over an unread tree' \
   '2' "$(_run_broken_index "$tmp/raw-tx-false-green" "$GUARD_RAW_TX" "$RAW_TX_FILE")"
-_eq 'dynamic-sql: an unreadable index is exit 2, NOT a clean exit 0 over an unread tree' \
-  '2' "$(_run_broken_index "$tmp/dyn-false-green" "$GUARD_DYN" "$DYN_FILE")"
 
 # ---------------------------------------------------------------------------
 # 5. THE MERGE-RESULT CASE (the pr-merge-result-check contract)
@@ -591,9 +482,8 @@ _eq 'commit hook: the TEMP index of a partial commit is honoured, not replaced b
 # became exit 0 over a forged clean body.
 #
 # Built so the answer cannot be a coincidence: the violation is staged, its
-# loose object is REMOVED (a fresh fixture never packs — the same trick
-# section 13 uses), and the forged store holds the GOOD line's bytes under the
-# VIOLATION's oid. The interesting assertion is a non-event, so the three
+# loose object is REMOVED (a fresh fixture never packs), and the forged store
+# holds the GOOD line's bytes under the VIOLATION's oid. The interesting assertion is a non-event, so the three
 # before it pin that there was an event to prevent.
 fx="$tmp/raw-tx-alternates"
 _new_fixture "$fx"
@@ -665,6 +555,13 @@ PY
   ) 2>/dev/null
 }
 
+DYN_FILE="src-tauri/src/thing_4017.rs"
+DYN_BAD='async fn f() {
+    let rows = sqlx::query("SELECT 1").fetch_all(&pool).await?;
+}'
+DYN_GOOD='async fn f() {
+    let rows = sqlx::query!("SELECT 1").fetch_all(&pool).await?;
+}'
 DYN_BASELINE="src-tauri/dynamic-sql-baseline.txt"
 
 fx="$tmp/agreement-staged-deletion"
@@ -687,14 +584,6 @@ _eq 'agreement: a staged deletion reads as absent, exactly as exists() says' \
 _eq 'agreement: …and a path that IS staged reads as present, so the probe discriminates' \
   "$DYN_FILE exists=True read_is_none=False" \
   "$(_probe_source "$fx" "$DYN_FILE")"
-
-# …and the consequence, in the guard that actually asks. The ceiling is
-# leaving the commit, so the site it was licensing is unjustified in the
-# commit being made.
-_eq 'agreement: the INDEX judges the commit against the ceiling that commit removes' \
-  '1' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
-_eq 'agreement: …while the WORKING TREE still sees the on-disk ceiling (the control)' \
-  '0' "$(_run "$fx" "$GUARD_DYN" --worktree "$DYN_FILE")"
 
 # The UNMERGED path is the one case whose right answer IS the disk, and it
 # must not be swept up by the fix above. A real conflict is built by merging
@@ -740,8 +629,7 @@ printf '%s\n' "$RAW_TX_GOOD" > "$fx/$RAW_TX_FILE"  # …and clean on disk
 
 # THE CONTROL, before the damage: the staged violation is found, so an exit
 # 0 below can only mean the guard read the wrong copy — never "nothing to
-# find". check-dynamic-sql scans $RAW_TX_FILE too (a `sqlx::query(` site is
-# not what makes that file interesting — being STAGED is).
+# find".
 _eq 'damaged object: the intact fixture fails under --cached (the control)' \
   '1' "$(_run "$fx" "$GUARD_RAW_TX" --cached "$RAW_TX_FILE")"
 
@@ -756,69 +644,6 @@ _eq 'damaged object: …and the refusal names the sha rather than falling back s
 # request that the object store cannot break, so it still answers.
 _eq 'damaged object: --worktree is unaffected — it never asks the object store' \
   '0' "$(_run "$fx" "$GUARD_RAW_TX" --worktree "$RAW_TX_FILE")"
-_eq 'damaged object: the same fail-closed answer in check-dynamic-sql' \
-  '2' "$(_run "$fx" "$GUARD_DYN" --cached "$RAW_TX_FILE")"
-
-# ---------------------------------------------------------------------------
-# 8. THE WHOLE-TREE BRANCH ENUMERATES THE SOURCE (#4060 / #4047)
-# ---------------------------------------------------------------------------
-# `check-dynamic-sql.py`'s `all_production_files` scanned the DISK even under
-# `--cached`, while its path-argument branch asked `src.exists()`. Its one
-# caller is `--update-baseline`, which runs against the WORKING TREE by
-# design — so the fix has to leave that alone, and the two answers are pinned
-# side by side: the enumerator follows the source, and the source for a
-# re-anchor is still the disk.
-DYN_OTHER="src-tauri/src/other_4047.rs"
-fx="$tmp/dyn-whole-tree"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src"
-printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
-printf '# Format: <count> <path-relative-to-repo-root>\n' > "$fx/$DYN_BASELINE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-printf '%s\n' "$DYN_BAD" > "$fx/$DYN_OTHER"          # staged only, then removed
-git -C "$fx" add -A
-rm "$fx/$DYN_OTHER"
-printf '%s\n' "$DYN_BAD" > "$fx/$DYN_FILE"
-git -C "$fx" rm -q --cached "$DYN_FILE"              # on disk only
-
-_probe_list() {
-  local dir="$1"
-  shift
-  (
-    cd "$dir" || exit 99
-    env -u GIT_INDEX_FILE python3 - "$@" <<'PY'
-import importlib.util
-import pathlib
-import sys
-
-root = pathlib.Path.cwd()
-spec = importlib.util.spec_from_file_location(
-    "_gfs", root / "scripts" / "lib" / "guard_file_source.py"
-)
-gfs = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gfs)
-for source in (gfs.SOURCE_INDEX, gfs.SOURCE_WORKTREE):
-    src = gfs.FileSource(root, source, "test probe")
-    listed = src.list_paths(sys.argv[1], ".rs")
-    # list_paths and exists() must answer about ONE set, or the whole-tree
-    # branch enumerates files the path-argument branch would skip.
-    assert all(src.exists(rel) for rel in listed), (source, listed)
-    print(f"{source}: {' '.join(listed) or '(none)'}")
-PY
-  ) 2>/dev/null
-}
-_eq 'whole tree: list_paths follows the source, and agrees with exists() in both' \
-  "index: $DYN_OTHER
-worktree: $DYN_FILE" \
-  "$(_probe_list "$fx" src-tauri/src)"
-
-# --update-baseline is dispatched BEFORE the source is resolved, so it keeps
-# reading the tree you are editing. Pinned, because the enumerator it calls
-# is the one just changed.
-( cd "$fx" && env -u GIT_INDEX_FILE python3 "$GUARD_DYN" --update-baseline --all >/dev/null 2>&1 )
-_eq 'whole tree: --update-baseline --all still re-anchors from the WORKING TREE' \
-  "1 $DYN_FILE" "$(grep -Ev '^(#|$)' "$fx/$DYN_BASELINE")"
 
 # ---------------------------------------------------------------------------
 # 9. A LINKED WORKTREE'S OWN INDEX (#4048)
@@ -974,267 +799,6 @@ _eq 'undecodable file: …and the CONTROL — no violation behind the bad bytes 
   '0' "$(_run "$fx" "$GUARD_RAW_TX" --worktree "$RAW_TX_FILE")"
 _eq 'undecodable file: …and green under --cached too' \
   '0' "$(_run "$fx" "$GUARD_RAW_TX" --cached "$RAW_TX_FILE")"
-
-# ---------------------------------------------------------------------------
-# 11. check-dynamic-sql.py: THE ORPHAN SWEEP BATCHES cat-file SPAWNS (#4063)
-# ---------------------------------------------------------------------------
-# `orphan_entries` is GLOBAL over the baseline (an entry naming a file going
-# away must be reclaimed, and prek's changed-file list omits deletions), so
-# under --cached every surviving entry used to cost its own `git cat-file
-# blob <sha>` spawn (`_blob`, one per path). `read_many` warms the cache
-# through chunked `git cat-file --batch` calls instead — one spawn per
-# chunk, not one per path. A `git` SHIM on PATH counts `cat-file`
-# invocations, so the reduction is MEASURED rather than asserted from the
-# diff.
-REAL_GIT="$(command -v git)"
-CAT_SHIM_DIR="$tmp/cat-file-count-shim"
-mkdir -p "$CAT_SHIM_DIR"
-# Sibling of $CAT_SHIM_DIR, NOT inside it: $CAT_SHIM_DIR is prepended to
-# PATH for the run being measured, and scratch data (the per-run count
-# files) has no business living on the PATH of the process under test.
-CAT_COUNT_DIR="$tmp/cat-file-count-data"
-mkdir -p "$CAT_COUNT_DIR"
-cat > "$CAT_SHIM_DIR/git" <<SHIM
-#!/usr/bin/env bash
-if [ "\$1" = "cat-file" ]; then
-  printf 'x\n' >> "\$CAT_FILE_COUNT_FILE"
-fi
-exec "$REAL_GIT" "\$@"
-SHIM
-chmod +x "$CAT_SHIM_DIR/git"
-
-# Run a guard with the shim in front of PATH; prints "<exit-code>
-# <cat-file-spawn-count>".
-_run_dyn_count_cat_file() {
-  local dir="$1"
-  shift
-  local count_file="$CAT_COUNT_DIR/count-$RANDOM-$RANDOM"
-  : > "$count_file"
-  local status
-  (
-    cd "$dir" || exit 99
-    env -u GIT_INDEX_FILE \
-      PATH="$CAT_SHIM_DIR:$PATH" \
-      CAT_FILE_COUNT_FILE="$count_file" \
-      python3 "$@" >/dev/null 2>&1
-  )
-  status=$?
-  printf '%s %s\n' "$status" "$(wc -l < "$count_file" | tr -d ' ')"
-}
-
-# 6 present, clean, in-scope baseline entries — none excluded, none
-# test-only, no drift (the target below is a DIFFERENT file, so these 6
-# never enter `actual_counts` and `drifted_entries` never examines them —
-# only `orphan_entries`'s global sweep reads their content, which is the
-# surface #4063 is about).
-DYN_ORPHAN_N=6
-fx="$tmp/dyn-orphan-batch-clean"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src"
-printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
-{
-  printf '# Format: <count> <path-relative-to-repo-root>\n'
-  for i in $(seq 1 "$DYN_ORPHAN_N"); do
-    orphan_rel="src-tauri/src/orphan_4063_$i.rs"
-    printf 'fn f_%s() {}\n' "$i" > "$fx/$orphan_rel"
-    printf '1 %s\n' "$orphan_rel"
-  done
-} > "$fx/$DYN_BASELINE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-
-_eq 'orphan batch: the clean fixture is green under --cached (the control)' \
-  '0' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
-
-read -r batch_status batch_count <<<"$(_run_dyn_count_cat_file "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
-_eq 'orphan batch: still exits 0 while counting spawns (the run under test is the same one)' \
-  '0' "$batch_status"
-# 1 spawn for the target file's own content, 1 for the baseline file's own
-# content (`read_baseline`, unrelated to this fix — both already O(1)), and 1
-# chunked `cat-file --batch` for the WHOLE orphan sweep. Measured before this
-# fix, on this exact fixture: 8 (target + baseline + one `_blob` spawn PER
-# baseline entry — 6). `-le 3` rather than `-eq 3` so a future unrelated read
-# added to the target's or baseline's own processing does not make this
-# assertion brittle; the point under test is that it does NOT scale with
-# $DYN_ORPHAN_N — a 7th orphan candidate would still be 3, not 4.
-if [ "$batch_count" -ge 1 ] && [ "$batch_count" -le 3 ]; then
-  _ok "orphan batch: cat-file spawn count is O(1) in the baseline size, not O($DYN_ORPHAN_N) (got $batch_count, was 8 before #4063)"
-else
-  _bad 'orphan batch: cat-file spawn count is O(1) in the baseline size' \
-    "expected 1..3, got $batch_count"
-fi
-
-# …and the SAME fixture with one baseline entry naming a file that was never
-# created — an entry `read_many` must skip (no stage-0 blob to batch) while
-# `orphan_entries` still flags it, exactly as it did one spawn at a time.
-# Pins that batching did not change WHICH baseline entries the sweep flags,
-# only how many spawns flagging them costs.
-fx="$tmp/dyn-orphan-batch-with-gone"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src"
-printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
-{
-  printf '# Format: <count> <path-relative-to-repo-root>\n'
-  for i in $(seq 1 "$DYN_ORPHAN_N"); do
-    orphan_rel="src-tauri/src/orphan_4063_$i.rs"
-    printf 'fn f_%s() {}\n' "$i" > "$fx/$orphan_rel"
-    printf '1 %s\n' "$orphan_rel"
-  done
-  printf '1 src-tauri/src/orphan_4063_gone.rs\n'
-} > "$fx/$DYN_BASELINE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-
-_eq 'orphan batch: a baseline entry naming a file that never existed is still reclaimed as an orphan' \
-  '1' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
-_eq 'orphan batch: …and the message names it, rather than the batching swallowing it silently' \
-  '1' "$(cd "$fx" && env -u GIT_INDEX_FILE python3 "$GUARD_DYN" --cached "$DYN_FILE" 2>&1 >/dev/null \
-    | grep -c 'orphan_4063_gone.rs: no such file')"
-
-# ---------------------------------------------------------------------------
-# 12. read_many SPANS MULTIPLE `cat-file --batch` CALLS, NOT JUST ONE (#4063)
-# ---------------------------------------------------------------------------
-# Every guard-driven assertion above exercises `read_many` with far fewer
-# paths than the default chunk size (500), so the chunking LOOP in
-# `read_many` — `for i in range(0, len(wanted), chunk_size)` — only ever
-# runs its body once in this suite; the boundary between two `_read_batch`
-# calls is never reached, so an off-by-one there (a dropped path at a chunk
-# edge, or content from one chunk landing under another chunk's path) would
-# pass every assertion above and still be wrong. This section forces the
-# boundary by passing `read_many`'s explicit `chunk_size=2` over 5
-# distinctly-sized files — three `_read_batch` calls (2, 2, 1) — and checks
-# CONTENT, not just presence: a path caching that is off by one file would
-# still leave every `rel` a key in `_blobs`, so "cached" alone would not
-# catch it. `chunk_size` is an explicit parameter (not a monkeypatched
-# module global) for the same reason the `.mjs` sibling threads `chunkSize`
-# through explicitly: a renamed or inlined private constant would make a
-# monkeypatch silently stop taking effect while this test kept printing
-# `ok`.
-fx="$tmp/read-many-chunk-boundary"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src"
-CHUNK_RELS=()
-for i in 1 2 3 4 5; do
-  rel="src-tauri/src/chunk_$i.rs"
-  CHUNK_RELS+=("$rel")
-  python3 -c "print('CHUNK_${i}_MARKER_' + 'x' * ($i * 7))" > "$fx/$rel"
-done
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-
-_probe_read_many_chunks() {
-  local dir="$1"
-  shift
-  (
-    cd "$dir" || exit 99
-    env -u GIT_INDEX_FILE python3 - "$@" <<'PY'
-import importlib.util
-import pathlib
-import sys
-
-root = pathlib.Path.cwd()
-spec = importlib.util.spec_from_file_location(
-    "_gfs", root / "scripts" / "lib" / "guard_file_source.py"
-)
-gfs = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gfs)
-rels = sys.argv[1:]
-src = gfs.FileSource(root, gfs.SOURCE_INDEX, "test probe")
-src.read_many(rels, chunk_size=2)  # force >1 `cat-file --batch` call over the 5 rels below
-bad = []
-for rel in rels:
-    if rel not in src._blobs:
-        bad.append(f"{rel}: not cached")
-        continue
-    got = src.read(rel)
-    want = (root / rel).read_text()
-    if got != want:
-        bad.append(f"{rel}: content mismatch")
-print("ok" if not bad else "; ".join(bad))
-PY
-  ) 2>/dev/null
-}
-_eq 'read_many: every path across a chunk boundary is cached with ITS OWN content, not a neighbours' \
-  'ok' "$(_probe_read_many_chunks "$fx" "${CHUNK_RELS[@]}")"
-
-# ---------------------------------------------------------------------------
-# 13. THE ORPHAN SWEEP WARMS ONLY WHAT IT WILL READ (#4193)
-# ---------------------------------------------------------------------------
-# `orphan_entries` batches its reads through `read_many` (#4063), and the
-# first spelling passed the WHOLE baseline — including the entries the sweep
-# discards without ever looking at their content. `read_many` is fail-closed
-# about a blob the index names but the object store cannot produce, so a
-# damaged object behind a DISCARDED entry turned an actionable orphan report
-# (exit 1, naming the real violation) into a `GitError` (exit 2) over an entry
-# that could not have changed the verdict. Before batching, per-entry reads
-# gave the right behaviour for free: an entry was read only if the loop
-# reached it.
-#
-# The fixture holds both kinds of baseline entry at once, so the two possible
-# answers are distinguishable rather than merely "some non-zero exit":
-#
-#   * an EXCLUDED path (`**/src/bin/**`, one of `EXTRA_TEST_FILE_GLOBS`) whose
-#     staged blob has been deleted from the object store. The sweep discards
-#     it on its path alone and must never read it;
-#   * a genuine orphan naming a file that was never created, which the sweep
-#     must still report BY NAME.
-#
-# A fresh fixture never packs, so the staged blob is loose and removable —
-# the same trick scenario 6 of `runSourceScenarios` uses.
-DYN_DAMAGED_REL="src-tauri/src/bin/excluded_4193.rs"
-DYN_GONE_REL="src-tauri/src/orphan_4193_gone.rs"
-fx="$tmp/dyn-orphan-discarded-damaged"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src/bin"
-printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
-# DISTINCT content, deliberately: git addresses blobs by content, so two
-# byte-identical files share ONE object and removing it would damage the
-# target file's blob as well — the assertions below would then pass for
-# entirely the wrong reason (they did, on the first draft: exit 2 naming
-# `thing_4017.rs`, not the excluded path).
-printf '// excluded_4193 %s\n' "$DYN_GOOD" > "$fx/$DYN_DAMAGED_REL"
-{
-  printf '# Format: <count> <path-relative-to-repo-root>\n'
-  printf '1 %s\n' "$DYN_DAMAGED_REL"
-  printf '1 %s\n' "$DYN_GONE_REL"
-} > "$fx/$DYN_BASELINE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-dyn_damaged_sha="$(git -C "$fx" ls-files -s -- "$DYN_DAMAGED_REL" | awk '{print $2}')"
-rm -f "$fx/.git/objects/${dyn_damaged_sha:0:2}/${dyn_damaged_sha:2}"
-# The fixture really is damaged — else every assertion below is vacuous.
-_eq 'orphan discard: the fixture really did remove the excluded path staged blob' \
-  '1' "$(git -C "$fx" cat-file --batch <<<"$dyn_damaged_sha" 2>/dev/null | grep -c ' missing$')"
-_eq 'orphan discard: a damaged object behind a DISCARDED entry is exit 1, not exit 2 (#4193)' \
-  '1' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
-_eq 'orphan discard: …and the real orphan is still named, rather than lost behind the GitError' \
-  '1' "$(cd "$fx" && env -u GIT_INDEX_FILE python3 "$GUARD_DYN" --cached "$DYN_FILE" 2>&1 >/dev/null \
-    | grep -c 'orphan_4193_gone.rs: no such file')"
-_eq 'orphan discard: …and the excluded entry is reclaimed on its PATH, without its content' \
-  '1' "$(cd "$fx" && env -u GIT_INDEX_FILE python3 "$GUARD_DYN" --cached "$DYN_FILE" 2>&1 >/dev/null \
-    | grep -c 'excluded_4193.rs: now a test/fixture path')"
-# THE CONTROL: the fail-closed behaviour is NARROWED, not removed. The same
-# damage behind an entry the sweep DOES read — an in-scope, present,
-# non-excluded path — must still be exit 2 with the cause named, or this fix
-# would have bought its exit 1 by making the guard tolerate a damaged object
-# store.
-fx="$tmp/dyn-orphan-kept-damaged"
-_new_fixture "$fx"
-mkdir -p "$fx/src-tauri/src"
-printf '%s\n' "$DYN_GOOD" > "$fx/$DYN_FILE"
-printf '// kept_4193 %s\n' "$DYN_GOOD" > "$fx/src-tauri/src/kept_4193.rs" # distinct, as above
-{
-  printf '# Format: <count> <path-relative-to-repo-root>\n'
-  printf '1 src-tauri/src/kept_4193.rs\n'
-} > "$fx/$DYN_BASELINE"
-git -C "$fx" add -A
-git -C "$fx" commit -qm base
-dyn_kept_sha="$(git -C "$fx" ls-files -s -- src-tauri/src/kept_4193.rs | awk '{print $2}')"
-rm -f "$fx/.git/objects/${dyn_kept_sha:0:2}/${dyn_kept_sha:2}"
-_eq 'orphan discard: the CONTROL fixture really did remove the kept path staged blob' \
-  '1' "$(git -C "$fx" cat-file --batch <<<"$dyn_kept_sha" 2>/dev/null | grep -c ' missing$')"
-_eq 'orphan discard: …while damage behind an entry the sweep DOES read is still exit 2' \
-  '2' "$(_run "$fx" "$GUARD_DYN" --cached "$DYN_FILE")"
 
 # ---------------------------------------------------------------------------
 # 14. THE PYTHON AND NODE REDIRECT-VAR LISTS ARE ACTUALLY IDENTICAL (#4206)

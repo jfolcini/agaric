@@ -114,9 +114,7 @@ const ROOT_MISSING_HINT = [
   '       directory that does not exist. These prefixes decide which changed',
   '       files this guard is willing to police, so a stale one silently',
   '       exempts every file under that crate rather than narrowing a walk.',
-  '       Fix the LIST, and check the siblings — check-dynamic-sql.py,',
-  '       check-table-ownership.py and check-op-log-delete.py each keep their',
-  '       own hand-synchronised copy of it.',
+  '       Fix the LIST: check-dynamic-sql and check-table-ownership share it.',
   '       If the tree under test is deliberately NOT this repository (a',
   '       fixture repo), the caller says so with `--synthetic-tree`.',
 ].join('\n')

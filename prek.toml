@@ -1676,53 +1676,28 @@ stages = ["manual"]
 
 # Rust: dynamic-SQL justification guard (#646). docs/architecture/tooling.md
 # claims every runtime `sqlx::query()` (non-macro) site carries a comment
-# justifying the runtime form — until #646 that claim was unenforced (unlike
-# every sibling invariant: check-raw-tx, unsafe-allowlist, migrations-
-# immutable). This hook counts runtime `sqlx::query(`/`query_as(`/
-# `query_scalar(` sites per production file (the macro forms are compile-
-# checked and exempt) and compares against a checked-in baseline
-# (src-tauri/dynamic-sql-baseline.txt). Existing sites are grandfathered;
-# a file that grows PAST its baseline must carry a `// dynamic-sql: <reason>`
-# marker at every dynamic site, applying back-pressure toward the compile-
-# checked macros. Comment-/string-stripping and `#[cfg(test)]`-module skipping
-# are shared with check-raw-tx.py. Since #3107 the scan follows the four crate
-# roots the #2621 split moved dynamic-SQL surface into (app = src-tauri/src,
-# agaric-store, agaric-engine, agaric-sync) — mirroring the table-ownership
-# hook's `files` — plus the diagnostics crate (its bins are excluded at the
-# guard level). Re-anchor the baseline with `python3
-# scripts/check-dynamic-sql.py --update-baseline <path>...`, which since
-# #3659 rewrites ONLY the named entries (bare = the files in your current
-# diff; `--all` = everything). It used to regenerate the whole file, so an
-# update that needed one entry silently laundered eight unrelated drifted
-# ones into the same diff. The guard now also fails on a baseline that has
-# drifted DOWNWARD or names a file the scan no longer covers, so the slack
-# cannot accumulate again. Allowlist/rules live in
-# scripts/check-dynamic-sql.py.
+# justifying the runtime form. This hook counts runtime `sqlx::query(`/
+# `query_as(`/`query_scalar(` sites per production file (the macro forms are
+# compile-checked and exempt) against src-tauri/dynamic-sql-baseline.txt.
+# Existing sites are grandfathered; a file that grows PAST its baseline must
+# carry a `// dynamic-sql: <reason>` marker at every dynamic site. It scans
+# the crate roots in scripts/lib/rust-scan.mjs (#3107), shared with
+# check-raw-tx. Re-anchor with `node scripts/check-dynamic-sql.mjs
+# --update-baseline <path>...`, which rewrites ONLY the named entries (#3659;
+# bare = the files in your current diff, `--all` = everything). The guard also
+# fails on a baseline that has drifted DOWNWARD or names a file the scan no
+# longer covers.
 # WHY: unjustified dynamic SQL is an injection surface — #646 (#3107, #3659)
 [[repos.hooks]]
 id = "check-dynamic-sql"
 name = "dynamic-SQL justification guard (#646)"
-entry = "python3 scripts/check-dynamic-sql.py"
+entry = "node scripts/check-dynamic-sql.mjs"
 language = "system"
-# #3997: this guard `importlib`-loads `scripts/check-raw-tx.py` (for
-# strip_rust_comments/cfg_test_line_set/is_test_file/_glob_match) AND
-# `scripts/lib/guard_file_source.py` directly (for the staged-index-vs-
-# working-tree source it judges) — both real dependencies. `check-raw-tx.py`
-# was not previously unioned in anywhere for THIS hook, so a commit editing
-# only it selected this hook not at all — the always_run self-test only
-# re-drives its own fixtures, not this hook's live-tree judgment.
-# `guard_file_source.py` is a narrower correction: `py-guard-file-source-
-# selftest` (further down this file) already unions it and is a genuine
-# falsification suite (#4017), so editing it alone was never truly
-# zero-hooks; unioned here anyway for uniformity with the sibling hooks.
-# Falsified (#3997 second review round): with `guard_file_source.exists()`
-# defanged to always `False`, THIS hook — unlike its siblings — DOES
-# genuinely redden even on a non-`.rs` arg, because its baseline orphan
-# sweep is GLOBAL (every baselined file, not just the ones in argv) and asks
-# `exists()` for each: a defanged always-`False` answer reads every
-# baselined file as deleted and reports the whole baseline as drifted. This
-# union is the one case where "selected" and "effective" coincide.
-files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
+# The guard and the two libraries it imports are unioned so a change to any of
+# them re-runs it. A run selected by a library change alone still judges
+# something: the orphan sweep covers the whole baseline. The staged-vs-working-
+# tree wiring is pinned by `scripts/lib/check-dynamic-sql.test.mjs` (#4017).
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-dynamic-sql\.mjs|lib/rust-scan\.mjs|lib/guard-file-source\.mjs)$'
 stages = ["pre-commit", "pre-push"]
 
 # #1188: the guard's detection regex must tolerate a turbofish between the
@@ -1731,11 +1706,11 @@ stages = ["pre-commit", "pre-push"]
 # silently skipped. This companion hook runs the guard's own fixture suite
 # (`--self-test`) so the match contract (turbofish + nested-generic close,
 # macro-form exemption) cannot silently regress. No file args.
-# WHY: a Python AST guard: a node shape it does not recognise is a silently skipped line — #1188
+# WHY: a hand-written Rust scanner: a shape it does not recognise is a silently skipped line — #1188
 [[repos.hooks]]
 id = "check-dynamic-sql-self-test"
 name = "dynamic-SQL guard self-test (#1188 turbofish fixtures)"
-entry = "python3 scripts/check-dynamic-sql.py --self-test"
+entry = "node scripts/check-dynamic-sql.mjs --self-test"
 language = "system"
 pass_filenames = false
 always_run = true
@@ -1751,25 +1726,19 @@ stages = ["manual"]
 # count EXCEEDS its checked-in baseline (src-tauri/table-ownership-baseline.txt).
 # Owner-crate writes are unconstrained; existing cross-crate sites are
 # grandfathered, so the ratchet only back-pressures NEW ones. Regenerate the
-# baseline with `python3 scripts/check-table-ownership.py --update-baseline`.
+# baseline with `node scripts/check-table-ownership.mjs --update-baseline`.
 # Ownership is aggregate, so the guard rescans the whole tree regardless of
 # which files changed. Ownership map/rules: src-tauri/migrations/AGENTS.md.
 # WHY: a crate writing a table it does not own breaks the ownership boundary — #2895
 [[repos.hooks]]
 id = "check-table-ownership"
 name = "table-ownership baseline guard (#2895)"
-entry = "python3 scripts/check-table-ownership.py"
+entry = "node scripts/check-table-ownership.mjs"
 language = "system"
-# #3997: this guard `importlib`-loads `scripts/check-raw-tx.py` for
-# cfg_test_line_set/is_test_file/_glob_match; union it so a commit that
-# edits only that shared module can't select this hook out entirely (the
-# always_run self-test is only a partial backstop — it re-drives its own
-# fixtures, not this hook's live-tree judgment). `guard_file_source.py` is
-# unioned too: loading check-raw-tx.py as a library runs ITS top-level
-# `exec_module(guard_file_source)` as a side effect, so a broken
-# guard_file_source.py would break this load even though nothing here calls
-# into it directly.
-files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
+# #3997: the guard and the two libraries it imports are unioned so a commit
+# that edits only a library still re-runs it; the always_run self-test
+# re-drives its own fixtures, not this hook's live-tree judgment.
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-table-ownership\.mjs|lib/rust-scan\.mjs|lib/guard-file-source\.mjs)$'
 stages = ["pre-commit", "pre-push"]
 
 # #2895: the ownership guard must match SQL inside `sqlx::query!("…")` macro
@@ -1778,11 +1747,11 @@ stages = ["pre-commit", "pre-push"]
 # boundaries (`blocks` != `block_links` / `_new_blocks` / `blocks_fts`). This
 # companion hook runs the guard's own fixture suite (`--self-test`) so that
 # match/exclusion contract cannot silently regress. No file args.
-# WHY: a Python AST guard: a write shape it does not recognise is a silently skipped line — #2895
+# WHY: a hand-written Rust scanner: a write shape it does not recognise is a silently skipped line — #2895
 [[repos.hooks]]
 id = "check-table-ownership-self-test"
 name = "table-ownership guard self-test (#2895 write-regex fixtures)"
-entry = "python3 scripts/check-table-ownership.py --self-test"
+entry = "node scripts/check-table-ownership.mjs --self-test"
 language = "system"
 pass_filenames = false
 always_run = true
@@ -1871,7 +1840,7 @@ name = "python guards judge the staged index (#4017 falsification suite)"
 entry = "bash scripts/test-py-guard-file-source.sh"
 language = "system"
 pass_filenames = false
-files = '^scripts/(check-(raw-tx|dynamic-sql)\.py|lib/guard_file_source\.py|lib/git-scratch-guard\.sh|test-py-guard-file-source\.sh)$'
+files = '^scripts/(check-raw-tx\.py|lib/guard_file_source\.py|lib/git-scratch-guard\.sh|test-py-guard-file-source\.sh)$'
 stages = ["manual"]
 
 # Rust: cargo fmt. Auto-fix formatter (#817): drops `--check` so a

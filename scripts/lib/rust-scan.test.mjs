@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import { initScratchRepo, scrubbedGitEnv, withScrubbedProcessEnv } from './git-scratch-guard.mjs'
-import { CRATE_ROOTS, openFileSource } from './rust-scan.mjs'
+import { CRATE_ROOTS, openFileSource, stripRustComments } from './rust-scan.mjs'
 
 // `check-raw-tx.mjs --self-test` covers the scanner. These cover what it
 // cannot reach: which copy of a file is read, and the guard's own `main()`
@@ -44,6 +44,11 @@ function withFixture(setup, fn) {
   }
 }
 
+void test('stripRustComments blanks strings by default and keeps them with keepStrings', () => {
+  assert.equal(stripRustComments('a "x" // y'), `a${' '.repeat(9)}`)
+  assert.equal(stripRustComments('a "x" // y', { keepStrings: true }), `a "x"${' '.repeat(5)}`)
+})
+
 void test('a staged deletion still on disk is absent from the index only', () => {
   withFixture(
     ({ git, write }) => {
@@ -57,6 +62,24 @@ void test('a staged deletion still on disk is absent from the index only', () =>
       assert.equal(cached.read(FILE), null)
       assert.equal(worktree.exists(FILE), true)
       assert.equal(worktree.read(FILE), ON_DISK)
+    },
+  )
+})
+
+void test('readMany caches each staged body under its own path', () => {
+  const files = ['src/b.rs', 'src/c.rs', 'src/d.rs']
+  withFixture(
+    ({ dir, git }) => {
+      for (const rel of files) writeFileSync(join(dir, rel), `staged ${rel}\n`)
+      git('add', '-A')
+      for (const rel of files) writeFileSync(join(dir, rel), ON_DISK)
+    },
+    ({ cached }) => {
+      cached.readMany(files)
+      assert.deepEqual(
+        files.map((rel) => cached.read(rel)),
+        files.map((rel) => `staged ${rel}\n`),
+      )
     },
   )
 })
