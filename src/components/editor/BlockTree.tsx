@@ -233,9 +233,16 @@ export function BlockTree({
       truncatedTotal: s.truncatedTotal,
     })),
   )
-  // Global focus/selection
-  const { focusedBlockId, selectedBlockIds } = useBlockStore(
-    useShallow((s) => ({ focusedBlockId: s.focusedBlockId, selectedBlockIds: s.selectedBlockIds })),
+  // #5447 — this tree's share of the GLOBAL focus and selection: the focused id
+  // only while this store owns it, the selected ids it owns. The journal week
+  // view mounts one tree per day, and subscribing to the raw values re-rendered
+  // every day on each focus move. Handlers that need the global values read
+  // them from the store at dispatch.
+  const focusedBlockId = useBlockStore((s) =>
+    s.focusedBlockId != null && blocksById.has(s.focusedBlockId) ? s.focusedBlockId : null,
+  )
+  const selectedBlockIds = useBlockStore(
+    useShallow((s) => s.selectedBlockIds.filter((id) => blocksById.has(id))),
   )
 
   // Per-page store API for imperative access
@@ -1230,7 +1237,6 @@ export function BlockTree({
   useBlockTreeKeyboardShortcuts({
     focusedBlockId,
     pageStore,
-    selectedBlockIds,
     hasChildrenSet,
     selectAllIds,
     // #922 — Shift+Arrow keyboard range-select steps through the RENDERED list
