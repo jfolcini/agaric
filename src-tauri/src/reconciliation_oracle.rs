@@ -78,7 +78,7 @@
 //! | `tags_cache.usage_count` (#3345) | `blocks`, `block_tags` **and** `block_tag_refs` (explicit + inline, so it rides on Artefact 12) | `rebuild_tags_cache(_split)` / `refresh_tag_usage_count` — audited by [`reconcile_tags_cache`], NOT by [`reconcile`] |
 //! | `agenda_cache` (the date roll-up, #3345) | `blocks`, `block_properties` **and** `block_tags` | `rebuild_agenda_cache(_split)` (the `RebuildAgendaCache` task) — audited by [`reconcile_agenda_cache`], NOT by [`reconcile`] |
 //! | `projected_agenda_cache` (the recurrence horizon, #3345) | `blocks` **and** `block_properties`, plus a `today` the caller supplies | `rebuild_projected_agenda_cache(_split)` (the `RebuildProjectedAgendaCache` task) — audited by [`reconcile_projected_agenda`], NOT by [`reconcile`] |
-//! | `pages_cache.{title_sort_key,last_edited_ms,space_id}` (the Pages sort keys, #5371) | the cached `pages_cache.title`; `op_log` and `blocks.page_id` for a floor; the page's `blocks.space_id` | the page-row rebuild and the page-create INSERT (key, space) / `raise_pages_last_edited_ms` on every op-landing path (last edited) / `sync_pages_cache_space_ids` in a `space` op's projection (space) — audited by [`reconcile_pages_cache_sort_keys`], NOT by [`reconcile`] |
+//! | `pages_cache.{title_sort_key,last_edited_ms,space_id}` (the Pages sort keys, #5371) | the cached `pages_cache.title`; `op_log` and `blocks.page_id` for a floor; the page's `blocks.space_id` | the page-row rebuild, its restore insert (`insert_missing_pages_cache_rows`) and the page-create INSERT (key, space) / `raise_pages_last_edited_ms` on every op-landing path (last edited) / `sync_pages_cache_space_ids` in a `space` op's projection (space) — audited by [`reconcile_pages_cache_sort_keys`], NOT by [`reconcile`] |
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
 //!
@@ -2668,18 +2668,19 @@ fn diff_block_space_ids(blocks: &[BaseBlock], out: &mut Vec<Divergence>) {
 }
 
 const PAGES_CACHE_SORT_KEY_OWNER: &str = "every pages_cache title writer must write the key with \
-     it: cache::pages' rebuild (the RebuildPagesCache task) and the page-create INSERT in \
-     apply::pages_cache";
+     it: cache::pages' rebuild (the RebuildPagesCache task) and restore insert \
+     (insert_missing_pages_cache_rows), and the page-create INSERT in apply::pages_cache";
 
 const PAGES_CACHE_LAST_EDITED_OWNER: &str = "cache::raise_pages_last_edited_ms, called by every path \
      that lands an op in op_log: CommandTx::commit_and_dispatch (local commands), \
      apply_op_projected_with_mode and apply_records_in_tx (the materializer), \
-     dag::ingest_remote_record (a peer's replicated op); a row the rebuild inserts is born \
-     from the op log";
+     dag::ingest_remote_record (a peer's replicated op); a row the rebuild or a restore \
+     inserts is born from the op log";
 
 const PAGES_CACHE_SPACE_OWNER: &str = "the page-create INSERT in apply::pages_cache, \
      cache::sync_pages_cache_space_ids (a `space` op's projection, the boot placement of \
-     space-less pages) and cache::pages' rebuild (every other path that moves a page) — \
+     space-less pages), cache::insert_missing_pages_cache_rows (a restore) and \
+     cache::pages' rebuild (every other path that moves a page) — \
      the Pages list filters on this column, so a stale value lists the page in a space it \
      left and hides it from the one it is in";
 

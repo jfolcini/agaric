@@ -1802,6 +1802,9 @@ pub async fn restore_block_inner(
 
     let restored: Vec<&String> = restore_cohort.iter().chain(&restored_chain.chain).collect();
     reject_restored_duplicate_tag_names(&mut tx, &restored).await?;
+    // #5371: the rebuild swept a trashed page's `pages_cache` row, and the
+    // Pages list reads its rows from there.
+    agaric_store::cache::insert_missing_pages_cache_rows(&mut tx, &restored).await?;
 
     // #2042: pages_cache counts for the restored subtree's pages are recomputed
     // by the background `RebuildPagesCacheCounts` task (enqueued via
@@ -2258,6 +2261,10 @@ pub async fn restore_all_deleted_inner(
     for root in &roots {
         agaric_store::tag_inheritance::recompute_subtree_inheritance(&mut tx, &root.id).await?;
     }
+    // #5371: as in `restore_block_inner`. The roots' cohorts are every
+    // tombstone the UPDATE cleared.
+    let restored: Vec<&String> = restore_fanout.iter().flat_map(|(_, c)| c).collect();
+    agaric_store::cache::insert_missing_pages_cache_rows(&mut tx, &restored).await?;
 
     // Commit + drain enqueued background dispatches in FIFO order.
     tx.commit_and_dispatch(materializer).await?;
@@ -2719,6 +2726,8 @@ pub async fn restore_blocks_by_ids_inner(
         .flat_map(|(_, cohort, chain)| cohort.iter().chain(chain))
         .collect();
     reject_restored_duplicate_tag_names(&mut tx, &restored).await?;
+    // #5371: as in `restore_block_inner`.
+    agaric_store::cache::insert_missing_pages_cache_rows(&mut tx, &restored).await?;
 
     // #2042: pages_cache counts for the restored subtrees' pages are recomputed
     // by the background `RebuildPagesCacheCounts` task (enqueued per root via
@@ -3871,7 +3880,9 @@ mod saturation_probe_tests {
     // #5295 — a block trashed BEFORE its page lists as its own trash root, and
     // restoring it brings the page back through the #1884 chain walk. The
     // page's own delete dropped its `pages_cache` row; the restore must put it
-    // back, or the page shows no counts and misses path filters.
+    // back, or the page shows no counts and misses path filters. #5371: in the
+    // restore's own transaction, since the Pages list reads its rows from the
+    // cache, so each test asserts before anything flushes the debounced rebuild.
     const PC_PAGE: &str = "PAGES-CACHE-P";
     const PC_BLOCK: &str = "PAGES-CACHE-B";
 
@@ -3934,7 +3945,6 @@ mod saturation_probe_tests {
         )
         .await
         .unwrap();
-        mat.flush().await.unwrap();
 
         assert_eq!(page_cache_rows(&pool).await, 1);
         mat.shutdown();
@@ -3949,7 +3959,18 @@ mod saturation_probe_tests {
         restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from_trusted(PC_BLOCK)])
             .await
             .unwrap();
-        mat.flush().await.unwrap();
+
+        assert_eq!(page_cache_rows(&pool).await, 1);
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn restore_all_deleted_inner_brings_back_the_restored_page_cache_row_5371() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        trash_block_then_its_page(&pool, &mat).await;
+
+        restore_all_deleted_inner(&pool, DEV, &mat).await.unwrap();
 
         assert_eq!(page_cache_rows(&pool).await, 1);
         mat.shutdown();

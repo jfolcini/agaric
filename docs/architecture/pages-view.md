@@ -58,7 +58,7 @@ One side hook orbits this pipeline without altering its shape:
 
 Six options, every one ordered by the server over all pages in the space behind a keyset cursor (#5371). The rows render in the order received; nothing re-sorts them in JS.
 
-Each sort reads its rows in order from an index and stops at the page size, so a page costs the same at any vault size (migration 0124). The query drives from `pages_cache`, which carries its page's `space_id`, through the index named below; a cursor page seeks into it at the cursor's key.
+Each sort reads its rows in order from an index and stops at the page size instead of sorting the space (migration 0124). The query drives from `pages_cache`, which carries its page's `space_id`, through the index named below; a cursor page seeks into it at the cursor's key. A page also reads the rows it skips: those a filter rejects, and, for the count and last-edited sorts, the pages that share the cursor's key and sort before it, since the seek lands at the start of that run (many pages share a count of zero).
 
 | Sort option | Wire value | Order | Cursor key | Index |
 |-------------|------------|-------|------------|-------|
@@ -70,7 +70,7 @@ Each sort reads its rows in order from an index and stops at the page size, so a
 | `most-content` | `most-content` | `pages_cache.child_block_count` DESC, `id` ASC | the count in `Cursor.seq` | `idx_pages_cache_space_content` |
 
 - Last opened reads two arms: the opened pages from `page_opens` in open order, then the never-opened pages of the space in id order; a cursor in the never-opened tail reads that arm alone. `page_opens` has no space, so the opened arm skips the opens of other spaces.
-- A page lists in the space its cache row names. The page-create INSERT copies the page's space, a `space` op's projection moves the row in the same transaction (`cache::sync_pages_cache_space_ids`), and the page-row rebuild repairs any other path (inbound sync, snapshot restore, purging a space). A page without a cache row, between a reset wiping the cache and its rebuild, is absent until the rebuild lands.
+- A page lists in the space its cache row names. The page-create INSERT copies the page's space, a `space` op's projection moves the row in the same transaction (`cache::sync_pages_cache_space_ids`), and the page-row rebuild repairs any other path (inbound sync, snapshot restore, purging a space). The rebuild drops a trashed page's row, so every restore path gives a restored page its row back in the restore's transaction (`cache::insert_missing_pages_cache_rows`). A page without a cache row, between a reset wiping the cache and its rebuild, is absent until the rebuild lands; boot schedules the rebuild when a live page has no row or a row in another space.
 
 - `title_sort_key` is the title NFKD-decomposed, combining marks stripped, lowercased (`agaric_core::title_sort::title_sort_key`), compared as UTF-8 bytes: `Émile` sorts with `E`, `ángel` before `Zebra`.
 - `last_edited_ms` is the newest op on the page or any block on it, else the page's ULID creation time. Every path that lands an op raises it in the same transaction (`agaric_store::cache::raise_pages_last_edited_ms`), so editing a page's body moves the page up, and op-log compaction (#5286) cannot lower it.
@@ -121,7 +121,7 @@ The parity contract is non-negotiable: `src-tauri/agaric-engine/src/materializer
 
 Materialised columns turn the `most-linked` first-page query from a per-page correlated subquery over `block_links` into a direct read on `pages_cache` — the regression bench is `src-tauri/benches/interactive_slo.rs` (run with `cd src-tauri && cargo bench --bench interactive_slo`). `EXPLAIN QUERY PLAN` shows `SEARCH pc USING INDEX idx_pages_cache_space_linked (space_id=?)` — no `block_links` scan, no count subquery, and no temp B-tree: the index rewrite a count change costs is paid on the write so the read never sorts the space (`every_sort_reads_an_index_instead_of_sorting_the_space_5371` pins every sort's plan).
 
-Migration `0123` adds the two sort keys beside them, `title_sort_key` and `last_edited_ms`; migration `0124` adds `space_id` and the per-sort indexes above. The page-row rebuild (`cache::pages::rebuild_pages_cache`) writes the title key wherever it writes the title and births `last_edited_ms` from the op log; boot schedules it while a row is still at the migration's unfilled default. `pages_cache_parity.rs` pins both keys after single ops, a batch and a cross-page move, and `space_id` through a page's `space` ops; the reconciliation oracle checks all three (`reconcile_pages_cache_sort_keys`).
+Migration `0123` adds the two sort keys beside them, `title_sort_key` and `last_edited_ms`; migration `0124` adds `space_id` and the per-sort indexes above. The page-row rebuild (`cache::pages::rebuild_pages_cache`) writes the title key wherever it writes the title and births `last_edited_ms` from the op log; boot schedules it while a row is still at the migration's unfilled default, or a live page has no row or a row in another space (an engine reproject in recovery writes `blocks.space_id` without the cache). `pages_cache_parity.rs` pins both keys after single ops, a batch and a cross-page move, and `space_id` through a page's `space` ops; the reconciliation oracle checks all three (`reconcile_pages_cache_sort_keys`).
 
 ## Open extension points
 

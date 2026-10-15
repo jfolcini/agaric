@@ -15,7 +15,9 @@ use agaric_lib::commands::tests::common::{
     DEV, TEST_SPACE_B_ID, TEST_SPACE_ID, assign_to_space, ensure_test_space, ensure_test_space_b,
     insert_block, test_pool,
 };
-use agaric_lib::commands::{edit_block_inner, purge_block_inner};
+use agaric_lib::commands::{
+    delete_block_inner, edit_block_inner, purge_block_inner, restore_blocks_by_ids_inner,
+};
 use agaric_lib::materializer::Materializer;
 use agaric_store::filters::{FilterPrimitive, LastEditedSpec, PropertyPredicate, PropertyValue};
 
@@ -3447,15 +3449,24 @@ async fn editing_a_child_block_moves_its_page_to_the_top_5371() {
 async fn last_opened_lists_opened_pages_in_open_order_then_newest_across_pages_5371() {
     let (pool, _dir) = test_pool().await;
     ensure_test_space(&pool).await;
-    let pages: Vec<String> = (1..=6)
+    let pages: Vec<String> = (1..=10)
         .map(|i| format!("01PAGE00000000000000000O{i:02}"))
         .collect();
     for (i, id) in pages.iter().enumerate() {
         seed_page(&pool, id, &format!("Page {i}")).await;
     }
-    // Opened 2, then 5, then 3. The command stamps `now`; the stamps are then
-    // spread so three opens in one millisecond cannot tie.
-    for (ms, i) in [(1_000_i64, 1), (2_000, 4), (3_000, 2)] {
+    // The command stamps `now`; the stamps are then set: 2 opened last, and
+    // 1, 3, 4, 5 and 6 in one millisecond, a tie the id breaks, newest first.
+    // The tie outnumbers a page, so each arm's own order decides what it
+    // hands the merge.
+    for (ms, i) in [
+        (2_000_i64, 1),
+        (2_000, 3),
+        (2_000, 4),
+        (2_000, 5),
+        (2_000, 6),
+        (3_000, 2),
+    ] {
         record_page_open_inner(&pool, pages[i].as_str().into())
             .await
             .expect("record the open");
@@ -3467,9 +3478,10 @@ async fn last_opened_lists_opened_pages_in_open_order_then_newest_across_pages_5
             .unwrap();
     }
 
-    // Four rows a page: the boundary falls inside the never-opened run.
-    let paged = page_through(&pool, PageSort::LastOpened, 4).await;
-    let expected: Vec<&str> = [2, 4, 1, 5, 3, 0]
+    // Three rows a page: the boundaries fall inside the tie, at its end, and
+    // inside the never-opened run.
+    let paged = page_through(&pool, PageSort::LastOpened, 3).await;
+    let expected: Vec<&str> = [2, 6, 5, 4, 3, 1, 9, 8, 7, 0]
         .iter()
         .map(|&i| pages[i].as_str())
         .collect();
@@ -3572,5 +3584,40 @@ async fn purging_a_page_drops_its_open_5371() {
         0,
         "the purge cascades to page_opens"
     );
+    mat.shutdown();
+}
+
+/// The rebuild sweeps a trashed page's cache row, and the list reads its rows
+/// from the cache: the restore itself must give the row back. Its own
+/// `RebuildPagesCache` waits on the lifecycle debounce, and nothing here
+/// flushes it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restored_page_lists_without_waiting_for_the_rebuild_5371() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let mat = Materializer::new(pool.clone());
+    let page = "01PAGE000000000000000000R1";
+    seed_page(&pool, page, "Restored").await;
+    delete_block_inner(&pool, DEV, &mat, page.into())
+        .await
+        .unwrap();
+    mat.flush().await.unwrap();
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pages_cache WHERE page_id = ?")
+        .bind(page)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "seed: the delete's rebuild swept the row");
+
+    restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![page.into()])
+        .await
+        .unwrap();
+
+    let listed =
+        list_pages_with_metadata_inner(&pool, filter(PageSort::Alphabetical), None, Some(50))
+            .await
+            .unwrap();
+    let ids: Vec<String> = listed.items.iter().map(|p| p.id.to_string()).collect();
+    assert_eq!(ids, [page], "listed straight after the restore");
     mat.shutdown();
 }

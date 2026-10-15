@@ -757,11 +757,10 @@ pub async fn project_restore_block_to_sql(
     block_id: &str,
     deleted_at_ref: i64,
 ) -> Result<Vec<String>, AppError> {
-    // The cleared ids are not needed here: a `RestoreBlock`'s cohort is
-    // captured PRE-UPDATE by `collect_restore_cohort` and fanned out by
-    // `dispatch_restore_descendants`. Only #4390's un-sweep caller consumes
-    // them.
-    let _cleared = clear_cohort_deleted_at_downward(&mut *conn, block_id, deleted_at_ref).await?;
+    // The engine fan-out does not read the cleared ids: a `RestoreBlock`'s
+    // cohort is captured PRE-UPDATE by `collect_restore_cohort` and fanned out
+    // by `dispatch_restore_descendants`. The page rows below do.
+    let cleared = clear_cohort_deleted_at_downward(&mut *conn, block_id, deleted_at_ref).await?;
 
     // #1884: also restore UPWARD, mirroring `restore_block_inner`. The cohort
     // CTE above only clears `deleted_at` downward, but the block's PARENT may
@@ -779,11 +778,16 @@ pub async fn project_restore_block_to_sql(
     // an engine fan-out the ancestors stay tombstoned in the CRDT and a later
     // `reproject_block_deleted_at` re-deletes them in SQL (self-perpetuating
     // divergence). The page/space re-derivation from the topmost id runs in the
-    // via-loro arm; this projection only owns the `deleted_at` clear.
+    // via-loro arm; this projection owns the `deleted_at` clear and the page
+    // rows it brings back.
     let restored_ancestors =
         agaric_store::block_descendants::restore_deleted_ancestor_chain(&mut *conn, block_id)
             .await?
             .chain;
+    // #5371: the rebuild swept a trashed page's `pages_cache` row, and the
+    // Pages list reads its rows from there.
+    let restored: Vec<&String> = cleared.iter().chain(&restored_ancestors).collect();
+    agaric_store::cache::insert_missing_pages_cache_rows(&mut *conn, &restored).await?;
 
     // R27: the pre-fix #1582 detection-only saturation probe is gone — the
     // batched walk above no longer truncates at the depth-100 cap (crossing
@@ -817,9 +821,9 @@ pub async fn project_restore_block_to_sql(
 /// statement's own answer rather than a second SELECT that could disagree with
 /// it, and it costs no extra round trip.
 ///
-/// `project_restore_block_to_sql` ignores them (its cohort is already captured
-/// pre-UPDATE by `collect_restore_cohort` for the `dispatch_restore_*`
-/// fan-outs). The un-sweep caller needs them because its cohort has no other
+/// `project_restore_block_to_sql` gives the pages among them back their cache
+/// rows (its engine fan-out takes the cohort `collect_restore_cohort` captured
+/// pre-UPDATE). The un-sweep caller needs them because its cohort has no other
 /// witness: a `MoveBlock` has no `deleted_at_ref` to walk back from once the
 /// clear has run, so without this list the post-commit engine mirror
 /// (`dispatch_unswept_cohort`) would have nothing to mirror. See

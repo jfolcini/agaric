@@ -1142,3 +1142,53 @@ async fn space_id_is_born_from_the_page_and_repaired_by_the_rebuild_5371() {
     );
     assert_space_parity(&pool, "after the rebuild").await;
 }
+
+/// #5371 — a `RestoreBlock` the materializer applies (a peer's, or a replay)
+/// gives the page back the cache row the rebuild swept while it sat in the
+/// trash, in the op's own transaction: the Pages list reads its rows from the
+/// cache. The row is born as the rebuild births one, the restore its newest op.
+#[tokio::test]
+async fn a_restore_gives_the_page_back_its_swept_row_5371() {
+    let (pool, _dir) = test_pool().await;
+    seed_space(&pool, SP_SPACE_A).await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id, space_id, deleted_at) \
+         VALUES (?, 'page', 'Émile', ?, ?, ?)",
+    )
+    .bind(SP_PAGE)
+    .bind(SP_PAGE)
+    .bind(SP_SPACE_A)
+    .bind(FIXED_TS)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let restore = OpPayload::RestoreBlock(RestoreBlockPayload {
+        block_id: BlockId::from_trusted(SP_PAGE),
+        deleted_at_ref: FIXED_TS,
+    });
+    let record = make_op_record_at(&pool, restore, FIXED_TS + 1).await;
+    handle_foreground_task(
+        &pool,
+        &MaterializeTask::ApplyOp(StdArc::new(record)),
+        &LoroState::new(),
+    )
+    .await
+    .unwrap();
+
+    let row: Option<(String, Option<String>, i64)> = sqlx::query_as(
+        "SELECT title_sort_key, space_id, last_edited_ms FROM pages_cache WHERE page_id = ?",
+    )
+    .bind(SP_PAGE)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        Some((
+            "emile".to_owned(),
+            Some(SP_SPACE_A.to_owned()),
+            FIXED_TS + 1
+        ))
+    );
+}

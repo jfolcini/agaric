@@ -1179,11 +1179,11 @@ async fn apply_reverse_restore_block(
         Ok(())
     })?;
 
-    Ok(cohort
-        .iter()
-        .chain(restored_chain.chain.iter())
-        .cloned()
-        .collect())
+    let restored: Vec<String> = cohort.into_iter().chain(restored_chain.chain).collect();
+    // #5371: the rebuild swept a trashed page's `pages_cache` row, and the
+    // Pages list reads its rows from there.
+    agaric_store::cache::insert_missing_pages_cache_rows(tx, &restored).await?;
+    Ok(restored)
 }
 
 /// `EditBlock` arm of [`apply_reverse_in_tx`]: write the prior text back and
@@ -5784,6 +5784,48 @@ mod tests {
             fts_ids_4733(&pool).await.is_empty(),
             "#4733: redoing the delete must de-index the DESCENDANT again"
         );
+        mat.shutdown();
+    }
+
+    /// #5371 — undoing a page's delete gives the page back the cache row the
+    /// rebuild swept while it sat in the trash, in the undo's own transaction:
+    /// the Pages list reads its rows from the cache. Nothing flushes the
+    /// undo's debounced rebuild before the assertion.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undoing_a_page_delete_brings_back_its_cache_row_5371() {
+        const PAGE: &str = "UNDO-PAGE-5371";
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'Undone')")
+            .bind(PAGE)
+            .execute(&pool)
+            .await
+            .unwrap();
+        agaric_store::cache::rebuild_pages_cache(&pool)
+            .await
+            .unwrap();
+        let rows = || {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM pages_cache WHERE page_id = ?")
+                .bind(PAGE)
+                .fetch_one(&pool)
+        };
+        assert_eq!(rows().await.unwrap(), 1, "seed: the page has its row");
+        crate::commands::delete_block_inner(&pool, DEV, &mat, BlockId::from_trusted(PAGE))
+            .await
+            .expect("delete must succeed");
+        mat.flush().await.unwrap();
+        assert_eq!(
+            rows().await.unwrap(),
+            0,
+            "seed: the delete's rebuild swept it"
+        );
+
+        let delete_op = newest_op_ref_4733(&pool).await;
+        revert_ops_inner(&pool, DEV, &mat, vec![delete_op])
+            .await
+            .expect("undo must succeed");
+
+        assert_eq!(rows().await.unwrap(), 1);
         mat.shutdown();
     }
 

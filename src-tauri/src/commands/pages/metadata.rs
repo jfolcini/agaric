@@ -376,7 +376,8 @@ fn push_string_asc_keyset<'a>(
 /// [`SortKeyset::I64Desc`]. The cursor carries the last row's key in its
 /// `seq` slot. The key and the id run in opposite directions, so no row value
 /// spans both; the leading `key_expr <= last_key` is the term the index seeks
-/// on.
+/// on, so a cursor page also steps over the pages that share `last_key` and
+/// sort before the cursor's id.
 fn push_i64_desc_keyset<'a>(
     sql: &mut String,
     key_expr: &str,
@@ -803,10 +804,11 @@ pub fn compose_list_pages_with_metadata_sql(
 /// pages_cache_count_parity` for the guarding integration test.
 ///
 /// **Rows come from `pages_cache`:** a page is listed in the space its cache
-/// row names. The page-create INSERT births the row and a `space` op moves
-/// it in the same transaction; a page whose row is missing (between a reset
-/// wiping the cache and its rebuild) is absent until `RebuildPagesCache`
-/// lands, and the reconciliation oracle reports it (`pages_cache.row`).
+/// row names. The page-create INSERT births the row, a `space` op moves it,
+/// and a restore gives a restored page its row back, each in the writing
+/// transaction; a page whose row is missing (between a reset wiping the
+/// cache and its rebuild) is absent until `RebuildPagesCache` lands, and the
+/// reconciliation oracle reports it (`pages_cache.row`).
 #[instrument(skip(pool), err)]
 pub async fn list_pages_with_metadata_inner(
     pool: &SqlitePool,
