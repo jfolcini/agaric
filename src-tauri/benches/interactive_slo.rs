@@ -73,19 +73,22 @@ use agaric_lib::commands::pages::{
     ListPagesWithMetadataFilter, PageSort, PageSubtree, list_pages_with_metadata_inner,
 };
 use agaric_lib::commands::{
-    PAGE_LINKS_EDGE_CAP, PropertyFilter, ResolvedBlock, batch_resolve_inner,
-    count_agenda_batch_by_source_inner, count_backlinks_batch_inner, create_block_inner,
-    export_page_markdown_inner, filtered_blocks_query_inner, get_batch_properties_inner,
-    get_block_inner, get_properties_inner, list_attachments_batch_inner,
-    list_backlinks_grouped_inner, list_blocks_inner, list_journal_pages_in_range_inner,
-    list_page_links_inner, list_projected_agenda_inner, list_unlinked_references_inner,
-    load_page_subtree_inner, query_by_property_inner, revert_ops_inner,
+    PAGE_LINKS_EDGE_CAP, PropertyFilter, ResolvedBlock, SearchBlockRow, SearchFilter,
+    batch_resolve_inner, count_agenda_batch_by_source_inner, count_backlinks_batch_inner,
+    create_block_inner, export_page_markdown_inner, filtered_blocks_query_inner,
+    get_batch_properties_inner, get_block_inner, get_properties_inner,
+    list_all_tags_in_space_inner, list_attachments_batch_inner, list_backlinks_grouped_inner,
+    list_blocks_inner, list_journal_pages_in_range_inner, list_page_links_inner,
+    list_projected_agenda_inner, list_unlinked_references_inner, load_page_subtree_inner,
+    query_by_property_inner, revert_ops_inner, search_blocks_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
-use agaric_store::cache::rebuild_projected_agenda_cache;
+use agaric_store::cache::{rebuild_projected_agenda_cache, rebuild_tags_cache};
+use agaric_store::fts::rebuild_fts_index;
 use agaric_store::op::OpRef;
-use agaric_store::pagination::BlockRow;
+use agaric_store::pagination::{BlockRow, PageResponse};
+use agaric_store::search_types::SearchScope;
 use agaric_store::space::{SpaceId, SpaceScope};
 
 use sqlx::SqlitePool;
@@ -2937,6 +2940,258 @@ fn bench_query_by_property_selective_value(c: &mut Criterion) {
     );
 }
 
+// #5366: each starts at the 30 ms list tier; if a warm run is over, measured × 2, never > 200 ms.
+const TAGS_1K_BUDGET_MS: f64 = 30.0;
+const TAGS_10K_BUDGET_MS: f64 = 30.0;
+const SEARCH_SHORT_BUDGET_MS: f64 = 30.0;
+const SEARCH_WORD_BUDGET_MS: f64 = 30.0;
+
+/// `list_all_tags_in_space` — the Tags view's open read of `tags_cache`, with
+/// `n_tags` tags spread round-robin over the 100K blocks (#5366).
+fn time_list_all_tags_in_space(c: &mut Criterion, n_tags: usize, budget_ms: f64) {
+    let cmd = format!("list_all_tags_in_space ({}K tags) @ 100K", n_tags / 1_000);
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, &format!("slo_list_all_tags_{n_tags}")));
+    let ids = rt.block_on(seed_blocks_bulk(&pool, FIXTURE_SIZE));
+    let tag_ids = rt.block_on(seed_tags_with_usage(&pool, &ids, n_tags));
+    rt.block_on(assign_all_to_slo_space(&pool));
+    rt.block_on(rebuild_tags_cache(&pool)).unwrap();
+
+    let usage = (FIXTURE_SIZE / n_tags) as i64;
+    let mut expected: Vec<(String, String, i64)> = tag_ids
+        .into_iter()
+        .enumerate()
+        .map(|(i, id)| (format!("tag{i}"), id, usage))
+        .collect();
+    expected.sort_unstable();
+    let observed: Vec<(String, String, i64)> = rt
+        .block_on(list_all_tags_in_space_inner(&pool, SLO_SPACE_ID))
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.name, row.tag_id, row.usage_count))
+        .collect();
+    assert_eq!(
+        observed, expected,
+        "{cmd}: untimed probe must return every seeded tag, by name, with its usage (#3304)"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function(
+        format!("list_all_tags_in_space_{n_tags}_tags_100k"),
+        move |b| {
+            let acc = acc_for_bench.clone();
+            let pool = pool.clone();
+            b.to_async(&rt).iter_custom(move |iters| {
+                let pool = pool.clone();
+                let acc = acc.clone();
+                async move {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        let _ = list_all_tags_in_space_inner(&pool, SLO_SPACE_ID)
+                            .await
+                            .unwrap();
+                    }
+                    let elapsed = start.elapsed();
+                    acc.record(elapsed, iters);
+                    elapsed
+                }
+            });
+        },
+    );
+    group.finish();
+
+    assert_under_budget(&cmd, &acc, budget_ms);
+}
+
+fn bench_list_all_tags_in_space_1k(c: &mut Criterion) {
+    time_list_all_tags_in_space(c, 1_000, TAGS_1K_BUDGET_MS);
+}
+
+fn bench_list_all_tags_in_space_10k(c: &mut Criterion) {
+    time_list_all_tags_in_space(c, 10_000, TAGS_10K_BUDGET_MS);
+}
+
+/// The Search panel fixture (#5366). Every `SEARCH_SHORT_STRIDE`-th block reads
+/// `Meeting notes {i:06}`: equal length and one hit each, so all 10K share one
+/// rank and the first page is the first 50 in id order. `SEARCH_WORD_BLOCKS`
+/// other blocks carry `SEARCH_WORD_QUERY`, whose leading trigrams the
+/// "placeholder" in every remaining block also carries.
+const SEARCH_SHORT_QUERY: &str = "mee";
+const SEARCH_SHORT_STRIDE: usize = 10;
+const SEARCH_WORD_QUERY: &str = "placeholders";
+const SEARCH_WORD_BLOCKS: usize = 20;
+const SEARCH_PAGE_SIZE: usize = 50;
+
+/// Returns the short-query and the word-query matches, each in id order.
+async fn seed_search_fixture(pool: &SqlitePool) -> (Vec<String>, Vec<String>) {
+    let ids = seed_blocks_bulk(pool, FIXTURE_SIZE).await;
+    assign_all_to_slo_space(pool).await;
+    let word_stride = FIXTURE_SIZE / SEARCH_WORD_BLOCKS;
+    let mut short_ids = Vec::new();
+    let mut word_ids = Vec::new();
+    let mut tx = pool.begin().await.unwrap();
+    for (i, id) in ids.into_iter().enumerate() {
+        let (content, matches) = if i.is_multiple_of(SEARCH_SHORT_STRIDE) {
+            (format!("Meeting notes {i:06}"), &mut short_ids)
+        } else if i % word_stride == 1 {
+            (
+                format!("Renamed the {SEARCH_WORD_QUERY} in block {i}"),
+                &mut word_ids,
+            )
+        } else {
+            continue;
+        };
+        sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+            .bind(content)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        matches.push(id);
+    }
+    tx.commit().await.unwrap();
+    rebuild_fts_index(pool).await.unwrap();
+    (short_ids, word_ids)
+}
+
+/// The Search panel's filter with no tokens: the active space only.
+fn slo_search_filter() -> SearchFilter {
+    SearchFilter {
+        parent_id: None,
+        tag_ids: Vec::new(),
+        scope: SearchScope::Spaces(vec![SpaceId::from_trusted(SLO_SPACE_ID)]),
+        include_page_globs: Vec::new(),
+        exclude_page_globs: Vec::new(),
+        case_sensitive: false,
+        whole_word: false,
+        is_regex: false,
+        block_type_filter: None,
+        state_filter: Vec::new(),
+        priority_filter: Vec::new(),
+        due_filter: None,
+        scheduled_filter: None,
+        property_filters: Vec::new(),
+        excluded_property_filters: Vec::new(),
+        excluded_state_filter: Vec::new(),
+        excluded_priority_filter: Vec::new(),
+        last_edited: None,
+        tags_match_inline_and_inherited: false,
+    }
+}
+
+/// The first page of `query`, as the Search panel asks for it.
+async fn search_first_page(pool: &SqlitePool, query: &str) -> PageResponse<SearchBlockRow> {
+    search_blocks_inner(
+        pool,
+        query.to_owned(),
+        None,
+        Some(SEARCH_PAGE_SIZE as i64),
+        slo_search_filter(),
+        None,
+    )
+    .await
+    .unwrap()
+}
+
+/// Time `search_first_page` for `query`.
+fn time_search_blocks(
+    c: &mut Criterion,
+    rt: Runtime,
+    pool: SqlitePool,
+    bench_name: &str,
+    query: &'static str,
+) -> Acc {
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function(bench_name, move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = search_first_page(&pool, query).await;
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+    acc
+}
+
+/// `search_blocks` — a 3-character query matching 10K of 100K blocks (#5366).
+fn bench_search_blocks_short_query(c: &mut Criterion) {
+    const CMD: &str = "search_blocks (3-char query, 10K matches) @ 100K";
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_search_short"));
+    let (short_ids, _) = rt.block_on(seed_search_fixture(&pool));
+
+    let observed = rt.block_on(search_first_page(&pool, SEARCH_SHORT_QUERY));
+    let observed_ids: Vec<&str> = observed.items.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(
+        observed_ids,
+        &short_ids[..SEARCH_PAGE_SIZE],
+        "{CMD}: untimed probe must return the first 50 matches in id order (#3304)"
+    );
+    assert!(
+        observed.has_more,
+        "{CMD}: 10K matches overflow one page of 50 (#3304)"
+    );
+
+    let acc = time_search_blocks(
+        c,
+        rt,
+        pool,
+        "search_blocks_short_query_100k",
+        SEARCH_SHORT_QUERY,
+    );
+    assert_under_budget(CMD, &acc, SEARCH_SHORT_BUDGET_MS);
+}
+
+/// `search_blocks` — a word query matching 20 of 100K blocks (#5366).
+fn bench_search_blocks_word_query(c: &mut Criterion) {
+    const CMD: &str = "search_blocks (word query, 20 matches) @ 100K";
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_search_word"));
+    let (_, word_ids) = rt.block_on(seed_search_fixture(&pool));
+
+    let observed = rt.block_on(search_first_page(&pool, SEARCH_WORD_QUERY));
+    let mut observed_ids: Vec<&str> = observed.items.iter().map(|row| row.id.as_str()).collect();
+    observed_ids.sort_unstable();
+    assert_eq!(
+        observed_ids, word_ids,
+        "{CMD}: untimed probe must return exactly the 20 blocks holding the word (#3304)"
+    );
+    assert!(
+        !observed.has_more,
+        "{CMD}: 20 matches fit one page of 50 (#3304)"
+    );
+
+    let acc = time_search_blocks(
+        c,
+        rt,
+        pool,
+        "search_blocks_word_query_100k",
+        SEARCH_WORD_QUERY,
+    );
+    assert_under_budget(CMD, &acc, SEARCH_WORD_BUDGET_MS);
+}
+
 /// #5426 — `query_by_property` on `todo_state = 'TODO'`, which half of 100K
 /// blocks carry. PROBLEM TIER, report-only: equality reads its value index and
 /// sorts every match before the LIMIT, where an id-order walk stops after one
@@ -4072,6 +4327,11 @@ criterion_group!(
     bench_list_projected_agenda,
     bench_list_projected_agenda_past_day,
     bench_query_by_property_selective_value,
+    // #5366 — the Tags view and the Search panel.
+    bench_list_all_tags_in_space_1k,
+    bench_list_all_tags_in_space_10k,
+    bench_search_blocks_short_query,
+    bench_search_blocks_word_query,
     // #5402 — the MCP read paths.
     mcp_reads::bench_mcp_get_page_markdown,
     mcp_reads::bench_mcp_get_journal,
