@@ -356,21 +356,18 @@ async fn affected_pages_for_create(
     Ok(())
 }
 
-/// The pages an `Edit` touches: the block's own page, the pages its OLD
-/// outbound edges pointed at, and the pages its NEW content points at.
+/// The pages an `Edit` touches: the pages its OLD outbound edges pointed at
+/// and the pages its NEW content points at.
+///
+/// Not the block's own page (#5423): an edit moves no block into or out of
+/// it, so `child_block_count` holds, and `inbound_link_count` skips sources on
+/// the page itself, so this block's edges never counted there.
 async fn affected_pages_for_edit(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
     to_text: &str,
     affected: &mut std::collections::HashSet<String>,
 ) -> Result<(), AppError> {
-    // Owning page of the edited block.
-    let row = sqlx::query!("SELECT page_id FROM blocks WHERE id = ?", block_id)
-        .fetch_optional(&mut *conn)
-        .await?;
-    if let Some(Some(p)) = row.map(|r| r.page_id) {
-        affected.insert(p);
-    }
     // Pages reachable via OLD outbound edges (still in
     // `block_links` until we re-diff below). Collected BEFORE the
     // in-tx reindex so a page that just LOST its only inbound edge
