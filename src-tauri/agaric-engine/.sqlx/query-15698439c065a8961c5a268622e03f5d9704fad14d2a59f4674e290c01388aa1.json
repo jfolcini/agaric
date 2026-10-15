@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE pages_cache SET last_edited_ms = touched.ms FROM (SELECT b.page_id AS page_id, MAX(json_extract(j.value, '$[1]')) AS ms FROM json_each(?) AS j JOIN blocks b ON b.id = json_extract(j.value, '$[0]') GROUP BY b.page_id) AS touched WHERE pages_cache.page_id = touched.page_id AND touched.ms > pages_cache.last_edited_ms",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "15698439c065a8961c5a268622e03f5d9704fad14d2a59f4674e290c01388aa1"
+}

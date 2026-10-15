@@ -2272,14 +2272,16 @@ fn wire_sync_daemon(w: SyncDaemonWiring) {
 ///
 /// Slice 2 — the RO surface binds the reader pool (plus the
 /// writer pool for `journal_for_date`'s sole write side-effect); the RW
-/// surface binds the writer pool (every RW tool mutates). Every field is a
-/// cheap `Arc`-backed clone taken before the originals move into managed state.
+/// surface binds the writer pool, plus the reader pool for `list_spaces`.
+/// Every field is a cheap `Arc`-backed clone taken before the originals move
+/// into managed state.
 struct McpServerWiring {
     ro_read_pool: sqlx::SqlitePool,
     ro_write_pool: sqlx::SqlitePool,
     ro_materializer: materializer::Materializer,
     ro_device_id: String,
     rw_write_pool: sqlx::SqlitePool,
+    rw_read_pool: sqlx::SqlitePool,
     rw_materializer: materializer::Materializer,
     rw_device_id: String,
 }
@@ -2303,6 +2305,7 @@ fn wire_mcp_servers<R: tauri::Runtime>(
         ro_materializer: mcp_ro_materializer,
         ro_device_id: mcp_ro_device_id,
         rw_write_pool: mcp_rw_write_pool,
+        rw_read_pool: mcp_rw_read_pool,
         rw_materializer: mcp_rw_materializer,
         rw_device_id: mcp_rw_device_id,
     } = w;
@@ -2372,6 +2375,7 @@ fn wire_mcp_servers<R: tauri::Runtime>(
         app_data_dir,
         app.handle().clone(),
         mcp_rw_write_pool,
+        mcp_rw_read_pool,
         mcp_rw_materializer,
         mcp_rw_device_id,
         // #695 — same shared ring as the RO surface so the
@@ -2730,6 +2734,7 @@ fn build_mcp_server_wiring(
         ro_materializer: materializer.clone(),
         ro_device_id: device_id.to_owned(),
         rw_write_pool: pools.write.clone(),
+        rw_read_pool: pools.read.clone(),
         rw_materializer: materializer.clone(),
         rw_device_id: device_id.to_owned(),
     }

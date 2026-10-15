@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT page_id, title, title_sort_key, last_edited_ms FROM pages_cache",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "page_id"
+          }
+        }
+      },
+      {
+        "name": "title",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "title"
+          }
+        }
+      },
+      {
+        "name": "title_sort_key",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "title_sort_key"
+          }
+        }
+      },
+      {
+        "name": "last_edited_ms",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "last_edited_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d20c69eb3b1c17d85ba2319cba83c1b2d8f286a8ea0803ca7d985ed032e860ad"
+}

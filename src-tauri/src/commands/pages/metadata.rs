@@ -152,6 +152,25 @@ pub struct PageWithMetadataRow {
     pub flags: PagePropertyFlags,
 }
 
+impl From<PageWithMetadataRow> for agaric_store::pagination::BlockRow {
+    /// The page's plain block row, without the metadata columns.
+    fn from(row: PageWithMetadataRow) -> Self {
+        Self {
+            id: row.id,
+            block_type: row.block_type,
+            content: row.content,
+            parent_id: row.parent_id,
+            position: row.position,
+            deleted_at: row.deleted_at,
+            todo_state: row.todo_state,
+            priority: row.priority,
+            due_date: row.due_date,
+            scheduled_date: row.scheduled_date,
+            page_id: row.page_id.map(BlockId::from),
+        }
+    }
+}
+
 /// Build the `position` slot's encoded sort-mode tag. Stamped into every
 /// outgoing cursor and read back by `validate_pages_metadata_cursor`
 /// to refuse a cursor whose sort-mode discriminator doesn't match the

@@ -246,3 +246,52 @@ async fn undoing_an_add_on_a_page_that_is_gone_is_not_found() {
     );
     mat.shutdown();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn clearing_a_page_drops_an_alias_it_lost_so_recovery_cannot_hand_it_back() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let winner = page(&pool, &mat, "Winner").await;
+    let loser = page(&pool, &mat, "Loser").await;
+    set(&pool, &mat, &winner, &["x"]).await.unwrap();
+    // A synced add of the same alias: the loser's engine holds it, the row
+    // stays with the lower page id.
+    {
+        let space = SpaceId::from_trusted(TEST_SPACE_ID);
+        let mut guard = mat.loro_state().registry.for_space(&space, DEV).unwrap();
+        guard
+            .engine_mut()
+            .apply_add_page_alias(&loser, "x")
+            .unwrap();
+    }
+    set(&pool, &mat, &winner, &[]).await.unwrap();
+    assert_eq!(
+        engine_aliases(&mat, &loser),
+        vec!["x"],
+        "the loser's engine holds it"
+    );
+    assert!(
+        aliases(&pool, &loser).await.is_empty(),
+        "the loser never showed it"
+    );
+
+    set(&pool, &mat, &loser, &[]).await.unwrap();
+
+    assert!(
+        engine_aliases(&mat, &loser).is_empty(),
+        "clearing the loser clears its engine map too"
+    );
+    let mut conn = pool.acquire().await.unwrap();
+    agaric_engine::loro::projection::reproject_page_aliases_from_engine(
+        &mut conn,
+        &loser,
+        &engine_aliases(&mat, &loser),
+    )
+    .await
+    .unwrap();
+    assert!(
+        aliases(&pool, &loser).await.is_empty(),
+        "a reprojection gives the loser nothing"
+    );
+    mat.shutdown();
+}
