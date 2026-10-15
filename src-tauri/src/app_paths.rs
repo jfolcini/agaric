@@ -69,6 +69,11 @@ fn truthy(raw: &str) -> bool {
     )
 }
 
+/// Whether this process runs under [`SANDBOX_ENV`], read as [`decide`] reads it.
+pub(crate) fn sandboxed() -> bool {
+    std::env::var(SANDBOX_ENV).is_ok_and(|raw| truthy(&raw))
+}
+
 /// Decide where the app-data directory lives, from the environment alone.
 ///
 /// `os_default` is the identifier-derived OS path (`None` if the platform

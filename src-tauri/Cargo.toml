@@ -361,6 +361,10 @@ libc = "0.2"
 # silently emits no D-Bus call on Linux. Same crate/version the plugin pulls.
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = "4"
+# The crate behind Tauri's `PlatformWebview::inner()` on Linux, which Tauri does
+# not re-export: `enable_mock_camera_under_e2e_sandbox` in lib.rs needs its
+# settings traits. Same version Tauri and wry resolve, so nothing new is built.
+webkit2gtk = { version = "2.0.2", features = ["v2_4"] }
 
 # Desktop-only Tauri plugins (#760).  Every registration is gated behind
 # `#[cfg(desktop)]` / `#[cfg(not(mobile))]` in lib.rs (Tauri's `desktop`
