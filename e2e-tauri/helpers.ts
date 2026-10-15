@@ -44,6 +44,10 @@
 //     view actually switched — no per-view anchor or timing race required.
 //   - `button*=Add block`                   JournalPage "Add block" action
 //     (`agenda.day.addBlock`), the same selector smoke.e2e.ts committed to.
+//   - `#journal-tab-weekly`                 JournalControls week tab
+//     (`journalTabId('weekly')`); `section[id="journal-<date>"]` is a
+//     DaySection, and "No blocks for" (`agenda.day.empty`) marks a day with
+//     no page.
 //   - `[data-testid="block-editor"]`        the roving TipTap editor box.
 //   - `[data-testid="block-static"]`        a committed (non-focused) block row
 //     (StaticBlock; carries `data-block-id`).

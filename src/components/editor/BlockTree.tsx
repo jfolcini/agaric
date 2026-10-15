@@ -415,7 +415,6 @@ export function BlockTree({
   })
   useEffect(() => {
     if (!focusedBlockId) return
-    if (!blocksById.has(focusedBlockId)) return
     expandAncestors(focusedBlockId)
     if (mountedVisible.some((b) => b.id === focusedBlockId)) {
       onRevealSettledRef.current?.(focusedBlockId, true)
@@ -724,7 +723,6 @@ export function BlockTree({
   // rendered when the user clicked, not a fresh read after the IPC settles.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const {
-    ownedSelectedIds,
     batchDeleteConfirm,
     batchInProgress,
     setBatchDeleteConfirm,
@@ -915,17 +913,17 @@ export function BlockTree({
   // #4550 phase 2 — is an unlocked embed borrowing this tree's editable row
   // right now, for a block that is not ours?
   //
-  // BOTH terms are load-bearing. `storeOwnsBlock` alone is false for any
-  // focused id this store has not loaded yet, which is an ordinary state
-  // during an async page load and would disarm the page's own chords and
-  // slash commands while it lasts. `activeEmbed` alone is true for an embed
-  // unlocked anywhere, including one whose rows THIS tree owns (a same-page
-  // embed) — where the callbacks are correct and must keep working. Together
-  // they name exactly the case: an embed is hosting the roving row, and the
-  // block under it belongs to another page's store.
+  // BOTH terms are load-bearing. `focusedBlockId` is already narrowed to ids
+  // this store holds, so it is null for a focus on another page's block AND for
+  // one this store has not loaded yet, which is an ordinary state during an
+  // async page load and would disarm the page's own chords and slash commands
+  // while it lasts. `activeEmbed` alone is true for an embed unlocked anywhere,
+  // including one whose rows THIS tree owns (a same-page embed) — where the
+  // callbacks are correct and must keep working. Together they name exactly the
+  // case: an embed is hosting the roving row, and the block under it belongs to
+  // another page's store.
   const rovingBlockIsForeign =
-    useSyncExternalStore(subscribeActiveEmbed, getActiveEmbed) != null &&
-    !storeOwnsBlock(pageStore, focusedBlockId)
+    useSyncExternalStore(subscribeActiveEmbed, getActiveEmbed) != null && focusedBlockId == null
   const ownsRovingBlock = !rovingBlockIsForeign
   // The three content handlers write through the HOST page store, so on a
   // foreign block the IPC commits while the optimistic update no-ops (that
@@ -1513,7 +1511,7 @@ export function BlockTree({
               </div>
             )}
             <BlockBatchActionMenu
-              selectedBlockIds={ownedSelectedIds}
+              selectedBlockIds={selectedBlockIds}
               batchInProgress={batchInProgress}
               batchDeleteConfirm={batchDeleteConfirm}
               onBatchSetTodo={handleBatchSetTodo}
