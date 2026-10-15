@@ -162,8 +162,8 @@ const CURSOR_PART_SEP: char = '\u{1f}';
 // block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?N)`
 // sub-select no longer exists. The canonical text lives in
 // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`], and the
-// `check-space-filter-drift` prek hook (#139) guards every inlined copy
-// against drift.
+// `space_filter_production_sites_match_canonical` test guards every inlined
+// copy against drift.
 //
 // `sqlx::query_as!` / `sqlx::query!` require a string literal and do
 // *not* accept `concat!()`, so the fragment is inlined at each compile-

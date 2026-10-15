@@ -923,7 +923,7 @@ prek_skip_list() {
     # Frontend absent → skip the FE lint/type/architecture hooks.
     if [ "$has_ts" = "0" ]; then
         skip_items+=(tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
-            no-ui-store-imports no-legacy-react-apis check-elevation-tiers \
+            no-ui-store-imports no-legacy-react-apis \
             import-cycles store-layering axe-presence test-file-naming \
             ipc-error-path-coverage no-raw-invoke no-raw-local-storage \
             trace-interactions-named)
@@ -934,7 +934,7 @@ prek_skip_list() {
     if [ "$has_rs" = "0" ]; then
         skip_items+=(cargo-fmt cargo-clippy cargo-deny cargo-machete sqruff \
             tauri-command-sanitize tauri-command-instrumented check-raw-tx \
-            check-dynamic-sql check-command-arity check-space-filter-drift \
+            check-dynamic-sql \
             unsafe-allowlist migrations-immutable migrations-strict-tables \
             migrations-rebuild-cascade)
     fi
