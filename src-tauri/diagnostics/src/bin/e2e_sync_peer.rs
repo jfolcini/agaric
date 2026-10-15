@@ -8,10 +8,10 @@
 //!
 //! Every step is the app's own code: `init_pools`, the daemon,
 //! `confirm_pairing_inner` with the fields of the QR the app showed (what a
-//! phone's camera hands the joiner), `create_block_inner`,
-//! `set_property_inner`, `move_block_inner`, `get_active_block_inner` and
-//! `get_property_inner`. `sync` wakes the daemon as `start_sync` does; it never
-//! runs a session itself.
+//! phone's camera hands the joiner), `create_block_inner`, `edit_block_inner`,
+//! `set_property_inner`, `move_block_inner`, `get_active_block_inner`,
+//! `get_property_inner` and `list_peer_refs_inner`. `sync` wakes the daemon as
+//! `start_sync` does; it never runs a session itself.
 //!
 //! A session is a pull by the device that dials (#610), so each direction has
 //! its own wait: `sync` for this vault's pull from the app (`synced_at`), and
@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -29,8 +29,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{
-    confirm_pairing_inner, create_block_inner, get_active_block_inner, get_property_inner,
-    move_block_inner, set_property_inner,
+    confirm_pairing_inner, create_block_inner, edit_block_inner, get_active_block_inner,
+    get_property_inner, list_peer_refs_inner, move_block_inner, set_property_inner,
 };
 use agaric_lib::db::{DbPools, init_pools, now_ms};
 use agaric_lib::materializer::Materializer;
@@ -64,12 +64,19 @@ enum Command {
     },
     /// Pull from the paired app now, and wait until the pull has landed.
     Sync,
+    /// Pull from the paired app now, and wait for the app to refuse it.
+    SyncRefused,
     GetBlock {
         id: String,
     },
     /// Write a content block under `parent_id`.
     CreateBlock {
         parent_id: String,
+        content: String,
+    },
+    /// Replace the whole text of block `id` with `content`.
+    EditBlock {
+        id: String,
         content: String,
     },
     /// Set text property `key` on block `id`.
@@ -95,6 +102,8 @@ enum Command {
     /// mDNS found this vault first; after, only an app resync
     /// (`SyncScheduler`'s `DEFAULT_RESYNC`) that spans the write.
     WaitPulled,
+    /// The device ids this vault holds a pairing with.
+    ListPeers,
 }
 
 /// One stdout line.
@@ -108,6 +117,10 @@ enum Reply {
         address: String,
     },
     Synced,
+    /// `message` is the first sync error the daemon reported after the wake.
+    Refused {
+        message: String,
+    },
     Block {
         id: String,
         parent_id: Option<String>,
@@ -116,6 +129,7 @@ enum Reply {
     Created {
         id: String,
     },
+    Edited,
     PropertySet,
     Moved,
     /// `value_text` is null when the block holds no such property.
@@ -123,6 +137,9 @@ enum Reply {
         value_text: Option<String>,
     },
     Pulled,
+    Peers {
+        peer_ids: Vec<String>,
+    },
     Error {
         message: String,
     },
@@ -132,11 +149,23 @@ fn parse_command(line: &str) -> Result<Command, String> {
     serde_json::from_str(line).map_err(|e| format!("unreadable command {line:?}: {e}"))
 }
 
-/// The daemon's events feed a UI this vault does not have.
-struct NoEvents;
+/// The daemon's events feed a UI this vault does not have; only the error
+/// messages are kept, for `sync_refused`.
+#[derive(Default)]
+struct SyncErrors(Mutex<Vec<String>>);
 
-impl SyncEventSink for NoEvents {
-    fn on_sync_event(&self, _event: SyncEvent) {}
+impl SyncErrors {
+    fn messages(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl SyncEventSink for SyncErrors {
+    fn on_sync_event(&self, event: SyncEvent) {
+        if let SyncEvent::Error { message, .. } = event {
+            self.messages().push(message);
+        }
+    }
 }
 
 struct Peer {
@@ -146,6 +175,7 @@ struct Peer {
     scheduler: Arc<SyncScheduler>,
     pairing: Mutex<Option<PairingSession>>,
     daemon: SyncDaemon,
+    errors: Arc<SyncErrors>,
     /// The app's device id, once paired.
     app: Option<String>,
     /// When this vault last wrote, for `wait_pulled`.
@@ -166,13 +196,14 @@ impl Peer {
         let materializer = Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
         agaric_lib::spaces::bootstrap_spaces(&pools.write, &device_id, &materializer).await?;
         let scheduler = Arc::new(SyncScheduler::with_intervals(DEBOUNCE, NO_PERIODIC_PULL));
+        let errors = Arc::new(SyncErrors::default());
         let daemon = SyncDaemon::start_if_peers_exist_with_lifecycle(SyncDaemonContext {
             pool: pools.write.clone(),
             device_id: device_id.clone(),
             materializer: Arc::new(materializer.clone()),
             scheduler: Arc::clone(&scheduler),
             endpoint_secret,
-            event_sink: Arc::new(NoEvents),
+            event_sink: Arc::clone(&errors) as Arc<dyn SyncEventSink>,
             cancel: Arc::new(AtomicBool::new(false)),
             lifecycle: LifecycleHooks::default(),
             internet_relay: false,
@@ -185,6 +216,7 @@ impl Peer {
             scheduler,
             pairing: Mutex::new(None),
             daemon,
+            errors,
             app: None,
             last_write_ms: 0,
         })
@@ -206,10 +238,12 @@ impl Peer {
                 self.pair(passphrase, app).await
             }
             Command::Sync => self.sync().await,
+            Command::SyncRefused => self.sync_refused().await,
             Command::GetBlock { id } => self.get_block(id).await,
             Command::CreateBlock { parent_id, content } => {
                 self.create_block(parent_id, content).await
             }
+            Command::EditBlock { id, content } => self.edit_block(id, content).await,
             Command::SetProperty { id, key, value } => self.set_property(id, key, value).await,
             Command::MoveBlock {
                 id,
@@ -218,6 +252,7 @@ impl Peer {
             } => self.move_block(id, parent_id, index).await,
             Command::GetProperty { id, key } => self.get_property(id, key).await,
             Command::WaitPulled => self.wait_pulled().await,
+            Command::ListPeers => self.list_peers().await,
         };
         result.unwrap_or_else(|e| Reply::Error {
             message: e.to_string(),
@@ -275,6 +310,26 @@ impl Peer {
         Ok(Reply::Synced)
     }
 
+    async fn sync_refused(&self) -> Result<Reply, AppError> {
+        self.paired_app()?;
+        let seen = self.errors.messages().len();
+        self.scheduler.notify_change();
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            if let Some(message) = self.errors.messages().get(seen) {
+                return Ok(Reply::Refused {
+                    message: message.clone(),
+                });
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(AppError::InvalidOperation(format!(
+                    "waited {WAIT:?} for the app to refuse this vault's pull; the daemon reported no error"
+                )));
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    }
+
     async fn get_block(&self, id: String) -> Result<Reply, AppError> {
         let row = get_active_block_inner(&self.pools.read, BlockId::from_string(id)?).await?;
         Ok(Reply::Block {
@@ -303,6 +358,19 @@ impl Peer {
         Ok(Reply::Created {
             id: row.id.into_string(),
         })
+    }
+
+    async fn edit_block(&mut self, id: String, content: String) -> Result<Reply, AppError> {
+        edit_block_inner(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            BlockId::from_string(id)?,
+            content,
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::Edited)
     }
 
     async fn set_property(
@@ -366,6 +434,13 @@ impl Peer {
         )
         .await?;
         Ok(Reply::Pulled)
+    }
+
+    async fn list_peers(&self) -> Result<Reply, AppError> {
+        let rows = list_peer_refs_inner(&self.pools.read).await?;
+        Ok(Reply::Peers {
+            peer_ids: rows.into_iter().map(|row| row.peer_id).collect(),
+        })
     }
 
     fn paired_app(&self) -> Result<&str, AppError> {
@@ -483,6 +558,36 @@ mod tests {
                 value: "v".into(),
             }),
             "sync-peer.ts sends a property as its block id, key and text value"
+        );
+    }
+
+    #[test]
+    fn edit_block_takes_a_block_and_its_whole_new_text() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"edit_block","id":"B1","content":"new text"}"#),
+            Ok(Command::EditBlock {
+                id: "B1".into(),
+                content: "new text".into(),
+            }),
+            "sync-peer.ts sends an edit as the block id and the block's whole new text"
+        );
+    }
+
+    #[test]
+    fn sync_refused_is_its_name_alone() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"sync_refused"}"#),
+            Ok(Command::SyncRefused),
+            "sync-peer.ts asks for a refused pull by name alone"
+        );
+    }
+
+    #[test]
+    fn list_peers_is_its_name_alone() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"list_peers"}"#),
+            Ok(Command::ListPeers),
+            "sync-peer.ts asks for the peer list by name alone"
         );
     }
 
