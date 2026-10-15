@@ -4,7 +4,7 @@
 `<title>/*`. `PagesProjection::compile_path_glob` compiled every glob to
 `LOWER(title) GLOB ?` over `pages_cache`, a full scan, run twice on a first page
 (fetch and COUNT). The new `interactive_slo` probe (`Notes/*` among 100K pages)
-measured 13.45 ms against a 10 ms budget before the change.
+measured 13.45 ms against a 10 ms budget before the change and 0.73 ms after.
 
 A pattern with a literal head before its first `*`, `?` or `[` now also bounds
 `title COLLATE NOCASE` to `[head, head with its last char bumped)`, a range seek
