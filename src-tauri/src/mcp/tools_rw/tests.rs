@@ -86,6 +86,7 @@ async fn list_tools_advertises_the_rw_tools() {
             "restore_block",
             "batch",
             "edit_page_markdown",
+            "set_page_aliases",
         ],
         "tool order is part of the wire contract — do not re-order; new tools are appended",
     );
@@ -3937,4 +3938,151 @@ async fn edit_page_markdown_cross_space_refused_5399() {
     );
     assert_eq!(op_count(&pool).await, before, "no op was written");
     assert_eq!(live_children(&pool, &page).await, [a, b]);
+}
+
+// -------------------------------------------------------------------
+// set_page_aliases (#5378)
+// -------------------------------------------------------------------
+
+async fn aliases_of(pool: &SqlitePool, page: &str) -> Vec<String> {
+    crate::commands::get_page_aliases_inner(pool, page)
+        .await
+        .unwrap()
+}
+
+/// Seed `page`'s aliases as the user would, outside any agent scope.
+async fn seed_aliases(pool: &SqlitePool, mat: &Materializer, page: &str, aliases: &[&str]) {
+    let aliases = aliases.iter().map(|a| (*a).to_owned()).collect();
+    crate::commands::set_page_aliases_inner(pool, DEV, mat, page, aliases)
+        .await
+        .unwrap();
+    settle(mat).await;
+}
+
+/// The call replaces the list, and its op refs, the ones its one activity
+/// entry carries, revert as the feed's Undo does to the list before it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_replaces_the_list_and_one_undo_restores_it_5378() {
+    use agaric_store::task_locals::{LAST_APPEND, take_appends};
+    use std::cell::RefCell;
+
+    let (tools, mat, pool, space, emitter, _dir) = mk_tools_recording().await;
+    let page = mk_page(&pool, &mat, &space, "Home").await;
+    seed_aliases(&pool, &mat, &page, &["old", "keep"]).await;
+
+    let (result, op_refs) = LAST_APPEND
+        .scope(RefCell::new(Vec::new()), async {
+            let result = tools
+                .call_tool(
+                    "set_page_aliases",
+                    json!({ "page_id": page, "aliases": ["keep", " new "], "space_id": space }),
+                    &test_ctx_agent(),
+                )
+                .await
+                .expect("happy path");
+            (result, take_appends())
+        })
+        .await;
+    settle(&mat).await;
+
+    assert_eq!(
+        result,
+        json!({ "page_id": page, "aliases": ["keep", "new"] })
+    );
+    assert_eq!(aliases_of(&pool, &page).await, ["keep", "new"]);
+    assert_eq!(emitter.blocks_changed(), vec![vec![page.clone()]]);
+
+    // The activity feed's Undo: `revert_ops` on the entry's refs, as the user.
+    crate::commands::revert_ops_inner(&pool, DEV, &mat, op_refs)
+        .await
+        .expect("the call's ops revert");
+    settle(&mat).await;
+    assert_eq!(aliases_of(&pool, &page).await, ["keep", "old"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_unknown_page_is_not_found_5378() {
+    let (tools, _mat, pool, space, _dir) = mk_tools().await;
+    let missing = BlockId::new().into_string();
+    let before = op_count(&pool).await;
+
+    let err = tools
+        .call_tool(
+            "set_page_aliases",
+            json!({ "page_id": missing, "aliases": ["a"], "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("no such page");
+    assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    assert_eq!(op_count(&pool).await, before, "no op was written");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_non_page_is_not_found_5378() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "c").await;
+    settle(&mat).await;
+    let before = op_count(&pool).await;
+
+    let err = tools
+        .call_tool(
+            "set_page_aliases",
+            json!({ "page_id": block.id.as_str(), "aliases": ["a"], "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("only a page has aliases");
+    assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    assert_eq!(op_count(&pool).await, before, "no op was written");
+    assert!(aliases_of(&pool, block.id.as_str()).await.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_cross_space_rejected_5378() {
+    let (tools, mat, pool, space_a, _dir) = mk_tools().await;
+    let space_b = mk_space(&pool, " space B").await;
+    let page_b = mk_page(&pool, &mat, &space_b, "PageB").await;
+    seed_aliases(&pool, &mat, &page_b, &["b1"]).await;
+
+    let err = tools
+        .call_tool(
+            "set_page_aliases",
+            json!({ "page_id": page_b, "aliases": ["a"], "space_id": space_a }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("a page of another space is refused");
+    assert!(
+        matches!(&err, AppError::Validation { message, .. } if message.contains("belongs to space")),
+        "got {err:?}"
+    );
+    assert_eq!(aliases_of(&pool, &page_b).await, ["b1"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_page_aliases_alias_held_by_another_page_rejected_5378() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let page = mk_page(&pool, &mat, &space, "Mine").await;
+    let other = mk_page(&pool, &mat, &space, "Theirs").await;
+    seed_aliases(&pool, &mat, &page, &["mine"]).await;
+    seed_aliases(&pool, &mat, &other, &["taken"]).await;
+    let before = op_count(&pool).await;
+
+    let err = tools
+        .call_tool(
+            "set_page_aliases",
+            json!({ "page_id": page, "aliases": ["fresh", "taken"], "space_id": space }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("another page holds `taken`");
+    assert_eq!(
+        err.validation_code(),
+        Some(agaric_core::error::ValidationCode::DuplicatePageAlias),
+        "got {err:?}"
+    );
+    assert_eq!(op_count(&pool).await, before, "nothing was written");
+    assert_eq!(aliases_of(&pool, &page).await, ["mine"]);
+    assert_eq!(aliases_of(&pool, &other).await, ["taken"]);
 }

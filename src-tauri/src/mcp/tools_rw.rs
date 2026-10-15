@@ -29,6 +29,7 @@
 //! | `restore_block` | [`restore_block_inner`] | Takes the `deleted_at` that `delete_block` / `list_trash` returned. |
 //! | `batch` | the `_in_tx` halves of the tools it names | #5399 — `append_block`, `update_block_content`, `set_property`, `add_tag`, `remove_tag`, `move_blocks` and `delete_block` calls in one transaction: one activity entry, one undo, nothing written when one is refused. |
 //! | `edit_page_markdown` | [`apply_page_source_inner`] | #5399 — the page's source as `get_page_markdown` with `editable` reads it, edited, saved as the app's source mode saves it. A stale `base` is refused. |
+//! | `set_page_aliases` | [`set_page_aliases_inner`] | Replaces the page's whole alias list in one transaction. An alias another page holds is refused, nothing written. |
 //!
 //! Every write tool's result carries the `op_refs` it appended, added by the
 //! adapter (`rmcp_adapter::with_op_refs`), not by these handlers.
@@ -69,8 +70,8 @@ use super::registry::{
     TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_BATCH, TOOL_CAPTURE,
     TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY,
     TOOL_EDIT_PAGE_MARKDOWN, TOOL_LIST_SPACES, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE,
-    TOOL_REMOVE_TAG, TOOL_RESTORE_BLOCK, TOOL_SET_PROPERTY, TOOL_UNDO, TOOL_UPDATE_BLOCK_CONTENT,
-    ToolDescription, ToolRegistry,
+    TOOL_REMOVE_TAG, TOOL_RESTORE_BLOCK, TOOL_SET_PAGE_ALIASES, TOOL_SET_PROPERTY, TOOL_UNDO,
+    TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::blocks::crud::{DeleteInTx, delete_block_in_tx, dispatch_deletes};
@@ -87,7 +88,7 @@ use crate::commands::{
     create_block_inner_with_space, delete_block_inner, delete_property_inner,
     get_active_block_inner, list_spaces_registry_inner, move_blocks_batch_inner,
     move_blocks_to_space_inner, remove_tag_inner, restore_block_inner, revert_ops_inner,
-    set_property_inner,
+    set_page_aliases_inner, set_property_inner,
 };
 use crate::db::CommandTx;
 use crate::materializer::Materializer;
@@ -279,6 +280,14 @@ struct EditPageMarkdownArgs {
     space_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetPageAliasesArgs {
+    page_id: String,
+    aliases: Vec<String>,
+    space_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // ReadWriteTools
 // ---------------------------------------------------------------------------
@@ -369,6 +378,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_restore_block(),
         tool_desc_batch(),
         tool_desc_edit_page_markdown(),
+        tool_desc_set_page_aliases(),
     ]
 }
 
@@ -441,6 +451,9 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_BATCH => handle_batch(&pool, &materializer, &device_id, emitter, args).await,
                 TOOL_EDIT_PAGE_MARKDOWN => {
                     handle_edit_page_markdown(&pool, &materializer, &device_id, emitter, args).await
+                }
+                TOOL_SET_PAGE_ALIASES => {
+                    handle_set_page_aliases(&pool, &materializer, &device_id, emitter, args).await
                 }
                 other => Err(unknown_tool_error(other)),
             }
@@ -728,6 +741,36 @@ fn tool_desc_delete_property() -> ToolDescription {
                 "space_id": {
                     "type": "string",
                     "description": "ULID of the space the agent is operating in. The delete is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
+                },
+            },
+        }),
+    }
+}
+
+fn tool_desc_set_page_aliases() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_SET_PAGE_ALIASES.to_string(),
+        description: "Replace a page's aliases with the given list, returned as { page_id, \
+                      aliases }. Entries are trimmed, blank ones dropped, and a second spelling \
+                      of one alias (ignoring ASCII case) dropped; an empty list removes every \
+                      alias. An alias another page holds, in any space or the Trash, is refused \
+                      with a Validation error and nothing is written. Reversible via page \
+                      history."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["page_id", "aliases", "space_id"],
+            "properties": {
+                "page_id": { "type": "string", "description": "ULID, title or alias of the page." },
+                "aliases": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "The page's full alias list after the call.",
+                },
+                "space_id": {
+                    "type": "string",
+                    "description": "ULID of the space the agent is operating in. The call is rejected with a Validation error if `page_id` lives in a different space.",
                 },
             },
         }),
@@ -1499,6 +1542,31 @@ async fn handle_delete_property(
         block_id,
         key: args.key,
     })
+}
+
+async fn handle_set_page_aliases(
+    pool: &SqlitePool,
+    materializer: &Materializer,
+    device_id: &str,
+    emitter: &dyn ViewChangeEmitter,
+    args: Value,
+) -> Result<Value, AppError> {
+    let args: SetPageAliasesArgs = parse_args(TOOL_SET_PAGE_ALIASES, args)?;
+    let space_id = normalize_ulid_arg(&args.space_id);
+    let page_id = resolve_id_arg(
+        pool,
+        TOOL_SET_PAGE_ALIASES,
+        "page_id",
+        &args.page_id,
+        Named::Page,
+        &space_id,
+    )
+    .await?;
+    validate_block_in_space(pool, &page_id, &space_id).await?;
+    let aliases =
+        set_page_aliases_inner(pool, device_id, materializer, &page_id, args.aliases).await?;
+    emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&page_id)).await;
+    to_tool_result(&json!({ "page_id": page_id, "aliases": aliases }))
 }
 
 /// Reverts through the same inner as the Activity feed's Undo, so the revert
