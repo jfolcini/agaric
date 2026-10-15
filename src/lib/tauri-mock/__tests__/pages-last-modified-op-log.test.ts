@@ -5,21 +5,18 @@
  *
  * ## What this file guards
  *
- * The backend has exactly ONE last-edited source per consumer, both derived
- * from `op_log`, else the page's ULID creation time — no seed table:
- *
- *  - the IPC column and the `RecentlyModified` keyset read
- *    `pages_cache.last_edited_ms` (#5371): the newest op on the page or any
- *    block on it, raised as ops land, `COALESCE(…, 0)` for the keyset, so
- *    rows with no op and an epoch id tie at the bottom and fall to the id
- *    tiebreak. The mock derives the same value from its op log on every call
- *    (`pagesLastEditedAt`, `shared.ts`); removing a page's rows below models a
- *    page that never had an op, not compaction, which the backend no longer
- *    lets lower the value;
- *  - `compile_last_edited` (`agaric-store/src/filters/primitive.rs`) reads the
- *    page block's own ops (`last_edited_ms_sql`), giving the documented "no
- *    op-log ⇒ epoch" rule (Rolling EXCLUDES, OlderThan INCLUDES, Range
- *    EXCLUDES).
+ * The backend has exactly ONE last-edited source, derived from `op_log`, else
+ * the page's ULID creation time — no seed table: the IPC column, the
+ * `RecentlyModified` keyset and the `LastEdited` filter
+ * (`compile_last_edited`, `agaric-store/src/filters/primitive.rs`) all read
+ * `pages_cache.last_edited_ms` (#5371), the newest op on the page or any block
+ * on it, raised as ops land. Rows with no op and an epoch id read as the
+ * epoch: they tie at the bottom of the keyset and fall to the id tiebreak,
+ * and the filter applies the "no op-log ⇒ epoch" rule (Rolling EXCLUDES,
+ * OlderThan INCLUDES, Range EXCLUDES). The mock derives the same value from
+ * its op log on every call (`pagesLastEditedAt`, `shared.ts`); removing a
+ * page's rows below models a page that never had an op, not compaction,
+ * which the backend no longer lets lower the value.
  *
  * The seed's ids all decode to the epoch, which this mock spells `null`, so
  * sections 1-3 see only the op-log half; section 4 pins the ULID half.

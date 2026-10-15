@@ -64,7 +64,9 @@ cross-surface; the Pages-only and Search-only groups are surface specialties.
   the DATE-exact `= ?` form (which already matches the whole calendar day),
   staying byte-identical with the backlink resolver oracle.
 - **`LastEditedSpec`** — `Rolling { days }` / `Range { start, end }` /
-  `OlderThan { days }`.
+  `OlderThan { days }`. Pages compares the page-wide `pages_cache.last_edited_ms`
+  its "Last edited" sort reads; Search and the advanced query compare the
+  block's own newest op, else its ULID creation time (`last_edited_ms_sql`).
 - **`SnippetSpec`** — FTS5 `snippet()` window parameters.
 
 ### Wire format
@@ -128,8 +130,10 @@ defence-in-depth.
   is the advanced-query surface. It supports the shared leaves and the #1280
   metadata leaves, and **delegates every one to `PagesProjection`** (both run on
   `FROM blocks b`), so the advanced query's SQL is byte-shape-identical to the
-  Pages surface. Pages-only physical leaves and Search-only leaves fall through
-  to `unsupported()`.
+  Pages surface. The exception is `last-edited`, which delegates to
+  `SearchProjection`, because Pages reads the page-wide `pages_cache` column.
+  Pages-only physical leaves and Search-only leaves fall through to
+  `unsupported()`.
 
 ## Per-surface allow-list gate
 

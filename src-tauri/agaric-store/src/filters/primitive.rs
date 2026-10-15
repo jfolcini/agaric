@@ -301,7 +301,7 @@ pub enum LastEditedSpec {
 impl LastEditedSpec {
     /// Reject a `Range` bound the compiler cannot parse. Every surface that
     /// accepts a spec from IPC or a persisted query runs this at its boundary,
-    /// because `PagesProjection::compile_last_edited` panics on a malformed
+    /// because `compile_last_edited_against` panics on a malformed
     /// bound (#383) rather than silently matching nothing.
     ///
     /// Bounds compare against `op_log.created_at` (full ISO timestamps), so a
@@ -373,7 +373,7 @@ const DAY_END: &str = "T23:59:59.999Z";
 ///
 /// A bound that already carries a `T` is a full RFC 3339 instant and converts
 /// verbatim; a bare calendar date is anchored with `anchor` first. Both
-/// [`LastEditedSpec::validate`] and `PagesProjection::compile_last_edited` go
+/// [`LastEditedSpec::validate`] and [`compile_last_edited_against`] go
 /// through here, so the set of strings they accept cannot drift apart.
 fn last_edited_bound_ms(value: &str, anchor: &str) -> Option<i64> {
     let ts = if value.contains('T') {
@@ -414,6 +414,52 @@ pub fn last_edited_ms_sql(id_expr: &str) -> String {
         "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = {id_expr}), {})",
         ulid_created_ms_sql(id_expr)
     )
+}
+
+/// The `LastEdited` comparison against `last_edited`, an epoch-ms SQL
+/// expression that is never NULL.
+///
+/// **End-of-day inclusivity:** the Range `end` bound is a *user-facing
+/// calendar window* — selecting `… AND 2026-03-01` means "up to and including
+/// all of March 1st". A bare (`YYYY-MM-DD`, no `T`) `end` is extended to the
+/// last instant of that day (`T23:59:59.999Z`) before conversion to epoch-ms;
+/// a bare `start` converts to midnight, already at/before any same-day edit.
+/// A bound that carries a `T` (full RFC 3339, also accepted by
+/// [`LastEditedSpec::validate`]) is converted verbatim.
+///
+/// The "now − N days" boundary is computed in SQLite as epoch-ms:
+/// `CAST(strftime('%s','now',?) AS INTEGER) * 1000` (the `?` is the
+/// `-N days` modifier), matching the column's units.
+fn compile_last_edited_against(spec: &LastEditedSpec, last_edited: &str) -> WhereClause {
+    // #383: every surface runs `LastEditedSpec::validate` at its boundary,
+    // against this same function, so `None` here means a validation bypass.
+    // An epoch-0 bound matches nothing, so the user's filter would quietly
+    // return the wrong rows — fail loudly in every build instead.
+    fn to_ms(value: &str, anchor: &str) -> i64 {
+        last_edited_bound_ms(value, anchor).unwrap_or_else(|| {
+            panic!(
+                "last_edited Range bound must be a timestamp \
+                 `LastEditedSpec::validate` accepts, got '{value}'"
+            )
+        })
+    }
+    match spec {
+        LastEditedSpec::Rolling { days } => WhereClause::new(
+            format!("{last_edited} >= (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"),
+            vec![Bind::Text(format!("-{days} days"))],
+        ),
+        LastEditedSpec::OlderThan { days } => WhereClause::new(
+            format!("{last_edited} < (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"),
+            vec![Bind::Text(format!("-{days} days"))],
+        ),
+        LastEditedSpec::Range { start, end } => WhereClause::new(
+            format!("{last_edited} >= ? AND {last_edited} <= ?"),
+            vec![
+                Bind::Int(to_ms(start, DAY_START)),
+                Bind::Int(to_ms(end, DAY_END)),
+            ],
+        ),
+    }
 }
 
 /// Snippet-rendering parameters threaded through to the FTS5 `snippet()`
@@ -698,10 +744,10 @@ impl FilterPrimitive {
     ///   `idx_blocks_page_id`) or reads a materialised `pages_cache`
     ///   column.
     /// - **1 (per-row, cheap):** `Priority` (a single equality scan over
-    ///   `blocks.priority`, no dedicated index) and `LastEdited` (a
-    ///   correlated `MAX(created_at)` subquery over `op_log`, served
-    ///   per-row via `idx_op_log_block_id` — not an index anti-join, so it
-    ///   ranks below the genuine index-backed primitives).
+    ///   `blocks.priority`, no dedicated index) and `LastEdited` (on Search
+    ///   and the advanced query a correlated `MAX(created_at)` subquery over
+    ///   `op_log`, served per-row via `idx_op_log_block_id`; on Pages a
+    ///   column compare — ranked by its costlier form).
     /// - **2 (GLOB):** `PathGlob`, always. It compiles to
     ///   `LOWER(title) GLOB ?` (#1320-A — the SAME dialect as Search;
     ///   `GLOB` + brace + `[class]` semantics). On Pages a pattern with a
@@ -748,7 +794,7 @@ impl FilterPrimitive {
             | FilterPrimitive::DueDate { .. }
             | FilterPrimitive::Scheduled { .. }
             | FilterPrimitive::Created { .. } => 0,
-            // `Priority` is a per-row equality; `LastEdited` is a
+            // `Priority` is a per-row equality; `LastEdited` is at worst a
             // per-row correlated `MAX()` subquery (served via
             // `idx_op_log_block_id`) — both rank above a full LIKE scan.
             // #1280 — `State`/`BlockType` are per-row column membership
@@ -1186,83 +1232,13 @@ impl Projection for PagesProjection {
             }
         }
     }
-    fn compile_last_edited(&self, spec: &LastEditedSpec, alias: &str) -> WhereClause {
-        // Uses the page's own last-edited expression ([`last_edited_ms_sql`]:
-        // newest op, else ULID creation time). A future phase may swap to a
-        // materialised `pages_cache.last_edited_at` column.
-        //
-        // **Epoch rule:** only an id that is not a ULID AND has no `op_log`
-        // row leaves that expression NULL. All three variants COALESCE that
-        // NULL to a common epoch sentinel (`0`, i.e. 1970-01-01 in the
-        // INTEGER-epoch-ms scheme, #109) so the
-        // "treated as edited at the epoch" rule is uniform:
-        //   - Rolling{N}   — epoch is far in the past, so it is `< now-N`
-        //                    and the page is EXCLUDED (it wasn't edited
-        //                    recently).
-        //   - OlderThan{N} — epoch is `< now-N`, so the page is INCLUDED
-        //                    (it counts as "old").
-        //   - Range{a,b}   — epoch is below any plausible `start`, so the
-        //                    page is EXCLUDED (it falls outside the window).
-        // Without the shared sentinel, Rolling/Range would silently drop such
-        // a page (NULL comparisons → NULL → false) while OlderThan
-        // included it — an asymmetry. The dates a Range binds are validated
-        // upstream in `commands::pages::compile_pages_filters`.
-        //
-        // **End-of-day inclusivity:** the Range `end` bound is
-        // a *user-facing calendar window* — selecting `… AND 2026-03-01`
-        // means "up to and including all of March 1st". `op_log.created_at`
-        // is INTEGER epoch-ms (#109), so we convert each bound to an
-        // epoch-ms integer: a bare (`YYYY-MM-DD`, no `T`) `end` is extended
-        // to the last instant of that day (`T23:59:59.999Z`) before
-        // conversion so the whole end day is included. A `start` bound needs
-        // no such treatment: a bare `'2026-02-01'` converts to midnight,
-        // already at/before any same-day edit, so `>= start_ms` correctly
-        // admits the entire start day. An `end` that already carries a `T`
-        // (full RFC 3339, also accepted by `LastEditedSpec::validate`) is
-        // converted verbatim — the caller asked for an exact instant.
-        //
-        // The "now − N days" boundary is computed in SQLite as epoch-ms:
-        // `CAST(strftime('%s','now',?) AS INTEGER) * 1000` (the `?` is the
-        // `-N days` modifier), matching the column's units.
-        const EPOCH: &str = "0"; // 1970-01-01T00:00:00Z in epoch-ms
-        // #383: every surface runs `LastEditedSpec::validate` at its boundary,
-        // against this same function, so `None` here means a validation bypass.
-        // An epoch-0 bound matches nothing, so the user's filter would quietly
-        // return the wrong rows — fail loudly in every build instead.
-        fn to_ms(value: &str, anchor: &str) -> i64 {
-            last_edited_bound_ms(value, anchor).unwrap_or_else(|| {
-                panic!(
-                    "last_edited Range bound must be a timestamp \
-                     `LastEditedSpec::validate` accepts, got '{value}'"
-                )
-            })
-        }
-        let last_edited = format!(
-            "COALESCE({}, {EPOCH})",
-            last_edited_ms_sql(&format!("{alias}.id"))
-        );
-        match spec {
-            LastEditedSpec::Rolling { days } => WhereClause::new(
-                format!("{last_edited} >= (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"),
-                vec![Bind::Text(format!("-{days} days"))],
-            ),
-            LastEditedSpec::OlderThan { days } => WhereClause::new(
-                format!("{last_edited} < (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"),
-                vec![Bind::Text(format!("-{days} days"))],
-            ),
-            LastEditedSpec::Range { start, end } => {
-                // A bare-date `end` (no `T`) is extended to the end of that
-                // calendar day so daytime edits on the end day are INCLUDED
-                // A bare-date `start` is anchored at midnight.
-                // Both are then converted to epoch-ms to match the column.
-                let start_ms = to_ms(start, DAY_START);
-                let end_ms = to_ms(end, DAY_END);
-                WhereClause::new(
-                    format!("{last_edited} >= ? AND {last_edited} <= ?"),
-                    vec![Bind::Int(start_ms), Bind::Int(end_ms)],
-                )
-            }
-        }
+    fn compile_last_edited(&self, spec: &LastEditedSpec, _alias: &str) -> WhereClause {
+        // The page-wide value the "Recently modified" sort reads, so the
+        // filter and the sort agree on a page whose child was edited after
+        // its title. NOT NULL: a page no op touched holds its ULID creation
+        // time (0 or 1 for a non-ULID id, i.e. the epoch), so Rolling and
+        // Range exclude it and OlderThan includes it.
+        compile_last_edited_against(spec, "pc.last_edited_ms")
     }
     /// D17 — **intentionally redundant on the Pages surface.** The Pages
     /// IPC (`commands::pages::list_pages_with_metadata_inner`) is already
@@ -1543,7 +1519,15 @@ impl Projection for SearchProjection {
         PagesProjection.compile_has_property(key, predicate, alias)
     }
     fn compile_last_edited(&self, spec: &LastEditedSpec, alias: &str) -> WhereClause {
-        PagesProjection.compile_last_edited(spec, alias)
+        // A block's own newest op, else its ULID creation time. Only a
+        // non-ULID id with no op leaves that NULL; COALESCE it to the epoch
+        // (`0`, #109) in every variant, so Rolling and Range exclude it and
+        // OlderThan includes it rather than NULL dropping it from all three.
+        let last_edited = format!(
+            "COALESCE({}, 0)",
+            last_edited_ms_sql(&format!("{alias}.id"))
+        );
+        compile_last_edited_against(spec, &last_edited)
     }
     fn compile_space(&self, space_id: &str, alias: &str) -> WhereClause {
         PagesProjection.compile_space(space_id, alias)
@@ -2149,14 +2133,14 @@ mod tests {
     #[test]
     fn last_edited_all_variants_coalesce_no_op_log_to_common_epoch() {
         // The "no op-log ⇒ epoch" rule must be uniform: ALL
-        // three variants COALESCE the page's last-edited expression to the
+        // three variants COALESCE the block's last-edited expression to the
         // SAME epoch sentinel — the INTEGER epoch-ms `0` (#109) — so a
-        // no-op-log page is handled consistently (excluded by
+        // no-op-log block is handled consistently (excluded by
         // Rolling/Range, included by OlderThan). Omitting the COALESCE in
-        // Rolling/Range would silently drop such pages (NULL → false)
+        // Rolling/Range would silently drop such blocks (NULL → false)
         // while OlderThan kept them — an asymmetry.
         const EPOCH: &str = ", 0)"; // COALESCE(..., 0)
-        let p = PagesProjection;
+        let p = SearchProjection;
         for spec in [
             LastEditedSpec::Rolling { days: 7 },
             LastEditedSpec::OlderThan { days: 7 },
@@ -2283,7 +2267,7 @@ mod tests {
             .cost_hint(),
             1
         );
-        // LastEdited — per-row correlated MAX() subquery (served via
+        // LastEdited — at worst a per-row correlated MAX() subquery (served via
         // idx_op_log_block_id), ranks with Priority above the true
         // index anti-joins (1), not at 0.
         assert_eq!(

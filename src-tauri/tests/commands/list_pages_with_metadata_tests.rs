@@ -878,9 +878,8 @@ async fn recently_modified_paginates_through_no_op_log_pages() {
 
 // ── #5286: op-log compaction must not erase "last modified" ───────────────
 
-/// The sort's `pages_cache.last_edited_ms` keeps the value compaction takes
-/// from the op log (#5371); the `LastEdited` filter still reads the op log
-/// and falls back to the ULID creation time.
+/// `pages_cache.last_edited_ms`, which the sort and the `LastEdited` filter
+/// both read, keeps the value compaction takes from the op log (#5371).
 #[tokio::test]
 async fn compacted_pages_fall_back_to_their_ulid_creation_time_5286() {
     let (pool, _dir) = test_pool().await;
@@ -2857,6 +2856,107 @@ async fn last_edited_range_bounds_inclusive() {
         "Range must include only the page inside [start, end]; \
          before/after/no-op-log pages are excluded"
     );
+}
+
+/// The filter reads the page-wide `pages_cache.last_edited_ms` the
+/// `RecentlyModified` sort reads, so a child edit counts as editing its page.
+#[tokio::test]
+async fn last_edited_rolling_and_older_than_count_a_child_edit() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000CHE", "ChildEdited").await;
+    seed_child(
+        &pool,
+        "01CHILD0000000000000000CE",
+        "01PAGE0000000000000000CHE",
+        "child",
+    )
+    .await;
+    seed_page(&pool, "01PAGE0000000000000000OLD", "Old").await;
+    let old_ts = now_minus_days_iso(&pool, 100).await;
+    let recent_ts = now_minus_days_iso(&pool, 1).await;
+    seed_op_log(&pool, "01PAGE0000000000000000CHE", &old_ts).await;
+    seed_op_log(&pool, "01CHILD0000000000000000CE", &recent_ts).await;
+    seed_op_log(&pool, "01PAGE0000000000000000OLD", &old_ts).await;
+
+    let mut by_spec = Vec::new();
+    for spec in [
+        LastEditedSpec::Rolling { days: 7 },
+        LastEditedSpec::OlderThan { days: 7 },
+    ] {
+        let resp = list_pages_with_metadata_inner(
+            &pool,
+            filter_with(
+                PageSort::Alphabetical,
+                vec![FilterPrimitive::LastEdited { spec }],
+            ),
+            None,
+            Some(50),
+        )
+        .await
+        .unwrap();
+        let contents: Vec<String> = resp.items.into_iter().filter_map(|p| p.content).collect();
+        by_spec.push(contents);
+    }
+    assert_eq!(
+        by_spec,
+        vec![vec!["ChildEdited".to_owned()], vec!["Old".to_owned()]],
+        "Rolling{{7}} includes the page whose child was edited yesterday and \
+         OlderThan{{7}} excludes it, although its own block is 100 days old"
+    );
+}
+
+/// [`last_edited_rolling_and_older_than_count_a_child_edit`] for `Range`: the
+/// page-wide newest edit decides, in both directions.
+#[tokio::test]
+async fn last_edited_range_reads_the_page_wide_newest_edit() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    // Own block before the range, child edited inside it: INCLUDED.
+    seed_page(&pool, "01PAGE0000000000000000CIN", "ChildInRange").await;
+    seed_child(
+        &pool,
+        "01CHILD0000000000000000CI",
+        "01PAGE0000000000000000CIN",
+        "child",
+    )
+    .await;
+    seed_op_log(&pool, "01PAGE0000000000000000CIN", "2026-01-01T00:00:00Z").await;
+    seed_op_log(&pool, "01CHILD0000000000000000CI", "2026-02-15T00:00:00Z").await;
+    // Own block inside the range, child edited after it: EXCLUDED.
+    seed_page(&pool, "01PAGE0000000000000000CAF", "ChildAfterRange").await;
+    seed_child(
+        &pool,
+        "01CHILD0000000000000000CA",
+        "01PAGE0000000000000000CAF",
+        "child",
+    )
+    .await;
+    seed_op_log(&pool, "01PAGE0000000000000000CAF", "2026-02-15T00:00:00Z").await;
+    seed_op_log(&pool, "01CHILD0000000000000000CA", "2026-04-01T00:00:00Z").await;
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::LastEdited {
+                spec: LastEditedSpec::Range {
+                    start: "2026-02-01T00:00:00Z".to_string(),
+                    end: "2026-03-01T00:00:00Z".to_string(),
+                },
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .unwrap();
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(contents, vec!["ChildInRange"]);
 }
 
 // ── LastEdited Range date validation ───────────────────────

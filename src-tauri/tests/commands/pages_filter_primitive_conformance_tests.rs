@@ -86,8 +86,9 @@ fn load_vectors() -> Vectors {
 ///   page's space, which the base SELECT lists by;
 /// - `blocks.priority` is stamped when present (read directly by `Priority`);
 /// - an `op_log` row stamped with `lastModifiedAt` is inserted only when
-///   non-null, so `LastEdited`'s `MAX(op_log.created_at)` subquery yields NULL
-///   for a null fixture timestamp (the Range bound then excludes it).
+///   non-null, and raises `pages_cache.last_edited_ms` (read by `LastEdited`)
+///   the way every op-landing path does; a null fixture timestamp leaves it
+///   at 0, which the Range bound excludes.
 async fn seed_filter_page(pool: &SqlitePool, row: &Row) {
     insert_block(pool, &row.id, "page", &row.title, None, Some(0)).await;
     assign_to_space(pool, &row.id, TEST_SPACE_ID).await;
@@ -133,6 +134,13 @@ async fn seed_filter_page(pool: &SqlitePool, row: &Row) {
         .bind(created_at_ms)
         .bind(&row.id)
         .execute(pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        agaric_store::cache::raise_pages_last_edited_ms(
+            &mut conn,
+            &[(row.id.as_str(), created_at_ms)],
+        )
         .await
         .unwrap();
     }

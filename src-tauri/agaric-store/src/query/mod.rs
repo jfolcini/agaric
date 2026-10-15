@@ -6,8 +6,9 @@
 //! This is the **first end-to-end** advanced query: it takes a
 //! [`FilterExpr`] boolean tree (AND / OR / NOT across every shared +
 //! metadata leaf), compiles it through [`projection::QueryProjection`]
-//! (which delegates each leaf to [`crate::filters::PagesProjection`] so the
-//! SQL is byte-shape-identical to the Pages surface), and runs a keyset-
+//! (which delegates each leaf but `last-edited` to
+//! [`crate::filters::PagesProjection`] so the SQL is byte-shape-identical to
+//! the Pages surface), and runs a keyset-
 //! paginated `SELECT … FROM blocks b`.
 //!
 //! ## Scope (structural + full-text)
@@ -370,7 +371,7 @@ pub enum SortColumn {
     /// creation order, so `Created` maps to `b.id`.
     Created,
     /// Last-edited time: `MAX(op_log.created_at)` over the block, else its
-    /// ULID creation time (matching `PagesProjection::compile_last_edited`).
+    /// ULID creation time (matching `SearchProjection::compile_last_edited`).
     LastEdited,
     /// Sibling position (`b.position`). NULL positions sort last.
     Position,
