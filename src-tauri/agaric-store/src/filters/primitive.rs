@@ -1059,6 +1059,44 @@ pub static SEARCH_ALLOWED_KEYS: std::sync::LazyLock<HashSet<&'static str>> =
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PagesProjection;
 
+impl PagesProjection {
+    /// [`Projection::compile_path_glob`] tested on `column`, a page id,
+    /// instead of `{alias}.id`.
+    pub fn compile_path_glob_on(&self, column: &str, pattern: &str, exclude: bool) -> WhereClause {
+        // #1320-A — Pages now uses the SAME `LOWER(title) GLOB ?` dialect as
+        // Search (after #1320), so both surfaces share `GLOB` + brace +
+        // `[class]` semantics. This is the SINGLE-pattern fragment for ONE
+        // already-prepared pattern: the caller (`compile_pages_filters`)
+        // runs `prepare_globs` to brace-expand / substring-wrap /
+        // ASCII-lowercase the raw pattern, then OR/AND-joins the per-pattern
+        // fragments this method emits. The `pattern` is therefore bound
+        // VERBATIM (`Bind::Text(pattern.to_string())`, NO `glob_to_like`).
+        //
+        // A pattern with a literal head also gets a `title COLLATE NOCASE`
+        // range, so the sub-select searches `idx_pages_cache_title_nocase`
+        // instead of scanning `pages_cache` (#5426); the GLOB stays the
+        // predicate.
+        let op = if exclude { "NOT IN" } else { "IN" };
+        let glob = Bind::Text(pattern.to_string());
+        match glob_literal_prefix_range(pattern) {
+            Some((lo, hi)) => WhereClause::new(
+                format!(
+                    "{column} {op} (SELECT page_id FROM pages_cache \
+                     WHERE title COLLATE NOCASE >= ? AND title COLLATE NOCASE < ? \
+                     AND LOWER(title) GLOB ?)"
+                ),
+                vec![Bind::Text(lo), Bind::Text(hi), glob],
+            ),
+            None => WhereClause::new(
+                format!(
+                    "{column} {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"
+                ),
+                vec![glob],
+            ),
+        }
+    }
+}
+
 impl Projection for PagesProjection {
     fn allowed_keys() -> &'static HashSet<&'static str> {
         &PAGES_ALLOWED_KEYS
@@ -1085,37 +1123,8 @@ impl Projection for PagesProjection {
         )
     }
     fn compile_path_glob(&self, pattern: &str, exclude: bool, alias: &str) -> WhereClause {
-        // #1320-A — Pages now uses the SAME `LOWER(title) GLOB ?` dialect as
-        // Search (after #1320), so both surfaces share `GLOB` + brace +
-        // `[class]` semantics. This is the SINGLE-pattern fragment for ONE
-        // already-prepared pattern: the caller (`compile_pages_filters`)
-        // runs `prepare_globs` to brace-expand / substring-wrap /
-        // ASCII-lowercase the raw pattern, then OR/AND-joins the per-pattern
-        // fragments this method emits. The `pattern` is therefore bound
-        // VERBATIM (`Bind::Text(pattern.to_string())`, NO `glob_to_like`).
-        //
-        // Pages keeps the `b.id` alias (Search uses `b.page_id`). A pattern
-        // with a literal head also gets a `title COLLATE NOCASE` range, so
-        // the sub-select searches `idx_pages_cache_title_nocase` instead of
-        // scanning `pages_cache` (#5426); the GLOB stays the predicate.
-        let op = if exclude { "NOT IN" } else { "IN" };
-        let glob = Bind::Text(pattern.to_string());
-        match glob_literal_prefix_range(pattern) {
-            Some((lo, hi)) => WhereClause::new(
-                format!(
-                    "{alias}.id {op} (SELECT page_id FROM pages_cache \
-                     WHERE title COLLATE NOCASE >= ? AND title COLLATE NOCASE < ? \
-                     AND LOWER(title) GLOB ?)"
-                ),
-                vec![Bind::Text(lo), Bind::Text(hi), glob],
-            ),
-            None => WhereClause::new(
-                format!(
-                    "{alias}.id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)"
-                ),
-                vec![glob],
-            ),
-        }
+        // Pages keeps the `b.id` alias (Search uses `b.page_id`).
+        self.compile_path_glob_on(&format!("{alias}.id"), pattern, exclude)
     }
     fn compile_has_property(
         &self,

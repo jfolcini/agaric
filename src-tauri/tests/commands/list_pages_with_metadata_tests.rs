@@ -1646,6 +1646,99 @@ async fn every_sort_reads_an_index_instead_of_sorting_the_space_5371() {
     }
 }
 
+/// A filter that lists its pages (a tag, an include path glob) drives every
+/// sort from that list: a plan that reads `pages_cache` by anything but
+/// `page_id` walks the whole space, testing each page against the filter
+/// (`PagesTreeSection`'s namespace lookup, a tag chip). A brace pair is an OR
+/// of lists, which only the `pages_cache` key serves. An exclude glob or a
+/// property filter lists no pages, so each keeps the sort's index.
+#[tokio::test]
+async fn page_list_filters_seek_their_pages_instead_of_walking_the_space() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    for i in 0..10 {
+        seed_page(
+            &pool,
+            &format!("01PAGE0000000000000000G{i:02}"),
+            &format!("Notes/child {i}"),
+        )
+        .await;
+    }
+    let glob = |pattern: &str, exclude| FilterPrimitive::PathGlob {
+        pattern: pattern.to_string(),
+        exclude,
+    };
+    let tag = "01TAG000000000000000000T1";
+    // Each filter's binds; a glob's are the title range, then the glob, per
+    // prepared pattern.
+    let notes: &[&str] = &["notes/", "notes0", "notes/*"];
+    let lists: [(FilterPrimitive, &[&str]); 4] = [
+        (glob("Notes/*", false), notes),
+        (
+            glob("{Notes,Journal}/*", false),
+            &[
+                "notes/",
+                "notes0",
+                "notes/*",
+                "journal/",
+                "journal0",
+                "journal/*",
+            ],
+        ),
+        (
+            FilterPrimitive::Tag {
+                tag: tag.to_string(),
+            },
+            &[tag],
+        ),
+        (
+            FilterPrimitive::TagOrRef {
+                tag: tag.to_string(),
+            },
+            &[tag, tag],
+        ),
+    ];
+    let sorts = [
+        PageSort::Alphabetical,
+        PageSort::Created,
+        PageSort::RecentlyModified,
+        PageSort::LastOpened,
+        PageSort::MostLinked,
+        PageSort::MostContent,
+    ];
+    for (list, binds) in &lists {
+        for sort in sorts {
+            let f = filter_with(sort, vec![list.clone()]);
+            let plan = explain_query_plan_for_filter(&pool, &f, binds).await;
+            for line in plan.lines() {
+                let reads_pc = line.starts_with("SCAN pc ") || line.starts_with("SEARCH pc ");
+                assert!(
+                    !reads_pc || line.contains("page_id=?"),
+                    "{list:?} under {sort:?} walks the space; got:\n{plan}"
+                );
+            }
+        }
+    }
+    let others: [(FilterPrimitive, &[&str]); 2] = [
+        (glob("Notes/*", true), notes),
+        (
+            FilterPrimitive::HasProperty {
+                key: "status".to_string(),
+                predicate: PropertyPredicate::Exists,
+            },
+            &["status"],
+        ),
+    ];
+    for (other, binds) in &others {
+        let f = filter_with(PageSort::Alphabetical, vec![other.clone()]);
+        let plan = explain_query_plan_for_filter(&pool, &f, binds).await;
+        assert!(
+            plan.contains("idx_pages_cache_space_title"),
+            "{other:?} must keep the sort's index; got:\n{plan}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn filtered_query_plan_explains_real_composed_ipc_sql() {
     // Assert the EXPLAIN harness now plans the IPC's REAL

@@ -503,10 +503,11 @@ fn compose_last_opened_sql<'a>(
 /// Phase 3 — compile the compound-filter primitives for the Pages
 /// surface into a single AND-joined SQL fragment plus its ordered binds.
 ///
-/// Returns `(sql_fragment, binds)` where `sql_fragment` is either empty
-/// (no filters) or a leading-` AND (...)`-style string ready to splice
-/// after the base WHERE and `binds` are the bind values in the SAME
-/// left-to-right order their `?` placeholders appear in the fragment.
+/// Returns `(sql_fragment, binds)` where `sql_fragment` is the space term
+/// ([`SPACE_TERM`] or [`SPACE_TERM_UNDER_PAGE_LIST`]) followed by an ` AND (...)`
+/// per compiled primitive, ready to splice after the base WHERE, and
+/// `binds` are the filter bind values in the SAME left-to-right order their
+/// `?` placeholders appear in the fragment.
 ///
 /// Steps:
 ///
@@ -529,15 +530,11 @@ fn compose_last_opened_sql<'a>(
 ///    expansion / substring wrap / ASCII-lowercase, the SAME preprocessing
 ///    Search does) and the resulting patterns are OR-joined (include) /
 ///    AND-joined (exclude) into ONE multi-`?` fragment built from
-///    per-pattern `PagesProjection::compile_path_glob` sub-selects, so the
+///    per-pattern `PagesProjection::compile_path_glob_on` sub-selects, so the
 ///    Pages surface now shares Search's `LOWER(title) GLOB ?` dialect.
 fn compile_pages_filters(
     filters: &[FilterPrimitive],
 ) -> Result<(String, Vec<SqlBind<'static>>), AppError> {
-    if filters.is_empty() {
-        return Ok((String::new(), Vec::new()));
-    }
-
     validate_pages_filters(filters)?;
 
     // Cost-order: stable sort by cost_hint keeps equal-cost primitives in
@@ -546,9 +543,10 @@ fn compile_pages_filters(
     ordered.sort_by_key(|p| p.cost_hint());
 
     let proj = PagesProjection;
+    let mut space_term = SPACE_TERM;
     let mut clauses: Vec<String> = Vec::with_capacity(ordered.len());
     let mut binds: Vec<SqlBind<'static>> = Vec::new();
-    // The projection emits anonymous `?` placeholders. The base SELECT
+    // The projection emits anonymous `?` placeholders. The space term
     // already uses an explicit `?1` (space_id) and the keyset uses explicit
     // `?N` numbers downstream — mixing explicit and anonymous placeholders
     // makes SQLite's positional numbering ambiguous (a bare `?` is numbered
@@ -568,6 +566,14 @@ fn compile_pages_filters(
         } else {
             proj.compile(prim)
         };
+        if matches!(
+            prim,
+            FilterPrimitive::Tag { .. }
+                | FilterPrimitive::TagOrRef { .. }
+                | FilterPrimitive::PathGlob { exclude: false, .. }
+        ) {
+            space_term = SPACE_TERM_UNDER_PAGE_LIST;
+        }
         // The allowed-keys gate above admits only Pages-surface tokens, but
         // a primitive could still compile to `unsupported()` via the
         // cross-surface default trait methods if a future variant lands on
@@ -592,7 +598,7 @@ fn compile_pages_filters(
         // replacing the former char-by-char scan.
         let fragment = agaric_store::filters::SqlFragment::from_where_clause(wc);
         let sql = fragment.render(&mut next_pos);
-        clauses.push(format!("({sql})"));
+        clauses.push(format!(" AND ({sql})"));
         for b in fragment.into_binds() {
             binds.push(match b {
                 agaric_store::filters::primitive::Bind::Text(s) => SqlBind::OwnedStr(s),
@@ -602,16 +608,7 @@ fn compile_pages_filters(
         }
     }
 
-    // Every primitive may legitimately emit NO clause (a `PathGlob` whose
-    // pattern reduces to zero prepared globs is `continue`d above, #1320-A).
-    // If that leaves `clauses` empty while `filters` was non-empty, joining
-    // would yield a dangling ` AND ` and SQLite would reject the spliced
-    // statement ("incomplete input"). Emit an empty fragment instead.
-    if clauses.is_empty() {
-        return Ok((String::new(), Vec::new()));
-    }
-    let fragment = format!(" AND {}", clauses.join(" AND "));
-    Ok((fragment, binds))
+    Ok((format!("{space_term}{}", clauses.concat()), binds))
 }
 
 /// Steps 1-2 of [`compile_pages_filters`] — everything that rejects a
@@ -648,10 +645,13 @@ fn validate_pages_filters(filters: &[FilterPrimitive]) -> Result<(), AppError> {
 /// Search path does upstream). One raw pattern can expand into MANY
 /// prepared patterns (`{a,b}/*` → two), so we build ONE fragment that
 /// OR-joins (include) / AND-joins (exclude) a per-pattern
-/// `PagesProjection::compile_path_glob` sub-select. The SELECT body is
+/// `PagesProjection::compile_path_glob_on` sub-select. The SELECT body is
 /// single-sourced through that method so the two surfaces stay in
-/// lockstep on the GLOB; Pages differs by the `b.id` alias and its
-/// title-range narrowing (#5426).
+/// lockstep on the GLOB; Pages differs by its title-range narrowing (#5426).
+///
+/// Each pattern tests `pc.page_id`, not `b.id`: SQLite carries the join's
+/// `b.id = pc.page_id` into a single `IN` but not into an OR of them, and
+/// only on the `pages_cache` key can a multi-pattern glob drive the list.
 ///
 /// `None` means the raw pattern reduced to zero prepared globs
 /// (whitespace-only / fully stripped), so it constrains no rows and
@@ -677,11 +677,7 @@ fn compile_path_glob_clause(
         if i > 0 {
             frag.push_str(joiner);
         }
-        let inner = proj.compile_path_glob(
-            pat,
-            exclude,
-            agaric_store::filters::primitive::DEFAULT_ROW_ALIAS,
-        );
+        let inner = proj.compile_path_glob_on("pc.page_id", pat, exclude);
         frag.push_str(&inner.sql);
         frag_binds.extend(inner.binds);
     }
@@ -722,9 +718,9 @@ const PAGES_METADATA_COLUMNS: &str = r"SELECT
                pc.title_sort_key,
                COALESCE(po.opened_ms, -1) AS opened_ms";
 
-/// The rows a Pages request reads. `?1` is the space_id bind; the
-/// compound-filter fragment (its `?` binds renumbered from `?2`) is appended
-/// after this, then the keyset / ORDER BY / LIMIT.
+/// The rows a Pages request reads. The compiled filter fragment appended
+/// after this opens with the space term (`?1`, [`SPACE_TERM`]), its own `?`
+/// binds renumbered from `?2`; then the keyset / ORDER BY / LIMIT.
 ///
 /// # One index range per sort (#5371, migration 0124)
 ///
@@ -744,8 +740,7 @@ const PAGES_METADATA_FROM: &str = r"
            FROM pages_cache pc
            CROSS JOIN blocks b ON b.id = pc.page_id
            LEFT JOIN page_opens po ON po.page_id = pc.page_id
-           WHERE pc.space_id = ?1
-             AND b.block_type = 'page'
+           WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL";
 
 /// [`PAGES_METADATA_FROM`] for the opened arm of
@@ -754,9 +749,20 @@ const PAGES_METADATA_FROM_OPENS: &str = r"
            FROM page_opens po
            CROSS JOIN pages_cache pc ON pc.page_id = po.page_id
            CROSS JOIN blocks b ON b.id = pc.page_id
-           WHERE pc.space_id = ?1
-             AND b.block_type = 'page'
+           WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL";
+
+/// The space every Pages statement lists: the first term after its base
+/// WHERE, the head of [`compile_pages_filters`]' fragment.
+const SPACE_TERM: &str = " AND pc.space_id = ?1";
+
+/// [`SPACE_TERM`] once a filter lists its pages: a tag or an include
+/// `PathGlob`, each an `IN` of page ids that can drive `pages_cache` by its
+/// key. The unary `+` keeps the space's sort indexes out of the plan: without
+/// `sqlite_stat1` the planner rates them above that list, then walks the
+/// whole space testing every page against it. A statement with no such list
+/// keeps [`SPACE_TERM`]: without the space index its plan scans every space.
+const SPACE_TERM_UNDER_PAGE_LIST: &str = " AND +pc.space_id = ?1";
 
 /// A fetched page row plus the two sort keys the wire row does not carry,
 /// so the next cursor holds exactly the key the keyset compared.
@@ -774,8 +780,8 @@ struct KeyedPageRow {
 /// instead of a hand-rebuilt copy that could silently drift from it.
 ///
 /// Mirrors the compose sequence in `list_pages_with_metadata_inner`:
-/// base SELECT (`?1` = space_id) → compiled compound-filter fragment
-/// (`?2 ..`) → keyset / ORDER BY / LIMIT (first page, `cursor = None`).
+/// base SELECT → space term (`?1` = space_id) and compiled compound-filter
+/// fragment (`?2 ..`) → keyset / ORDER BY / LIMIT (first page, `cursor = None`).
 /// The error path (invalid filter / date) surfaces verbatim so a test can
 /// also assert rejection. The space_id, filter binds, and `limit` are
 /// supplied by the caller via the bound `?N` placeholders at execution.
@@ -890,8 +896,7 @@ pub async fn list_pages_with_metadata_inner(
         let count_sql = format!(
             "SELECT COUNT(*) FROM pages_cache pc \
              CROSS JOIN blocks b ON b.id = pc.page_id \
-             WHERE pc.space_id = ?1 \
-               AND b.block_type = 'page' \
+             WHERE b.block_type = 'page' \
                AND b.deleted_at IS NULL{filter_sql}"
         );
         let mut count_query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()))

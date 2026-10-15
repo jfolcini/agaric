@@ -58,7 +58,7 @@ One side hook orbits this pipeline without altering its shape:
 
 Six options, every one ordered by the server over all pages in the space behind a keyset cursor (#5371). The rows render in the order received; nothing re-sorts them in JS.
 
-Each sort reads its rows in order from an index and stops at the page size instead of sorting the space (migration 0124). The query drives from `pages_cache`, which carries its page's `space_id`, through the index named below; a cursor page seeks into it at the cursor's key. A page also reads the rows it skips: those a filter rejects, and, for the count and last-edited sorts, the pages that share the cursor's key and sort before it, since the seek lands at the start of that run (many pages share a count of zero).
+Each sort reads its rows in order from an index and stops at the page size instead of sorting the space (migration 0124). The query drives from `pages_cache`, which carries its page's `space_id`, through the index named below; a cursor page seeks into it at the cursor's key. A page also reads the rows it skips: those a filter rejects, and, for the count and last-edited sorts, the pages that share the cursor's key and sort before it, since the seek lands at the start of that run (many pages share a count of zero). A tag filter or an include path glob is the exception: the query seeks the pages it lists by id and sorts only those (`SPACE_TERM_UNDER_PAGE_LIST` in `src-tauri/src/commands/pages/metadata.rs`).
 
 | Sort option | Wire value | Order | Cursor key | Index |
 |-------------|------------|-------|------------|-------|
