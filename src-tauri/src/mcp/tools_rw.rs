@@ -63,7 +63,7 @@ use sqlx::SqlitePool;
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{
     Named, normalize_ulid_arg, parse_args, resolve_id_arg, resolve_journal_date, to_tool_result,
-    validate_block_in_space, with_space_guard,
+    with_space_guard,
 };
 use super::registry::{
     TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_BATCH, TOOL_CAPTURE,
@@ -89,7 +89,7 @@ use crate::commands::{
     move_blocks_to_space_inner, remove_tag_inner, restore_block_inner, revert_ops_inner,
     set_property_inner,
 };
-use crate::db::CommandTx;
+use crate::db::{CommandTx, validate_block_in_space};
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;

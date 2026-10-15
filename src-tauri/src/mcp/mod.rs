@@ -1087,7 +1087,7 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
 /// `activity_ring` (#695) — same shared managed ring as the RO task,
 /// so the `get_mcp_recent_activity` command surfaces one merged feed.
 // The same dependency set as `spawn_mcp_ro_task`, for the same reason.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn spawn_mcp_rw_task<R: tauri::Runtime>(
     app_data_dir: &Path,
     app_handle: tauri::AppHandle<R>,

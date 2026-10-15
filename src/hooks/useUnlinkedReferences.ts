@@ -77,7 +77,8 @@ export interface UseUnlinkedReferencesParams {
    * `fetch_block_rows_by_ids` for 19 of the 20 groups — each up to
    * `MAX_BLOCKS_PER_GROUP = 200` rows — plus their JSON IPC serialization.
    * With no filters, #5422 goes further: `count_unlinked_references` answers
-   * the same counts in one SQL statement, with no root-page resolve or group.
+   * the same counts in one SQL statement that compares each hit's own
+   * `blocks.page_id` to the target, with no root-page lookup or grouping.
    *
    * Part of the query key, so expanding the panel refetches with the full page.
    * Defaults to `false`, leaving any other caller on the full page.
