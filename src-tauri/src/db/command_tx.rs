@@ -2,6 +2,129 @@ use sqlx::{Sqlite, SqlitePool};
 use std::sync::Arc;
 
 use super::begin_immediate_logged;
+use agaric_core::error::AppError;
+
+#[cfg(test)]
+tokio::task_local! {
+    static COMMAND_TX_OPENS: std::cell::Cell<usize>;
+}
+
+/// `future`'s output, and how many [`CommandTx`]s it opened.
+#[cfg(test)]
+pub(crate) async fn count_command_tx_opens<F: std::future::Future>(
+    future: F,
+) -> (F::Output, usize) {
+    COMMAND_TX_OPENS
+        .scope(std::cell::Cell::new(0), async {
+            let output = future.await;
+            (output, COMMAND_TX_OPENS.with(std::cell::Cell::get))
+        })
+        .await
+}
+
+/// Validate that `block_id`'s owning page lives in
+/// `space_id`, rejecting a target in another space at the MCP boundary.
+///
+/// The owning page is `b.id` if `b` is itself a page block (where
+/// `page_id` is set to `id` by `create_block_in_tx`), else `b.page_id`
+/// (an inherited reference to the page block at the top of the parent
+/// chain). The page's space comes from the page block's own
+/// `blocks.space_id` column (Phase 2, #533).
+///
+/// A read checks on the reader pool; a write checks inside its own
+/// transaction (#5402): a single-op tool through `with_space_guard`, and
+/// `batch` per op on the batch's connection.
+///
+/// # Returns
+///
+/// - `Ok(())` if the block does not exist (lets the downstream
+///   `*_inner` surface [`AppError::NotFound`] with a tool-specific
+///   message — duplicating the error here would just add a second
+///   variant to the agent-visible error chain), or if the owning
+///   page's space matches `space_id`.
+/// - [`AppError::Validation`] if the owning page exists in a different
+///   space, or has a NULL `space_id` / no owning page at all (e.g. the
+///   caller passed a tag block ID, or a corrupted page that escaped the
+///   IPC tightening).
+pub(crate) async fn validate_block_in_space<'e, E>(
+    executor: E,
+    block_id: &str,
+    space_id: &str,
+) -> Result<(), AppError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    // #1666: the compile-time-checked `query_scalar!` macro is used so a
+    // future `blocks.space_id` / `blocks.page_id` schema change breaks
+    // the build here rather than silently altering this security guard.
+    // The three-state distinction the LEFT JOIN needs — no row vs.
+    // row-with-NULL vs. row-with-value — is preserved by combining the
+    // explicit-nullable column annotation (`"space?"` → `Option<String>`
+    // for the COALESCE) with `.fetch_optional` (→ `Option<_>` for the
+    // missing-row case), yielding `Option<Option<String>>`. The bound is
+    // one-row, indexed (the PK on `blocks.id` for both the input lookup
+    // and the page self-join), no scan.
+    let row: Option<Option<String>> = sqlx::query_scalar!(
+        // #533: prefer the block's own `space_id`, falling back to its
+        // (live) owning page — mirrors `resolve_block_space` exactly,
+        // including the `pg.deleted_at IS NULL` guard so a soft-deleted
+        // owning page doesn't authorize a write via its retained space.
+        // The `"space?"` alias forces sqlx to type the COALESCE as
+        // nullable, so a row-with-NULL stays distinguishable from a
+        // row-with-value.
+        r#"SELECT COALESCE(b.space_id, pg.space_id) AS "space?"
+           FROM blocks b
+           LEFT JOIN blocks pg
+             ON pg.id = b.page_id AND pg.deleted_at IS NULL
+           WHERE b.id = ?"#,
+        block_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+
+    match row {
+        // Block doesn't exist — defer to the downstream `*_inner` to
+        // surface NotFound with a tool-specific message.
+        None => Ok(()),
+        // Block exists but its owning page has a NULL `space_id` (or it
+        // has no owning page) — either a tag block (global, no owning
+        // page) or a corrupted page. Refuse: a space-scoped write cannot
+        // be authorised against an unscoped target.
+        Some(None) => Err(AppError::validation(format!(
+            "block '{block_id}' does not belong to any space"
+        ))),
+        Some(Some(found)) if found == space_id => Ok(()),
+        Some(Some(found)) => Err(AppError::validation(format!(
+            "block '{block_id}' belongs to space '{found}', not '{space_id}'"
+        ))),
+    }
+}
+
+/// The blocks a write tool targets and the space they must be in (#5402).
+pub(crate) struct SpaceGuard {
+    pub(crate) space_id: String,
+    pub(crate) block_ids: Vec<String>,
+}
+
+tokio::task_local! {
+    /// Set by the MCP layer's `with_space_guard`; read by [`check_space_guard`].
+    pub(crate) static SPACE_GUARD: SpaceGuard;
+}
+
+/// The MCP layer's `with_space_guard` check, on the connection of the transaction
+/// `CommandTx::begin_immediate` just opened. Outside the guard it checks
+/// nothing.
+async fn check_space_guard(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
+    let Ok((space_id, block_ids)) =
+        SPACE_GUARD.try_with(|guard| (guard.space_id.clone(), guard.block_ids.clone()))
+    else {
+        return Ok(());
+    };
+    for block_id in &block_ids {
+        validate_block_in_space(&mut *conn, block_id, &space_id).await?;
+    }
+    Ok(())
+}
 
 /// Command-layer transaction wrapper that couples a `BEGIN IMMEDIATE`
 /// SQLite transaction to the materializer-dispatch calls that must fire
@@ -118,6 +241,17 @@ enum PendingDispatch {
     },
 }
 
+impl PendingDispatch {
+    fn record(&self) -> &agaric_store::op_log::OpRecord {
+        match self {
+            Self::Background(record)
+            | Self::EditBackground { record, .. }
+            | Self::LifecycleBackground { record, .. }
+            | Self::MoveBackground { record, .. } => record,
+        }
+    }
+}
+
 pub struct CommandTx {
     /// The live `BEGIN IMMEDIATE` transaction. `'static` because
     /// `pool.begin_with(...)` internally clones the pool handle.
@@ -174,11 +308,14 @@ impl CommandTx {
     /// `label` mirrors [`begin_immediate_logged`] — a stable,
     /// human-readable tag like `"undo_page_op"` so slow writes can be
     /// filtered per-command in the tracing output.
-    pub async fn begin_immediate(
-        pool: &SqlitePool,
-        label: &'static str,
-    ) -> Result<Self, sqlx::Error> {
-        let inner = begin_immediate_logged(pool, label).await?;
+    ///
+    /// Inside an MCP write tool's `with_space_guard`, the tool's space check
+    /// runs here, in this transaction (#5402).
+    pub async fn begin_immediate(pool: &SqlitePool, label: &'static str) -> Result<Self, AppError> {
+        let mut inner = begin_immediate_logged(pool, label).await?;
+        #[cfg(test)]
+        let _ = COMMAND_TX_OPENS.try_with(|count| count.set(count.get() + 1));
+        check_space_guard(&mut inner).await?;
         Ok(Self {
             inner: Some(inner),
             pending: Vec::new(),
@@ -327,12 +464,28 @@ impl CommandTx {
     /// a `tracing::debug!` for observability — see the [`Drop`] impl,
     /// issue #1316.)
     ///
+    /// Before committing, raises `pages_cache.last_edited_ms` for the pages
+    /// the queued ops touched (#5371). Every local command commits its ops
+    /// here, undo and attachment ops included, so this is the one place the
+    /// LOCAL path keeps "Last edited" fresh; an error rolls the command back.
+    ///
     /// Returns the number of dispatches that fired. Dispatch failures
     /// are logged at warn level and do not surface here.
     pub async fn commit_and_dispatch(
         mut self,
         materializer: &crate::materializer::Materializer,
     ) -> Result<usize, sqlx::Error> {
+        let touched: Vec<(&str, i64)> = self
+            .pending
+            .iter()
+            .filter_map(|entry| {
+                let record = entry.record();
+                record.block_id.as_deref().map(|b| (b, record.created_at))
+            })
+            .collect();
+        if let Some(tx) = self.inner.as_mut() {
+            agaric_store::cache::raise_pages_last_edited_ms(tx, &touched).await?;
+        }
         // #2604 — detach the engine-rollback checkpoints WHILE the write lock is
         // still held (before the commit below releases it). On a commit failure
         // we rewind the in-place engine apply so it never stays ahead of the
@@ -725,7 +878,9 @@ mod tests {
         // the async block, dropping the CommandTx uncommitted — exactly what
         // a real command does when a projected-state write fails.
         let result: Result<(), sqlx::Error> = async {
-            let mut tx = CommandTx::begin_immediate(&pool, "test_delete_rollback").await?;
+            let mut tx = CommandTx::begin_immediate(&pool, "test_delete_rollback")
+                .await
+                .expect("begin");
 
             sqlx::query(
                 "INSERT INTO op_log (seq, device_id, op_type, payload, created_at, hash) \

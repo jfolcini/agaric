@@ -180,7 +180,10 @@ pub use page_id::{
 pub use page_links::{
     rebuild_page_link_cache, rebuild_page_link_cache_split, reindex_page_link_cache_for_block,
 };
-pub use pages::{rebuild_pages_cache, rebuild_pages_cache_counts, rebuild_pages_cache_split};
+pub use pages::{
+    raise_pages_last_edited_ms, rebuild_pages_cache, rebuild_pages_cache_counts,
+    rebuild_pages_cache_split,
+};
 // #417: the production RESET path recomputes the two `pages_cache` count
 // columns full-table via the dedicated `rebuild_pages_cache_counts` entry
 // point above; the per-op title/orphan rebuild no longer carries the count

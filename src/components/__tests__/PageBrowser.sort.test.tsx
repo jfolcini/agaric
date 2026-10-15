@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 // Split from the PageBrowser.test.tsx monolith (#2929). Concern: the sort
-// dropdown and the sort comparator vs. page metadata.
+// dropdown, and that every sort renders the rows in the server's order (#5371).
 
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makePage } from '@/__tests__/fixtures'
-import { type PageListEnvelope, pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
+import { pageList, stubPageRowInvoke } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
@@ -48,20 +49,8 @@ vi.mock('@tanstack/react-virtual', () =>
 )
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
-// (see src/__tests__/mocks/ui-select.tsx).
-
-// #1149 — recent-pages moved from `lib/recent-pages` to the zustand store.
-// Override only the snapshot reader the PageBrowser sort/grouping uses;
-// keep every other store export real (the full PageBrowser render pulls in
-// `useRecentPagesStore`, `QuickAccessBar`, etc.).
-vi.mock('@/stores/recent-pages', async (importActual) => {
-  const actual = await importActual<typeof import('@/stores/recent-pages')>()
-  return { ...actual, getRecentPagesForSpace: vi.fn(() => []) }
-})
-
-import { getRecentPagesForSpace } from '@/stores/recent-pages'
-
-const mockedGetRecentPages = vi.mocked(getRecentPagesForSpace)
+// (see src/__tests__/mocks/ui-select.tsx). It renders `SelectSeparator` as
+// nothing, so the menu's lack of one is pinned in `e2e/pages-view.spec.ts`.
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -77,27 +66,17 @@ const mockedInvoke = vi.mocked(invoke)
  * had already been told, silently, no longer existed.
  */
 
-/**
- * Serve `list_pages_with_metadata` with rows built directly as metadata rows.
- *
- * The three server-ordered sorts need the metadata columns a `BlockRow`
- * cannot carry, so they bypass {@link stubPageList}'s `makePage` reshaping.
- */
-function stubMetaPageList(items: PageListEnvelope['items']) {
-  stubPageRowInvoke(mockedInvoke, {
-    list_pages_with_metadata: () => ({
-      items,
-      next_cursor: null,
-      has_more: false,
-      total_count: items.length,
-    }),
-  })
-}
-
 function stubPageList(items: ReturnType<typeof makePage>[], totalCount: number | null = null) {
   stubPageRowInvoke(mockedInvoke, {
     list_pages_with_metadata: () => pageList(items, { total_count: totalCount }),
   })
+}
+
+function renderedTitles(): Array<string | null | undefined> {
+  return within(screen.getByRole('grid'))
+    .getAllByRole('row')
+    .filter((r) => r.hasAttribute('data-page-item'))
+    .map((r) => r.querySelector('.page-browser-item-title')?.textContent)
 }
 
 beforeEach(() => {
@@ -136,27 +115,31 @@ beforeEach(() => {
 
 describe('PageBrowser', () => {
   describe('sort dropdown', () => {
-    it('renders sort dropdown with 7 options', async () => {
-      stubPageList([makePage({ id: 'P1', content: 'A Page' })])
+    it('renders the six sort options, without the loaded-pages cue', async () => {
+      // More pages remain: the old cue showed exactly here.
+      stubPageRowInvoke(mockedInvoke, {
+        list_pages_with_metadata: () =>
+          pageList([makePage({ id: 'P1', content: 'A Page' })], {
+            has_more: true,
+            next_cursor: 'NEXT',
+          }),
+      })
 
       render(<PageBrowser />)
 
       await screen.findByText('A Page')
 
       const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
-      expect(sortSelect).toBeInTheDocument()
-
       const options = within(sortSelect).getAllByRole('option')
-      expect(options).toHaveLength(7)
-      expect(options.map((o) => o.textContent)).toEqual([
-        'Alphabetical',
-        'Recent',
-        'Created',
-        'Recently modified',
-        'Most linked',
-        'Most content',
-        'Default',
+      expect(options.map((o) => [o.getAttribute('value'), o.textContent])).toEqual([
+        ['alphabetical', 'Alphabetical'],
+        ['recent', 'Last opened'],
+        ['created', 'Created'],
+        ['recently-modified', 'Last edited'],
+        ['most-linked', 'Most linked'],
+        ['most-content', 'Most content'],
       ])
+      expect(screen.queryByText(/sorted within loaded pages/i)).not.toBeInTheDocument()
     })
 
     it('defaults to Alphabetical sort', async () => {
@@ -170,77 +153,85 @@ describe('PageBrowser', () => {
       expect(sortSelect).toHaveValue('alphabetical')
     })
 
-    it('sorts pages alphabetically by default', async () => {
-      stubPageList([
-        makePage({ id: 'P1', content: 'Cherry' }),
-        makePage({ id: 'P2', content: 'Apple' }),
-        makePage({ id: 'P3', content: 'Banana' }),
-      ])
+    // Every option asks the server for its own order, and the rows render in
+    // the order received: the stub answers each wire sort with a different
+    // permutation, none of them the order a client comparator would produce.
+    const PAGES = {
+      Apple: makePage({ id: 'P1', content: 'Apple' }),
+      Banana: makePage({ id: 'P2', content: 'Banana' }),
+      Cherry: makePage({ id: 'P3', content: 'Cherry' }),
+    }
+    const SERVER_ORDER: Readonly<Record<string, readonly (keyof typeof PAGES)[]>> = {
+      alphabetical: ['Cherry', 'Apple', 'Banana'],
+      'last-opened': ['Banana', 'Cherry', 'Apple'],
+      created: ['Apple', 'Cherry', 'Banana'],
+      'recently-modified': ['Banana', 'Apple', 'Cherry'],
+      'most-linked': ['Cherry', 'Banana', 'Apple'],
+      'most-content': ['Apple', 'Banana', 'Cherry'],
+    }
+
+    function stubServerOrders(): void {
+      stubPageRowInvoke(mockedInvoke, {
+        list_pages_with_metadata: (args) => {
+          const sort = String((args['filter'] as Record<string, unknown>)['sort'])
+          const order = SERVER_ORDER[sort]
+          if (!order) return Promise.reject(new Error(`no stubbed order for ${sort}`))
+          return pageList(order.map((title) => PAGES[title]))
+        },
+      })
+    }
+
+    it.each([
+      ['alphabetical', 'alphabetical'],
+      ['recent', 'last-opened'],
+      ['created', 'created'],
+      ['recently-modified', 'recently-modified'],
+      ['most-linked', 'most-linked'],
+      ['most-content', 'most-content'],
+    ] as const)('the %s option renders the server order of wire sort %s', async (option, wire) => {
+      const user = userEvent.setup()
+      stubServerOrders()
 
       render(<PageBrowser />)
-
       await screen.findByText('Apple')
 
-      const listItems = within(screen.getByRole('grid'))
-        .getAllByRole('row')
-        .filter((r) => r.hasAttribute('data-page-item'))
-      const titles = listItems.map(
-        (li) => li.querySelector('.page-browser-item-title')?.textContent,
-      )
-      expect(titles).toEqual(['Apple', 'Banana', 'Cherry'])
+      if (option !== 'alphabetical') {
+        await user.selectOptions(screen.getByRole('combobox', { name: /sort order/i }), option)
+      }
+
+      await waitFor(() => {
+        expect(renderedTitles()).toEqual(SERVER_ORDER[wire])
+      })
     })
 
-    it('switching to Created sort orders pages by ULID descending (newest first)', async () => {
+    it('reports the failure when the server refuses the new sort', async () => {
       const user = userEvent.setup()
-      stubPageList([
-        makePage({ id: '01AAA', content: 'Oldest' }),
-        makePage({ id: '01CCC', content: 'Newest' }),
-        makePage({ id: '01BBB', content: 'Middle' }),
-      ])
+      stubPageRowInvoke(mockedInvoke, {
+        list_pages_with_metadata: (args) =>
+          (args['filter'] as Record<string, unknown>)['sort'] === 'created'
+            ? Promise.reject(new Error('backend down'))
+            : pageList([PAGES.Apple]),
+      })
 
       render(<PageBrowser />)
-
-      await screen.findByText('Oldest')
-
-      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
-      await user.selectOptions(sortSelect, 'created')
-
-      const listItems = within(screen.getByRole('grid'))
-        .getAllByRole('row')
-        .filter((r) => r.hasAttribute('data-page-item'))
-      const titles = listItems.map(
-        (li) => li.querySelector('.page-browser-item-title')?.textContent,
-      )
-      expect(titles).toEqual(['Newest', 'Middle', 'Oldest'])
-    })
-
-    it('switching to Recent sort uses recent-pages store', async () => {
-      const user = userEvent.setup()
-      mockedGetRecentPages.mockReturnValue([
-        { id: 'P2', title: 'Banana', visitedAt: '2025-01-15T12:00:00Z' },
-        { id: 'P3', title: 'Cherry', visitedAt: '2025-01-14T12:00:00Z' },
-      ])
-      stubPageList([
-        makePage({ id: 'P1', content: 'Apple' }),
-        makePage({ id: 'P2', content: 'Banana' }),
-        makePage({ id: 'P3', content: 'Cherry' }),
-      ])
-
-      render(<PageBrowser />)
-
       await screen.findByText('Apple')
+      await user.selectOptions(screen.getByRole('combobox', { name: /sort order/i }), 'created')
 
-      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
-      await user.selectOptions(sortSelect, 'recent')
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+          expect.stringContaining('Failed to load pages'),
+        )
+      })
+    })
 
-      const listItems = within(screen.getByRole('grid'))
-        .getAllByRole('row')
-        .filter((r) => r.hasAttribute('data-page-item'))
-      const titles = listItems.map(
-        (li) => li.querySelector('.page-browser-item-title')?.textContent,
-      )
-      // Banana (most recent), Cherry (second recent), Apple (not in recent, alphabetical fallback)
-      expect(titles).toEqual(['Banana', 'Cherry', 'Apple'])
+    it('reads a stored retired `default` sort as Created', async () => {
+      localStorage.setItem('page-browser-sort', 'default')
+      stubPageList([makePage({ id: 'P1', content: 'A Page' })])
+
+      render(<PageBrowser />)
+
+      await screen.findByText('A Page')
+      expect(screen.getByRole('combobox', { name: /sort order/i })).toHaveValue('created')
     })
 
     it('persists sort preference to localStorage', async () => {
@@ -278,115 +269,6 @@ describe('PageBrowser', () => {
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
-    })
-  })
-  describe('sort comparator vs metadata', () => {
-    afterEach(() => {
-      localStorage.removeItem('page-browser-sort')
-    })
-
-    function makeMetaPage(overrides: {
-      id: string
-      content: string | null
-      lastModifiedAt?: number | null
-      inboundLinkCount?: number
-      childBlockCount?: number
-    }): PageListEnvelope['items'][number] {
-      return {
-        id: overrides.id,
-        blockType: 'page',
-        content: overrides.content,
-        parentId: null,
-        position: null,
-        deletedAt: null,
-        todoState: null,
-        priority: null,
-        dueDate: null,
-        scheduledDate: null,
-        pageId: overrides.id,
-        lastModifiedAt: overrides.lastModifiedAt ?? null,
-        inboundLinkCount: overrides.inboundLinkCount ?? 0,
-        childBlockCount: overrides.childBlockCount ?? 0,
-        flags: { hasTags: false, hasTodo: false, hasScheduled: false, hasDue: false },
-      }
-    }
-
-    function renderedTitles(): Array<string | null | undefined> {
-      return within(screen.getByRole('grid'))
-        .getAllByRole('row')
-        .filter((r) => r.hasAttribute('data-page-item'))
-        .map((r) => r.querySelector('.page-browser-item-title')?.textContent)
-    }
-
-    // #2602 Part A — the three server-derived sorts are ordered by the SQL
-    // `ORDER BY (<key> DESC, id ASC)`; PageBrowser renders the rows in the
-    // received order without a client re-sort. The mocks return rows in the
-    // order the real server would (which is neither alphabetical nor id-ASC),
-    // and each test asserts that exact order survives to the DOM — proving
-    // the SQL ordering is the single authority.
-    it('renders most-linked rows in server order (inboundLinkCount DESC, id ASC), no client re-sort', async () => {
-      const user = userEvent.setup()
-      // Server order: Banana(5), Date(3), then the 1-count tie resolved
-      // server-side by id ASC → Apple(P1) before Cherry(P3).
-      stubMetaPageList([
-        makeMetaPage({ id: 'P2', content: 'Banana', inboundLinkCount: 5 }),
-        makeMetaPage({ id: 'P4', content: 'Date', inboundLinkCount: 3 }),
-        makeMetaPage({ id: 'P1', content: 'Apple', inboundLinkCount: 1 }),
-        makeMetaPage({ id: 'P3', content: 'Cherry', inboundLinkCount: 1 }),
-      ])
-
-      render(<PageBrowser />)
-      await screen.findByText('Apple')
-
-      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
-      await user.selectOptions(sortSelect, 'most-linked')
-
-      await waitFor(() => {
-        expect(renderedTitles()).toEqual(['Banana', 'Date', 'Apple', 'Cherry'])
-      })
-    })
-
-    it('renders most-content rows in server order (childBlockCount DESC, id ASC), no client re-sort', async () => {
-      const user = userEvent.setup()
-      // Server order: Banana(10), Date(7), then the 2-count tie by id ASC.
-      stubMetaPageList([
-        makeMetaPage({ id: 'P2', content: 'Banana', childBlockCount: 10 }),
-        makeMetaPage({ id: 'P4', content: 'Date', childBlockCount: 7 }),
-        makeMetaPage({ id: 'P1', content: 'Apple', childBlockCount: 2 }),
-        makeMetaPage({ id: 'P3', content: 'Cherry', childBlockCount: 2 }),
-      ])
-
-      render(<PageBrowser />)
-      await screen.findByText('Apple')
-
-      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
-      await user.selectOptions(sortSelect, 'most-content')
-
-      await waitFor(() => {
-        expect(renderedTitles()).toEqual(['Banana', 'Date', 'Apple', 'Cherry'])
-      })
-    })
-
-    it('renders recently-modified rows in server order (lastModifiedAt DESC, id ASC), no client re-sort', async () => {
-      const user = userEvent.setup()
-      // Server order: Banana (newest), Date, then the Apple/Cherry
-      // timestamp tie resolved server-side by id ASC.
-      stubMetaPageList([
-        makeMetaPage({ id: 'P2', content: 'Banana', lastModifiedAt: 1772323200000 }),
-        makeMetaPage({ id: 'P4', content: 'Date', lastModifiedAt: 1769904000000 }),
-        makeMetaPage({ id: 'P1', content: 'Apple', lastModifiedAt: 1767225600000 }),
-        makeMetaPage({ id: 'P3', content: 'Cherry', lastModifiedAt: 1767225600000 }),
-      ])
-
-      render(<PageBrowser />)
-      await screen.findByText('Apple')
-
-      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
-      await user.selectOptions(sortSelect, 'recently-modified')
-
-      await waitFor(() => {
-        expect(renderedTitles()).toEqual(['Banana', 'Date', 'Apple', 'Cherry'])
-      })
     })
   })
 })

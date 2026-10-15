@@ -68,6 +68,8 @@ sudo apt install -y \
   libappindicator3-dev patchelf
 ```
 
+Scanning a pairing QR code with a real camera also needs WebKitGTK's GStreamer capture source on the host (`gstreamer1.0-plugins-good`, or `gstreamer1.0-pipewire` on a PipeWire desktop); the bundles do not declare it.
+
 Plus Node 24 (see `.nvmrc`) and the Rust toolchain pinned in [`rust-toolchain.toml`](../rust-toolchain.toml) — `rustup` picks the pin up automatically inside the repo; that same version is the MSRV recorded as `rust-version` in `src-tauri/Cargo.toml`.
 
 The canonical quickstart used throughout this repo — `scripts/setup.sh`, the `justfile`, and CI — invokes `cargo tauri dev` / `cargo tauri build`. That dispatches to a `cargo-tauri` binary, which `npm ci` does **not** provide, so install it with `cargo install tauri-cli --locked` (what `ci.yml` does for its bundle build). Keep it in step with the pinned `@tauri-apps/cli` devDependency (see `package.json` for the current pin) so the Rust and JS CLIs stay on the same Tauri stack ([AGENTS.md § coupled dependency stacks](../AGENTS.md)). The `npm ci`-installed `@tauri-apps/cli` also exposes an equivalent `npx tauri …` if you prefer to avoid the extra cargo install.

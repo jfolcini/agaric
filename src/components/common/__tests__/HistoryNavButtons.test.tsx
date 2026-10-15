@@ -1,8 +1,10 @@
+import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { HistoryNavButtons } from '@/components/common/HistoryNavButtons'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
@@ -45,6 +47,11 @@ beforeEach(async () => {
     navHistoryBySpace: {},
   })
   await Promise.resolve()
+})
+
+// Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+beforeEach(() => {
+  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ record_page_open: () => null }))
 })
 
 describe('HistoryNavButtons', () => {

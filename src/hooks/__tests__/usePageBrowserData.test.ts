@@ -79,7 +79,7 @@ const BASE: {
 } = {
   currentSpaceId: 'SPACE_A',
   spaceIsReady: true,
-  sortOption: 'default',
+  sortOption: 'created',
   wireFilters: [],
   wireFiltersKey: '[]',
 }
@@ -367,6 +367,24 @@ describe('usePageBrowserData', () => {
     expect(mockedList).toHaveBeenCalledTimes(2)
     expect(mockedList.mock.calls[0]?.[1]).toBeNull()
     expect(mockedList.mock.calls[1]?.[1]).toBe('C2')
+  })
+
+  // #5371 — every page open moves "Last opened" without marking the list
+  // stale, so that sort refetches on every return.
+  it('a remount under Last opened refetches with no write since the last fetch', async () => {
+    const lastOpened = { ...BASE, sortOption: 'recent' as const }
+    mockedList.mockResolvedValueOnce(resp([page('A')]))
+    const first = renderHook(() => usePageBrowserData(lastOpened))
+    await waitFor(() => expect(first.result.current.pages.map((row) => row.id)).toEqual(['A']))
+    first.unmount()
+    mockedList.mockClear()
+    mockedList.mockResolvedValueOnce(resp([page('B'), page('A')]))
+
+    const { result } = renderHook(() => usePageBrowserData(lastOpened))
+
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['B', 'A']))
+    expect(mockedList).toHaveBeenCalledTimes(1)
+    expect(mockedList.mock.calls[0]?.[0]).toMatchObject({ sort: 'last-opened' })
   })
 
   it('switching back to an already-fetched sort refetches it', async () => {

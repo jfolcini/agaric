@@ -24,7 +24,6 @@ import {
   Select,
   SelectContent,
   SelectItem,
-  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -78,14 +77,6 @@ export interface PageBrowserHeaderProps {
    * pairing a loaded numerator with a filtered-total denominator.
    */
   hasChipFilters?: boolean
-  /**
-   * True when a frontend-only sort (`alphabetical`,
-   * `recent`, `created`) is active AND more pages remain to load. The
-   * client-side reorder only covers the loaded pages, so we surface a
-   * subtle cue near the sort control to set expectations. Never set for
-   * `default` or the server-side sorts, nor when fully loaded.
-   */
-  frontendSortAtScale?: boolean
   /** Saved Pages views (#2003 piece 1) — sort/filters snapshots. */
   savedViews: SavedPagesView[]
   /** The saved view matching the current tuple, or `null` if none matches. */
@@ -111,7 +102,6 @@ export function PageBrowserHeader({
   filteredCount,
   hasTextQuery,
   hasChipFilters,
-  frontendSortAtScale,
   savedViews,
   activeSavedView,
   onApplySavedView,
@@ -256,31 +246,13 @@ export function PageBrowserHeader({
               <SelectItem value="alphabetical">{t('pageBrowser.sortAlphabetical')}</SelectItem>
               <SelectItem value="recent">{t('pageBrowser.sortRecent')}</SelectItem>
               <SelectItem value="created">{t('pageBrowser.sortCreated')}</SelectItem>
-              <SelectSeparator />
               <SelectItem value="recently-modified">
                 {t('pageBrowser.sortRecentlyModified')}
               </SelectItem>
               <SelectItem value="most-linked">{t('pageBrowser.sortMostLinked')}</SelectItem>
               <SelectItem value="most-content">{t('pageBrowser.sortMostContent')}</SelectItem>
-              <SelectItem value="default">{t('pageBrowser.sortDefault')}</SelectItem>
             </SelectContent>
           </Select>
-          {/* frontend-only sorts reorder just the loaded
-              pages; while more remain, surface a muted cue so the user
-              knows the visible order isn't the global order yet. */}
-          {frontendSortAtScale && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span
-                  className="text-xs text-muted-foreground whitespace-nowrap cursor-default"
-                  data-testid="page-browser-frontend-sort-cue"
-                >
-                  {t('pageBrowser.frontendSortHint')}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{t('pageBrowser.frontendSortHintTooltip')}</TooltipContent>
-            </Tooltip>
-          )}
           <SavedViewsDropdown
             views={savedViews}
             activeView={activeSavedView}

@@ -114,6 +114,9 @@ impl McpSurface {
                  this device's clock.\n\
                  History: `page_history` and `block_history` show who changed what, and \
                  when.\n\
+                 Long reads: `get_page`, `list_backlinks` and `get_page_markdown` stop at a \
+                 size budget with `truncated: true`; pass `next_cursor` back as `cursor` to \
+                 read on.\n\
                  Names: in a tool that takes `space_id`, a page or tag argument that is not \
                  a ULID is a page's title or alias, or a tag's name, in that space; \
                  `resolve` looks many up at once.\n\
@@ -1069,7 +1072,7 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
 /// Mirrors [`spawn_mcp_ro_task`] but reads the RW marker
 /// ([`MCP_RW_ENABLED_MARKER`]) and builds a [`tools_rw::ReadWriteTools`]
 /// registry bound to the **writer** pool — every RW tool but `list_spaces`
-/// mutates.
+/// mutates; `list_spaces` reads `read_pool`.
 ///
 /// When the marker is absent, logs at info level and returns. When the
 /// socket is already bound by another instance, logs at warn level and
@@ -1083,10 +1086,13 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
 ///
 /// `activity_ring` (#695) — same shared managed ring as the RO task,
 /// so the `get_mcp_recent_activity` command surfaces one merged feed.
+// The same dependency set as `spawn_mcp_ro_task`, for the same reason.
+#[expect(clippy::too_many_arguments)]
 pub fn spawn_mcp_rw_task<R: tauri::Runtime>(
     app_data_dir: &Path,
     app_handle: tauri::AppHandle<R>,
     write_pool: SqlitePool,
+    read_pool: SqlitePool,
     materializer: Materializer,
     device_id: String,
     activity_ring: Arc<std::sync::Mutex<activity::ActivityRing>>,
@@ -1109,7 +1115,7 @@ pub fn spawn_mcp_rw_task<R: tauri::Runtime>(
         Arc::new(view_notify::TauriViewChangeEmitter::new(app_handle.clone()));
     let activity_ctx =
         activity::ActivityContext::from_app_handle_with_ring(app_handle, activity_ring);
-    let registry = tools_rw::ReadWriteTools::new(write_pool, materializer, device_id)
+    let registry = tools_rw::ReadWriteTools::new(write_pool, read_pool, materializer, device_id)
         .with_view_emitter(view_emitter);
     spawn_mcp_rw_task_with_registry(socket_path, registry, Some(activity_ctx), lifecycle);
 }

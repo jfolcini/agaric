@@ -113,9 +113,10 @@ async fn assert_parity(pool: &SqlitePool, context: &str) {
 }
 
 /// Insert a page row directly + the matching `pages_cache` row with
-/// default (zero) counts. Sets `page_id = id` to mirror what
-/// `RebuildPageIds` would compute. Title = content per the canonical
-/// pages_cache contract (see `cache/pages.rs::DESIRED_PAGES_SQL`).
+/// default (zero) counts and no op yet (`last_edited_ms = 0`). Sets
+/// `page_id = id` to mirror what `RebuildPageIds` would compute. Title =
+/// content per the canonical pages_cache contract (see
+/// `cache/pages.rs::apply_sort_merge_rebuild`).
 async fn seed_page(pool: &SqlitePool, id: &str, title: &str) {
     sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)")
         .bind(id)
@@ -125,11 +126,12 @@ async fn seed_page(pool: &SqlitePool, id: &str, title: &str) {
         .await
         .unwrap();
     sqlx::query(
-            "INSERT INTO pages_cache (page_id, title, updated_at, inbound_link_count, child_block_count) \
-             VALUES (?, ?, 1735689600000, 0, 0)",
+            "INSERT INTO pages_cache (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count) \
+             VALUES (?, ?, ?, 1735689600000, 0, 0)",
         )
         .bind(id)
         .bind(title)
+        .bind(agaric_core::title_sort::title_sort_key(title))
         .execute(pool)
         .await
         .unwrap();
@@ -740,5 +742,237 @@ async fn cross_page_move_refreshes_both_page_counts() {
         moved_page.as_deref(),
         Some("PAGE_DST"),
         "grandchild's page_id must follow the moved subtree to the destination"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #5371 — `pages_cache.{title_sort_key,last_edited_ms}` parity
+// ---------------------------------------------------------------------------
+
+/// Every row's `title_sort_key` is the key of its title, and its
+/// `last_edited_ms` is at least the newest op on any block now on the page.
+/// It may sit higher, never lower: ops on a block that moved away keep the
+/// credit they gave, so each test also pins the touched page exactly.
+async fn assert_sort_key_parity(pool: &SqlitePool, context: &str) {
+    let rows: Vec<(String, String, String, i64, Option<i64>)> = sqlx::query_as(
+        "SELECT pc.page_id, pc.title, pc.title_sort_key, pc.last_edited_ms, \
+                (SELECT MAX(o.created_at) FROM op_log o JOIN blocks d ON d.id = o.block_id \
+                  WHERE d.page_id = pc.page_id) \
+           FROM pages_cache pc",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    for (page_id, title, key, last_edited, newest_op) in rows {
+        assert_eq!(
+            key,
+            agaric_core::title_sort::title_sort_key(&title),
+            "[{context}] title_sort_key drift on page_id={page_id}",
+        );
+        assert!(
+            last_edited >= newest_op.unwrap_or(0),
+            "[{context}] last_edited_ms={last_edited} below the newest op {newest_op:?} on \
+             page_id={page_id}",
+        );
+    }
+}
+
+async fn last_edited(pool: &SqlitePool, page_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT last_edited_ms FROM pages_cache WHERE page_id = ?")
+        .bind(page_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn seed_child(pool: &SqlitePool, id: &str, page_id: &str) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+         VALUES (?, 'content', 'c', ?, ?)",
+    )
+    .bind(id)
+    .bind(page_id)
+    .bind(page_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// An op stamped `created_at`: two ops one test compares must not share a
+/// millisecond, or an assertion that tells them apart passes vacuously.
+async fn make_op_record_at(pool: &SqlitePool, payload: OpPayload, created_at: i64) -> OpRecord {
+    agaric_store::op_log::append_local_op_at(pool, DEV, payload, created_at)
+        .await
+        .unwrap()
+}
+
+fn edit(block_id: &str, to_text: &str) -> OpPayload {
+    OpPayload::EditBlock(EditBlockPayload {
+        block_id: BlockId::test_id(block_id),
+        to_text: to_text.into(),
+        prev_edit: None,
+    })
+}
+
+/// #5371 — the single-op `ApplyOp` path: a child's edit or delete moves its
+/// page to the op's time and leaves other pages alone; a retitle re-keys the
+/// page once `RebuildPagesCache` runs.
+#[tokio::test]
+async fn sort_keys_follow_single_ops_5371() {
+    let (pool, _dir) = test_pool().await;
+    seed_page(&pool, "SK_PAGE_A", "Émile").await;
+    seed_page(&pool, "SK_PAGE_B", "Zebra").await;
+    seed_child(&pool, "SK_CHILD_A", "SK_PAGE_A").await;
+    assert_sort_key_parity(&pool, "seeded").await;
+
+    let e = make_op_record_at(&pool, edit("SK_CHILD_A", "edited"), FIXED_TS + 1).await;
+    run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(e.clone())), &[]).await;
+    assert_eq!(
+        last_edited(&pool, "SK_PAGE_A").await,
+        e.created_at,
+        "child edit"
+    );
+    assert_eq!(last_edited(&pool, "SK_PAGE_B").await, 0, "untouched page");
+    assert_sort_key_parity(&pool, "after child edit").await;
+
+    let d = make_op_record_at(
+        &pool,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id("SK_CHILD_A"),
+        }),
+        FIXED_TS + 2,
+    )
+    .await;
+    run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(d.clone())), &[]).await;
+    assert_eq!(
+        last_edited(&pool, "SK_PAGE_A").await,
+        d.created_at,
+        "child delete"
+    );
+    assert_sort_key_parity(&pool, "after child delete").await;
+
+    let t = make_op_record_at(&pool, edit("SK_PAGE_B", "ángel"), FIXED_TS + 3).await;
+    run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(t.clone())), &[]).await;
+    handle_background_task(&pool, &MaterializeTask::RebuildPagesCache, None, None)
+        .await
+        .unwrap();
+    let key: String =
+        sqlx::query_scalar("SELECT title_sort_key FROM pages_cache WHERE page_id = 'SK_PAGE_B'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(key, "angel", "retitle re-keys the page");
+    assert_eq!(
+        last_edited(&pool, "SK_PAGE_B").await,
+        t.created_at,
+        "retitle"
+    );
+    assert_sort_key_parity(&pool, "after retitle").await;
+}
+
+/// #5371 — the `BatchApplyOps` path raises every page the batch touched to
+/// its own newest op.
+#[tokio::test]
+async fn sort_keys_follow_a_batch_5371() {
+    let (pool, _dir) = test_pool().await;
+    seed_page(&pool, "SK_PAGE_C", "Charlie").await;
+    seed_page(&pool, "SK_PAGE_D", "Delta").await;
+    seed_page(&pool, "SK_PAGE_E", "Echo").await;
+    seed_child(&pool, "SK_CHILD_C1", "SK_PAGE_C").await;
+    seed_child(&pool, "SK_CHILD_C2", "SK_PAGE_C").await;
+    seed_child(&pool, "SK_CHILD_D", "SK_PAGE_D").await;
+
+    let c1 = make_op_record_at(&pool, edit("SK_CHILD_C1", "one"), FIXED_TS + 1).await;
+    let d = make_op_record_at(&pool, edit("SK_CHILD_D", "two"), FIXED_TS + 2).await;
+    let c2 = make_op_record_at(&pool, edit("SK_CHILD_C2", "three"), FIXED_TS + 3).await;
+    handle_foreground_task(
+        &pool,
+        &MaterializeTask::BatchApplyOps(StdArc::new(vec![c1, d.clone(), c2.clone()])),
+        &LoroState::new(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        last_edited(&pool, "SK_PAGE_C").await,
+        c2.created_at,
+        "newest of two"
+    );
+    assert_eq!(
+        last_edited(&pool, "SK_PAGE_D").await,
+        d.created_at,
+        "its own op"
+    );
+    assert_eq!(last_edited(&pool, "SK_PAGE_E").await, 0, "not in the batch");
+    assert_sort_key_parity(&pool, "after batch").await;
+}
+
+/// #5371 — a move between pages moves the destination up; the source keeps
+/// the credit its earlier ops gave it.
+#[tokio::test]
+async fn a_cross_page_move_raises_the_destination_only_5371() {
+    let (pool, _dir) = test_pool().await;
+    seed_page(&pool, "SK_PAGE_SRC", "Source").await;
+    seed_page(&pool, "SK_PAGE_DST", "Destination").await;
+    seed_child(&pool, "SK_MOVED", "SK_PAGE_SRC").await;
+
+    let e = make_op_record_at(&pool, edit("SK_MOVED", "before the move"), FIXED_TS + 1).await;
+    run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(e.clone())), &[]).await;
+    let m = make_op_record_at(
+        &pool,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::test_id("SK_MOVED"),
+            new_parent_id: Some(BlockId::test_id("SK_PAGE_DST")),
+            new_position: 0,
+            new_index: None,
+        }),
+        FIXED_TS + 2,
+    )
+    .await;
+    run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(m.clone())), &[]).await;
+
+    assert_eq!(
+        last_edited(&pool, "SK_PAGE_DST").await,
+        m.created_at,
+        "destination"
+    );
+    assert_eq!(
+        last_edited(&pool, "SK_PAGE_SRC").await,
+        e.created_at,
+        "source unchanged"
+    );
+    assert_sort_key_parity(&pool, "after cross-page move").await;
+}
+
+/// #5371 — a page created through `ApplyOp` carries its title key from the
+/// create itself: no `RebuildPagesCache` runs before the read.
+#[tokio::test]
+async fn a_page_create_writes_its_title_key_without_a_rebuild_5371() {
+    let (pool, _dir) = test_pool().await;
+    let c = make_op_record_at(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id("SK_PAGE_NEW"),
+            block_type: "page".into(),
+            parent_id: None,
+            position: Some(0),
+            index: None,
+            content: "Émile".into(),
+        }),
+        FIXED_TS + 1,
+    )
+    .await;
+    run_op(&pool, MaterializeTask::ApplyOp(StdArc::new(c.clone())), &[]).await;
+
+    let row: (String, i64) = sqlx::query_as(
+        "SELECT title_sort_key, last_edited_ms FROM pages_cache WHERE page_id = 'SK_PAGE_NEW'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        ("emile".to_owned(), c.created_at),
+        "the create's INSERT writes the key, and the apply raises the row to the create"
     );
 }

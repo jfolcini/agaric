@@ -1,0 +1,52 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!\", b.content AS \"title!\",\n                  COALESCE(pc.last_edited_ms, 0) = 0 AS \"unfilled!: bool\",\n                  CASE WHEN COALESCE(pc.last_edited_ms, 0) = 0 THEN\n                      (SELECT MAX((SELECT MAX(o.created_at) FROM op_log o\n                                    WHERE o.block_id = d.id))\n                         FROM blocks d WHERE d.page_id = b.id)\n                  END AS \"newest_op_ms?: i64\"\n             FROM blocks b\n             LEFT JOIN pages_cache pc ON pc.page_id = b.id\n            WHERE b.block_type = 'page' AND b.deleted_at IS NULL AND b.content IS NOT NULL\n              AND (pc.page_id IS NULL\n                   OR pc.title != b.content\n                   OR (pc.title_sort_key = '' AND b.content != '')\n                   OR pc.last_edited_ms = 0)",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "title!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "unfilled!: bool",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "newest_op_ms?: i64",
+        "ordinal": 3,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "da67145cdba9bd79c75b5288bb55894afe902ab57969c7f187599cfe680844c1"
+}

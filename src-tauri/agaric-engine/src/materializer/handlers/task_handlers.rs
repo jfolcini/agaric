@@ -258,6 +258,13 @@ async fn apply_records_in_tx(
     if let Some(chunk) = chunk {
         chunk.flush(tx).await?;
     }
+    // #5371: one statement moves every page the batch touched up "Last
+    // edited".
+    let touched: Vec<(&str, i64)> = records
+        .iter()
+        .filter_map(|r| r.block_id.as_deref().map(|b| (b, r.created_at)))
+        .collect();
+    agaric_store::cache::raise_pages_last_edited_ms(tx, &touched).await?;
     // C-2b: advance the cursor to the highest seq in the batch
     // inside the same tx so `apply + cursor` are atomic. Empty
     // batches skip the update entirely (no seq to record).

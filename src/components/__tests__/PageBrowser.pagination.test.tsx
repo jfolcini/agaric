@@ -224,7 +224,7 @@ describe('PageBrowser', () => {
       // for page 2 without any click on the Load More button.
       await waitFor(() => {
         expect(mockedInvoke).toHaveBeenCalledWith('list_pages_with_metadata', {
-          filter: { sort: 'default', spaceId: 'SPACE_TEST', filters: [] },
+          filter: { sort: 'alphabetical', spaceId: 'SPACE_TEST', filters: [] },
           cursor: 'cursor_abc',
           limit: 50,
         })

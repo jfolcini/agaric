@@ -28,7 +28,7 @@ Browse every page in the active space.
 
 - **Tree view** (default): pages organised by `/`-delimited namespace, e.g. `Projects/Website/Backlog`. Folders show a count badge and a `+` button to create a child page inline.
 - **Flat view**: every page, no hierarchy.
-- **Sort dropdown**: Alphabetical, Recent, Created, Recently modified, Most linked, Most content.
+- **Sort dropdown**: Alphabetical, Last opened, Created, Last edited, Most linked, Most content. Every sort orders all the pages in the space, not just the loaded ones. Alphabetical ignores accents and case (`Émile` sorts with E); Last edited counts an edit to any block on the page; Last opened is this device's own history, never synced.
 - **Filter chips** narrow the list ([../PAGES.md](../PAGES.md)). A space starts with *Exclude journal pages*, which hides the `YYYY-MM-DD` pages until you remove it.
 - **Virtualised list**: scrolls smoothly even with thousands of pages.
 - **Multi-select** pages with `Ctrl/Shift+Click`; **batch delete** with confirmation.

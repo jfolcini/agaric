@@ -549,41 +549,54 @@ test.describe('search box', () => {
 // 7. Sort
 // ===========================================================================
 test.describe('sort', () => {
-  test('the seven modes reorder the list', async ({ page }) => {
+  test('the six modes reorder the list', async ({ page }) => {
     await bootPages(page)
-
-    // Alphabetical (default) — the daily page (digits) sorts before letters.
-    await selectSort(page, 'Alphabetical')
-    let titles = await visibleTitles(page)
-    const sorted = [...titles].toSorted((a, b) => a.localeCompare(b))
-    expect(titles).toEqual(sorted)
-
-    // Default — id-ASC (the seed pages were inserted Getting Started first).
-    await selectSort(page, 'Default')
-    titles = await visibleTitles(page)
-    expect(titles[0]).toBe('Getting Started')
-
-    // Most linked, Most content, Recently modified are the three
-    // server-derived sorts (`usePageBrowserSort.ts`): `selectSort` only
-    // waits for the Radix listbox to close, not for the `list_pages_with_metadata`
-    // round-trip that actually reorders these three, and `sortPages` does NOT
-    // re-sort them client-side (it renders server rows in received order) —
-    // so a read right after selecting one of these three can legitimately
-    // still show the PREVIOUS mode's order (#3918, same missing-barrier class
-    // as #3902/#3915's filter reads). `Alphabetical` / `Default` / `Created` /
-    // `Recent` are frontend-only: `sortPages` re-sorts whatever rows are
-    // already loaded immediately on click, so their reads below need no
-    // barrier regardless of the same background refetch race.
     const daily = localDateStr(new Date())
-    // The deterministic full order for `default` / `most-linked` /
-    // `recently-modified` in this fixture: `most-linked`'s two 1-inbound
-    // pages (Getting Started, Quick Notes) are already id-ASC-first, and
-    // `recently-modified`'s ties (all seed pages share the hoisted ~90d
-    // stamp — `seed.ts`, one `offsetIso(-90)` call shared by all six
-    // pages, not one per page) fall back to the SAME id-ASC tiebreak — so
-    // all three sorts render this exact array. Confirmed by invoking
-    // `list_pages_with_metadata` directly against the mock for all four
-    // wire sorts (`dispatch()`, not through the UI/react-query pipeline).
+
+    // The menu: six options, no separator.
+    await page.getByRole('combobox', { name: 'Sort order' }).click()
+    await expect(page.getByRole('listbox').getByRole('option')).toHaveText([
+      'Alphabetical',
+      'Last opened',
+      'Created',
+      'Last edited',
+      'Most linked',
+      'Most content',
+    ])
+    await expect(page.getByRole('listbox').locator('[data-slot="select-separator"]')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('listbox')).toHaveCount(0)
+
+    // Every sort is ordered by the server (#5371), and `selectSort` waits only
+    // for the listbox to close, so each read below is a retrying `toHaveText`
+    // on the full order, and consecutive steps are chosen to differ so a
+    // stale read cannot pass for a settled one.
+    //
+    // Alphabetical (default) — title key order; the daily page (digits) leads.
+    await selectSort(page, 'Alphabetical')
+    await expect(pageTitleLocator(page)).toHaveText([
+      daily,
+      'Getting Started',
+      'Meeting Notes Template',
+      'Meetings',
+      'Projects',
+      'Quick Notes',
+    ])
+
+    // Created — id DESC; the seed ids run PAGE01 (Getting Started) to PAGE06.
+    const createdOrder = [
+      'Meeting Notes Template',
+      'Meetings',
+      'Projects',
+      daily,
+      'Quick Notes',
+      'Getting Started',
+    ]
+    await selectSort(page, 'Created')
+    await expect(pageTitleLocator(page)).toHaveText(createdOrder)
+
+    // Most linked — Getting Started + Quick Notes (each 1 inbound) lead; every
+    // tie falls to id ASC.
     const idAscOrder = [
       'Getting Started',
       'Quick Notes',
@@ -592,57 +605,79 @@ test.describe('sort', () => {
       'Meetings',
       'Meeting Notes Template',
     ]
-
-    // Most linked — Getting Started + Quick Notes (each 1 inbound) lead the
-    // zero-inbound pages. NOT given a barrier: its settled order is
-    // `idAscOrder`, byte-identical to the `Default` order already on screen
-    // from the previous step (both pages happen to already be id-ASC-first),
-    // so a stale read and a settled read are indistinguishable here — a
-    // barrier could not be shown to block anything in this fixture.
     await selectSort(page, 'Most linked')
-    titles = await visibleTitles(page)
-    expect(titles.slice(0, 2).toSorted()).toEqual(['Getting Started', 'Quick Notes'])
+    await expect(pageTitleLocator(page)).toHaveText(idAscOrder)
 
     // Most content — Getting Started and the daily page each carry 5 child
-    // blocks (the most), so they lead; the tiebreak is id ASC (PAGE01
-    // before PAGE03), so Getting Started — not the daily page — heads the
-    // list (see `mostContentOrder`). This IS observable against the
-    // preceding Most-linked/idAscOrder state (second position differs:
-    // `daily` here vs. `Quick Notes` there), so barrier on the full
-    // deterministic order before reading.
+    // blocks; id ASC puts Getting Started first (see `mostContentOrder`).
     await selectSort(page, 'Most content')
     await expect(pageTitleLocator(page)).toHaveText(mostContentOrder())
 
-    // Recently modified — all seed pages share the hoisted ~90d stamp
-    // (`seed.ts`), so the id-ASC tiebreak applies (`compareMetaRows`,
-    // `shared.ts`), giving the same full order as `idAscOrder` —
-    // observable against the preceding Most-content state.
-    await selectSort(page, 'Recently modified')
+    // Last edited — every seed page shares the hoisted ~90d stamp (`seed.ts`)
+    // and no child carries an op, so the id-ASC tiebreak gives `idAscOrder`.
+    await selectSort(page, 'Last edited')
     await expect(pageTitleLocator(page)).toHaveText(idAscOrder)
 
-    // Created (ULID DESC) and Recent (visit history) both reorder without
-    // dropping rows. Both are frontend-only (see the note above `daily`) —
-    // synchronous client re-sorts of whatever is already loaded, so no
-    // barrier is needed for either read.
-    await selectSort(page, 'Created')
-    expect((await visibleTitles(page)).length).toBe(6)
-    await selectSort(page, 'Recent')
-    expect((await visibleTitles(page)).length).toBe(6)
+    // Last opened — nothing opened yet, so every page is "never opened" and
+    // falls to id DESC: the Created order.
+    await selectSort(page, 'Last opened')
+    await expect(pageTitleLocator(page)).toHaveText(createdOrder)
   })
 
-  test('frontend-only-sort cue appears past page 1 for alphabetical', async ({ page }) => {
-    await bootPages(page, { extraPages: 80 })
-    // Alphabetical is a frontend-only sort; with more pages to load the cue
-    // tells the user the order covers loaded pages only.
-    await selectSort(page, 'Alphabetical')
-    await expect(page.getByTestId('page-browser-frontend-sort-cue')).toBeVisible()
-    await expect(page.getByTestId('page-browser-frontend-sort-cue')).toHaveText(
-      'Sorted within loaded pages',
-    )
+  // #5371 — opening a page stamps it, and "Last opened" lists it first on the
+  // way back to Pages.
+  test('opening a page moves it to the top of Last opened', async ({ page }) => {
+    await bootPages(page)
+    await selectSort(page, 'Last opened')
+    await expect(pageTitleLocator(page).first()).toHaveText('Meeting Notes Template')
 
-    // A server-side sort (recently-modified) is globally accurate → no cue.
-    await selectSort(page, 'Recently modified')
-    await expect(page.getByTestId('page-browser-frontend-sort-cue')).toHaveCount(0)
+    await grid(page).getByText('Projects', { exact: true }).click()
+    await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+    await openPagesView(page)
+
+    await expect(pageTitleLocator(page).first()).toHaveText('Projects')
+    await expect(pageTitleLocator(page).nth(1)).toHaveText('Meeting Notes Template')
+  })
+
+  // #5371 — Alphabetical and Created order every page on the server, so past
+  // the first 50 the rows continue the global order. The seed's bulk pages
+  // take ids after the six canonical ones, in title order.
+  test('alphabetical and created order every page past the first 50', async ({ page }) => {
+    await bootPages(page, { extraPages: 80 })
+    const daily = localDateStr(new Date())
+
+    // Created: the first row is the newest page, `Bulk Page 080`, which an id
+    // ASC first page would not even hold; the oldest canonical page ends it.
+    await selectSort(page, 'Created')
+    await expect(pageTitleLocator(page).first()).toHaveText('Bulk Page 080')
+    await expect(page.getByTestId('load-more-progress')).toHaveText('Loaded 50 of 86')
+    await expect
+      .poll(
+        async () => {
+          await scrollGridToBottom(page)
+          return (await visibleTitles(page)).slice(-3)
+        },
+        { timeout: 15_000 },
+      )
+      .toEqual([daily, 'Quick Notes', 'Getting Started'])
+
+    // Alphabetical: the canonical titles sort after `Bulk Page …`, so they
+    // arrive on the second page and end the list.
+    await selectSort(page, 'Alphabetical')
+    await grid(page).evaluate((el) => {
+      el.scrollTop = 0
+    })
+    await expect(pageTitleLocator(page).first()).toHaveText(daily)
+    await expect(pageTitleLocator(page).nth(1)).toHaveText('Bulk Page 001')
+    await expect
+      .poll(
+        async () => {
+          await scrollGridToBottom(page)
+          return (await visibleTitles(page)).slice(-5)
+        },
+        { timeout: 15_000 },
+      )
+      .toEqual(['Getting Started', 'Meeting Notes Template', 'Meetings', 'Projects', 'Quick Notes'])
   })
 
   test('sort preference persists across reload', async ({ page }) => {
@@ -892,7 +927,7 @@ test.describe('cursor robustness', () => {
 
     // Switch to a server-side keyset sort — this resets the cursor basis. The
     // list re-fetches from page 1 under the new sort with a fresh cursor.
-    await selectSort(page, 'Recently modified')
+    await selectSort(page, 'Last edited')
     // Return to the top so the leading row is in the virtual window. Under
     // recently-modified the newest bulk page (Bulk Page 001, stamped "now")
     // leads; assert no duplicate of it crept in across the basis change.
@@ -985,7 +1020,7 @@ test.describe('cursor IPC contract (E12)', () => {
   test('first page carries total_count; cursor pages return null (D6)', async ({ page }) => {
     await bootPages(page, { extraPages: 80 })
     const first = (await invokePages(page, {
-      sort: 'default',
+      sort: 'created',
       cursor: null,
       limit: 50,
     })) as MetaResp
@@ -995,7 +1030,7 @@ test.describe('cursor IPC contract (E12)', () => {
     expect(first.next_cursor).not.toBeNull()
 
     const second = (await invokePages(page, {
-      sort: 'default',
+      sort: 'created',
       cursor: first.next_cursor,
       limit: 50,
     })) as MetaResp
@@ -1010,13 +1045,13 @@ test.describe('cursor IPC contract (E12)', () => {
   }) => {
     await bootPages(page, { extraPages: 80 })
     const first = (await invokePages(page, {
-      sort: 'default',
+      sort: 'created',
       cursor: null,
       limit: 50,
     })) as MetaResp
     expect(first.next_cursor).not.toBeNull()
 
-    // Replay the default-sort cursor under `most-linked` → discriminator
+    // Replay the created-sort cursor under `most-linked` → discriminator
     // mismatch → the mock throws the AppError wire shape carrying the
     // structured `RequiresRefresh` code (#2251) that `withCursorRecovery`
     // keys on.

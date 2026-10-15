@@ -1,6 +1,6 @@
 /**
  * Cross-impl conformance test for the tauri-mock's sort/cursor
- * re-implementation (#1886, slice 1).
+ * re-implementation (#1886, #5371).
  *
  * The mock's `compareMetaRows` / `encodeNextCursor` re-implement the backend's
  * page-listing sort + cursor logic in TypeScript. This test drives those pure
@@ -18,7 +18,12 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { base64UrlToUtf8 } from '@/lib/base64url'
-import { compareMetaRows, encodeNextCursor, type PageMetaRow } from '@/lib/tauri-mock/handlers'
+import {
+  compareMetaRows,
+  encodeNextCursor,
+  type PageSortRow,
+  titleSortKey,
+} from '@/lib/tauri-mock/handlers'
 
 // ---------------------------------------------------------------------------
 // Fixture types (mirror the shape of sort-cursor.vectors.json)
@@ -28,6 +33,7 @@ interface Row {
   id: string
   content: string
   lastModifiedAt: string
+  openedAt?: string
   inboundLinkCount: number
   childBlockCount: number
 }
@@ -35,6 +41,7 @@ interface Row {
 interface ExpectedCursor {
   id: string
   position: number
+  deletedAt?: string
   seq?: number
 }
 
@@ -64,16 +71,18 @@ const FIXTURE_PATH = path.resolve(
 const vectors = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')) as Vectors
 
 /**
- * Promote a fixture row to a full `PageMetaRow`. Only the fields the sort/cursor
+ * Promote a fixture row to a full `PageSortRow`. Only the fields the sort/cursor
  * logic reads carry real values; everything else is an inert default.
  */
-function toMetaRow(row: Row): PageMetaRow {
+function toMetaRow(row: Row): PageSortRow {
   return {
     id: row.id,
     content: row.content,
     inboundLinkCount: row.inboundLinkCount,
     childBlockCount: row.childBlockCount,
     lastModifiedAt: row.lastModifiedAt,
+    titleSortKey: titleSortKey(row.content),
+    openedMs: row.openedAt === undefined ? -1 : Date.parse(row.openedAt),
     blockType: 'page',
     parentId: null,
     position: null,
@@ -98,7 +107,7 @@ describe('sort/cursor cross-impl conformance', () => {
         expect(sorted.map((r) => r.id)).toEqual(scenario.expectedOrder)
       })
 
-      it('mints a next cursor with the golden discriminator', () => {
+      it('mints the golden first cursor', () => {
         const sorted = vectors.rows
           .map(toMetaRow)
           .toSorted((a, b) => compareMetaRows(a, b, scenario.sort))
@@ -107,11 +116,12 @@ describe('sort/cursor cross-impl conformance', () => {
         const decoded = JSON.parse(
           base64UrlToUtf8(encodeNextCursor(first, scenario.sort)),
         ) as Record<string, unknown>
-        expect(decoded['id']).toBe(scenario.expectedCursorAfterFirst.id)
-        expect(decoded['position']).toBe(scenario.expectedCursorAfterFirst.position)
-        if (scenario.expectedCursorAfterFirst.seq !== undefined) {
-          expect(decoded['seq']).toBe(scenario.expectedCursorAfterFirst.seq)
-        }
+        const { deletedAt, ...rest } = scenario.expectedCursorAfterFirst
+        expect(decoded).toEqual({
+          ...rest,
+          version: 1,
+          ...(deletedAt === undefined ? {} : { deleted_at: deletedAt }),
+        })
       })
     })
   }
@@ -119,7 +129,8 @@ describe('sort/cursor cross-impl conformance', () => {
   it('wire-sort discriminators are pairwise-distinct', () => {
     const sampleRow = vectors.rows[0]
     if (sampleRow === undefined) throw new Error('fixture has no rows')
-    const wireSorts = ['default', 'recently-modified', 'most-linked', 'most-content']
+    const wireSorts = vectors.scenarios.map((scenario) => scenario.sort)
+    expect(wireSorts).toHaveLength(6)
     const discriminators = wireSorts.map((s) => {
       const decoded = JSON.parse(
         base64UrlToUtf8(encodeNextCursor(toMetaRow(sampleRow), s)),
@@ -136,8 +147,8 @@ describe('sort/cursor cross-impl conformance', () => {
  * handler.
  *
  * Under `sort: 'alphabetical'` the cursor payload's `deleted_at` slot carries
- * `last.content` — the raw page TITLE — so the encoder sees arbitrary user
- * text. The backend's `Cursor::encode`
+ * the page's title sort key, user text, so the encoder sees arbitrary
+ * non-ASCII text. The backend's `Cursor::encode`
  * (`agaric-store/src/pagination/mod.rs`) is
  * `URL_SAFE_NO_PAD.encode(json.as_bytes())`, i.e. the UTF-8 bytes of the JSON.
  * `btoa` maps each string CODE UNIT to one byte and therefore has two
@@ -146,8 +157,9 @@ describe('sort/cursor cross-impl conformance', () => {
  *   - em dash (U+2014): `btoa` throws `InvalidCharacterError`, and `dispatch`
  *     (`handlers.ts`) has no try/catch, so a raw DOMException escapes the IPC
  *     boundary from `list_pages_with_metadata` instead of a page of results.
- *   - `é` (U+00E9): no throw — `btoa` silently emits the single Latin-1 byte
- *     0xE9 where the backend emits the UTF-8 pair 0xC3 0xA9.
+ *   - `ø` (U+00F8): no throw — `btoa` silently emits the single Latin-1 byte
+ *     0xF8 where the backend emits the UTF-8 pair 0xC3 0xB8. (`é` no longer
+ *     reaches the cursor: the key strips its accent.)
  *
  * Expected strings are built from an INDEPENDENT base64url encoder over
  * `TextEncoder` bytes and from a hand-written JSON literal, not from the
@@ -181,7 +193,7 @@ describe('encodeNextCursor — non-ASCII titles (#3888 note 2)', () => {
 
   const ID = '00000000000000000000000001'
 
-  function rowTitled(title: string): PageMetaRow {
+  function rowTitled(title: string): PageSortRow {
     return toMetaRow({
       id: ID,
       content: title,
@@ -193,42 +205,36 @@ describe('encodeNextCursor — non-ASCII titles (#3888 note 2)', () => {
 
   /**
    * The exact JSON `encodeNextCursor` builds for `alphabetical`, written out by
-   * hand (insertion order `id`, `version`, `position`, `deleted_at`).
-   * `position: 1` is `PageSort::Alphabetical`'s discriminator
-   * (`sort_discriminator`, `src-tauri/src/commands/pages/metadata.rs`). It read
-   * `5` here until #3927, mirroring the mock's own bug rather than the backend:
-   * `alphabetical` was folded into `default`'s tag on the false premise that it
-   * is a frontend-only sort. Incidental to what these three tests assert (the
-   * UTF-8 base64url encoding), but it is a hand-written expectation and a
-   * hand-written expectation that repeats the bug is how the bug survives.
+   * hand (insertion order `id`, `version`, `position`, `deleted_at`), with the
+   * title's sort key spelled out by hand too. `position: 1` is
+   * `PageSort::Alphabetical`'s discriminator (`sort_discriminator`,
+   * `src-tauri/src/commands/pages/metadata.rs`).
    */
-  function alphabeticalJson(title: string): string {
-    return `{"id":"${ID}","version":1,"position":1,"deleted_at":${JSON.stringify(title)}}`
+  function alphabeticalJson(key: string): string {
+    return `{"id":"${ID}","version":1,"position":1,"deleted_at":${JSON.stringify(key)}}`
   }
 
   it('encodes an above-U+00FF title (em dash) instead of throwing InvalidCharacterError', () => {
-    const TITLE = 'Q3 — Roadmap' // U+2014
-    expect(encodeNextCursor(rowTitled(TITLE), 'alphabetical')).toBe(
-      rustCursorBytes(alphabeticalJson(TITLE)),
+    expect(encodeNextCursor(rowTitled('Q3 — Roadmap'), 'alphabetical')).toBe(
+      rustCursorBytes(alphabeticalJson('q3 — roadmap')), // U+2014
     )
   })
 
-  it('encodes a U+0080–U+00FF title (é) as UTF-8, not as a single Latin-1 byte', () => {
-    const TITLE = 'Café Notes' // U+00E9
-    expect(encodeNextCursor(rowTitled(TITLE), 'alphabetical')).toBe(
-      rustCursorBytes(alphabeticalJson(TITLE)),
+  it('encodes a U+0080–U+00FF title (ø) as UTF-8, not as a single Latin-1 byte', () => {
+    expect(encodeNextCursor(rowTitled('Søren Notes'), 'alphabetical')).toBe(
+      rustCursorBytes(alphabeticalJson('søren notes')), // U+00F8
     )
   })
 
   it('round-trips a non-ASCII cursor back through the decoder the handler uses', () => {
     // A wrong DECODER breaks resume even behind a right encoder: a Latin-1
-    // read of UTF-8 bytes yields a mojibake title and a mangled id.
+    // read of UTF-8 bytes yields a mojibake key and a mangled id.
     const encoded = encodeNextCursor(rowTitled('Q3 — Roadmap'), 'alphabetical')
     expect(JSON.parse(base64UrlToUtf8(encoded)) as Record<string, unknown>).toEqual({
       id: ID,
       version: 1,
       position: 1,
-      deleted_at: 'Q3 — Roadmap',
+      deleted_at: 'q3 — roadmap',
     })
   })
 })

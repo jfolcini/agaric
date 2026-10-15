@@ -6847,6 +6847,120 @@ async fn tags_cache_0121_unique_per_space_recomputes_rows_5237() {
     .expect_err("0121 keeps a name unique WITHIN a space");
 }
 
+/// #5371 — 0123 adds the two Pages sort keys unfilled, and the page-row
+/// rebuild (scheduled at boot while a row is unfilled) is their backfill:
+/// SQLite cannot compute the NFKD `title_sort_key`. `last_edited_ms` is the
+/// newest op on any block of the page, the child's here.
+#[tokio::test]
+async fn pages_cache_0123_sort_keys_fill_from_the_page_row_rebuild_5371() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 122).await;
+
+    let page = "01J00000000000000000PAGE5A";
+    let child = "01J00000000000000000CHDX5A";
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)")
+        .bind(page)
+        .bind("Émile")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .expect("seed page");
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+         VALUES (?, 'content', 'body', ?, ?)",
+    )
+    .bind(child)
+    .bind(page)
+    .bind(page)
+    .execute(&pool)
+    .await
+    .expect("seed child");
+    for (seq, block_id, created_at) in [(1_i64, page, 1_000_i64), (2, child, 5_000)] {
+        sqlx::query(
+            "INSERT INTO op_log (seq, device_id, op_type, payload, created_at, hash, block_id) \
+             VALUES (?, 'dev', 'edit_block', '{}', ?, 'h', ?)",
+        )
+        .bind(seq)
+        .bind(created_at)
+        .bind(block_id)
+        .execute(&pool)
+        .await
+        .expect("seed op");
+    }
+    sqlx::query("INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, 'Émile', 7)")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .expect("seed pre-0123 row");
+
+    apply_migrations_to_head(&pool, 122).await;
+
+    let read = || {
+        sqlx::query_as::<_, (String, i64, i64)>(
+            "SELECT title_sort_key, last_edited_ms, updated_at FROM pages_cache WHERE page_id = ?",
+        )
+        .bind(page)
+        .fetch_one(&pool)
+    };
+    assert_eq!(
+        read().await.unwrap(),
+        (String::new(), 0, 7),
+        "0123 leaves both keys at their unfilled defaults"
+    );
+
+    agaric_store::cache::rebuild_pages_cache(&pool)
+        .await
+        .expect("page-row rebuild");
+    assert_eq!(
+        read().await.unwrap(),
+        ("emile".to_owned(), 5_000, 7),
+        "the rebuild fills the NFKD key and the child's newest op, and keeps the \
+         unchanged title's updated_at"
+    );
+}
+
+/// #5371 — `page_opens` is STRICT, rejects a negative stamp, and goes with
+/// its page on a hard delete.
+#[tokio::test]
+async fn page_opens_0123_is_strict_checked_and_cascades_5371() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 122).await;
+    let page = "01J00000000000000000PAGE5B";
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'P', ?)")
+        .bind(page)
+        .bind(page)
+        .execute(&pool)
+        .await
+        .expect("seed page");
+    apply_migrations_to_head(&pool, 122).await;
+
+    let strict: i64 =
+        sqlx::query_scalar("SELECT strict FROM pragma_table_list WHERE name = 'page_opens'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(strict, 1, "page_opens is STRICT");
+    sqlx::query("INSERT INTO page_opens (page_id, opened_ms) VALUES (?, -1)")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .expect_err("opened_ms >= 0");
+    sqlx::query("INSERT INTO page_opens (page_id, opened_ms) VALUES (?, 42)")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .expect("record an open");
+    sqlx::query("DELETE FROM blocks WHERE id = ?")
+        .bind(page)
+        .execute(&pool)
+        .await
+        .expect("hard-delete the page");
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_opens")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "the open goes with its page (ON DELETE CASCADE)");
+}
 /// #5426 — 0122 adds `page_link_cache.space_id` and backfills it on an
 /// upgrading vault's rows with the writers' rule: the space both pages share,
 /// NULL for an edge between spaces, an edge with a space-less end, or an end

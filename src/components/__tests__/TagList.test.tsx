@@ -72,7 +72,12 @@ function makeTag(id: string, name: string, usageCount = 0): TagCacheRow {
  */
 function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
   mockedInvoke.mockImplementation(
-    mockInvokeCommands({ list_all_tags_in_space: () => [], ...handlers }),
+    // Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+    mockInvokeCommands({
+      list_all_tags_in_space: () => [],
+      record_page_open: () => null,
+      ...handlers,
+    }),
   )
 }
 

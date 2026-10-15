@@ -1,12 +1,11 @@
 /**
  * Tests for usePageBrowserGrouping — covers the two branch helpers
- * (`buildSinglePageBranch`, `buildMultiPageBranch`) and the
- * `sortTopLevelUnits` comparator that drive `PageBrowser`'s unified
- * `Starred` + `Pages` row model.
+ * (`buildSinglePageBranch`, `buildMultiPageBranch`) that drive
+ * `PageBrowser`'s unified `Starred` + `Pages` row model.
  */
 
 import { renderHook } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { makePage } from '@/__tests__/fixtures'
 import {
@@ -14,25 +13,11 @@ import {
   buildSinglePageBranch,
   usePageBrowserGrouping,
 } from '@/hooks/usePageBrowserGrouping'
-import type { BlockRow } from '@/lib/bindings'
 import type { PageTreeNode } from '@/lib/page-tree'
-
-// #1149 — recent-pages moved to the zustand store. The grouping comparator
-// reads the snapshot helper `getRecentPagesForSpace`; override only that and
-// keep the rest of the store module real.
-vi.mock('@/stores/recent-pages', async (importActual) => {
-  const actual = await importActual<typeof import('@/stores/recent-pages')>()
-  return { ...actual, getRecentPagesForSpace: vi.fn(() => []) }
-})
-
-/** Identity sort — keeps inputs in their original order so assertions are stable. */
-function identitySort(input: BlockRow[]): BlockRow[] {
-  return [...input]
-}
 
 describe('buildSinglePageBranch', () => {
   it('returns hasPages=false for an empty input', () => {
-    const result = buildSinglePageBranch([], identitySort)
+    const result = buildSinglePageBranch([])
     expect(result.hasPages).toBe(false)
     expect(result.hasStarred).toBe(false)
     expect(result.groupedRows).toEqual([])
@@ -42,7 +27,7 @@ describe('buildSinglePageBranch', () => {
 
   it('emits a single flat page row for a one-page vault — no headers', () => {
     const p = makePage({ id: 'P1', content: 'Solo' })
-    const result = buildSinglePageBranch([p], identitySort)
+    const result = buildSinglePageBranch([p])
     expect(result.hasStarred).toBe(false)
     expect(result.hasPages).toBe(true)
     expect(result.groupedRows).toHaveLength(1)
@@ -51,15 +36,12 @@ describe('buildSinglePageBranch', () => {
     expect(result.pageIndexToRowIndex).toEqual([0])
   })
 
-  it('passes pages through the supplied sortPages callback', () => {
+  it('keeps the server order of its input', () => {
     const p1 = makePage({ id: 'P1', content: 'Bravo' })
     const p2 = makePage({ id: 'P2', content: 'Alpha' })
-    const sortByName = (input: BlockRow[]) =>
-      [...input].toSorted((a, b) => (a.content ?? '').localeCompare(b.content ?? ''))
-    const result = buildSinglePageBranch([p1, p2], sortByName)
-    // Sorted: Alpha first.
-    expect(result.groupedRows[0]).toMatchObject({ kind: 'page', page: { id: 'P2' } })
-    expect(result.groupedRows[1]).toMatchObject({ kind: 'page', page: { id: 'P1' } })
+    const result = buildSinglePageBranch([p1, p2])
+    expect(result.groupedRows[0]).toMatchObject({ kind: 'page', page: { id: 'P1' } })
+    expect(result.groupedRows[1]).toMatchObject({ kind: 'page', page: { id: 'P2' } })
   })
 })
 
@@ -67,7 +49,7 @@ describe('buildMultiPageBranch', () => {
   it('emits a Pages-only section when no pages are starred', () => {
     const a = makePage({ id: 'P1', content: 'Alpha' })
     const b = makePage({ id: 'P2', content: 'Bravo' })
-    const result = buildMultiPageBranch([a, b], identitySort, 'alphabetical', new Set())
+    const result = buildMultiPageBranch([a, b], new Set())
     expect(result.hasStarred).toBe(false)
     expect(result.hasPages).toBe(true)
     // 1 header + 2 page rows.
@@ -78,12 +60,7 @@ describe('buildMultiPageBranch', () => {
   it('puts starred non-namespaced pages ONLY in the Starred section (no duplicate)', () => {
     const a = makePage({ id: 'P1', content: 'Alpha' })
     const b = makePage({ id: 'P2', content: 'Bravo' })
-    const result = buildMultiPageBranch(
-      [a, b],
-      identitySort,
-      'alphabetical',
-      new Set(['P1']) as ReadonlySet<string>,
-    )
+    const result = buildMultiPageBranch([a, b], new Set(['P1']) as ReadonlySet<string>)
     expect(result.hasStarred).toBe(true)
     expect(result.hasPages).toBe(true)
     // First header is starred with count 1, then the starred page.
@@ -98,7 +75,7 @@ describe('buildMultiPageBranch', () => {
     const a = makePage({ id: 'P1', content: 'work/foo' })
     const b = makePage({ id: 'P2', content: 'home' })
     const starred: ReadonlySet<string> = new Set(['P1'])
-    const result = buildMultiPageBranch([a, b], identitySort, 'alphabetical', starred)
+    const result = buildMultiPageBranch([a, b], starred)
     // Starred section count = 1 (only the namespaced starred page).
     const starredHeader = result.groupedRows.find(
       (r) => r.kind === 'header' && r.section === 'starred',
@@ -115,19 +92,14 @@ describe('buildMultiPageBranch', () => {
 
   // #3286 — both `node.pageId -> BlockRow` lookups now go through the id map
   // built alongside `starredFiltered`/`pagesSourcePages` instead of a linear
-  // `filteredPagesUnsorted.find`. Pins the resolution the map has to preserve:
+  // `filteredPages.find`. Pins the resolution the map has to preserve:
   // the flat-page arm AND the hybrid tree-root arm (a page named `work` that
   // also has `work/...` children), which is the only caller of the second one.
   it('resolves a hybrid namespace root to its backing page row', () => {
     const root = makePage({ id: 'P1', content: 'work' })
     const child = makePage({ id: 'P2', content: 'work/foo' })
     const flat = makePage({ id: 'P3', content: 'home' })
-    const result = buildMultiPageBranch(
-      [root, child, flat],
-      identitySort,
-      'alphabetical',
-      new Set(),
-    )
+    const result = buildMultiPageBranch([root, child, flat], new Set())
     const treeIndex = result.groupedRows.findIndex((r) => r.kind === 'tree-page')
     expect(treeIndex).toBeGreaterThanOrEqual(0)
     const treeRow = result.groupedRows[treeIndex]
@@ -145,45 +117,47 @@ describe('buildMultiPageBranch', () => {
   it('pageIndexToRowIndex skips header rows', () => {
     const a = makePage({ id: 'P1', content: 'Alpha' })
     const b = makePage({ id: 'P2', content: 'Bravo' })
-    const result = buildMultiPageBranch(
-      [a, b],
-      identitySort,
-      'alphabetical',
-      new Set(['P1']) as ReadonlySet<string>,
-    )
+    const result = buildMultiPageBranch([a, b], new Set(['P1']) as ReadonlySet<string>)
     // 4 rows total: [starred header, P1, pages header, P2]
     // Page index 0 → row 1, page index 1 → row 3.
     expect(result.pageIndexToRowIndex).toEqual([1, 3])
   })
 
   it('returns hasStarred=false hasPages=false for an empty input', () => {
-    const result = buildMultiPageBranch([], identitySort, 'alphabetical', new Set())
+    const result = buildMultiPageBranch([], new Set())
     expect(result.hasStarred).toBe(false)
     expect(result.hasPages).toBe(false)
     expect(result.groupedRows).toEqual([])
   })
 
-  it('created sort orders top-level pages by ULID descending', () => {
-    const older = makePage({ id: '01AAAA', content: 'Older' })
-    const newer = makePage({ id: '01ZZZZ', content: 'Newer' })
-    const result = buildMultiPageBranch([older, newer], identitySort, 'created', new Set())
-    // Pages section starts at row 1 (after the header).
-    const firstPageRow = result.groupedRows[1]
-    const secondPageRow = result.groupedRows[2]
-    // Newer ULID comes first.
-    expect(firstPageRow).toMatchObject({ kind: 'page', page: { id: '01ZZZZ' } })
-    expect(secondPageRow).toMatchObject({ kind: 'page', page: { id: '01AAAA' } })
+  // #5371 — the server orders the pages; a namespace root sits where its
+  // first page arrived, and the flat rows keep their places around it.
+  it('keeps the server order, a namespace root at its first page', () => {
+    const pages = [
+      makePage({ id: 'P1', content: 'zeta' }),
+      makePage({ id: 'P2', content: 'work/b' }),
+      makePage({ id: 'P3', content: 'alpha' }),
+      makePage({ id: 'P4', content: 'work/a' }),
+    ]
+    const result = buildMultiPageBranch(pages, new Set())
+    expect(
+      result.groupedRows
+        .slice(1)
+        .map((row) =>
+          row.kind === 'page' ? row.page.id : row.kind === 'tree-page' ? row.node.name : '',
+        ),
+    ).toEqual(['P1', 'work', 'P3'])
   })
 })
 
 describe('matchedPageCount (E7)', () => {
   it('single-page branch reports the flat page count', () => {
-    const result = buildSinglePageBranch([makePage({ id: 'P1', content: 'Solo' })], identitySort)
+    const result = buildSinglePageBranch([makePage({ id: 'P1', content: 'Solo' })])
     expect(result.matchedPageCount).toBe(1)
   })
 
   it('empty single-page branch reports zero', () => {
-    expect(buildSinglePageBranch([], identitySort).matchedPageCount).toBe(0)
+    expect(buildSinglePageBranch([]).matchedPageCount).toBe(0)
   })
 
   it('counts DISTINCT matched pages, not grouped rows, for a namespaced subtree', () => {
@@ -195,7 +169,7 @@ describe('matchedPageCount (E7)', () => {
       makePage({ id: 'P2', content: 'work/b' }),
       makePage({ id: 'P3', content: 'work/c' }),
     ]
-    const result = buildMultiPageBranch(pages, identitySort, 'alphabetical', new Set())
+    const result = buildMultiPageBranch(pages, new Set())
     expect(result.matchedPageCount).toBe(3)
     // Sanity: the grouped row array (`filteredPages`) is SHORTER than the
     // distinct page count because the subtree collapsed to one row.
@@ -216,7 +190,7 @@ describe('matchedPageCount (E7)', () => {
       makePage({ id: 'P5', content: 'team/y' }),
     ]
     const starred: ReadonlySet<string> = new Set(['P5'])
-    const result = buildMultiPageBranch(pages, identitySort, 'alphabetical', starred)
+    const result = buildMultiPageBranch(pages, starred)
     // Five distinct matched pages.
     expect(result.matchedPageCount).toBe(5)
     // The grouped row array does NOT equal the distinct count (subtree
@@ -246,7 +220,7 @@ describe('duplicate titles (#4709)', () => {
       makePage({ id: 'P2', content: 'Agaric' }),
       makePage({ id: 'P3', content: 'iadm' }),
     ]
-    const result = buildMultiPageBranch(pages, identitySort, 'alphabetical', new Set())
+    const result = buildMultiPageBranch(pages, new Set())
     // Header + one row per page.
     expect(result.groupedRows.filter((r) => r.kind === 'page')).toHaveLength(3)
     expect(reachableIds(result.groupedRows).toSorted()).toEqual(['P1', 'P2', 'P3'])
@@ -257,7 +231,7 @@ describe('duplicate titles (#4709)', () => {
       makePage({ id: 'P1', content: 'DevEx/workstations/avature' }),
       makePage({ id: 'P2', content: 'DevEx/workstations/avature' }),
     ]
-    const result = buildMultiPageBranch(pages, identitySort, 'alphabetical', new Set())
+    const result = buildMultiPageBranch(pages, new Set())
     expect(reachableIds(result.groupedRows).toSorted()).toEqual(['P1', 'P2'])
   })
 
@@ -275,7 +249,7 @@ describe('duplicate titles (#4709)', () => {
       makePage({ id: 'P4', content: 'work/dup' }),
       makePage({ id: 'P5', content: 'work/solo' }),
     ]
-    const result = buildMultiPageBranch(pages, identitySort, 'alphabetical', new Set())
+    const result = buildMultiPageBranch(pages, new Set())
     expect(result.matchedPageCount).toBe(5)
     const ids = reachableIds(result.groupedRows)
     // Distinct — no page counted twice by the rows either.
@@ -289,7 +263,7 @@ describe('duplicate titles (#4709)', () => {
       makePage({ id: 'P2', content: 'Agaric' }),
       makePage({ id: 'P3', content: 'iadm' }),
     ]
-    const result = buildMultiPageBranch(pages, identitySort, 'alphabetical', new Set())
+    const result = buildMultiPageBranch(pages, new Set())
     const flagFor = (id: string) =>
       result.groupedRows.find((r) => r.kind === 'page' && r.page.id === id) as
         | Extract<(typeof result.groupedRows)[number], { kind: 'page' }>
@@ -301,63 +275,12 @@ describe('duplicate titles (#4709)', () => {
   })
 })
 
-describe('sortTopLevelUnits id tiebreak (E14)', () => {
-  it('recent sort breaks visit-less ties by id ASC (matching the server keyset), not title', () => {
-    // Neither page has a recent-visit time (the mocked getRecentPages
-    // returns []), so BOTH fall to the tiebreaker — the common case, since
-    // most pages have never been visited. The server streams these ties in
-    // id ASC order; the client must match that, NOT reorder by title.
-    // Title order would put 'Alpha' first if title were the tiebreak; id
-    // ASC instead puts the lower id ('Zebra') first. This is the row
-    // reshuffle E14 fixes: as pages stream in, equal-key rows must keep a
-    // stable, server-aligned order.
-    const lowerIdLaterTitle = makePage({ id: '01AAAA', content: 'Zebra' })
-    const higherIdEarlierTitle = makePage({ id: '01ZZZZ', content: 'Alpha' })
-    const result = buildMultiPageBranch(
-      [higherIdEarlierTitle, lowerIdLaterTitle],
-      identitySort,
-      'recent',
-      new Set(),
-    )
-    // id ASC: 01AAAA ('Zebra') first, 01ZZZZ ('Alpha') second.
-    expect(result.groupedRows[1]).toMatchObject({ kind: 'page', page: { id: '01AAAA' } })
-    expect(result.groupedRows[2]).toMatchObject({ kind: 'page', page: { id: '01ZZZZ' } })
-  })
-
-  it('recent ties are order-independent (stable regardless of input order)', () => {
-    // Feed the SAME two visit-less pages in the opposite input order; the
-    // id-ASC tiebreak must produce the identical output order, proving the
-    // result no longer depends on incoming (stream) order.
-    const a = makePage({ id: '01AAAA', content: 'Zebra' })
-    const z = makePage({ id: '01ZZZZ', content: 'Alpha' })
-    const forward = buildMultiPageBranch([a, z], identitySort, 'recent', new Set())
-    const reversed = buildMultiPageBranch([z, a], identitySort, 'recent', new Set())
-    const idsOf = (r: typeof forward) =>
-      r.groupedRows
-        .filter((row) => row.kind === 'page')
-        .map((row) => (row as { page: BlockRow }).page.id)
-    expect(idsOf(forward)).toEqual(['01AAAA', '01ZZZZ'])
-    expect(idsOf(reversed)).toEqual(['01AAAA', '01ZZZZ'])
-  })
-
-  it('created sort orders by ULID DESC and stays deterministic', () => {
-    const a = makePage({ id: '01AAAA', content: 'Zeta' })
-    const b = makePage({ id: '01BBBB', content: 'Alpha' })
-    const result = buildMultiPageBranch([a, b], identitySort, 'created', new Set())
-    // created = ULID DESC: 01BBBB before 01AAAA regardless of title.
-    expect(result.groupedRows[1]).toMatchObject({ kind: 'page', page: { id: '01BBBB' } })
-    expect(result.groupedRows[2]).toMatchObject({ kind: 'page', page: { id: '01AAAA' } })
-  })
-})
-
 describe('usePageBrowserGrouping (hook)', () => {
   it('selects the single-page branch for a one-page non-namespaced vault', () => {
     const p = makePage({ id: 'P1', content: 'Solo' })
     const { result } = renderHook(() =>
       usePageBrowserGrouping({
-        filteredPagesUnsorted: [p],
-        sortPages: identitySort,
-        sortOption: 'alphabetical',
+        filteredPages: [p],
         starredIds: new Set(),
         isSinglePageVault: true,
       }),
@@ -373,9 +296,7 @@ describe('usePageBrowserGrouping (hook)', () => {
     const b = makePage({ id: 'P2', content: 'Bravo' })
     const { result } = renderHook(() =>
       usePageBrowserGrouping({
-        filteredPagesUnsorted: [a, b],
-        sortPages: identitySort,
-        sortOption: 'alphabetical',
+        filteredPages: [a, b],
         starredIds: new Set(),
         isSinglePageVault: false,
       }),
