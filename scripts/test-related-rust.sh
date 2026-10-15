@@ -178,16 +178,17 @@ crate_roots() {
            --format-version 1 2>/dev/null) \
     || return 1
 
-  printf '%s' "$meta" | python3 -c "
-import json, os, sys
-meta = json.load(sys.stdin)
-ws = os.path.realpath(meta['workspace_root'])
-for pkg in meta['packages']:
-    d = os.path.dirname(pkg['manifest_path'])
-    if os.path.realpath(d) == ws:
-        continue
-    print(os.path.relpath(d, sys.argv[1]), pkg['name'])
-" "$REPO_ROOT"
+  printf '%s' "$meta" | node -e '
+const { readFileSync, realpathSync } = require("node:fs")
+const { dirname, relative } = require("node:path")
+const meta = JSON.parse(readFileSync(0, "utf8"))
+const ws = realpathSync(meta.workspace_root)
+for (const pkg of meta.packages) {
+  const d = dirname(pkg.manifest_path)
+  if (realpathSync(d) === ws) continue
+  console.log(relative(process.argv[1], d), pkg.name)
+}
+' "$REPO_ROOT"
 }
 
 CRATE_MAP=""

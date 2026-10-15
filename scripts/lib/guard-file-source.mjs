@@ -34,12 +34,8 @@
 // AUTO requires the exported index to be THIS tree's. `GIT_INDEX_FILE` merely
 // being SET is not the question; whose index it names is. A guard rooted in
 // one tree while a commit runs in another has no correct guess available, so
-// it makes none and exits 2 (`isAmbiguousSource`). This rule and its Python
-// twin in `guard_file_source.py` are one rule, and are kept in step by the
-// same fail-closed scenarios in `runSourceScenarios` — before it was ported
-// here, a foreign `GIT_INDEX_FILE` made the two helpers answer OPPOSITELY
-// for the same situation: Python exit 2, Node "read the staged index" of a
-// repository it was not judging.
+// it makes none and exits 2 (`isAmbiguousSource`), pinned by the fail-closed
+// scenarios in `runSourceScenarios`.
 //
 // AUTO exists because the two prek invocations that must behave differently
 // share ONE `entry` line in prek.toml: the hooks are registered at
@@ -94,8 +90,8 @@
 // (or their own fixtures built on the same helper), which spawns the guard INSIDE
 // a throwaway fixture with `cwd` set to it; a script-anchored root would send
 // them scanning the real repository from there and passing for entirely the
-// wrong reason. The Python guards solved the same problem by copying the
-// guard into the fixture (`scripts/test-py-guard-file-source.sh`,
+// wrong reason. The Rust-scanning guards solve the same problem by copying
+// the guard into the fixture (`scripts/check-table-ownership.test.mjs`,
 // `pr-merge-result-check.sh`), which is the better answer and the one to
 // adopt if these five ever need it.
 //
@@ -104,10 +100,10 @@
 // --show-toplevel')`. That mattered (#4192): every copy asked the question
 // under the AMBIENT environment, so a leaked git context could redirect the
 // root itself, BEFORE the ownership probe #4061 added was ever consulted.
-// The Python guards are immune to that vector for free, being anchored at
-// `SCRIPT_DIR.parent` rather than at anything git answers; the Node side
-// buys the same immunity by scrubbing the redirect variables for that one
-// call. Which is why the exception is now a shared function: a rule with
+// A script-anchored guard is immune to that vector for free, being anchored
+// at its own location rather than at anything git answers; these five buy
+// the same immunity by scrubbing the redirect variables for that one call.
+// Which is why the exception is now a shared function: a rule with
 // five implementations is five rules.
 //
 // None is in `RATCHET_GUARDS`, so none is ever run against a tree other than
@@ -215,9 +211,6 @@ const CAT_FILE_MAX_BUFFER = 64 * 1024 * 1024
 /**
  * Does `indexFile` name an index of the repository at `repoRoot`?
  *
- * The Node twin of `guard_file_source.py`'s `_index_belongs_to`, and
- * deliberately the same shape:
- *
  *   * a RELATIVE `GIT_INDEX_FILE` (`.git/index` — what an ordinary `git
  *     commit` exports) is resolved against the process cwd, because that is
  *     how git itself resolves it;
@@ -292,8 +285,7 @@ const CAT_FILE_MAX_BUFFER = 64 * 1024 * 1024
  * this fix, in a two-repository scratch fixture with `GIT_DIR` and
  * `GIT_INDEX_FILE` both exported from the second: AUTO accepted the foreign
  * index as belonging to the first, and the guard exited 0 over a staged
- * violation it never read. Pinned in scenario 9 of `runSourceScenarios` and
- * section 5 of `scripts/test-py-guard-file-source.sh`.
+ * violation it never read. Pinned in scenario 9 of `runSourceScenarios`.
  */
 const NESTED_GIT_DIRS = new Set(['worktrees', 'modules'])
 
@@ -356,11 +348,10 @@ const NESTED_GIT_DIRS = new Set(['worktrees', 'modules'])
 // consulted for any oid the primary store lacks — so a leaked
 // `GIT_ALTERNATE_OBJECT_DIRECTORIES` can serve an ATTACKER-CHOSEN body for
 // an oid `git ls-files -s` names, through `cat-file blob` and `cat-file
-// --batch` alike. Reproduced against `check-raw-tx.py --cached` over a
+// --batch` alike. Reproduced against `check-raw-tx --cached` over a
 // staged violation whose loose object had been removed: exit 2 (the
 // fail-closed "damaged object store" refusal) became exit 0, over a forged
-// clean body. Pinned in section 5c of `scripts/test-py-guard-file-source.sh`
-// and in `verifyLeakedGitContext` (./git-scratch-guard.mjs).
+// clean body. Pinned in `verifyLeakedGitContext` (./git-scratch-guard.mjs).
 //
 // Scrubbing the pair is not costless in every direction, only every
 // direction that matters HERE: a guard run as a server-side `pre-receive` /
@@ -413,14 +404,7 @@ const NESTED_GIT_DIRS = new Set(['worktrees', 'modules'])
 // (both measured) — that appears nowhere in git's layout and cannot be
 // re-derived. It is therefore KEPT when it belongs to the tree being judged
 // and dropped when it does not, which is `gitEnv`'s ownership rule below.
-//
-// The Node twin of `_GIT_REDIRECT_VARS` in `guard_file_source.py`; the two
-// lists are identical, which is the point — a divergence between them is the
-// same class of bug as #4062. Exported (unlike the Python name's leading
-// underscore) so `scripts/test-py-guard-file-source.sh` can import this
-// exact list and diff it against the Python one at test time, rather than
-// trusting the "identical" claim in these two comments to stay true.
-export const GIT_REDIRECT_VARS = [
+const GIT_REDIRECT_VARS = [
   'GIT_DIR',
   'GIT_WORK_TREE',
   'GIT_COMMON_DIR',
@@ -524,9 +508,8 @@ export function indexBelongsTo(indexFile, repoRoot, env = process.env) {
 }
 
 /**
- * The environment a guard's own `git` calls should run under — the Node twin
- * of `guard_file_source.py`'s `git_env`, and the other half of the ownership
- * rule.
+ * The environment a guard's own `git` calls should run under — the other
+ * half of the ownership rule.
  *
  * `cwd` does NOT decide which index git reads: an ambient `GIT_INDEX_FILE`
  * outranks it. So a guard reading the staged index of `repoRoot` while some
@@ -798,11 +781,7 @@ function readFromIndex(paths, repoRoot, entries, chunkSize = CAT_FILE_CHUNK, env
       // (`git rm --cached`, which leaves the file on disk). It is not being
       // committed, so under `--cached` it is not read: reading the disk copy
       // would be this source answering about a path it has just been told is
-      // absent. Unreachable from the five guards, which enumerate FROM
-      // `listTrackedEntries`; stated so the rule is one rule. The Python
-      // sibling reaches it (its callers pass prek's path arguments) and
-      // answers the same way — `read` in scripts/lib/guard_file_source.py,
-      // #4058.
+      // absent (#4058).
       continue
     }
     if (entry.sha === null) {
@@ -901,10 +880,8 @@ function readFromIndex(paths, repoRoot, entries, chunkSize = CAT_FILE_CHUNK, env
  * no correct per-file answer — so it fails closed, and the commit is blocked
  * with the sha named rather than judged against a file nobody staged.
  *
- * `scripts/lib/guard_file_source.py` reaches the same verdict from the same
- * reasoning in `_blob`, one blob per call instead of a batch. Its first draft
- * conflated EVERY `cat-file` failure into this same silent fallback, which is
- * what #4046 was filed about; the two helpers now differ only in framing.
+ * Conflating EVERY `cat-file` failure into a silent fallback is what #4046
+ * was filed about.
  */
 export function parseBatchStream(out, chunk) {
   const bodies = new Map()

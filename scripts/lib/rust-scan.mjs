@@ -8,8 +8,8 @@
 // it does not reuse `check-bulk-equivalence.mjs`'s `blank()`, which walks
 // UTF-16 units and gets both wrong.
 
-import { statSync } from 'node:fs'
-import { join } from 'node:path'
+import { realpathSync, statSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import {
   SOURCE_INDEX,
@@ -30,6 +30,70 @@ export const CRATE_ROOTS = Object.freeze([
   'src-tauri/diagnostics/src/',
   'src-tauri/src/',
 ])
+
+/** Is `rel` under one of `crateRoots`? */
+export function underCrateRoot(rel, crateRoots = CRATE_ROOTS) {
+  return crateRoots.some((root) => rel.startsWith(root))
+}
+
+/**
+ * The entries of `crateRoots` naming no directory under `repoRoot`, without
+ * their trailing slash. A stale root exempts every file under its crate and
+ * the run still exits 0, so the guards fail on any of these (#4501).
+ */
+export function missingCrateRoots(crateRoots, repoRoot) {
+  return crateRoots
+    .filter((root) => !isDirectory(join(repoRoot, root)))
+    .map((root) => root.replace(/\/+$/, ''))
+}
+
+export function isDirectory(path) {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/** A line writer for `stream`. */
+export const write = (stream) => (line) => stream.write(`${line}\n`)
+
+/** 0-based line of each offset, counting `\n` only, for ascending offsets. */
+export function lineIndexer(text) {
+  let pos = 0
+  let line = 0
+  return (offset) => {
+    for (; pos < offset; pos++) if (text[pos] === '\n') line += 1
+    return line
+  }
+}
+
+/**
+ * Symlinks resolved as far as the path exists, the rest appended, so a
+ * staged file deleted from disk still maps into the repo.
+ */
+function resolveExisting(arg) {
+  let head = resolve(arg)
+  const tail = []
+  for (;;) {
+    try {
+      return join(realpathSync(head), ...tail)
+    } catch {
+      const parent = dirname(head)
+      if (parent === head) return resolve(arg)
+      tail.unshift(basename(head))
+      head = parent
+    }
+  }
+}
+
+/** The `repoRoot`-relative spelling of `arg`, or null when it lies outside. */
+export function repoRelative(arg, repoRoot) {
+  const rel = relative(repoRoot, resolveExisting(arg))
+  if (rel === '') return '.'
+  if (rel === '..' || rel.startsWith('../') || isAbsolute(rel)) return null
+  return rel
+}
 
 // Files their parent module declares `#[cfg(test)] mod …`, so they carry no
 // inner `#[cfg(test)]` for `cfgTestLineSet` to find.

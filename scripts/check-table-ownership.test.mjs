@@ -7,10 +7,10 @@ import test from 'node:test'
 
 import { CRATE_ROOTS } from './lib/rust-scan.mjs'
 
-// `--self-test` covers the scanner and the roots wiring with every reader
-// stubbed. These run the guard's `main()` end to end over a real tree: the
-// comparison against the baseline, the owner exemption and the baseline
-// reader and writer.
+// `--self-test` covers the scanner and the baseline parser. These run the
+// guard's `main()` end to end over a real tree: the comparison against the
+// baseline, the owner exemption, the baseline reader and writer, and the
+// missing-crate-root refusals.
 
 const GUARD_FILES = ['check-table-ownership.mjs', 'lib/rust-scan.mjs', 'lib/guard-file-source.mjs']
 const BASELINE = 'src-tauri/table-ownership-baseline.txt'

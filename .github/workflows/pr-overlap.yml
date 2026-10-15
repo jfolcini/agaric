@@ -403,8 +403,8 @@ jobs:
   # the same fixture runs the job and it catches a planted ratchet violation
   # in the base-only file. Over-triggering is the safe direction — this job
   # runs on some base movement that turns out not to touch a ratchet file, at
-  # the cost of a checkout and six guard invocations (three Python, two bash,
-  # one node — see `merge-result`'s own header), never the reverse — so
+  # the cost of a checkout and the ratchet guards (see `merge-result`'s own
+  # header), never the reverse — so
   # `basechanged` is left as "any base movement" deliberately rather than
   # narrowed to a ratchet-only count `pr-file-overlap.mjs` does not compute
   # yet (it would need to scan `main`'s diverged set with `isRatchetFile`,
@@ -431,7 +431,7 @@ jobs:
   # merge RESULT rather than a branch. It is deliberately narrow: no Rust
   # toolchain, no node_modules — `scripts/pr-merge-result-check.sh` runs the
   # five whole-tree ratchet guards against a disposable worktree: the
-  # stdlib-only Python trio that shares the five-crate-root scan (#3107) and
+  # stdlib-only Node trio that shares the five-crate-root scan (#3107) and
   # two bash guards (unsafe-allowlist, migrations-immutable) — #3978.
   # Running the FULL `prek
   # --all-files` here (#3672 comment 3's step 3, in full) needs the whole
@@ -488,8 +488,8 @@ jobs:
     # and the base-divergence half is the only thing that would fire. Excluding
     # `unknown` meant a failure in the divergence script silently switched the
     # merge-result lane off for exactly the case it exists for. Running it
-    # costs a checkout, six guard invocations (three Python, two bash, one
-    # node — see below) and, since #4078, an `npm ci` + `npm run typecheck`;
+    # costs a checkout, the ratchet guards (see below) and, since #4078, an
+    # `npm ci` + `npm run typecheck`;
     # see `timeout-minutes` below for the measured total. Not running it costs
     # the incident — twice now, #3724 in a ratchet and #4074×#4075 in ordinary
     # TypeScript.
@@ -587,7 +587,7 @@ jobs:
         # `ignore-scripts=false` before this step ever runs. That is not NEW
         # exposure — not a guarantee this comment alone can make — the job
         # already executes PR-authored code elsewhere: the merged tree's own
-        # guard scripts (python3/bash/node), and now, since #4078, its
+        # guard scripts (bash/node), and now, since #4078, its
         # `package.json`'s `typecheck` script, which is an arbitrary command.
         # It holds only `contents: read`, sets `persist-credentials: false`,
         # and references no secrets (see the trust-boundary guard,
@@ -667,7 +667,7 @@ jobs:
             # "I judged nothing": base/head could not be resolved, `mktemp`
             # or `git worktree add` failed on this runner, a guard is
             # missing from the merged tree, no .rs file exists under any
-            # known crate root, no python3 — or (#4078) the typecheck half
+            # known crate root — or (#4078) the typecheck half
             # could not run: nothing to borrow a `node_modules` from, or a
             # merged tree carrying no `package.json`, no `typecheck` script
             # or no `tsconfig.json`. All of these used to exit 0,
@@ -691,7 +691,7 @@ jobs:
               echo "The check could not run: base/head could not be resolved, \`mktemp\`"
               echo "or \`git worktree add\` failed on this runner, a guard named in"
               echo "\`RATCHET_GUARDS\` is absent from the merged tree, no \`.rs\` file exists"
-              echo "under any crate root the script knows about, python3 is unavailable,"
+              echo "under any crate root the script knows about,"
               echo "or the typecheck half had nothing to run (#4078: no installed"
               echo "\`node_modules\` to borrow, a merged tree with no \`package.json\`,"
               echo "no \`typecheck\` script or no \`tsconfig.json\`, or (#4176) the merge"
