@@ -162,125 +162,25 @@ pub(crate) async fn resolve_id_arg(
     Ok(ids.remove(0))
 }
 
-/// Validate that `block_id`'s owning page lives in
-/// `space_id`, rejecting a target in another space at the MCP boundary.
-///
-/// The owning page is `b.id` if `b` is itself a page block (where
-/// `page_id` is set to `id` by `create_block_in_tx`), else `b.page_id`
-/// (an inherited reference to the page block at the top of the parent
-/// chain). The page's space comes from the page block's own
-/// `blocks.space_id` column (Phase 2, #533).
-///
-/// A read checks on the reader pool; a write checks inside its own
-/// transaction (#5402): a single-op tool through [`with_space_guard`], and
-/// `batch` per op on the batch's connection.
-///
-/// # Returns
-///
-/// - `Ok(())` if the block does not exist (lets the downstream
-///   `*_inner` surface [`AppError::NotFound`] with a tool-specific
-///   message — duplicating the error here would just add a second
-///   variant to the agent-visible error chain), or if the owning
-///   page's space matches `space_id`.
-/// - [`AppError::Validation`] if the owning page exists in a different
-///   space, or has a NULL `space_id` / no owning page at all (e.g. the
-///   caller passed a tag block ID, or a corrupted page that escaped the
-///   IPC tightening).
-pub(crate) async fn validate_block_in_space<'e, E>(
-    executor: E,
-    block_id: &str,
-    space_id: &str,
-) -> Result<(), AppError>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
-{
-    // #1666: the compile-time-checked `query_scalar!` macro is used so a
-    // future `blocks.space_id` / `blocks.page_id` schema change breaks
-    // the build here rather than silently altering this security guard.
-    // The three-state distinction the LEFT JOIN needs — no row vs.
-    // row-with-NULL vs. row-with-value — is preserved by combining the
-    // explicit-nullable column annotation (`"space?"` → `Option<String>`
-    // for the COALESCE) with `.fetch_optional` (→ `Option<_>` for the
-    // missing-row case), yielding `Option<Option<String>>`. The bound is
-    // one-row, indexed (the PK on `blocks.id` for both the input lookup
-    // and the page self-join), no scan.
-    let row: Option<Option<String>> = sqlx::query_scalar!(
-        // #533: prefer the block's own `space_id`, falling back to its
-        // (live) owning page — mirrors `resolve_block_space` exactly,
-        // including the `pg.deleted_at IS NULL` guard so a soft-deleted
-        // owning page doesn't authorize a write via its retained space.
-        // The `"space?"` alias forces sqlx to type the COALESCE as
-        // nullable, so a row-with-NULL stays distinguishable from a
-        // row-with-value.
-        r#"SELECT COALESCE(b.space_id, pg.space_id) AS "space?"
-           FROM blocks b
-           LEFT JOIN blocks pg
-             ON pg.id = b.page_id AND pg.deleted_at IS NULL
-           WHERE b.id = ?"#,
-        block_id,
-    )
-    .fetch_optional(executor)
-    .await?;
-
-    match row {
-        // Block doesn't exist — defer to the downstream `*_inner` to
-        // surface NotFound with a tool-specific message.
-        None => Ok(()),
-        // Block exists but its owning page has a NULL `space_id` (or it
-        // has no owning page) — either a tag block (global, no owning
-        // page) or a corrupted page. Refuse: a space-scoped write cannot
-        // be authorised against an unscoped target.
-        Some(None) => Err(AppError::validation(format!(
-            "block '{block_id}' does not belong to any space"
-        ))),
-        Some(Some(found)) if found == space_id => Ok(()),
-        Some(Some(found)) => Err(AppError::validation(format!(
-            "block '{block_id}' belongs to space '{found}', not '{space_id}'"
-        ))),
-    }
-}
-
-/// The blocks a write tool targets and the space they must be in (#5402).
-struct SpaceGuard {
-    space_id: String,
-    block_ids: Vec<String>,
-}
-
-tokio::task_local! {
-    /// Set by [`with_space_guard`]; read by [`check_space_guard`].
-    static SPACE_GUARD: SpaceGuard;
-}
-
 /// Run `write` so that every `CommandTx` it opens refuses, inside that
 /// transaction, a block of `block_ids` whose owning page is not in `space_id`
-/// ([`validate_block_in_space`]). The check and the write then share one
+/// ([`crate::db::validate_block_in_space`]). The check and the write then share one
 /// `BEGIN IMMEDIATE`, so no other write lands between them (#5402).
+///
+/// Fails open unless the write opens a `CommandTx` in the same task, so a new
+/// guarded tool must join the list in
+/// `each_write_tool_opens_one_command_transaction_5402` (`tools_rw/tests.rs`).
 pub(crate) fn with_space_guard<F: std::future::Future>(
     space_id: &str,
     block_ids: Vec<String>,
     write: F,
 ) -> impl std::future::Future<Output = F::Output> {
-    let guard = SpaceGuard {
+    let guard = crate::db::SpaceGuard {
         space_id: space_id.to_owned(),
         block_ids,
     };
     // Boxed: the `*_inner` write futures are large (`clippy::large_futures`).
-    Box::pin(SPACE_GUARD.scope(guard, write))
-}
-
-/// The [`with_space_guard`] check, on the connection of the transaction
-/// `CommandTx::begin_immediate` just opened. Outside the guard it checks
-/// nothing.
-pub(crate) async fn check_space_guard(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
-    let Ok((space_id, block_ids)) =
-        SPACE_GUARD.try_with(|guard| (guard.space_id.clone(), guard.block_ids.clone()))
-    else {
-        return Ok(());
-    };
-    for block_id in &block_ids {
-        validate_block_in_space(&mut *conn, block_id, &space_id).await?;
-    }
-    Ok(())
+    Box::pin(crate::db::SPACE_GUARD.scope(guard, write))
 }
 
 /// Who wrote one op, and the block it targets.
@@ -518,7 +418,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     use crate::commands::create_space_inner;
-    use crate::db::init_pool;
+    use crate::db::{init_pool, validate_block_in_space};
     use crate::materializer::Materializer;
 
     /// Insert a bare content block via direct SQL with an explicit
