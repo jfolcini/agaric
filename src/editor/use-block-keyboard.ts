@@ -12,6 +12,7 @@ import { useCallback, useEffect } from 'react'
 import { getSelectionProbe } from '@/editor/pm-selection-probe'
 import { isTabIndentEnabled } from '@/lib/editor-preferences'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { isTabKey } from '@/lib/keyboard-config/keys'
 
 /**
  * Check whether a suggestion popup (.suggestion-popup) is currently visible.
@@ -204,10 +205,7 @@ export interface EditorLike {
  * Extracted from the hook for direct unit testing.
  */
 export function handleBlockKeyDown(
-  event: Pick<
-    KeyboardEvent,
-    'key' | 'shiftKey' | 'ctrlKey' | 'metaKey' | 'altKey' | 'preventDefault'
-  >,
+  event: KeyEvent,
   editor: EditorLike,
   callbacks: BlockKeyboardCallbacks,
 ): void {
@@ -243,7 +241,7 @@ export function handleBlockKeyDown(
 type KeyEvent = Pick<
   KeyboardEvent,
   'key' | 'shiftKey' | 'ctrlKey' | 'metaKey' | 'altKey' | 'preventDefault'
->
+> & { code?: string }
 
 interface KeyContext {
   atStart: boolean
@@ -322,14 +320,14 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // block, and a code block should get browser/keymap focus handling rather
   // than an outline-depth change.
   {
-    match: (e, ctx) => e.key === 'Tab' && !e.shiftKey && !ctx.inCodeBlock && !ctx.inTable,
+    match: (e, ctx) => isTabKey(e) && !e.shiftKey && !ctx.inCodeBlock && !ctx.inTable,
     handle: (e, cb) => {
       e.preventDefault()
       cb.onIndent()
     },
   },
   {
-    match: (e, ctx) => e.key === 'Tab' && e.shiftKey && !ctx.inCodeBlock && !ctx.inTable,
+    match: (e, ctx) => isTabKey(e) && e.shiftKey && !ctx.inCodeBlock && !ctx.inTable,
     handle: (e, cb) => {
       e.preventDefault()
       cb.onDedent()
@@ -539,7 +537,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       //      navigation key for keyboard/AT users (indent stays on
       //      Ctrl/Cmd+Shift+Arrow). See `isTabIndentEnabled`.
       if (
-        event.key === 'Tab' &&
+        isTabKey(event) &&
         (isSuggestionPopupVisible() || isQueryHintActive() || !isTabIndentEnabled())
       )
         return

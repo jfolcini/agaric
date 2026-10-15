@@ -16,6 +16,7 @@ import {
   toAriaKeyshortcuts,
   validateBindingInput,
 } from '@/lib/keyboard-config'
+import { isTabKey } from '@/lib/keyboard-config/keys'
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -1580,6 +1581,22 @@ describe('keyboard-config', () => {
       ).toBe(false)
     })
 
+    it('Ctrl+Shift+Tab as WebKitGTK reports it (key Unidentified, code Tab) matches previousTab', () => {
+      expect(
+        matchesShortcutBinding(
+          {
+            altKey: false,
+            ctrlKey: true,
+            metaKey: false,
+            shiftKey: true,
+            key: 'Unidentified',
+            code: 'Tab',
+          },
+          'previousTab',
+        ),
+      ).toBe(true)
+    })
+
     it('Ctrl+Shift+Tab does NOT match nextTab (more specific binding)', () => {
       expect(
         matchesShortcutBinding(
@@ -2219,5 +2236,19 @@ describe('keyboard-config', () => {
         matchesShortcutBinding(ev('x', { ctrlKey: true, shiftKey: true }), 'strikethrough'),
       ).toBe(false)
     })
+  })
+})
+
+describe('isTabKey', () => {
+  it('is true for Tab, Shift+Tab, and Shift+Tab as WebKitGTK reports it', () => {
+    expect(isTabKey({ key: 'Tab', code: 'Tab' })).toBe(true)
+    expect(isTabKey({ key: 'Tab' })).toBe(true)
+    expect(isTabKey({ key: 'Unidentified', code: 'Tab' })).toBe(true)
+  })
+
+  it('is false for any other key, identified or not', () => {
+    expect(isTabKey({ key: 'Unidentified', code: 'KeyA' })).toBe(false)
+    expect(isTabKey({ key: 'Unidentified' })).toBe(false)
+    expect(isTabKey({ key: 'a', code: 'Tab' })).toBe(false)
   })
 })
