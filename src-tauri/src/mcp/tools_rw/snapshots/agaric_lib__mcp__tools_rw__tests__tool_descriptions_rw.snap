@@ -501,3 +501,24 @@ expression: wire
       - space_id
     type: object
   name: edit_page_markdown
+- description: "Replace a page's aliases with the given list, returned as { page_id, aliases }. Entries are trimmed, blank ones dropped, and a second spelling of one alias (ignoring ASCII case) dropped; an empty list removes every alias. An alias another page holds, in any space or the Trash, is refused with a Validation error and nothing is written. Reversible via page history."
+  inputSchema:
+    additionalProperties: false
+    properties:
+      aliases:
+        description: "The page's full alias list after the call."
+        items:
+          type: string
+        type: array
+      page_id:
+        description: "ULID, title or alias of the page."
+        type: string
+      space_id:
+        description: "ULID of the space the agent is operating in. The call is rejected with a Validation error if `page_id` lives in a different space."
+        type: string
+    required:
+      - page_id
+      - aliases
+      - space_id
+    type: object
+  name: set_page_aliases
