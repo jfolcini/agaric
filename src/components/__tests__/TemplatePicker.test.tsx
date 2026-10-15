@@ -194,6 +194,16 @@ describe('TemplatePicker', () => {
     expect(document.activeElement).toBe(buttons[1])
   })
 
+  it('traps Shift+Tab as WebKitGTK reports it (key Unidentified, code Tab)', () => {
+    render(<TemplatePicker templatePages={templatePages} onSelect={onSelect} onClose={onClose} />)
+
+    const buttons = screen.getAllByRole('button')
+    expect(document.activeElement).toBe(buttons[0])
+
+    fireEvent.keyDown(document, { key: 'Unidentified', code: 'Tab', keyCode: 9, shiftKey: true })
+    expect(document.activeElement).toBe(buttons[2])
+  })
+
   it('restores focus to the previously focused element on close', () => {
     // The element focused before the picker opens (the trigger) must regain
     // focus when the picker unmounts — the second half of a real focus trap.

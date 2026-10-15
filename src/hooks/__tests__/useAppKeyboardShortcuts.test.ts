@@ -573,6 +573,22 @@ describe('useAppKeyboardShortcuts — tab shortcuts', () => {
     expect(useTabsStore.getState().activeTabIndex).toBe(1)
   })
 
+  it('Ctrl+Shift+Tab as WebKitGTK reports it (key Unidentified, code Tab) cycles to the previous tab', () => {
+    seedTwoTabs()
+
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    fireEvent.keyDown(window, {
+      key: 'Unidentified',
+      code: 'Tab',
+      keyCode: 9,
+      ctrlKey: true,
+      shiftKey: true,
+    })
+
+    expect(useTabsStore.getState().activeTabIndex).toBe(1)
+  })
+
   it('does NOT fire on mobile (TabBar is hidden)', () => {
     seedTwoTabs()
 
