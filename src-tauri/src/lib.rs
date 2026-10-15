@@ -560,6 +560,47 @@ fn disable_webkit_dmabuf_if_unset() {
     }
 }
 
+// Linux: WebKitGTK denies a `permission-request` the app leaves unanswered, so
+// the pairing QR scanner's `getUserMedia` failed with `NotAllowedError`
+// (#5386). Granting the camera without a prompt is safe because the webview
+// loads only the app's own origin (AGENTS.md "Threat Model"); every other
+// request stays on WebKitGTK's default.
+#[cfg(target_os = "linux")]
+fn allow_camera_permission(
+    _webview: tauri::Webview<tauri::Wry>,
+    kind: tauri::webview::PermissionKind,
+) -> tauri::webview::PermissionResponse {
+    use tauri::webview::{PermissionKind, PermissionResponse};
+    if kind == PermissionKind::Camera {
+        PermissionResponse::Allow
+    } else {
+        PermissionResponse::Default
+    }
+}
+
+// The e2e-tauri runner has no camera, so under the e2e sandbox WebKitGTK's mock
+// capture devices stand in and `camera-permission.e2e.ts` can pin
+// `allow_camera_permission` against the real webview.
+#[cfg(target_os = "linux")]
+fn enable_mock_camera_under_e2e_sandbox(app: &tauri::App) {
+    use tauri::Manager;
+    use webkit2gtk::{SettingsExt as _, WebViewExt as _};
+    if !app_paths::sandboxed() {
+        return;
+    }
+    let Some(window) = app.get_webview_window("main") else {
+        tracing::warn!("e2e sandbox: no main window to give mock capture devices");
+        return;
+    };
+    if let Err(e) = window.with_webview(|webview| {
+        if let Some(settings) = webview.inner().settings() {
+            settings.set_enable_mock_capture_devices(true);
+        }
+    }) {
+        tracing::warn!(error = %e, "e2e sandbox: could not enable mock capture devices");
+    }
+}
+
 /// Detect whether this process is running inside a Flatpak sandbox.
 ///
 /// Flatpak's runtime bind-mounts `/.flatpak-info` (an INI file
@@ -2678,6 +2719,10 @@ fn build_tauri_builder() -> tauri::Builder<tauri::Wry> {
             tauri_builder = tauri_builder.plugin(tauri_plugin_updater::Builder::new().build());
         }
     }
+    #[cfg(target_os = "linux")]
+    {
+        tauri_builder = tauri_builder.on_permission_request(allow_camera_permission);
+    }
     tauri_builder
 }
 
@@ -2929,6 +2974,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         );
         std::process::exit(1);
     }
+
+    #[cfg(target_os = "linux")]
+    enable_mock_camera_under_e2e_sandbox(app);
 
     Ok(())
 }
