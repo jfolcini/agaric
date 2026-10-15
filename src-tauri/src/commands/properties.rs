@@ -112,9 +112,9 @@ pub async fn list_property_values_inner(
 /// Set (upsert) a property on a block.
 ///
 /// Thin wrapper around [`set_property_in_tx`] that manages the transaction
-/// lifecycle and dispatches background work. `todo_state` goes through
-/// [`set_todo_state_inner`] instead, so it stamps and recurs as the app's
-/// checkbox does; a clear (no value) is a clear there too. A `value_text`
+/// lifecycle and dispatches background work. `todo_state` is written as
+/// [`set_todo_state_inner`] writes it instead, so it stamps and recurs as the
+/// app's checkbox does; a clear (no value) is a clear there too. A `value_text`
 /// under a `ref` definition is the block its id, `[[Title]]` or title names
 /// in the block's space (#5160 D11), and is refused when it names none or
 /// two.
@@ -142,6 +142,46 @@ pub async fn set_property_inner(
     value_bool: Option<bool>,
     caller_context: Option<&str>,
 ) -> Result<ActiveBlockRow, AppError> {
+    // CommandTx couples commit + post-commit dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    // Boxed: inlined, it makes the `set_property` wrapper's future trip
+    // `clippy::large_futures`.
+    let block = Box::pin(set_property_inner_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        block_id,
+        key,
+        value_text,
+        value_num,
+        value_date,
+        value_ref,
+        value_bool,
+        caller_context,
+    ))
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(ActiveBlockRow::from_block_row_unchecked(block))
+}
+
+/// [`set_property_inner`] inside the caller's rollback-armed transaction
+/// (MCP `batch`, #5399).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn set_property_inner_in_tx(
+    tx: &mut CommandTx,
+    loro: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: ActiveBlockId,
+    key: String,
+    value_text: Option<String>,
+    value_num: Option<f64>,
+    value_date: Option<String>,
+    value_ref: Option<String>,
+    value_bool: Option<bool>,
+    caller_context: Option<&str>,
+) -> Result<BlockRow, AppError> {
     // When a caller_context is supplied, enforce the
     // exactly-one-value invariant here so the error message can name
     // the caller. Callers that pass `None` keep the legacy behaviour
@@ -184,15 +224,15 @@ pub async fn set_property_inner(
                     .into(),
             ));
         }
-        // Boxed: inlined, it makes the `set_property` wrapper's future trip
-        // `clippy::large_futures`.
-        return Box::pin(set_todo_state_inner(
-            pool,
+        let prior = prior_task_state_in_tx(tx, block_id.as_str()).await?;
+        return set_todo_state_in_tx(
+            tx,
+            loro,
             device_id,
-            materializer,
-            block_id,
+            block_id.into_string(),
+            &prior,
             value_text,
-        ))
+        )
         .await;
     }
     // #3647 — validate the `repeat` recurrence grammar HERE, at the user's
@@ -225,21 +265,17 @@ pub async fn set_property_inner(
         agaric_engine::recurrence::validate_repeat_rule(rule)?;
     }
 
-    // CommandTx couples commit + post-commit dispatch.
-    let mut tx = CommandTx::begin_immediate(pool, "set_property").await?;
-    // #2604 — rollback-safe engine apply (rewind on tx abort).
-    tx.arm_engine_rollback(materializer.loro_state());
     // #5160 D11 — text under a `ref` definition names its target as a typed
     // `key:: value` line does, so the block editor can commit one.
     let (value_text, value_ref) = match value_text {
         Some(text) if value_ref.is_none() => {
-            super::pages::markdown::read_typed_ref(&mut tx, block_id.as_str(), &key, text).await?
+            super::pages::markdown::read_typed_ref(tx, block_id.as_str(), &key, text).await?
         }
         text => (text, value_ref),
     };
     let (block, op_record) = set_property_in_tx(
-        &mut tx,
-        materializer.loro_state(),
+        tx,
+        loro,
         device_id,
         block_id.into_string(),
         &key,
@@ -251,8 +287,7 @@ pub async fn set_property_inner(
     )
     .await?;
     tx.enqueue_background(Arc::new(op_record));
-    tx.commit_and_dispatch(materializer).await?;
-    Ok(ActiveBlockRow::from_block_row_unchecked(block))
+    Ok(block)
 }
 
 /// What a block's row already said about its task lifecycle, read in the
