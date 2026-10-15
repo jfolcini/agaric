@@ -5245,6 +5245,36 @@ async fn search_match_offsets_only_when_asked_5401() {
     }
 }
 
+/// A page's title is its own `content`, so `search` adds `page_title` to the
+/// blocks on a page but not to the page row, as `get_block` does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_page_title_only_on_content_rows() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_named(&tools, &mat, &space, "page", "Zebra notes").await;
+    let child = mk_child(&tools, &mat, &page, "zebra sighting").await;
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            TOOL_SEARCH,
+            json!({ "query": "zebra", "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    let rows = result["items"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    for row in rows {
+        if row["id"] == page.as_str() {
+            assert_eq!(row.get("page_title"), None, "{row}");
+        } else {
+            assert_eq!(row["id"], child.as_str(), "{row}");
+            assert_eq!(row["page_title"], "Zebra notes", "{row}");
+        }
+    }
+}
+
 /// `list_pages` sorts and filters as the Pages view does, and its cursor
 /// carries both across a page boundary.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
