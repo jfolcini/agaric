@@ -396,8 +396,9 @@ async fn read_touched_targets_for_rollup_key(
     //
     // #5423: the roll-up `COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1` is
     // spelled as its three cases, one branch each, because SQLite cannot use
-    // an index for a COALESCE comparison: as one predicate it scanned all of
-    // `block_links` on every reindex, under the write lock. Each branch is an
+    // an index for a COALESCE comparison: as one predicate it read the whole
+    // vault (all of `block_links`, or every block once statistics exist) on
+    // every reindex, under the write lock. Each branch is an
     // index seek (`page_id`, `parent_id`, the primary key) followed by the
     // source's own links. The scanning form is kept as the test oracle below.
     let touched_targets: Vec<String> = sqlx::query!(
@@ -712,15 +713,16 @@ mod touched_targets_tests {
     /// keyed by its page (`A`), one keyed by its parent because it has no page
     /// (`C`), one keyed by itself because it has neither (`K`), one whose page
     /// wins over a parent naming another key (`M`), a soft-deleted source that
-    /// must not count (`D`), and a target only `page_link_cache` still names
-    /// (`P1 → T5`). For every key the indexed read must return the oracle's
+    /// must not count (`D`, and `D2` / `D3` on the parent and self branches), a
+    /// paged source that must not match its own id (`Z`), and a target only
+    /// `page_link_cache` still names (`P1 → T5`). For every key the indexed read must return the oracle's
     /// set; the literals pin that the sets are the intended ones rather than
     /// two agreeing empties.
     #[tokio::test]
     async fn touched_targets_match_the_scanning_oracle_for_every_rollup_case_5423() {
         let (pool, _dir) = crate::test_support::test_pool().await;
         // (id, block_type, parent_id, page_id, deleted_at), parents first.
-        let blocks: [(&str, &str, Option<&str>, Option<&str>, Option<i64>); 12] = [
+        let blocks: [(&str, &str, Option<&str>, Option<&str>, Option<i64>); 15] = [
             ("P1", "page", None, Some("P1"), None),
             ("P2", "page", None, Some("P2"), None),
             ("T1", "page", None, Some("T1"), None),
@@ -733,6 +735,9 @@ mod touched_targets_tests {
             ("A", "content", Some("P1"), Some("P1"), None),
             ("D", "content", Some("P1"), Some("P1"), Some(1)),
             ("M", "content", Some("P1"), Some("P2"), None),
+            ("D2", "content", Some("K"), None, Some(1)),
+            ("D3", "content", None, None, Some(1)),
+            ("Z", "content", None, Some("P2"), None),
         ];
         for (id, block_type, parent_id, page_id, deleted_at) in blocks {
             sqlx::query(
@@ -755,6 +760,9 @@ mod touched_targets_tests {
             ("K", "T1"),
             ("C", "T2"),
             ("M", "T4"),
+            ("D2", "T3"),
+            ("D3", "T3"),
+            ("Z", "T3"),
         ] {
             sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
                 .bind(source)
@@ -771,11 +779,13 @@ mod touched_targets_tests {
         .await
         .unwrap();
 
-        let cases: [(&str, &[&str]); 5] = [
+        let cases: [(&str, &[&str]); 7] = [
             ("P1", &["T1", "T2", "T5"]),
-            ("P2", &["T4"]),
+            ("P2", &["T3", "T4"]),
             ("K", &["T1", "T2"]),
             ("C", &[]),
+            ("D3", &[]),
+            ("Z", &[]),
             ("NOT_A_KEY", &[]),
         ];
         let mut conn = pool.acquire().await.unwrap();
