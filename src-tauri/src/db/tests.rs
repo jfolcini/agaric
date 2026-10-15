@@ -5207,9 +5207,18 @@ async fn upgraded_vault_page_links_survive_a_disarmed_lazy_rebuild_3839() {
     seed_pre_0110_vault(&pool, page_a, page_b, child).await;
     // The vault's pages carry their space before the upgrade (0086), which is
     // what 0122 copies into the rolled-up edge for the scoped read.
+    // Stamped raw: the shared helper also writes `pages_cache.space_id`,
+    // which only exists from 0124, whose backfill fills it on the upgrade.
     let space = crate::commands::tests::common::TEST_SPACE_ID;
+    crate::commands::tests::common::ensure_test_space(&pool).await;
     for page in [page_a, page_b] {
-        crate::commands::tests::common::assign_to_test_space(&pool, page).await;
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+            .bind(space)
+            .bind(page)
+            .bind(page)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     apply_migrations_to_head(&pool, 109).await;
 
