@@ -256,9 +256,9 @@ node_deps_remedy() {
 # Option 1 from the issue: detect and instruct, not option 2's
 # auto-migrate-behind-the-developer's-back — this gate is otherwise
 # read-only, and a check that mutates local state during it is a
-# surprise. The sqlite read goes through `python3`'s stdlib sqlite3
-# module (already a build dependency for the `check-*.py` prek hooks) in
-# read-only URI mode, so this function never creates dev.db itself, never
+# surprise. The sqlite read is Node's built-in `node:sqlite`, opened
+# read-only, in `scripts/lib/devdb-migration-gap.mjs` (the body of this
+# function), so this function never creates dev.db itself, never
 # migrates it, and never writes the main db file. Note this is narrower
 # than "never writes anything": if dev.db is in WAL mode, SQLite must
 # build the `-shm` wal-index to read it consistently even over a
@@ -271,10 +271,15 @@ node_deps_remedy() {
 # exact remedy command on stdout; prints nothing on stdout when it is
 # caught up. Returns 0 when dev.db is caught up with migrations/, 1 when
 # it is confirmed missing/never-migrated/behind (the caller should hard
-# block), 2 when it could not be inspected at all — e.g. python3 is
+# block), 2 when it could not be inspected at all — e.g. node is
 # missing, or a permission/OS error reading .env or dev.db (the caller
 # should warn and continue: a guard that cannot inspect the database is
 # not evidence the database is behind).
+#
+# The body's path is resolved here, at definition time, because the
+# script `cd`s to the repo root before the preflight runs, after which a
+# relative `${BASH_SOURCE[0]}` no longer names this directory.
+DEVDB_GAP_MJS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/devdb-migration-gap.mjs"
 devdb_migration_gap() {
     local src_tauri="$1" migrations_dir="$2"
     local out rc
@@ -294,518 +299,32 @@ devdb_migration_gap() {
     case "${SQLX_OFFLINE:-}" in
         [Tt][Rr][Uu][Ee] | 1) return 0 ;;
     esac
-    # stderr folded into the capture: a missing python3 (exit 127) or an
-    # interpreter-level failure that never reaches the try/except below
-    # would otherwise print to the terminal while $out stays empty — a
-    # hard block with a headline and a blank body.
-    out="$(python3 - "$src_tauri" "$migrations_dir" 2>&1 <<'PYEOF'
-import contextlib
-import hashlib
-import os
-import pathlib
-import re
-import sys
-import urllib.parse
-
-# `sqlite3` is imported inside the guard, not at module scope, and this is
-# load-bearing rather than stylistic. A python3 built without the `_sqlite3`
-# extension — pyenv, or a source build without libsqlite3-dev, both ordinary
-# Linux dev setups — raises ModuleNotFoundError. At module scope that escapes
-# the `try` around `main()` below, CPython prints a traceback and exits 1, and
-# the caller reads 1 as "confirmed gap" and hard-blocks the push with a
-# traceback under a headline about migrations and a remedy that can never
-# clear it. That is precisely the confusing hard block this whole preflight
-# exists to remove, reproduced by the preflight.
-try:
-    import sqlite3
-except Exception as _e:  # pragma: no cover - depends on the interpreter build
-    print("could not inspect dev.db: %s: %s" % (type(_e).__name__, _e))
-    sys.exit(2)
-
-
-_QUERY_CRED_KEY_RE = re.compile(
-    r"(?i)\b(password|pwd|passwd|secret|token|api[_-]?key|access[_-]?token)=[^&#]*"
-)
-
-
-def redact_url_credentials(url):
-    """Redact userinfo (user:password@) AND credential-shaped query
-    parameters from a URL before it is ever printed. Push output gets
-    pasted into issues/chat, and a non-sqlite DATABASE_URL reaching the
-    diagnosis below (e.g. "postgres://user:password@host/db" or
-    "postgres://host/db?password=secret") can carry a real credential.
-
-    Userinfo: the authority is everything right after "//" up to the
-    first "?", "#", or end of string — that span is captured WHOLE
-    (including any "/" inside it), then the LAST "@" in that span (not
-    the first) is treated as the userinfo/host boundary and everything
-    before it becomes "***". Two things that break a narrower approach:
-    a password may itself contain an at-sign, so stopping at the FIRST
-    "@" ("postgres://u:p@ss@host/db") leaves the tail of the password on
-    screen; and a password may contain an unescaped "/"
-    ("postgres://u:p/w@host/db"), so a character class that excludes "/"
-    never reaches the "@" at all and redacts nothing. Taking the last "@"
-    before the authority's own terminator handles both — at the cost of
-    also redacting a stray "@" that happens to appear in a path with no
-    real userinfo at all (e.g. ".../user@company/report"); for a DATABASE_URL
-    that shape is not a realistic input, and over-redacting is the safe
-    direction for a function whose whole job is not leaking a credential.
-    scheme, host, port, path and query survive untouched otherwise, since
-    those are what make the printed line diagnostic in the first place. A
-    URL with no "//" segment at all (e.g. "sqlite:dev.db"), or one with no
-    "@" in its authority, is returned unchanged.
-
-    Query string: kept in the printed line deliberately (see the
-    "not a sqlite: URL" caller) because host/dbname/mode/sslmode etc. are
-    diagnostic — but the query string is its own leak surface, not just
-    the userinfo, since some drivers accept "?password=..." instead of
-    (or in addition to) userinfo. Any query key that looks credential-shaped
-    (password/pwd/passwd/secret/token/api[_-]key/access[_-]token, case
-    insensitive) has its VALUE redacted; every other query key is left
-    alone. This is a heuristic allowlist of key names, not a guarantee —
-    a driver-specific key this list doesn't know about would still print —
-    but it closes the concrete "?password=" shape this preflight can
-    actually receive from a postgres/mysql-style DATABASE_URL.
-    """
-
-    def _redact_authority(m):
-        prefix, authority = m.group(1), m.group(2)
-        at = authority.rfind("@")
-        if at == -1:
-            return prefix + authority
-        return prefix + "***" + authority[at:]
-
-    url = re.sub(r"(//)([^?#]*)", _redact_authority, url, count=1)
-
-    q = url.find("?")
-    if q != -1:
-        head, tail = url[: q + 1], url[q + 1 :]
-        tail = _QUERY_CRED_KEY_RE.sub(lambda m: m.group(1) + "=***", tail)
-        url = head + tail
-    return url
-
-
-def main():
-    src_tauri, migrations_dir = sys.argv[1], sys.argv[2]
-
-    # Resolve DATABASE_URL the way sqlx-cli does: an exported DATABASE_URL wins
-    # over `.env` (dotenvy never overrides an already-set var), and within
-    # `.env`, dotenvy keeps the FIRST "DATABASE_URL=" line, not the last.
-    # Default to "dev.db" (sqlx-cli's own default) when neither is set.
-    def resolve_sqlite_path(url):
-        # NOT actually routed through `url::Url::path()`/`.host_str()` on the
-        # Rust side, despite appearances: sqlx-sqlite's own
-        # `SqliteConnectOptions::from_str` (options/parse.rs) does
-        # `url.trim_start_matches("sqlite://").trim_start_matches("sqlite:")`
-        # — a PLAIN STRING prefix strip, not a parsed authority/path split —
-        # then splits once on the first "?", then percent-decodes the
-        # remainder as one opaque string via `percent_decode_str(database)
-        # .decode_utf8()`. (`ConnectOptions::from_url` for sqlite round-trips
-        # through `url.as_str()` back into this same `from_str`, so there is
-        # no separate url-crate-driven codepath for the "sqlite://" form
-        # either — ONE rule, not two, is the correct thing to mirror here.)
-        # The host/path split below is kept only because it is functionally
-        # a no-op for that same reason: stripping "//" and rejoining
-        # `host + path` (with no separator between them) reproduces the
-        # original string exactly, since the "/" that split them was never
-        # consumed — so "sqlite://dev.db" -> "dev.db" and
-        # "sqlite:///abs/path" -> "/abs/path" fall out correctly without a
-        # true authority parse. A trailing "?...querystring" (e.g.
-        # "?mode=rwc") is split off first and is never part of the path,
-        # matching sqlx's own `splitn(2, '?')`.
-        rest = url[len("sqlite:"):]
-        q = rest.find("?")
-        if q != -1:
-            rest = rest[:q]
-        if rest.startswith("//"):
-            rest = rest[2:]
-            slash = rest.find("/")
-            host, path = (rest, "") if slash == -1 else (rest[:slash], rest[slash:])
-            rest = host + path
-        # sqlx percent-decodes this same remainder uniformly regardless of
-        # which prefix form was stripped (see above — there is only one
-        # codepath) "to allow for `?` or `#` in the filename" (its own
-        # comment). Without this, "sqlite:my%20db.db" resolves here to the
-        # literal, nonexistent "my%20db.db" instead of the real "my db.db"
-        # on disk, and a healthy dev.db is hard-blocked as missing
-        # (#4330 review). `unquote`'s default `errors="replace"` mirrors
-        # `decode_utf8`'s own lossy fallback closely enough for a diagnostic
-        # path (an invalid-UTF-8 percent sequence in a filename is not a
-        # case this preflight needs to be exact about); a plain path with no
-        # "%" escapes at all passes through unchanged.
-        return urllib.parse.unquote(rest)
-
-    db_rel = "dev.db"
-    val = os.environ.get("DATABASE_URL")
-    env_ambiguous = False
-    if not val:
-        env_file = os.path.join(src_tauri, ".env")
-        if os.path.isfile(env_file):
-            # A relaxed line parser — NOT a full dotenvy reimplementation
-            # (checksum/WAL fixture work is #4334) — that handles the
-            # forms real .env files actually use: an optional "export "
-            # prefix, spaces around "=", a single matched pair of
-            # surrounding quotes (not repeated stripping — a value like
-            # '""x""' must lose exactly one quote per side, not all of
-            # them), and a trailing "# comment" outside quotes. dotenvy
-            # keeps the FIRST "DATABASE_URL=" line, not the last, so this
-            # stops at the first line that actually assigns the key,
-            # whether or not its value turns out to be usable.
-            key_re = re.compile(r"^(?:export\s+)?DATABASE_URL\s*=\s*(.*)$")
-            with open(env_file, encoding="utf-8", errors="replace") as f:
-                for raw in f:
-                    line = raw.strip()
-                    if not line or line.startswith("#"):
-                        continue
-                    m = key_re.match(line)
-                    if not m:
-                        # A word-boundary match, not a plain substring test:
-                        # "POSTGRES_DATABASE_URL=" or "DATABASE_URL_REPLICA="
-                        # both contain "DATABASE_URL" as a substring but name
-                        # a DIFFERENT key entirely, so they must not set the
-                        # ambiguous flag and force the rc=2 "could not
-                        # resolve" banner on every push (#4330 review).
-                        if re.search(r"\bDATABASE_URL\b", line):
-                            # Mentions the key in a form this parser
-                            # doesn't recognise (e.g. a YAML-style
-                            # "DATABASE_URL:", or some other unhandled
-                            # shape) — don't silently treat the file as if
-                            # it said nothing about DATABASE_URL at all;
-                            # keep scanning for a line that does parse.
-                            env_ambiguous = True
-                        continue
-                    v = m.group(1).strip()
-                    if v[:1] in ('"', "'"):
-                        qc = v[0]
-                        end = v.find(qc, 1)
-                        v = v[1:end] if end != -1 else v[1:]
-                    else:
-                        # dotenvy only starts a comment at a "#" that is
-                        # PRECEDED BY WHITESPACE in an unquoted value — not
-                        # at any "#" — so "sqlite:my#db.db" is the whole
-                        # value, not truncated to "sqlite:my" (#4330 review:
-                        # that truncation produced a wrong-diagnosis hard
-                        # block naming the wrong file).
-                        h = re.search(r"(?<=\s)#", v)
-                        if h is not None:
-                            v = v[: h.start()]
-                        v = v.strip()
-                    if "${" in v:
-                        # A variable reference (or anything else this
-                        # parser chooses not to resolve) — using it
-                        # verbatim would produce a literal, nonexistent
-                        # filename and a wrong-diagnosis hard block, which
-                        # is worse than a warning (#4334 territory).
-                        env_ambiguous = True
-                    else:
-                        val = v
-                        env_ambiguous = False
-                    break  # first DATABASE_URL= line wins, resolved or not
-    if env_ambiguous:
-        print("could not resolve DATABASE_URL from %s" % env_file)
-        print("  (unrecognized .env form, or an unresolved ${VAR}-style reference)")
-        print("  Set it to a plain sqlite: URL so this preflight can check it, e.g.:")
-        print("    DATABASE_URL=sqlite:dev.db")
-        sys.exit(2)
-    # Neither an exported DATABASE_URL nor a `.env` entry for it at all (not
-    # merely empty or ambiguous — genuinely absent from both sources this
-    # preflight checks). sqlx-macros-core resolves the exact same
-    # MacrosEnv.database_url to None in this state — it walks the SAME
-    # manifest-dir-ancestor `.env` search this preflight does
-    # (query/metadata.rs load_env) — and its own match arm is on
-    # `database_url: Some(db_url)`, not on SQLX_OFFLINE. With no
-    # DATABASE_URL anywhere, that arm is never taken; `sqlx::query!` ALWAYS
-    # falls back to the committed src-tauri/.sqlx/ query cache, regardless
-    # of whether SQLX_OFFLINE is true, false, or unset (the offline flag
-    # there only selects which error MESSAGE to give if the cache is
-    # missing, not whether the cache is consulted). So Phase D/D2 never
-    # opens dev.db here — the same premise the SQLX_OFFLINE=true
-    # short-circuit above is built on.
-    #
-    # This does NOT make dev.db's own state irrelevant to REPORT — if it
-    # happens to be caught up, that is still the truth and is reported as
-    # such below exactly like any other invocation (the default "dev.db"
-    # this preflight falls back to checking is itself sqlx-CLI's own
-    # convention, so a developer who never configured DATABASE_URL is
-    # extremely likely to be using that exact filename, and there is no
-    # harm in confirming it is fine). What must NOT happen is treating an
-    # actually-BEHIND dev.db in this state as a CONFIRMED gap worth hard
-    # blocking a push over: the build this push triggers will not touch
-    # that file at all, so its staleness cannot be why Phase D/D2 would
-    # fail. The three "confirmed gap" exit(1) sites below each check this
-    # flag and downgrade to a warn (rc=2) instead, with an added note,
-    # rather than skipping the inspection outright — kept narrow rather
-    # than short-circuiting like SQLX_OFFLINE=true does, since the
-    # documented setup (scripts/setup-dev-db.sh) always writes a `.env`
-    # with DATABASE_URL=sqlite:dev.db and reaching this state at all is
-    # itself unusual for this repo; a developer who DOES have DATABASE_URL
-    # set somewhere this invocation didn't inherit from (a shell profile
-    # the hook's non-interactive shell doesn't source, direnv, etc.) still
-    # benefits from seeing dev.db's real state as a heads-up.
-    database_url_unset = val is None
-    if val is not None and not val.startswith("sqlite:"):
-        # A DATABASE_URL that actually resolved (exported, or a clean .env
-        # assignment — not the env_ambiguous cases above) to something that
-        # isn't a sqlite: URL at all: empty ("DATABASE_URL=" with no value),
-        # or another engine entirely (e.g. "postgres://..."). This preflight
-        # only understands sqlite:, and checking dev.db against a database
-        # the developer isn't even using would silently hard-block (rc=1)
-        # with a remedy aimed at the wrong database — this file's own stated
-        # policy is that "cannot tell" is a warn (rc=2), not a block (#4330
-        # review). Not reachable in this repo today (sqlite-only,
-        # .env.example pins "sqlite:dev.db") but exit 1 here would violate
-        # that policy the moment it became reachable.
-        if val == "":
-            # Genuinely empty (an exported `DATABASE_URL=""` the shell
-            # inherited, or a clean-but-blank `.env` assignment) carries no
-            # information for this preflight to check against at all — say
-            # so plainly rather than the misleading "not a sqlite: URL: ''",
-            # which reads as if a value WAS given and rejected (#4330 review).
-            print("DATABASE_URL is set but empty: ''")
-            print("  There is nothing here for this preflight to check against —")
-            print("  it cannot tell whether your actual database is caught up")
-            print("  with migrations/. If you are using sqlite, set it to a")
-            print("  plain sqlite: URL, e.g.:")
-            print("    DATABASE_URL=sqlite:dev.db")
-        else:
-            # Redact userinfo (user:password@) before this ever hits stdout
-            # — push output gets pasted into issues/chat, and a non-sqlite
-            # URL here (e.g. "postgres://user:password@host/db") can carry a
-            # real credential. Keeps scheme/host/path so the line is still
-            # diagnostic; just not the password.
-            print("DATABASE_URL is set but is not a sqlite: URL: %r" % redact_url_credentials(val))
-            print("  This preflight only understands sqlite: URLs and cannot tell")
-            print("  whether your actual database is caught up with migrations/.")
-            print("  If you are using sqlite, set it to a plain sqlite: URL, e.g.:")
-            print("    DATABASE_URL=sqlite:dev.db")
-        sys.exit(2)
-    if val is not None:
-        db_rel = resolve_sqlite_path(val)
-        if db_rel == ":memory:":
-            # sqlite::memory: (and equivalents resolving to the same bare
-            # path) has no on-disk file at all — "does not exist" below
-            # would be a confirmed-missing hard block (rc=1) for a database
-            # that was never meant to exist on disk. Same "cannot tell"
-            # category as the non-sqlite-engine case above: warn (rc=2),
-            # don't block (#4330 review).
-            print("DATABASE_URL is sqlite::memory: — an in-memory database")
-            print("  There is no on-disk file for this preflight to check against —")
-            print("  it cannot tell whether an in-memory database is caught up")
-            print("  with migrations/.")
-            sys.exit(2)
-        if db_rel == "":
-            # "sqlite:" or "sqlite://" with nothing after it resolves here
-            # to the empty string (both trim to "", the host/path fold
-            # above is a no-op on an already-empty remainder). Left
-            # unhandled, `os.path.join(src_tauri, "")` yields
-            # "<src_tauri>/" — a DIRECTORY, not a file — and
-            # `os.path.isfile` on that is False, so the "does not exist"
-            # branch below would hard-block (rc=1) with a wrong diagnosis:
-            # it names a directory as a missing "dev.db" (#4330 review).
-            # No filename was actually given at all, which is the same
-            # "cannot tell" category as sqlite::memory: above, not a
-            # confirmed gap.
-            print("DATABASE_URL resolves to an empty sqlite path: %r" % redact_url_credentials(val))
-            print("  There is no filename here for this preflight to check against —")
-            print("  it cannot tell whether your actual database is caught up with")
-            print("  migrations/. Set it to a plain sqlite: URL naming a file, e.g.:")
-            print("    DATABASE_URL=sqlite:dev.db")
-            sys.exit(2)
-    db_file = db_rel if os.path.isabs(db_rel) else os.path.join(src_tauri, db_rel)
-
-    # Printed as two lines rather than one "cd src-tauri && cargo sqlx migrate
-    # run" string: the self-test's #3361 root-lane ratchet greps THIS FILE for
-    # "cd src-tauri" followed within 40 chars by "cargo sqlx (migrate run|
-    # prepare)" to catch a real Phase E invocation that forgot the DATABASE_URL
-    # override — a message string with the same two substrings on one line
-    # would be indistinguishable from that to a plain grep.
-    def print_remedy():
-        print("    cd src-tauri")
-        print("    cargo sqlx migrate run")
-
-    def confirmed_gap_exit():
-        # A migration gap this preflight can see in dev.db is only a
-        # CONFIRMED gap (rc=1, hard block) when Phase D/D2's own build
-        # would actually touch dev.db. With DATABASE_URL unset everywhere
-        # (see `database_url_unset`'s own comment above), it would not —
-        # downgrade to a warn (rc=2) instead: still tell the developer
-        # what dev.db's real state is (that stays useful — the default
-        # filename this preflight fell back to checking is the one
-        # sqlx-cli itself would provision), but don't hard-block a push
-        # over a file the current build does not read.
-        if database_url_unset:
-            print("  (DATABASE_URL is not set anywhere — no export, no .env entry —")
-            print("  so cargo sqlx's query macros resolve from the committed")
-            print("  src-tauri/.sqlx/ query cache and never open this file for THIS")
-            print("  push. This is a heads-up, not a confirmed reason your build")
-            print("  would fail; provision it anyway before you rely on it, e.g. for")
-            print("  `cargo sqlx prepare` or a future push that DOES set DATABASE_URL.)")
-            sys.exit(2)
-        sys.exit(1)
-
-    if not os.path.isfile(db_file):
-        print("dev.db does not exist: %s" % db_file)
-        print("  Provision it (idempotent):")
-        print("    bash scripts/setup-dev-db.sh")
-        print("  or apply migrations directly:")
-        print_remedy()
-        confirmed_gap_exit()
-
-    expected = {}
-    pat = re.compile(r"^(\d+)_.+\.sql$")
-    if os.path.isdir(migrations_dir):
-        for fn in sorted(os.listdir(migrations_dir)):
-            m = pat.match(fn)
-            if m:
-                expected[int(m.group(1))] = fn
-
-    try:
-        # `"file:%s?mode=ro" % db_file` is not a real URI construction — a
-        # checkout path containing "#", "?", or "%" (e.g. a directory named
-        # "work#2") gets misparsed by sqlite3's own URI handling (the "#"
-        # starts a fragment, truncating the path) rather than raising, so
-        # this silently opened the wrong (nonexistent) file and fell through
-        # to the same could-not-inspect rc=2 warn path as any other open
-        # failure — safe, but silently inert for such a checkout (#4330
-        # review). `Path.as_uri()` percent-escapes the path correctly.
-        #
-        # `contextlib.closing`: a bare `with sqlite3.connect(...) as con:`
-        # commits/rolls back a transaction on exit but does NOT close the
-        # connection (a standard-library gotcha) — this releases the handle
-        # before this short-lived probe process exits, rather than leaving
-        # it for process teardown.
-        with contextlib.closing(
-            sqlite3.connect(pathlib.Path(db_file).as_uri() + "?mode=ro", uri=True)
-        ) as con:
-            cur = con.cursor()
-            cur.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'"
-            )
-            if cur.fetchone() is None:
-                print("dev.db exists but has never been migrated (no _sqlx_migrations table): %s" % db_file)
-                print("  Apply all migrations:")
-                print_remedy()
-                confirmed_gap_exit()
-            # AND success: a row for a migration whose application did not
-            # complete (success=0) is not "applied" — sqlx-cli itself treats
-            # it as a hard error requiring `cargo sqlx migrate repair`, not
-            # as caught-up state, and this preflight shouldn't be more
-            # lenient.
-            # #4334 note 1 — `checksum` alongside `version`. Comparing the
-            # version SETS alone answers "was a migration with this number
-            # ever applied", which is a strictly weaker question than "does
-            # dev.db's schema match the files on disk". Editing a migration
-            # IN PLACE after applying it — routine while iterating on your
-            # own migration on a branch — leaves the version sets equal and
-            # the schemas different, so this preflight passed and Phase D
-            # then failed with exactly the confusing `no such table`-shaped
-            # error the preflight exists to get ahead of.
-            cur.execute("SELECT version, checksum FROM _sqlx_migrations WHERE success")
-            applied_rows = cur.fetchall()
-            applied = {row[0] for row in applied_rows}
-            applied_checksums = {row[0]: bytes(row[1]) if row[1] is not None else None
-                                 for row in applied_rows}
-    except sqlite3.Error as e:
-        print("could not inspect dev.db (%s): %s" % (db_file, e))
-        sys.exit(2)
-
-    pending = sorted(v for v in expected if v not in applied)
-    if pending:
-        print("dev.db is behind src-tauri/migrations/ — pending migration(s):")
-        for v in pending:
-            print("    %s" % expected[v])
-        print("  Apply them:")
-        print_remedy()
-        confirmed_gap_exit()
-
-    # #4334 note 1, the MIRROR case: a version applied in dev.db with no
-    # file on disk. That is what you get after switching off a branch that
-    # added a migration — the database is AHEAD, not behind, which is its
-    # own confusing failure and used to read here as "up to date" because
-    # `pending` only ever looks in one direction. No `migrate run` can fix
-    # it (there is nothing left to run), so the remedy is different too.
-    ahead = sorted(v for v in applied if v not in expected)
-    if ahead:
-        print("dev.db is AHEAD of src-tauri/migrations/ — applied migration(s) with no file:")
-        for v in ahead:
-            print("    version %d (no matching src-tauri/migrations/%d_*.sql)" % (v, v))
-        print("  This is what switching off a branch that added a migration leaves behind.")
-        print("  `sqlx migrate run` cannot fix it — there is nothing left to run. Either")
-        print("  check that branch back out, or re-provision dev.db from scratch:")
-        print("    rm -f src-tauri/dev.db src-tauri/dev.db-wal src-tauri/dev.db-shm")
-        print("    bash scripts/setup-dev-db.sh")
-        confirmed_gap_exit()
-
-    # #4334 note 1, the case the version sets cannot see at all. sqlx stores
-    # a per-migration checksum — SHA-384 over the migration file's SQL text
-    # (`Migration::new` in sqlx-core hashes `sql.as_bytes()`) — so an
-    # in-place edit to an already-applied migration is detectable here for
-    # the price of one hash per file. Verified against this repo's real
-    # dev.db: all 112 applied rows match the on-disk files byte for byte
-    # under this hash.
-    #
-    # A row whose checksum is NULL (not something sqlx itself writes — the
-    # column is NOT NULL — but reachable for a hand-built database) is
-    # skipped rather than reported as a mismatch: an absent checksum is no
-    # evidence of drift, and this preflight must not hard-block on a
-    # question it cannot actually answer.
-    drifted = []
-    for v in sorted(applied):
-        if v not in expected:
-            continue
-        stored = applied_checksums.get(v)
-        if stored is None:
-            continue
-        with open(os.path.join(migrations_dir, expected[v]), "rb") as fh:
-            actual = hashlib.sha384(fh.read()).digest()
-        if actual != stored:
-            drifted.append(v)
-    if drifted:
-        print("dev.db's applied migration(s) no longer match src-tauri/migrations/ on disk:")
-        for v in drifted:
-            print("    %s (edited in place after it was applied)" % expected[v])
-        print("  The version numbers agree, so dev.db LOOKS caught up, but its schema is")
-        print("  whatever the OLD text of these file(s) produced. `sqlx migrate run` will")
-        print("  not re-run an already-applied version; re-provision dev.db from scratch:")
-        print("    rm -f src-tauri/dev.db src-tauri/dev.db-wal src-tauri/dev.db-shm")
-        print("    bash scripts/setup-dev-db.sh")
-        confirmed_gap_exit()
-
-    sys.exit(0)
-
-# sys.exit(0/1) calls inside main() raise SystemExit, which does NOT
-# subclass Exception — they propagate through this handler untouched.
-# Only a genuine failure-to-inspect (PermissionError opening .env,
-# OSError from listdir, an unexpected sqlite3/other error) lands here:
-# say so plainly and exit 2 — distinct from exit 1's confirmed gap — so
-# the caller can WARN instead of hard-blocking a push nothing is wrong
-# with.
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print("could not inspect dev.db: %s: %s" % (type(e).__name__, e))
-        sys.exit(2)
-PYEOF
-)"
+    # stderr folded into the capture: a missing node (exit 127) or a
+    # failure that never reaches the .mjs's own catch would otherwise
+    # print to the terminal while $out stays empty — a hard block with a
+    # headline and a blank body. `--no-warnings` keeps a warning out of
+    # that fold: Node 22 prints an ExperimentalWarning on stderr every time
+    # `node:sqlite` loads, which would otherwise read as part of the
+    # diagnosis.
+    out="$(node --no-warnings "$DEVDB_GAP_MJS" "$src_tauri" "$migrations_dir" 2>&1)"
     rc=$?
     if [ "$rc" -eq 127 ]; then
-        # `python3` itself is missing — bash's own "command not found" is
+        # `node` itself is missing — bash's own "command not found" is
         # already folded into $out via the 2>&1 above.
-        printf 'could not inspect dev.db: python3 not found on PATH: %s\n' "$out"
+        printf 'could not inspect dev.db: node not found on PATH: %s\n' "$out"
         return 2
     fi
     if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ] && [ "$rc" -ne 2 ]; then
-        # The script above only ever calls sys.exit(0/1/2) — anything else
-        # is python3 failing in a way that never reached its own
-        # try/except: not executable (126), killed by a signal (bash
-        # reports these as 128+signum), or some other interpreter-level
-        # abort. The caller below only branches on `-eq 1` / `-eq 2`, so
-        # an unrecognized code would otherwise match NEITHER arm and
-        # produce no message at all — a silent no-op guard. Fold it into
-        # the same rc=2 "could not inspect" warn path instead: a guard
-        # that cannot inspect dev.db is not evidence dev.db is behind.
-        printf 'could not inspect dev.db: python3 exited %s: %s\n' "$rc" "$out"
+        # The .mjs only ever exits 0/1/2 — anything else is node failing
+        # in a way that never reached its own catch: not executable (126),
+        # killed by a signal (bash reports these as 128+signum), or some
+        # other runtime-level abort. The caller below only branches on
+        # `-eq 1` / `-eq 2`, so an unrecognized code would otherwise match
+        # NEITHER arm and produce no message at all — a silent no-op guard.
+        # Fold it into the same rc=2 "could not inspect" warn path instead:
+        # a guard that cannot inspect dev.db is not evidence dev.db is
+        # behind.
+        printf 'could not inspect dev.db: node exited %s: %s\n' "$rc" "$out"
         return 2
     fi
     printf '%s' "$out"
@@ -1779,7 +1298,7 @@ typos")"
         # whose stored checksum should be deliberately WRONG (#4334 — the
         # edited-in-place case; default "" = every applied row carries the
         # real SHA-384 of its on-disk file, which is what sqlx itself
-        # stores), $6 = journal mode: "" for python's rollback-journal
+        # stores), $6 = journal mode: "" for SQLite's rollback-journal
         # default, or "WAL" for the shape that actually ships (#4334 note 2
         # — sqlx's `SqliteConnectOptions` defaults `journal_mode` to WAL, so
         # a rollback-journal fixture is not the database this guard meets in
@@ -1796,57 +1315,56 @@ typos")"
         case "$applied" in
             NODB) ;;
             NOTABLE)
-                python3 -c "
-import sqlite3
-con = sqlite3.connect('$dir/$dbname')
-con.execute('CREATE TABLE not_a_migrations_table (id INTEGER)')
-con.commit()
-"
+                node --no-warnings -e '
+const { DatabaseSync } = require("node:sqlite")
+const db = new DatabaseSync(process.argv[1])
+db.exec("CREATE TABLE not_a_migrations_table (id INTEGER)")
+db.close()
+' "$dir/$dbname"
                 ;;
             *)
-                python3 -c "
-import glob, hashlib, os, re, sqlite3
-d = '$dir'
-con = sqlite3.connect(os.path.join(d, '$dbname'))
-if '$journal':
-    con.execute('PRAGMA journal_mode=$journal')
-con.execute('''CREATE TABLE _sqlx_migrations (
+                node --no-warnings -e '
+const { createHash } = require("node:crypto")
+const { readdirSync, readFileSync } = require("node:fs")
+const { join } = require("node:path")
+const { DatabaseSync } = require("node:sqlite")
+const [dir, dbname, applied, drift, journal] = process.argv.slice(1)
+const versions = (list) => list.split(/\s+/).filter(Boolean).map(Number)
+const sha384 = (data) => createHash("sha384").update(data).digest()
+const db = new DatabaseSync(join(dir, dbname))
+if (journal) db.exec(`PRAGMA journal_mode=${journal}`)
+db.exec(`CREATE TABLE _sqlx_migrations (
     version BIGINT PRIMARY KEY, description TEXT NOT NULL,
     installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     success BOOLEAN NOT NULL, checksum BLOB NOT NULL, execution_time BIGINT NOT NULL
-)''')
-# The stored checksum must be the REAL one — SHA-384 over the migration
-# file's bytes, the same thing sqlx's own \`Migration::new\` computes — or
-# every fixture whose versions line up would report as edited-in-place
-# under the #4334 comparison. A version with no file on disk (the DB-AHEAD
-# fixture) has nothing to hash, so it gets a placeholder.
-on_disk = {}
-for path in glob.glob(os.path.join(d, 'migrations', '*.sql')):
-    m = re.match(r'^(\d+)_.+\.sql\$', os.path.basename(path))
-    if m:
-        on_disk[int(m.group(1))] = path
-drift = {int(x) for x in '$drift'.split()}
-for raw in '$applied'.split():
-    v = int(raw)
-    path = on_disk.get(v)
-    checksum = hashlib.sha384(open(path, 'rb').read()).digest() if path else b'\x00'
-    if v in drift:
-        checksum = hashlib.sha384(b'the text this migration used to have').digest()
-    con.execute(
-        'INSERT INTO _sqlx_migrations VALUES (?,?,CURRENT_TIMESTAMP,1,?,0)',
-        (v, 'seed', checksum),
-    )
-con.commit()
-con.close()
-"
+)`)
+// The stored checksum must be the REAL one — SHA-384 over the bytes of
+// the migration file, the same thing `Migration::new` in sqlx computes — or
+// every fixture whose versions line up would report as edited-in-place
+// under the #4334 comparison. A version with no file on disk (the DB-AHEAD
+// fixture) has nothing to hash, so it gets a placeholder.
+const onDisk = new Map()
+for (const fn of readdirSync(join(dir, "migrations"))) {
+  const m = /^(\d+)_.+\.sql$/.exec(fn)
+  if (m) onDisk.set(Number(m[1]), join(dir, "migrations", fn))
+}
+const drifted = new Set(versions(drift))
+const insert = db.prepare("INSERT INTO _sqlx_migrations VALUES (?,?,CURRENT_TIMESTAMP,1,?,0)")
+for (const v of versions(applied)) {
+  const file = onDisk.get(v)
+  let checksum = file ? sha384(readFileSync(file)) : Buffer.from([0])
+  if (drifted.has(v)) checksum = sha384("the text this migration used to have")
+  insert.run(v, "seed", checksum)
+}
+db.close()
+' "$dir" "$dbname" "$applied" "$drift" "$journal"
                 ;;
         esac
     }
 
-    # The remedy is printed as two lines (see print_remedy() above — kept
-    # off one line so this very file doesn't reproduce the #3361 ratchet's
-    # forbidden "cd src-tauri" + "cargo sqlx migrate run" adjacency). Assert
-    # both lines rather than one contiguous string for the same reason.
+    # The remedy is printed as two lines (`REMEDY` in
+    # scripts/lib/devdb-migration-gap.mjs), so assert both lines rather than
+    # one contiguous string.
     st_devdb_names_remedy() {
         printf '%s' "$1" | grep -qF 'cd src-tauri' \
             && printf '%s' "$1" | grep -qF 'cargo sqlx migrate run'
@@ -1918,7 +1436,7 @@ con.close()
     fi
 
     # 30b (#4334 note 2). THE SHAPE THAT ACTUALLY SHIPS. Every fixture above
-    #     is a rollback-journal database, because that is python's sqlite3
+    #     is a rollback-journal database, because that is SQLite's own
     #     default — but sqlx's `SqliteConnectOptions` defaults `journal_mode`
     #     to WAL, so the dev.db this guard meets in a real checkout is a WAL
     #     database, and a read-only open of one takes a DIFFERENT SQLite code
@@ -2056,7 +1574,7 @@ con.close()
     # continues), distinct from 1 (a confirmed gap, which hard-blocks).
 
     # 36. dev.db exists but is not a valid sqlite file at all (corrupt /
-    #     truncated) — sqlite3 raises on the first query; caught locally.
+    #     truncated) — node:sqlite throws on the first query; caught locally.
     mkdir -p "$st_devdb_root/corrupt-db/src-tauri/migrations"
     touch "$st_devdb_root/corrupt-db/src-tauri/migrations/0001_initial.sql"
     printf 'not a sqlite database\n' >"$st_devdb_root/corrupt-db/src-tauri/dev.db"
@@ -2067,15 +1585,15 @@ con.close()
         st_bad "a corrupt (non-sqlite) dev.db is reported as could-not-inspect (rc=2), not a confirmed gap" "rc=$st_rc out=$st_out"
     fi
 
-    # 37. python3 itself unavailable — the function must say so plainly on
+    # 37. node itself unavailable — the function must say so plainly on
     #     stdout (not lose it to the terminal as bare stderr) and return 2.
-    st_devdb_seed no-python "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/no-python/src-tauri"
+    st_devdb_seed no-node "0001_initial.sql" "1"
+    st_dir="$st_devdb_root/no-node/src-tauri"
     st_out="$(unset SQLX_OFFLINE; PATH="$st_devdb_root/empty-bin-$$" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
-    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'python3 not found'; then
-        st_ok "a missing python3 is reported as could-not-inspect (rc=2) with a plain message, not a silent blank body"
+    if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'node not found'; then
+        st_ok "a missing node is reported as could-not-inspect (rc=2) with a plain message, not a silent blank body"
     else
-        st_bad "a missing python3 is reported as could-not-inspect (rc=2) with a plain message, not a silent blank body" "rc=$st_rc out=$st_out"
+        st_bad "a missing node is reported as could-not-inspect (rc=2) with a plain message, not a silent blank body" "rc=$st_rc out=$st_out"
     fi
 
     # ── ambient-environment isolation (#4330 review) ──────────────────
@@ -2148,24 +1666,24 @@ con.close()
         st_bad "SQLX_OFFLINE=false does not short-circuit — the preflight still runs" "rc=$st_rc out=$st_out"
     fi
 
-    # 41. python3 EXISTS but exits with an exit code neither 0/1/2 (its own
-    #     script's only sys.exit values) nor 127 (missing) — e.g. 126 "not
+    # 41. node EXISTS but exits with an exit code neither 0/1/2 (the .mjs's
+    #     only exit codes) nor 127 (missing) — e.g. 126 "not
     #     executable", or a signal death reported as 128+n. Must fold into
     #     the rc=2 warn path with a message, not produce NO output at all
     #     (the caller's `-eq 1`/`-eq 2` branches would otherwise match
     #     neither and the guard would silently no-op).
-    st_devdb_seed weird-python-rc "0001_initial.sql" "1"
-    st_dir="$st_devdb_root/weird-python-rc/src-tauri"
+    st_devdb_seed weird-node-rc "0001_initial.sql" "1"
+    st_dir="$st_devdb_root/weird-node-rc/src-tauri"
     st_weird_bin="$st_devdb_root/weird-bin-$$"
     mkdir -p "$st_weird_bin"
-    printf '#!/bin/sh\nexit 126\n' >"$st_weird_bin/python3"
-    chmod +x "$st_weird_bin/python3"
+    printf '#!/bin/sh\nexit 126\n' >"$st_weird_bin/node"
+    chmod +x "$st_weird_bin/node"
     st_out="$(unset SQLX_OFFLINE; PATH="$st_weird_bin" devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 2 ] && printf '%s' "$st_out" | grep -q 'could not inspect' \
         && printf '%s' "$st_out" | grep -q '126'; then
-        st_ok "an unexpected python3 exit code (126) is folded into could-not-inspect (rc=2), not a silent no-op"
+        st_ok "an unexpected node exit code (126) is folded into could-not-inspect (rc=2), not a silent no-op"
     else
-        st_bad "an unexpected python3 exit code (126) is folded into could-not-inspect (rc=2), not a silent no-op" "rc=$st_rc out=$st_out"
+        st_bad "an unexpected node exit code (126) is folded into could-not-inspect (rc=2), not a silent no-op" "rc=$st_rc out=$st_out"
     fi
 
     # ── .env parser: beyond the literal "DATABASE_URL=..." prefix (#4330 review) ──
@@ -2294,19 +1812,17 @@ con.close()
         st_bad "an explicit but empty DATABASE_URL= warns (rc=2) instead of silently defaulting to dev.db" "rc=$st_rc out=$st_out"
     fi
 
-    # ── sqlite URI construction (#4330 review) ─────────────────────────
-    # 50. A checkout path containing "#", "?", or "%" — a naive
-    #     `"file:%s?mode=ro" % db_file` misparses these (e.g. "#" starts a
-    #     URI fragment, truncating the path at it), degrading to the rc=2
-    #     could-not-inspect warn path instead of actually inspecting dev.db.
-    #     Must resolve correctly and pass SILENTLY, same shape as case 30.
+    # ── a checkout path with URI characters (#4330 review) ─────────────
+    # 50. A checkout path containing "#", "?", or "%" must still open
+    #     dev.db and pass SILENTLY, same shape as case 30, rather than
+    #     degrade to the rc=2 could-not-inspect warn path.
     st_devdb_seed 'weird#dir?with%chars' "0001_initial.sql" "1"
     st_dir="$st_devdb_root/weird#dir?with%chars/src-tauri"
     st_out="$(unset DATABASE_URL SQLX_OFFLINE; devdb_migration_gap "$st_dir" "$st_dir/migrations")" && st_rc=0 || st_rc=$?
     if [ "$st_rc" -eq 0 ] && [ -z "$st_out" ]; then
-        st_ok "a checkout path containing #, ?, or % is percent-escaped correctly, not misparsed into could-not-inspect"
+        st_ok "a checkout path containing #, ?, or % is opened as that path, not misparsed into could-not-inspect"
     else
-        st_bad "a checkout path containing #, ?, or % is percent-escaped correctly, not misparsed into could-not-inspect" "rc=$st_rc out=$st_out"
+        st_bad "a checkout path containing #, ?, or % is opened as that path, not misparsed into could-not-inspect" "rc=$st_rc out=$st_out"
     fi
 
     # ── credential redaction (#4330 review — the leak this batch closes) ──
@@ -2738,7 +2254,7 @@ if [ "$HAS_RS" = "1" ]; then
         echo "  such table') from a crate this push never touched." >&2
         exit 1
     elif [ "$devdb_gap_rc" -eq 2 ]; then
-        # Could not inspect at all (missing python3, permission/OS error) —
+        # Could not inspect at all (missing node, permission/OS error) —
         # this is NOT evidence dev.db is behind, so warn and let the push
         # proceed rather than hard-blocking on an inability to check.
         echo "⚠ Could not check dev.db against src-tauri/migrations/ (#4266) — continuing without this preflight:" >&2
