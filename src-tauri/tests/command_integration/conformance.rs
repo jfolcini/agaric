@@ -1438,6 +1438,15 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
         }
     }
     assign_all_to_test_space(&pool).await;
+    // The raw seed bypasses the materializer, so give every seeded page the
+    // `pages_cache` row and counts production would hold (the mock derives
+    // both live). Rows before counts: the count recompute only UPDATEs rows.
+    agaric_store::cache::rebuild_pages_cache(&pool)
+        .await
+        .expect("seed pages_cache rows");
+    agaric_store::cache::rebuild_pages_cache_counts(&pool)
+        .await
+        .expect("seed pages_cache counts");
 
     let mut canonical_order: Vec<String> = seed["blocks"]
         .as_array()
