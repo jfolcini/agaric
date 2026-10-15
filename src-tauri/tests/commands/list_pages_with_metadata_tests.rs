@@ -3330,7 +3330,9 @@ async fn pages_path_glob_whitespace_only_is_not_malformed_sql() {
 async fn page_through(pool: &SqlitePool, sort: PageSort, limit: i64) -> Vec<String> {
     let mut ids = Vec::new();
     let mut cursor = None;
-    loop {
+    // Bounded so a cursor that stops advancing fails here instead of hanging
+    // until the runner's timeout.
+    for _ in 0..100 {
         let page = list_pages_with_metadata_inner(pool, filter(sort), cursor, Some(limit))
             .await
             .unwrap();
@@ -3340,6 +3342,7 @@ async fn page_through(pool: &SqlitePool, sort: PageSort, limit: i64) -> Vec<Stri
             None => return ids,
         }
     }
+    panic!("{sort:?} paging did not end within 100 pages: {ids:?}");
 }
 
 /// The `RecentlyModified` order computed live: the per-page correlated
