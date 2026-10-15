@@ -1603,6 +1603,36 @@ async fn filtered_query_plan_explains_real_composed_ipc_sql() {
     );
 }
 
+/// #5426 — `PagesTreeSection`'s `<title>/*` lookup (default sort, as it
+/// sends none) searches `idx_pages_cache_title_nocase` instead of scanning
+/// every `pages_cache` row.
+#[tokio::test]
+async fn path_glob_with_literal_prefix_plans_on_title_index() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    for i in 0..10 {
+        seed_page(
+            &pool,
+            &format!("01PAGE0000000000000000N{i:02}"),
+            &format!("Notes/child {i}"),
+        )
+        .await;
+    }
+    let f = filter_with(
+        PageSort::default(),
+        vec![FilterPrimitive::PathGlob {
+            pattern: "Notes/*".to_string(),
+            exclude: false,
+        }],
+    );
+    // ?2 / ?3 = the title range, ?4 = the prepared glob.
+    let plan = explain_query_plan_for_filter(&pool, &f, &["notes/", "notes0", "notes/*"]).await;
+    assert!(
+        plan.contains("idx_pages_cache_title_nocase") && !plan.contains("SCAN pages_cache"),
+        "a prefix PathGlob must search the NOCASE title index, not scan pages_cache; got:\n{plan}"
+    );
+}
+
 // ── Phase 3 — compound filters ────────────────────────────────────
 //
 // These exercise `ListPagesWithMetadataFilter.filters`: the allowed-keys

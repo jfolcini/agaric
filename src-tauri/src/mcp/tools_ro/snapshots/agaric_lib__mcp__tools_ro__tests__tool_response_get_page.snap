@@ -1,34 +1,23 @@
 ---
-source: src/mcp/tools_ro.rs
+source: src/mcp/tools_ro/tests.rs
 expression: result
 ---
 children:
   - block_type: content
     content: child
-    deleted_at: ~
-    due_date: ~
     id: "[ULID]"
     page_id: "[ULID]"
     parent_id: "[ULID]"
     position: 1
-    priority: ~
-    scheduled_date: ~
-    todo_state: ~
 has_more: false
 next_cursor: "[CURSOR]"
 page:
   aliases: []
   block_type: page
   content: Root
-  deleted_at: ~
-  due_date: ~
   id: "[ULID]"
   page_id: "[ULID]"
-  parent_id: ~
   position: 1
-  priority: ~
   properties: []
-  scheduled_date: ~
   tags: []
-  todo_state: ~
 truncated: false

@@ -327,7 +327,27 @@ pub(crate) async fn fetch_op_origins(
 /// fail — but the conversion is kept honest so future response shapes
 /// cannot regress silently.
 pub(crate) fn to_tool_result<T: serde::Serialize>(value: &T) -> Result<Value, AppError> {
-    Ok(serde_json::to_value(value)?)
+    let mut value = serde_json::to_value(value)?;
+    omit_null_block_fields(&mut value);
+    Ok(value)
+}
+
+/// Leave out the null fields of every block row in `value` (#5401): an unset
+/// `due_date`, a live row's `deleted_at` and the like cost an agent tokens and
+/// say nothing. A block row is an object with a `block_type`; other objects
+/// keep their nulls, which some tools document (`get_journal`'s
+/// `page_id: null`, `resolve`'s null for no match).
+fn omit_null_block_fields(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            if fields.contains_key("block_type") {
+                fields.retain(|_, field| !field.is_null());
+            }
+            fields.values_mut().for_each(omit_null_block_fields);
+        }
+        Value::Array(items) => items.iter_mut().for_each(omit_null_block_fields),
+        _ => {}
+    }
 }
 
 /// A journal tool's `date` (#5396): `"today"` (also when omitted),

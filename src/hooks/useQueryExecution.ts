@@ -146,10 +146,10 @@ export async function fetchBacklinksQuery(
 /** AND-intersect property + tag predicates in SQL.
  *
  *  Single IPC into `filtered_blocks_query` which composes one
- *  `EXISTS (SELECT 1 FROM block_properties …)` subquery per property
- *  filter and one `EXISTS (… block_tags … UNION block_tag_refs …)`
- *  per tag filter. The AND between them is the structural conjunction
- *  of the EXISTS clauses — SQLite walks the full universe so the
+ *  `b.id IN (SELECT block_id FROM block_properties …)` id set per
+ *  property filter and one over `block_tags` / `block_tag_refs` per tag
+ *  filter. The AND between them is the structural conjunction of those
+ *  id sets — SQLite resolves them over the full universe so the
  *  result row cap (now only the page limit) applies AFTER the
  *  intersection, NOT per-sub-query.
  *

@@ -4037,6 +4037,134 @@ async fn reindex_page_link_cache_for_block_drops_zero_count_row() {
     assert_eq!(post, 0, "edge_count == 0 must DELETE the cache row");
 }
 
+async fn page_link_spaces(pool: &SqlitePool) -> Vec<(String, String, Option<String>)> {
+    sqlx::query_as(
+        "SELECT source_page_id, target_page_id, space_id FROM page_link_cache \
+         ORDER BY source_page_id, target_page_id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// #5426: `space_id` is the space both pages share, and the per-block
+/// reindex, the full rebuild and its read/write split all write the same
+/// value. The fixture holds one edge of each kind: inside a space, into
+/// another space, into a space-less page, into a same-space block that is not
+/// a page, and from a source key that is not a page. The last step pins the
+/// reindex's UPSERT: a target that joins the source's space must refresh an
+/// EXISTING row's `space_id`.
+#[tokio::test]
+async fn page_link_cache_space_id_matches_across_writers_5426() {
+    let (pool, _dir) = test_pool().await;
+    let space_a = "01SPACE0000000000000005426";
+    let space_b = "01SPACE0000000000000005427";
+    let page_a = "01PAGEA000000000000000542A";
+    let page_a2 = "01PAGEA200000000000000542A";
+    let page_b = "01PAGEB000000000000000542B";
+    let page_none = "01PAGEN000000000000000542N";
+    let child = "01CHILD00000000000000542AC";
+    let note = "01NOTE000000000000000542A2";
+    let tag = "01TAGSRC000000000000005426";
+    for page in [space_a, space_b, page_a, page_a2, page_b, page_none] {
+        cs375_insert_page(&pool, page).await;
+    }
+    cs375_set_space(&pool, page_a, space_a).await;
+    cs375_set_space(&pool, page_a2, space_a).await;
+    cs375_set_space(&pool, page_b, space_b).await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id, position) \
+         VALUES (?, 'content', 'links', ?, ?, ?, 1)",
+    )
+    .bind(child)
+    .bind(page_a)
+    .bind(page_a)
+    .bind(space_a)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id, position) \
+         VALUES (?, 'content', 'note', ?, ?, ?, 1)",
+    )
+    .bind(note)
+    .bind(page_a2)
+    .bind(page_a2)
+    .bind(space_a)
+    .execute(&pool)
+    .await
+    .unwrap();
+    insert_block(&pool, tag, "tag", "source").await;
+    cs375_set_space(&pool, tag, space_a).await;
+    for (source, target) in [
+        (child, page_a2),
+        (child, page_b),
+        (child, page_none),
+        (child, note),
+        (tag, page_a2),
+    ] {
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(source)
+            .bind(target)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    for source in [child, tag] {
+        reindex_page_link_cache_for_block(&pool, source)
+            .await
+            .unwrap();
+    }
+    let reindexed = page_link_spaces(&pool).await;
+    let row = |source: &str, target: &str, space: Option<&str>| {
+        (
+            source.to_owned(),
+            target.to_owned(),
+            space.map(str::to_owned),
+        )
+    };
+    assert_eq!(
+        reindexed,
+        vec![
+            row(page_a, note, None),
+            row(page_a, page_a2, Some(space_a)),
+            row(page_a, page_b, None),
+            row(page_a, page_none, None),
+            row(tag, page_a2, None),
+        ],
+        "only the page-to-page edge inside one space carries that space"
+    );
+    rebuild_page_link_cache(&pool).await.unwrap();
+    assert_eq!(
+        page_link_spaces(&pool).await,
+        reindexed,
+        "the full rebuild must write what the per-block reindex wrote"
+    );
+    rebuild_page_link_cache_split(&pool, &pool).await.unwrap();
+    assert_eq!(
+        page_link_spaces(&pool).await,
+        reindexed,
+        "the split rebuild must write what the per-block reindex wrote"
+    );
+
+    cs375_set_space(&pool, page_b, space_a).await;
+    reindex_page_link_cache_for_block(&pool, child)
+        .await
+        .unwrap();
+    assert_eq!(
+        page_link_spaces(&pool).await,
+        vec![
+            row(page_a, note, None),
+            row(page_a, page_a2, Some(space_a)),
+            row(page_a, page_b, Some(space_a)),
+            row(page_a, page_none, None),
+            row(tag, page_a2, None),
+        ],
+        "a reindex must refresh the space of a row that already exists"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Issue #103: contention-mode regression guard for the
 // `pool.begin()` → `begin_immediate_logged` migration. A cache rebuild

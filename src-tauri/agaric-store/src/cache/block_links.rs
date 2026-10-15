@@ -578,8 +578,9 @@ pub async fn reindex_block_links_conn(
     // Phase 3 — filter out cross-space targets before inserting.
     // The write-time enforcement gate (Phase 2) rejects new cross-space
     // references, but the materializer rebuild path also processes content
-    // that may contain legacy tokens. Filtering here ensures the cache
-    // never holds cross-space rows even if a legacy token survives.
+    // that may contain legacy tokens. Filtering here keeps a legacy token from
+    // writing a cross-space row; a page that later changes space keeps its
+    // links, so cross-space rows can still exist.
     //
     // P6 (#346): the source space is resolved once (one query); the
     // per-target space resolution that used to run in a Rust loop is

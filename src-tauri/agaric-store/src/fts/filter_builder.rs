@@ -502,14 +502,30 @@ impl StructuralFilterBuilder {
     /// economy. No-op on an empty slice (mirrors `add_tags_all`). The
     /// loop calls `add_projection_clause` once per tag, each consuming one
     /// `?N` placeholder, so `next_param` advances by exactly `tags.len()`.
-    pub(super) fn add_tags_via_projection(&mut self, prefix: &str, tags: &[String]) {
-        if tags.is_empty() {
-            return;
-        }
+    ///
+    /// `inline_and_inherited` widens each tag to the tag query's leaf
+    /// ([`tag_leaf_subquery_body`](crate::tag_query::tag_leaf_subquery_body)):
+    /// attached, inline `#tag` reference, or inherited from an ancestor. That
+    /// leaf binds the tag once per arm, so `next_param` then advances by
+    /// `3 * tags.len()`.
+    pub(super) fn add_tags_via_projection(
+        &mut self,
+        prefix: &str,
+        tags: &[String],
+        inline_and_inherited: bool,
+    ) {
         for tag in tags {
-            let prim = FilterPrimitive::Tag { tag: tag.clone() };
-            let wc = SearchProjection.compile(&prim);
-            self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+            if inline_and_inherited {
+                let sql = format!(
+                    "b.id IN ({})",
+                    crate::tag_query::tag_leaf_subquery_body(true)
+                );
+                self.add_projection_clause(prefix, &sql, &vec![Bind::Text(tag.clone()); 3]);
+            } else {
+                let prim = FilterPrimitive::Tag { tag: tag.clone() };
+                let wc = SearchProjection.compile(&prim);
+                self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+            }
         }
     }
 
@@ -813,6 +829,7 @@ mod tests {
                 "01TAG0000000000000000000A".to_string(),
                 "01TAG0000000000000000000B".to_string(),
             ],
+            false,
         );
 
         // Exact SQL snapshot: two per-tag IN-subselects, AND-joined, with
@@ -1274,7 +1291,7 @@ mod tests {
         // now contiguous: parent ?1, tag ?2, space ?3, glob ?4, block_type ?5.
         let mut fb = StructuralFilterBuilder::new(1);
         fb.add_parent(TOGGLE_PREFIX, Some("p")); // ?1
-        fb.add_tags_via_projection(TOGGLE_PREFIX, &["T".to_string()]); // ?2
+        fb.add_tags_via_projection(TOGGLE_PREFIX, &["T".to_string()], false); // ?2
         fb.add_space(TOGGLE_PREFIX, &spaces(&["S"])); // ?3
         fb.add_page_globs_via_projection(TOGGLE_PREFIX, false, &["*g*".to_string()]); // ?4
         fb.add_block_type_via_projection(TOGGLE_PREFIX, Some("page")); // ?5
@@ -1338,10 +1355,11 @@ mod tests {
                 to: "2026-12-31".into(),
             }),
             last_edited: Some(crate::filters::LastEditedSpec::Rolling { days: 7 }),
+            tags_match_inline_and_inherited: false,
         };
         let mut fb = StructuralFilterBuilder::new(6);
         fb.add_parent(FTS_PREFIX, Some("PARENT01"));
-        fb.add_tags_via_projection(FTS_PREFIX, &["TAGA".to_string(), "TAGB".to_string()]);
+        fb.add_tags_via_projection(FTS_PREFIX, &["TAGA".to_string(), "TAGB".to_string()], false);
         fb.add_space(FTS_PREFIX, &spaces(&["01SPACE0001"]));
         fb.add_page_globs_via_projection(
             FTS_PREFIX,

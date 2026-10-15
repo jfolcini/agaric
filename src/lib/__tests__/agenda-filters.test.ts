@@ -736,7 +736,7 @@ describe('executeAgendaFilters', () => {
       // #1746 guard: an is-set entry sharing a key with one or more valued
       // entries must collapse to a single bare-key filter. Emitting the
       // valued entries as additional same-key PropertyFilters would AND in
-      // the EXISTS composition (queries.rs) and produce a strictly NARROWER
+      // the id-set composition (queries.rs) and produce a strictly NARROWER
       // result than the intended OR-within-dimension (#720) — the inverse of
       // the desired union. Order of values must not change the outcome.
       await executeAgendaFilters(
@@ -1161,7 +1161,7 @@ describe('executeAgendaFilters', () => {
 
       expect(result.blocks).toHaveLength(1)
       expect(result.blocks[0]?.id).toBe('shared-1')
-      // Exactly ONE IPC carries both filters — the SQL composed-EXISTS
+      // Exactly ONE IPC carries both filters — the SQL composed id-set
       // shape does the AND server-side.
       expect(filteredCalls()).toHaveLength(1)
       const call = filteredCalls()[0] as Record<string, unknown>
@@ -1357,7 +1357,7 @@ describe('loadMoreAgendaFilters', () => {
   it("page 2's blocks satisfy every active filter (AND-intersection preserved)", async () => {
     // Returns three blocks; every one matches BOTH filters (todo_state in
     // ['TODO','DOING'] AND priority='1'). This is what the backend
-    // composed-EXISTS shape guarantees — the assertion pins that
+    // composed id-set shape guarantees — the assertion pins that
     // load-more does not silently drop AND-membership.
     const blocks = [
       makeBlock({ id: 'b10', todo_state: 'TODO', priority: '1' }),
