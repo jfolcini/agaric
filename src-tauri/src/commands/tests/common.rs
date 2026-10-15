@@ -140,6 +140,22 @@ pub async fn assign_to_test_space(pool: &SqlitePool, block_id: &str) {
         .execute(pool)
         .await
         .unwrap();
+    sync_pages_cache_space(pool, Some(block_id)).await;
+}
+
+/// The `pages_cache` half of a raw space stamp: production's `space` op
+/// moves a page's cache row with the page, in the same transaction (#5371).
+/// `None` syncs every row.
+async fn sync_pages_cache_space(pool: &SqlitePool, page_id: Option<&str>) {
+    sqlx::query(
+        "UPDATE pages_cache \
+            SET space_id = (SELECT b.space_id FROM blocks b WHERE b.id = pages_cache.page_id) \
+          WHERE ?1 IS NULL OR page_id = ?1",
+    )
+    .bind(page_id)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 /// Variant of [`ensure_test_space`] that seeds the
@@ -180,6 +196,7 @@ pub async fn assign_to_space(pool: &SqlitePool, block_id: &str, space_id: &str) 
         .execute(pool)
         .await
         .unwrap();
+    sync_pages_cache_space(pool, Some(block_id)).await;
 }
 
 /// Bulk-assign every block currently in the DB (excluding the
@@ -218,6 +235,7 @@ pub async fn assign_all_to_test_space(pool: &SqlitePool) {
     .execute(pool)
     .await
     .unwrap();
+    sync_pages_cache_space(pool, None).await;
 }
 
 /// A page in [`TEST_SPACE_ID`], made through the commands so the engine holds

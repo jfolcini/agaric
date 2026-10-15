@@ -5207,9 +5207,18 @@ async fn upgraded_vault_page_links_survive_a_disarmed_lazy_rebuild_3839() {
     seed_pre_0110_vault(&pool, page_a, page_b, child).await;
     // The vault's pages carry their space before the upgrade (0086), which is
     // what 0122 copies into the rolled-up edge for the scoped read.
+    // Stamped raw: the shared helper also writes `pages_cache.space_id`,
+    // which only exists from 0124, whose backfill fills it on the upgrade.
     let space = crate::commands::tests::common::TEST_SPACE_ID;
+    crate::commands::tests::common::ensure_test_space(&pool).await;
     for page in [page_a, page_b] {
-        crate::commands::tests::common::assign_to_test_space(&pool, page).await;
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+            .bind(space)
+            .bind(page)
+            .bind(page)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
     apply_migrations_to_head(&pool, 109).await;
 
@@ -7129,4 +7138,120 @@ async fn page_link_cache_0122_space_id_backfills_the_shared_space_5426() {
         vec![(a1.to_owned(), a2.to_owned(), 2)],
         "the scoped read must find the backfilled same-space edge and nothing else"
     );
+}
+
+/// #5371 — 0124 adds `pages_cache.space_id` and backfills it from each row's
+/// page (NULL for a space-less page), adds the per-sort indexes, and the
+/// Pages list, which now reads the space from the cache row, lists each
+/// upgraded page in its own space.
+#[tokio::test]
+async fn pages_cache_0124_space_id_backfills_from_the_page_5371() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 123).await;
+
+    let space_a = "01HZ00000000000000000SPA4A";
+    let space_b = "01HZ00000000000000000SPA4B";
+    for space in [space_a, space_b] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'space', ?)",
+        )
+        .bind(space)
+        .bind(space)
+        .execute(&pool)
+        .await
+        .expect("seed space page");
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(space)
+            .execute(&pool)
+            .await
+            .expect("register space");
+    }
+    let in_a = "01HZ0000000000000000PAGE4A";
+    let in_b = "01HZ0000000000000000PAGE4B";
+    let spaceless = "01HZ0000000000000000PAGE4N";
+    for (page, space) in [
+        (in_a, Some(space_a)),
+        (in_b, Some(space_b)),
+        (spaceless, None),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id, space_id) \
+             VALUES (?, 'page', ?, ?, ?)",
+        )
+        .bind(page)
+        .bind(page)
+        .bind(page)
+        .bind(space)
+        .execute(&pool)
+        .await
+        .expect("seed page");
+        sqlx::query(
+            "INSERT INTO pages_cache (page_id, title, title_sort_key, last_edited_ms, updated_at) \
+             VALUES (?, ?, ?, 1, 1)",
+        )
+        .bind(page)
+        .bind(page)
+        .bind(page.to_lowercase())
+        .execute(&pool)
+        .await
+        .expect("seed pre-0124 cache row");
+    }
+
+    apply_migrations_through(&pool, 123, 124).await;
+
+    let rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT page_id, space_id FROM pages_cache ORDER BY page_id")
+            .fetch_all(&pool)
+            .await
+            .expect("read backfilled rows");
+    assert_eq!(
+        rows,
+        vec![
+            (in_a.to_owned(), Some(space_a.to_owned())),
+            (in_b.to_owned(), Some(space_b.to_owned())),
+            (spaceless.to_owned(), None),
+        ],
+        "each row carries its page's space"
+    );
+
+    let indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master \
+         WHERE type = 'index' AND tbl_name IN ('pages_cache', 'page_opens') \
+           AND name LIKE 'idx_%' \
+         ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("list indexes");
+    assert_eq!(
+        indexes,
+        [
+            "idx_page_opens_opened",
+            "idx_pages_cache_space_content",
+            "idx_pages_cache_space_created",
+            "idx_pages_cache_space_edited",
+            "idx_pages_cache_space_linked",
+            "idx_pages_cache_space_title",
+            "idx_pages_cache_title_nocase",
+        ],
+        "0124 adds one index per sort"
+    );
+
+    apply_migrations_to_head(&pool, 124).await;
+    for (space, page) in [(space_a, in_a), (space_b, in_b)] {
+        let response = crate::commands::pages::list_pages_with_metadata_inner(
+            &pool,
+            crate::commands::pages::ListPagesWithMetadataFilter {
+                sort: crate::commands::pages::PageSort::Alphabetical,
+                space_id: space.to_owned(),
+                filters: Vec::new(),
+            },
+            None,
+            Some(50),
+        )
+        .await
+        .expect("list after the upgrade");
+        let ids: Vec<&str> = response.items.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, [page], "space {space} lists its upgraded page");
+    }
 }

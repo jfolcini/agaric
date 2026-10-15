@@ -271,6 +271,9 @@ export function useSearchResults({
       placeholderData: keepPreviousData,
       // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
       refetchOnMount: 'always',
+      // A content edit fires no event the key folds in, so a query asked again
+      // re-reads the backend instead of a cached answer.
+      staleTime: 0,
       // `invalidationKey` mints a new key on every block-property change; under the
       // client's `gcTime: Infinity` those superseded, observer-less entries would
       // accumulate unbounded over a session. Bound the churn (mirrors DonePanel):

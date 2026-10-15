@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n                   SELECT 1 FROM blocks b\n                     LEFT JOIN pages_cache pc ON pc.page_id = b.id\n                    WHERE b.block_type = 'page' AND b.deleted_at IS NULL AND b.content IS NOT NULL\n                      AND (pc.page_id IS NULL\n                           OR pc.last_edited_ms = 0\n                           OR pc.space_id IS NOT b.space_id)\n               ) AS \"stale!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "stale!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6d1ac8e1045a38a0182f5f38e564e893692ae4b1b2f2dba7ebd3a105360ebcbd"
+}

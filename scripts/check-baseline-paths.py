@@ -176,7 +176,7 @@ NO_PATHS: dict[str, str] = {
 EMBEDDED_SOURCES: list[tuple[str, str, str]] = [
     # Sanctioned raw-transaction sites. Mixed exact paths and `**` globs;
     # the globs are skipped per-entry (see the module docstring).
-    ("scripts/check-raw-tx.py", "ALLOWLIST_GLOBS", "."),
+    ("scripts/check-raw-tx.mjs", "ALLOWLIST_GLOBS", "."),
     # Sanctioned raw `invoke(` / `localStorage` seams.
     ("scripts/check-raw-invoke.mjs", "EXEMPT_FILES", "."),
     # Directory prefixes, not files — `exists()` covers both, and a prefix
@@ -192,7 +192,7 @@ EMBEDDED_SOURCES: list[tuple[str, str, str]] = [
 # nothing true about them.
 #   check-git-fixture-isolation.mjs EXEMPT_BASENAMES  — bare basenames
 #   check-store-layering.mjs PAGE_BLOCK_STORE_*       — basenames under src/stores/
-#   check-raw-tx.py TEST_FILE_GLOBS / BIN_FILE_GLOBS  — structural patterns
+#   check-raw-tx.mjs BIN_FILE_GLOBS, lib/rust-scan.mjs TEST_FILE_GLOBS — structural patterns
 #   check-dynamic-sql.py EXTRA_TEST_FILE_GLOBS        — structural patterns
 #   check-table-ownership.py OWNER / EXTRA_TEST_...   — table names / patterns
 # Two are path-keyed exemption sets and are still excluded, for reasons that

@@ -372,6 +372,8 @@ pub async fn migrate_pages_to_personal_space_batched(
         }
         q.execute(&mut **tx).await?;
     }
+    let pages: Vec<&str> = page_ids.iter().map(String::as_str).collect();
+    agaric_store::cache::sync_pages_cache_space_ids(tx, &pages).await?;
 
     Ok(())
 }

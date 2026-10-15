@@ -181,8 +181,8 @@ pub use page_links::{
     rebuild_page_link_cache, rebuild_page_link_cache_split, reindex_page_link_cache_for_block,
 };
 pub use pages::{
-    raise_pages_last_edited_ms, rebuild_pages_cache, rebuild_pages_cache_counts,
-    rebuild_pages_cache_split,
+    insert_missing_pages_cache_rows, raise_pages_last_edited_ms, rebuild_pages_cache,
+    rebuild_pages_cache_counts, rebuild_pages_cache_split, sync_pages_cache_space_ids,
 };
 // #417: the production RESET path recomputes the two `pages_cache` count
 // columns full-table via the dedicated `rebuild_pages_cache_counts` entry

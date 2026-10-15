@@ -7,9 +7,10 @@ use agaric_core::error::AppError;
 // ---------------------------------------------------------------------------
 
 /// Push the diff down to SQLite: find the page rows that are new, retitled,
-/// or still at migration 0123's unfilled defaults, compute their keys in Rust
-/// (an NFKD `title_sort_key` has no SQL spelling), UPSERT them, then sweep
-/// orphans. Only the stale rows cross the process boundary.
+/// still at migration 0123's unfilled defaults, or whose `space_id` no longer
+/// is the page's, compute their keys in Rust (an NFKD `title_sort_key` has no
+/// SQL spelling), UPSERT them, then sweep orphans. Only the stale rows cross
+/// the process boundary.
 ///
 /// The "skip unchanged → preserve `updated_at`" semantic is kept: an UPSERT
 /// hit refreshes `updated_at` only when the title changed, and a hit that
@@ -28,7 +29,7 @@ async fn apply_sort_merge_rebuild(
     // folded per page, and is only computed for a row whose
     // `last_edited_ms` is unfilled.
     let stale = sqlx::query!(
-        r#"SELECT b.id AS "id!", b.content AS "title!",
+        r#"SELECT b.id AS "id!", b.content AS "title!", b.space_id AS "space_id?",
                   COALESCE(pc.last_edited_ms, 0) = 0 AS "unfilled!: bool",
                   CASE WHEN COALESCE(pc.last_edited_ms, 0) = 0 THEN
                       (SELECT MAX((SELECT MAX(o.created_at) FROM op_log o
@@ -41,56 +42,17 @@ async fn apply_sort_merge_rebuild(
               AND (pc.page_id IS NULL
                    OR pc.title != b.content
                    OR (pc.title_sort_key = '' AND b.content != '')
-                   OR pc.last_edited_ms = 0)"#,
+                   OR pc.last_edited_ms = 0
+                   OR pc.space_id IS NOT b.space_id)"#,
     )
     .fetch_all(&mut *write_conn)
     .await?;
 
-    let mut upserted = 0;
-    if !stale.is_empty() {
-        let rows: Vec<(String, String, String, i64)> = stale
-            .into_iter()
-            .map(|r| {
-                let key = agaric_core::title_sort::title_sort_key(&r.title);
-                // 0 leaves a filled row's value alone: the UPSERT keeps the MAX.
-                // A born value is at least 1 so 0 stays the unfilled marker: a
-                // seeded space page's ULID time is 0, and once compaction drops
-                // its ops, boot would otherwise reschedule this rebuild forever.
-                let last_edited = if r.unfilled {
-                    r.newest_op_ms
-                        .unwrap_or_else(|| ulid_created_ms(&r.id))
-                        .max(1)
-                } else {
-                    0
-                };
-                (r.id, r.title, key, last_edited)
-            })
-            .collect();
-        let rows_json = serde_json::to_string(&rows)?;
-        // `WHERE true`: an UPSERT's SELECT needs a WHERE, or SQLite parses
-        // `ON CONFLICT` as a join constraint.
-        upserted = sqlx::query!(
-            "INSERT INTO pages_cache (page_id, title, title_sort_key, last_edited_ms, updated_at) \
-             SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), \
-                    json_extract(value, '$[2]'), json_extract(value, '$[3]'), ?1 \
-               FROM json_each(?2) \
-              WHERE true \
-             ON CONFLICT(page_id) DO UPDATE SET \
-                 title          = excluded.title, \
-                 title_sort_key = excluded.title_sort_key, \
-                 last_edited_ms = MAX(pages_cache.last_edited_ms, excluded.last_edited_ms), \
-                 updated_at     = CASE WHEN pages_cache.title != excluded.title \
-                                       THEN excluded.updated_at ELSE pages_cache.updated_at END \
-              WHERE pages_cache.title != excluded.title \
-                 OR pages_cache.title_sort_key != excluded.title_sort_key \
-                 OR pages_cache.last_edited_ms < excluded.last_edited_ms",
-            now,
-            rows_json,
-        )
-        .execute(&mut *write_conn)
-        .await?
-        .rows_affected();
-    }
+    let rows: Vec<PageRow> = stale
+        .into_iter()
+        .map(|r| page_row(r.id, r.title, r.space_id, r.unfilled, r.newest_op_ms))
+        .collect();
+    let upserted = upsert_page_rows(&mut *write_conn, &rows, now).await?;
 
     let delete = sqlx::query!(
         "DELETE FROM pages_cache \
@@ -116,6 +78,112 @@ async fn apply_sort_merge_rebuild(
     // 0), which now enqueues the dedicated `RebuildPagesCacheCounts`
     // task (-> [`recompute_all_pages_cache_counts`]) separately.
     Ok(upserted + delete.rows_affected())
+}
+
+/// A page row as [`upsert_page_rows`] writes it: id, title, title sort key,
+/// `last_edited_ms`, `space_id`.
+type PageRow = (String, String, String, i64, Option<String>);
+
+/// The row a stale or missing page is upserted with: its title's key in
+/// Rust, since an NFKD `title_sort_key` has no SQL spelling.
+fn page_row(
+    id: String,
+    title: String,
+    space_id: Option<String>,
+    unfilled: bool,
+    newest_op_ms: Option<i64>,
+) -> PageRow {
+    let key = agaric_core::title_sort::title_sort_key(&title);
+    let last_edited = upsert_last_edited_ms(unfilled, newest_op_ms, &id);
+    (id, title, key, last_edited, space_id)
+}
+
+/// UPSERT `rows`. A hit refreshes `updated_at` only when the title changed,
+/// only ever raises `last_edited_ms`, and writes nothing when nothing
+/// changed. Returns the rows written.
+async fn upsert_page_rows(
+    conn: &mut sqlx::SqliteConnection,
+    rows: &[PageRow],
+    now: i64,
+) -> Result<u64, AppError> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let rows_json = serde_json::to_string(rows)?;
+    // `WHERE true`: an UPSERT's SELECT needs a WHERE, or SQLite parses
+    // `ON CONFLICT` as a join constraint.
+    Ok(sqlx::query!(
+        "INSERT INTO pages_cache \
+             (page_id, title, title_sort_key, last_edited_ms, space_id, updated_at) \
+         SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), \
+                json_extract(value, '$[2]'), json_extract(value, '$[3]'), \
+                json_extract(value, '$[4]'), ?1 \
+           FROM json_each(?2) \
+          WHERE true \
+         ON CONFLICT(page_id) DO UPDATE SET \
+             title          = excluded.title, \
+             title_sort_key = excluded.title_sort_key, \
+             last_edited_ms = MAX(pages_cache.last_edited_ms, excluded.last_edited_ms), \
+             space_id       = excluded.space_id, \
+             updated_at     = CASE WHEN pages_cache.title != excluded.title \
+                                   THEN excluded.updated_at ELSE pages_cache.updated_at END \
+          WHERE pages_cache.title != excluded.title \
+             OR pages_cache.title_sort_key != excluded.title_sort_key \
+             OR pages_cache.last_edited_ms < excluded.last_edited_ms \
+             OR pages_cache.space_id IS NOT excluded.space_id",
+        now,
+        rows_json,
+    )
+    .execute(&mut *conn)
+    .await?
+    .rows_affected())
+}
+
+/// Give each live, titled page among `ids` that has no `pages_cache` row its
+/// row, in the caller's transaction (#5371). The page-row rebuild sweeps a
+/// trashed page's row and the Pages list reads its rows from `pages_cache`,
+/// so every restore path calls this over the blocks it brought back, or a
+/// restored page stays off the list until the debounced rebuild lands. The
+/// row is born as the rebuild births one; its counts are left to the
+/// restore's `RebuildPagesCacheCounts`.
+pub async fn insert_missing_pages_cache_rows<S: AsRef<str> + Sync>(
+    conn: &mut sqlx::SqliteConnection,
+    ids: &[S],
+) -> Result<(), AppError> {
+    let ids: Vec<&str> = ids.iter().map(AsRef::as_ref).collect();
+    let ids_json = serde_json::to_string(&ids)?;
+    let missing = sqlx::query!(
+        r#"SELECT b.id AS "id!", b.content AS "title!", b.space_id AS "space_id?",
+                  (SELECT MAX((SELECT MAX(o.created_at) FROM op_log o
+                                WHERE o.block_id = d.id))
+                     FROM blocks d WHERE d.page_id = b.id) AS "newest_op_ms?: i64"
+             FROM blocks b
+            WHERE b.id IN (SELECT value FROM json_each(?))
+              AND b.block_type = 'page' AND b.deleted_at IS NULL AND b.content IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM pages_cache pc WHERE pc.page_id = b.id)"#,
+        ids_json,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let rows: Vec<PageRow> = missing
+        .into_iter()
+        .map(|r| page_row(r.id, r.title, r.space_id, true, r.newest_op_ms))
+        .collect();
+    upsert_page_rows(conn, &rows, crate::db::now_ms()).await?;
+    Ok(())
+}
+
+/// The `last_edited_ms` a stale row is upserted with. 0 leaves a filled row's
+/// value alone: the UPSERT keeps the MAX. A born value is at least 1 so 0
+/// stays the unfilled marker: a seeded space page's ULID time is 0, and once
+/// compaction drops its ops, boot would otherwise reschedule this rebuild
+/// forever.
+fn upsert_last_edited_ms(unfilled: bool, newest_op_ms: Option<i64>, id: &str) -> i64 {
+    if unfilled {
+        newest_op_ms.unwrap_or_else(|| ulid_created_ms(id)).max(1)
+    } else {
+        0
+    }
 }
 
 /// The creation time in a ULID page id; 0 for an id that is not one.
@@ -159,6 +227,26 @@ pub async fn raise_pages_last_edited_ms(
     Ok(())
 }
 
+/// Copy each page's `blocks.space_id` onto its `pages_cache` row, in the
+/// caller's transaction, so a page a `space` write re-homes lists in its new
+/// space at commit (#5371). Ids without a cache row touch nothing; the
+/// page-row rebuild repairs every path that does not call this.
+pub async fn sync_pages_cache_space_ids(
+    conn: &mut sqlx::SqliteConnection,
+    page_ids: &[&str],
+) -> Result<(), AppError> {
+    let ids_json = serde_json::to_string(page_ids)?;
+    sqlx::query!(
+        "UPDATE pages_cache \
+            SET space_id = (SELECT b.space_id FROM blocks b WHERE b.id = pages_cache.page_id) \
+          WHERE page_id IN (SELECT value FROM json_each(?))",
+        ids_json,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// #417: full-table recompute of both `pages_cache` count columns.
 ///
 /// Extracted verbatim (#432-guarded form) from the former tail of
@@ -183,12 +271,11 @@ pub async fn raise_pages_last_edited_ms(
 /// The #2508 audit flagged the `inbound_link_count` / `child_block_count`
 /// columns as a possible drop ("read the canonical live SELECT instead").
 /// They are **not** droppable: they are the sort keys for `MostLinked` /
-/// `MostContent` and the predicate for the `Orphan` / `Stub` /
-/// `HasNoInboundLinks` filters (`commands/pages/metadata.rs` `keyset_for`,
-/// `filters/primitive.rs`). Those paths run a `USE TEMP B-TREE FOR ORDER BY`
-/// / page-wide `WHERE`, so SQLite evaluates the count for **every page in
-/// the space** before the `LIMIT` — a cheap materialised-column read per
-/// page. Migration `0069` created these columns precisely to replace the
+/// `MostContent`, each read in order from its own index (migration 0124),
+/// and the predicate for the `Orphan` / `Stub` / `HasNoInboundLinks` filters
+/// (`commands/pages/metadata.rs` `keyset_for`, `filters/primitive.rs`), which
+/// read the column for every candidate page — a cheap materialised-column
+/// read per page. Migration `0069` created these columns precisely to replace the
 /// per-row `COUNT(DISTINCT …) FROM block_links` correlated subquery;
 /// dropping them re-introduces that O(N)-subquery cost (guarded today by
 /// `most_linked_perf_gate_20k_pages` +
@@ -211,11 +298,6 @@ pub async fn raise_pages_last_edited_ms(
 pub(crate) async fn recompute_all_pages_cache_counts(
     write_conn: &mut sqlx::SqliteConnection,
 ) -> Result<u64, AppError> {
-    // #469 L3: use a CTE so each correlated subquery is evaluated once
-    // per pages_cache row rather than twice (once in SET, once in the
-    // change-guard WHERE). SQLite does not CSE correlated subqueries
-    // across SET and WHERE, so the pre-CTE form ran 4 subquery
-    // evaluations per row instead of 2.
     // `+src.space_id`: the unary `+` keeps the planner from driving the inbound
     // count off `idx_blocks_space_type`, a scan of the whole space per page
     // (quadratic in the vault) instead of a walk of the page's own links.

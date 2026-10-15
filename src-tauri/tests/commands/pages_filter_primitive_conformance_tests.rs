@@ -82,8 +82,8 @@ fn load_vectors() -> Vectors {
 
 /// Seed one fixture row as a page in [`TEST_SPACE_ID`]:
 /// - `pages_cache` carries the materialised `inbound_link_count` /
-///   `child_block_count` (read via the LEFT JOIN by `HasNoInboundLinks` /
-///   `Stub`);
+///   `child_block_count` (read by `HasNoInboundLinks` / `Stub`) and the
+///   page's space, which the base SELECT lists by;
 /// - `blocks.priority` is stamped when present (read directly by `Priority`);
 /// - an `op_log` row stamped with `lastModifiedAt` is inserted only when
 ///   non-null, so `LastEdited`'s `MAX(op_log.created_at)` subquery yields NULL
@@ -101,13 +101,14 @@ async fn seed_filter_page(pool: &SqlitePool, row: &Row) {
     }
     sqlx::query(
         "INSERT OR IGNORE INTO pages_cache \
-             (page_id, title, updated_at, inbound_link_count, child_block_count) \
-         VALUES (?, ?, 1735689600000, ?, ?)",
+             (page_id, title, updated_at, inbound_link_count, child_block_count, space_id) \
+         VALUES (?, ?, 1735689600000, ?, ?, ?)",
     )
     .bind(&row.id)
     .bind(&row.title)
     .bind(row.inbound_link_count)
     .bind(row.child_block_count)
+    .bind(TEST_SPACE_ID)
     .execute(pool)
     .await
     .unwrap();

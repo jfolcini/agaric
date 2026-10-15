@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE pages_cache SET space_id = (SELECT b.space_id FROM blocks b WHERE b.id = pages_cache.page_id) WHERE page_id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "187a7e0dd9c402e5909e4fa9463de356baa39d82acf0b7e63e5e71d314947b17"
+}
