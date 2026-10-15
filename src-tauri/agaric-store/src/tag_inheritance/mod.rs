@@ -109,12 +109,15 @@ pub async fn apply_op_tag_inheritance(
         //  - EditBlock / SetProperty / DeleteProperty: tag membership unchanged
         //  - AddAttachment / DeleteAttachment: attachments don't inherit tags
         //  - PurgeBlock: cascade DELETE in materializer handles block_tag_inherited rows
+        //  - AddPageAlias / RemovePageAlias: aliases are not tags
         OpPayload::EditBlock(_)
         | OpPayload::SetProperty(_)
         | OpPayload::DeleteProperty(_)
         | OpPayload::AddAttachment(_)
         | OpPayload::DeleteAttachment(_)
         | OpPayload::RenameAttachment(_)
-        | OpPayload::PurgeBlock(_) => Ok(()),
+        | OpPayload::PurgeBlock(_)
+        | OpPayload::AddPageAlias(_)
+        | OpPayload::RemovePageAlias(_) => Ok(()),
     }
 }

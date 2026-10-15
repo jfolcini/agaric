@@ -75,7 +75,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 10,
+      "count": 12,
       "ops": [
         {
           "key": "stage",
@@ -98,6 +98,12 @@
         {
           "key": "stage",
           "op_type": "set_property"
+        },
+        {
+          "op_type": "remove_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
         },
         {
           "op_type": "remove_tag"

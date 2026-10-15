@@ -2563,6 +2563,47 @@ describe('list_unlinked_references', () => {
 })
 
 // ---------------------------------------------------------------------------
+// count_unlinked_references (#5422)
+// ---------------------------------------------------------------------------
+
+describe('count_unlinked_references', () => {
+  it("answers the list reader's counts with no groups, without the page's own mentions", () => {
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'Check Quick Notes for details',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    })
+    // A mention on the target's own page is a self-reference: in neither count.
+    invoke('create_block', {
+      blockType: 'content',
+      content: 'These Quick Notes are mine',
+      parentId: SEED_IDS.PAGE_QUICK_NOTES,
+    })
+    const listed = invoke('list_unlinked_references', {
+      pageId: SEED_IDS.PAGE_QUICK_NOTES,
+      limit: 50,
+    }) as {
+      groups: Array<{ blocks: unknown[] }>
+      total_count: number
+      filtered_count: number
+    }
+    const counted = invoke('count_unlinked_references', { pageId: SEED_IDS.PAGE_QUICK_NOTES })
+
+    // Only the Getting Started mention is listed.
+    expect(listed.groups.flatMap((g) => g.blocks)).toHaveLength(1)
+    expect(listed.total_count).toBe(1)
+    expect(counted).toEqual({
+      groups: [],
+      next_cursor: null,
+      has_more: false,
+      total_count: listed.total_count,
+      filtered_count: listed.filtered_count,
+      truncated: false,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // compute_edit_diff
 // ---------------------------------------------------------------------------
 
@@ -2697,6 +2738,46 @@ describe('page alias commands', () => {
       pageId: SEED_IDS.PAGE_GETTING_STARTED,
     }) as string[]
     expect(aliases).toEqual(['intro', 'welcome'])
+  })
+
+  // #5387 — an alias edit is ops, as `write_page_aliases_in_tx` appends them.
+  it('set_page_aliases removes then adds, as alias ops, and answers their refs', () => {
+    const page = SEED_IDS.PAGE_GETTING_STARTED
+    const before = opLog.length
+    const resp = invoke('set_page_aliases', { pageId: page, aliases: ['GS', 'intro'] }) as {
+      aliases: string[]
+      op_refs: Array<{ device_id: string; seq: number }>
+    }
+    expect(resp.aliases).toEqual(['GS', 'intro'])
+    const appended = opLog.slice(before).map((op) => [op.op_type, JSON.parse(op.payload).alias])
+    expect(appended).toEqual([
+      ['remove_page_alias', 'getting-started'],
+      ['remove_page_alias', 'gs'],
+      ['add_page_alias', 'GS'],
+      ['add_page_alias', 'intro'],
+    ])
+    expect(resp.op_refs.map((ref) => ref.seq)).toEqual(opLog.slice(before).map((op) => op.seq))
+  })
+
+  it('set_page_aliases refuses an alias another page holds and writes nothing', () => {
+    const before = opLog.length
+    expect(() =>
+      invoke('set_page_aliases', { pageId: SEED_IDS.PAGE_GETTING_STARTED, aliases: ['PROJ'] }),
+    ).toThrow(expect.objectContaining({ kind: 'validation', code: 'DuplicatePageAlias' }))
+    expect(opLog.length).toBe(before)
+    expect(invoke('get_page_aliases', { pageId: SEED_IDS.PAGE_GETTING_STARTED })).toEqual([
+      'getting-started',
+      'gs',
+    ])
+  })
+
+  it('undoing an alias edit restores the aliases it replaced', () => {
+    const page = SEED_IDS.PAGE_GETTING_STARTED
+    const resp = invoke('set_page_aliases', { pageId: page, aliases: ['intro'] }) as {
+      op_refs: Array<{ device_id: string; seq: number }>
+    }
+    invoke('undo_ops', { ops: resp.op_refs })
+    expect(invoke('get_page_aliases', { pageId: page })).toEqual(['getting-started', 'gs'])
   })
 
   it('resolve_page_by_alias finds page by alias', () => {

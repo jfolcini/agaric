@@ -33,7 +33,7 @@ import { computeSelectionRoots } from '@/lib/tree-utils'
 import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import type { PageBlockState } from '@/stores/page-blocks'
-import { addOwnedBlockListener, storeOwnsBlock } from '@/stores/page-blocks'
+import { addOwnedBlockListener, forEachPageStore, storeOwnsBlock } from '@/stores/page-blocks'
 
 export interface UseBlockTreeKeyboardShortcutsOptions {
   focusedBlockId: string | null
@@ -104,15 +104,57 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
 }
 
 /**
- * Put `ids` and their subtrees on the system clipboard as the backend renders
- * them. The chord runs only with no block focused, so no draft is pending.
+ * Put each page's `roots` and their subtrees on the system clipboard as the
+ * backend renders them, one page after another. The backend renders one page
+ * per call. The chord runs only with no block focused, so no draft is pending.
  * Resolves `false` when there was nothing to copy.
  */
-async function copySelection(ids: string[]): Promise<boolean> {
-  const text = unwrap(await commands.getBlocksSource(ids, true))
+async function copySelection(rootsByPage: string[][]): Promise<boolean> {
+  const texts = await Promise.all(
+    rootsByPage.map(async (roots) => unwrap(await commands.getBlocksSource(roots, true))),
+  )
+  const text = texts.join('')
   if (text.length === 0) return false
   await writeText(text)
   return true
+}
+
+interface PageSelection {
+  state: PageBlockState
+  roots: string[]
+}
+
+/**
+ * The selection roots of `selected` in `pageStore`, which owns the anchor, and
+ * in every other mounted page, pages in document order. The journal week and
+ * stream views mount one tree per day, and one selection can span them.
+ */
+function selectionByPage(
+  pageStore: StoreApi<PageBlockState>,
+  selected: readonly string[],
+): PageSelection[] {
+  const stores = [pageStore]
+  forEachPageStore((_pageId, store) => {
+    if (!storeOwnsBlock(store, selected.at(-1) ?? null)) stores.push(store)
+  })
+  const pages: (PageSelection & { row: Element | undefined })[] = []
+  for (const store of stores) {
+    const state = store.getState()
+    const owned = selected.filter((id) => state.blocksById.has(id))
+    if (owned.length === 0) continue
+    const roots = computeSelectionRoots(state.blocks, owned)
+    const row = roots
+      .map((id) => document.querySelector(`[data-block-id="${id}"]`))
+      .find((el) => el != null)
+    pages.push({ state, roots, row })
+  }
+  return pages.toSorted((a, b) =>
+    a.row == null || b.row == null
+      ? 0
+      : a.row.compareDocumentPosition(b.row) & Node.DOCUMENT_POSITION_FOLLOWING
+        ? -1
+        : 1,
+  )
 }
 
 export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShortcutsOptions): void {
@@ -282,17 +324,12 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // fire (or `preventDefault`) when a roving editor is focused — the browser's
   // native text copy/cut/paste owns those keystrokes inside an editor.
   //
-  // #713 ownership gate: these chords read the GLOBAL `selectedBlockIds` /
-  // `focusedBlockId`, but each mounted tree (journal week/month) must only act
-  // on blocks IN ITS OWN store. Copy/cut filter the selection to ids this store
-  // owns; paste anchors on an owned block. A non-owning tree returns WITHOUT
-  // side effects and WITHOUT `preventDefault()` so the chord passes through.
-  //
-  // #2903 — NOT routed through `addOwnedBlockListener`: the gate here is a
-  // FILTER over the SET of selected ids this store owns (copy/cut act on all of
-  // them, not a single focused/anchor block), so there is no one block id for
-  // the helper's single-block gate. The `state.blocksById.has(id)` filter is the
-  // same ownership predicate `storeOwnsBlock` uses, applied per id.
+  // #713 ownership gate: every mounted tree (journal week and stream) runs this
+  // listener over the one GLOBAL selection, so only the tree that owns the
+  // anchor (the last selected id, read at dispatch, #5447) acts. Copy and cut
+  // take the whole selection across every mounted page; paste lands once,
+  // after the anchor. Any other tree returns without side effects and without
+  // `preventDefault()`.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const { focusedBlockId: fid, selectedBlockIds: sel } = useBlockStore.getState()
@@ -305,29 +342,24 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
       const isPaste = matchesShortcutBinding(e, 'pasteBlocks')
       if (!isCopy && !isCut && !isPaste) return
 
-      const state = pageStore.getState()
+      const anchorId = sel.at(-1) ?? null
+      if (!storeOwnsBlock(pageStore, anchorId)) return
+      e.preventDefault()
 
       if (isCopy || isCut) {
-        if (sel.length === 0) return
-        // Restrict to the selection this store owns (the #713 gate). If none
-        // of the selected blocks live here, another tree owns them — fall
-        // through without claiming the chord.
-        const ownedSelected = sel.filter((id) => state.blocksById.has(id))
-        if (ownedSelected.length === 0) return
-        e.preventDefault()
         // Only the selection ROOTS: a nested selected descendant travels with
         // its ancestor, both on the clipboard (`with_children`) and through
         // cut's cascading `remove()`. Sending every selected id would also trip
         // the backend's id-list cap on a large Select All.
-        const roots = computeSelectionRoots(state.blocks, ownedSelected)
-        void copySelection(roots)
+        const pages = selectionByPage(pageStore, sel)
+        void copySelection(pages.map((p) => p.roots))
           .then((copied) => {
             // Cut removal is gated on the clipboard write RESOLVING: deleting
             // the blocks before the content reached the clipboard would be
             // silent destruction (and a later paste would insert stale data).
             if (!copied || !isCut) return
             // `clearSelected` resets the now-stale set.
-            for (const id of roots) void state.remove(id)
+            for (const { state, roots } of pages) for (const id of roots) void state.remove(id)
             clearSelected()
           })
           .catch((err) => {
@@ -337,12 +369,8 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
         return
       }
 
-      // Paste: anchor on the LAST selected owned block (the user's most recent
-      // selection), insert the clipboard outline after it.
-      const ownedSelected = sel.filter((id) => state.blocksById.has(id))
-      const anchorId = ownedSelected.at(-1)
-      if (anchorId == null) return
-      e.preventDefault()
+      // Paste: insert the clipboard outline after the anchor.
+      const state = pageStore.getState()
       void readText()
         .then((text) => {
           if (text.length === 0) return

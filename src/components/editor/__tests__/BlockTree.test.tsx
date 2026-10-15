@@ -6753,6 +6753,32 @@ describe('BlockTree batch toolbar (#657)', () => {
     expect(screen.getByText('2 selected')).toBeInTheDocument()
   })
 
+  it('batch delete sends only the selected blocks this tree holds', async () => {
+    const user = userEvent.setup()
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', content: 'Alpha' }),
+        makeBlock({ id: 'B', depth: 1, content: 'Beta' }),
+      ],
+      loading: false,
+    })
+    useBlockStore.setState({
+      focusedBlockId: null,
+      selectedBlockIds: ['OTHER_DAY_1', 'A', 'OTHER_DAY_2', 'B'],
+    })
+    stubBlockTree({ delete_blocks_by_ids: () => ({ deleted_count: 2, affected_page_ids: [] }) })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    await user.click(screen.getByRole('button', { name: /Delete/i }))
+    await user.click(screen.getByRole('button', { name: /Yes, delete/i }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: ['A', 'B'] })
+    })
+  })
+
   it('hides the batch toolbar when no selected block is in this tree', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Alpha' })]
     pageStore.setState({ blocks: tree, loading: false })

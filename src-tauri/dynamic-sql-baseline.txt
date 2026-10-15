@@ -18,7 +18,7 @@
 3 src-tauri/agaric-engine/src/materializer/retry_queue.rs
 2 src-tauri/agaric-engine/src/spaces.rs
 20 src-tauri/agaric-store/src/backlink/filters.rs
-8 src-tauri/agaric-store/src/backlink/grouped.rs
+9 src-tauri/agaric-store/src/backlink/grouped.rs
 9 src-tauri/agaric-store/src/backlink/query.rs
 1 src-tauri/agaric-store/src/backlink/sort.rs
 11 src-tauri/agaric-store/src/block_descendants.rs

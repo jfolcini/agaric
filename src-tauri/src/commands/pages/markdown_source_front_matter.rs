@@ -133,7 +133,7 @@ fn valued(front: &FrontMatter) -> BTreeMap<&str, &str> {
 /// started from over the page, which holds `now`: a key or item the buffer
 /// left as it was writes nothing, so a merge keeps what the page changed
 /// since. The properties are written as a block's `key::` lines are, the
-/// aliases replace the page's when they differ, and the tags are added and
+/// aliases as the alias editor writes them, and the tags are added and
 /// removed. Returns the tags created.
 ///
 /// # Errors
@@ -153,11 +153,9 @@ pub(super) async fn write_front_matter(
     Box::pin(write_properties(&mut tx, save, page, changes, &prior)).await?;
     let aliases = edited_list(&edit.from.aliases, &edit.to.aliases, &now.aliases);
     if aliases.iter().collect::<BTreeSet<_>>() != now.aliases.iter().collect::<BTreeSet<_>>() {
-        sqlx::query!("DELETE FROM page_aliases WHERE page_id = ?1", page)
-            .execute(&mut **tx)
+        let (materializer, device_id) = (save.materializer, save.device_id);
+        apply_frontmatter_aliases(&mut tx, materializer, device_id, page, &aliases, warnings)
             .await?;
-        let aliases = aliases.iter().map(String::as_str).collect();
-        apply_frontmatter_aliases(&mut tx, page, aliases, warnings).await?;
     }
     let (tx, created) = Box::pin(write_tags(tx, save, data, now, &edit, warnings)).await?;
     crate::commands::ensure_batch_within_cap("ops", tx.pending_len())?;

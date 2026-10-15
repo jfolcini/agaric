@@ -27,8 +27,10 @@
 //! ## Problem-command gating
 //!
 //! The gated measurement tier holds the #2508 tags/pages-cache direct-query
-//! probes, the #2585 MostLinked cache/counterfactual probes and the
-//! space-scoped `list_page_links` read (over budget, #5426), behind
+//! probes, the #2585 MostLinked cache/counterfactual probes, the
+//! space-scoped `list_page_links` read (over budget, #5426) and the #5422
+//! backlink-panel probes (`list_unlinked_references` at `limit = 1` on a
+//! common title, `list_backlinks_grouped` on a 5k-backlink target), behind
 //! `SLO_INCLUDE_PROBLEM` so they don't fail CI. `list_projected_agenda` was
 //! promoted to the green tier after the nightly lane confirmed it under
 //! budget (#2178). To run the gated probes locally:
@@ -73,8 +75,9 @@ use agaric_lib::commands::pages::{
 use agaric_lib::commands::{
     PAGE_LINKS_EDGE_CAP, batch_resolve_inner, count_agenda_batch_by_source_inner,
     count_backlinks_batch_inner, create_block_inner, export_page_markdown_inner, get_block_inner,
-    get_properties_inner, list_blocks_inner, list_page_links_inner, list_projected_agenda_inner,
-    load_page_subtree_inner, revert_ops_inner,
+    get_properties_inner, list_backlinks_grouped_inner, list_blocks_inner, list_page_links_inner,
+    list_projected_agenda_inner, list_unlinked_references_inner, load_page_subtree_inner,
+    revert_ops_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
@@ -147,6 +150,29 @@ const PAGES_CACHE_SAMPLE_SIZE: usize = 50;
 /// returned row count. `+ 1` is the production probe-for-more pattern.
 const PAGES_MOSTLINKED_PAGE_LIMIT: usize = 50;
 const PAGES_MOSTLINKED_LIMIT_PLUS_ONE: i64 = PAGES_MOSTLINKED_PAGE_LIMIT as i64 + 1;
+
+/// #5422 — page/children shape for the backlink-panel probes:
+/// `BACKLINK_PANEL_PAGES * (BACKLINK_PANEL_CHILDREN_PER_PAGE + 1) == FIXTURE_SIZE`.
+const BACKLINK_PANEL_PAGES: usize = 1_000;
+const BACKLINK_PANEL_CHILDREN_PER_PAGE: usize = 99;
+
+/// #5422 — the unlinked probe's target. Every third fixture child mentions
+/// its title, so the match set overflows the FTS row cap.
+const UNLINKED_PANEL_TARGET: &str = "01NTSTARGET000000000000001";
+const UNLINKED_PANEL_TITLE: &str = "Notes";
+const UNLINKED_PANEL_MENTION_STRIDE: usize = 3;
+
+/// Mirrors the crate-private `agaric_store::backlink::FTS_ROW_CAP`. The
+/// unlinked probe asserts its fixture fills it exactly.
+const UNLINKED_FTS_ROW_CAP: usize = 10_000;
+
+/// #5422 — the linked probe's target: the first `LINKED_PANEL_PER_SOURCE_PAGE`
+/// children of every `LINKED_PANEL_SOURCE_PAGE_STRIDE`-th page link to it, read
+/// one `LINKED_PANEL_GROUP_LIMIT`-group page at a time as the expanded panel does.
+const LINKED_PANEL_TARGET: &str = "01BKTARGET0000000000000001";
+const LINKED_PANEL_SOURCE_PAGE_STRIDE: usize = 10;
+const LINKED_PANEL_PER_SOURCE_PAGE: usize = 50;
+const LINKED_PANEL_GROUP_LIMIT: usize = 50;
 
 // ---------------------------------------------------------------------------
 // Accumulator type
@@ -797,6 +823,115 @@ async fn seed_pages_mostlinked_fixture(pool: &SqlitePool) -> Vec<String> {
     page_ids
 }
 
+/// #5422 — the backlink panels' 100K shape: the panel's target page plus
+/// `BACKLINK_PANEL_PAGES` pages of `BACKLINK_PANEL_CHILDREN_PER_PAGE` children,
+/// all in `SLO_SPACE_ID`. Every block carries `page_id` (both panels group by
+/// it and drop orphans) and an `fts_blocks` row (the unlinked panel's base set
+/// is an FTS match). `child(page, child)` returns a child's content and
+/// whether it links to the target.
+async fn seed_backlink_panel_fixture(
+    pool: &SqlitePool,
+    target_id: &str,
+    target_title: &str,
+    child: &dyn Fn(usize, usize) -> (String, bool),
+) {
+    let mut tx = pool.begin().await.unwrap();
+    insert_indexed_block(&mut tx, target_id, "page", target_title, None, 0, target_id).await;
+    for p in 0..BACKLINK_PANEL_PAGES {
+        let page_id = format!("01BP{p:022}");
+        let title = format!("Page {p}");
+        insert_indexed_block(&mut tx, &page_id, "page", &title, None, p + 1, &page_id).await;
+        for c in 0..BACKLINK_PANEL_CHILDREN_PER_PAGE {
+            let id = format!("01BC{:022}", p * BACKLINK_PANEL_CHILDREN_PER_PAGE + c);
+            let (content, links_target) = child(p, c);
+            let parent = Some(page_id.as_str());
+            insert_indexed_block(&mut tx, &id, "content", &content, parent, c + 1, &page_id).await;
+            if links_target {
+                sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+                    .bind(&id)
+                    .bind(target_id)
+                    .execute(&mut *tx)
+                    .await
+                    .unwrap();
+            }
+        }
+    }
+    tx.commit().await.unwrap();
+    assign_all_to_slo_space(pool).await;
+}
+
+/// One `blocks` row plus the `fts_blocks` row the materializer would index
+/// for it.
+async fn insert_indexed_block(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: &str,
+    block_type: &str,
+    content: &str,
+    parent_id: Option<&str>,
+    position: usize,
+    page_id: &str,
+) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(block_type)
+    .bind(content)
+    .bind(parent_id)
+    .bind(position as i64)
+    .bind(page_id)
+    .execute(&mut **tx)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
+        .bind(id)
+        .bind(content)
+        .execute(&mut **tx)
+        .await
+        .unwrap();
+}
+
+/// The unlinked probe's fixture: every `UNLINKED_PANEL_MENTION_STRIDE`-th
+/// child mentions `UNLINKED_PANEL_TITLE` without linking to it.
+async fn seed_unlinked_panel_fixture(pool: &SqlitePool) {
+    seed_backlink_panel_fixture(
+        pool,
+        UNLINKED_PANEL_TARGET,
+        UNLINKED_PANEL_TITLE,
+        &|_: usize, c: usize| {
+            let content = if c.is_multiple_of(UNLINKED_PANEL_MENTION_STRIDE) {
+                format!("Meeting {UNLINKED_PANEL_TITLE} item {c}")
+            } else {
+                format!("Seeded child {c} with placeholder content.")
+            };
+            (content, false)
+        },
+    )
+    .await;
+}
+
+/// The linked probe's fixture: see `LINKED_PANEL_TARGET`.
+async fn seed_linked_panel_fixture(pool: &SqlitePool) {
+    seed_backlink_panel_fixture(
+        pool,
+        LINKED_PANEL_TARGET,
+        "Linked Target",
+        &|p: usize, c: usize| {
+            if p.is_multiple_of(LINKED_PANEL_SOURCE_PAGE_STRIDE) && c < LINKED_PANEL_PER_SOURCE_PAGE
+            {
+                (
+                    format!("See [[{LINKED_PANEL_TARGET}]] from child {c}"),
+                    true,
+                )
+            } else {
+                (format!("Seeded child {c} with placeholder content."), false)
+            }
+        },
+    )
+    .await;
+}
+
 /// Deterministic, monotonic `op_log.created_at` (epoch ms) from a seq counter.
 /// INTEGER since migration 0079 — see `SLO_BASE_TS_MS`. Strictly increasing in
 /// `seq` so the most-recent-N op selectors see a stable order.
@@ -985,12 +1120,12 @@ fn assert_under_budget_deferred(cmd: &str, acc: &Acc, budget_ms: f64) {
     }
 }
 
-/// #2585 — print-only reporter for a pure counterfactual probe (no budget).
-/// The `_LIVE` MostLinked probe is EXPECTED to be slow — it exists to quantify
-/// the cost the `pages_cache` columns avoid, not to gate a regression — so it
-/// must never fail the bench. Still emits the same grep-stable
-/// `interactive_slo: {cmd} = … ms` prefix the nightly lane keys on, so the
-/// number is captured alongside the budgeted probes.
+/// Print-only reporter for a probe with no budget: the #2585 counterfactual
+/// (`_LIVE` MostLinked, expected to be slow) and the #5422 backlink-panel
+/// probes (no budget until CI has measured them). It must never fail the
+/// bench. Still emits the same grep-stable `interactive_slo: {cmd} = … ms`
+/// prefix the nightly lane keys on, so the number is captured alongside the
+/// budgeted probes.
 fn report_measurement_only(cmd: &str, acc: &Acc) {
     let iters = acc.iters();
     assert!(
@@ -998,7 +1133,7 @@ fn report_measurement_only(cmd: &str, acc: &Acc) {
         "interactive_slo: {cmd} ran zero iterations (Criterion harness bug?)"
     );
     let mean_ms = (acc.total().as_secs_f64() * 1000.0) / iters as f64;
-    println!("interactive_slo: {cmd} = {mean_ms:.2} ms (counterfactual — no budget)");
+    println!("interactive_slo: {cmd} = {mean_ms:.2} ms (measurement only — no budget)");
 }
 
 /// Final member of the `slo_problem` group: fails the bench run iff any
@@ -2678,6 +2813,246 @@ fn bench_pages_mostlinked_sort_live(c: &mut Criterion) {
     report_measurement_only("pages MostLinked sort (live subquery) @ 100K", &acc);
 }
 
+/// #5422 — `list_unlinked_references` at `limit = 1`, for a title common
+/// enough that the FTS row cap fires.
+/// PROBLEM TIER, measurement only: no budget until CI has measured it.
+fn bench_list_unlinked_references_collapsed(c: &mut Criterion) {
+    const CMD: &str = "list_unlinked_references (limit 1, capped FTS) @ 100K";
+    if problem_skipped(CMD) {
+        return;
+    }
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_unlinked_collapsed"));
+    rt.block_on(seed_unlinked_panel_fixture(&pool));
+
+    let observed = rt
+        .block_on(list_unlinked_references_inner(
+            &pool,
+            &agaric_core::ulid::PageId::from(UNLINKED_PANEL_TARGET),
+            None,
+            None,
+            None,
+            Some(1),
+            &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
+        ))
+        .unwrap();
+    assert_eq!(
+        observed.total_count, UNLINKED_FTS_ROW_CAP,
+        "{CMD}: untimed probe must count the whole capped match set"
+    );
+    assert!(
+        observed.truncated,
+        "{CMD}: fixture must overflow the FTS row cap"
+    );
+    assert_eq!(
+        observed.groups.len(),
+        1,
+        "{CMD}: untimed probe must return the one requested group"
+    );
+    assert!(
+        observed.has_more,
+        "{CMD}: fixture must hold more than one group"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("list_unlinked_references_limit1_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = list_unlinked_references_inner(
+                        &pool,
+                        &agaric_core::ulid::PageId::from(UNLINKED_PANEL_TARGET),
+                        None,
+                        None,
+                        None,
+                        Some(1),
+                        &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    report_measurement_only(CMD, &acc);
+}
+
+/// #5422 — the expanded linked-references panel's first page: 50 groups of a
+/// target with 5,000 backlinks over 100 source pages. PROBLEM TIER,
+/// measurement only: no budget until CI has measured it.
+fn bench_list_backlinks_grouped_5k(c: &mut Criterion) {
+    const CMD: &str = "list_backlinks_grouped (5k backlinks, 50 groups) @ 100K";
+    if problem_skipped(CMD) {
+        return;
+    }
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_backlinks_grouped"));
+    rt.block_on(seed_linked_panel_fixture(&pool));
+
+    let observed = rt
+        .block_on(list_backlinks_grouped_inner(
+            &pool,
+            agaric_core::ulid::BlockId::from_trusted(LINKED_PANEL_TARGET),
+            None,
+            None,
+            None,
+            Some(LINKED_PANEL_GROUP_LIMIT as i64),
+            &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
+            None,
+        ))
+        .unwrap();
+    let source_pages = BACKLINK_PANEL_PAGES / LINKED_PANEL_SOURCE_PAGE_STRIDE;
+    assert_eq!(
+        observed.total_count,
+        source_pages * LINKED_PANEL_PER_SOURCE_PAGE,
+        "{CMD}: untimed probe must count every seeded backlink"
+    );
+    assert_eq!(
+        observed.groups.len(),
+        LINKED_PANEL_GROUP_LIMIT,
+        "{CMD}: untimed probe must return one full page of groups"
+    );
+    assert!(
+        observed.has_more,
+        "{CMD}: fixture must hold more than one page of groups"
+    );
+    for g in &observed.groups {
+        assert_eq!(
+            g.blocks.len(),
+            LINKED_PANEL_PER_SOURCE_PAGE,
+            "{CMD}: group {} must carry every backlink of its source page",
+            g.page_id
+        );
+    }
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("list_backlinks_grouped_5k_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = list_backlinks_grouped_inner(
+                        &pool,
+                        agaric_core::ulid::BlockId::from_trusted(LINKED_PANEL_TARGET),
+                        None,
+                        None,
+                        None,
+                        Some(LINKED_PANEL_GROUP_LIMIT as i64),
+                        &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    report_measurement_only(CMD, &acc);
+}
+
+/// #5422 — the collapsed unlinked panel's count-only read, on the fixture
+/// `bench_list_unlinked_references_collapsed` measures, so one run prints
+/// both. PROBLEM TIER, measurement only.
+fn bench_count_unlinked_references(c: &mut Criterion) {
+    const CMD: &str = "count_unlinked_references (capped FTS) @ 100K";
+    if problem_skipped(CMD) {
+        return;
+    }
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_unlinked_count"));
+    rt.block_on(seed_unlinked_panel_fixture(&pool));
+
+    let target = agaric_core::ulid::PageId::from(UNLINKED_PANEL_TARGET);
+    let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
+    let listed = rt
+        .block_on(list_unlinked_references_inner(
+            &pool,
+            &target,
+            None,
+            None,
+            None,
+            Some(1),
+            &scope,
+        ))
+        .unwrap();
+    let counted = rt
+        .block_on(agaric_lib::commands::count_unlinked_references_inner(
+            &pool, &target, &scope,
+        ))
+        .unwrap();
+    assert_eq!(
+        (counted.total_count, counted.truncated),
+        (listed.total_count, listed.truncated),
+        "{CMD}: the count path must agree with the list path"
+    );
+    assert_eq!(
+        counted.total_count, UNLINKED_FTS_ROW_CAP,
+        "{CMD}: untimed probe must count the whole capped match set"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let acc = Acc::new();
+    let acc_for_bench = acc.clone();
+
+    group.bench_function("count_unlinked_references_100k", move |b| {
+        let acc = acc_for_bench.clone();
+        let pool = pool.clone();
+        b.to_async(&rt).iter_custom(move |iters| {
+            let pool = pool.clone();
+            let acc = acc.clone();
+            async move {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    let _ = agaric_lib::commands::count_unlinked_references_inner(
+                        &pool,
+                        &agaric_core::ulid::PageId::from(UNLINKED_PANEL_TARGET),
+                        &SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID)),
+                    )
+                    .await
+                    .unwrap();
+                }
+                let elapsed = start.elapsed();
+                acc.record(elapsed, iters);
+                elapsed
+            }
+        });
+    });
+    group.finish();
+
+    report_measurement_only(CMD, &acc);
+}
+
 // ===========================================================================
 // Harness
 // ===========================================================================
@@ -2710,6 +3085,9 @@ criterion_group!(
     bench_pages_mostlinked_sort_cache,
     bench_pages_mostlinked_sort_live,
     bench_list_page_links,
+    bench_list_unlinked_references_collapsed,
+    bench_list_backlinks_grouped_5k,
+    bench_count_unlinked_references,
     problem_tier_verdict,
 );
 

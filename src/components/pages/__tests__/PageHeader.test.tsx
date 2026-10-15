@@ -245,7 +245,7 @@ function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) 
     if (cmd === 'list_property_defs')
       return { items: [], next_cursor: null, has_more: false, total_count: null }
     if (cmd === 'get_page_aliases') return aliases
-    if (cmd === 'set_page_aliases') return args?.aliases ?? []
+    if (cmd === 'set_page_aliases') return { aliases: args?.aliases ?? [], op_refs: [] }
     return null
   })
 }
