@@ -1751,25 +1751,19 @@ stages = ["manual"]
 # count EXCEEDS its checked-in baseline (src-tauri/table-ownership-baseline.txt).
 # Owner-crate writes are unconstrained; existing cross-crate sites are
 # grandfathered, so the ratchet only back-pressures NEW ones. Regenerate the
-# baseline with `python3 scripts/check-table-ownership.py --update-baseline`.
+# baseline with `node scripts/check-table-ownership.mjs --update-baseline`.
 # Ownership is aggregate, so the guard rescans the whole tree regardless of
 # which files changed. Ownership map/rules: src-tauri/migrations/AGENTS.md.
 # WHY: a crate writing a table it does not own breaks the ownership boundary — #2895
 [[repos.hooks]]
 id = "check-table-ownership"
 name = "table-ownership baseline guard (#2895)"
-entry = "python3 scripts/check-table-ownership.py"
+entry = "node scripts/check-table-ownership.mjs"
 language = "system"
-# #3997: this guard `importlib`-loads `scripts/check-raw-tx.py` for
-# cfg_test_line_set/is_test_file/_glob_match; union it so a commit that
-# edits only that shared module can't select this hook out entirely (the
-# always_run self-test is only a partial backstop — it re-drives its own
-# fixtures, not this hook's live-tree judgment). `guard_file_source.py` is
-# unioned too: loading check-raw-tx.py as a library runs ITS top-level
-# `exec_module(guard_file_source)` as a side effect, so a broken
-# guard_file_source.py would break this load even though nothing here calls
-# into it directly.
-files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-raw-tx\.py|lib/guard_file_source\.py)$'
+# #3997: the guard and the two libraries it imports are unioned so a commit
+# that edits only a library still re-runs it; the always_run self-test
+# re-drives its own fixtures, not this hook's live-tree judgment.
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$|^scripts/(check-table-ownership\.mjs|lib/rust-scan\.mjs|lib/guard-file-source\.mjs)$'
 stages = ["pre-commit", "pre-push"]
 
 # #2895: the ownership guard must match SQL inside `sqlx::query!("…")` macro
@@ -1778,11 +1772,11 @@ stages = ["pre-commit", "pre-push"]
 # boundaries (`blocks` != `block_links` / `_new_blocks` / `blocks_fts`). This
 # companion hook runs the guard's own fixture suite (`--self-test`) so that
 # match/exclusion contract cannot silently regress. No file args.
-# WHY: a Python AST guard: a write shape it does not recognise is a silently skipped line — #2895
+# WHY: a hand-written Rust scanner: a write shape it does not recognise is a silently skipped line — #2895
 [[repos.hooks]]
 id = "check-table-ownership-self-test"
 name = "table-ownership guard self-test (#2895 write-regex fixtures)"
-entry = "python3 scripts/check-table-ownership.py --self-test"
+entry = "node scripts/check-table-ownership.mjs --self-test"
 language = "system"
 pass_filenames = false
 always_run = true

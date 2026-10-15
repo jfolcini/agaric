@@ -85,7 +85,7 @@ set -euo pipefail
 # The four committed `.sqlx/` caches (AGENTS.md invariant #6 / #2621
 # layered-workspace split). Hardcoded to match every sibling guard that
 # enumerates these same four crate roots (check-raw-tx.py,
-# check-dynamic-sql.py, check-table-ownership.py).
+# check-dynamic-sql.py, check-table-ownership.mjs).
 SQLX_DIRS=(
   "src-tauri/.sqlx"
   "src-tauri/agaric-store/.sqlx"

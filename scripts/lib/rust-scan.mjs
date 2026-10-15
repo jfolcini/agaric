@@ -1,6 +1,6 @@
 // Shared Rust-source scanning for the guards that police `src-tauri/` (#5579):
-// check-raw-tx.mjs now, check-table-ownership and check-dynamic-sql when they
-// leave Python.
+// check-raw-tx.mjs and check-table-ownership.mjs now, check-dynamic-sql when
+// it leaves Python.
 //
 // Whitespace, word characters and line breaks follow Python's definitions
 // (`str.isspace`, Unicode `\b`, `str.splitlines`), the ones these guards'
@@ -43,7 +43,8 @@ const PY_SPACE =
 /** One Python `\s`, for building `u`-flag patterns. */
 export const WS = `[${PY_SPACE}]`
 // Python's `\b` is Unicode-aware; a JS `\b` treats `é` as a boundary.
-const WORD = '[\\p{L}\\p{N}_]'
+/** One Python `\w`, for building `u`-flag patterns. */
+export const WORD = '[\\p{L}\\p{N}_]'
 /** Python's `\b` before a word character, for `u`-flag patterns. */
 export const WORD_START = `(?<!${WORD})`
 /** Python's `\b` after a word character, for `u`-flag patterns. */
@@ -75,8 +76,12 @@ export function splitLines(text) {
  * onto `text`. A mention of a call inside a comment or string can then never
  * match, and a `//` inside a string never truncates it. A lifetime (`'a`) is
  * not a char literal because the char-literal form needs its closing quote.
+ *
+ * `keepStrings` blanks the comments only, for a guard whose match lives
+ * inside the literals (SQL in `sqlx::query!("…")`); the literals are still
+ * parsed, so a `//` inside one is not taken for a comment.
  */
-export function stripRustComments(text) {
+export function stripRustComments(text, { keepStrings = false } = {}) {
   const cps = Array.from(text)
   const out = [...cps]
   const n = cps.length
@@ -91,7 +96,8 @@ export function stripRustComments(text) {
     if (end === -1) {
       i += 1
     } else {
-      blank(i, end)
+      // Only a comment starts with `/`.
+      if (!keepStrings || cps[i] === '/') blank(i, end)
       i = end
     }
   }
