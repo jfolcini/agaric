@@ -1,0 +1,64 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!\", b.content AS \"title!\", b.space_id AS \"space_id?\",\n                  COALESCE(pc.last_edited_ms, 0) = 0 AS \"unfilled!: bool\",\n                  CASE WHEN COALESCE(pc.last_edited_ms, 0) = 0 THEN\n                      (SELECT MAX((SELECT MAX(o.created_at) FROM op_log o\n                                    WHERE o.block_id = d.id))\n                         FROM blocks d WHERE d.page_id = b.id)\n                  END AS \"newest_op_ms?: i64\"\n             FROM blocks b\n             LEFT JOIN pages_cache pc ON pc.page_id = b.id\n            WHERE b.block_type = 'page' AND b.deleted_at IS NULL AND b.content IS NOT NULL\n              AND (pc.page_id IS NULL\n                   OR pc.title != b.content\n                   OR (pc.title_sort_key = '' AND b.content != '')\n                   OR pc.last_edited_ms = 0\n                   OR pc.space_id IS NOT b.space_id)",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "title!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "space_id?",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "unfilled!: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "newest_op_ms?: i64",
+        "ordinal": 4,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "f25fc384fb17c7ed01d93e1304ef59c2303338e6a90b21c509323b8738617e34"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO pages_cache (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count, space_id) VALUES (?1, ?2, ?3, ?4, 0, 0, (SELECT space_id FROM blocks WHERE id = ?1))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "d7ba9ad8d87cfc03a448a3ee6fbdfc06aa91a04e44c23a052c0eb8d02b6ccb08"
+}
