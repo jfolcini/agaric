@@ -54,9 +54,12 @@
 //   - Settings › Sync & devices, for sync-two-device.e2e.ts: `#settings-tab-sync`,
 //     `[data-testid="settings-panel-sync"]`, "Pair new device",
 //     `[data-testid="pairing-qr-code"]` (its SVG is decoded in sync-peer.ts),
-//     `.pairing-passphrase`, `.device-peer-item`, "Edit address for …",
+//     `.pairing-passphrase`, the "Cancel pairing" button of the close guard's
+//     `[role="alertdialog"]`, `.device-peer-item`, "Edit address for …",
 //     "Address (host:port)", "Save", "Sync now with device …", and the toasts
-//     "Device paired successfully" and "Address updated".
+//     "Device paired successfully" and "Address updated". Its outline reads
+//     `[data-testid="sortable-block"]` rows, their `li[aria-level]`, and the
+//     `[data-testid="property-chip"]` inside a row.
 //   - `[data-testid="suggestion-item"]`     an item of the open `[[` / `#`
 //     picker (SuggestionList.tsx); the create item's id is
 //     `suggestion-__create__`.

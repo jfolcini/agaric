@@ -8,9 +8,10 @@
 //!
 //! Every step is the app's own code: `init_pools`, the daemon,
 //! `confirm_pairing_inner` with the fields of the QR the app showed (what a
-//! phone's camera hands the joiner), `create_block_inner` and
-//! `get_active_block_inner`. `sync` wakes the daemon as `start_sync` does; it
-//! never runs a session itself.
+//! phone's camera hands the joiner), `create_block_inner`,
+//! `set_property_inner`, `move_block_inner`, `get_active_block_inner` and
+//! `get_property_inner`. `sync` wakes the daemon as `start_sync` does; it never
+//! runs a session itself.
 //!
 //! A session is a pull by the device that dials (#610), so each direction has
 //! its own wait: `sync` for this vault's pull from the app (`synced_at`), and
@@ -27,9 +28,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
-use agaric_lib::commands::{confirm_pairing_inner, create_block_inner, get_active_block_inner};
+use agaric_lib::commands::{
+    confirm_pairing_inner, create_block_inner, get_active_block_inner, get_property_inner,
+    move_block_inner, set_property_inner,
+};
 use agaric_lib::db::{DbPools, init_pools, now_ms};
 use agaric_lib::materializer::Materializer;
+use agaric_lib::ulid::verify_active;
 use agaric_store::peer_refs::{self, PeerRef};
 use agaric_sync::foreground::LifecycleHooks;
 use agaric_sync::pairing::{PairingSession, ScannedPeerCandidate};
@@ -67,9 +72,28 @@ enum Command {
         parent_id: String,
         content: String,
     },
-    /// Wait for an app pull that ends after this vault's last write. The spec
-    /// writes before it types this vault's address into the app, so unless
-    /// mDNS found this vault first, no app pull can span the write.
+    /// Set text property `key` on block `id`.
+    SetProperty {
+        id: String,
+        key: String,
+        value: String,
+    },
+    /// Move block `id` to sibling slot `index` (0-based) under `parent_id`.
+    MoveBlock {
+        id: String,
+        parent_id: String,
+        index: i64,
+    },
+    /// Read text property `key` of block `id`.
+    GetProperty {
+        id: String,
+        key: String,
+    },
+    /// Wait for an app pull that ends after this vault's last write. Only a
+    /// pull already running at the write can answer early, without it. Before
+    /// the spec types this vault's address into the app, none can run unless
+    /// mDNS found this vault first; after, only an app resync
+    /// (`SyncScheduler`'s `DEFAULT_RESYNC`) that spans the write.
     WaitPulled,
 }
 
@@ -91,6 +115,12 @@ enum Reply {
     },
     Created {
         id: String,
+    },
+    PropertySet,
+    Moved,
+    /// `value_text` is null when the block holds no such property.
+    Property {
+        value_text: Option<String>,
     },
     Pulled,
     Error {
@@ -180,6 +210,13 @@ impl Peer {
             Command::CreateBlock { parent_id, content } => {
                 self.create_block(parent_id, content).await
             }
+            Command::SetProperty { id, key, value } => self.set_property(id, key, value).await,
+            Command::MoveBlock {
+                id,
+                parent_id,
+                index,
+            } => self.move_block(id, parent_id, index).await,
+            Command::GetProperty { id, key } => self.get_property(id, key).await,
             Command::WaitPulled => self.wait_pulled().await,
         };
         result.unwrap_or_else(|e| Reply::Error {
@@ -265,6 +302,57 @@ impl Peer {
         self.last_write_ms = now_ms();
         Ok(Reply::Created {
             id: row.id.into_string(),
+        })
+    }
+
+    async fn set_property(
+        &mut self,
+        id: String,
+        key: String,
+        value: String,
+    ) -> Result<Reply, AppError> {
+        let block = verify_active(&self.pools.read, &BlockId::from_string(id)?).await?;
+        set_property_inner(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            block,
+            key,
+            Some(value),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::PropertySet)
+    }
+
+    async fn move_block(
+        &mut self,
+        id: String,
+        parent_id: String,
+        index: i64,
+    ) -> Result<Reply, AppError> {
+        move_block_inner(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            BlockId::from_string(id)?,
+            Some(BlockId::from_string(parent_id)?),
+            index,
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::Moved)
+    }
+
+    async fn get_property(&self, id: String, key: String) -> Result<Reply, AppError> {
+        let row = get_property_inner(&self.pools.read, &BlockId::from_string(id)?, &key).await?;
+        Ok(Reply::Property {
+            value_text: row.and_then(|row| row.value_text),
         })
     }
 
@@ -382,6 +470,44 @@ mod tests {
             parse_command(r#"{"cmd":"wait_pulled"}"#),
             Ok(Command::WaitPulled),
             "a command without fields is its name alone"
+        );
+    }
+
+    #[test]
+    fn set_property_takes_a_block_key_and_text_value() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"set_property","id":"B1","key":"k","value":"v"}"#),
+            Ok(Command::SetProperty {
+                id: "B1".into(),
+                key: "k".into(),
+                value: "v".into(),
+            }),
+            "sync-peer.ts sends a property as its block id, key and text value"
+        );
+    }
+
+    #[test]
+    fn move_block_takes_a_block_its_new_parent_and_a_slot() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"move_block","id":"B1","parent_id":"P1","index":0}"#),
+            Ok(Command::MoveBlock {
+                id: "B1".into(),
+                parent_id: "P1".into(),
+                index: 0,
+            }),
+            "sync-peer.ts sends a move as the block id, its new parent and a 0-based slot"
+        );
+    }
+
+    #[test]
+    fn get_property_takes_a_block_and_key() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"get_property","id":"B1","key":"k"}"#),
+            Ok(Command::GetProperty {
+                id: "B1".into(),
+                key: "k".into(),
+            }),
+            "sync-peer.ts asks for a property by block id and key"
         );
     }
 
