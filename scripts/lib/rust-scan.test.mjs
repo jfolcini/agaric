@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 import { initScratchRepo, scrubbedGitEnv, withScrubbedProcessEnv } from './git-scratch-guard.mjs'
-import { CRATE_ROOTS, openFileSource } from './rust-scan.mjs'
+import { CRATE_ROOTS, openFileSource, stripRustComments } from './rust-scan.mjs'
 
 // `check-raw-tx.mjs --self-test` covers the scanner. These cover what it
 // cannot reach: which copy of a file is read, and the guard's own `main()`
@@ -43,6 +43,11 @@ function withFixture(setup, fn) {
     rmSync(root, { recursive: true, force: true })
   }
 }
+
+void test('stripRustComments blanks strings by default and keeps them with keepStrings', () => {
+  assert.equal(stripRustComments('a "x" // y'), `a${' '.repeat(9)}`)
+  assert.equal(stripRustComments('a "x" // y', { keepStrings: true }), `a "x"${' '.repeat(5)}`)
+})
 
 void test('a staged deletion still on disk is absent from the index only', () => {
   withFixture(

@@ -744,6 +744,7 @@ jobs:
           scripts/file-fuzz-findings.test.mjs
           scripts/npm-audit-retry.test.mjs
           scripts/lib/rust-scan.test.mjs
+          scripts/check-table-ownership.test.mjs
           scripts/lib/check-dynamic-sql.test.mjs
 
       - name: Verify npm package provenance signatures
