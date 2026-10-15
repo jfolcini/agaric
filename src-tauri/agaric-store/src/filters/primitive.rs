@@ -3044,8 +3044,8 @@ mod explain_query_plan_tests {
     /// so this method does NOT preprocess. This test pins the compiled
     /// shape and confirms the plan stays on `pages_cache`. It mirrors
     /// `search_path_glob_compiles_to_glob` (which is left UNCHANGED, as it
-    /// guards that Search is untouched — the two surfaces only differ by
-    /// the `b.id` vs `b.page_id` alias).
+    /// guards that Search is untouched). A pattern with no literal head,
+    /// like the ones here, compiles to the same GLOB as Search.
     #[tokio::test]
     async fn pages_path_glob_compiles_to_glob_not_like() {
         let (pool, _dir) = test_pool().await;
@@ -3080,8 +3080,8 @@ mod explain_query_plan_tests {
         assert!(!inc.sql.contains("COLLATE NOCASE LIKE"));
         assert!(inc.sql.contains("b.id IN"));
 
-        // The plan stays on pages_cache (a scan is fine for the small,
-        // one-row-per-page table).
+        // The plan stays on pages_cache; `*page*` has no literal head, so
+        // there is no title range to seek.
         let plan = explain_for(&pool, &inc.sql).await;
         eprintln!("[#1320-A EXPLAIN PathGlob *page*]\n{plan}");
         assert!(
