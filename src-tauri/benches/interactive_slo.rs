@@ -78,7 +78,7 @@ use agaric_lib::commands::{
     filtered_blocks_query_inner, get_block_inner, get_properties_inner,
     list_backlinks_grouped_inner, list_blocks_inner, list_page_links_inner,
     list_projected_agenda_inner, list_unlinked_references_inner, load_page_subtree_inner,
-    revert_ops_inner,
+    query_by_property_inner, revert_ops_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
@@ -2557,8 +2557,6 @@ fn bench_list_projected_agenda_past_day(c: &mut Criterion) {
 
     assert_under_budget("list_projected_agenda past day @ 100K", &acc, BUDGET_MS);
 }
-
-use agaric_lib::commands::query_by_property_inner;
 
 /// A free-form key every fixture block carries: a reserved key would route to
 /// a `blocks` column, and 0088's CHECK keeps it out of `block_properties`.
