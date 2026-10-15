@@ -5461,6 +5461,8 @@ async fn page_link_cache_incremental_skips_dangling_rollup_keys_3894() {
     let (pool, _dir) = unmigrated_pool().await;
     apply_migrations_through(&pool, 0, 110).await;
     seed_pre_0110_vault(&pool, page_a, page_b, child).await;
+    // The reindex below is today's writer, so it needs today's schema.
+    apply_migrations_to_head(&pool, 110).await;
 
     // `max_connections(1)`, so the pragma lands on the connection the writes
     // below use.
