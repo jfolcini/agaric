@@ -1,20 +1,16 @@
 ---
 source: src/mcp/tools_ro/tests.rs
-assertion_line: 1697
 expression: result
 ---
 has_more: false
 items:
   - block_type: page
+    child_block_count: 0
     content: Alpha
-    deleted_at: ~
-    due_date: ~
     id: "[ULID]"
+    inbound_link_count: 0
+    last_modified_at: "[TIMESTAMP]"
     page_id: "[ULID]"
-    parent_id: ~
     position: 1
-    priority: ~
-    scheduled_date: ~
-    todo_state: ~
 next_cursor: "[CURSOR]"
-total_count: ~
+total_count: 1

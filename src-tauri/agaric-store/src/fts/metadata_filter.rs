@@ -104,6 +104,10 @@ pub struct MetadataPredicates {
     /// every search surface (FTS / regex / filter-only / partitioned)
     /// alongside the rest of the metadata, with no new function signatures.
     pub last_edited: Option<LastEditedSpec>,
+    /// [`SearchFilter::tags_match_inline_and_inherited`], carried here for
+    /// the same reason as [`Self::last_edited`]. Not a filter by itself, so
+    /// [`Self::is_empty`] ignores it.
+    pub tags_match_inline_and_inherited: bool,
 }
 
 /// Resolved date predicate ready for SQL composition.
@@ -232,6 +236,7 @@ pub fn prepare_metadata_with_today(
         spec.validate()?;
     }
     out.last_edited = filter.last_edited.clone();
+    out.tags_match_inline_and_inherited = filter.tags_match_inline_and_inherited;
 
     Ok(out)
 }

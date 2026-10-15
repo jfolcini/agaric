@@ -159,14 +159,14 @@ fn list_pages_schema_matches_args_struct() {
     // fields, those would be required and missing from the payload.
     let mut payload = serde_json::Map::new();
     for &name in &prop_names {
-        // Pick a value-shape that matches the schema's declared
-        // type (`string` or `integer`); extending the test would
-        // need a small type mapper.
+        // Pick a value-shape that matches the schema's declared type.
         let ty = props[name]["type"].as_str().expect("each prop has a type");
-        let value = match ty {
-            "string" => json!("placeholder"),
-            "integer" => json!(1),
-            other => panic!("list_pages schema grew an unexpected type: {other}"),
+        let value = match (ty, props[name].get("enum")) {
+            ("string", Some(variants)) => variants[0].clone(),
+            ("string", None) => json!("placeholder"),
+            ("integer", _) => json!(1),
+            ("array", _) => json!([]),
+            (other, _) => panic!("list_pages schema grew an unexpected type: {other}"),
         };
         payload.insert(name.to_string(), value);
     }
@@ -2763,50 +2763,8 @@ async fn concurrent_clients_exact_success_count() {
 }
 
 // -------------------------------------------------------------------
-// Happy + error path per *new* *_inner helper (4 × 2 = 8 tests)
+// Happy + error path per *new* *_inner helper
 // -------------------------------------------------------------------
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inner_list_pages_returns_only_pages() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    create_block_inner(&pool, DEV, &mat, "page".into(), "P1".into(), None, Some(1))
-        .await
-        .unwrap();
-    create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "c1".into(),
-        None,
-        Some(2),
-    )
-    .await
-    .unwrap();
-    settle(&mat).await;
-    crate::commands::tests::common::assign_all_to_test_space(&pool).await;
-
-    let resp = list_pages_inner(&pool, TEST_SPACE_ID, None, Some(10))
-        .await
-        .unwrap();
-    assert_eq!(resp.items.len(), 1);
-    assert_eq!(resp.items[0].block_type, "page");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inner_list_pages_rejects_bogus_cursor() {
-    let (pool, _dir) = test_pool().await;
-    let err = list_pages_inner(
-        &pool,
-        TEST_SPACE_ID,
-        Some("not-a-real-cursor".to_string()),
-        Some(10),
-    )
-    .await
-    .expect_err("invalid cursor");
-    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inner_get_page_composes_root_and_subtree() {
@@ -2984,6 +2942,7 @@ async fn snapshot_list_pages_response_shape() {
     insta::assert_yaml_snapshot!("tool_response_list_pages", result, {
         ".items[].id" => "[ULID]",
         ".items[].page_id" => "[ULID]",
+        ".items[].last_modified_at" => "[TIMESTAMP]",
         ".next_cursor" => "[CURSOR]",
     });
 }
@@ -4842,4 +4801,295 @@ async fn query_rejects_a_limit_out_of_range_5398() {
         .await
         .expect_err("rejected, not clamped");
     assert!(matches!(err, AppError::Validation { .. }), "{err:?}");
+}
+
+// -------------------------------------------------------------------
+// #5398 / #5401 — search fixes, compact rows, list_pages on the metadata
+// backend
+// -------------------------------------------------------------------
+
+/// The bytes an agent receives for a fixed page and search: the JSON text
+/// `rmcp_adapter` sends. Ids and cursors have fixed lengths, so only a field
+/// added to or left out of a row moves these.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_page_and_search_response_bytes_5401() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_named(&tools, &mat, &space, "page", "Project Alpha").await;
+    for text in [
+        "findme in the first note",
+        "findme in the second note",
+        "unrelated",
+    ] {
+        mk_child(&tools, &mat, &page, text).await;
+    }
+    settle(&mat).await;
+
+    let page_resp = tools
+        .call_tool(
+            TOOL_GET_PAGE,
+            json!({ "page_id": page, "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    let search_resp = tools
+        .call_tool(
+            TOOL_SEARCH,
+            json!({ "query": "findme", "space_id": space }),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (page_resp.to_string().len(), search_resp.to_string().len()),
+        (783, 604),
+        "get_page: {page_resp}\nsearch: {search_resp}"
+    );
+}
+
+async fn tag_block(tools: &ReadOnlyTools, mat: &Materializer, block: &str, tag: &str) {
+    crate::commands::add_tag_inner(
+        &tools.pool,
+        DEV,
+        mat,
+        BlockId::from_trusted(block),
+        BlockId::from_trusted(tag),
+    )
+    .await
+    .unwrap();
+}
+
+fn row_ids(result: &Value) -> Vec<String> {
+    let mut ids: Vec<String> = result["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].as_str().unwrap().to_owned())
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// A tag reaches a block attached, written inline, or inherited from its
+/// page, on the text path and the empty-query path alike; every row names
+/// its page. The app's search, which cannot set the mode, still matches
+/// attached tags only.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_tag_matches_attached_inline_and_inherited_tags_5398() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let tag = mk_named(&tools, &mat, &space, "tag", "work").await;
+    let tagged = mk_named(&tools, &mat, &space, "page", "Tagged").await;
+    let inherits = mk_child(&tools, &mat, &tagged, "needle inherits").await;
+    tag_block(&tools, &mat, &tagged, &tag).await;
+    let plain = mk_named(&tools, &mat, &space, "page", "Plain").await;
+    let inline = mk_child(&tools, &mat, &plain, &format!("needle inline #[{tag}]")).await;
+    let attached = mk_child(&tools, &mat, &plain, "needle attached").await;
+    tag_block(&tools, &mat, &attached, &tag).await;
+    mk_child(&tools, &mat, &plain, "needle untagged").await;
+    settle(&mat).await;
+
+    let ctx = test_ctx();
+    let search = |query: &str| {
+        tools.call_tool(
+            TOOL_SEARCH,
+            json!({ "query": query, "space_id": space, "tag_ids": [tag] }),
+            &ctx,
+        )
+    };
+    let hits = search("needle").await.unwrap();
+    let mut expected = vec![inherits.clone(), inline.clone(), attached.clone()];
+    expected.sort();
+    assert_eq!(row_ids(&hits), expected);
+    for row in hits["items"].as_array().unwrap() {
+        let page = if row["id"] == inherits.as_str() {
+            "Tagged"
+        } else {
+            "Plain"
+        };
+        assert_eq!(row["page_title"], page, "{row}");
+    }
+    expected.push(tagged.clone());
+    expected.sort();
+    assert_eq!(row_ids(&search("").await.unwrap()), expected);
+
+    let app_filter: crate::commands::SearchFilter = serde_json::from_value(json!({
+        "scope": SearchScope::Spaces(vec![SpaceId::from_trusted(&space)]),
+        "tagIds": [tag],
+        "tagsMatchInlineAndInherited": true,
+    }))
+    .unwrap();
+    let app = search_blocks_inner(&tools.pool, "needle".into(), None, None, app_filter, None)
+        .await
+        .unwrap();
+    let app_ids: Vec<&str> = app.items.iter().map(|row| row.id.as_str()).collect();
+    assert_eq!(app_ids, [attached.as_str()]);
+}
+
+/// `filter.last_edited` narrows a search to the blocks edited in the window.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_last_edited_narrows_results_5398() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_named(&tools, &mat, &space, "page", "Inbox").await;
+    let fresh = mk_child(&tools, &mat, &page, "fresh note").await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES (?, 'content', 'old note', ?, 9, ?, ?)",
+    )
+    .bind(OLD_BLOCK)
+    .bind(&page)
+    .bind(&page)
+    .bind(&space)
+    .execute(&tools.pool)
+    .await
+    .unwrap();
+    settle(&mat).await;
+    agaric_store::fts::rebuild_fts_index(&tools.pool)
+        .await
+        .unwrap();
+
+    let (tools, space) = (&tools, &space);
+    let search = |filter: Value| async move {
+        let args = json!({ "query": "note", "space_id": space, "filter": filter });
+        row_ids(
+            &tools
+                .call_tool(TOOL_SEARCH, args, &test_ctx())
+                .await
+                .unwrap(),
+        )
+    };
+    let mut both = vec![fresh.clone(), OLD_BLOCK.to_owned()];
+    both.sort();
+    assert_eq!(search(json!({})).await, both);
+    let recent =
+        json!({ "last_edited": { "type": "Range", "start": "2020-01-01", "end": "2999-12-31" } });
+    assert_eq!(search(recent).await, [fresh]);
+    let old = json!({ "last_edited": { "type": "OlderThan", "days": 365 } });
+    assert_eq!(search(old).await, [OLD_BLOCK]);
+}
+
+/// `match_offsets` comes back only when asked for.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_match_offsets_only_when_asked_5401() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let page = mk_named(&tools, &mat, &space, "page", "Notes").await;
+    mk_child(&tools, &mat, &page, "find the needle").await;
+    settle(&mat).await;
+
+    for (asked, expected) in [
+        (false, None),
+        (true, Some(json!([{ "start": 9, "end": 15 }]))),
+    ] {
+        let result = tools
+            .call_tool(
+                TOOL_SEARCH,
+                json!({
+                    "query": "needle",
+                    "space_id": space,
+                    "filter": { "whole_word": true },
+                    "include_match_offsets": asked,
+                }),
+                &test_ctx(),
+            )
+            .await
+            .unwrap();
+        let row = &result["items"][0];
+        assert_eq!(row.get("match_offsets"), expected.as_ref(), "{row}");
+    }
+}
+
+/// `list_pages` sorts and filters as the Pages view does, and its cursor
+/// carries both across a page boundary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_pages_sorts_and_filters_across_a_cursor_5401() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "S").await;
+    let tag = mk_named(&tools, &mat, &space, "tag", "work").await;
+    let mut pages = HashMap::new();
+    for (title, children, tagged) in [
+        ("echo", 3, true),
+        ("alpha", 0, false),
+        ("Delta", 1, true),
+        ("bravo", 2, true),
+        ("Charlie", 0, false),
+    ] {
+        let page = mk_named(&tools, &mat, &space, "page", title).await;
+        for i in 0..children {
+            mk_child(&tools, &mat, &page, &format!("block {i}")).await;
+        }
+        if tagged {
+            tag_block(&tools, &mat, &page, &tag).await;
+        }
+        pages.insert(page, title);
+    }
+    settle(&mat).await;
+
+    let (tools, space, pages) = (&tools, &space, &pages);
+    let list = |mut args: Value| async move {
+        let mut all = Vec::new();
+        args["space_id"] = json!(space);
+        loop {
+            let resp = tools
+                .call_tool(TOOL_LIST_PAGES, args.clone(), &test_ctx())
+                .await
+                .unwrap();
+            let titles: Vec<&str> = resp["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| pages[row["id"].as_str().unwrap()])
+                .collect();
+            all.push(titles);
+            match resp["next_cursor"].as_str() {
+                Some(cursor) if resp["has_more"] == true => args["cursor"] = json!(cursor),
+                _ => return all,
+            }
+        }
+    };
+    assert_eq!(
+        list(json!({ "limit": 2 })).await,
+        [
+            vec!["alpha", "bravo"],
+            vec!["Charlie", "Delta"],
+            vec!["echo"]
+        ]
+    );
+    assert_eq!(
+        list(json!({
+            "sort": "most-content",
+            "filters": [{ "type": "Tag", "tag": tag }],
+            "limit": 2,
+        }))
+        .await,
+        [vec!["echo", "bravo"], vec!["Delta"]]
+    );
+    assert_eq!(
+        list(json!({ "filters": [{ "type": "Stub" }], "limit": 1 })).await,
+        [vec!["alpha"], vec!["Charlie"]]
+    );
+
+    let first = tools
+        .call_tool(
+            TOOL_LIST_PAGES,
+            json!({ "space_id": space, "limit": 1 }),
+            &test_ctx(),
+        )
+        .await
+        .unwrap();
+    for args in [
+        json!({ "space_id": space, "sort": "most-linked", "cursor": first["next_cursor"] }),
+        json!({ "space_id": space, "filters": [{ "type": "State", "values": ["TODO"] }] }),
+    ] {
+        let err = tools
+            .call_tool(TOOL_LIST_PAGES, args.clone(), &test_ctx())
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(err, AppError::Validation { .. }),
+            "{args}: {err:?}"
+        );
+    }
 }

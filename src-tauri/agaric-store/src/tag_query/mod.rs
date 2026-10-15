@@ -10,6 +10,7 @@ pub use query::{
 // Shared leaf-resolution helpers — `backlink::filters` calls
 // These to stay in lockstep with `resolve_expr`'s inline-ref
 // union semantics. See `resolve.rs` for the canonical SQL.
+pub(crate) use resolve::tag_leaf_subquery_body;
 pub use resolve::{resolve_tag_leaves, resolve_tag_prefix_leaves};
 
 use serde::{Deserialize, Serialize};
