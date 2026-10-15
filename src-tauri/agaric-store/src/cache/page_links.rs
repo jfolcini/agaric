@@ -26,6 +26,12 @@
 //! 0096) so the unscoped read no longer needs even the two residual
 //! `blocks` joins it carried after 0065.
 //!
+//! #5426 (migration 0122) does the same for the space-scoped read: `space_id`
+//! is the space both pages share, NULL for an edge between spaces, an edge
+//! with a space-less end, or an end that is not a page. It reads pages'
+//! `blocks.space_id` alone, and every path that changes one (a `space` op,
+//! inbound sync, purging the space) rebuilds this cache.
+//!
 //! Two public entry points:
 //!
 //! - [`reindex_page_link_cache_for_block`] — called from the
@@ -41,8 +47,9 @@
 //!   `COALESCE(blocks.page_id, parent_id, source_id)`, groups by
 //!   `(source_page, target_page)`, and DELETE + INSERTs the whole
 //!   table. Used by snapshot restore, the delete/restore/purge/cross-page-move
-//!   `FULL_CACHE_REBUILD_TASKS` fan-out, and the read path's lazy heal in
-//!   `commands::pages::links` (gated on the table being ENTIRELY empty).
+//!   `FULL_CACHE_REBUILD_TASKS` fan-out, a `space` op, and the read path's
+//!   lazy heal in `commands::pages::links` (gated on the table being ENTIRELY
+//!   empty).
 //!
 //! #3839 correction of record: this module previously documented a
 //! "boot-time `table is empty` fallback (recovery)". **No such recovery
@@ -67,11 +74,10 @@ use sqlx::SqlitePool;
 use crate::db::MAX_SQL_PARAMS;
 use agaric_core::error::AppError;
 
-/// `page_link_cache` has 6 columns per row since #2070 denormalised the
-/// `src_deleted` / `tgt_deleted` / `tgt_is_page` predicate flags
-/// (migration 0096) → `MAX_SQL_PARAMS / 6 = 166` rows per chunk. Mirrors
-/// the chunk-size derivation in `cache/pages.rs` and `cache/agenda.rs`.
-const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 6; // 166
+/// One bind per `page_link_cache` column: the roll-up pair and count, the
+/// three 0096 flags and the 0122 `space_id`. Mirrors the chunk-size
+/// derivation in `cache/pages.rs` and `cache/agenda.rs`.
+const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 7;
 
 // ---------------------------------------------------------------------------
 // Per-block incremental update
@@ -117,10 +123,10 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 6; // 166
 /// `page_link_cache` either observes the pre-update snapshot or the
 /// post-update one, never a mid-update split state.
 ///
-/// Cross-space isolation is inherited transitively: `block_links` is
-/// Already filtered to same-space pairs by `reindex_block_links` (
-/// Phase 3 guard at the write-time gate), so a roll-up over `block_links`
-/// cannot manufacture a cross-space `page_link_cache` row.
+/// Rows can cross spaces: `reindex_block_links` filters a pair only when the
+/// source has a space at write time, and a page that later changes space
+/// keeps its `block_links`. Such a row carries a NULL `space_id`, which is
+/// what keeps it out of every space-scoped read (#5426).
 pub async fn reindex_page_link_cache_for_block(
     pool: &SqlitePool,
     block_id: &str,
@@ -305,12 +311,17 @@ async fn recompute_rows_for_rollup_key(
     // The zero-edge DELETE below is deliberately NOT guarded: it removes rows,
     // so it cannot violate an FK, and a row that somehow exists under a
     // dangling key should be swept, not preserved.
+    //
+    // #5426: `space_id` is the space both pages share (the rule the rebuilds
+    // and migration 0122 spell as a `CASE`).
     sqlx::query!(
         "WITH desired AS ( \
              SELECT bl.target_id AS target, \
                     COUNT(*) AS edge_count, \
                     MAX(tb.deleted_at IS NOT NULL) AS tgt_deleted, \
-                    MIN(tb.block_type = 'page') AS tgt_is_page \
+                    MIN(tb.block_type = 'page') AS tgt_is_page, \
+                    MAX(CASE WHEN tb.block_type = 'page' THEN tb.space_id END) \
+                        AS tgt_page_space_id \
              FROM block_links bl \
              JOIN blocks sb ON sb.id = bl.source_id \
              JOIN blocks tb ON tb.id = bl.target_id \
@@ -324,16 +335,21 @@ async fn recompute_rows_for_rollup_key(
              GROUP BY 1 \
          ) \
          INSERT INTO page_link_cache \
-             (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page) \
+             (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page, \
+              space_id) \
          SELECT ?1, target, edge_count, \
                 COALESCE((SELECT (b.deleted_at IS NOT NULL) FROM blocks b WHERE b.id = ?1), 1), \
-                tgt_deleted, tgt_is_page \
+                tgt_deleted, tgt_is_page, \
+                (SELECT b.space_id FROM blocks b \
+                 WHERE b.id = ?1 AND b.block_type = 'page' \
+                   AND b.space_id = tgt_page_space_id) \
          FROM desired WHERE true \
          ON CONFLICT(source_page_id, target_page_id) \
          DO UPDATE SET edge_count = excluded.edge_count, \
                        src_deleted = excluded.src_deleted, \
                        tgt_deleted = excluded.tgt_deleted, \
-                       tgt_is_page = excluded.tgt_is_page",
+                       tgt_is_page = excluded.tgt_is_page, \
+                       space_id = excluded.space_id",
         source_page,
         targets_json,
     )
@@ -433,6 +449,7 @@ async fn read_touched_targets_for_rollup_key(
 ///
 /// - the delete/restore/purge/cross-page-move `FULL_CACHE_REBUILD_TASKS`
 ///   fan-out,
+/// - a `space` op, which moves `space_id` on edges in both directions (#5426),
 /// - the read path's lazy heal in `commands::pages::links`, gated on the
 ///   table being ENTIRELY empty (#3839).
 ///
@@ -502,18 +519,24 @@ async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError
     // rebuild total. It cannot distort a surviving row: the key is the first
     // GROUP BY term, so the predicate is constant across a group and can only
     // drop whole groups, never part of one group's `COUNT(*)`. This is also
-    // what makes migration 0110 (`0110_page_link_cache_backfill.sql`, an
-    // exact transcription of this statement) safe to run at boot, where the
-    // same abort would be an unrecoverable startup failure rather than a
-    // logged background error.
-    let rows: Vec<(String, String, i64, i64, i64, i64)> = sqlx::query!(
+    // what makes migration 0110 (`0110_page_link_cache_backfill.sql`, a
+    // transcription of this statement from before `space_id`) safe to run at
+    // boot, where the same abort would be an unrecoverable startup failure
+    // rather than a logged background error.
+    //
+    // #5426: `space_id` is the space both pages share; `sp` and `tb` are one
+    // block each per group, so the `MAX` is identity.
+    let rows = sqlx::query!(
         "SELECT
              COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!: String\",
              bl.target_id AS \"target_page_id!: String\",
              COUNT(*) AS \"edge_count!: i64\",
              MAX(CASE WHEN sp.id IS NULL THEN 1 ELSE (sp.deleted_at IS NOT NULL) END) AS \"src_deleted!: i64\",
              MAX(tb.deleted_at IS NOT NULL) AS \"tgt_deleted!: i64\",
-             MIN(tb.block_type = 'page') AS \"tgt_is_page!: i64\"
+             MIN(tb.block_type = 'page') AS \"tgt_is_page!: i64\",
+             MAX(CASE WHEN sp.block_type = 'page' AND tb.block_type = 'page'
+                           AND sp.space_id = tb.space_id
+                      THEN sp.space_id END) AS \"space_id?: String\"
          FROM block_links bl
          JOIN blocks sb ON sb.id = bl.source_id
          JOIN blocks tb ON tb.id = bl.target_id
@@ -526,38 +549,28 @@ async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError
          GROUP BY 1, 2",
     )
     .fetch_all(&mut *tx)
-    .await?
-    .into_iter()
-    .map(|r| {
-        (
-            r.source_page_id,
-            r.target_page_id,
-            r.edge_count,
-            r.src_deleted,
-            r.tgt_deleted,
-            r.tgt_is_page,
-        )
-    })
-    .collect();
+    .await?;
 
     let mut inserted: u64 = 0;
     for chunk in rows.chunks(REBUILD_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?)").collect();
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?, ?)").collect();
         let sql = format!(
             "INSERT OR IGNORE INTO page_link_cache \
-             (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page) \
+             (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page, \
+              space_id) \
              VALUES {}",
             placeholders.join(", ")
         );
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
-        for (src, tgt, count, src_del, tgt_del, tgt_page) in chunk {
+        for r in chunk {
             q = q
-                .bind(src)
-                .bind(tgt)
-                .bind(count)
-                .bind(src_del)
-                .bind(tgt_del)
-                .bind(tgt_page);
+                .bind(&r.source_page_id)
+                .bind(&r.target_page_id)
+                .bind(r.edge_count)
+                .bind(r.src_deleted)
+                .bind(r.tgt_deleted)
+                .bind(r.tgt_is_page)
+                .bind(&r.space_id);
         }
         let res = q.execute(&mut *tx).await?;
         inserted += res.rows_affected();
@@ -601,15 +614,18 @@ async fn rebuild_page_link_cache_split_impl(
     // so a rollup key that names no `blocks` row would raise here too. See
     // `rebuild_page_link_cache_impl` for why the source side needs it and the
     // target side does not, and why dropping the group cannot distort a
-    // surviving row's `edge_count`.
-    let rows: Vec<(String, String, i64, i64, i64, i64)> = sqlx::query!(
+    // surviving row's `edge_count`. `space_id` follows the same rule there.
+    let rows = sqlx::query!(
         "SELECT
              COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!: String\",
              bl.target_id AS \"target_page_id!: String\",
              COUNT(*) AS \"edge_count!: i64\",
              MAX(CASE WHEN sp.id IS NULL THEN 1 ELSE (sp.deleted_at IS NOT NULL) END) AS \"src_deleted!: i64\",
              MAX(tb.deleted_at IS NOT NULL) AS \"tgt_deleted!: i64\",
-             MIN(tb.block_type = 'page') AS \"tgt_is_page!: i64\"
+             MIN(tb.block_type = 'page') AS \"tgt_is_page!: i64\",
+             MAX(CASE WHEN sp.block_type = 'page' AND tb.block_type = 'page'
+                           AND sp.space_id = tb.space_id
+                      THEN sp.space_id END) AS \"space_id?: String\"
          FROM block_links bl
          JOIN blocks sb ON sb.id = bl.source_id
          JOIN blocks tb ON tb.id = bl.target_id
@@ -622,19 +638,7 @@ async fn rebuild_page_link_cache_split_impl(
          GROUP BY 1, 2",
     )
     .fetch_all(read_pool)
-    .await?
-    .into_iter()
-    .map(|r| {
-        (
-            r.source_page_id,
-            r.target_page_id,
-            r.edge_count,
-            r.src_deleted,
-            r.tgt_deleted,
-            r.tgt_is_page,
-        )
-    })
-    .collect();
+    .await?;
 
     let mut tx =
         crate::db::begin_immediate_logged(write_pool, "cache_page_links_rebuild_write").await?;
@@ -645,22 +649,24 @@ async fn rebuild_page_link_cache_split_impl(
 
     let mut inserted: u64 = 0;
     for chunk in rows.chunks(REBUILD_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?)").collect();
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?, ?)").collect();
         let sql = format!(
             "INSERT OR IGNORE INTO page_link_cache \
-             (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page) \
+             (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page, \
+              space_id) \
              VALUES {}",
             placeholders.join(", ")
         );
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
-        for (src, tgt, count, src_del, tgt_del, tgt_page) in chunk {
+        for r in chunk {
             q = q
-                .bind(src)
-                .bind(tgt)
-                .bind(count)
-                .bind(src_del)
-                .bind(tgt_del)
-                .bind(tgt_page);
+                .bind(&r.source_page_id)
+                .bind(&r.target_page_id)
+                .bind(r.edge_count)
+                .bind(r.src_deleted)
+                .bind(r.tgt_deleted)
+                .bind(r.tgt_is_page)
+                .bind(&r.space_id);
         }
         let res = q.execute(&mut *tx).await?;
         inserted += res.rows_affected();

@@ -121,7 +121,7 @@ fn test_space_search_filter() -> SearchFilter {
 /// purge — regardless of block_type) enqueues a background dispatch via
 /// `CommandTx::commit_and_dispatch`. Tests that read paginated /
 /// projected state (`list_blocks_inner`, `list_trash_inner`,
-/// `list_pages_inner`, anything that joins on a cache or property table
+/// `list_pages_with_metadata_inner`, anything that joins on a cache or property table
 /// written by the materializer) MUST call this between the seed loop
 /// and the read, or risk a low-frequency race where the read observes
 /// partial state.

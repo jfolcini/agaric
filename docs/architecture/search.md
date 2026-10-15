@@ -81,6 +81,8 @@ pub struct SearchBlockRow {
 }
 ```
 
+`tag_ids` matches attached tags (`block_tags`). `SearchFilter::tags_match_inline_and_inherited` widens each tag to inline `#[ULID]` references and inherited tags too, through the tag query's own leaf (`tag_query::tag_leaf_subquery_body`). It is `#[serde(skip)]`, so no IPC caller can set it: only the MCP `search` tool does.
+
 Two invariants ride on this contract:
 
 1. **`SearchFilter` is the canonical extension struct.** New filter dimensions land as additional fields on this struct — never as new positional arguments on the Tauri command. The `tauri-specta` 10-argument ceiling is already close on the search surface; the struct keeps the command signature at five arguments (`pool`, `query`, `cursor`, `limit`, `filter`) regardless of how many filter dimensions exist. `QueryByPropertyRequest` in `src-tauri/src/commands/mod.rs` is the same pattern applied to `query_by_property` (it retired the older arg-count-driven `ExtraQueryFilters` overflow bundle).

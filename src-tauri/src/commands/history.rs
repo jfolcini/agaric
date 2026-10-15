@@ -824,7 +824,8 @@ impl ReverseCohortFanout {
 ///
 /// Only handles the subset of op types that can result from `compute_reverse`:
 /// `DeleteBlock`, `RestoreBlock`, `EditBlock`, `MoveBlock`, `AddTag`,
-/// `RemoveTag`, `SetProperty`, `DeleteProperty`, `DeleteAttachment`.
+/// `RemoveTag`, `AddPageAlias`, `RemovePageAlias`, `SetProperty`,
+/// `DeleteProperty`, `DeleteAttachment`.
 ///
 /// #2325/#2250 — INTENTIONAL EXCEPTION to the single-entry-point apply collapse.
 /// Undo/redo applies the *reverse* effect via bespoke reverse SQL (it is NOT an
@@ -936,6 +937,18 @@ pub async fn apply_reverse_in_tx(
         }
         OpPayload::RemoveTag(p) => {
             apply_reverse_remove_tag(tx, state, device_id, p).await?;
+        }
+        // #5387: refused, as the write path refuses them, when the page is
+        // gone or (re-adding) another page holds the alias now.
+        OpPayload::AddPageAlias(p) => {
+            apply_reverse_add_page_alias(tx, state, device_id, p).await?;
+        }
+        OpPayload::RemovePageAlias(p) => {
+            crate::commands::pages::aliases::require_live_page(tx, p.page_id.as_str()).await?;
+            agaric_engine::apply::loro_apply::apply_remove_page_alias_via_loro(
+                tx, state, device_id, p,
+            )
+            .await?;
         }
         OpPayload::SetProperty(p) => {
             apply_reverse_set_property(tx, state, device_id, p).await?;
@@ -1270,6 +1283,28 @@ async fn apply_reverse_remove_tag(
         }
         Ok(())
     })
+}
+
+/// `AddPageAlias` arm of [`apply_reverse_in_tx`] — the undo of a removal.
+async fn apply_reverse_add_page_alias(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    p: &agaric_store::op::AddPageAliasPayload,
+) -> Result<(), AppError> {
+    use crate::commands::pages::aliases::{alias_holder_other_than, require_live_page};
+    let page_id = p.page_id.as_str();
+    require_live_page(tx, page_id).await?;
+    if alias_holder_other_than(tx, page_id, &p.alias)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::validation_coded(
+            agaric_core::error::ValidationCode::DuplicatePageAlias,
+            format!("alias '{}' is already used by another page", p.alias),
+        ));
+    }
+    agaric_engine::apply::loro_apply::apply_add_page_alias_via_loro(tx, state, device_id, p).await
 }
 
 /// `SetProperty` arm of [`apply_reverse_in_tx`].

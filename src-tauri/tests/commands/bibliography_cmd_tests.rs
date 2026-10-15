@@ -1252,8 +1252,8 @@ async fn import_bibliography_treats_soft_deleted_values_as_in_use_4382() {
 }
 
 /// #5275 — an imported reference page is a fresh block: its `space` stamp
-/// must not dispatch, or every entry would queue the two full-table count
-/// rebuilds the `space` arm of `push_property_op_invalidations` exists for.
+/// must not dispatch, or every entry would queue the full-table rebuilds the
+/// `space` arm of `push_property_op_invalidations` exists for.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_bibliography_does_not_dispatch_the_space_op_5275() {
     use std::sync::atomic::Ordering;
@@ -1279,7 +1279,8 @@ async fn import_bibliography_does_not_dispatch_the_space_op_5275() {
 
     assert_eq!(result.pages_created, 1, "warnings: {:?}", result.warnings);
     // The page's own create fan-out and the flush barrier; nothing from the
-    // `space` op (which would add `RebuildTagsCache` + `RebuildPagesCacheCounts`).
+    // `space` op (which would add `RebuildTagsCache` + `RebuildPagesCacheCounts`
+    // + `RebuildPageLinkCache`).
     assert_eq!(
         mat.metrics().bg_processed.load(Ordering::Relaxed) - before,
         5

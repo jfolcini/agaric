@@ -11,17 +11,17 @@
 //!
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
-//! | `list_pages` | [`list_pages_inner`] | The pages of one space. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
+//! | `list_pages` | [`list_pages_with_metadata_inner`] | The pages of one space, sorted and filtered as the Pages view does, with their link and block counts. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
 //! | `get_page` | [`get_page_inner`] | Composes `get_active_block_inner` + paginated subtree via `page_id`; `page` carries its properties, tags and aliases (#5377). soft-deleted pages → `NotFound`. `space_id` required; a page in another space is rejected. |
-//! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. |
-//! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. `space_id` required; a block in another space is rejected. |
+//! | `search` | [`search_blocks_inner`] | FTS5. Result count capped at 50, snippet length at 512 chars. Rows add `page_title`; `tag_ids` match attached, inline and inherited tags (#5398). |
+//! | `get_block` | [`get_active_block_inner`] | Plus the block's properties, tags, its page's title and, for a page, aliases (#5377). soft-deleted blocks → `NotFound`. `space_id` required; a block in another space is rejected. |
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`] | Grouped by source page. `space_id` required. |
 //! | `list_tags` | [`list_tags_inner`] | The tags of one space. Cursor paginated. Limits outside `[1, 100]` are rejected. `space_id` required. |
 //! | `list_property_defs` | [`list_property_defs_inner`] | Typed property schema; cursor paginated. No `space_id`: property definitions are vault-wide. |
 //! | `get_agenda` | [`agenda_range_inner`] | Dated blocks in the range plus projected repeats, one row each. `space_id` required. |
 //! | `journal_for_date` | [`journal_for_date_inner`] | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and `handle_journal_for_date` below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`] | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
-//! | `get_page_markdown` | [`get_page_for_agent_inner`] | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. `space_id` required; a page in another space is rejected. |
+//! | `get_page_markdown` | [`get_page_for_agent_inner`], or [`get_page_source_inner`] with `editable` | #5375 — the whole page as Markdown, ids written as names and every block with its `^ID`. No pagination, as the export. `editable` (#5399) returns the source buffer `edit_page_markdown` takes back instead. `space_id` required; a page in another space is rejected. |
 //! | `page_history` | [`list_page_history_inner`] | Ops on a page's blocks, newest first: device, origin, op type, time, clipped before/after. Cursor paginated. `space_id` required. |
 //! | `block_history` | [`get_block_history_inner`] | The same rows for one block. |
 //! | `get_journal` | [`get_journal_page_by_date_inner`] + [`get_page_for_agent_inner`] | #5396 — a day as `get_page_markdown` renders it; `date` is `today` (default), `yesterday` or `YYYY-MM-DD` on the device's clock. Never creates: a missing day is an empty `markdown`. |
@@ -84,26 +84,29 @@ use super::registry::{
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::pages::markdown::{NameMatch, match_page_names, match_tag_names};
+use crate::commands::pages::metadata::{
+    ListPagesWithMetadataFilter, PageSort, PageWithMetadataRow, list_pages_with_metadata_inner,
+};
 use crate::commands::{
     PropertyRow, agenda_range_inner, batch_resolve_inner, get_active_block_inner,
     get_batch_properties_inner, get_block_history_inner, get_journal_page_by_date_inner,
-    get_page_aliases_inner, get_page_for_agent_inner, get_page_inner, get_properties_inner,
-    journal_for_date_inner, list_backlinks_grouped_inner, list_journal_days_inner,
-    list_page_history_inner, list_pages_inner, list_property_defs_inner,
+    get_page_aliases_inner, get_page_for_agent_inner, get_page_inner, get_page_source_inner,
+    get_properties_inner, journal_for_date_inner, list_backlinks_grouped_inner,
+    list_journal_days_inner, list_page_history_inner, list_property_defs_inner,
     list_spaces_registry_inner, list_tags_for_block_inner, list_tags_inner, list_trash_inner,
     search_blocks_inner,
 };
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
-use agaric_store::filters::{FilterExpr, FilterPrimitive};
+use agaric_store::filters::{FilterExpr, FilterPrimitive, LastEditedSpec};
 use agaric_store::op::OpRef;
 use agaric_store::pagination::{ActiveBlockRow, BlockRow, HistoryEntry, PageResponse};
 use agaric_store::query::{
     AdvancedQueryRequest, AdvancedQueryResponse, AggregateResult, AggregateSpec, AggregateTarget,
     GroupKey, GroupSpec, SortKey, compile_and_run,
 };
-use agaric_store::search_types::SearchScope;
+use agaric_store::search_types::{SearchBlockRow, SearchScope};
 use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_store::task_locals::ActorContext;
 
@@ -119,7 +122,7 @@ pub const SEARCH_RESULT_CAP: i64 = 50;
 /// Default for list-style tools (`list_pages`, `list_tags`,
 /// `list_backlinks`). Re-exported from
 /// [`crate::commands::MCP_PAGE_LIMIT_CAP`] so the tool boundary and the
-/// [`list_pages_inner`] / [`get_page_inner`] internal strict validation
+/// [`list_pages_with_metadata_inner`] / [`get_page_inner`] internal strict validation
 /// share a single source of truth.
 pub use crate::commands::MCP_PAGE_LIMIT_CAP as LIST_RESULT_CAP;
 
@@ -236,6 +239,10 @@ fn within_journal_create_window(date: chrono::NaiveDate) -> bool {
 struct ListPagesArgs {
     space_id: String,
     #[serde(default)]
+    sort: PageSort,
+    #[serde(default)]
+    filters: Vec<FilterPrimitive>,
+    #[serde(default)]
     cursor: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
@@ -279,6 +286,9 @@ struct SearchArgs {
     /// structured arguments instead.
     #[serde(default)]
     filter: Option<SearchFilterArgs>,
+    /// Add each row's `match_offsets`, left out by default (#5401).
+    #[serde(default)]
+    include_match_offsets: bool,
 }
 
 /// JSON wire shape for the MCP `search.filter` argument.
@@ -319,6 +329,8 @@ struct SearchFilterArgs {
     property_filters: Vec<crate::commands::queries::SearchPropertyFilter>,
     #[serde(default)]
     excluded_property_filters: Vec<crate::commands::queries::SearchPropertyFilter>,
+    #[serde(default)]
+    last_edited: Option<LastEditedSpec>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -333,6 +345,8 @@ struct GetBlockArgs {
 struct GetPageMarkdownArgs {
     page_id: String,
     space_id: String,
+    #[serde(default)]
+    editable: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -705,7 +719,11 @@ fn tool_desc_resolve() -> ToolDescription {
 fn tool_desc_list_pages() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_PAGES.to_string(),
-        description: "List the pages of a space, with cursor pagination.".to_string(),
+        description: "List the pages of a space, sorted and filtered, with cursor pagination. \
+             Each row is the page's block row (`content` is its title) plus \
+             `last_modified_at` (epoch ms), `inbound_link_count` and `child_block_count`; \
+             the first page also carries `total_count`."
+            .to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -714,6 +732,16 @@ fn tool_desc_list_pages() -> ToolDescription {
                 "space_id": {
                     "type": "string",
                     "description": "ULID of the space whose pages to list.",
+                },
+                "sort": {
+                    "type": "string",
+                    "enum": ["alphabetical", "recently-modified", "most-linked", "most-content", "default"],
+                    "description": "Title A-Z (the default), last edit newest first, most inbound links, most blocks, or creation order (`default`). A cursor only continues the sort it came from.",
+                },
+                "filters": {
+                    "type": "array",
+                    "items": { "type": "object" },
+                    "description": "Primitives, all of which a page must match: {type: Orphan} (no links in or out), {type: HasNoInboundLinks}, {type: Stub} (no blocks but its title), {type: Tag, tag} (attached tag ULID), {type: TagOrRef, tag} (attached or inline), {type: PathGlob, pattern, exclude} (title GLOB), {type: LastEdited, spec} (spec: Rolling {days}, OlderThan {days} or Range {start, end}), {type: HasProperty, key, predicate} and {type: Priority, values}, in the `query` tool's shapes. Any other primitive is refused.",
                 },
                 "cursor": { "type": "string", "description": "Opaque pagination cursor from a prior response." },
                 "limit": {
@@ -825,6 +853,10 @@ fn search_filter_schema() -> serde_json::Value {
                     "required": ["key", "value"],
                 },
             },
+            "last_edited": {
+                "type": "object",
+                "description": "When the block was last edited: `{ \"type\": \"Rolling\", \"days\": N }` (within the last N days), `{ \"type\": \"OlderThan\", \"days\": N }`, or `{ \"type\": \"Range\", \"start\": \"YYYY-MM-DD\", \"end\": \"YYYY-MM-DD\" }` (both days included).",
+            },
         },
     })
 }
@@ -832,18 +864,24 @@ fn search_filter_schema() -> serde_json::Value {
 fn tool_desc_search() -> ToolDescription {
     ToolDescription {
         name: TOOL_SEARCH.to_string(),
-        description:
-            "Full-text search across block content (FTS5). Returns BlockRow records; content \
-             is truncated to 512 chars per result. pass `filter` for structured \
-             narrowing (state / priority / due / scheduled / property / page-name globs / \
-             block-type / case-sensitive / whole-word / regex toggles)."
-                .to_string(),
+        description: "Search one space's blocks by text. `query` is not raw FTS5: every word must \
+             appear, as a case-insensitive substring; `\"a phrase\"` matches as written; \
+             `OR` and `NOT` between terms combine them. Words and phrases under 3 characters \
+             are dropped (the index is trigram), so a query of only short words finds \
+             nothing. Hits come best match first. An empty `query` with at least one of \
+             `parent_id`, `tag_ids` or `filter` returns the blocks those match, newest \
+             first; with none it returns nothing. Rows carry `page_title` and a `snippet` \
+             with <mark> around the matches; `content` is cut to 512 chars, and null fields \
+             are left out. `filter` narrows further (state / priority / due / scheduled / \
+             last edited / property / page-name globs / block type / case-sensitive / \
+             whole-word / regex)."
+            .to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "required": ["query", "space_id"],
             "properties": {
-                "query": { "type": "string", "description": "FTS5 MATCH query string." },
+                "query": { "type": "string", "description": "Words to find; empty for a filter-only search." },
                 "cursor": { "type": "string" },
                 "limit": {
                     "type": "integer",
@@ -851,11 +889,15 @@ fn tool_desc_search() -> ToolDescription {
                     "maximum": SEARCH_RESULT_CAP,
                     "description": format!("Max results per response (capped at {SEARCH_RESULT_CAP})."),
                 },
-                "parent_id": { "type": "string", "description": "Optional parent ULID, or a page's title or alias, to scope the search." },
+                "parent_id": { "type": "string", "description": "Only the direct children of this block, not deeper descendants: a ULID, or a page's title or alias." },
                 "tag_ids": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Optional list of tag ULIDs or names to intersect the result set with.",
+                    "description": "Tag ULIDs or names. A block must carry every one: attached, as an inline #tag, or inherited from an ancestor such as its page.",
+                },
+                "include_match_offsets": {
+                    "type": "boolean",
+                    "description": "Add each row's `match_offsets` (UTF-16 offsets into `content`). Only case_sensitive, whole_word and is_regex searches fill them.",
                 },
                 "space_id": {
                     "type": "string",
@@ -1056,7 +1098,10 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
              then the block outline with each block's `key:: value` properties under it. Links, \
              tags and ref-typed values are written as names, for reading; a name can be \
              ambiguous, so write links by ULID (`[[ULID]]`, `#[ULID]`). Each block ends with \
-             `^ULID`, the block_id update_block_content takes. No pagination."
+             `^ULID`, the block_id update_block_content takes. No pagination. With `editable: \
+             true`, `markdown` is instead the page's source, the text the read-write server's \
+             edit_page_markdown takes back: no title line, a name only where it reads back as \
+             the same link, ref-typed values as ULIDs, and each block's `^ULID`."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -1068,6 +1113,7 @@ fn tool_desc_get_page_markdown() -> ToolDescription {
                     "type": "string",
                     "description": "ULID of the space the page belongs to. A page in another space is rejected with a Validation error.",
                 },
+                "editable": { "type": "boolean", "description": "Return the source edit_page_markdown takes instead. Defaults to false." },
             },
         }),
     }
@@ -1284,7 +1330,7 @@ fn tool_desc_list_trash() -> ToolDescription {
 ///
 /// #1665: on the MCP path this check *shadows* the equivalent range
 /// checks inside the backing `*_inner` functions (e.g.
-/// `list_pages_inner` / `get_page_inner` in `commands/pages/listing.rs`).
+/// `list_pages_with_metadata_inner` / `get_page_inner` in `commands/pages/`).
 /// Because `validate_limit` runs first and short-circuits, the `*_inner`
 /// message is never observed on the wire by an MCP agent — what they see
 /// is the message produced here. The inner checks are intentional
@@ -1306,9 +1352,53 @@ fn validate_limit(tool: &str, limit: Option<i64>, cap: i64) -> Result<Option<i64
 async fn handle_list_pages(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
     let args: ListPagesArgs = parse_args(TOOL_LIST_PAGES, args)?;
     let limit = validate_limit(TOOL_LIST_PAGES, args.limit, LIST_RESULT_CAP)?;
-    let space_id = SpaceId::from_string(args.space_id)?;
-    let resp = list_pages_inner(pool, space_id.as_str(), args.cursor, limit).await?;
-    to_tool_result(&resp)
+    let filter = ListPagesWithMetadataFilter {
+        sort: args.sort,
+        space_id: SpaceId::from_string(args.space_id)?.into_string(),
+        filters: args.filters,
+    };
+    let resp = list_pages_with_metadata_inner(pool, filter, args.cursor, limit).await?;
+    let items: Vec<PageListRow> = resp.items.into_iter().map(PageListRow::from).collect();
+    to_tool_result(&json!({
+        "items": items,
+        "next_cursor": resp.next_cursor,
+        "has_more": resp.has_more,
+        "total_count": resp.total_count,
+    }))
+}
+
+/// One `list_pages` row: the page's block row and the figures its sorts order
+/// by, in the snake_case every other tool uses.
+#[derive(Serialize)]
+struct PageListRow {
+    #[serde(flatten)]
+    block: BlockRow,
+    last_modified_at: Option<i64>,
+    inbound_link_count: i64,
+    child_block_count: i64,
+}
+
+impl From<PageWithMetadataRow> for PageListRow {
+    fn from(row: PageWithMetadataRow) -> Self {
+        Self {
+            block: BlockRow {
+                id: row.id,
+                block_type: row.block_type,
+                content: row.content,
+                parent_id: row.parent_id,
+                position: row.position,
+                deleted_at: row.deleted_at,
+                todo_state: row.todo_state,
+                priority: row.priority,
+                due_date: row.due_date,
+                scheduled_date: row.scheduled_date,
+                page_id: row.page_id.map(BlockId::from),
+            },
+            last_modified_at: row.last_modified_at,
+            inbound_link_count: row.inbound_link_count,
+            child_block_count: row.child_block_count,
+        }
+    }
 }
 
 async fn handle_get_page(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
@@ -1363,7 +1453,11 @@ async fn handle_get_page_markdown(
     let page_id = normalize_ulid_arg(&args.page_id);
     let space_id = SpaceId::from_string(args.space_id)?;
     validate_block_in_space(writer_pool, &page_id, space_id.as_str()).await?;
-    let markdown = get_page_for_agent_inner(pool, &page_id).await?;
+    let markdown = if args.editable {
+        get_page_source_inner(pool, &page_id).await?
+    } else {
+        get_page_for_agent_inner(pool, &page_id).await?
+    };
     Ok(json!({ "page_id": page_id, "markdown": markdown }))
 }
 
@@ -1505,65 +1599,69 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         space_id.as_str(),
     )
     .await?;
-    // Fold the optional structured `filter` arg into the
-    // `SearchFilter` passed to `search_blocks_inner`. Omitting `filter`
-    // Preserves the pre-existing contract (no metadata / glob / toggle
-    // Filters applied). `space_id` is always required and
-    // comes from the top-level arg; `parent_id` / `tag_ids` likewise
-    // stay at the top level to keep the existing wire contract
-    // backward-compatible.
-    let f = args.filter.unwrap_or_default();
-    // P4 (#346) — push the snippet truncation into the DB instead of
-    // fetching up to 50 full block bodies and `.chars().take(...)`-ing them
-    // in Rust. `search_blocks_inner` returns `content` already truncated to
-    // `SEARCH_SNIPPET_CAP` codepoints (codepoint-safe `substr` on the
-    // non-matching paths; post-match truncation on the toggle/regex paths).
+    let filter = search_filter(
+        args.filter.unwrap_or_default(),
+        parent_id,
+        tag_ids,
+        space_id.clone(),
+    );
+    // P4 (#346) — `search_blocks_inner` returns `content` already cut to
+    // `SEARCH_SNIPPET_CAP` codepoints, at the database.
     let resp = search_blocks_inner(
         pool,
         args.query,
         args.cursor,
         limit,
-        crate::commands::SearchFilter {
-            parent_id,
-            tag_ids,
-            // The MCP `search` tool searches the one space its required arg
-            // names.
-            // #2956 — validate the id via the strict `from_string` constructor
-            // like every sibling tool (`list_backlinks`, `list_property_defs`,
-            // `create_page`): a malformed / truncated / empty `space_id` must
-            // error (`AppError::Ulid`, which `app_error_to_rmcp` maps to
-            // JSON-RPC -32602 invalid-params, #3301) rather than silently
-            // become an id that matches nothing (which would make an
-            // agent wrongly conclude the vault is empty).
-            scope: SearchScope::Spaces(vec![space_id]),
-            include_page_globs: f.include_page_globs,
-            exclude_page_globs: f.exclude_page_globs,
-            case_sensitive: f.case_sensitive,
-            whole_word: f.whole_word,
-            is_regex: f.is_regex,
-            block_type_filter: f.block_type_filter,
-            state_filter: f.state_filter,
-            priority_filter: f.priority_filter,
-            due_filter: f.due_filter,
-            scheduled_filter: f.scheduled_filter,
-            property_filters: f.property_filters,
-            excluded_property_filters: f.excluded_property_filters,
-            excluded_state_filter: f.excluded_state_filter,
-            excluded_priority_filter: f.excluded_priority_filter,
-            // #1320-C — the MCP `search` tool does not expose a
-            // `last-edited:` qualifier; leave the window filter unset.
-            last_edited: None,
-        },
-        // P4 (#346) — DB-side truncation to SEARCH_SNIPPET_CAP codepoints.
-        // `substr` on TEXT cuts on codepoint boundaries, so the output is
-        // always valid UTF-8 even with multi-byte content (CJK, emoji).
+        filter,
         Some(SEARCH_SNIPPET_CAP),
     )
     .await?;
-    // #828 — the backend snippet carries PUA sentinels (U+E000/U+E001); the
-    // web UI parses them directly, but the agent-facing MCP contract is
-    // <mark>/</mark>, so convert them back before serialising the result.
-    let mut resp = resp;
+    search_result(pool, resp, &space_id, args.include_match_offsets).await
+}
+
+/// The `SearchFilter` a `search` call runs: its top-level `parent_id` /
+/// `tag_ids` and its one space, plus the structured `filter` fields 1:1.
+fn search_filter(
+    f: SearchFilterArgs,
+    parent_id: Option<String>,
+    tag_ids: Vec<String>,
+    space_id: SpaceId,
+) -> crate::commands::SearchFilter {
+    crate::commands::SearchFilter {
+        parent_id,
+        tag_ids,
+        // #2956 — the strictly parsed `space_id`: a malformed one errors
+        // upstream rather than becoming an id that matches nothing.
+        scope: SearchScope::Spaces(vec![space_id]),
+        include_page_globs: f.include_page_globs,
+        exclude_page_globs: f.exclude_page_globs,
+        case_sensitive: f.case_sensitive,
+        whole_word: f.whole_word,
+        is_regex: f.is_regex,
+        block_type_filter: f.block_type_filter,
+        state_filter: f.state_filter,
+        priority_filter: f.priority_filter,
+        due_filter: f.due_filter,
+        scheduled_filter: f.scheduled_filter,
+        property_filters: f.property_filters,
+        excluded_property_filters: f.excluded_property_filters,
+        excluded_state_filter: f.excluded_state_filter,
+        excluded_priority_filter: f.excluded_priority_filter,
+        last_edited: f.last_edited,
+        tags_match_inline_and_inherited: true,
+    }
+}
+
+/// `search`'s result: each row with its page's title, resolved in one lookup,
+/// its snippet marked with `<mark>`, and `match_offsets` only when asked.
+async fn search_result(
+    pool: &SqlitePool,
+    mut resp: PageResponse<SearchBlockRow>,
+    space_id: &SpaceId,
+    include_match_offsets: bool,
+) -> Result<Value, AppError> {
+    // #828 — the backend snippet carries PUA sentinels (U+E000/U+E001) the web
+    // UI parses; the agent-facing contract is <mark>/</mark>.
     for row in &mut resp.items {
         if let Some(s) = row.snippet.take() {
             row.snippet = Some(
@@ -1572,7 +1670,40 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
             );
         }
     }
-    to_tool_result(&resp)
+    let page_ids = resp.items.iter().filter_map(|r| r.page_id.as_deref());
+    let titles = page_titles(pool, page_ids, space_id).await?;
+    let mut result = to_tool_result(&resp)?;
+    let rows = result["items"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object_mut);
+    for (row, block) in rows.zip(&resp.items) {
+        if !include_match_offsets {
+            row.remove("match_offsets");
+        }
+        let title = block
+            .page_id
+            .as_ref()
+            .and_then(|id| titles.get(id).cloned().flatten());
+        if let Some(title) = title {
+            row.insert("page_title".into(), Value::String(title));
+        }
+    }
+    Ok(result)
+}
+
+/// The titles of the blocks `ids` names in `space_id`, in one lookup.
+async fn page_titles(
+    pool: &SqlitePool,
+    ids: impl Iterator<Item = &str>,
+    space_id: &SpaceId,
+) -> Result<HashMap<String, Option<String>>, AppError> {
+    let ids: HashSet<&str> = ids.collect();
+    let ids = ids.into_iter().map(BlockId::from_trusted).collect();
+    let scope = SpaceScope::Active(space_id.clone());
+    let resolved = batch_resolve_inner(pool, ids, &scope).await?;
+    Ok(resolved.into_iter().map(|r| (r.id, r.title)).collect())
 }
 
 async fn handle_get_block(
@@ -1589,7 +1720,16 @@ async fn handle_get_block(
     // agent cannot fetch tombstoned rows. The MCP read surface
     // mirrors the Tauri IPC `get_block` command's contract.
     let block = get_active_block_inner(pool, block_id.into()).await?;
-    to_tool_result(&with_metadata(pool, block).await?)
+    // A page's title is its own `content`.
+    let page_id = block.page_id.clone().filter(|_| block.block_type != "page");
+    let mut result = to_tool_result(&with_metadata(pool, block).await?)?;
+    if let Some(page_id) = page_id {
+        let titles = page_titles(pool, std::iter::once(page_id.as_str()), &space_id).await?;
+        if let Some(Some(title)) = titles.get(page_id.as_str()) {
+            result["page_title"] = Value::String(title.clone());
+        }
+    }
+    Ok(result)
 }
 
 async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
@@ -1984,9 +2124,7 @@ async fn query_titles(
                 .filter_map(|g| BlockId::from_string(&g.key).ok().map(BlockId::into_string)),
         );
     }
-    let ids = ids.iter().map(|id| BlockId::from_trusted(id)).collect();
-    let resolved = batch_resolve_inner(pool, ids, &SpaceScope::Active(space_id)).await?;
-    Ok(resolved.into_iter().map(|r| (r.id, r.title)).collect())
+    page_titles(pool, ids.iter().map(String::as_str), &space_id).await
 }
 
 /// One `query` row: the block, its page's title and the touched properties.

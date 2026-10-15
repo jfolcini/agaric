@@ -512,7 +512,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 39,
+      "count": 40,
       "ops": [
         {
           "op_type": "delete_block"
@@ -624,6 +624,9 @@
         },
         {
           "op_type": "edit_block"
+        },
+        {
+          "op_type": "add_page_alias"
         },
         {
           "op_type": "create_block"
@@ -789,7 +792,7 @@
       "code": null,
       "error": null,
       "name": "roadmap_gets_the_alias_rm",
-      "returns": ["set_page_aliases#inserted=rm"]
+      "returns": ["set_page_aliases#alias=rm"]
     },
     {
       "code": null,

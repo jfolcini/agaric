@@ -1,22 +1,15 @@
 ---
 source: src/mcp/tools_ro/tests.rs
-assertion_line: 1775
 expression: result
 ---
 has_more: false
 items:
   - block_type: content
     content: findme please
-    deleted_at: ~
-    due_date: ~
     id: "[ULID]"
-    match_offsets: []
     page_id: "[ULID]"
-    parent_id: ~
+    page_title: findme please
     position: 1
-    priority: ~
-    scheduled_date: ~
     snippet: "<mark>findme</mark> please"
-    todo_state: ~
 next_cursor: "[CURSOR]"
 total_count: ~

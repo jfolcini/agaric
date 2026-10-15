@@ -42,7 +42,7 @@ async fn front_matter_page(pool: &SqlitePool, mat: &Materializer) -> (BlockId, B
     let page = dup_page(pool, mat, "Front").await;
     let body = dup_child(pool, mat, &page, "body").await;
     set_text(pool, mat, &page, "stage", "open").await;
-    set_page_aliases_inner(pool, page.as_str(), vec!["Home base".into()])
+    set_page_aliases_inner(pool, DEV, mat, page.as_str(), vec!["Home base".into()])
         .await
         .unwrap();
     insert_block(pool, WORK, "tag", "work", None, Some(1)).await;
@@ -296,9 +296,15 @@ async fn apply_page_source_merge_keeps_the_front_matter_the_page_changed() {
     delete_property_inner(&pool, DEV, &mat, page.as_str().into(), "drop".into())
         .await
         .unwrap();
-    set_page_aliases_inner(&pool, page.as_str(), vec!["Home base".into(), "HQ".into()])
-        .await
-        .unwrap();
+    set_page_aliases_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.as_str(),
+        vec!["Home base".into(), "HQ".into()],
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
     let source = with(
         &with(
@@ -330,8 +336,8 @@ async fn apply_page_source_merge_keeps_the_front_matter_the_page_changed() {
 
     assert_eq!(
         ops_after(&pool, before).await,
-        ["set_property"],
-        "`stage` alone: the page already holds `mood` and has no `drop`"
+        ["set_property", "add_page_alias"],
+        "`stage` and `Den` alone: the page already holds `mood` and `HQ` and has no `drop`"
     );
     assert_eq!(
         dup_storage(&pool, &page).await,

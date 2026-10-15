@@ -149,9 +149,9 @@ pub use pages::{
     import_markdown_with_progress, list_all_pages_in_space, list_all_pages_in_space_inner,
     list_page_aliases_by_prefix, list_page_aliases_by_prefix_inner, list_page_links,
     list_page_links_inner, list_page_links_inner_split, list_page_links_inner_split_with_cap,
-    list_pages_inner, list_template_page_ids_in_space, list_template_page_ids_in_space_inner,
-    load_page_subtree, load_page_subtree_inner, paste_blocks, paste_blocks_inner,
-    resolve_page_by_alias, resolve_page_by_alias_inner, set_page_aliases, set_page_aliases_inner,
+    list_template_page_ids_in_space, list_template_page_ids_in_space_inner, load_page_subtree,
+    load_page_subtree_inner, paste_blocks, paste_blocks_inner, resolve_page_by_alias,
+    resolve_page_by_alias_inner, set_page_aliases, set_page_aliases_inner,
 };
 pub use properties::{
     create_property_def, create_property_def_in_tx, create_property_def_inner, delete_property,
@@ -168,11 +168,11 @@ pub use properties::{
 pub use queries::{
     DateFilter, DateOp, MatchOffset, NamedDateRange, PropertyFilter, SearchBlockRow, SearchFilter,
     SearchPropertyFilter, TagFilterExpr, count_backlinks_batch, count_backlinks_batch_inner,
-    filtered_blocks_query, filtered_blocks_query_inner, get_backlinks, get_backlinks_inner,
-    get_status, get_status_inner, list_backlinks_grouped, list_backlinks_grouped_inner,
-    list_unfinished_tasks, list_unfinished_tasks_inner, list_unlinked_references,
-    list_unlinked_references_inner, query_by_property, query_by_property_inner, search_blocks,
-    search_blocks_inner,
+    count_unlinked_references, count_unlinked_references_inner, filtered_blocks_query,
+    filtered_blocks_query_inner, get_backlinks, get_backlinks_inner, get_status, get_status_inner,
+    list_backlinks_grouped, list_backlinks_grouped_inner, list_unfinished_tasks,
+    list_unfinished_tasks_inner, list_unlinked_references, list_unlinked_references_inner,
+    query_by_property, query_by_property_inner, search_blocks, search_blocks_inner,
 };
 pub use recovery::get_recovery_status;
 pub use spaces::{

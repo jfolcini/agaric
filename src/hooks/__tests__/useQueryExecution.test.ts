@@ -603,7 +603,7 @@ describe('fetchBacklinksQuery', () => {
 // `fetchFilteredQuery` no longer fans out one
 // IPC per sub-filter and intersects in JS; it delegates to the new
 // `filtered_blocks_query` IPC which composes the AND in SQL via
-// EXISTS subqueries. Pre-Tier-2.10b the FE silently dropped any
+// id-set subqueries. Pre-Tier-2.10b the FE silently dropped any
 // AND-set member outside the top-200 of any one sub-query because the
 // 200-row sub-query cap was applied BEFORE the JS intersection.
 describe('fetchFilteredQuery', () => {
@@ -800,7 +800,7 @@ describe('dispatchQuery', () => {
     )
 
     // ONE IPC — composes property + tag filters into a single SQL
-    // EXISTS-chain on the backend.
+    // statement on the backend.
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('filtered_blocks_query', expect.anything())
     expect(mockedInvoke).not.toHaveBeenCalledWith('query_by_property', expect.anything())

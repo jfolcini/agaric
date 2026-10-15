@@ -1,6 +1,6 @@
 //! Page listing / lookup command handlers (#644 split).
 //!
-//! `list_pages_inner`, `get_page_inner`, `list_all_pages_in_space`,
+//! `get_page_inner`, `list_all_pages_in_space`,
 //! `list_template_page_ids_in_space`, `load_page_subtree` and their cores,
 //! plus the response/heading shapes and the MCP page-limit cap.
 
@@ -17,61 +17,18 @@ use agaric_core::error::AppError;
 use agaric_core::error::ValidationCode;
 use agaric_core::ulid::BlockId;
 use agaric_store::pagination::{
-    self, BlockRow, NULL_POSITION_SENTINEL, PageRequest, PageResponse, position_keyset_binds,
+    BlockRow, NULL_POSITION_SENTINEL, PageRequest, position_keyset_binds,
     split_position_keyset_page,
 };
 use agaric_store::space::SpaceScope;
 
 use super::super::*;
 
-/// Maximum `limit` accepted by `list_pages_inner` / `get_page_inner`.
+/// Maximum `limit` accepted by `get_page_inner` and `list_pages_with_metadata_inner`.
 /// Values outside [1, 100] are rejected with [`AppError::Validation`]
 /// before reaching the underlying pagination layer. Matches the
 /// tool-surface cap.
 pub const MCP_PAGE_LIMIT_CAP: i64 = 100;
-
-/// List the pages of one space with cursor pagination.
-///
-/// Returns non-deleted, non-conflict blocks with `block_type = 'page'`
-/// in `space_id`, ordered by `id ASC` (ULID ≈ chronological). A supplied `limit`
-/// outside `[1, MCP_PAGE_LIMIT_CAP]` is rejected with
-/// [`AppError::Validation`]; callers can still fetch all pages via the
-/// returned cursor.
-///
-/// Thin wrapper over [`pagination::list_by_type`]; used directly by the
-/// MCP `list_pages` tool. Frontend code reaches for backlinks /
-/// FTS instead and does not call this.
-#[instrument(skip(pool), err)]
-pub async fn list_pages_inner(
-    pool: &SqlitePool,
-    space_id: &str,
-    cursor: Option<String>,
-    limit: Option<i64>,
-) -> Result<PageResponse<BlockRow>, AppError> {
-    // limit-clamp-followup Phase 1: reject limits outside
-    // `[1, MCP_PAGE_LIMIT_CAP]` loudly (was silently clamped).
-    // #1665: on the MCP path `validate_limit` (mcp/tools_ro.rs) runs first
-    // and short-circuits, so this message never reaches an MCP agent; this
-    // check is the non-MCP (direct command/IPC) backstop — keep both.
-    if let Some(l) = limit
-        && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
-    {
-        return Err(AppError::validation(format!(
-            "list_pages limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}. \
-                 For larger result sets, use cursor pagination."
-        )));
-    }
-    let page = PageRequest::new(cursor, limit)?;
-    // Downcast at the MCP-facing boundary to keep the tool's wire shape
-    // stable; the active-typing invariant lives inside `list_by_type`.
-    let resp = pagination::list_by_type(pool, "page", &page, Some(space_id)).await?;
-    Ok(PageResponse {
-        items: resp.items.into_iter().map(BlockRow::from).collect(),
-        next_cursor: resp.next_cursor,
-        has_more: resp.has_more,
-        total_count: resp.total_count,
-    })
-}
 
 /// Response shape for [`get_page_inner`] — the page itself plus its
 /// paginated subtree of non-conflict descendants.

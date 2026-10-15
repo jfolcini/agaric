@@ -1300,6 +1300,7 @@ async fn page_link_cache_reconciles_and_reports_an_unmaintained_rollup() {
                     src_deleted: false,
                     tgt_deleted: false,
                     tgt_is_page: true,
+                    space_id: None,
                 },
             ),
             (
@@ -1309,6 +1310,7 @@ async fn page_link_cache_reconciles_and_reports_an_unmaintained_rollup() {
                     src_deleted: false,
                     tgt_deleted: false,
                     tgt_is_page: true,
+                    space_id: None,
                 },
             ),
         ]
@@ -1416,6 +1418,104 @@ async fn page_link_cache_reconciles_and_reports_an_unmaintained_rollup() {
         (1, 1),
         "only NESTED_PAGE -> PAGE_B should survive, flagged tgt_deleted, got {end:?}"
     );
+}
+
+/// Re-home a page group the way a `space` op's projection does
+/// (`project_set_property_to_sql`): the page and every block it owns.
+async fn move_page_group(pool: &sqlx::SqlitePool, page: &str, space: &str) {
+    // dynamic-sql: test-only fault injection (not a production query path).
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+        .bind(space)
+        .bind(page)
+        .bind(page)
+        .execute(pool)
+        .await
+        .expect("move page group");
+}
+
+/// **`page_link_cache.space_id`** (#5426). The column must equal the fold for
+/// an edge that becomes same-space AND for one that stops being, because the
+/// scoped graph read filters on it alone.
+///
+/// The injected state is the real one: a `space` op re-homes a page group in
+/// its own transaction, and every edge of that group keeps its old answer
+/// until the `RebuildPageLinkCache` the op's dispatch enqueues has run. The
+/// `pages_cache` counts move with the same op, so they are settled first and
+/// the page-link row is the divergence reported.
+#[tokio::test]
+async fn page_link_cache_space_id_follows_a_page_between_spaces_5426() {
+    let (pool, _dir) = space_fixture().await;
+    for id in [A_CHILD, A_GRAND, N_CHILD] {
+        agaric_store::cache::set_block_space_id_from_parent(&pool, id)
+            .await
+            .expect("set_block_space_id_from_parent");
+    }
+    // PAGE_A (SPACE_X) -> PAGE_B (SPACE_Y) crosses spaces; NESTED_PAGE ->
+    // PAGE_B stays inside SPACE_Y, and so does NESTED_PAGE -> B_CHILD, whose
+    // target is not a page.
+    insert_block_link(&pool, A_CHILD, PAGE_B).await;
+    insert_block_link(&pool, N_CHILD, PAGE_B).await;
+    insert_block_link(&pool, N_CHILD, B_CHILD).await;
+    settle_pages_cache(&pool).await;
+    settle_page_link_cache_rebuild(&pool)
+        .await
+        .expect("page_link_cache rebuild");
+    assert_reconciled(&pool, "the edges rolled up").await;
+
+    // NON-VACUITY, by value: the fold must tell the three edges apart.
+    let folded = rebuild_page_link_cache_from_base(&pool, &dump_blocks(&pool).await.expect("dump"))
+        .await
+        .expect("page-link rebuild");
+    let shared_space = |source: &str, target: &str| {
+        folded[&(source.to_owned(), target.to_owned())]
+            .space_id
+            .clone()
+    };
+    assert_eq!(
+        (
+            shared_space(PAGE_A, PAGE_B),
+            shared_space(NESTED_PAGE, PAGE_B),
+            shared_space(NESTED_PAGE, B_CHILD)
+        ),
+        (None, Some(SPACE_Y.to_owned()), None),
+        "only the page-to-page edge inside SPACE_Y carries a space"
+    );
+
+    // Direction 1 — the edge BECOMES same-space: PAGE_A joins SPACE_Y.
+    move_page_group(&pool, PAGE_A, SPACE_Y).await;
+    settle_pages_cache(&pool).await;
+    let joined = reconciliation_failure(&pool, "page moved into its target's space")
+        .await
+        .expect("oracle must report the space_id the move left behind");
+    assert!(
+        joined.contains("page_link_cache.edge")
+            && joined.contains(&format!("{PAGE_A} -> {PAGE_B}"))
+            && joined.contains(&format!("space_id: Some(\"{SPACE_Y}\")"))
+            && joined.contains("space_id: None"),
+        "expected a space_id divergence on PAGE_A -> PAGE_B naming both values, got:\n{joined}"
+    );
+    settle_page_link_cache_rebuild(&pool)
+        .await
+        .expect("page_link_cache rebuild");
+    assert_reconciled(&pool, "after the rebuild the space op enqueues").await;
+
+    // Direction 2 — the edge STOPS being same-space: NESTED_PAGE leaves SPACE_Y.
+    move_page_group(&pool, NESTED_PAGE, SPACE_X).await;
+    settle_pages_cache(&pool).await;
+    let left = reconciliation_failure(&pool, "page moved out of its target's space")
+        .await
+        .expect("oracle must report the space_id the move left behind");
+    assert!(
+        left.contains("page_link_cache.edge")
+            && left.contains(&format!("{NESTED_PAGE} -> {PAGE_B}"))
+            && left.contains(&format!("space_id: Some(\"{SPACE_Y}\")"))
+            && left.contains("space_id: None"),
+        "expected a space_id divergence on NESTED_PAGE -> PAGE_B naming both values, got:\n{left}"
+    );
+    settle_page_link_cache_rebuild(&pool)
+        .await
+        .expect("page_link_cache rebuild");
+    assert_reconciled(&pool, "after the rebuild the second space op enqueues").await;
 }
 
 // ---------------------------------------------------------------------------

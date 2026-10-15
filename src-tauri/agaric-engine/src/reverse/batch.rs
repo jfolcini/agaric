@@ -91,7 +91,7 @@
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use std::str::FromStr;
 
-use super::{attachment_ops, block_ops, tag_ops};
+use super::{alias_ops, attachment_ops, block_ops, tag_ops};
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_store::db::MAX_SQL_PARAMS;
@@ -399,6 +399,8 @@ fn assemble_reverses(
             OpType::PurgeBlock => Err(AppError::NonReversible {
                 op_type: record.op_type.clone(),
             }),
+            OpType::AddPageAlias => alias_ops::reverse_add_page_alias(record),
+            OpType::RemovePageAlias => alias_ops::reverse_remove_page_alias(record),
         };
         match reverse {
             Ok(payload) => result.push(Ok(payload)),

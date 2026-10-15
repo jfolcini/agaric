@@ -965,6 +965,113 @@ pub async fn project_remove_tag_to_sql(
     Ok(())
 }
 
+/// Project an `AddPageAlias` into `page_aliases` (#5387).
+///
+/// `page_aliases.alias` is unique across pages, so an alias another page
+/// already holds stays with it. The write path refuses such an alias before it
+/// appends the op, so only a replay of an older op lands here, and it must not
+/// take a row from a newer one; the losing claim is logged and stays in the
+/// engine. A merge settles a contest by page id instead, in
+/// [`reproject_page_aliases_from_engine`]. Re-adding a spelling of an alias the
+/// page holds respells its row. A page with no `blocks` row writes nothing.
+pub async fn project_add_page_alias_to_sql(
+    conn: &mut SqliteConnection,
+    page_id: &str,
+    alias: &str,
+) -> Result<(), AppError> {
+    let alias = alias.trim();
+    let holder = sqlx::query_scalar!("SELECT page_id FROM page_aliases WHERE alias = ?", alias)
+        .fetch_optional(&mut *conn)
+        .await?;
+    match holder {
+        None => {
+            sqlx::query!(
+                "INSERT INTO page_aliases (page_id, alias) \
+                 SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?1)",
+                page_id,
+                alias,
+            )
+            .execute(&mut *conn)
+            .await?;
+        }
+        Some(holder) if holder == page_id => {
+            sqlx::query!(
+                "UPDATE page_aliases SET alias = ?1 WHERE page_id = ?2 AND alias = ?1",
+                alias,
+                page_id,
+            )
+            .execute(&mut *conn)
+            .await?;
+        }
+        Some(holder) => {
+            tracing::warn!(
+                page_id,
+                alias,
+                holder = %holder,
+                "page alias is already another page's; that page keeps it (#5387)"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Project a `RemovePageAlias` into `page_aliases` (#5387): drop the page's
+/// row for any spelling of `alias`. A row another page holds is not touched.
+pub async fn project_remove_page_alias_to_sql(
+    conn: &mut SqliteConnection,
+    page_id: &str,
+    alias: &str,
+) -> Result<(), AppError> {
+    let alias = alias.trim();
+    sqlx::query!(
+        "DELETE FROM page_aliases WHERE page_id = ? AND alias = ?",
+        page_id,
+        alias,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Re-project a page's aliases from the engine after an import or in disaster
+/// recovery (#5387): the page's rows become `aliases`. Rows already equal to
+/// `aliases` are left alone.
+///
+/// An alias two pages claim goes to the lower page id, whichever of the two is
+/// reprojected first and on whichever device, so engines that converged project
+/// the same rows. The loser keeps its engine entry and loses the row.
+pub async fn reproject_page_aliases_from_engine(
+    conn: &mut SqliteConnection,
+    page_id: &str,
+    aliases: &[String],
+) -> Result<(), AppError> {
+    let existing = sqlx::query_scalar!("SELECT alias FROM page_aliases WHERE page_id = ?", page_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    let desired: std::collections::HashSet<&str> = aliases.iter().map(String::as_str).collect();
+    if existing.len() == desired.len() && existing.iter().all(|a| desired.contains(a.as_str())) {
+        return Ok(());
+    }
+    sqlx::query!("DELETE FROM page_aliases WHERE page_id = ?", page_id)
+        .execute(&mut *conn)
+        .await?;
+    for alias in aliases {
+        let alias = alias.trim();
+        // A page with no `blocks` row projects nothing, so it takes nothing.
+        sqlx::query!(
+            "DELETE FROM page_aliases \
+             WHERE alias = ?1 AND page_id > ?2 \
+               AND EXISTS (SELECT 1 FROM blocks WHERE id = ?2)",
+            alias,
+            page_id,
+        )
+        .execute(&mut *conn)
+        .await?;
+        project_add_page_alias_to_sql(conn, page_id, alias).await?;
+    }
+    Ok(())
+}
+
 /// Project an engine-side block snapshot to SQL after a sync-pull
 /// import. Drives the `apply_remote` side of
 /// `sync_protocol::loro_sync`.
@@ -4784,6 +4891,153 @@ mod tests {
             landed, 0,
             "the tx rolled back whole: no row, and above all no row silently \
              reparented to the vault root with parent_id = NULL"
+        );
+    }
+
+    /// Two pages, `BLOCK_A` and `BLOCK_B`, for the page-alias projections.
+    async fn seed_two_pages(pool: &SqlitePool) {
+        for id in [BLOCK_A, BLOCK_B] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'page', 'P', NULL, 0, ?)",
+            )
+            .bind(id)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    async fn page_alias_rows(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as("SELECT page_id, alias FROM page_aliases ORDER BY page_id, alias")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn page_alias_projection_keeps_the_first_claim_and_respells_its_own() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_two_pages(&pool).await;
+        let mut conn = pool.acquire().await.unwrap();
+        project_add_page_alias_to_sql(&mut conn, BLOCK_A, " Plans ")
+            .await
+            .unwrap();
+        project_add_page_alias_to_sql(&mut conn, BLOCK_B, "plans")
+            .await
+            .unwrap();
+        drop(conn);
+        assert_eq!(
+            page_alias_rows(&pool).await,
+            vec![(BLOCK_A.to_owned(), "Plans".to_owned())],
+            "the first claim keeps the alias, trimmed"
+        );
+
+        let mut conn = pool.acquire().await.unwrap();
+        project_remove_page_alias_to_sql(&mut conn, BLOCK_B, "plans")
+            .await
+            .unwrap();
+        project_add_page_alias_to_sql(&mut conn, BLOCK_A, "PLANS")
+            .await
+            .unwrap();
+        project_add_page_alias_to_sql(&mut conn, "01HZ00000000000000000000Z9", "ghost")
+            .await
+            .unwrap();
+        drop(conn);
+        assert_eq!(
+            page_alias_rows(&pool).await,
+            vec![(BLOCK_A.to_owned(), "PLANS".to_owned())],
+            "a loser's remove leaves it, its own page respells it, and a page \
+             with no row writes nothing"
+        );
+
+        let mut conn = pool.acquire().await.unwrap();
+        project_remove_page_alias_to_sql(&mut conn, BLOCK_A, "plans")
+            .await
+            .unwrap();
+        drop(conn);
+        assert!(
+            page_alias_rows(&pool).await.is_empty(),
+            "removal folds case"
+        );
+    }
+
+    #[tokio::test]
+    async fn page_alias_reprojection_replaces_the_page_rows_with_the_engine_set() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_two_pages(&pool).await;
+        let mut conn = pool.acquire().await.unwrap();
+        for alias in ["a", "b"] {
+            project_add_page_alias_to_sql(&mut conn, BLOCK_A, alias)
+                .await
+                .unwrap();
+        }
+        project_add_page_alias_to_sql(&mut conn, BLOCK_B, "C")
+            .await
+            .unwrap();
+        let engine = vec!["b".to_owned(), "c".to_owned()];
+        reproject_page_aliases_from_engine(&mut conn, BLOCK_A, &engine)
+            .await
+            .unwrap();
+        drop(conn);
+        assert_eq!(
+            page_alias_rows(&pool).await,
+            vec![
+                (BLOCK_A.to_owned(), "b".to_owned()),
+                (BLOCK_A.to_owned(), "c".to_owned())
+            ],
+            "`a` goes, and `c`, which both pages claim, goes to the lower page id"
+        );
+    }
+
+    /// Two pages claim one alias in the engine. The lowest page id holds the
+    /// row whichever page is reprojected first, so devices that merged in
+    /// different orders project the same rows.
+    #[tokio::test]
+    async fn page_alias_reprojection_gives_a_contested_alias_to_the_lowest_page_in_either_order() {
+        for order in [[BLOCK_A, BLOCK_B], [BLOCK_B, BLOCK_A]] {
+            let (pool, _dir) = fresh_pool().await;
+            seed_two_pages(&pool).await;
+            let mut conn = pool.acquire().await.unwrap();
+            for page in order {
+                // Two spellings of one alias: the fold decides the contest.
+                let claim = if page == BLOCK_A { "plans" } else { "PLANS" };
+                reproject_page_aliases_from_engine(&mut conn, page, &[claim.to_owned()])
+                    .await
+                    .unwrap();
+            }
+            drop(conn);
+            assert_eq!(
+                page_alias_rows(&pool).await,
+                vec![(BLOCK_A.to_owned(), "plans".to_owned())],
+                "reprojected in the order {order:?}"
+            );
+        }
+    }
+
+    /// A claim for a page with no `blocks` row projects nothing, so it must
+    /// not take the alias from the page that holds it either.
+    #[tokio::test]
+    async fn page_alias_reprojection_for_a_page_with_no_row_takes_nothing() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_two_pages(&pool).await;
+        let mut conn = pool.acquire().await.unwrap();
+        project_add_page_alias_to_sql(&mut conn, BLOCK_B, "plans")
+            .await
+            .unwrap();
+        reproject_page_aliases_from_engine(
+            &mut conn,
+            "01HZ00000000000000000000A0",
+            &["plans".to_owned()],
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        assert_eq!(
+            page_alias_rows(&pool).await,
+            vec![(BLOCK_B.to_owned(), "plans".to_owned())],
+            "the holder keeps the alias against a page that has no row"
         );
     }
 }

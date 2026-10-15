@@ -26,8 +26,7 @@ use super::super::*;
 // ───────────────────────────────────────────────────────────────────────────
 // List_pages_with_metadata
 //
-// Sibling IPC to `list_pages_inner`. Returns the same column shape as
-// `BlockRow` PLUS four metadata columns:
+// Returns the same column shape as `BlockRow` PLUS four metadata columns:
 //
 //   - `last_modified_at`: max(`op_log.created_at`) over the page itself,
 //     else its ULID creation time (`last_edited_ms_sql`).
@@ -712,7 +711,8 @@ fn validate_pages_filters(filters: &[FilterPrimitive]) -> Result<(), AppError> {
 /// OR-joins (include) / AND-joins (exclude) a per-pattern
 /// `PagesProjection::compile_path_glob` sub-select. The SELECT body is
 /// single-sourced through that method so the two surfaces stay in
-/// lockstep on everything but the `b.id` vs `b.page_id` alias.
+/// lockstep on the GLOB; Pages differs by the `b.id` alias and its
+/// title-range narrowing (#5426).
 ///
 /// `None` means the raw pattern reduced to zero prepared globs
 /// (whitespace-only / fully stripped), so it constrains no rows and
@@ -910,7 +910,7 @@ pub async fn list_pages_with_metadata_inner(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<PageWithMetadataRow>, AppError> {
-    // Mirror the strict limit-validation policy from `list_pages_inner`.
+    // Rejected, not clamped (AGENTS.md invariant 10).
     if let Some(l) = limit
         && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
     {

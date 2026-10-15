@@ -1,0 +1,203 @@
+{
+  "description": "#5387 — `add_page_alias` and `remove_page_alias` through Undo. An alias edit appends a `remove_page_alias` per alias that goes and then an `add_page_alias` per alias that comes; `undo_ops` over those refs reverses each into the other, newest first, so the page holds what it held before. A respelling (`Plans` → `plans`) is a remove and an add of the same folded alias, which is why the order matters: undone the other way round, the remove of `plans` would take `Plans` with it. The refused third op pins the collision refusal on a page that holds nothing yet. Both alias op types and their reverses land in the op-log digest.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Planning",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Projects",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 10,
+      "ops": [
+        {
+          "op_type": "add_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
+        },
+        {
+          "op_type": "remove_page_alias"
+        },
+        {
+          "op_type": "remove_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
+        },
+        {
+          "op_type": "remove_page_alias"
+        },
+        {
+          "op_type": "remove_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
+        },
+        {
+          "op_type": "add_page_alias"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "first_edit_adds_two",
+      "returns": ["set_page_aliases#alias=Plans", "set_page_aliases#alias=roadmap"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "second_edit_respells_and_replaces",
+      "returns": ["set_page_aliases#alias=plans", "set_page_aliases#alias=next"]
+    },
+    {
+      "code": "DuplicatePageAlias",
+      "error": "validation",
+      "name": "refuses_an_alias_another_page_holds",
+      "returns": []
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "undo_the_second_edit",
+      "returns": [
+        "undo_ops#reversed_op_type=add_page_alias#new_op_type=remove_page_alias#is_redo=false",
+        "undo_ops#reversed_op_type=add_page_alias#new_op_type=remove_page_alias#is_redo=false",
+        "undo_ops#reversed_op_type=remove_page_alias#new_op_type=add_page_alias#is_redo=false",
+        "undo_ops#reversed_op_type=remove_page_alias#new_op_type=add_page_alias#is_redo=false"
+      ]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "undo_restores_the_first_edit",
+      "rows": ["Plans", "roadmap"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "refused_edit_wrote_nothing",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "page_alias_undo",
+  "ops": [
+    {
+      "args": {
+        "aliases": ["Plans", "roadmap"],
+        "pageId": "S1"
+      },
+      "command": "set_page_aliases",
+      "comment": "O1, O2 — two `add_page_alias` ops.",
+      "name": "first_edit_adds_two",
+      "via": "command"
+    },
+    {
+      "args": {
+        "aliases": ["plans", "next"],
+        "pageId": "S1"
+      },
+      "command": "set_page_aliases",
+      "comment": "O3, O4 — `remove_page_alias` for `Plans` and `roadmap`, in `ORDER BY alias` order; O5, O6 — `add_page_alias` for `plans` and `next`.",
+      "name": "second_edit_respells_and_replaces",
+      "via": "command"
+    },
+    {
+      "args": {
+        "aliases": ["NEXT"],
+        "pageId": "S2"
+      },
+      "command": "set_page_aliases",
+      "comment": "S1 holds `next`, so S2's edit is refused with `DuplicatePageAlias` and appends nothing.",
+      "expect_code": "DuplicatePageAlias",
+      "expect_error": "validation",
+      "name": "refuses_an_alias_another_page_holds",
+      "via": "command"
+    },
+    {
+      "args": {
+        "ops": ["O3", "O4", "O5", "O6"]
+      },
+      "command": "undo_ops",
+      "comment": "One Undo of the second edit: four reverses, newest first, so S1 holds `Plans` and `roadmap` again.",
+      "name": "undo_the_second_edit",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "pageId": "S1"
+      },
+      "command": "get_page_aliases",
+      "comment": "`Plans`, `roadmap` — what the first edit wrote, restored by the Undo. A reverse applied in append order loses `Plans` to the remove of `plans`.",
+      "name": "undo_restores_the_first_edit"
+    },
+    {
+      "args": {
+        "pageId": "S2"
+      },
+      "command": "get_page_aliases",
+      "comment": "Nothing: the refused edit wrote no row.",
+      "expect_empty": true,
+      "name": "refused_edit_wrote_nothing"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Planning",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Projects",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

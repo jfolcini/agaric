@@ -104,6 +104,10 @@ pub struct MetadataPredicates {
     /// every search surface (FTS / regex / filter-only / partitioned)
     /// alongside the rest of the metadata, with no new function signatures.
     pub last_edited: Option<LastEditedSpec>,
+    /// [`SearchFilter::tags_match_inline_and_inherited`], carried here for
+    /// the same reason as [`Self::last_edited`]. Not a filter by itself, so
+    /// [`Self::is_empty`] ignores it.
+    pub tags_match_inline_and_inherited: bool,
 }
 
 /// Resolved date predicate ready for SQL composition.
@@ -147,7 +151,12 @@ impl MetadataPredicates {
 /// for any unparseable ISO date or unknown bucket keyword.
 pub fn prepare_metadata(filter: &SearchFilter) -> Result<MetadataPredicates, AppError> {
     let today = chrono::Local::now().date_naive();
-    prepare_metadata_with_today(filter, today)
+    let mut out = prepare_metadata_with_today(filter, today)?;
+    // Set here, not in `prepare_metadata_with_today`: the mock's conformance
+    // ratchet reads that body as the list of fields `is_empty` checks, and
+    // this mode is not a filter.
+    out.tags_match_inline_and_inherited = filter.tags_match_inline_and_inherited;
+    Ok(out)
 }
 
 /// Test-injected `today` variant of [`prepare_metadata`]. Production

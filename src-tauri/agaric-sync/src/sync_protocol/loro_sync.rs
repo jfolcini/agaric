@@ -1030,15 +1030,16 @@ async fn project_pass_a(
         // SetProperty / DeleteProperty changes into `block_properties`.
         // Skipped for rank-only siblings (#3162) — this import carried no
         // property change for them.
-        if let Some((props, _, _)) = full_state {
+        if let Some((props, _, _, _)) = full_state {
             reproject_block_properties_from_engine(&mut *tx, block_id, props, &value_types).await?;
         }
     }
     Ok(())
 }
 
-/// Pass B — tags. Mirrors remote AddTag / RemoveTag
-/// changes into `block_tags`.  Runs AFTER Pass A so every referenced
+/// Pass B — tags and page aliases. Mirrors remote AddTag / RemoveTag
+/// changes into `block_tags` and AddPageAlias / RemovePageAlias into
+/// `page_aliases`.  Runs AFTER Pass A so every referenced
 /// tag block already has its `blocks` row (FK ordering, see above).
 /// Read the tag list under the guard, then write in the tx — same
 /// read-under-guard-then-write-in-tx discipline as the property pass.
@@ -1050,11 +1051,16 @@ async fn project_pass_b(
     changed_blocks: &[agaric_core::ulid::BlockId],
     block_states: &[ProjectedBlockState],
 ) -> Result<(), AppError> {
-    use agaric_engine::loro::projection::reproject_block_tags_from_engine;
+    use agaric_engine::loro::projection::{
+        reproject_block_tags_from_engine, reproject_page_aliases_from_engine,
+    };
 
     for (block_id, (_, full_state)) in changed_blocks.iter().zip(block_states) {
-        if let Some((_, tag_ids, _)) = full_state {
+        if let Some((_, tag_ids, _, aliases)) = full_state {
             reproject_block_tags_from_engine(&mut *tx, block_id, tag_ids).await?;
+            if let Some(aliases) = aliases {
+                reproject_page_aliases_from_engine(&mut *tx, block_id.as_str(), aliases).await?;
+            }
         }
     }
     Ok(())
@@ -1091,7 +1097,7 @@ async fn project_pass_c(
     // full-projection member of `changed_blocks` whose call here cascades over
     // its whole subtree — these siblings included.
     for (block_id, (_, full_state)) in changed_blocks.iter().zip(block_states) {
-        let Some((_, _, engine_deleted_at)) = full_state else {
+        let Some((_, _, engine_deleted_at, _)) = full_state else {
             continue;
         };
         let stamped = reproject_block_deleted_at_from_engine(
@@ -1438,14 +1444,16 @@ type ProjectionStates = (
 );
 
 /// One block's engine state for the projection passes: the core snapshot, plus
-/// the typed properties, tags and soft-delete seed that every block except a
-/// rank-only sibling (#3162) needs.
+/// the typed properties, tags, soft-delete seed and page aliases (`None` for a
+/// block that never held one) that every block except a rank-only sibling
+/// (#3162) needs.
 type ProjectedBlockState = (
     Option<agaric_engine::loro::engine::BlockSnapshot>,
     Option<(
         Vec<(String, agaric_engine::loro::engine::PropertyValue)>,
         Vec<String>,
         Option<String>,
+        Option<Vec<String>>,
     )>,
 );
 
@@ -1567,6 +1575,7 @@ fn read_projection_states(
                 engine.read_all_properties_typed(block_id.as_str())?,
                 engine.read_tags(block_id.as_str())?,
                 engine.read_deleted_at(block_id.as_str())?,
+                engine.read_page_aliases(block_id.as_str())?,
             ))
         };
         states.push((snapshot, full_state));
@@ -1591,6 +1600,7 @@ fn read_projection_states(
             engine.read_all_properties_typed(block_id)?,
             engine.read_tags(block_id)?,
             engine.read_deleted_at(block_id)?,
+            engine.read_page_aliases(block_id)?,
         ));
         ancestor_states.push((snapshot, full_state));
     }

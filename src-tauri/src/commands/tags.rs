@@ -50,6 +50,38 @@ pub async fn add_tag_inner(
     block_id: BlockId,
     tag_id: BlockId,
 ) -> Result<TagResponse, AppError> {
+    // Single IMMEDIATE transaction: validation + op_log + block_tags write.
+    // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
+    // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
+    // and the actual mutation. CommandTx couples commit + post-commit
+    // dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "add_tag").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    add_tag_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        &block_id,
+        &tag_id,
+    )
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(TagResponse {
+        block_id: block_id.into_string(),
+        tag_id: tag_id.into_string(),
+    })
+}
+
+/// [`add_tag_inner`] inside the caller's rollback-armed transaction (MCP
+/// `batch`, #5399), the `AddTag` op enqueued for the caller's commit.
+pub(crate) async fn add_tag_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: &BlockId,
+    tag_id: &BlockId,
+) -> Result<(), AppError> {
     // I-CommandsCRUD-2 / AGENTS.md invariant #8: both ids reference
     // `blocks.id` and are already canonical uppercase — the `BlockId`
     // newtype normalises on construction (`Deserialize` / `from_trusted` /
@@ -68,27 +100,12 @@ pub async fn add_tag_inner(
         ));
     }
 
-    // 1. Build OpPayload
-    let payload = OpPayload::AddTag(AddTagPayload {
-        block_id: block_id.clone(),
-        tag_id: tag_id.clone(),
-    });
-
-    // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
-    //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
-    //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
-    // And the actual mutation. CommandTx couples commit +
-    //    post-commit dispatch.
-    let mut tx = CommandTx::begin_immediate(pool, "add_tag").await?;
-    // #2604 — rollback-safe engine apply (rewind on tx abort).
-    tx.arm_engine_rollback(materializer.loro_state());
-
     // Validate block exists and is not deleted (TOCTOU-safe)
     let exists = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id_str
     )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -101,7 +118,7 @@ pub async fn add_tag_inner(
         "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
         tag_id_str
     )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
     match tag_row {
         None => {
@@ -118,32 +135,22 @@ pub async fn add_tag_inner(
         _ => {}
     }
 
-    // 3-5. Cross-space resolution / orphan adoption + dup-check + op append +
-    //      block_tags insert + inheritance propagation, all via the shared
-    //      `apply_tag_to_block_in_tx` helper (also used by the bulk path).
-    //      `payload` is consumed inside the helper. A `None` result means the
-    //      association already exists — the single-row path surfaces that as
-    //      an explicit `InvalidOperation` error (the bulk path skips it).
-    let op_record = apply_tag_to_block_in_tx(
-        &mut tx,
-        materializer.loro_state(),
-        device_id,
-        block_id_str,
-        tag_id_str,
-        payload,
-    )
-    .await?
-    .ok_or_else(|| AppError::InvalidOperation("tag already applied".into()))?;
-
-    // 6. Commit + dispatch background cache tasks (fire-and-forget).
+    // Cross-space resolution / orphan adoption + dup-check + op append +
+    // block_tags insert + inheritance propagation, all via the shared
+    // `apply_tag_to_block_in_tx` helper (also used by the bulk path). A
+    // `None` result means the association already exists — the single-row
+    // path surfaces that as an explicit `InvalidOperation` error (the bulk
+    // path skips it).
+    let payload = OpPayload::AddTag(AddTagPayload {
+        block_id: block_id.clone(),
+        tag_id: tag_id.clone(),
+    });
+    let op_record =
+        apply_tag_to_block_in_tx(tx, state, device_id, block_id_str, tag_id_str, payload)
+            .await?
+            .ok_or_else(|| AppError::InvalidOperation("tag already applied".into()))?;
     tx.enqueue_background(op_record);
-    tx.commit_and_dispatch(materializer).await?;
-
-    // 7. Return response
-    Ok(TagResponse {
-        block_id: block_id.into_string(),
-        tag_id: tag_id.into_string(),
-    })
+    Ok(())
 }
 
 /// Apply a single `tag_id → block_id` association inside an existing
@@ -383,29 +390,53 @@ pub async fn remove_tag_inner(
     block_id: BlockId,
     tag_id: BlockId,
 ) -> Result<TagResponse, AppError> {
+    // Single IMMEDIATE transaction: validation + op_log + block_tags write.
+    // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
+    // SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
+    // and the actual mutation. CommandTx couples commit + post-commit
+    // dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "remove_tag").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+    remove_tag_inner_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        &block_id,
+        &tag_id,
+    )
+    .await?;
+    tx.commit_and_dispatch(materializer).await?;
+    Ok(TagResponse {
+        block_id: block_id.into_string(),
+        tag_id: tag_id.into_string(),
+    })
+}
+
+/// [`remove_tag_inner`] inside the caller's rollback-armed transaction (MCP
+/// `batch`, #5399): unlike [`remove_tag_in_tx`], a missing block or a block
+/// without the tag is refused. The `RemoveTag` op is enqueued for the
+/// caller's commit.
+pub(crate) async fn remove_tag_inner_in_tx(
+    tx: &mut CommandTx,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
+    block_id: &BlockId,
+    tag_id: &BlockId,
+) -> Result<(), AppError> {
     // I-CommandsCRUD-2 / AGENTS.md invariant #8: both ids reference
     // `blocks.id` and are already canonical uppercase — the `BlockId`
     // newtype normalises on construction, so no separate
     // `to_ascii_uppercase()` pass is needed for the byte-exact ULID
     // comparisons below.
     let block_id_str = block_id.as_str();
-    let tag_id_str = tag_id.as_str();
-
-    // 1. Single IMMEDIATE transaction: validation + op_log + block_tags write.
-    //    BEGIN IMMEDIATE eagerly acquires the write lock, preventing
-    //    SQLITE_BUSY_SNAPSHOT and fixing the TOCTOU window between validation
-    // And the actual mutation. CommandTx couples commit +
-    //    post-commit dispatch.
-    let mut tx = CommandTx::begin_immediate(pool, "remove_tag").await?;
-    // #2604 — rollback-safe engine apply (rewind on tx abort).
-    tx.arm_engine_rollback(materializer.loro_state());
 
     // Validate block exists and is not deleted (TOCTOU-safe)
     let exists = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id_str
     )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!(
@@ -413,27 +444,13 @@ pub async fn remove_tag_inner(
         )));
     }
 
-    // 2-4. Association check + op append + projection, shared with the
-    //      source save's front matter (#5160 S8).
-    let op_record = remove_tag_in_tx(
-        &mut tx,
-        materializer.loro_state(),
-        device_id,
-        block_id_str,
-        tag_id_str,
-    )
-    .await?
-    .ok_or_else(|| AppError::NotFound("tag association".into()))?;
-
-    // 5. Commit + dispatch background cache tasks (fire-and-forget).
+    // Association check + op append + projection, shared with the source
+    // save's front matter (#5160 S8).
+    let op_record = remove_tag_in_tx(tx, state, device_id, block_id_str, tag_id.as_str())
+        .await?
+        .ok_or_else(|| AppError::NotFound("tag association".into()))?;
     tx.enqueue_background(op_record);
-    tx.commit_and_dispatch(materializer).await?;
-
-    // 6. Return response
-    Ok(TagResponse {
-        block_id: block_id.into_string(),
-        tag_id: tag_id.into_string(),
-    })
+    Ok(())
 }
 
 /// Remove `tag_id` from `block_id` in the caller's transaction, as

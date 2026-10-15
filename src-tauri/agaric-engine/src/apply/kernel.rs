@@ -541,6 +541,22 @@ pub async fn apply_op_tx(
     apply_op_tx_with_mode(conn, record, chunk, state, ApplyMode::Normal).await
 }
 
+/// `AddPageAlias` / `RemovePageAlias` (#5387); neither moves the cache counts.
+async fn apply_page_alias_op(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    record: &OpRecord,
+    op_type: OpType,
+) -> Result<(), AppError> {
+    if op_type == OpType::AddPageAlias {
+        let p: AddPageAliasPayload = serde_json::from_str(&record.payload)?;
+        apply_add_page_alias_via_loro(conn, state, &record.device_id, &p).await
+    } else {
+        let p: RemovePageAliasPayload = serde_json::from_str(&record.payload)?;
+        apply_remove_page_alias_via_loro(conn, state, &record.device_id, &p).await
+    }
+}
+
 /// #2896 — [`apply_op_tx`] with an EXPLICIT [`ApplyMode`]. Boot replay passes
 /// [`ApplyMode::ReplaySuppressed`] so each replayed create/move records its
 /// touched sibling group into the replay-owned [`ReplayDirtyParents`] sink
@@ -631,6 +647,9 @@ pub async fn apply_op_tx_with_mode(
         OpType::RenameAttachment => {
             let p: RenameAttachmentPayload = serde_json::from_str(&record.payload)?;
             apply_rename_attachment_tx(conn, p).await?;
+        }
+        OpType::AddPageAlias | OpType::RemovePageAlias => {
+            apply_page_alias_op(conn, state, record, op_type).await?;
         }
     }
     // Maintain `pages_cache.{inbound_link_count,child_block_count}`.

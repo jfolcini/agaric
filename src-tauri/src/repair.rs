@@ -1,4 +1,4 @@
-//! Boot driver for [`agaric_engine::repair`] (#4728, #4715, #5074).
+//! Boot driver for [`agaric_engine::repair`] (#4728, #4715, #5074, #5387).
 //!
 //! Runs once per boot, after `bootstrap_spaces` and the empty-block sweep,
 //! and never fails boot. Each repair gets a `CommandTx` of its own with the
@@ -34,6 +34,7 @@ use agaric_engine::repair::RepairOp;
 use agaric_engine::repair::completed_at::repair_completed_at;
 use agaric_engine::repair::journal_duplicates::repair_journal_duplicates;
 use agaric_engine::repair::orphans::repair_orphans;
+use agaric_engine::repair::page_aliases::repair_page_aliases;
 use agaric_store::op_log::OpRecord;
 
 /// The repairs, in the order they run. Each is independent of the others; the
@@ -43,16 +44,23 @@ enum Repair {
     Orphans,
     JournalDuplicates,
     CompletedAt,
+    PageAliases,
 }
 
 impl Repair {
-    const ALL: [Self; 3] = [Self::Orphans, Self::JournalDuplicates, Self::CompletedAt];
+    const ALL: [Self; 4] = [
+        Self::Orphans,
+        Self::JournalDuplicates,
+        Self::CompletedAt,
+        Self::PageAliases,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Self::Orphans => "repair_orphans",
             Self::JournalDuplicates => "repair_journal_duplicates",
             Self::CompletedAt => "repair_completed_at",
+            Self::PageAliases => "repair_page_aliases",
         }
     }
 }
@@ -123,6 +131,11 @@ async fn run(
                 r.ops,
                 format!("backfilled = {}, cleared = {}", r.backfilled, r.cleared),
             )
+        }
+        Repair::PageAliases => {
+            let r = repair_page_aliases(&mut tx, state, device_id).await?;
+            let summary = format!("backfilled = {}", r.ops.len());
+            (r.ops, summary)
         }
     };
     let mut deletes: Vec<(Arc<OpRecord>, ApplyEffects)> = Vec::new();

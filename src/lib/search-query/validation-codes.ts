@@ -40,6 +40,8 @@ export const ValidationCode = {
   InvalidRepeatRule: 'InvalidRepeatRule',
   /** Page rename to a title another live page in the same space carries (#4723). */
   DuplicatePageTitle: 'DuplicatePageTitle',
+  /** An alias another page already holds, at `set_page_aliases` or its undo (#5387). */
+  DuplicatePageAlias: 'DuplicatePageAlias',
 } as const satisfies { [K in GeneratedValidationCode]: K }
 
 /**

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO page_aliases (page_id, alias) SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "7e7c2d502d873f07d913f604b205ccc7ac7ab2410f56bc38b3e83f696f736847"
+}

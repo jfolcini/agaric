@@ -101,9 +101,8 @@ pub fn engine_apply(
     }
 }
 
-/// Dispatch on op_type. Covers ten op types (CreateBlock /
-/// EditBlock / DeleteBlock / MoveBlock / SetProperty / AddTag /
-/// RemoveTag / RestoreBlock / PurgeBlock / DeleteProperty).
+/// Dispatch on op_type. Covers every op type the engine models (the block,
+/// property, tag and page-alias ops).
 /// AddAttachment / DeleteAttachment log+skip — those are file-blob ops and
 /// the file lives outside the CRDT state, so nothing reaches the engine.
 fn dispatch_engine_op(
@@ -158,6 +157,12 @@ fn dispatch_engine_op(
         agaric_store::op::OpPayload::PurgeBlock(p) => engine.apply_purge_block(p.block_id.as_str()),
         agaric_store::op::OpPayload::DeleteProperty(p) => {
             engine.apply_delete_property(p.block_id.as_str(), &p.key)
+        }
+        agaric_store::op::OpPayload::AddPageAlias(p) => {
+            engine.apply_add_page_alias(p.page_id.as_str(), &p.alias)
+        }
+        agaric_store::op::OpPayload::RemovePageAlias(p) => {
+            engine.apply_remove_page_alias(p.page_id.as_str(), &p.alias)
         }
         // AddAttachment / DeleteAttachment are out of scope:
         // attachments are file-blobs that live outside CRDT state —

@@ -71,6 +71,20 @@ vi.mock('@/lib/bindings', async () => {
       listTagsByPrefix: mockListTagsByPrefix,
       listUnlinkedReferences: (...args: unknown[]) =>
         mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
+      // #5422 — the collapsed, unfiltered panel asks for the count only: the
+      // list stub's limit-1 answer with no groups, read through its
+      // implementation so it records no list call.
+      countUnlinkedReferences: async (pageId: unknown, scope: unknown) => {
+        const listed = await mockListUnlinkedReferences.getMockImplementation()?.(
+          pageId,
+          null,
+          null,
+          null,
+          1,
+          scope,
+        )
+        return { status: 'ok', data: { ...listed, groups: [], next_cursor: null, has_more: false } }
+      },
       getPageAliases: (...args: unknown[]) =>
         mockGetPageAliases(...args).then((data: unknown) => ({ status: 'ok', data })),
       editBlock: (...args: unknown[]) =>
@@ -237,8 +251,8 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
     const user = userEvent.setup()
     let releaseExpanded: ((v: GroupedBacklinkResponse) => void) | undefined
     mockedListUnlinked.mockImplementation(async (_pageId, _filters, _sort, _cursor, limit) => {
-      // The collapsed panel asks for a single group (#3316 item 2) and gets the
-      // exact counts back; expanding re-keys the query to the full page.
+      // The collapsed panel's count (#5422) is this limit-1 answer's counts;
+      // expanding re-keys the query to the full page.
       if (Number(limit) === 1) return makeResponse({ ids: ['B1'], total: 12, filtered: 12 })
       return new Promise<GroupedBacklinkResponse>((resolve) => {
         releaseExpanded = resolve
