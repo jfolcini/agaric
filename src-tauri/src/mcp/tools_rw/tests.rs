@@ -3307,7 +3307,8 @@ async fn a_lowercase_ulid_argument_is_still_the_id_5397() {
 /// `name`'s result, and how many `CommandTx`s the call opened.
 async fn command_txs_of(tools: &ReadWriteTools, name: &str, args: Value) -> (Value, usize) {
     let (result, opened) =
-        crate::db::count_command_tx_opens(tools.call_tool(name, args, &test_ctx_agent())).await;
+        crate::db::count_command_tx_opens(Box::pin(tools.call_tool(name, args, &test_ctx_agent())))
+            .await;
     (
         result.unwrap_or_else(|e| panic!("{name} must succeed: {e:?}")),
         opened,
