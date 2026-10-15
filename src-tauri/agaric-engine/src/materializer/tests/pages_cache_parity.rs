@@ -340,6 +340,52 @@ async fn cohort_ops_defer_the_count_recompute_2042() {
     );
 }
 
+/// #5423 — an edit does not recompute its own page's counts. It moves no block
+/// into or out of the page, and the page's inbound count skips sources on the
+/// page itself, so that recompute could only re-derive the stored values; the
+/// edits in the parity tests around this one pin that the counts stay right
+/// without it.
+///
+/// A deliberately wrong seeded value stands in for the recompute's output, as in
+/// `cohort_ops_defer_the_count_recompute_2042`, so the assertion fails the moment
+/// an edit recomputes its page again.
+#[tokio::test]
+async fn edit_leaves_its_own_page_counts_alone_5423() {
+    let (pool, _dir) = test_pool().await;
+    seed_page(&pool, "PAGE_E", "Page E").await;
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+             VALUES ('CHILD_E', 'content', 'before', 'PAGE_E', 'PAGE_E')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Deliberately wrong: the real count is 1.
+    sqlx::query("UPDATE pages_cache SET child_block_count = 99 WHERE page_id = 'PAGE_E'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let payload = r#"{"block_id":"CHILD_E","to_text":"after","prev_edit":null}"#;
+    run_op(&pool, op_task("edit_block", payload), &[]).await;
+
+    let content: Option<String> =
+        sqlx::query_scalar("SELECT content FROM blocks WHERE id = 'CHILD_E'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        content.as_deref(),
+        Some("after"),
+        "the edit must have applied, or the count below proves nothing"
+    );
+    let (_, child) = cached_counts(&pool, "PAGE_E").await.unwrap();
+    assert_eq!(
+        child, 99,
+        "an edit must leave its own page's counts alone; got {child}"
+    );
+}
+
 /// Multi-page fixture with mixed link patterns; exercises every
 /// op kind and asserts parity at every step. The fixture is
 /// Intentionally small (10 pages instead of the 1000
