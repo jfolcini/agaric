@@ -790,6 +790,23 @@ describe('useBlockTreeKeyboardShortcuts', () => {
         expect(opts2.clearSelected).toHaveBeenCalledTimes(1)
       })
 
+      it('Ctrl+X writes and removes nothing when one day fails to render', async () => {
+        stubInvoke(mockedInvoke, {
+          get_blocks_source: (args) => {
+            const [id] = (args as { blockIds: string[] }).blockIds
+            return id === 'D2' ? Promise.reject(new Error('pool closed')) : `- ${id}\n`
+          },
+        })
+        const { day1, day2 } = twoDays()
+
+        fireEvent.keyDown(document, { key: 'x', ctrlKey: true })
+
+        await waitFor(() => expect(toast.error).toHaveBeenCalledWith(t('palette.copyFailed')))
+        expect(mockWriteText).not.toHaveBeenCalled()
+        expect(day1.__remove).not.toHaveBeenCalled()
+        expect(day2.__remove).not.toHaveBeenCalled()
+      })
+
       it('Ctrl+V pastes once, after the anchor in the day that holds it', async () => {
         mockReadText.mockResolvedValue('- pasted')
         const { day1, day2 } = twoDays()

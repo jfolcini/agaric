@@ -127,7 +127,7 @@ interface PageSelection {
 /**
  * The selection roots of `selected` in `pageStore`, which owns the anchor, and
  * in every other mounted page, pages in document order. The journal week and
- * month views mount one tree per day, and one selection can span them.
+ * stream views mount one tree per day, and one selection can span them.
  */
 function selectionByPage(
   pageStore: StoreApi<PageBlockState>,

@@ -130,18 +130,14 @@ describe('Agaric real-backend week-view clipboard across two days', () => {
     expect(today).not.toBe('')
     expect(empty).not.toBe('')
 
-    // The empty day's first "Add block" creates its page; the week view seeds
-    // no block there, so the page's own "Add block" creates one.
+    // The empty day's "Add block" creates its page and seeds its first block.
     const otherDay = $(`#${empty}`)
     await otherDay.scrollIntoView()
     await otherDay.$('button*=Add block').click()
-    await browser.waitUntil(async () => !(await otherDay.getText()).includes('No blocks for'), {
-      timeout: ACTION_TIMEOUT,
-      timeoutMsg: 'the empty day never got a page',
-    })
-    const addBlock = otherDay.$('button*=Add block')
-    await addBlock.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await addBlock.click()
+    await browser.waitUntil(
+      async () => (await $$(`#${empty} [data-testid="sortable-block"]`).getElements()).length === 1,
+      { timeout: ACTION_TIMEOUT, timeoutMsg: `Add block did not seed one block row in ${empty}` },
+    )
     await typeMarkerVerified(OTHER)
     // Escape leaves the editor with the block selected (#5160 D17); the second
     // Escape clears that selection so the Ctrl+clicks below start from none.

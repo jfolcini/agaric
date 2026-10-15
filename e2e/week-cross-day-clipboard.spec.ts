@@ -76,11 +76,9 @@ async function seedSecondDay(page: Page): Promise<{ otherBlock: string; otherFir
   const emptyDay = days.filter({ hasText: 'No blocks for' }).first()
   const otherId = (await emptyDay.getAttribute('id')) as string
   const otherDay = page.locator(`section[id="${otherId}"]`)
-  // The first click creates the day's page; the week view seeds no block in
-  // it, so the second (the page's own "Add block") creates one.
+  // The click creates the day's page and seeds its first block.
   await otherDay.getByRole('button', { name: 'Add block' }).click()
-  await expect(otherDay.getByText('No blocks for')).toHaveCount(0)
-  await otherDay.getByRole('button', { name: 'Add block' }).click()
+  await expect(otherDay.locator('[data-testid="sortable-block"]')).toHaveCount(1)
   const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
   await expect(editor).toBeVisible()
   await editor.pressSequentially(OTHER_TEXT)
