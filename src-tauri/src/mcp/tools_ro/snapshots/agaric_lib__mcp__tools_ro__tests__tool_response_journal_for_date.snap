@@ -4,12 +4,6 @@ expression: result
 ---
 block_type: page
 content: "[DATE]"
-deleted_at: ~
-due_date: ~
 id: "[ULID]"
 page_id: "[ULID]"
-parent_id: ~
 position: 2
-priority: ~
-scheduled_date: ~
-todo_state: ~

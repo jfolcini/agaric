@@ -1,6 +1,5 @@
 ---
 source: src/mcp/tools_ro/tests.rs
-assertion_line: 1935
 expression: result
 ---
 has_more: false
@@ -8,15 +7,9 @@ items:
   - block:
       block_type: content
       content: recurring
-      deleted_at: ~
       due_date: 2099-01-03
       id: "[ULID]"
-      page_id: ~
-      parent_id: ~
       position: 1
-      priority: ~
-      scheduled_date: ~
-      todo_state: ~
     date: 2099-01-04
     projected: true
     source: due_date

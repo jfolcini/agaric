@@ -23,8 +23,7 @@ use super::super::*;
 // ───────────────────────────────────────────────────────────────────────────
 // List_pages_with_metadata
 //
-// Sibling IPC to `list_pages_inner`. Returns the same column shape as
-// `BlockRow` PLUS four metadata columns:
+// Returns the same column shape as `BlockRow` PLUS four metadata columns:
 //
 //   - `last_modified_at`: `pages_cache.last_edited_ms`, the newest op on the
 //     page or any block on it, else its ULID creation time (#5371).
@@ -804,7 +803,7 @@ pub async fn list_pages_with_metadata_inner(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<PageWithMetadataRow>, AppError> {
-    // Mirror the strict limit-validation policy from `list_pages_inner`.
+    // Rejected, not clamped (AGENTS.md invariant 10).
     if let Some(l) = limit
         && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
     {

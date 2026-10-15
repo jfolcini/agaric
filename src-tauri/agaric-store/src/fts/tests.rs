@@ -7212,7 +7212,7 @@ async fn tags_via_projection_matches_legacy_count_distinct_equivalence() {
         // proved the row-set equivalence; this test now pins the routed path
         // against the hand-computed oracle (the durable correctness invariant).
         let projected = tag_filter_ids(&pool, |fb| {
-            fb.add_tags_via_projection(PREFIX, tags);
+            fb.add_tags_via_projection(PREFIX, tags, false);
         })
         .await;
 
