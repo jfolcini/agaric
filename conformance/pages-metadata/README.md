@@ -7,8 +7,9 @@ that handler **names** match the generated bindings — it never checks
 **behaviour**, so a backend semantics change (sort order, cursor encoding) can
 leave the mock stale while every suite stays green (#1886).
 
-`sort-cursor.vectors.json` closes that gap for sort + cursor. It is the single
-source of truth, asserted from both sides:
+`sort-cursor.vectors.json` closes that gap for sort + cursor. It covers every
+`PageSort` wire value, and it is the single source of truth, asserted from both
+sides:
 
 - **Rust** — `src-tauri/tests/commands/pages_metadata_conformance_tests.rs`
   seeds a temp DB from `rows` and drives the real
@@ -24,36 +25,26 @@ until `handlers.ts` is realigned — which is the whole point.
 
 ```jsonc
 {
-  "rows": [ { "id", "content", "lastModifiedAt", "inboundLinkCount", "childBlockCount" } ],
+  "rows": [ { "id", "content", "lastModifiedAt", "openedAt"?, "inboundLinkCount", "childBlockCount" } ],
   "scenarios": [
     {
-      "sort": "default" | "recently-modified" | "most-linked" | "most-content",
-      "expectedOrder": ["<id>", ...],            // full order, ties broken by id ASC
+      "sort": "alphabetical" | "created" | "recently-modified" | "last-opened" | "most-linked" | "most-content",
+      "expectedOrder": ["<id>", ...],            // the full order
       "expectedCursorAfterFirst": {              // next_cursor minted after the 1st sorted row
         "id": "<id>",
-        "position": <sort discriminator>,        // 2=recently-modified 3=most-linked 4=most-content 5=default
-        "seq": <int>                             // present only for count sorts (most-linked/most-content)
+        "position": <sort discriminator>,        // 1 alphabetical, 2 recently-modified, 3 most-linked,
+                                                 // 4 most-content, 6 created, 7 last-opened
+        "deletedAt": "<title sort key>",         // alphabetical only
+        "seq": <int>                             // the i64 key: epoch-ms or a count
       }
     }
   ]
 }
 ```
 
-Only `id` and `position` (the sort discriminator) are asserted on the cursor:
-they are the representation-stable parts that the cross-mode-refresh contract
-depends on. The key-slot value legitimately differs between impls (Rust stores
-`recently-modified` as epoch-ms-as-string, the mock as an ISO string), so it is
-**not** compared across languages; `seq` (an integer on both sides) is the
-exception and is asserted for the count sorts.
-
-## Scope (staged, per #1886)
-
-- **In:** the four wire sorts — ordering + cursor discriminator (`position`/`seq`).
-- **Out:** recently-modified key-slot byte-equality. `alphabetical` is
-  intentionally excluded — it never crosses the wire
-  (`pageSortWireFor('alphabetical')` returns `'default'`). The filter-primitive
-  evaluation parity (#1908) is otherwise covered — see "Filter primitives",
-  "`Orphan` filter", and "`Tag` / `HasProperty` filters" below.
+`lastModifiedAt` is the page's `pages_cache.last_edited_ms`; `openedAt`, when
+present, its `page_opens.opened_ms`. Both impls stash the same key in the same
+cursor slot, so the whole decoded cursor is compared.
 
 ## `PathGlob` filter (#1910)
 

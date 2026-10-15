@@ -50,19 +50,6 @@ vi.mock('@tanstack/react-virtual', () =>
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
-// #1149 — recent-pages moved from `lib/recent-pages` to the zustand store.
-// Override only the snapshot reader the PageBrowser sort/grouping uses;
-// keep every other store export real (the full PageBrowser render pulls in
-// `useRecentPagesStore`, `QuickAccessBar`, etc.).
-vi.mock('@/stores/recent-pages', async (importActual) => {
-  const actual = await importActual<typeof import('@/stores/recent-pages')>()
-  return { ...actual, getRecentPagesForSpace: vi.fn(() => []) }
-})
-
-import { getRecentPagesForSpace } from '@/stores/recent-pages'
-
-const mockedGetRecentPages = vi.mocked(getRecentPagesForSpace)
-
 const mockedInvoke = vi.mocked(invoke)
 
 /**
@@ -204,9 +191,9 @@ describe('PageBrowser', () => {
       expect(starredRow).toHaveAttribute('data-starred', 'true')
     })
 
-    // Starred-above-unstarred ordering with sort applied
-    // independently per group.
-    it('alphabetical sort applies inside each group independently', async () => {
+    // #5371 — the server orders the pages; each group keeps that order, with
+    // no client re-sort.
+    it('each group keeps the server order', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P3', 'P1']))
       stubPageList([
         makePage({ id: 'P1', content: 'Cherry' }),
@@ -218,67 +205,13 @@ describe('PageBrowser', () => {
       render(<PageBrowser />)
       await screen.findByText('Apple')
 
-      // Default sort is alphabetical. Starred set = {Cherry, Banana};
-      // Other = {Apple, Durian}. Within each group: alphabetical.
+      // Starred = {Cherry, Banana}; Other = {Apple, Durian}; each in the
+      // order the server sent.
       const titles = within(screen.getByRole('grid'))
         .getAllByRole('row')
         .filter((r) => r.hasAttribute('data-page-item'))
         .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
-      expect(titles).toEqual(['Banana', 'Cherry', 'Apple', 'Durian'])
-    })
-
-    it('created-DESC sort applies inside each group independently', async () => {
-      const user = userEvent.setup()
-      localStorage.setItem('starred-pages', JSON.stringify(['01AAA', '01CCC']))
-      stubPageList([
-        makePage({ id: '01AAA', content: 'OldStar' }),
-        makePage({ id: '01BBB', content: 'MidUnstar' }),
-        makePage({ id: '01CCC', content: 'NewStar' }),
-        makePage({ id: '01DDD', content: 'NewestUnstar' }),
-      ])
-
-      render(<PageBrowser />)
-      await screen.findByText('OldStar')
-
-      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
-      await user.selectOptions(sortSelect, 'created')
-
-      // Starred (newest-first): NewStar, OldStar
-      // Other (newest-first):   NewestUnstar, MidUnstar
-      const titles = within(screen.getByRole('grid'))
-        .getAllByRole('row')
-        .filter((r) => r.hasAttribute('data-page-item'))
-        .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
-      expect(titles).toEqual(['NewStar', 'OldStar', 'NewestUnstar', 'MidUnstar'])
-    })
-
-    it('recent sort applies inside each group independently', async () => {
-      const user = userEvent.setup()
-      localStorage.setItem('starred-pages', JSON.stringify(['P1', 'P2']))
-      mockedGetRecentPages.mockReturnValue([
-        { id: 'P3', title: 'Cherry', visitedAt: '2025-01-15T12:00:00Z' },
-        { id: 'P1', title: 'Apple', visitedAt: '2025-01-14T12:00:00Z' },
-      ])
-      stubPageList([
-        makePage({ id: 'P1', content: 'Apple' }),
-        makePage({ id: 'P2', content: 'Banana' }),
-        makePage({ id: 'P3', content: 'Cherry' }),
-        makePage({ id: 'P4', content: 'Durian' }),
-      ])
-
-      render(<PageBrowser />)
-      await screen.findByText('Apple')
-
-      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
-      await user.selectOptions(sortSelect, 'recent')
-
-      // Starred = {Apple, Banana} — Apple has a recent visit, Banana does not
-      // (alphabetical fallback). Other = {Cherry, Durian} — Cherry recent, Durian not.
-      const titles = within(screen.getByRole('grid'))
-        .getAllByRole('row')
-        .filter((r) => r.hasAttribute('data-page-item'))
-        .map((o) => o.querySelector('.page-browser-item-title')?.textContent)
-      expect(titles).toEqual(['Apple', 'Banana', 'Cherry', 'Durian'])
+      expect(titles).toEqual(['Cherry', 'Banana', 'Apple', 'Durian'])
     })
 
     it('toggling round-trips a page between groups', async () => {
@@ -692,9 +625,10 @@ describe('PageBrowser', () => {
 
     it('keyboard ArrowDown walks every visible row in render order, including duplicates', async () => {
       localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+      // The server's alphabetical order: Inbox before work/foo.
       stubPageList([
-        makePage({ id: 'P1', content: 'work/foo' }),
         makePage({ id: 'P2', content: 'Inbox' }),
+        makePage({ id: 'P1', content: 'work/foo' }),
       ])
 
       render(<PageBrowser />)

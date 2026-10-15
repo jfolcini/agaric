@@ -15,6 +15,7 @@ pub mod listing;
 pub mod markdown;
 pub(crate) mod markdown_yaml;
 pub mod metadata;
+pub mod opens;
 
 pub use aliases::*;
 pub use bibliography::*;
@@ -22,3 +23,4 @@ pub use links::*;
 pub use listing::*;
 pub use markdown::*;
 pub use metadata::*;
+pub use opens::*;

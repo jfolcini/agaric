@@ -191,11 +191,8 @@ export function usePageBrowserData({
           return { items: [], next_cursor: null, has_more: false, total_count: null }
         }
         const spaceId = currentSpaceId
-        // Phase 3 — metadata-rich payload + server-derived sort. The wire
-        // sort enum is a 4-member subset of the frontend's 7
-        // (`pageSortWireFor` does the mapping); the frontend-only sorts
-        // (`alphabetical`, `recent`, `created`, `default`) all map to wire
-        // `default` and re-sort client-side via `sortPages`.
+        // Phase 3 — metadata-rich payload; the server orders every page
+        // (`pageSortWireFor` names the wire sort).
         return withCursorRecovery(
           (c) =>
             commands
@@ -205,7 +202,7 @@ export function usePageBrowserData({
                 // single source of truth, and `filters` is sent as an
                 // explicit `[]` so the wire shape stays unambiguous.
                 {
-                  sort: pageSortWireFor(sortOption) ?? null,
+                  sort: pageSortWireFor(sortOption),
                   spaceId,
                   filters: wireFilters,
                 } as Parameters<typeof commands.listPagesWithMetadata>[0],
@@ -235,7 +232,9 @@ export function usePageBrowserData({
       enabled: spaceIsReady,
       // #5446 — returning to an unchanged list sends no IPC. A write or a
       // failed fetch invalidates the query, and only then does a mount refetch.
-      refetchOnMount: (query) => query.state.isInvalidated,
+      // #5371 — "Last opened" moves on every page open, which marks nothing
+      // stale (`record_page_open` is a non-note write), so it always refetches.
+      refetchOnMount: (query) => query.state.isInvalidated || sortOption === 'recent',
       // usePaginatedQuery ALSO re-ran the IPC on every deps change, even when
       // switching back to a previously-fetched basis (e.g. removing a filter
       // chip returns to the earlier `filters: []` query). Under the client's

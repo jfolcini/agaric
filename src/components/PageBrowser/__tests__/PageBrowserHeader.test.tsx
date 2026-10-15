@@ -2,7 +2,7 @@
  * Tests for `PageBrowserHeader` (Phase 2 extension).
  *
  * Coverage:
- *   1. All 7 `SortOption` items are reachable via the sort select.
+ *   1. All 6 `SortOption` items are reachable via the sort select.
  *   2. `axe(container)` reports no a11y violations.
  *   3. The view buttons (#5269) open their views and the Trash button
  *      carries the trash count.
@@ -53,15 +53,14 @@ function makeProps(overrides: Partial<PageBrowserHeaderProps> = {}): PageBrowser
 }
 
 describe('PageBrowserHeader', () => {
-  it('exposes all 7 sort modes in the sort select', () => {
+  it('exposes all 6 sort modes in the sort select', () => {
     render(<PageBrowserHeader {...makeProps()} />)
 
     const sortSelect = screen.getByRole('combobox', {
       name: t('pageBrowser.sortLabel'),
     })
     // The mocked Select renders <option>s as direct children; the test
-    // pulls the option values to verify the union is fully surfaced and
-    // ordered as the spec requires (3 legacy then 4 new).
+    // pulls the option values to verify the union is fully surfaced, in order.
     const options = Array.from(sortSelect.querySelectorAll('option')).map((opt) => opt.value)
     expect(options).toEqual([
       'alphabetical',
@@ -70,7 +69,6 @@ describe('PageBrowserHeader', () => {
       'recently-modified',
       'most-linked',
       'most-content',
-      'default',
     ])
   })
 
@@ -88,33 +86,6 @@ describe('PageBrowserHeader', () => {
 
   it('has no axe violations', async () => {
     const { container } = render(<PageBrowserHeader {...makeProps()} />)
-    const results = await axe(container)
-    expect(results).toHaveNoViolations()
-  })
-
-  // ── frontend-only-sort-at-scale cue ───────────────────
-
-  it('renders the frontend-sort cue when frontendSortAtScale is true', () => {
-    render(<PageBrowserHeader {...makeProps({ frontendSortAtScale: true })} />)
-    const cue = screen.getByTestId('page-browser-frontend-sort-cue')
-    expect(cue).toBeInTheDocument()
-    expect(cue).toHaveTextContent(t('pageBrowser.frontendSortHint'))
-  })
-
-  it('does not render the frontend-sort cue when frontendSortAtScale is false', () => {
-    render(<PageBrowserHeader {...makeProps({ frontendSortAtScale: false })} />)
-    expect(screen.queryByTestId('page-browser-frontend-sort-cue')).not.toBeInTheDocument()
-  })
-
-  it('does not render the frontend-sort cue when frontendSortAtScale is omitted', () => {
-    render(<PageBrowserHeader {...makeProps()} />)
-    expect(screen.queryByTestId('page-browser-frontend-sort-cue')).not.toBeInTheDocument()
-  })
-
-  it('has no axe violations with the frontend-sort cue present', async () => {
-    const { container } = render(
-      <PageBrowserHeader {...makeProps({ frontendSortAtScale: true })} />,
-    )
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })

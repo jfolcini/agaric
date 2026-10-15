@@ -322,6 +322,8 @@ macro_rules! agaric_commands {
             // (last-modified, inbound-link count, child-block count,
             // has-property bitmask) + richer sort taxonomy.
             $crate::commands::pages::list_pages_with_metadata,
+            // #5371: the Pages view's device-local "Last opened" key.
+            $crate::commands::pages::record_page_open,
             // #1280 — composable advanced query: a FilterExpr boolean tree
             // (AND/OR/NOT across all structural dimensions) compiled to a
             // cursor-paginated page of blocks. Structural-only (no full-text
@@ -1473,8 +1475,37 @@ async fn schedule_block_tag_refs_rebuild_if_empty(
     }
 }
 
+/// [`boot_cache_gating`]'s `pages_cache` check. A row still at
+/// `last_edited_ms = 0` has not been filled since migration 0123 added the
+/// Pages sort keys (#5371): SQLite cannot compute the NFKD `title_sort_key`,
+/// so the page-row rebuild is the backfill. The rebuild fills every such row,
+/// so a filled vault schedules nothing.
+async fn schedule_pages_cache_backfill_if_unfilled(
+    read_pool: &sqlx::SqlitePool,
+    materializer_handle: &materializer::Materializer,
+) {
+    use materializer::MaterializeTask;
+
+    let unfilled = log_or_zero(
+        sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM pages_cache WHERE last_edited_ms = 0) AS "unfilled!: i64""#
+        )
+        .fetch_one(read_pool)
+        .await,
+        "pages_cache_unfilled_exists",
+    ) != 0;
+    if unfilled {
+        tracing::info!("pages_cache sort keys unfilled (migration 0123) — scheduling rebuild");
+        if let Err(e) =
+            materializer_handle.try_enqueue_background(MaterializeTask::RebuildPagesCache)
+        {
+            tracing::warn!(error = %e, "failed to enqueue pages_cache rebuild at boot");
+        }
+    }
+}
+
 /// [`spawn_boot_maintenance`]'s off-critical-path work: link-metadata GC on
-/// the writer, then the FTS and `block_tag_refs` empty-table gating on the
+/// the writer, then the FTS, `block_tag_refs` and `pages_cache` gating on the
 /// reader, in that order.
 async fn boot_cache_gating(
     write_pool: sqlx::SqlitePool,
@@ -1495,6 +1526,7 @@ async fn boot_cache_gating(
 
     schedule_fts_rebuild_if_empty(&read_pool, &materializer_handle).await;
     schedule_block_tag_refs_rebuild_if_empty(&read_pool, &materializer_handle).await;
+    schedule_pages_cache_backfill_if_unfilled(&read_pool, &materializer_handle).await;
 }
 
 /// Boot-phase 6 — best-effort boot maintenance moved off the synchronous
@@ -4102,6 +4134,122 @@ mod boot_cache_gating_tests {
             1,
             "an empty block_tag_refs with no inline tag token must schedule no \
              rebuild: only the flush barrier runs"
+        );
+        mat.shutdown();
+    }
+
+    /// #5371 — a `pages_cache` row migration 0123 left unfilled is filled by
+    /// the boot-scheduled page-row rebuild, and a filled vault schedules
+    /// nothing on the next boot.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unfilled_pages_cache_row_is_filled_at_boot_5371() {
+        const PAGE: &str = "01J00000000000000000PAGE5C";
+        let dir = tempfile::TempDir::new().unwrap();
+        let pools = db::init_pools(&dir.path().join("test.db")).await.unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'Émile', ?)",
+        )
+        .bind(PAGE)
+        .bind(PAGE)
+        .execute(&pools.write)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, 'Émile', 1)")
+            .bind(PAGE)
+            .execute(&pools.write)
+            .await
+            .unwrap();
+        let mat =
+            materializer::Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background()
+            .await
+            .expect("drain the boot rebuilds");
+        let created_ms = i64::try_from(ulid::Ulid::from_string(PAGE).unwrap().timestamp_ms())
+            .expect("a ULID time fits i64");
+        let row: (String, i64) = sqlx::query_as(
+            "SELECT title_sort_key, last_edited_ms FROM pages_cache WHERE page_id = ?",
+        )
+        .bind(PAGE)
+        .fetch_one(&pools.read)
+        .await
+        .unwrap();
+        assert_eq!(
+            row,
+            ("emile".to_owned(), created_ms),
+            "the key of the title, and the creation time of a page with no op"
+        );
+
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        let before = load();
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the second boot");
+        assert_eq!(
+            load() - before,
+            1,
+            "a filled pages_cache schedules no rebuild: only the flush barrier runs"
+        );
+        mat.shutdown();
+    }
+
+    /// #5371 — a seeded space page's ULID time is 0, and compaction can leave
+    /// it with no op. Its row is born at 1, not at the unfilled 0, so the
+    /// next boot schedules no rebuild.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_seeded_space_page_with_no_op_is_filled_once_5371() {
+        const PAGE: &str = crate::spaces::SPACE_PERSONAL_ULID;
+        let dir = tempfile::TempDir::new().unwrap();
+        let pools = db::init_pools(&dir.path().join("test.db")).await.unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'Personal', ?)",
+        )
+        .bind(PAGE)
+        .bind(PAGE)
+        .execute(&pools.write)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, 'Personal', 1)",
+        )
+        .bind(PAGE)
+        .execute(&pools.write)
+        .await
+        .unwrap();
+        let mat =
+            materializer::Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background()
+            .await
+            .expect("drain the boot rebuilds");
+        let last_edited: i64 =
+            sqlx::query_scalar("SELECT last_edited_ms FROM pages_cache WHERE page_id = ?")
+                .bind(PAGE)
+                .fetch_one(&pools.read)
+                .await
+                .unwrap();
+        assert_eq!(
+            last_edited, 1,
+            "no op and a zero ULID time: born at the floor"
+        );
+
+        let load = || {
+            mat.metrics()
+                .bg_processed
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        let before = load();
+        boot_cache_gating(pools.write.clone(), pools.read.clone(), mat.clone()).await;
+        mat.flush_background().await.expect("drain the second boot");
+        assert_eq!(
+            load() - before,
+            1,
+            "a row born at the floor schedules no rebuild: only the flush barrier runs"
         );
         mat.shutdown();
     }

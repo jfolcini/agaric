@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO pages_cache (page_id, title, title_sort_key, last_edited_ms, updated_at) SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), ?1 FROM json_each(?2) WHERE true ON CONFLICT(page_id) DO UPDATE SET title          = excluded.title, title_sort_key = excluded.title_sort_key, last_edited_ms = MAX(pages_cache.last_edited_ms, excluded.last_edited_ms), updated_at     = CASE WHEN pages_cache.title != excluded.title THEN excluded.updated_at ELSE pages_cache.updated_at END WHERE pages_cache.title != excluded.title OR pages_cache.title_sort_key != excluded.title_sort_key OR pages_cache.last_edited_ms < excluded.last_edited_ms",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b1641056d16ce4524ca4c8f46651739e5bf95be8fda7419039a6de1e33090431"
+}

@@ -1,27 +1,26 @@
 //! Conformance tests for `list_pages_with_metadata` sort + cursor
-//! semantics (#1886, slice 1), driven by the SHARED golden fixture
+//! semantics (#1886, #5371), driven by the SHARED golden fixture
 //! `conformance/pages-metadata/sort-cursor.vectors.json`.
 //!
 //! The SAME fixture is asserted by the tauri-mock TS reimplementation
 //! (`src/lib/tauri-mock/__tests__/sort-cursor-conformance.test.ts`). If
 //! backend semantics change, regenerate the fixture from THIS Rust side;
-//! the mock test then fails until `handlers.ts` is realigned. See
+//! the mock test then fails until the mock is realigned. See
 //! `conformance/pages-metadata/README.md`.
 //!
-//! Slice 1 covers the four WIRE sorts (default, recently-modified,
-//! most-linked, most-content) for ordering, real cursor round-trip
-//! pagination (no dupes/drops), and the per-sort cursor discriminator.
+//! Every wire sort: ordering, real cursor round-trip pagination (no
+//! dupes/drops), and the whole first cursor (discriminator and key slot).
 
 use serde::Deserialize;
 use sqlx::SqlitePool;
 
-use agaric_lib::commands::pages::metadata::sort_discriminator;
 use agaric_lib::commands::pages::{
     ListPagesWithMetadataFilter, PageSort, list_pages_with_metadata_inner,
 };
 use agaric_lib::commands::tests::common::{
     TEST_SPACE_ID, assign_to_space, ensure_test_space, insert_block, test_pool,
 };
+use agaric_store::pagination::Cursor;
 
 // ── Fixture model ─────────────────────────────────────────────────────────
 //
@@ -40,6 +39,8 @@ struct Row {
     id: String,
     content: String,
     last_modified_at: String,
+    #[serde(default)]
+    opened_at: Option<String>,
     inbound_link_count: i64,
     child_block_count: i64,
 }
@@ -57,10 +58,10 @@ struct Scenario {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ExpectedCursor {
-    #[allow(dead_code)]
     id: String,
     position: i64,
-    #[allow(dead_code)]
+    #[serde(default)]
+    deleted_at: Option<String>,
     #[serde(default)]
     seq: Option<i64>,
 }
@@ -76,51 +77,43 @@ fn load_vectors() -> Vectors {
     serde_json::from_str(&raw).expect("parse fixture")
 }
 
-/// Seed one fixture row as a page in [`TEST_SPACE_ID`], writing the
-/// materialised `pages_cache` counts DIRECTLY (so MostLinked / MostContent
-/// read the fixture's declared counts via the LEFT JOIN) and an `op_log`
-/// row stamped with `lastModifiedAt` (so RecentlyModified's
-/// `MAX(op_log.created_at)` subquery sees the fixture's timestamp).
-///
-/// Mirrors the sibling `list_pages_with_metadata_tests::{seed_page,
-/// seed_op_log}` SQL shapes against the current schema.
+/// RFC 3339 → epoch-ms, exact.
+fn epoch_ms(rfc3339: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(rfc3339)
+        .expect("rfc3339")
+        .timestamp_millis()
+}
+
+/// Seed one fixture row as a page in [`TEST_SPACE_ID`], writing its
+/// `pages_cache` row DIRECTLY: the counts, the title sort key, and
+/// `last_edited_ms` = `lastModifiedAt`; and its `page_opens` row when it
+/// carries `openedAt`.
 async fn seed_conf_page(pool: &SqlitePool, row: &Row) {
     insert_block(pool, &row.id, "page", &row.content, None, Some(0)).await;
     assign_to_space(pool, &row.id, TEST_SPACE_ID).await;
     sqlx::query(
-        "INSERT OR IGNORE INTO pages_cache \
-             (page_id, title, updated_at, inbound_link_count, child_block_count) \
-         VALUES (?, ?, 1735689600000, ?, ?)",
+        "INSERT INTO pages_cache \
+             (page_id, title, title_sort_key, last_edited_ms, updated_at, \
+              inbound_link_count, child_block_count) \
+         VALUES (?, ?, ?, ?, 1735689600000, ?, ?)",
     )
     .bind(&row.id)
     .bind(&row.content)
+    .bind(agaric_core::title_sort::title_sort_key(&row.content))
+    .bind(epoch_ms(&row.last_modified_at))
     .bind(row.inbound_link_count)
     .bind(row.child_block_count)
     .execute(pool)
     .await
     .unwrap();
-    // #109 Phase 2: `op_log.created_at` is INTEGER epoch-ms. The fixture
-    // expresses timestamps as RFC 3339; parse to epoch-ms (exact, monotonic).
-    let created_at_ms = chrono::DateTime::parse_from_rfc3339(&row.last_modified_at)
-        .expect("rfc3339")
-        .timestamp_millis();
-    sqlx::query(
-        "INSERT INTO op_log (seq, device_id, op_type, payload, created_at, hash, block_id) \
-         VALUES (\
-             (SELECT COALESCE(MAX(seq), 0) + 1 FROM op_log), \
-             'test-device', \
-             'CreateBlock', \
-             '{}', \
-             ?, \
-             'deadbeef', \
-             ?\
-         )",
-    )
-    .bind(created_at_ms)
-    .bind(&row.id)
-    .execute(pool)
-    .await
-    .unwrap();
+    if let Some(opened_at) = &row.opened_at {
+        sqlx::query("INSERT INTO page_opens (page_id, opened_ms) VALUES (?, ?)")
+            .bind(&row.id)
+            .bind(epoch_ms(opened_at))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
 }
 
 /// Parse the WIRE sort string (e.g. `"recently-modified"`) into [`PageSort`]
@@ -186,12 +179,26 @@ async fn pages_metadata_conformance_sort_and_cursor() {
             scenario.name, sort
         );
 
-        // 3. Discriminator — the `position` slot stamped into every cursor
-        //    for this sort must match the fixture's expected value.
+        // 3. The first cursor — its discriminator and its key slot.
+        let first = list_pages_with_metadata_inner(&pool, filter.clone(), None, Some(1))
+            .await
+            .unwrap();
+        let cursor = Cursor::decode(&first.next_cursor.expect("a next cursor")).unwrap();
+        let expected = &scenario.expected_cursor_after_first;
         assert_eq!(
-            sort_discriminator(sort),
-            scenario.expected_cursor_after_first.position,
-            "discriminator mismatch for scenario `{}` (sort {:?})",
+            (
+                cursor.id.as_str(),
+                cursor.position,
+                cursor.deleted_at.as_deref(),
+                cursor.seq
+            ),
+            (
+                expected.id.as_str(),
+                Some(expected.position),
+                expected.deleted_at.as_deref(),
+                expected.seq
+            ),
+            "first cursor mismatch for scenario `{}` (sort {:?})",
             scenario.name,
             sort
         );

@@ -427,13 +427,6 @@ export function AgendaResults({
             a completeness the backend never provides. Truncation, not the
             choice of sort key, is the whole defect.
 
-            PageBrowser gates the same cue on
-            `isFrontendOnlySort(sortOption) && hasMore` (PageBrowser.tsx) —
-            because SOME of its sorts ARE pushed into SQL
-            (commands/pages/metadata.rs `ORDER BY {key_expr}`). No agenda sort
-            is. The predicate here is that same one with its first conjunct
-            collapsed to `true`, not a laxer rule.
-
             Rendered above the list (not next to the Load more button, which
             sits below a scrolling viewport) so it is adjacent to the item
             whose primacy it qualifies. Mirrors the SearchPanel 5000-item

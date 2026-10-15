@@ -6,43 +6,91 @@ use agaric_core::error::AppError;
 // Set-based rebuild core (issue #112 sub-item 2)
 // ---------------------------------------------------------------------------
 
-/// Push-down the entire diff to SQLite as two statements: an UPSERT
-/// from the live `blocks` projection followed by a delete-orphans
-/// sweep. Replaces the prior streamed-sort-merge implementation that
-/// walked both sides in Rust — the engine can do the join + diff far
-/// more efficiently than two separate streams crossing the process
-/// boundary.
+/// Push the diff down to SQLite: find the page rows that are new, retitled,
+/// or still at migration 0123's unfilled defaults, compute their keys in Rust
+/// (an NFKD `title_sort_key` has no SQL spelling), UPSERT them, then sweep
+/// orphans. Only the stale rows cross the process boundary.
 ///
-/// The "skip unchanged → preserve `updated_at`" semantic is
-/// preserved by the `WHERE pages_cache.title != excluded.title`
-/// predicate on the `DO UPDATE` clause: a hit with an identical title
-/// is a no-op so `updated_at` keeps its prior value. Dropping that
-/// predicate would bump `updated_at` on every page on every rebuild
-/// and regress cache recency.
+/// The "skip unchanged → preserve `updated_at`" semantic is kept: an UPSERT
+/// hit refreshes `updated_at` only when the title changed, and a hit that
+/// changes nothing at all writes nothing.
 ///
-/// `INSERT … ON CONFLICT DO UPDATE` counts both pure inserts and the
-/// rows where the conditional update fired — both go in `rows_affected`;
-/// unchanged-title hits do not. Combined with the DELETE's
-/// `rows_affected` this gives the same `changed` count the previous
-/// implementation produced (insert + delete + actual-title-change
-/// updates).
+/// A row is born with `last_edited_ms` = its page's newest op, else the
+/// page's ULID creation time, floored at 1; an existing row only ever has it
+/// raised (#5371).
+///
+/// Returns the rows inserted, updated, or deleted.
 async fn apply_sort_merge_rebuild(
     write_conn: &mut sqlx::SqliteConnection,
     now: i64,
 ) -> Result<u64, AppError> {
-    let upsert = sqlx::query!(
-        "INSERT INTO pages_cache (page_id, title, updated_at) \
-         SELECT id, content, ? \
-         FROM blocks \
-         WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL \
-         ON CONFLICT(page_id) DO UPDATE SET \
-             title      = excluded.title, \
-             updated_at = excluded.updated_at \
-         WHERE pages_cache.title != excluded.title",
-        now,
+    // `newest_op_ms` is the per-block MAX over `idx_op_log_block_created`,
+    // folded per page, and is only computed for a row whose
+    // `last_edited_ms` is unfilled.
+    let stale = sqlx::query!(
+        r#"SELECT b.id AS "id!", b.content AS "title!",
+                  COALESCE(pc.last_edited_ms, 0) = 0 AS "unfilled!: bool",
+                  CASE WHEN COALESCE(pc.last_edited_ms, 0) = 0 THEN
+                      (SELECT MAX((SELECT MAX(o.created_at) FROM op_log o
+                                    WHERE o.block_id = d.id))
+                         FROM blocks d WHERE d.page_id = b.id)
+                  END AS "newest_op_ms?: i64"
+             FROM blocks b
+             LEFT JOIN pages_cache pc ON pc.page_id = b.id
+            WHERE b.block_type = 'page' AND b.deleted_at IS NULL AND b.content IS NOT NULL
+              AND (pc.page_id IS NULL
+                   OR pc.title != b.content
+                   OR (pc.title_sort_key = '' AND b.content != '')
+                   OR pc.last_edited_ms = 0)"#,
     )
-    .execute(&mut *write_conn)
+    .fetch_all(&mut *write_conn)
     .await?;
+
+    let mut upserted = 0;
+    if !stale.is_empty() {
+        let rows: Vec<(String, String, String, i64)> = stale
+            .into_iter()
+            .map(|r| {
+                let key = agaric_core::title_sort::title_sort_key(&r.title);
+                // 0 leaves a filled row's value alone: the UPSERT keeps the MAX.
+                // A born value is at least 1 so 0 stays the unfilled marker: a
+                // seeded space page's ULID time is 0, and once compaction drops
+                // its ops, boot would otherwise reschedule this rebuild forever.
+                let last_edited = if r.unfilled {
+                    r.newest_op_ms
+                        .unwrap_or_else(|| ulid_created_ms(&r.id))
+                        .max(1)
+                } else {
+                    0
+                };
+                (r.id, r.title, key, last_edited)
+            })
+            .collect();
+        let rows_json = serde_json::to_string(&rows)?;
+        // `WHERE true`: an UPSERT's SELECT needs a WHERE, or SQLite parses
+        // `ON CONFLICT` as a join constraint.
+        upserted = sqlx::query!(
+            "INSERT INTO pages_cache (page_id, title, title_sort_key, last_edited_ms, updated_at) \
+             SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), \
+                    json_extract(value, '$[2]'), json_extract(value, '$[3]'), ?1 \
+               FROM json_each(?2) \
+              WHERE true \
+             ON CONFLICT(page_id) DO UPDATE SET \
+                 title          = excluded.title, \
+                 title_sort_key = excluded.title_sort_key, \
+                 last_edited_ms = MAX(pages_cache.last_edited_ms, excluded.last_edited_ms), \
+                 updated_at     = CASE WHEN pages_cache.title != excluded.title \
+                                       THEN excluded.updated_at ELSE pages_cache.updated_at END \
+              WHERE pages_cache.title != excluded.title \
+                 OR pages_cache.title_sort_key != excluded.title_sort_key \
+                 OR pages_cache.last_edited_ms < excluded.last_edited_ms",
+            now,
+            rows_json,
+        )
+        .execute(&mut *write_conn)
+        .await?
+        .rows_affected();
+    }
 
     let delete = sqlx::query!(
         "DELETE FROM pages_cache \
@@ -67,7 +115,48 @@ async fn apply_sort_merge_rebuild(
     // a snapshot/sync RESET that wiped `pages_cache` (counts default to
     // 0), which now enqueues the dedicated `RebuildPagesCacheCounts`
     // task (-> [`recompute_all_pages_cache_counts`]) separately.
-    Ok(upsert.rows_affected() + delete.rows_affected())
+    Ok(upserted + delete.rows_affected())
+}
+
+/// The creation time in a ULID page id; 0 for an id that is not one.
+fn ulid_created_ms(id: &str) -> i64 {
+    ulid::Ulid::from_string(id)
+        .ok()
+        .and_then(|u| i64::try_from(u.timestamp_ms()).ok())
+        .unwrap_or(0)
+}
+
+/// Raise `last_edited_ms` for the page each `(block_id, created_at)` op
+/// touched: the block's own `page_id`, which is the page itself for a page
+/// block. Never lowers it, so a replayed or out-of-order op is a no-op (#5371).
+/// One statement per call; every path that lands an op in `op_log` calls it
+/// once in the same transaction: a local command's commit, the
+/// materializer's single-op and batch apply, and a peer's replicated op.
+///
+/// A block that no longer exists (a purge) or whose page has no cache row
+/// touches nothing: a row the rebuild inserts later is born from the op log.
+pub async fn raise_pages_last_edited_ms(
+    conn: &mut sqlx::SqliteConnection,
+    touched: &[(&str, i64)],
+) -> Result<(), sqlx::Error> {
+    if touched.is_empty() {
+        return Ok(());
+    }
+    let touched_json =
+        serde_json::to_string(touched).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+    sqlx::query!(
+        "UPDATE pages_cache SET last_edited_ms = touched.ms \
+           FROM (SELECT b.page_id AS page_id, MAX(json_extract(j.value, '$[1]')) AS ms \
+                   FROM json_each(?) AS j \
+                   JOIN blocks b ON b.id = json_extract(j.value, '$[0]') \
+                  GROUP BY b.page_id) AS touched \
+          WHERE pages_cache.page_id = touched.page_id \
+            AND touched.ms > pages_cache.last_edited_ms",
+        touched_json,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 /// #417: full-table recompute of both `pages_cache` count columns.
@@ -175,12 +264,9 @@ pub(crate) async fn recompute_all_pages_cache_counts(
 
 /// Incremental rebuild of `pages_cache`.
 ///
-/// Two SQL statements push the entire diff down to SQLite:
-/// 1. `INSERT … SELECT FROM blocks ON CONFLICT(page_id) DO UPDATE …
-///    WHERE pages_cache.title != excluded.title` — adds new pages and
-///    refreshes title + `updated_at` only when the title actually
-///    Changed. Unchanged-title hits are no-ops (semantic: their
-///    `updated_at` is preserved).
+/// 1. UPSERT the rows that are new, retitled, or still unfilled since
+///    migration 0123 (see `apply_sort_merge_rebuild`). Unchanged hits are
+///    no-ops, so their `updated_at` is preserved.
 /// 2. `DELETE FROM pages_cache WHERE page_id NOT IN (live page IDs)` —
 ///    sweeps cache rows whose source block was soft-deleted, hard
 ///    deleted, demoted from `block_type = 'page'`, or had its content
@@ -192,9 +278,9 @@ pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
 
 async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     let now = crate::db::now_ms();
-    // Single write connection — the rebuild is now two SQL statements
-    // that read `blocks` and write `pages_cache` on the same
-    // transaction. No separate reader connections are needed.
+    // Single write connection — the rebuild reads `blocks` and writes
+    // `pages_cache` on the same transaction. No separate reader
+    // connections are needed.
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_pages_rebuild").await?;
 
     let changed = apply_sort_merge_rebuild(&mut tx, now).await?;
@@ -282,8 +368,8 @@ async fn rebuild_pages_cache_split_impl(
     _read_pool: &SqlitePool,
 ) -> Result<u64, AppError> {
     let now = crate::db::now_ms();
-    // The rebuild is two SQL statements (UPSERT from `blocks` +
-    // delete-orphans) executed on a single write transaction. SQLite
+    // The rebuild (UPSERT from `blocks` + delete-orphans) runs on a
+    // single write transaction. SQLite
     // is one file regardless of pool split, so the write connection
     // already sees `blocks`; the read pool is unused under the new
     // shape but kept in the signature so call sites in
@@ -545,6 +631,68 @@ mod tests {
             "title-unchanged row must preserve its prior updated_at \
              (invariant — the `WHERE title != excluded.title` \
              predicate on ON CONFLICT DO UPDATE is mandatory)",
+        );
+    }
+
+    async fn last_edited(pool: &SqlitePool, page: &str) -> i64 {
+        sqlx::query_scalar("SELECT last_edited_ms FROM pages_cache WHERE page_id = ?")
+            .bind(page)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// #5371 — a page row with no op is born at its ULID creation time; an
+    /// op on the page or any of its blocks then raises it, and an older op
+    /// never lowers it.
+    #[tokio::test]
+    async fn last_edited_ms_is_born_at_creation_then_only_raised_5371() {
+        let (pool, _dir) = test_pool().await;
+        let page = "01J00000000000000000PAGE5D";
+        let child = "01J00000000000000000CHDX5D";
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', 'P', ?)",
+        )
+        .bind(page)
+        .bind(page)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+             VALUES (?, 'content', 'c', ?, ?)",
+        )
+        .bind(child)
+        .bind(page)
+        .bind(page)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        rebuild_pages_cache_impl(&pool).await.unwrap();
+        let created = ulid_created_ms(page);
+        assert_eq!(
+            last_edited(&pool, page).await,
+            created,
+            "no op: creation time"
+        );
+
+        let mut conn = pool.acquire().await.unwrap();
+        raise_pages_last_edited_ms(&mut conn, &[(page, created + 5), (child, created + 10)])
+            .await
+            .unwrap();
+        assert_eq!(
+            last_edited(&pool, page).await,
+            created + 10,
+            "the newest op on any block of the page"
+        );
+        raise_pages_last_edited_ms(&mut conn, &[(child, created + 1)])
+            .await
+            .unwrap();
+        assert_eq!(
+            last_edited(&pool, page).await,
+            created + 10,
+            "an older op never lowers it"
         );
     }
 }

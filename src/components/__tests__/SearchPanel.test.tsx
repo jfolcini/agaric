@@ -99,7 +99,12 @@ function searchPage(items: SearchRow[], rest: Partial<SearchPage> = {}): SearchP
 /** Command-keyed `invoke`, with the search itself resolving empty by default. */
 function stubInvoke(handlers: Readonly<TypedInvokeHandlers> = {}) {
   mockedInvoke.mockImplementation(
-    mockInvokeCommands({ search_blocks: () => emptyPage, ...handlers }),
+    // Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+    mockInvokeCommands({
+      search_blocks: () => emptyPage,
+      record_page_open: () => null,
+      ...handlers,
+    }),
   )
 }
 

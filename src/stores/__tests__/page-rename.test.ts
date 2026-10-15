@@ -10,8 +10,10 @@
  * click resurrected the stale title in the tab bar, persisted, across
  * restarts, while `PageHeader` rendered the new one.
  */
+import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import {
   _resetGraphStructureEventsForTest,
   DEBOUNCE_MS,
@@ -27,6 +29,11 @@ import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 const SPACE = 'SPACE_TEST'
 const PAGE = 'PAGE_P'
+
+// Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+beforeEach(() => {
+  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ record_page_open: () => null }))
+})
 
 describe('renamePage fan-out', () => {
   beforeEach(() => {

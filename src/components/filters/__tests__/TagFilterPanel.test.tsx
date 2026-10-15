@@ -104,6 +104,8 @@ beforeEach(() => {
     query_by_tags: () => emptyPage,
     query_by_tag_expr: () => emptyPage,
     batch_resolve: () => [],
+    // Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+    record_page_open: () => null,
   })
   vi.useFakeTimers({ shouldAdvanceTime: true })
   user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })

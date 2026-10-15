@@ -796,8 +796,9 @@ async fn seed_pages_mostlinked_fixture(pool: &SqlitePool) -> Vec<String> {
     .await;
     assign_all_to_slo_space(pool).await;
     sqlx::query(
-        "INSERT INTO pages_cache (page_id, title, updated_at, inbound_link_count, child_block_count) \
-         SELECT p.id, p.content, 0, \
+        "INSERT INTO pages_cache \
+             (page_id, title, title_sort_key, updated_at, inbound_link_count, child_block_count) \
+         SELECT p.id, p.content, lower(p.content), 0, \
              ( \
                  SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
                      JOIN blocks descendant ON bl.target_id = descendant.id \
@@ -1758,8 +1759,9 @@ fn bench_load_page_subtree(c: &mut Criterion) {
 }
 
 /// `list_pages_with_metadata` — the pages view's first page over 10K pages /
-/// 100K blocks; runs on every pages-view open. Wire sort `default`: the view's
-/// default `alphabetical` sort sends it and re-sorts client-side.
+/// 100K blocks; runs on every pages-view open, under the view's default
+/// `alphabetical` sort. The fixture's titles are ASCII, so `lower()` is their
+/// title sort key.
 /// Budget: 10 ms, 2x the worst dev-box sample (4.67-4.92 ms); provisional
 /// until a `bench-slo` run measures it.
 fn bench_list_pages_with_metadata(c: &mut Criterion) {
@@ -1771,7 +1773,7 @@ fn bench_list_pages_with_metadata(c: &mut Criterion) {
     let pool = rt.block_on(fresh_pool(&dir, "slo_list_pages_with_metadata"));
     let page_ids = rt.block_on(seed_pages_mostlinked_fixture(&pool));
     let filter = ListPagesWithMetadataFilter {
-        sort: PageSort::Default,
+        sort: PageSort::Alphabetical,
         space_id: SLO_SPACE_ID.to_owned(),
         filters: vec![],
     };
@@ -1785,10 +1787,18 @@ fn bench_list_pages_with_metadata(c: &mut Criterion) {
         ))
         .unwrap();
     let observed_ids: Vec<&str> = observed.items.iter().map(|row| row.id.as_str()).collect();
+    // The fixture titles page `i` `Page {i}`: key order is byte order of
+    // `page {i}`, so `page 10` precedes `page 2`.
+    let mut by_key: Vec<(String, &str)> = page_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (format!("page {i}"), id.as_str()))
+        .collect();
+    by_key.sort_unstable();
+    let expected_ids: Vec<&str> = by_key[..PAGE_SIZE].iter().map(|(_, id)| *id).collect();
     assert_eq!(
-        observed_ids,
-        page_ids[..PAGE_SIZE],
-        "list_pages_with_metadata @ 100K: untimed probe must return the first 50 fixture pages in id order (#3304)"
+        observed_ids, expected_ids,
+        "list_pages_with_metadata @ 100K: untimed probe must return the first 50 fixture pages in title-key order (#3304)"
     );
     assert_eq!(
         observed.total_count,

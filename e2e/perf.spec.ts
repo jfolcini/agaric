@@ -935,6 +935,7 @@ const PAGE_OPEN_IPC = [
   'list_tags_for_block',
   'load_page_subtree',
   'plugin:window|set_title',
+  'record_page_open',
 ]
 /**
  * The open set plus the chip's target lookup, minus the tag list: the header
@@ -957,6 +958,7 @@ const LINK_CLICK_IPC = [
   'list_tags_for_block',
   'load_page_subtree',
   'plugin:window|set_title',
+  'record_page_open',
 ]
 
 test('opening a page and following a link chip pin their IPC (#5445)', async ({ page }) => {

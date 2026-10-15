@@ -64,12 +64,13 @@ import { attachmentBytes } from '@/lib/tauri-mock/seed'
 // directly off `handlers.ts` (test-only page-metadata conformance suites) —
 // see `handlers/shared.ts` for the implementations. Moving them there did
 // not change this file's public surface.
-export type { PageMetaRow } from '@/lib/tauri-mock/handlers/shared'
+export type { PageMetaRow, PageSortRow } from '@/lib/tauri-mock/handlers/shared'
 export {
   compareMetaRows,
   encodeNextCursor,
   metaRowMatchesExpr,
   metaRowMatchesFilter,
+  titleSortKey,
 } from '@/lib/tauri-mock/handlers/shared'
 
 const HANDLERS_TYPED = {
