@@ -96,6 +96,9 @@ type Command =
   | { cmd: 'sync' }
   | { cmd: 'get_block'; id: string }
   | { cmd: 'create_block'; parent_id: string; content: string }
+  | { cmd: 'set_property'; id: string; key: string; value: string }
+  | { cmd: 'move_block'; id: string; parent_id: string; index: number }
+  | { cmd: 'get_property'; id: string; key: string }
   | { cmd: 'wait_pulled' }
 
 type Reply =
@@ -103,6 +106,9 @@ type Reply =
   | { reply: 'synced' }
   | { reply: 'block'; id: string; parent_id: string | null; content: string }
   | { reply: 'created'; id: string }
+  | { reply: 'property_set' }
+  | { reply: 'moved' }
+  | { reply: 'property'; value_text: string | null }
   | { reply: 'pulled' }
   | { reply: 'error'; message: string }
 
@@ -121,6 +127,12 @@ export interface SyncPeer {
   getBlock(id: string): Promise<PeerBlock>
   /** Write a content block under `parentId`; resolves to its id. */
   createBlock(parentId: string, content: string): Promise<string>
+  /** Set text property `key` on block `id`. */
+  setProperty(id: string, key: string, value: string): Promise<void>
+  /** Move block `id` under `parentId`, to 0-based sibling slot `index`. */
+  moveBlock(id: string, parentId: string, index: number): Promise<void>
+  /** Text property `key` of block `id`; null when the block holds none. */
+  getProperty(id: string, key: string): Promise<string | null>
   /** Resolves once the app has pulled since the peer's last write. */
   waitPulled(): Promise<void>
   /** End the peer and delete its vault. */
@@ -180,6 +192,14 @@ export async function startSyncPeer(): Promise<SyncPeer> {
     },
     createBlock: async (parentId, content) =>
       (await request({ cmd: 'create_block', parent_id: parentId, content }, 'created')).id,
+    setProperty: async (id, key, value) => {
+      await request({ cmd: 'set_property', id, key, value }, 'property_set')
+    },
+    moveBlock: async (id, parentId, index) => {
+      await request({ cmd: 'move_block', id, parent_id: parentId, index }, 'moved')
+    },
+    getProperty: async (id, key) =>
+      (await request({ cmd: 'get_property', id, key }, 'property')).value_text,
     waitPulled: async () => {
       await request({ cmd: 'wait_pulled' }, 'pulled')
     },
