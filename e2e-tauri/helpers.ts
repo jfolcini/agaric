@@ -318,6 +318,14 @@ export async function typeInputVerified(selector: string, text: string): Promise
 }
 
 /**
+ * `typeMarkerVerified` for any contenteditable other than the block editor,
+ * such as the page title, read back with `getText()`.
+ */
+export async function typeTextVerified(selector: string, text: string): Promise<void> {
+  await typeVerified(selector, text, (sel) => $(sel).getText(), 'text box')
+}
+
+/**
  * Shared implementation behind `typeMarkerVerified` / `typeInputVerified`.
  *
  * `readBack` is what makes the typed text an asserted invariant rather than a
