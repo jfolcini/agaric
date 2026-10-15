@@ -2600,10 +2600,9 @@ fn report_settled(cmd: &str, acc: &Acc) {
 }
 
 /// `edit_block` — a content save on one child of the 2K-block page (#5423).
-/// Budget: 200 ms, the interactive ceiling, until a `bench-slo` run measures
-/// it; #5423 then sets it to the measured mean × 2.
+/// Budget: the first `bench-slo` mean × 2.
 fn bench_edit_block(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 200.0;
+    const BUDGET_MS: f64 = 4.0;
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_edit_block"));
@@ -2675,11 +2674,10 @@ fn bench_edit_block(c: &mut Criterion) {
 /// (#5423): the todo cycle, which the command routes through
 /// `set_todo_state_inner` (#5394). The vault carries
 /// [`WRITE_PATH_REPEATING_BLOCKS`] repeating tasks, so the projected-agenda
-/// rebuild each write enqueues has rows to rewrite. Budget: 200 ms, the
-/// interactive ceiling, until a `bench-slo` run measures it; #5423 then sets
-/// it to the measured mean × 2.
+/// rebuild each write enqueues has rows to rewrite. Budget: the first
+/// `bench-slo` mean × 2.
 fn bench_set_property(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 200.0;
+    const BUDGET_MS: f64 = 5.0;
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_set_property"));
@@ -2783,11 +2781,10 @@ fn bench_set_property(c: &mut Criterion) {
 /// `move_block` — indent one child of the 2K-block page under its previous
 /// sibling, then outdent it back to its slot (#5423). Every call is a reparent
 /// inside the page: the move that still pays the in-transaction page-id and
-/// count maintenance a same-parent reorder skips (#2200). Budget: 200 ms, the
-/// interactive ceiling, until a `bench-slo` run measures it; #5423 then sets it
-/// to the measured mean × 2.
+/// count maintenance a same-parent reorder skips (#2200). Budget: the first
+/// `bench-slo` mean × 2.
 fn bench_move_block(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 200.0;
+    const BUDGET_MS: f64 = 18.0;
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_move_block"));
@@ -3396,7 +3393,7 @@ fn bench_query_by_property_selective_value(c: &mut Criterion) {
 
 // #5366: each starts at the 30 ms list tier; if a warm run is over, measured × 2, never > 200 ms.
 const TAGS_1K_BUDGET_MS: f64 = 30.0;
-const TAGS_10K_BUDGET_MS: f64 = 30.0;
+const TAGS_10K_BUDGET_MS: f64 = 64.0;
 const SEARCH_SHORT_BUDGET_MS: f64 = 30.0;
 const SEARCH_WORD_BUDGET_MS: f64 = 30.0;
 
