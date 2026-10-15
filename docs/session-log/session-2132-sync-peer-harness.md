@@ -22,8 +22,8 @@ spec on it:
 
 The spec found a product bug: "Sync now" never dialled while the peer was
 announcing on mDNS, because the debounce behind it restarted on every mDNS
-event. #5595 fixes it, and this branch carries the same change. The
-harness needed its own fix too: the peer now runs `bootstrap_spaces`, or
+event. #5595 fixes it; the spec passed against that fix before this
+merged. The harness needed its own fix too: the peer now runs `bootstrap_spaces`, or
 its writes stay SQL-only and are never exported.
 
 `wdio.conf.ts` builds the peer before the run, and so does a new step in
