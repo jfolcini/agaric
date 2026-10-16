@@ -946,7 +946,7 @@ pub async fn apply_reverse_in_tx(
         OpPayload::RemovePageAlias(p) => {
             crate::commands::pages::aliases::require_live_page(tx, p.page_id.as_str()).await?;
             agaric_engine::apply::loro_apply::apply_remove_page_alias_via_loro(
-                tx, state, device_id, p,
+                tx, state, device_id, p, false,
             )
             .await?;
         }
@@ -1304,7 +1304,8 @@ async fn apply_reverse_add_page_alias(
             format!("alias '{}' is already used by another page", p.alias),
         ));
     }
-    agaric_engine::apply::loro_apply::apply_add_page_alias_via_loro(tx, state, device_id, p).await
+    agaric_engine::apply::loro_apply::apply_add_page_alias_via_loro(tx, state, device_id, p, false)
+        .await
 }
 
 /// `SetProperty` arm of [`apply_reverse_in_tx`].
@@ -1331,8 +1332,10 @@ async fn apply_reverse_set_property(
     // left the page in the destination doc, where every later edit fell back
     // to SQL-only and never synced.
     if p.key == agaric_store::op::SPACE_PROPERTY_KEY {
-        agaric_engine::apply::loro_apply::apply_set_property_via_loro(tx, state, device_id, p)
-            .await?;
+        agaric_engine::apply::loro_apply::apply_set_property_via_loro(
+            tx, state, device_id, p, false,
+        )
+        .await?;
         // #5267: the forward move re-rooted the nested pages the hydration
         // above stops at; only an undo puts them back, so this stays here
         // rather than in the forward path.

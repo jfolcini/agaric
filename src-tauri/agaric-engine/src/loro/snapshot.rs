@@ -100,8 +100,9 @@ fn now_ms() -> i64 {
 /// * an op parked in `materializer_retry_queue`, durable on its own.
 ///
 /// Draft recovery (`recovery::draft_recovery`), the empty-block sweep
-/// (`soft_delete::empty_block_sweep`) and the boot repairs (`repair`) also
-/// write the engine after commit, but they run only at boot and await those
+/// (`soft_delete::empty_block_sweep`), the boot repairs (`repair`) and boot
+/// replay's delete cohort fan-out (`recovery::replay`, #5630) also write the
+/// engine after commit, but they run only at boot and await those
 /// writes before the periodic pass is spawned, so no pass reads a head between
 /// their commit and their engine write.
 ///

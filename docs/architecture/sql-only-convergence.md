@@ -21,10 +21,11 @@ model rather than accidents of test scaffolding. They are enumerated as
 `SqlOnlyFallbackReason`
 (`src-tauri/agaric-engine/src/apply/sql_only_fallback.rs`):
 
-- **`SpaceUnresolved`** — `agaric_store::space::resolve_block_space` misses, so
-  the op has no per-space engine to route to: an orphan block, a block with no
-  `space` ancestor, a pre-spaces row, or a fresh page-create whose
-  `SetProperty(space)` has not applied yet.
+- **`SpaceUnresolved`** — `agaric_store::space::resolve_block_space` misses
+  (on boot replay, `loro_apply::resolve_op_space`, which also reads a
+  tombstoned row's own `space_id`), so the op has no per-space engine to route
+  to: an orphan block, a block with no `space` ancestor, a pre-spaces row, or a
+  fresh page-create whose `SetProperty(space)` has not applied yet.
 - **`EngineMissingTarget`** — the space resolved, but the block (or a
   `move_block`'s target parent) is absent from *that* space's engine tree, so a
   single-space engine mutation cannot represent the op. Reached by the #1257

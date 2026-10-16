@@ -860,9 +860,9 @@ pub async fn dispatch_delete_descendants(
 /// (`unsweep_inherited_cohort_after_move`) and then lets
 /// `sweep_move_under_tombstoned_ancestor` stamp whatever the new position
 /// implies. Both halves write SQL and neither can write the engine — a move
-/// whose subject is tombstoned is routed to that arm precisely BY
-/// `resolve_block_space`'s `deleted_at IS NULL` filter, so the arm has no
-/// engine by construction.
+/// whose subject is tombstoned is routed to that arm, off boot replay,
+/// precisely BY `resolve_block_space`'s `deleted_at IS NULL` filter, so the
+/// arm has no engine by construction.
 ///
 /// Without this fan-out the subject's per-space register keeps the OLD
 /// cohort's timestamp, which a delete's `dispatch_delete_descendants` put

@@ -216,9 +216,9 @@ pub async fn apply_restore_block_sql_only(
 /// transaction commits. Empty on every path that did not un-sweep, which is
 /// every path but the tombstoned-INHERITED subject: the cycle skip, a live
 /// subject, and an INTRINSIC tombstone all return `vec![]`. This arm has no
-/// engine by construction — that is what `resolve_block_space`'s
-/// `deleted_at IS NULL` filter routes here — so threading the ids out is the
-/// only way the clear can reach one.
+/// engine by construction — off boot replay, that is what
+/// `resolve_block_space`'s `deleted_at IS NULL` filter routes here — so
+/// threading the ids out is the only way the clear can reach one.
 pub async fn apply_move_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: MoveBlockPayload,
@@ -269,8 +269,8 @@ pub async fn apply_move_block_sql_only(
     // #4204: an INHERITED tombstone is positional, so the reparent above
     // invalidated it. Clear it and let the sweep below re-derive the cohort
     // from the new position. This arm has no engine to mirror the clear onto,
-    // and it is the arm that RUNS for a tombstoned subject — so #4390 threads
-    // the cleared ids OUT to a post-commit mirror instead. See
+    // and off boot replay it is the arm that RUNS for a tombstoned subject —
+    // so #4390 threads the cleared ids OUT to a post-commit mirror instead. See
     // `unsweep_inherited_cohort_after_move`'s "Why it returns the cleared ids".
     // #4390: the cleared ids are threaded back out to `apply_op_tx`, which
     // reads their FINAL `deleted_at` (the sweep below may re-stamp them) into
@@ -289,8 +289,8 @@ pub async fn apply_move_block_sql_only(
     // root it just tombstoned — `sweep_converges_the_inherited_tag_cache_with_the_arbiter_4112`
     // reddens on that substitution).
     //
-    // The engine arm runs the SAME sweep, then additionally mirrors the cohort
-    // onto its per-space engine; this arm has no engine to mirror to in its
+    // Off boot replay the engine arm runs the SAME sweep, then additionally
+    // mirrors the cohort onto its per-space engine; this arm has no engine to mirror to in its
     // primary case (`SpaceUnresolved` — the block never entered one). In the
     // `EngineMissingTarget` sub-case the block CAN be in an engine that now
     // disagrees (engine live / SQL deleted), which is the pre-existing #2250
@@ -450,11 +450,11 @@ pub(crate) async fn inherited_cohort_before_move(
 ///
 /// The mirror cannot live HERE, nor in `apply_move_block_via_loro`: a move
 /// whose subject is TOMBSTONED — the only kind this helper ever sees — is
-/// routed to [`apply_move_block_sql_only`] by `resolve_block_space`'s
-/// `deleted_at IS NULL` filter, and that arm has no engine by construction. So
-/// #4390 threads the answer OUT instead: this helper returns the ids it
-/// cleared, [`apply_move_block_sql_only`] returns them to its caller,
-/// `apply_op_tx` re-reads their FINAL `deleted_at` into
+/// routed, off boot replay, to [`apply_move_block_sql_only`] by
+/// `resolve_block_space`'s `deleted_at IS NULL` filter, and that arm has no
+/// engine by construction. So #4390 threads the answer OUT instead: this
+/// helper returns the ids it cleared, [`apply_move_block_sql_only`] returns
+/// them to its caller, `apply_op_tx` re-reads their FINAL `deleted_at` into
 /// `ApplyEffects::unswept_cohort`, and the post-commit
 /// `materializer::handlers::apply::dispatch_unswept_cohort` mirrors that final
 /// state onto the per-space engine — the shape of #2868's purge fix

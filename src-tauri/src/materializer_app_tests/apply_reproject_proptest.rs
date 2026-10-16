@@ -622,7 +622,7 @@ impl ChainDriver {
                 .expect("local create_block");
             }
             OpPayload::EditBlock(p) => {
-                loro_apply::apply_edit_block_via_loro(&mut tx, state, &self.device_id, p)
+                loro_apply::apply_edit_block_via_loro(&mut tx, state, &self.device_id, p, false)
                     .await
                     .expect("local edit_block");
             }
@@ -632,14 +632,20 @@ impl ChainDriver {
                     .expect("local move_block");
             }
             OpPayload::SetProperty(p) => {
-                loro_apply::apply_set_property_via_loro(&mut tx, state, &self.device_id, p)
+                loro_apply::apply_set_property_via_loro(&mut tx, state, &self.device_id, p, false)
                     .await
                     .expect("local set_property");
             }
             OpPayload::DeleteProperty(p) => {
-                loro_apply::apply_delete_property_via_loro(&mut tx, state, &self.device_id, p)
-                    .await
-                    .expect("local delete_property");
+                loro_apply::apply_delete_property_via_loro(
+                    &mut tx,
+                    state,
+                    &self.device_id,
+                    p,
+                    false,
+                )
+                .await
+                .expect("local delete_property");
             }
             // #2681: delete/restore on the LOCAL command path are bare
             // `apply_*_via_loro` calls too. `DeleteBlock` stamps `deleted_at`
@@ -665,12 +671,12 @@ impl ChainDriver {
             // helper here faithfully models it. Retained only by
             // `prepare_chain_b5`.
             OpPayload::AddTag(p) => {
-                loro_apply::apply_add_tag_via_loro(&mut tx, state, &self.device_id, p)
+                loro_apply::apply_add_tag_via_loro(&mut tx, state, &self.device_id, p, false)
                     .await
                     .expect("local add_tag");
             }
             OpPayload::RemoveTag(p) => {
-                loro_apply::apply_remove_tag_via_loro(&mut tx, state, &self.device_id, p)
+                loro_apply::apply_remove_tag_via_loro(&mut tx, state, &self.device_id, p, false)
                     .await
                     .expect("local remove_tag");
             }
