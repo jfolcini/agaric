@@ -52,7 +52,11 @@ export function readDiagramColors(): DiagramColors | null {
   return colors as DiagramColors
 }
 
-/** Map the resolved colours onto every Mermaid variable a shipped diagram type paints with. */
+/**
+ * Map the resolved colours onto Mermaid's base-theme inputs. Only variables the
+ * base theme would otherwise compute differently are set; the rest (node,
+ * actor, cluster and link colours) it derives from these in `updateColors`.
+ */
 export function mermaidThemeVariables(
   c: DiagramColors,
   darkMode: boolean,
@@ -62,44 +66,24 @@ export function mermaidThemeVariables(
     darkMode,
     fontFamily,
     background: c.background,
-    // Node, actor and activation fills.
+    // Fills: node, actor and activation colours derive from these.
     primaryColor: c.fill,
     secondaryColor: c.fill,
-    mainBkg: c.fill,
-    nodeBkg: c.fill,
-    actorBkg: c.fill,
-    labelBoxBkgColor: c.fill,
-    activationBkgColor: c.fill,
     // Clusters and edge labels sit on the page itself.
     tertiaryColor: c.background,
-    clusterBkg: c.background,
     edgeLabelBackground: c.background,
     noteBkgColor: c.note,
-    // Text.
+    // Text: every other text colour derives from the primary one.
     primaryTextColor: c.text,
     secondaryTextColor: c.text,
     tertiaryTextColor: c.text,
-    textColor: c.text,
-    nodeTextColor: c.text,
-    titleColor: c.text,
-    actorTextColor: c.text,
-    labelTextColor: c.text,
-    loopTextColor: c.text,
     noteTextColor: c.text,
-    signalColor: c.text,
-    signalTextColor: c.text,
-    // Strokes and edges.
+    // Strokes and edges: node, cluster, actor and link colours derive from these.
     primaryBorderColor: c.line,
     secondaryBorderColor: c.line,
     tertiaryBorderColor: c.line,
-    nodeBorder: c.line,
-    clusterBorder: c.line,
     lineColor: c.line,
-    defaultLinkColor: c.line,
     arrowheadColor: c.line,
-    actorBorder: c.line,
-    actorLineColor: c.line,
-    labelBoxBorderColor: c.line,
     noteBorderColor: c.line,
     activationBorderColor: c.line,
   }

@@ -94,7 +94,15 @@ export function ImageLightbox({
     [hasMultiple, goPrev, goNext],
   )
   const zoomPan = useZoomPan({ active: open, resetKey: safeIndex, onUnzoomedArrow })
-  const { zoom, zoomed, dragging, setNode, surfaceProps } = zoomPan
+  const { zoom, zoomed, dragging, setNode, setGestureNode, style, gestureHandlers } = zoomPan
+  // The image is both what zooms and what takes the gestures.
+  const setImage = useCallback(
+    (img: HTMLImageElement | null) => {
+      setNode(img)
+      setGestureNode(img)
+    },
+    [setNode, setGestureNode],
+  )
 
   if (!current) return null
 
@@ -153,7 +161,7 @@ export function ImageLightbox({
         ) : (
           <img
             key={current.src}
-            ref={setNode}
+            ref={setImage}
             src={current.src}
             alt={current.alt}
             className={cn(
@@ -161,7 +169,8 @@ export function ImageLightbox({
               !reducedMotion && !dragging && 'transition-transform',
               zoomed && (dragging ? 'cursor-grabbing' : 'cursor-grab'),
             )}
-            {...surfaceProps}
+            style={style}
+            {...gestureHandlers}
             onError={() => setImgError(true)}
             draggable={false}
             data-testid="lightbox-image"

@@ -2,8 +2,10 @@
  * useZoomPan — the zoom-and-pan surface shared by the image lightbox and the
  * diagram viewer (#294 item 7, #5638).
  *
- * `zoom` is a scale factor and `pan` a CSS-px translation applied before it;
- * spread `surfaceProps` onto the element being zoomed and give it `setNode`.
+ * `zoom` is a scale factor and `pan` a CSS-px translation applied before it.
+ * The zoomed element takes `style` and `setNode`; the element that receives
+ * gestures takes `gestureHandlers` and `setGestureNode`. They differ when the
+ * content can be smaller than the area around it, such as a fitted diagram.
  * Inputs: `+`/`=`, `-`/`_` and `0` (back to `minZoom`) on the window, arrow
  * keys pan while zoomed, the wheel zooms (or pans, with `wheel: 'pan'`, where
  * Ctrl/⌘ + wheel and a trackpad pinch zoom), one pointer drags while zoomed,
@@ -14,6 +16,7 @@ import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 const ZOOM_STEP = 0.25
+const MAX_ZOOM = 4
 /** Pixels panned per arrow-key press while zoomed in. */
 const PAN_KEY_STEP = 60
 
@@ -36,7 +39,6 @@ export interface ZoomPanOptions {
   /** Zoom and pan return to `minZoom` whenever this changes. */
   resetKey?: unknown
   minZoom?: number
-  maxZoom?: number
   wheel?: 'zoom' | 'pan'
   /** Called for ArrowLeft/ArrowRight while not zoomed; return true when handled. */
   onUnzoomedArrow?: ((key: 'ArrowLeft' | 'ArrowRight') => boolean) | undefined
@@ -46,19 +48,17 @@ export function useZoomPan({
   active,
   resetKey,
   minZoom = 1,
-  maxZoom = 4,
   wheel = 'zoom',
   onUnzoomedArrow,
 }: ZoomPanOptions) {
   const nodeRef = useRef<HTMLElement | null>(null)
-  // Mirrors `nodeRef.current` in state so the wheel effect re-attaches exactly
-  // when the DOM node changes (#2760): a Radix Portal mounts in two passes, so
-  // an effect keyed on anything else can run before the node exists.
-  const [node, setNodeState] = useState<HTMLElement | null>(null)
   const setNode = useCallback((el: HTMLElement | null) => {
     nodeRef.current = el
-    setNodeState(el)
   }, [])
+  // State, not a ref, so the wheel effect re-attaches exactly when the DOM node
+  // changes (#2760): a Radix Portal mounts in two passes, so an effect keyed on
+  // anything else can run before the node exists.
+  const [gestureNode, setGestureNode] = useState<HTMLElement | null>(null)
   const [zoom, setZoom] = useState(minZoom)
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
@@ -80,12 +80,12 @@ export function useZoomPan({
   )
 
   const zoomTo = useCallback(
-    (z: number) => setZoom(clamp(Number(z.toFixed(2)), minZoom, maxZoom)),
-    [minZoom, maxZoom],
+    (z: number) => setZoom(clamp(Number(z.toFixed(2)), minZoom, MAX_ZOOM)),
+    [minZoom],
   )
   const zoomBy = useCallback(
-    (delta: number) => setZoom((z) => clamp(Number((z + delta).toFixed(2)), minZoom, maxZoom)),
-    [minZoom, maxZoom],
+    (delta: number) => setZoom((z) => clamp(Number((z + delta).toFixed(2)), minZoom, MAX_ZOOM)),
+    [minZoom],
   )
   const resetZoom = useCallback(() => {
     setZoom(minZoom)
@@ -137,15 +137,15 @@ export function useZoomPan({
   // A native non-passive listener, not JSX `onWheel` (#2760): React's root
   // wheel listener is passive, so `preventDefault()` there is a no-op.
   useEffect(() => {
-    if (!node) return
+    if (!gestureNode) return
     const onWheel = (e: WheelEvent): void => {
       e.preventDefault()
       if (wheel === 'pan' && !e.ctrlKey && !e.metaKey) panBy(-e.deltaX, -e.deltaY)
       else zoomBy(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP)
     }
-    node.addEventListener('wheel', onWheel, { passive: false })
-    return () => node.removeEventListener('wheel', onWheel)
-  }, [node, wheel, zoomBy, panBy])
+    gestureNode.addEventListener('wheel', onWheel, { passive: false })
+    return () => gestureNode.removeEventListener('wheel', onWheel)
+  }, [gestureNode, wheel, zoomBy, panBy])
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -192,14 +192,15 @@ export function useZoomPan({
   return {
     zoom,
     zoomed,
-    canZoomIn: zoom < maxZoom,
+    canZoomIn: zoom < MAX_ZOOM,
     dragging,
     zoomBy,
     zoomTo,
     resetZoom,
     setNode,
-    surfaceProps: {
-      style: { transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` },
+    setGestureNode,
+    style: { transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` },
+    gestureHandlers: {
       onPointerDown,
       onPointerMove,
       onPointerUp,

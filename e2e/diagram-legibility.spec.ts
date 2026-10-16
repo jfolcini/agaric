@@ -379,10 +379,12 @@ for (const [label, touch] of [
   })
 }
 
-test.describe('diagram viewer pinch (phone)', () => {
+// The fitted diagram can be a thin strip, so gestures belong to the whole
+// viewer, not to the diagram's own box.
+test.describe('diagram viewer gestures outside the diagram (phone)', () => {
   test.use({ viewport: iPhone13.viewport, hasTouch: true, isMobile: true })
 
-  test('two fingers spreading apart zoom in', async ({ page }) => {
+  test('two fingers that start above and below the fitted strip zoom in', async ({ page }) => {
     await waitForBoot(page)
     await seedSearchBlocks(page, [{ content: WIDE_FLOWCHART }])
     await openPageMobile(page, 'Projects')
@@ -390,14 +392,16 @@ test.describe('diagram viewer pinch (phone)', () => {
     const surface = page.getByTestId('diagram-viewer-surface')
     await expect(surface).toBeVisible()
     const before = await surfaceTransform(surface)
-    const { cx, cy: y } = await boxOf(surface)
+    const { cx, cy, height } = await boxOf(surface)
+    // Both fingers start outside the strip.
+    expect(height).toBeLessThan(120)
     const cdp = await page.context().newCDPSession(page)
     const touches = (spread: number) => [
-      { x: cx - spread, y, id: 1 },
-      { x: cx + spread, y, id: 2 },
+      { x: cx, y: cy - spread, id: 1 },
+      { x: cx, y: cy + spread, id: 2 },
     ]
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: touches(20) })
-    for (const spread of [40, 60, 80]) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: touches(60) })
+    for (const spread of [80, 100, 120]) {
       await cdp.send('Input.dispatchTouchEvent', {
         type: 'touchMove',
         touchPoints: touches(spread),
@@ -405,7 +409,40 @@ test.describe('diagram viewer pinch (phone)', () => {
     }
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
     await cdp.detach()
-    expect((await surfaceTransform(surface)).z).toBeGreaterThan(before.z * 2)
+    expect((await surfaceTransform(surface)).z).toBeCloseTo(before.z * 2, 1)
+  })
+})
+
+test.describe('diagram viewer gestures outside the diagram (desktop)', () => {
+  test.use({ viewport: VIEWPORTS.desktop })
+
+  test('Ctrl + wheel zooms and a drag pans from outside the diagram box', async ({ page }) => {
+    await waitForBoot(page)
+    await seedSearchBlocks(page, [{ content: WIDE_FLOWCHART }])
+    await openPage(page, 'Projects')
+    const host = page.locator('.group\\/diagram:has([data-testid="mermaid-diagram"])')
+    await host.hover()
+    await host.getByRole('button', { name: 'Expand', exact: true }).click()
+    const surface = page.getByTestId('diagram-viewer-surface')
+    await expect(surface).toBeVisible()
+    const fitted = await surfaceTransform(surface)
+    // Bottom-right of the screen, well below the fitted diagram.
+    const outside = { x: VIEWPORTS.desktop.width - 100, y: VIEWPORTS.desktop.height - 60 }
+    const { y, height } = await boxOf(surface)
+    expect(outside.y).toBeGreaterThan(y + height * 2)
+
+    await page.mouse.move(outside.x, outside.y)
+    await page.keyboard.down('Control')
+    await page.mouse.wheel(0, -100)
+    await page.keyboard.up('Control')
+    await expect
+      .poll(async () => (await surfaceTransform(surface)).z)
+      .toBeCloseTo(fitted.z + 0.25, 2)
+
+    await page.mouse.down()
+    await page.mouse.move(outside.x - 40, outside.y, { steps: 4 })
+    await page.mouse.up()
+    expect((await surfaceTransform(surface)).x).toBeLessThan(0)
   })
 })
 

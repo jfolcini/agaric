@@ -10,8 +10,15 @@ import { describe, expect, it } from 'vitest'
 import { useZoomPan, type ZoomPanOptions } from '@/hooks/useZoomPan'
 
 function Surface(props: Partial<ZoomPanOptions>): React.ReactElement {
-  const { setNode, surfaceProps } = useZoomPan({ active: true, ...props })
-  return <div ref={setNode} {...surfaceProps} data-testid="surface" />
+  const { setNode, setGestureNode, style, gestureHandlers } = useZoomPan({
+    active: true,
+    ...props,
+  })
+  return (
+    <div ref={setGestureNode} {...gestureHandlers} data-testid="area">
+      <div ref={setNode} style={style} data-testid="surface" />
+    </div>
+  )
 }
 
 const transform = () => screen.getByTestId('surface').style.transform
@@ -28,27 +35,29 @@ describe('useZoomPan', () => {
 
   it('pans on a plain wheel and zooms on Ctrl + wheel in pan mode', () => {
     render(<Surface wheel="pan" />)
+    // The pan limit comes from the zoomed content; the wheel lands around it.
     const surface = screen.getByTestId('surface')
     Object.defineProperty(surface, 'clientWidth', { value: 400 })
     Object.defineProperty(surface, 'clientHeight', { value: 400 })
+    const area = screen.getByTestId('area')
     const ctrlWheel = new WheelEvent('wheel', { deltaY: -100, cancelable: true })
     // happy-dom's WheelEvent init drops modifier keys.
     Object.defineProperty(ctrlWheel, 'ctrlKey', { value: true })
-    fireEvent(surface, ctrlWheel)
+    fireEvent(area, ctrlWheel)
     expect(transform()).toContain('scale(1.25)')
-    fireEvent.wheel(surface, { deltaY: 20, deltaX: 0 })
+    fireEvent.wheel(area, { deltaY: 20, deltaX: 0 })
     expect(transform()).toContain('translate(0px, -20px) scale(1.25)')
   })
 
   it('zooms by the ratio two pointers spread apart', () => {
     render(<Surface />)
-    const surface = screen.getByTestId('surface')
-    fireEvent.pointerDown(surface, { pointerId: 1, clientX: 100, clientY: 0 })
-    fireEvent.pointerDown(surface, { pointerId: 2, clientX: 140, clientY: 0 })
-    fireEvent.pointerMove(surface, { pointerId: 2, clientX: 180, clientY: 0 })
+    const area = screen.getByTestId('area')
+    fireEvent.pointerDown(area, { pointerId: 1, clientX: 100, clientY: 0 })
+    fireEvent.pointerDown(area, { pointerId: 2, clientX: 140, clientY: 0 })
+    fireEvent.pointerMove(area, { pointerId: 2, clientX: 180, clientY: 0 })
     expect(transform()).toContain('scale(2)')
-    fireEvent.pointerUp(surface, { pointerId: 2 })
-    fireEvent.pointerUp(surface, { pointerId: 1 })
+    fireEvent.pointerUp(area, { pointerId: 2 })
+    fireEvent.pointerUp(area, { pointerId: 1 })
     expect(transform()).toContain('scale(2)')
   })
 })

@@ -84,13 +84,21 @@ export function DiagramViewer({
   }, [viewport, content])
 
   const zoomPan = useZoomPan({ active: open, minZoom: fit ?? 1, resetKey: fit, wheel: 'pan' })
-  const { zoom, dragging, zoomed, setNode } = zoomPan
+  const { zoom, dragging, zoomed, setNode, setGestureNode } = zoomPan
   const setSurface = useCallback(
     (node: HTMLDivElement | null) => {
       setContent(node)
       setNode(node)
     },
     [setNode],
+  )
+  // The whole screen takes gestures: the fitted diagram can be a thin strip.
+  const setGestureArea = useCallback(
+    (node: HTMLDivElement | null) => {
+      setViewport(node)
+      setGestureNode(node)
+    },
+    [setGestureNode],
   )
   const onOpenChange = (next: boolean) => {
     setOpen(next)
@@ -152,17 +160,17 @@ export function DiagramViewer({
         <DialogDescription className="sr-only">{t('diagramViewer.description')}</DialogDescription>
 
         <div
-          ref={setViewport}
-          className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
+          ref={setGestureArea}
+          {...zoomPan.gestureHandlers}
+          className={cn(
+            'relative flex min-h-0 flex-1 touch-none items-center justify-center overflow-hidden select-none',
+            zoomed && (dragging ? 'cursor-grabbing' : 'cursor-grab'),
+          )}
         >
           <div
             ref={setSurface}
-            {...zoomPan.surfaceProps}
-            className={cn(
-              'shrink-0 touch-none select-none',
-              fit === null && 'invisible',
-              zoomed && (dragging ? 'cursor-grabbing' : 'cursor-grab'),
-            )}
+            style={zoomPan.style}
+            className={cn('shrink-0', fit === null && 'invisible')}
             data-testid="diagram-viewer-surface"
           >
             {children}
@@ -185,22 +193,24 @@ export function DiagramViewer({
               {t('diagramViewer.downloadSvg')}
             </Button>
           )}
+        </div>
+
+        <div className="absolute bottom-4 left-4 flex flex-col items-start gap-1">
           <span
-            className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground tabular-nums"
+            className="rounded-md bg-muted px-2 py-1 text-xs whitespace-nowrap text-muted-foreground tabular-nums"
             aria-live="polite"
             data-testid="diagram-viewer-zoom"
           >
             {t('diagramViewer.zoom', { percent: Math.round(zoom * 100) })}
           </span>
+          <ZoomControls
+            zoomPan={zoomPan}
+            resetLabel={t('diagramViewer.fit')}
+            actualSize
+            testIdPrefix="diagram-viewer"
+            className="flex flex-col gap-1"
+          />
         </div>
-
-        <ZoomControls
-          zoomPan={zoomPan}
-          resetLabel={t('diagramViewer.fit')}
-          actualSize
-          testIdPrefix="diagram-viewer"
-          className="absolute bottom-4 left-4 flex flex-col gap-1"
-        />
       </DialogContent>
     </Dialog>
   )

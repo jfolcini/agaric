@@ -144,8 +144,10 @@ describe('MermaidDiagram', () => {
     })
 
     await waitFor(() => {
-      expect(mockedRender.mock.calls.length).toBeGreaterThan(rendersBefore)
+      expect(mockedRender.mock.calls.length).toBe(rendersBefore + 1)
     })
+    await screen.findByTestId('mermaid-diagram')
+    expect(mockedRender.mock.calls.length).toBe(rendersBefore + 1)
   })
 
   it('uses the base theme with token colours when the tokens resolve (#5638)', async () => {
@@ -170,7 +172,7 @@ describe('MermaidDiagram', () => {
         theme: 'base',
         securityLevel: 'strict',
         themeVariables: expect.objectContaining({
-          mainBkg: '#202020',
+          primaryColor: '#202020',
           primaryTextColor: '#f0f0f0',
           lineColor: '#a0a0a0',
         }),
@@ -305,7 +307,7 @@ describe('MermaidDiagram', () => {
 
   // #5638 — Expand opens the full-screen viewer with the diagram at its
   // natural size: the inline width:100%/max-width sizing is replaced by the
-  // viewBox size, and the ids are renamed so they do not collide.
+  // viewBox size.
   it('opens the viewer from Expand with the diagram at natural size (#5638)', async () => {
     mockedRender.mockResolvedValue({
       svg: '<svg id="mermaid-x" width="100%" style="max-width: 300px;" viewBox="0 0 300 100"><text>X</text></svg>',

@@ -91,9 +91,9 @@ describe('mermaidThemeVariables', () => {
     expect(v).toMatchObject({
       darkMode: true,
       fontFamily: 'Inter',
-      mainBkg: '#000002',
+      primaryColor: '#000002',
       primaryTextColor: '#000003',
-      nodeBorder: '#000004',
+      primaryBorderColor: '#000004',
       lineColor: '#000004',
       edgeLabelBackground: '#000001',
       noteBkgColor: '#000005',
