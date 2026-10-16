@@ -1051,8 +1051,8 @@ async fn append_delete_ops_in_tx(
     // either double-count the cascade if run before the batch UPDATE, or
     // hit the same dead-space-resolution wall if run after it — the
     // pre-captured space sidesteps both. The op-log shape (one op per root)
-    // and the apply cursor are untouched (cursor advance stays a
-    // boot-replay / `dispatch_op` concern, #1248 / #1257).
+    // and the apply cursor are untouched: the snapshot pass, not the command,
+    // moves the cursor past LOCAL ops (#5418).
     let mut delete_fanout: Vec<DeleteEngineFanout> = Vec::with_capacity(live_roots.len());
     for (root, root_block_type) in live_roots {
         let payload = DeleteBlockPayload {
@@ -2667,8 +2667,8 @@ pub async fn restore_blocks_by_ids_inner(
     //
     // #3834: the returned `chain` is KEPT (it used to be dropped on the floor
     // in favour of the `apply_op` → `dispatch_restore_ancestors` replay arm,
-    // which never runs for a locally authored op — the local path leaves the
-    // apply cursor put, so the op only replays at boot, by which point the
+    // which runs for a locally authored op only if boot replays it — the
+    // snapshot pass moves the cursor past LOCAL ops (#5418) — and by then the
     // chain is already live in SQL and the projection returns an EMPTY chain).
     // It is stashed on this root's `restore_fanout` entry and driven onto the
     // engine post-commit alongside the descendant cohort, which

@@ -245,9 +245,9 @@ pub async fn ensure_accent_color_property(
 /// `SetProperty(space)` op per page, applied in this transaction through the
 /// shared projection like any other op. For the `space` key that stamps
 /// `blocks.space_id` on the page group and hydrates the page's subtree into
-/// Personal's engine (#2326). The apply has to happen here: a snapshot pass
-/// moves the apply cursor past these ops (#5418), so boot never replays them,
-/// and a page missing from the engine never syncs and is lost to a
+/// Personal's engine (#2326). The apply has to happen here: once a snapshot
+/// pass moves the apply cursor past these ops (#5418), boot no longer replays
+/// them, and a page missing from the engine never syncs and is lost to a
 /// reprojection from the engine.
 ///
 /// [`pages_without_space`] selects pages with no `space_id`, so the apply has

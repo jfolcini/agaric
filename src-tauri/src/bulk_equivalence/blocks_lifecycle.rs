@@ -966,8 +966,8 @@ async fn assert_member_converged(env: &ArmEnv, path: &str, role: &str, label: &s
     //
     // #3834 (ancestor): nothing in either local command reached the engine for
     // the chain — the `apply_op` → `dispatch_restore_ancestors` arm the code
-    // cited never runs for a locally authored op (the local path leaves the
-    // apply cursor put, so the op only replays at boot, by which point the
+    // cited runs for a locally authored op only if boot replays it (the
+    // snapshot pass moves the cursor past LOCAL ops, #5418), and by then the
     // chain is already live in SQL and the projection returns an empty chain).
     //
     // #3856 (seed + descendant cohort): `restore_block_inner` and

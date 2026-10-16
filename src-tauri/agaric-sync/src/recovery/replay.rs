@@ -267,11 +267,12 @@ pub(super) async fn compacted_floor_above(
 /// The reset target is the most-stale watermark across all spaces. What
 /// bounds it is `save_all_engines`: since #2201 that pass re-encodes only
 /// DIRTY spaces, but it also advances `applied_through_seq` for every space
-/// it did not re-encode (`snapshot::advance_clean_space_watermarks`) — a
-/// clean engine already reflects the ops below the pass's head, bar the late
-/// engine writes `snapshot::op_log_head` lists, so the claim holds without
-/// rewriting the blob. Every row therefore tracks the apply cursor
-/// to within roughly one snapshot interval, and so does this `MIN`.
+/// it did not re-encode (`snapshot::advance_clean_space_watermarks`), taking
+/// a clean engine to reflect the ops below the pass's head without rewriting
+/// the blob. The exceptions are the late engine writes `snapshot::op_log_head`
+/// lists, each of which re-dirties its engine so the next pass persists it.
+/// Every row therefore tracks the apply cursor to within roughly one snapshot
+/// interval, and so does this `MIN`.
 ///
 /// Do NOT "optimise" this to `MAX`, nor narrow it to a per-space subset:
 /// the target must cover the MOST-behind engine, and a rewind that lands

@@ -18,8 +18,9 @@
 //!
 //! The replay reconciliation net is asymmetric:
 //! - **LOCAL** ops live in the device op_log and apply with `advance_cursor =
-//!   false`, so boot replay (`recovery::replay`) re-applies them idempotently →
-//!   self-healing.
+//!   false`, so boot replay (`recovery::replay`) re-applies the ones committed
+//!   after the last snapshot pass idempotently → self-healing. The pass moves
+//!   the cursor past the rest once the engine snapshots hold them (#5418).
 //! - **REMOTE** ops never land in the local op_log (#490-M1) and advance the
 //!   apply cursor (`advance_cursor = true`), so boot replay cannot see them. The
 //!   only net is the #2504 disaster-recovery reprojection

@@ -2679,8 +2679,8 @@ const PAGES_CACHE_LAST_EDITED_OWNER: &str = "cache::raise_pages_last_edited_ms, 
      inserts is born from the op log";
 
 const PAGES_CACHE_SPACE_OWNER: &str = "the page-create INSERT in apply::pages_cache, \
-     cache::sync_pages_cache_space_ids (a `space` op's projection, the boot placement of \
-     space-less pages), cache::insert_missing_pages_cache_rows (a restore) and \
+     cache::sync_pages_cache_space_ids (a `space` op's projection, which the boot placement of \
+     space-less pages goes through), cache::insert_missing_pages_cache_rows (a restore) and \
      cache::pages' rebuild (every other path that moves a page) — \
      the Pages list filters on this column, so a stale value lists the page in a space it \
      left and hides it from the one it is in";

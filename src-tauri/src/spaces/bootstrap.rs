@@ -7,8 +7,8 @@
 //! can be retried safely on the next boot.
 //!
 //! #2621 THE INVERSION: the neutral, transaction-scoped inner core (the
-//! seeded-block / `is_space` / `accent_color` writers, the batched
-//! page-space backfill, and the orphan-tag majority-space assignment) moved
+//! seeded-block / `is_space` / `accent_color` writers, the page-space
+//! backfill, and the orphan-tag majority-space assignment) moved
 //! DOWN into [`agaric_engine::spaces`] so it depends *down* on the
 //! block-write core and the store with no upward `spaces → commands` edge.
 //! This module keeps the `CommandTx` / `Materializer` orchestrator
@@ -93,10 +93,12 @@ pub async fn bootstrap_spaces(
     // being discarded. Helpers append the `OpRecord`s into `records`,
     // which we drain into the tx's pending queue before commit.
     let mut tx = CommandTx::begin_immediate(pool, "bootstrap_spaces").await?;
-    // #2604 — rollback-safe engine apply. The misfiled-tag repair below
-    // prunes a tag out of one space's LoroDoc and hydrates it into another
-    // (#2907) inside this tx; if the commit then fails, the in-memory docs
-    // must be rewound so they never sit ahead of the rolled-back SQL. Same
+    // #2604 — rollback-safe engine apply. The page backfill hydrates each
+    // space-less page into Personal's LoroDoc (#5418), and the misfiled-tag
+    // repair below prunes a tag out of one space's LoroDoc and hydrates it
+    // into another (#2907), both inside this tx; if the commit then fails, the
+    // in-memory docs must be rewound so they never sit ahead of the
+    // rolled-back SQL. Same
     // arming as `move_blocks_to_space_inner`, the canonical cross-space move.
     tx.arm_engine_rollback(state);
     let mut records: Vec<OpRecord> = Vec::new();
@@ -755,8 +757,9 @@ mod tests {
 
     /// #5418: a snapshot pass moves the apply cursor past the backfill's
     /// `SetProperty(space)` ops, so boot no longer replays them. A page the
-    /// backfill places in Personal must already be in Personal's engine, or it
-    /// never syncs and a reprojection from the engine loses it.
+    /// backfill places in Personal must already be in Personal's engine with
+    /// its children, or they never sync and a reprojection from the engine
+    /// loses them.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn pages_placed_by_the_backfill_are_in_the_engine_after_a_reboot() {
         use agaric_engine::loro::snapshot::{rehydrate_registry, save_engines_and_advance_cursor};
@@ -775,21 +778,26 @@ mod tests {
         .await
         .unwrap();
         // Two pages, because boot replays the newest op (the pass's watermark
-        // withholds it): only the older page can show a miss.
+        // withholds it): only the older page can show a miss. Each has a child,
+        // which reaches the engine only through its page's hydrate.
         let mut space_less = Vec::new();
         for title in ["Legacy A", "Legacy B"] {
-            let id = agaric_core::ulid::BlockId::new().to_string();
+            let page = agaric_core::ulid::BlockId::new().to_string();
+            let child = agaric_core::ulid::BlockId::new().to_string();
             sqlx::query(
                 "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-                 VALUES (?, 'page', ?, NULL, 1, ?)",
+                 VALUES (?, 'page', ?, NULL, 1, ?), (?, 'content', 'body', ?, 1, ?)",
             )
-            .bind(&id)
+            .bind(&page)
             .bind(title)
-            .bind(&id)
+            .bind(&page)
+            .bind(&child)
+            .bind(&page)
+            .bind(&page)
             .execute(&pool)
             .await
             .unwrap();
-            space_less.push(id);
+            space_less.push((page, child));
         }
 
         bootstrap_spaces(&pool, DEV, &session).await.unwrap();
@@ -804,21 +812,127 @@ mod tests {
         crate::recovery::recover_at_boot(&pool, DEV, &boot, registry)
             .await
             .unwrap();
-        let held: Vec<bool> = {
+        let held: Vec<(bool, bool)> = {
             let personal = SpaceId::from_trusted(SPACE_PERSONAL_ULID);
             let mut guard = registry.for_space(&personal, DEV).unwrap();
             let engine = guard.engine_mut();
             space_less
                 .iter()
-                .map(|id| engine.read_block(id).unwrap().is_some())
+                .map(|(page, child)| (engine.contains_block(page), engine.contains_block(child)))
                 .collect()
         };
         boot.shutdown();
 
         assert_eq!(
             held,
-            [true, true],
-            "every page the backfill placed must be in Personal's engine"
+            [(true, true), (true, true)],
+            "every (page, child) the backfill placed must be in Personal's engine"
+        );
+    }
+
+    /// Three space-less pages, the third carrying a whitespace-only alias that
+    /// the hydrate's `apply_add_page_alias` refuses, so the backfill fails
+    /// after it has hydrated the first two. Ids are fixed because the backfill
+    /// walks pages in id order. Returns the page ids.
+    async fn seed_backfill_that_fails_on_the_third_page(pool: &SqlitePool) -> Vec<String> {
+        let ids: Vec<String> = (1..=3).map(|n| format!("01JRB{n:021}")).collect();
+        for id in &ids {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'page', 'legacy', NULL, 1, ?)",
+            )
+            .bind(id)
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ' ')")
+            .bind(&ids[2])
+            .execute(pool)
+            .await
+            .unwrap();
+        ids
+    }
+
+    /// After a failed backfill: which pages SQL placed, and which Personal's
+    /// engine holds.
+    async fn backfill_trace(
+        pool: &SqlitePool,
+        mat: &Materializer,
+        ids: &[String],
+    ) -> (Vec<Option<String>>, Vec<bool>) {
+        let mut placed = Vec::new();
+        for id in ids {
+            let space: Option<String> =
+                sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(pool)
+                    .await
+                    .unwrap();
+            placed.push(space);
+        }
+        let personal = SpaceId::from_trusted(SPACE_PERSONAL_ULID);
+        let mut guard = mat.loro_state().registry.for_space(&personal, DEV).unwrap();
+        let engine = guard.engine_mut();
+        let held = ids.iter().map(|id| engine.contains_block(id)).collect();
+        (placed, held)
+    }
+
+    /// #2604: the boot backfill hydrates each page into Personal's engine in
+    /// its transaction, so a failure part-way must rewind the engine with the
+    /// SQL, or the pages it hydrated stay in Personal's doc while SQL says
+    /// they have no space.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failed_boot_backfill_leaves_no_page_in_the_engine() {
+        let (pool, mat, _tmp) = boot_pool().await;
+        bootstrap_spaces(&pool, DEV, &mat).await.unwrap();
+        let ids = seed_backfill_that_fails_on_the_third_page(&pool).await;
+
+        let result = bootstrap_spaces(&pool, DEV, &mat).await;
+        let (placed, held) = backfill_trace(&pool, &mat, &ids).await;
+        mat.shutdown();
+
+        assert!(
+            matches!(result, Err(AppError::Validation { .. })),
+            "precondition: the blank alias must fail the backfill, got {result:?}"
+        );
+        assert_eq!(
+            placed,
+            [None, None, None],
+            "a failed backfill must leave every page space-less in SQL"
+        );
+        assert_eq!(
+            held,
+            [false, false, false],
+            "a failed backfill must leave none of its pages in Personal's engine"
+        );
+    }
+
+    /// The same failure through the sync entry (#4717).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failed_sync_placement_leaves_no_page_in_the_engine() {
+        let (pool, mat, _tmp) = boot_pool().await;
+        bootstrap_spaces(&pool, DEV, &mat).await.unwrap();
+        let ids = seed_backfill_that_fails_on_the_third_page(&pool).await;
+
+        let result = place_space_less_blocks(&pool, &pool, DEV, &mat).await;
+        let (placed, held) = backfill_trace(&pool, &mat, &ids).await;
+        mat.shutdown();
+
+        assert!(
+            matches!(result, Err(AppError::Validation { .. })),
+            "precondition: the blank alias must fail the placement, got {result:?}"
+        );
+        assert_eq!(
+            placed,
+            [None, None, None],
+            "a failed placement must leave every page space-less in SQL"
+        );
+        assert_eq!(
+            held,
+            [false, false, false],
+            "a failed placement must leave none of its pages in Personal's engine"
         );
     }
 }
