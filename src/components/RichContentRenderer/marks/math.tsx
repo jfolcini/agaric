@@ -24,7 +24,7 @@ export function renderMathInline(node: MathInlineNode, key: string): React.React
 export function renderMathBlock(node: MathBlockNode, key: string): React.ReactElement {
   return (
     <Suspense key={key} fallback={<div className="text-muted-foreground">{node.attrs.latex}</div>}>
-      <LazyKatexMath latex={node.attrs.latex} display />
+      <LazyKatexMath latex={node.attrs.latex} display expandable />
     </Suspense>
   )
 }

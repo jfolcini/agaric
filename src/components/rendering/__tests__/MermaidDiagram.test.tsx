@@ -9,6 +9,7 @@
  */
 
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -21,7 +22,15 @@ vi.mock('mermaid', () => ({
   },
 }))
 
+// happy-dom has no 2D canvas; the token resolver itself is covered in
+// mermaid-theme.test.ts, so here it is stubbed to either outcome.
+vi.mock('@/components/rendering/mermaid-theme', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/components/rendering/mermaid-theme')>()),
+  readDiagramColors: vi.fn(() => null),
+}))
+
 const mermaid = (await import('mermaid')).default
+const { readDiagramColors } = await import('@/components/rendering/mermaid-theme')
 const mockedRender = vi.mocked(mermaid.render)
 const mockedInitialize = vi.mocked(mermaid.initialize)
 
@@ -112,6 +121,63 @@ describe('MermaidDiagram', () => {
       )
     })
     expect(mockedRender.mock.calls.length).toBeGreaterThan(rendersAfterDark)
+  })
+
+  // #5638 — the diagram is painted from the theme's tokens, so a switch that
+  // keeps `isDark` (dark → dracula) must re-render too.
+  it('re-renders on a theme change that keeps the same light/dark side (#5638)', async () => {
+    mockedRender.mockResolvedValue({
+      svg: '<svg><text>X</text></svg>',
+      diagramType: 'flowchart',
+      bindFunctions: vi.fn(),
+    })
+    const { result } = renderHook(() => useTheme())
+    act(() => {
+      result.current.setTheme('dark')
+    })
+    render(<MermaidDiagram code="graph TD; A-->B;" />)
+    await screen.findByTestId('mermaid-diagram')
+    const rendersBefore = mockedRender.mock.calls.length
+
+    act(() => {
+      result.current.setTheme('dracula')
+    })
+
+    await waitFor(() => {
+      expect(mockedRender.mock.calls.length).toBe(rendersBefore + 1)
+    })
+    await screen.findByTestId('mermaid-diagram')
+    expect(mockedRender.mock.calls.length).toBe(rendersBefore + 1)
+  })
+
+  it('uses the base theme with token colours when the tokens resolve (#5638)', async () => {
+    vi.mocked(readDiagramColors).mockReturnValueOnce({
+      background: '#101010',
+      fill: '#202020',
+      text: '#f0f0f0',
+      line: '#a0a0a0',
+      note: '#303030',
+    })
+    mockedRender.mockResolvedValue({
+      svg: '<svg><text>X</text></svg>',
+      diagramType: 'flowchart',
+      bindFunctions: vi.fn(),
+    })
+
+    render(<MermaidDiagram code="graph TD; A-->B;" />)
+    await screen.findByTestId('mermaid-diagram')
+
+    expect(mockedInitialize).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        theme: 'base',
+        securityLevel: 'strict',
+        themeVariables: expect.objectContaining({
+          primaryColor: '#202020',
+          primaryTextColor: '#f0f0f0',
+          lineColor: '#a0a0a0',
+        }),
+      }),
+    )
   })
 
   it('shows loading state initially', () => {
@@ -237,5 +303,30 @@ describe('MermaidDiagram', () => {
     // No bare overflow-x-auto anywhere.
     const anyOverflowX = container.querySelector('.overflow-x-auto')
     expect(anyOverflowX).toBeNull()
+  })
+
+  // #5638 — Expand opens the full-screen viewer with the diagram at its
+  // natural size: the inline width:100%/max-width sizing is replaced by the
+  // viewBox size.
+  it('opens the viewer from Expand with the diagram at natural size (#5638)', async () => {
+    mockedRender.mockResolvedValue({
+      svg: '<svg id="mermaid-x" width="100%" style="max-width: 300px;" viewBox="0 0 300 100"><text>X</text></svg>',
+      diagramType: 'flowchart',
+      bindFunctions: vi.fn(),
+    })
+    const user = userEvent.setup()
+    render(<MermaidDiagram code="graph TD; A-->B;" />)
+    await screen.findByTestId('mermaid-diagram')
+
+    await user.click(screen.getByRole('button', { name: 'Expand' }))
+
+    const dialog = screen.getByRole('dialog')
+    const svg = dialog.querySelector('svg')
+    expect(svg).toHaveAttribute('width', '300')
+    expect(svg).toHaveAttribute('height', '100')
+    expect(svg?.getAttribute('style') ?? '').not.toContain('max-width')
+    expect(screen.getByRole('button', { name: 'Copy source' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download SVG' })).toBeInTheDocument()
+    expect(await axe(dialog)).toHaveNoViolations()
   })
 })
