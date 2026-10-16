@@ -6,6 +6,8 @@
  *   2. `axe(container)` reports no a11y violations.
  *   3. The view buttons (#5269) open their views and the Trash button
  *      carries the trash count.
+ *   4. Search first (#5637): the first row is search, sort, saved views and
+ *      New page; search is the primary focus only with a fine pointer.
  *
  * Radix Select is globally mocked to a native `<select>` tree in
  * `src/test-setup.ts`, so `userEvent.selectOptions` drives the
@@ -17,7 +19,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createRef } from 'react'
+import { useEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -26,19 +28,15 @@ import {
   PageBrowserHeader,
   type PageBrowserHeaderProps,
 } from '@/components/PageBrowser/PageBrowserHeader'
+import { PrimaryFocusProvider, usePrimaryFocusRegistry } from '@/hooks/usePrimaryFocus'
 import { t } from '@/lib/i18n'
+import { OPEN_NEW_PAGE_DIALOG_EVENT } from '@/lib/overlay-events'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
 function makeProps(overrides: Partial<PageBrowserHeaderProps> = {}): PageBrowserHeaderProps {
   return {
-    formRef: createRef<HTMLFormElement>(),
-    newPageInputRef: createRef<HTMLInputElement>(),
-    newPageName: '',
-    onNewPageNameChange: vi.fn(),
-    isCreating: false,
-    onSubmit: vi.fn(),
-    showSearchAndSort: true,
+    showSortAndViews: true,
     filterText: '',
     onFilterTextChange: vi.fn(),
     sortOption: 'alphabetical',
@@ -167,15 +165,99 @@ describe('PageBrowserHeader', () => {
     })
   })
 
-  // ── header row wraps on narrow viewports ──────────────
-  it('the search/sort row carries flex-wrap so it can wrap on mobile', () => {
-    const { container } = render(<PageBrowserHeader {...makeProps()} />)
-    // The controls row is the only `flex-wrap` child of `.page-browser-header`
-    // (the view-button row and the create form come first). It must opt into
-    // wrapping rather than overflowing horizontally on a narrow viewport.
-    const controlsRow = container.querySelector('.page-browser-header > div.flex-wrap')
-    expect(controlsRow).not.toBeNull()
-    expect(controlsRow).toHaveClass('flex-wrap')
+  // ── search first (#5637) ──────────────────────────────
+  describe('search first', () => {
+    it('the first row is search, sort, saved views, then New page, and it wraps', () => {
+      const { container } = render(<PageBrowserHeader {...makeProps()} />)
+      const firstRow = container.querySelector('.page-browser-header > div') as HTMLElement
+      // `flex-wrap` stacks the controls on a narrow viewport instead of overflowing.
+      expect(firstRow).toHaveClass('flex-wrap')
+      const inRow = within(firstRow)
+      const order = [
+        inRow.getByRole('textbox', { name: t('pageBrowser.searchPlaceholder') }),
+        inRow.getByRole('combobox', { name: t('pageBrowser.sortLabel') }),
+        inRow.getByRole('button', { name: t('pageBrowser.savedViews.trigger') }),
+        inRow.getByRole('button', { name: t('pageBrowser.newPage') }),
+      ]
+      for (let i = 1; i < order.length; i++) {
+        const prev = order[i - 1] as HTMLElement
+        expect(prev.compareDocumentPosition(order[i] as HTMLElement)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        )
+      }
+    })
+
+    it('with no pages, search and New page stay but sort and saved views go', () => {
+      render(<PageBrowserHeader {...makeProps({ showSortAndViews: false })} />)
+      expect(
+        screen.getByRole('textbox', { name: t('pageBrowser.searchPlaceholder') }),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('pageBrowser.newPage') })).toBeInTheDocument()
+      expect(screen.queryByRole('combobox', { name: t('pageBrowser.sortLabel') })).toBeNull()
+      expect(screen.queryByRole('button', { name: t('pageBrowser.savedViews.trigger') })).toBeNull()
+    })
+
+    it('New page opens the New page dialog with no title', async () => {
+      const user = userEvent.setup()
+      const opened: string[] = []
+      const listener = (e: Event) => opened.push((e as CustomEvent<string>).detail)
+      window.addEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
+      try {
+        render(<PageBrowserHeader {...makeProps()} />)
+        await user.click(screen.getByRole('button', { name: t('pageBrowser.newPage') }))
+      } finally {
+        window.removeEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
+      }
+      expect(opened).toEqual([''])
+    })
+
+    /** Focuses the view's registered primary element once, as App does on a view change. */
+    function FocusOnEntry(): null {
+      const registry = usePrimaryFocusRegistry()
+      useEffect(() => {
+        registry?.focus()
+      }, [registry])
+      return null
+    }
+
+    function renderEntering() {
+      return render(
+        <PrimaryFocusProvider>
+          <PageBrowserHeader {...makeProps()} />
+          <FocusOnEntry />
+        </PrimaryFocusProvider>,
+      )
+    }
+
+    it('search takes focus on entry with a fine pointer', () => {
+      renderEntering()
+      expect(
+        screen.getByRole('textbox', { name: t('pageBrowser.searchPlaceholder') }),
+      ).toHaveFocus()
+    })
+
+    it('search does not take focus on entry under a coarse pointer', () => {
+      vi.spyOn(window, 'matchMedia').mockImplementation(
+        (query: string) =>
+          ({
+            matches: query === '(pointer: coarse)',
+            media: query,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+          }) as unknown as MediaQueryList,
+      )
+      Object.defineProperty(navigator, 'maxTouchPoints', { value: 5, configurable: true })
+      try {
+        renderEntering()
+        expect(
+          screen.getByRole('textbox', { name: t('pageBrowser.searchPlaceholder') }),
+        ).not.toHaveFocus()
+        expect(document.activeElement).toBe(document.body)
+      } finally {
+        vi.restoreAllMocks()
+        Object.defineProperty(navigator, 'maxTouchPoints', { value: 0, configurable: true })
+      }
+    })
   })
 
   // ── view buttons (#5269) ──────────────────────────────

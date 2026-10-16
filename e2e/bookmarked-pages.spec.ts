@@ -1,6 +1,14 @@
 import { devices, type Locator, type Page } from '@playwright/test'
 
-import { dragBlock, dragBlockTouch, expect, openMobileSidebar, test, waitForBoot } from './helpers'
+import {
+  createPageFromPagesView,
+  dragBlock,
+  dragBlockTouch,
+  expect,
+  openMobileSidebar,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E coverage for the PageBrowser's unified
@@ -188,12 +196,7 @@ test.describe(' + PageBrowser unified Bookmarks + Pages model', () => {
    */
   test('the sidebar lists a page bookmarked in the session it was created in', async ({ page }) => {
     await openPagesView(page)
-    await page.getByPlaceholder('New page name...').fill('Brand New Page')
-    // Scoped to the view header: the sidebar has a "New Page" button too.
-    await page
-      .getByTestId('view-header-outlet')
-      .getByRole('button', { name: /New Page/i })
-      .click()
+    await createPageFromPagesView(page, 'Brand New Page')
 
     await openPagesView(page)
     await page.locator('[data-page-item]:has-text("Brand New Page") .star-toggle').click()
@@ -208,20 +211,9 @@ test.describe(' + PageBrowser unified Bookmarks + Pages model', () => {
     // the entire view to a tree-only mode. The flat seeded pages
     // continue to render alongside the new namespace tree under
     // `Pages`, and any starred page keeps its `Starred` row.
-    const newPageInput = page.getByPlaceholder('New page name...')
-    await newPageInput.fill('work/project-a')
-    // The bare `getByRole('button', { name: /New Page/i })` resolves to
-    // both the sidebar's "New Page" entry (`sidebar.newPage`) and the
-    // PageBrowser form's submit button (`pageBrowser.newPage`). Scope to
-    // the view header outlet so the click targets the form's submit
-    // button regardless of locale or sidebar state.
-    await page
-      .getByTestId('view-header-outlet')
-      .getByRole('button', { name: /New Page/i })
-      .click()
+    await createPageFromPagesView(page, 'work/project-a')
 
-    // Navigate back to Pages (creating a page typically navigates to
-    // its editor view).
+    // Creating a page opens it in the editor; go back to Pages.
     await openPagesView(page)
 
     // Star a flat page — under the `Starred` header DOES

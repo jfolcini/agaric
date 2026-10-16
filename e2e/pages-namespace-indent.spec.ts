@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, navigateToView, test, waitForBoot } from './helpers'
+import { createPageFromPagesView, expect, navigateToView, test, waitForBoot } from './helpers'
 
 /**
  * Geometry guard for the `Pages` list's two row shapes.
@@ -50,13 +50,7 @@ test.describe('Pages view — namespace indentation', () => {
 
     // Seed a namespace. The mock's seed pages are all flat, so without
     // this the tree half of the list never renders.
-    await page.getByPlaceholder('New page name...').fill(NAMESPACED_PAGE)
-    // Scoped to the header outlet: a bare name match also hits the
-    // sidebar's own "New Page" entry.
-    await page
-      .getByTestId('view-header-outlet')
-      .getByRole('button', { name: /New Page/i })
-      .click()
+    await createPageFromPagesView(page, NAMESPACED_PAGE)
     // Creating a page navigates to its editor.
     await openPagesView(page)
 

@@ -3,7 +3,7 @@
 // container hardening.
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -11,7 +11,10 @@ import { axe } from 'vitest-axe'
 
 import { pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { NewPageDialog } from '@/components/dialogs/NewPageDialog'
 import { PageBrowser } from '@/components/PageBrowser'
+import { useAppDialogs } from '@/hooks/useAppDialogs'
+import { invalidatePageBrowserData } from '@/hooks/usePageBrowserData'
 import { t } from '@/lib/i18n'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
@@ -95,6 +98,22 @@ beforeEach(() => {
     return pageRowInvokeFallback(cmd)
   })
 })
+
+/** Mounts the New page dialog the way App does: on `openNewPageDialog`. */
+function DialogHost() {
+  const { newPageTitle, setNewPageTitle } = useAppDialogs()
+  if (newPageTitle === null) return null
+  return (
+    <NewPageDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) setNewPageTitle(null)
+      }}
+      initialTitle={newPageTitle}
+      onOpenPage={() => {}}
+    />
+  )
+}
 
 describe('PageBrowser', () => {
   describe('frontend container hardening', () => {
@@ -184,59 +203,85 @@ describe('PageBrowser', () => {
       expect(results).toHaveNoViolations()
     })
 
-    // ── D10 — optimistic create respects active filters ────────────────
-    it('D10: create with active chips refetches (reload) instead of prepending', async () => {
+    // ── D10 — a created page reaches the list only through the server ───
+    //
+    // #5637 — the New page dialog creates the page; the list is not patched
+    // locally. Every local write marks it stale (`watchLocalWrites` →
+    // `invalidatePageBrowserData`, wired in `main.tsx`, called by hand here),
+    // and the refetch shows the page only where the server's filtered answer
+    // includes it.
+    it.each([
+      ['with a Stub chip active, the unmatched new page stays out', true],
+      ['with no chips active, the new page appears', false],
+    ])('D10: %s', async (_name, withChip) => {
       const user = userEvent.setup()
-      // Track metadata calls; the create with a chip active must trigger a
-      // fresh page-1 metadata fetch (reload) rather than an optimistic
-      // prepend.
+      let created = false
       mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
-        if (cmd === 'create_page_in_space') return Promise.resolve('P_NEW')
+        if (cmd === 'list_page_aliases_by_prefix') return Promise.resolve([])
+        if (cmd === 'search_blocks') {
+          return Promise.resolve({
+            items: [],
+            next_cursor: null,
+            has_more: false,
+            total_count: null,
+          })
+        }
+        if (cmd === 'create_page_in_space') {
+          created = true
+          return Promise.resolve('P_NEW')
+        }
         if (cmd === 'list_pages_with_metadata') {
           const filters =
             (args as { filter?: { filters?: Array<{ type?: string }> } } | undefined)?.filter
               ?.filters ?? []
-          const hasStub = filters.some((f) => f.type === 'Stub')
-          // With the Stub chip, the server reply never includes the new
-          // page (it doesn't match), so an optimistic prepend would be
-          // wrong — only a reload (which re-queries the server) is correct.
+          // The new page is not a stub, so the Stub query never returns it.
+          const includeNew = created && !filters.some((f) => f.type === 'Stub')
+          const items = [
+            metaPage('P1', 'Apple'),
+            ...(includeNew ? [metaPage('P_NEW', 'Brand New Page')] : []),
+          ]
           return Promise.resolve({
-            items: hasStub ? [metaPage('P1', 'Apple')] : [metaPage('P1', 'Apple')],
+            items,
             next_cursor: null,
             has_more: false,
-            total_count: hasStub ? 1 : 1,
+            total_count: items.length,
           })
         }
         return pageRowInvokeFallback(cmd)
       })
 
-      render(<PageBrowser />)
+      render(
+        <>
+          <PageBrowser />
+          <DialogHost />
+        </>,
+      )
       await screen.findByText('Apple')
 
-      // Activate a Stub chip.
-      await user.click(screen.getByRole('button', { name: 'Add filter' }))
-      await user.click(await screen.findByText('Stub'))
+      if (withChip) {
+        await user.click(screen.getByRole('button', { name: 'Add filter' }))
+        await user.click(await screen.findByText('Stub'))
+        await waitFor(() => {
+          expect(screen.getByRole('group', { name: 'Filter: Stub' })).toBeInTheDocument()
+        })
+      }
+
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.newPage') }))
+      const input = await screen.findByRole('textbox', { name: t('newPageDialog.inputLabel') })
+      await user.type(input, 'Brand New Page{Enter}')
       await waitFor(() => {
-        expect(screen.getByRole('group', { name: 'Filter: Stub' })).toBeInTheDocument()
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       })
+      expect(created).toBe(true)
 
       const metadataCallsBefore = mockedInvoke.mock.calls.filter(
         ([cmd]) => cmd === 'list_pages_with_metadata',
       ).length
-
-      // Create a page while the chip is active.
-      const input = screen.getByPlaceholderText('New page name...')
-      await user.type(input, 'Brand New Page')
-      await user.click(screen.getByRole('button', { name: /New Page/i }))
-
-      // The create IPC fired.
-      await waitFor(() => {
-        expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'create_page_in_space')).toBe(true)
+      await act(async () => {
+        invalidatePageBrowserData()
       })
-
-      // A fresh metadata fetch (reload) must have fired after create.
       await waitFor(() => {
         const after = mockedInvoke.mock.calls.filter(
           ([cmd]) => cmd === 'list_pages_with_metadata',
@@ -244,47 +289,11 @@ describe('PageBrowser', () => {
         expect(after).toBeGreaterThan(metadataCallsBefore)
       })
 
-      // The optimistic-but-unmatched row must NOT appear (the server reply
-      // for the Stub query doesn't include it).
-      expect(screen.queryByText('Brand New Page')).not.toBeInTheDocument()
-    })
-
-    it('D10: create with no chips active still prepends optimistically (no extra fetch)', async () => {
-      const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        if (cmd === 'list_all_pages_in_space') return Promise.resolve([])
-        if (cmd === 'create_page_in_space') return Promise.resolve('P_NEW')
-        if (cmd === 'list_pages_with_metadata') {
-          return Promise.resolve({
-            items: [metaPage('P1', 'Apple')],
-            next_cursor: null,
-            has_more: false,
-            total_count: 1,
-          })
-        }
-        return pageRowInvokeFallback(cmd)
-      })
-
-      render(<PageBrowser />)
-      await screen.findByText('Apple')
-
-      const metadataCallsBefore = mockedInvoke.mock.calls.filter(
-        ([cmd]) => cmd === 'list_pages_with_metadata',
-      ).length
-
-      const input = screen.getByPlaceholderText('New page name...')
-      await user.type(input, 'Fresh Page')
-      await user.click(screen.getByRole('button', { name: /New Page/i }))
-
-      // The optimistic row appears immediately.
-      expect(await screen.findByText('Fresh Page')).toBeInTheDocument()
-
-      // No reload fetch was triggered by the create (the fast path).
-      const metadataCallsAfter = mockedInvoke.mock.calls.filter(
-        ([cmd]) => cmd === 'list_pages_with_metadata',
-      ).length
-      expect(metadataCallsAfter).toBe(metadataCallsBefore)
+      if (withChip) {
+        expect(screen.queryByText('Brand New Page')).not.toBeInTheDocument()
+      } else {
+        expect(await screen.findByText('Brand New Page')).toBeInTheDocument()
+      }
     })
 
     // ── D11 — count chip uses the chip-only "matching" basis ───────────

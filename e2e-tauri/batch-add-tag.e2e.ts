@@ -26,6 +26,7 @@ import {
   typeInputVerified,
   waitForAppReady,
   waitForToast,
+  openNewPageDialog,
 } from './helpers'
 
 const TAG = runScopedMarker('wdio-batch-tag')
@@ -51,10 +52,10 @@ describe('Agaric real-backend batch add-tag (#4671)', () => {
     await addTag.click()
     await $(`[data-testid="tag-item-${TAG}"]`).waitForDisplayed({ timeout: ACTION_TIMEOUT })
 
-    // 2. Three pages via the Pages view create form; each create navigates
-    //    into the new page, so go back to the list before the next one.
+    // 2. Three pages via the New page dialog; each create navigates into the
+    //    new page.
     for (const title of PAGES) {
-      await navigateTo('Pages')
+      await openNewPageDialog()
       await typeInputVerified('#new-page-name', title)
       await browser.keys(['Enter'])
       await $('[aria-label="Page title"]').waitForDisplayed({ timeout: ACTION_TIMEOUT })

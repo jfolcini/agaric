@@ -15,7 +15,11 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { useAppDialogs } from '@/hooks/useAppDialogs'
 import { BUG_REPORT_EVENT, type BugReportEventDetail } from '@/lib/bug-report-events'
 import { setCustomShortcut } from '@/lib/keyboard-config/storage'
-import { CLOSE_ALL_OVERLAYS_EVENT, SHOW_SHORTCUTS_EVENT } from '@/lib/overlay-events'
+import {
+  CLOSE_ALL_OVERLAYS_EVENT,
+  openNewPageDialog,
+  SHOW_SHORTCUTS_EVENT,
+} from '@/lib/overlay-events'
 
 beforeEach(() => {
   // The #754 showShortcuts listener resolves its binding from
@@ -36,6 +40,7 @@ describe('useAppDialogs — initial state', () => {
     expect(result.current.quickCaptureOpen).toBe(false)
     expect(result.current.showNoPeersDialog).toBe(false)
     expect(result.current.shortcutsOpen).toBe(false)
+    expect(result.current.newPageTitle).toBeNull()
   })
 })
 
@@ -203,6 +208,29 @@ describe('useAppDialogs — SHOW_SHORTCUTS_EVENT (#922)', () => {
 
     // No throw, and the (now-unmounted) hook's last state stays closed.
     expect(result.current.shortcutsOpen).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4a'. OPEN_NEW_PAGE_DIALOG_EVENT listener (#5637)
+// ---------------------------------------------------------------------------
+
+describe('useAppDialogs — openNewPageDialog (#5637)', () => {
+  it('opens the New page dialog with the title the opener passed', () => {
+    const { result } = renderHook(() => useAppDialogs())
+
+    act(() => {
+      openNewPageDialog('Projects/')
+    })
+    expect(result.current.newPageTitle).toBe('Projects/')
+
+    act(() => {
+      result.current.setNewPageTitle(null)
+    })
+    act(() => {
+      openNewPageDialog()
+    })
+    expect(result.current.newPageTitle).toBe('')
   })
 })
 

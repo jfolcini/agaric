@@ -48,6 +48,9 @@
 //     (`journalTabId('weekly')`); `section[id="journal-<date>"]` is a
 //     DaySection, and "No blocks for" (`agenda.day.empty`) marks a day with
 //     no page.
+//   - `#new-page-name`                      the New page dialog's title field
+//     (NewPageDialog.tsx), opened by the sidebar's "New Page" button
+//     (`openNewPageDialog`); Enter in it creates the page.
 //   - `[data-testid="block-editor"]`        the roving TipTap editor box.
 //   - `[data-testid="block-static"]`        a committed (non-focused) block row
 //     (StaticBlock; carries `data-block-id`).
@@ -534,18 +537,27 @@ export async function expectAbsent(selector: string, what: string): Promise<void
 }
 
 /**
- * Click a sidebar ACTION button (not a nav destination): "New Page" creates an
- * untitled page in the active space and opens it in the page editor
- * (AppSidebar.tsx footer -> App.tsx handleNewPage -> navigateToPage). Unlike
- * `navigateTo` there is no `aria-current` to wait on, so readiness is the page
- * editor's title textbox (`PageTitleEditor`, aria-label `pageHeader.pageTitle`)
- * plus the auto-created, auto-focused first block's editor
- * (`use-block-auto-create-first-block.ts`).
+ * Click the sidebar's "New Page" ACTION button (not a nav destination), which
+ * opens the New page dialog (#5637), and wait for the dialog's title field,
+ * which takes focus.
  */
-export async function openNewPage(): Promise<void> {
+export async function openNewPageDialog(): Promise<void> {
   const button = sidebarNavButton('New Page')
   await button.waitForClickable({ timeout: NAV_TIMEOUT })
   await button.click()
+  await $('#new-page-name').waitForDisplayed({ timeout: NAV_TIMEOUT })
+}
+
+/**
+ * Create an untitled page and open it: the New page dialog with a blank title,
+ * then Enter. Unlike `navigateTo` there is no `aria-current` to wait on, so
+ * readiness is the page editor's title textbox (`PageTitleEditor`, aria-label
+ * `pageHeader.pageTitle`) plus the auto-created, auto-focused first block's
+ * editor (`use-block-auto-create-first-block.ts`).
+ */
+export async function openNewPage(): Promise<void> {
+  await openNewPageDialog()
+  await browser.keys(['Enter'])
   await $('[aria-label="Page title"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
   await $('[data-testid="block-editor"] [contenteditable="true"]').waitForDisplayed({
     timeout: ACTION_TIMEOUT,

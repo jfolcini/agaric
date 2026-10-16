@@ -57,8 +57,8 @@ import { useTabsStore } from '@/stores/tabs'
  * started in space A while the user switches to B gets labelled `B` and let
  * into B's warm cache, aborting an in-flight B fill — is the reason `added`
  * must be threaded, not read fresh. It does NOT hold for the `renamed` event
- * this function emits: the generation bump at
- * `src/components/block-tree/use-block-resolve.ts:1220` is unconditional and
+ * this function emits: the generation bump in `useBlockResolve`'s
+ * name-change-bus subscriber (`nameChangeGenerationRef`) is unconditional and
  * runs BEFORE the space check, so an in-flight fill aborts on a genuine
  * rename either way, mislabelled or not; and `applyPageNameChange`'s renamed
  * arm (`if (!present) return list`) only mutates a row already in the target

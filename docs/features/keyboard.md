@@ -89,7 +89,7 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 | `Escape` | Close all overlays; clear selection |
 | `Ctrl+1` … `Ctrl+9` | Switch to the Nth space (alphabetical) |
 | `Ctrl+B` | Toggle the sidebar (only when focus is outside the editor) |
-| `Ctrl+N` | Create a new page |
+| `Ctrl+N` | Open the **New page** dialog (type a title, Enter creates; a blank title makes an Untitled page) |
 | `Ctrl+T` | Open in new tab (desktop) |
 | `Ctrl+W` | Close active tab (desktop) |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab (desktop) |

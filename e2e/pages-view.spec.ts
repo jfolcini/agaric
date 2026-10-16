@@ -5,6 +5,7 @@ import type { Locator, Page } from '@playwright/test'
 import {
   activeAlertDialog,
   activePopover,
+  createPageFromPagesView,
   expect,
   navigateToView,
   openAddFilter,
@@ -761,15 +762,11 @@ test.describe('pagination / virtualization', () => {
 // 10. CRUD + grooming
 // ===========================================================================
 test.describe('CRUD + grooming', () => {
-  test('create page (unfiltered) prepends optimistically and bumps the count', async ({ page }) => {
+  test('a page created with no chips active is listed and bumps the count', async ({ page }) => {
     await bootPages(page)
     await expect(countChip(page)).toHaveText('6 pages')
 
-    await page.getByPlaceholder('New page name...').fill('Brand New Page')
-    await page
-      .getByTestId('view-header-outlet')
-      .getByRole('button', { name: /New Page/i })
-      .click()
+    await createPageFromPagesView(page, 'Brand New Page')
 
     // Creating navigates to the editor; go back to Pages and confirm it landed.
     await openPagesView(page)
@@ -780,8 +777,8 @@ test.describe('CRUD + grooming', () => {
   test('create with chips active: a non-matching new page does NOT appear', async ({ page }) => {
     await bootPages(page)
     // Filter to orphan pages, then create a page whose title links out (so it
-    // is NOT an orphan). With chips active the create path refetches from the
-    // server, so a non-matching new page is correctly absent.
+    // is NOT an orphan). The list shows only what the server's filtered query
+    // returns, so a non-matching new page is correctly absent.
     await addBooleanFacet(page, 'Orphan')
     await expect(countChip(page)).toHaveText('4 matching pages')
 
@@ -792,11 +789,7 @@ test.describe('CRUD + grooming', () => {
     await addPropertyFilter(page, 'template', 'exists')
     await expect(pageTitleLocator(page)).toHaveText(['Meeting Notes Template'])
 
-    await page.getByPlaceholder('New page name...').fill('No Template Page')
-    await page
-      .getByTestId('view-header-outlet')
-      .getByRole('button', { name: /New Page/i })
-      .click()
+    await createPageFromPagesView(page, 'No Template Page')
     await openPagesView(page)
     // The has-template chip survives the navigation round-trip; the new page
     // lacks `template` so it must not be in the filtered result.

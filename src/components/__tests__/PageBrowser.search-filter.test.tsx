@@ -3,7 +3,7 @@
 // search/filter, the SearchInput clear button, and compound filter chips.
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -13,6 +13,7 @@ import { type CommandReturns, pageList, stubPageRowInvoke } from '@/__tests__/he
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
+import { OPEN_NEW_PAGE_DIALOG_EVENT } from '@/lib/overlay-events'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useSpaceStore } from '@/stores/space'
 
@@ -138,10 +139,11 @@ describe('PageBrowser', () => {
       const searchInput = screen.getByPlaceholderText('Search pages...')
       await user.type(searchInput, 'project-a')
 
-      // Matching page should be visible
-      expect(screen.getByText(/project-a/)).toBeInTheDocument()
+      // Matching page should be visible (the grid, not the create row above it)
+      const grid = screen.getByRole('grid')
+      expect(within(grid).getByText(/project-a/)).toBeInTheDocument()
       // Ancestor folder should be visible
-      expect(screen.getByText('work')).toBeInTheDocument()
+      expect(within(grid).getByText('work')).toBeInTheDocument()
       // Non-matching pages should not be visible
       expect(screen.queryByText('project-b')).not.toBeInTheDocument()
       expect(screen.queryByText('journal')).not.toBeInTheDocument()
@@ -356,36 +358,6 @@ describe('PageBrowser', () => {
     })
   })
   describe('SearchInput clear button', () => {
-    it('new-page input shows clear button when non-empty and clearing resets name + disables submit', async () => {
-      const user = userEvent.setup()
-      stubPageRowInvoke(mockedInvoke, { list_pages_with_metadata: () => emptyPage })
-
-      render(<PageBrowser />)
-
-      await waitFor(() => {
-        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
-      })
-
-      const input = screen.getByPlaceholderText('New page name...') as HTMLInputElement
-      const submitBtn = screen.getByRole('button', { name: /New Page/i })
-      expect(submitBtn).toBeDisabled()
-      expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
-
-      await user.type(input, 'Draft Page')
-      expect(input.value).toBe('Draft Page')
-      // Validation wiring still works — submit is enabled now.
-      expect(submitBtn).toBeEnabled()
-
-      const clearBtn = screen.getByTestId('search-input-clear')
-      expect(clearBtn).toBeInTheDocument()
-
-      await user.click(clearBtn)
-      expect(input.value).toBe('')
-      expect(screen.queryByTestId('search-input-clear')).not.toBeInTheDocument()
-      // Validation wiring still works — submit is disabled again after clear.
-      expect(submitBtn).toBeDisabled()
-    })
-
     it('filter-search input shows clear button when non-empty and clearing restores full list', async () => {
       const user = userEvent.setup()
       stubPageRowInvoke(mockedInvoke, {
@@ -641,5 +613,74 @@ describe('PageBrowser', () => {
         expect(liveRegion).toHaveTextContent(t('pageBrowser.filter.announceResults', { count: 2 }))
       })
     })
+  })
+})
+
+// #5637 — search or create: a query that names no page offers to create it.
+describe('PageBrowser search or create', () => {
+  function stubWithPages(aliasMatch: [string, string] | null = null) {
+    stubPageRowInvoke(mockedInvoke, {
+      list_pages_with_metadata: () =>
+        pageList([
+          makePage({ id: 'P1', content: 'Meeting notes' }),
+          makePage({ id: 'P2', content: 'Shopping list' }),
+        ]),
+      resolve_page_by_alias: () => aliasMatch,
+    })
+  }
+
+  async function search(query: string) {
+    const user = userEvent.setup()
+    const view = render(<PageBrowser />)
+    await screen.findByText('Meeting notes')
+    await user.type(screen.getByPlaceholderText(t('pageBrowser.searchPlaceholder')), query)
+    return { user, view }
+  }
+
+  function createRow(name: string) {
+    return screen.queryByRole('button', { name: t('pageBrowser.createPageNamed', { name }) })
+  }
+
+  it('a query naming no page offers Create page, which opens the dialog pre-filled', async () => {
+    stubWithPages()
+    const opened: string[] = []
+    const listener = (e: Event) => opened.push((e as CustomEvent<string>).detail)
+    window.addEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
+    try {
+      const { user, view } = await search('  Meeting  ')
+      const row = createRow('Meeting')
+      expect(row).toBeInTheDocument()
+      // It comes before the results.
+      expect((row as HTMLElement).compareDocumentPosition(screen.getByTitle('Meeting notes'))).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      )
+      expect(await axe(view.container)).toHaveNoViolations()
+
+      await user.click(row as HTMLElement)
+    } finally {
+      window.removeEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
+    }
+    expect(opened).toEqual(['Meeting'])
+  })
+
+  it('offers no create row when the query is a page title, ignoring case', async () => {
+    stubWithPages()
+    await search('meeting NOTES')
+    expect(screen.getByTitle('Meeting notes')).toBeInTheDocument()
+    expect(createRow('meeting NOTES')).not.toBeInTheDocument()
+  })
+
+  it("offers no create row when the query is a page's alias", async () => {
+    stubWithPages(['P2', 'Shopping list'])
+    await search('groceries')
+    expect(await screen.findByTitle('Shopping list')).toBeInTheDocument()
+    expect(createRow('groceries')).not.toBeInTheDocument()
+  })
+
+  it('offers no create row with an empty query', async () => {
+    stubWithPages()
+    render(<PageBrowser />)
+    await screen.findByText('Meeting notes')
+    expect(screen.queryByTestId('page-browser-create-row')).not.toBeInTheDocument()
   })
 })

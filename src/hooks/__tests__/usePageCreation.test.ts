@@ -1,23 +1,19 @@
 /**
- * Tests for usePageCreation — the create-page flow extracted from
- * `PageBrowser` (#1263). Covers the optimistic-prepend path, the
- * chips-active reload path, duplicate-name vs generic error toasts, the
- * space-not-ready guard, and the count-chip bump.
+ * Tests for usePageCreation — the New page dialog's create handler. Covers
+ * the created / existing-title / blank-name results, the name-change-bus
+ * publish, the in-flight guard, and the error mapping the dialog shows.
  */
 
-import { act, renderHook, waitFor } from '@testing-library/react'
-import type { Dispatch, SetStateAction } from 'react'
-import { toast } from 'sonner'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePageCreation } from '@/hooks/usePageCreation'
-import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/bindings'
 import { useSpaceStore } from '@/stores/space'
 
-// #2927 phase 7 — `usePageCreation` calls `commands.createPageInSpace` from
-// `@/lib/bindings` directly. The spy sees the real wire arguments
-// `(parentId, content, spaceId)`; the shim wraps a fulfilment in the
-// `{ status: 'ok', data }` envelope `unwrap` expects.
+// `usePageCreation` calls `commands.createPageInSpace` from `@/lib/bindings`
+// directly. The spy sees the real wire arguments `(parentId, content,
+// spaceId)`; the shim wraps a fulfilment in the `{ status: 'ok', data }`
+// envelope `unwrap` expects.
 const mockedCreate = vi.hoisted(() => vi.fn())
 // #4723 — the create path asks the space for its full page list first, so an
 // existing title never reaches `createPageInSpace`.
@@ -37,52 +33,10 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
   }
 })
 
-// Primary-focus registration is a side effect unrelated to creation logic.
-vi.mock('@/hooks/usePrimaryFocus', () => ({
-  useRegisterPrimaryFocus: vi.fn(),
-}))
-
 import { isConflict } from '@/lib/app-error'
+import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
-
-const mockedToastError = vi.mocked(toast.error)
-
-type Row = BlockRow | PageWithMetadataRow
-
-interface Harness {
-  setPages: ReturnType<typeof vi.fn>
-  setDisplayTotalCount: ReturnType<typeof vi.fn>
-  reload: ReturnType<typeof vi.fn>
-  onPageSelect: ReturnType<typeof vi.fn>
-}
-
-function makeHarness(wireFilters: FilterPrimitive[] = []): Harness & {
-  render: () => ReturnType<typeof renderHook<ReturnType<typeof usePageCreation>, void>>
-} {
-  const setPages = vi.fn()
-  const setDisplayTotalCount = vi.fn()
-  const reload = vi.fn()
-  const onPageSelect = vi.fn()
-  return {
-    setPages,
-    setDisplayTotalCount,
-    reload,
-    onPageSelect,
-    render: () =>
-      renderHook(() =>
-        usePageCreation({
-          wireFilters,
-          reload,
-          setPages: setPages as unknown as Dispatch<SetStateAction<Row[]>>,
-          setDisplayTotalCount: setDisplayTotalCount as unknown as Dispatch<
-            SetStateAction<number | undefined>
-          >,
-          onPageSelect,
-        }),
-      ),
-  }
-}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -90,77 +44,45 @@ beforeEach(() => {
   useSpaceStore.setState({ currentSpaceId: 'SPACE_A', isReady: true })
 })
 
-afterEach(() => {
-  vi.useRealTimers()
-})
+async function create(name: string) {
+  const { result } = renderHook(() => usePageCreation())
+  let created: Awaited<ReturnType<typeof result.current.createPage>> = null
+  await act(async () => {
+    created = await result.current.createPage(name)
+  })
+  return { result, created }
+}
 
 describe('usePageCreation', () => {
-  it('optimistically prepends a page and bumps the count when no chips are active', async () => {
+  it('creates the page in the active space and returns it', async () => {
     mockedCreate.mockResolvedValue('NEW_ID_0000000000000000000')
-    const h = makeHarness([])
-    const { result } = h.render()
 
-    act(() => {
-      result.current.setNewPageName('My Page')
-    })
-    await act(async () => {
-      await result.current.handleCreatePage()
-    })
+    const { result, created } = await create('  My Page  ')
 
     expect(mockedCreate).toHaveBeenCalledWith(null, 'My Page', 'SPACE_A')
-    expect(h.reload).not.toHaveBeenCalled()
-    // Prepend updater produces [new, ...prev].
-    const updater = h.setPages.mock.calls[0]?.[0] as (prev: Row[]) => Row[]
-    const next = updater([{ id: 'OLD' } as Row])
-    expect(next.map((r) => r.id)).toEqual(['NEW_ID_0000000000000000000', 'OLD'])
-    // Count bump: +1 when a number, untouched otherwise.
-    const countUpdater = h.setDisplayTotalCount.mock.calls[0]?.[0] as (
-      cur: number | undefined,
-    ) => number | undefined
-    expect(countUpdater(5)).toBe(6)
-    expect(countUpdater(undefined)).toBeUndefined()
-    expect(h.onPageSelect).toHaveBeenCalledWith('NEW_ID_0000000000000000000', 'My Page')
+    expect(created).toEqual({ id: 'NEW_ID_0000000000000000000', title: 'My Page' })
+    expect(result.current.createError).toBeNull()
+    expect(result.current.isCreating).toBe(false)
   })
 
   // #4723 — an existing title resolves to that page on the backend, so the
-  // create is skipped entirely: a resolve past the loaded window would
-  // otherwise prepend a duplicate row and bump the count.
-  it('selects the existing page and never calls create when the title already exists in the space', async () => {
+  // create is skipped and the existing page is returned for the caller to open.
+  it('returns the existing page and never calls create when the title already exists', async () => {
     mockedListPages.mockResolvedValue([{ id: 'OLD', content: 'My Page' }])
-    const h = makeHarness([])
-    const { result } = h.render()
 
-    act(() => {
-      result.current.setNewPageName('My Page')
-    })
-    await act(async () => {
-      await result.current.handleCreatePage()
-    })
+    const { created } = await create('My Page')
 
     expect(mockedCreate).not.toHaveBeenCalled()
-    expect(h.setPages).not.toHaveBeenCalled()
-    expect(h.setDisplayTotalCount).not.toHaveBeenCalled()
-    expect(h.reload).not.toHaveBeenCalled()
-    expect(h.onPageSelect).toHaveBeenCalledWith('OLD', 'My Page')
+    expect(created).toEqual({ id: 'OLD', title: 'My Page' })
   })
 
-  // #4338 — the Pages view has no `useBlockResolve()` to register with, so
-  // the bus is its only route to the `[[` picker's cache. A page the user has
-  // just NAMED here is the page they are most likely to link to next.
+  // #4338 — the bus is the dialog's only route to a warm `[[` picker cache.
   it("publishes an 'added' event so the picker cache learns the new page", async () => {
     mockedCreate.mockResolvedValue('NEW_ID_0000000000000000009')
-    const h = makeHarness([])
-    const { result } = h.render()
-
     const changes: NameChange[] = []
     const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
     try {
-      act(() => {
-        result.current.setNewPageName('Quarterly Review')
-      })
-      await act(async () => {
-        await result.current.handleCreatePage()
-      })
+      await create('Quarterly Review')
     } finally {
       unsubscribe()
     }
@@ -176,17 +98,13 @@ describe('usePageCreation', () => {
     ])
   })
 
-  it('publishes nothing when the create IPC rejects', async () => {
+  it('publishes nothing and reports the error when the create IPC rejects', async () => {
     mockedCreate.mockRejectedValue(new Error('Disk full'))
-    const h = makeHarness([])
-    const { result } = h.render()
-
     const changes: NameChange[] = []
     const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+    let outcome: Awaited<ReturnType<typeof create>>
     try {
-      await act(async () => {
-        await result.current.handleCreatePage()
-      })
+      outcome = await create('Doomed')
     } finally {
       unsubscribe()
     }
@@ -194,114 +112,67 @@ describe('usePageCreation', () => {
     // A cache told about a page that does not exist would offer a `[[` link
     // resolving to nothing.
     expect(changes).toEqual([])
+    expect(outcome.created).toBeNull()
+    expect(outcome.result.current.createError).toBe(
+      t('pageBrowser.createFailed', { error: 'Error: Disk full' }),
+    )
   })
 
-  it('reloads (no optimistic prepend) when chips are active', async () => {
-    mockedCreate.mockResolvedValue('NEW_ID_0000000000000000001')
-    const h = makeHarness([{ kind: 'orphan' } as unknown as FilterPrimitive])
-    const { result } = h.render()
-
-    await act(async () => {
-      await result.current.handleCreatePage()
-    })
-
-    expect(h.reload).toHaveBeenCalledTimes(1)
-    expect(h.setPages).not.toHaveBeenCalled()
-    expect(h.setDisplayTotalCount).not.toHaveBeenCalled()
-  })
-
-  it('falls back to the untitled name when the input is blank', async () => {
-    mockedCreate.mockResolvedValue('NEW_ID_0000000000000000002')
-    const h = makeHarness([])
-    const { result } = h.render()
-
-    await act(async () => {
-      await result.current.handleCreatePage()
-    })
-
-    // Wire args are `(parentId, content, spaceId)` — a top-level page, so
-    // `parentId` is an explicit `null`.
-    const [parentId, content] = mockedCreate.mock.calls[0] ?? []
-    expect(parentId).toBeNull()
-    expect(typeof content).toBe('string')
-    expect((content as string).length).toBeGreaterThan(0)
-  })
-
-  // #4782 — the sidebar button, the chord and the palette all suffix through
-  // `untitledTitle`. The form's blank path passed the literal 'Untitled',
-  // which `create_page_in_space` RESOLVES to the Untitled page already there
-  // (#4723) instead of creating a second one, so submitting empty twice
-  // reopened the first one.
-  it('suffixes the blank-name create when an Untitled page already exists', async () => {
+  // #4782 — a blank name means "New page": the first free `Untitled N`, since
+  // `create_page_in_space` RESOLVES a literal 'Untitled' to the one already there.
+  it('names a blank create Untitled, suffixed past an existing Untitled page', async () => {
     mockedListPages.mockResolvedValue([{ id: 'OLD', content: 'Untitled' }])
     mockedCreate.mockResolvedValue('NEW_ID_0000000000000000003')
-    const h = makeHarness([])
-    const { result } = h.render()
 
-    await act(async () => {
-      await result.current.handleCreatePage()
-    })
+    const { created } = await create('   ')
 
     expect(mockedCreate).toHaveBeenCalledWith(null, 'Untitled 2', 'SPACE_A')
-    expect(h.onPageSelect).toHaveBeenCalledWith('NEW_ID_0000000000000000003', 'Untitled 2')
+    expect(created).toEqual({ id: 'NEW_ID_0000000000000000003', title: 'Untitled 2' })
   })
 
-  it('guards against a not-yet-ready space and never calls the IPC', async () => {
+  it('refuses a not-yet-ready space without calling the IPC', async () => {
     useSpaceStore.setState({ currentSpaceId: null })
-    const h = makeHarness([])
-    const { result } = h.render()
 
-    await act(async () => {
-      await result.current.handleCreatePage()
-    })
+    const { result, created } = await create('Anything')
 
+    expect(mockedListPages).not.toHaveBeenCalled()
     expect(mockedCreate).not.toHaveBeenCalled()
-    expect(mockedToastError).toHaveBeenCalledTimes(1)
+    expect(created).toBeNull()
+    expect(result.current.createError).toBe(t('pageBrowser.spaceNotReady'))
   })
 
-  it('shows a duplicate-name toast on a conflict error', async () => {
+  it('maps a conflict to the duplicate-name message', async () => {
     const conflict = { kind: 'conflict', message: 'dup' }
     expect(isConflict(conflict)).toBe(true)
     mockedCreate.mockRejectedValue(conflict)
-    const h = makeHarness([])
-    const { result } = h.render()
 
-    await act(async () => {
-      await result.current.handleCreatePage()
-    })
+    const { result, created } = await create('Taken')
 
-    await waitFor(() => expect(mockedToastError).toHaveBeenCalledTimes(1))
-    // A conflict toast carries no Retry action.
-    const opts = mockedToastError.mock.calls[0]?.[1]
-    expect(opts).toBeUndefined()
+    expect(created).toBeNull()
+    expect(result.current.createError).toBe(t('pageBrowser.duplicateName'))
   })
 
-  it('shows a retryable toast on a generic error', async () => {
-    mockedCreate.mockRejectedValue(new Error('db down'))
-    const h = makeHarness([])
-    const { result } = h.render()
+  it('ignores a second create while the first is in flight', async () => {
+    let resolveCreate: (id: string) => void = () => {}
+    mockedCreate.mockReturnValue(
+      new Promise<string>((resolve) => {
+        resolveCreate = resolve
+      }),
+    )
+    const { result } = renderHook(() => usePageCreation())
 
+    let first: Promise<unknown> = Promise.resolve()
+    let second: unknown
     await act(async () => {
-      await result.current.handleCreatePage()
+      first = result.current.createPage('Once')
+      second = await result.current.createPage('Once')
+    })
+    await act(async () => {
+      resolveCreate('NEW_ID_0000000000000000004')
+      await first
     })
 
-    await waitFor(() => expect(mockedToastError).toHaveBeenCalledTimes(1))
-    const opts = mockedToastError.mock.calls[0]?.[1] as { action?: { label: string } } | undefined
-    expect(opts?.action?.label).toBeTruthy()
-  })
-
-  it('handleCreateUnder seeds the namespace prefix and schedules a focus timer', () => {
-    vi.useFakeTimers()
-    const h = makeHarness([])
-    const { result } = h.render()
-
-    act(() => {
-      result.current.handleCreateUnder('work')
-    })
-    expect(result.current.newPageName).toBe('work/')
-    // Timer scheduled; flushing it must not throw (form ref is unattached).
-    act(() => {
-      vi.runAllTimers()
-    })
+    expect(second).toBeNull()
+    expect(mockedCreate).toHaveBeenCalledTimes(1)
   })
 })

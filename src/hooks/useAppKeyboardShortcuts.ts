@@ -39,14 +39,11 @@ import { useEffect } from 'react'
 import { getPaletteCommand } from '@/hooks/palette-commands'
 import { announce } from '@/lib/announcer'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
-import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
-import { createUntitledPage } from '@/lib/untitled-page'
+import { CLOSE_ALL_OVERLAYS_EVENT, openNewPageDialog } from '@/lib/overlay-events'
 import { type JournalMode, useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { addRecentCommand, getRecentCommands } from '@/stores/recent-commands'
-import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
@@ -301,32 +298,11 @@ function tryPaletteOpen(e: KeyboardEvent): boolean {
   return true
 }
 
-/**
- * `createNewPage` — create an untitled page in the active space and navigate
- * To it, through the shared `createUntitledPage` (#4723 — the title it settles
- * on is the first free `Untitled N`, so the chord never reopens the last one).
- * The `isReady`/`currentSpaceId` guard is defensive — the shortcut only fires
- * after boot resolves the space list.
- */
-function tryCreateNewPage(e: KeyboardEvent, t: (key: string) => string): boolean {
+/** `createNewPage` — open the New page dialog (#5637). */
+function tryCreateNewPage(e: KeyboardEvent): boolean {
   if (!matchesShortcutBinding(e, 'createNewPage')) return false
   e.preventDefault()
-  const { currentSpaceId, isReady } = useSpaceStore.getState()
-  if (!isReady || currentSpaceId == null) {
-    logger.warn('App', 'createNewPage shortcut fired before space hydrated')
-    notify.error(t('space.notReady'))
-    return true
-  }
-  createUntitledPage(currentSpaceId)
-    .then(({ id, title }) => {
-      useResolveStore.getState().set(id, title, false)
-      useTabsStore.getState().navigateToPage(id, title)
-      announce(t('announce.newPageCreated'))
-    })
-    .catch((err: unknown) => {
-      logger.error('App', 'Failed to create page via shortcut', undefined, err)
-      notify.error(t('error.createPageFailed'))
-    })
+  openNewPageDialog()
   return true
 }
 
@@ -380,7 +356,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
       if (tryFocusSearch(e)) return
       if (tryRunLastCommand(e, t)) return
       if (tryPaletteOpen(e)) return
-      tryCreateNewPage(e, t)
+      tryCreateNewPage(e)
     }
     window.addEventListener('keydown', handleGlobalShortcuts)
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)

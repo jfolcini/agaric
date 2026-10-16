@@ -12,7 +12,9 @@ import { axe } from 'vitest-axe'
 import { asPageWithMetadataRow, emptyPage, makePage, withOps } from '@/__tests__/fixtures'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { NewPageDialog } from '@/components/dialogs/NewPageDialog'
 import { PageBrowser } from '@/components/PageBrowser'
+import { useAppDialogs } from '@/hooks/useAppDialogs'
 import { t } from '@/lib/i18n'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useResolveStore } from '@/stores/resolve'
@@ -72,6 +74,22 @@ function findTrashButton(row: HTMLElement): HTMLButtonElement {
 }
 
 /** The `list_pages_with_metadata` response shape for a set of pages. */
+/** Mounts the New page dialog the way App does: on `openNewPageDialog`. */
+function DialogHost({ onOpenPage }: { onOpenPage: (pageId: string, title: string) => void }) {
+  const { newPageTitle, setNewPageTitle } = useAppDialogs()
+  if (newPageTitle === null) return null
+  return (
+    <NewPageDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) setNewPageTitle(null)
+      }}
+      initialTitle={newPageTitle}
+      onOpenPage={onOpenPage}
+    />
+  )
+}
+
 function pageList(...items: ReturnType<typeof makePage>[]) {
   return {
     items: items.map(asPageWithMetadataRow),
@@ -111,8 +129,11 @@ function stubInvoke(overrides: Readonly<TypedInvokeHandlers> = {}) {
       list_pages_with_metadata: () => emptyPage,
       // Alias resolution: no alias match unless a test says otherwise.
       resolve_page_by_alias: () => null,
-      // #4723 — the create form asks the space for its pages before creating.
+      // The New page dialog's matcher and #4723's pre-create read both list
+      // the space's pages; its alias lookup and FTS search find nothing.
       list_all_pages_in_space: () => [],
+      list_page_aliases_by_prefix: () => [],
+      search_blocks: () => ({ items: [], next_cursor: null, has_more: false, total_count: null }),
       // Speculative row prefetch — fires on pointer dwell, not on any
       // assertion; modelled here so it can never stand in for a real call.
       load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
@@ -328,139 +349,65 @@ describe('PageBrowser', () => {
       ).toHaveLength(2)
     })
   })
-  describe('page creation form', () => {
-    it('renders an input field and submit button', async () => {
-      stubInvoke()
-
-      render(<PageBrowser />)
-
+  // #5637 — the inline create form became the New page dialog. These drive
+  // the real path: the view's New Page button → `openNewPageDialog` →
+  // `useAppDialogs` → the dialog (`DialogHost` stands in for App).
+  describe('page creation through the New page dialog', () => {
+    async function openFromPagesView(onPageSelect = vi.fn()) {
+      const user = userEvent.setup()
+      render(
+        <>
+          <PageBrowser onPageSelect={onPageSelect} />
+          <DialogHost onOpenPage={onPageSelect} />
+        </>,
+      )
       await waitFor(() => {
-        expect(screen.getByPlaceholderText('New page name...')).toBeInTheDocument()
+        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
-      expect(screen.getByRole('button', { name: /New Page/i })).toBeInTheDocument()
-    })
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.newPage') }))
+      const input = await screen.findByRole('textbox', { name: t('newPageDialog.inputLabel') })
+      return { user, input }
+    }
 
-    // Input has accessible name via Label htmlFor
-    it('new page input has accessible name via sr-only label', async () => {
+    it('New Page opens the dialog with its labelled title field focused', async () => {
       stubInvoke()
+      const { input } = await openFromPagesView()
 
-      render(<PageBrowser />)
-
-      const input = await screen.findByRole('textbox', {
-        name: t('pageBrowser.createPageInputLabel'),
-      })
-      expect(input).toBeInTheDocument()
       expect(input).toHaveAttribute('id', 'new-page-name')
+      expect(input).toHaveFocus()
     })
 
-    it('creates page with the typed name on form submit', async () => {
-      const user = userEvent.setup()
-      // The atomic create wrapper returns the new page's ULID.
+    it('creates the page with the typed name via Enter and navigates to it', async () => {
       stubInvoke({ create_page_in_space: () => 'P_NEW' })
-
-      render(<PageBrowser />)
-
-      await waitFor(() => {
-        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
-      })
-
-      const input = screen.getByPlaceholderText('New page name...')
-      await user.type(input, 'My Custom Page')
-      await user.click(screen.getByRole('button', { name: /New Page/i }))
-
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
-          parentId: null,
-          content: 'My Custom Page',
-          spaceId: 'SPACE_TEST',
-        })
-      })
-
-      // The new page appears in the list
-      expect(await screen.findByText('My Custom Page')).toBeInTheDocument()
-    })
-
-    it('clears input after successful creation', async () => {
-      const user = userEvent.setup()
-      stubInvoke({ create_page_in_space: () => 'P_NEW' })
-
-      render(<PageBrowser />)
-
-      await waitFor(() => {
-        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
-      })
-
-      const input = screen.getByPlaceholderText('New page name...')
-      await user.type(input, 'Temp Name')
-      await user.click(screen.getByRole('button', { name: /New Page/i }))
-
-      await waitFor(() => {
-        expect(input).toHaveValue('')
-      })
-    })
-
-    it('disables "New Page" button when input is empty or whitespace', async () => {
-      const user = userEvent.setup()
-      stubInvoke()
-
-      render(<PageBrowser />)
-
-      await waitFor(() => {
-        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
-      })
-
-      const newPageBtn = screen.getByRole('button', { name: /New Page/i })
-      expect(newPageBtn).toBeDisabled()
-
-      const input = screen.getByPlaceholderText('New page name...')
-      await user.type(input, '   ')
-      expect(newPageBtn).toBeDisabled()
-
-      await user.clear(input)
-      await user.type(input, 'Some Page')
-      expect(newPageBtn).toBeEnabled()
-    })
-
-    it('submits via Enter key in the input', async () => {
-      const user = userEvent.setup()
-      stubInvoke({ create_page_in_space: () => 'P_ENTER' })
-
-      render(<PageBrowser />)
-
-      await waitFor(() => {
-        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
-      })
-
-      const input = screen.getByPlaceholderText('New page name...')
-      await user.type(input, 'Enter Page{Enter}')
-
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
-          parentId: null,
-          content: 'Enter Page',
-          spaceId: 'SPACE_TEST',
-        })
-      })
-    })
-
-    it('navigates to the new page after creation via onPageSelect', async () => {
-      const user = userEvent.setup()
       const onPageSelect = vi.fn()
-      stubInvoke({ create_page_in_space: () => 'P_NAV' })
+      const { user, input } = await openFromPagesView(onPageSelect)
 
-      render(<PageBrowser onPageSelect={onPageSelect} />)
-
-      await waitFor(() => {
-        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
-      })
-
-      const input = screen.getByPlaceholderText('New page name...')
-      await user.type(input, 'Navigate Here')
-      await user.click(screen.getByRole('button', { name: /New Page/i }))
+      await user.type(input, 'My Custom Page{Enter}')
 
       await waitFor(() => {
-        expect(onPageSelect).toHaveBeenCalledWith('P_NAV', 'Navigate Here')
+        expect(onPageSelect).toHaveBeenCalledWith('P_NEW', 'My Custom Page')
       })
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_page_in_space')).toEqual([
+        [
+          'create_page_in_space',
+          { parentId: null, content: 'My Custom Page', spaceId: 'SPACE_TEST' },
+        ],
+      ])
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('a failed create shows the error in the dialog and keeps it open', async () => {
+      stubInvoke({ create_page_in_space: () => Promise.reject(new Error('Create failed')) })
+      const onPageSelect = vi.fn()
+      const { user, input } = await openFromPagesView(onPageSelect)
+
+      await user.type(input, 'Failing Page{Enter}')
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        t('pageBrowser.createFailed', { error: 'Error: Create failed' }),
+      )
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(onPageSelect).not.toHaveBeenCalled()
     })
   })
   describe('error feedback', () => {
@@ -474,32 +421,6 @@ describe('PageBrowser', () => {
       await waitFor(() => {
         expect(mockedToastError).toHaveBeenCalledWith(
           expect.stringContaining('Failed to load pages'),
-        )
-      })
-    })
-
-    it('shows toast on failed page creation', async () => {
-      const user = userEvent.setup()
-      stubInvoke({ create_page_in_space: () => Promise.reject(new Error('Create failed')) })
-
-      render(<PageBrowser />)
-
-      await waitFor(() => {
-        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
-      })
-
-      const input = screen.getByPlaceholderText('New page name...')
-      await user.type(input, 'Failing Page')
-
-      const newPageBtn = screen.getByRole('button', { name: /New Page/i })
-      await user.click(newPageBtn)
-
-      await waitFor(() => {
-        expect(mockedToastError).toHaveBeenCalledWith(
-          expect.stringContaining('Failed to create page'),
-          expect.objectContaining({
-            action: expect.objectContaining({ label: 'Retry' }),
-          }),
         )
       })
     })
@@ -567,21 +488,29 @@ describe('PageBrowser', () => {
       expect(createBtn).toBeInTheDocument()
     })
 
-    it('clicking + on namespace prefills input', async () => {
+    it('clicking + on a namespace opens the New page dialog with the prefix filled in', async () => {
       const user = userEvent.setup()
       stubInvoke({
         list_pages_with_metadata: () => pageList(makePage({ id: 'P1', content: 'work/project-a' })),
       })
 
-      render(<PageBrowser />)
+      render(
+        <>
+          <PageBrowser />
+          <DialogHost onOpenPage={vi.fn()} />
+        </>,
+      )
 
       await screen.findByText('work')
 
       const createBtn = screen.getByRole('button', { name: /create page under work/i })
       await user.click(createBtn)
 
-      const input = screen.getByPlaceholderText('New page name...')
+      const input = await screen.findByRole('textbox', { name: t('newPageDialog.inputLabel') })
       expect(input).toHaveValue('work/')
+      expect(screen.getByTestId('new-page-parent-path')).toHaveTextContent(
+        t('newPageDialog.parentPath', { path: 'work' }),
+      )
     })
 
     it('a11y: + button has proper aria-label with namespace path', async () => {

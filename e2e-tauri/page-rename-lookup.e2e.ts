@@ -26,6 +26,7 @@ import {
   typeVerified,
   waitForAppReady,
   waitForToast,
+  openNewPageDialog,
 } from './helpers'
 
 // Not run-scoped: every spec file boots its own vault (see search-bm25-order).
@@ -79,7 +80,7 @@ async function clearFocused(): Promise<void> {
 describe('Agaric real-backend page rename (#5365)', () => {
   it('the Pages filter and the [[ picker find a renamed page by its new title only', async () => {
     await waitForAppReady()
-    await navigateTo('Pages')
+    await openNewPageDialog()
     await typeInputVerified('#new-page-name', OLD_TITLE)
     await browser.keys(['Enter'])
     await browser.waitUntil(async () => (await $(TITLE).getText()) === OLD_TITLE, {

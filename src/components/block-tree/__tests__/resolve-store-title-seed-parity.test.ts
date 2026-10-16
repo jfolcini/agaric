@@ -605,11 +605,6 @@ const DECLARED_WRITERS: Record<
   string,
   { writes: number; seedWrites?: number; kind: 'seed' | 'echo'; note: string }
 > = {
-  'src/App.tsx': {
-    writes: 1,
-    kind: 'echo',
-    note: 'new page — `Untitled` is the PERSISTED content passed to createPageInSpace, so it stays that untranslated literal',
-  },
   'src/components/TagList.tsx': {
     writes: 2,
     kind: 'echo',
@@ -656,11 +651,6 @@ const DECLARED_WRITERS: Record<
     kind: 'seed',
     note: '#5075 — a bookmark the resolve cache has never held is looked up on demand, so its title is a fetched row and goes through the gate',
   },
-  'src/hooks/useAppKeyboardShortcuts.ts': {
-    writes: 1,
-    kind: 'echo',
-    note: 'new page via chord — see App.tsx',
-  },
   'src/hooks/useBacklinkResolution.ts': {
     writes: 1,
     kind: 'seed',
@@ -672,6 +662,11 @@ const DECLARED_WRITERS: Record<
     kind: 'echo',
     note: 'journal page just created',
   },
+  'src/hooks/usePageCreation.ts': {
+    writes: 1,
+    kind: 'echo',
+    note: "the New page dialog's create (#5637) — the title is the content just passed to createPageInSpace; a blank title persists the untranslated `Untitled N` literal",
+  },
   'src/hooks/usePageDeleteAction.ts': {
     writes: 1,
     kind: 'echo',
@@ -682,11 +677,6 @@ const DECLARED_WRITERS: Record<
     writes: 1,
     kind: 'echo',
     note: 'tag the flush just created for a `#name` saved as text (#5160 follow-up 7a)',
-  },
-  'src/hooks/palette-commands.ts': {
-    writes: 1,
-    kind: 'echo',
-    note: 'new page via palette — see App.tsx',
   },
   'src/stores/page-blocks-reducers.ts': {
     writes: 1,

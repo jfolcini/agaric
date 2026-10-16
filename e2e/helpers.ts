@@ -566,6 +566,23 @@ const PAGES_HEADER_VIEWS: Readonly<Record<string, string | RegExp>> = {
 }
 
 /**
+ * Create a page called `title` from the Pages view (#5637): its header's New
+ * Page button opens the New page dialog, Enter creates the page, and the new
+ * page opens in the editor. The page must already be on the Pages view.
+ */
+export async function createPageFromPagesView(page: Page, title: string): Promise<void> {
+  await page
+    .locator('.page-browser-header')
+    .getByRole('button', { name: 'New Page', exact: true })
+    .click()
+  const input = activeDialog(page).getByRole('textbox', { name: 'New page title' })
+  await expect(input).toBeFocused()
+  await input.fill(title)
+  await input.press('Enter')
+  await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
+}
+
+/**
  * Navigate to a view by its label at whatever width the page currently is.
  *
  * Desktop clicks the pinned sidebar; mobile goes through the hamburger. Use

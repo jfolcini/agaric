@@ -208,8 +208,7 @@ function TreePageRow({
  * columns by structural overlap, and the metadata
  * fields (`lastModifiedAt`, `inboundLinkCount`, `childBlockCount`,
  * `flags`) live alongside on the same row object — we read them through
- * a typed cast and fall back to safe zero defaults when the cast misses
- * (e.g. an optimistically-inserted `BlockRow` from the create form).
+ * a typed cast and fall back to safe zero defaults when the cast misses.
  */
 interface FlatPageRowProps extends PageBrowserRowRendererProps {
   row: Extract<PageBrowserRow, { kind: 'page' }>
@@ -240,8 +239,7 @@ function FlatPageRow({
 
   // The grouping hook normalises the payload to `BlockRow`; the row
   // object is actually a `PageWithMetadataRow` with the metadata columns
-  // set. Optimistic inserts from the create form are still raw
-  // `BlockRow`s — `?? 0` / `?? false` keeps them safe.
+  // set; `?? 0` / `?? false` keep a row without them safe.
   const meta = page as unknown as Partial<PageWithMetadataRow>
   const lastModifiedAt = meta.lastModifiedAt ?? null
   const inboundLinkCount = meta.inboundLinkCount ?? 0

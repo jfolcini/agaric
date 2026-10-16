@@ -14,9 +14,8 @@
  * Rendered ONLY on nodes/rows `buildPageTree` marked as duplicates, so
  * the overwhelmingly common unique-title row is visually unchanged.
  *
- * `null` for a non-ULID id (the create form's optimistic inserts), so
- * nothing renders rather than a placeholder date that would itself
- * mislead.
+ * `null` for a non-ULID id, so nothing renders rather than a placeholder
+ * date that would itself mislead.
  *
  * Date AND time, not date alone. A cue that cannot tell two rows apart is
  * worse than no cue — it looks like an answer. ULIDs are millisecond

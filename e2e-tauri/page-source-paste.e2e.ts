@@ -30,6 +30,7 @@ import {
   typeMarkerVerified,
   waitForAppReady,
   waitForToast,
+  openNewPageDialog,
 } from './helpers'
 
 const FIRST = runScopedMarker('wdio-paste-first')
@@ -183,7 +184,7 @@ describe('Agaric real-backend source-mode cut, copy and paste (#5160 phase 5-5b)
   })
 
   it('lines pasted from another page’s buffer arrive as new blocks, and that page is unchanged', async () => {
-    await navigateTo('Pages')
+    await openNewPageDialog()
     await typeInputVerified('#new-page-name', OTHER_PAGE)
     await browser.keys(['Enter'])
     await $('[aria-label="Page title"]').waitForDisplayed({ timeout: ACTION_TIMEOUT })

@@ -369,13 +369,12 @@ describe('PageBrowser', () => {
       expect(capturedEstimateSizes.length).toBeGreaterThan(0)
       const initialEstimateSize = capturedEstimateSizes.at(-1)
 
-      // Trigger a re-render that changes only the `newPageName` state —
+      // Trigger a re-render that changes only the keyboard-focused row —
       // `groupedRows`, `pages`, `filterText`, sorting, and starred set
       // are all untouched, so the memoized `estimateSize` returned by
       // `useCallback([groupedRows])` must be the same reference.
-      const newPageInput = screen.getByPlaceholderText('New page name...')
       const beforeCount = capturedEstimateSizes.length
-      await user.type(newPageInput, 'Draft')
+      await user.keyboard('{ArrowDown}')
       // Wait for at least one re-render to register a new captured ref.
       await waitFor(() => {
         expect(capturedEstimateSizes.length).toBeGreaterThan(beforeCount)

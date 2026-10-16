@@ -43,16 +43,12 @@ import { useUndoShortcuts } from '@/hooks/useUndoShortcuts'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
 import { useViewChangeAnnouncer } from '@/hooks/useViewChangeAnnouncer'
 import { useWelcomeGate } from '@/hooks/useWelcomeGate'
-import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import { commands, type PeerRef } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { notify } from '@/lib/notify'
-import { createUntitledPage } from '@/lib/untitled-page'
+import { openNewPageDialog } from '@/lib/overlay-events'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
-import { useResolveStore } from '@/stores/resolve'
-import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
@@ -89,6 +85,9 @@ const QuickCaptureDialog = lazy(() =>
   import('@/components/dialogs/QuickCaptureDialog').then((m) => ({
     default: m.QuickCaptureDialog,
   })),
+)
+const NewPageDialog = lazy(() =>
+  import('@/components/dialogs/NewPageDialog').then((m) => ({ default: m.NewPageDialog })),
 )
 const NoPeersDialog = lazy(() =>
   import('@/components/dialogs/NoPeersDialog').then((m) => ({ default: m.NoPeersDialog })),
@@ -230,7 +229,7 @@ function App() {
   //                           and the focus-on-view-change effect.
   //   • `setView`          — used by `handleOpenSyncSettings`; also
   //                           forwarded to AppSidebar as `onSelectView`.
-  //   • `navigateToPage`   — used by `handleNewPage` / `handlePageSelect`
+  //   • `navigateToPage`   — used by `handlePageSelect`
   //                           and forwarded to ViewDispatcher.
   //   • `pageStack`        — derives `activePage` for both `viewKey` and
   //                           the ViewDispatcher page-editor branch.
@@ -264,7 +263,7 @@ function App() {
   const isOnline = useOnlineStatus()
   const isMobile = useIsMobile()
   const shouldShowMobileChrome = useShouldShowMobileChrome()
-  // Shell-level dialog state (4 dialogs + their
+  // Shell-level dialog state (the dialogs' open flags + their
   // event listeners) lives in `useAppDialogs`. The dialog JSX stays in
   // this file — the hook only owns the open/closed booleans, the
   // bug-report prefill payload, and the `BUG_REPORT_EVENT` /
@@ -280,6 +279,8 @@ function App() {
     setShowNoPeersDialog,
     shortcutsOpen,
     setShortcutsOpen,
+    newPageTitle,
+    setNewPageTitle,
   } = useAppDialogs()
   // #754 — first-run gate for the lazy `WelcomeModal`. Read once per
   // session: when onboarding is already done the modal (and its chunk)
@@ -404,26 +405,6 @@ function App() {
   // (#754 — extracted so StrictMode / HMR mount cycles can't interleave
   // the async register/unregister calls and leave the chord dead).
   useQuickCaptureShortcut(setQuickCaptureOpen)
-
-  const handleNewPage = useCallback(async () => {
-    // Phase 2 — route through the atomic `createPageInSpace`
-    // Tauri command (CreateBlock + SetProperty('space') in one tx).
-    const { currentSpaceId, isReady } = useSpaceStore.getState()
-    if (!isReady || currentSpaceId == null) {
-      logger.warn('App', 'handleNewPage fired before space hydrated')
-      notify.error(t('space.notReady'))
-      return
-    }
-    try {
-      const { id, title } = await createUntitledPage(currentSpaceId)
-      useResolveStore.getState().set(id, title, false)
-      navigateToPage(id, title)
-      announce(t('announce.newPageCreated'))
-    } catch (err) {
-      logger.error('App', 'Failed to create new page', undefined, err)
-      notify.error(t('error.createPageFailed'))
-    }
-  }, [navigateToPage, t])
 
   const handlePageSelect = useCallback(
     (pageId: string, title?: string, blockId?: string) => {
@@ -567,7 +548,7 @@ function App() {
           onSelectView={setView}
           syncing={syncing}
           isOnline={isOnline}
-          onNewPage={handleNewPage}
+          onNewPage={openNewPageDialog}
           onSyncClick={handleSyncClick}
         />
         <SidebarInset>
@@ -795,6 +776,24 @@ function App() {
         <FeatureErrorBoundary name="Quick capture" nameKey="errorBoundary.section.quickCapture">
           <Suspense fallback={null}>
             <QuickCaptureDialog open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />
+          </Suspense>
+        </FeatureErrorBoundary>
+      )}
+      {/* The New page dialog (#5637): every new-page entry point opens it
+          through `openNewPageDialog`. Keyed by the pre-filled title so a
+          second open with another title starts fresh. */}
+      {newPageTitle !== null && (
+        <FeatureErrorBoundary name="New page" nameKey="errorBoundary.section.newPage">
+          <Suspense fallback={null}>
+            <NewPageDialog
+              key={newPageTitle}
+              open
+              onOpenChange={(open) => {
+                if (!open) setNewPageTitle(null)
+              }}
+              initialTitle={newPageTitle}
+              onOpenPage={handlePageSelect}
+            />
           </Suspense>
         </FeatureErrorBoundary>
       )}

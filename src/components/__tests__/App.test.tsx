@@ -224,6 +224,22 @@ function getSidebar() {
   return within(sidebarEl as HTMLElement)
 }
 
+/** Waits for the (lazy) New page dialog, types `title` if given, and presses Enter. */
+async function createFromNewPageDialog(
+  user: ReturnType<typeof userEvent.setup>,
+  title = '',
+): Promise<void> {
+  const input = await screen.findByRole('textbox', { name: t('newPageDialog.inputLabel') })
+  await waitFor(() => expect(input).toHaveFocus())
+  if (title !== '') await user.type(input, title)
+  await user.keyboard('{Enter}')
+}
+
+/** Every `create_page_in_space` call so far, to pin that exactly one page was made. */
+function createCalls() {
+  return mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_page_in_space')
+}
+
 describe('App', () => {
   it('applies the stored font size at boot without opening Settings', async () => {
     localStorage.setItem('agaric-font-size', 'large')
@@ -309,9 +325,9 @@ describe('App', () => {
     const sidebar = getSidebar()
     await user.click(sidebar.getByText(t('sidebar.pages')))
 
-    // PageBrowser should render with its new-page input
+    // PageBrowser should render its header
     await waitFor(() => {
-      expect(screen.getByPlaceholderText(t('pageBrowser.newPagePlaceholder'))).toBeInTheDocument()
+      expect(document.querySelector('.page-browser-header')).not.toBeNull()
     })
   })
 
@@ -432,7 +448,7 @@ describe('App', () => {
     // Go to Pages
     await user.click(sidebar.getByText(t('sidebar.pages')))
     await waitFor(() => {
-      expect(screen.getByPlaceholderText(t('pageBrowser.newPagePlaceholder'))).toBeInTheDocument()
+      expect(document.querySelector('.page-browser-header')).not.toBeNull()
     })
 
     // Go back to Journal
@@ -468,7 +484,7 @@ describe('App', () => {
     expect(pagesBtn).toHaveAttribute('data-active', 'false')
     await user.click(sidebar.getByText(t('sidebar.pages')))
     await waitFor(() => {
-      expect(screen.getByPlaceholderText(t('pageBrowser.newPagePlaceholder'))).toBeInTheDocument()
+      expect(document.querySelector('.page-browser-header')).not.toBeNull()
     })
     const journalBtnAfter = sidebar
       .getByText(t('sidebar.journal'))
@@ -527,38 +543,25 @@ describe('App', () => {
     })
   })
 
-  it('Ctrl+N creates a new page and navigates to it', async () => {
-    // Mock create_page_in_space to return the new page's ULID (Phase 2).
-    // #4723 — the create first reads the space's page list to pick a free
-    // `Untitled N`; an empty space keeps the plain 'Untitled'.
+  // #5637 — every "new page" entry point opens the New page dialog; a blank
+  // title then creates the first free Untitled page.
+  it('Ctrl+N opens the New page dialog, and Enter creates one page and opens it', async () => {
+    const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_spaces')
         return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
       if (cmd === 'list_all_pages_in_space') return []
-      if (cmd === 'create_page_in_space') {
-        return 'NEW_PAGE_ID_00000000000000'
-      }
+      if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
       return emptyPage
     })
 
     render(<App />)
-
-    // Wait for boot
     await waitFor(() => {
       expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
     })
 
-    // Fire Ctrl+N on window
     fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
-
-    // Should call the atomic `create_page_in_space` command and then
-    // navigate to the new page.
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'create_page_in_space',
-        expect.objectContaining({ content: 'Untitled', parentId: null }),
-      )
-    })
+    await createFromNewPageDialog(user)
 
     await waitFor(() => {
       const state = useNavigationStore.getState()
@@ -567,11 +570,15 @@ describe('App', () => {
         expect.objectContaining({ pageId: 'NEW_PAGE_ID_00000000000000', title: 'Untitled' }),
       )
     })
+    expect(createCalls()).toEqual([
+      ['create_page_in_space', { parentId: null, content: 'Untitled', spaceId: 'SPACE_PERSONAL' }],
+    ])
+    expect(announce).toHaveBeenCalledWith(t('announce.newPageCreated'))
   })
 
   // #4723 — `create_page_in_space` resolves an existing title to that page, so
-  // the button used to reopen a lingering "Untitled" page instead of creating.
-  it('the sidebar New Page button creates the first free Untitled title', async () => {
+  // a blank create must pick the first free Untitled title.
+  it('the sidebar New Page button opens the dialog, which creates the first free Untitled title', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_spaces')
@@ -588,25 +595,25 @@ describe('App', () => {
     })
 
     await user.click(getSidebar().getByText(t('sidebar.newPage')))
+    await createFromNewPageDialog(user)
 
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith(
-        'create_page_in_space',
-        expect.objectContaining({ content: 'Untitled 2' }),
-      )
-    })
     await waitFor(() => {
       expect(selectPageStack(useTabsStore.getState())).toContainEqual(
         expect.objectContaining({ pageId: 'NEW_PAGE_ID_00000000000000', title: 'Untitled 2' }),
       )
     })
+    expect(createCalls()).toEqual([
+      [
+        'create_page_in_space',
+        { parentId: null, content: 'Untitled 2', spaceId: 'SPACE_PERSONAL' },
+      ],
+    ])
   })
 
-  // #4338 — `handleNewPage` is App-level: no `useBlockResolve()` in reach, so
-  // the bus is its only route to a warm `pagesListRef`. Driven through the
-  // real sidebar button rather than the hook so the wiring is pinned at the
-  // surface a user actually clicks.
-  it("the sidebar New Page button publishes an 'added' event to the name-change bus", async () => {
+  // #4338 — the dialog is App-level: no `useBlockResolve()` in reach, so the
+  // bus is its only route to a warm `pagesListRef`. Driven through the real
+  // sidebar button so the wiring is pinned at the surface a user clicks.
+  it("a page created from the sidebar's New Page publishes an 'added' event", async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_spaces')
@@ -620,25 +627,61 @@ describe('App', () => {
     const unsubscribe = subscribeToNameChanges((change) => changes.push(change))
     try {
       render(<App />)
-
       await waitFor(() => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
       await user.click(getSidebar().getByText(t('sidebar.newPage')))
+      await createFromNewPageDialog(user, 'Quarterly review')
 
       await waitFor(() =>
         expect(changes).toContainEqual({
           kind: 'added',
           entity: 'page',
           id: 'NEW_PAGE_ID_00000000000000',
-          name: 'Untitled',
+          name: 'Quarterly review',
           spaceId: 'SPACE_PERSONAL',
         }),
       )
     } finally {
       unsubscribe()
     }
+  })
+
+  it('the palette New page command opens the dialog, which creates one page', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_spaces')
+        return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
+      if (cmd === 'list_all_pages_in_space') return []
+      if (cmd === 'create_page_in_space') return 'NEW_PAGE_ID_00000000000000'
+      return emptyPage
+    })
+
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+    })
+
+    act(() => {
+      getPaletteCommand('create-new-page')?.run({ onClose: () => {}, onEscalate: () => {} })
+    })
+    await createFromNewPageDialog(user, 'From the palette')
+
+    await waitFor(() => {
+      expect(selectPageStack(useTabsStore.getState())).toContainEqual(
+        expect.objectContaining({
+          pageId: 'NEW_PAGE_ID_00000000000000',
+          title: 'From the palette',
+        }),
+      )
+    })
+    expect(createCalls()).toEqual([
+      [
+        'create_page_in_space',
+        { parentId: null, content: 'From the palette', spaceId: 'SPACE_PERSONAL' },
+      ],
+    ])
   })
 
   it('Ctrl+Shift+F announces the destination view via the central view-change announcer (#2944)', async () => {
@@ -659,30 +702,6 @@ describe('App', () => {
     // `useViewChangeAnnouncer` subscriber is the only source, so the
     // transition to 'search' must announce exactly once.
     expect(announce).toHaveBeenCalledTimes(1)
-  })
-
-  it('Ctrl+N announces "New page created"', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_spaces')
-        return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
-      if (cmd === 'list_all_pages_in_space') return []
-      if (cmd === 'create_page_in_space') {
-        return 'NEW_PAGE_ID_00000000000000'
-      }
-      return emptyPage
-    })
-
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-    })
-
-    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
-
-    await waitFor(() => {
-      expect(announce).toHaveBeenCalledWith(t('announce.newPageCreated'))
-    })
   })
 
   // ── Journal navigation shortcuts (Alt+Arrow, Alt+T) ─────────────────
@@ -915,45 +934,29 @@ describe('App', () => {
       })
     })
 
-    it('rebinding createNewPage: new keys fire, old Ctrl+N does not', async () => {
+    it('rebinding createNewPage: new keys open the New page dialog, old Ctrl+N does not', async () => {
       localStorage.setItem(
         'agaric-keyboard-shortcuts',
         JSON.stringify({ createNewPage: 'Ctrl + Alt + M' }),
       )
-      // Phase 2 — the atomic create_page_in_space command is
-      // now used instead of create_block for top-level pages. The IPC
-      // returns the new page's ULID (a string), not a BlockRow.
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_spaces')
-          return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
-        if (cmd === 'list_all_pages_in_space') return []
-        if (cmd === 'create_page_in_space') {
-          return 'NEW_PAGE_1'
-        }
-        return emptyPage
-      })
 
       render(<App />)
       await waitFor(() => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      // Old Ctrl+N does NOT fire the page-creation IPC
+      // Old Ctrl+N does NOT open the dialog
       fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
-      await Promise.resolve()
-      expect(mockedInvoke).not.toHaveBeenCalledWith(
-        'create_page_in_space',
-        expect.objectContaining({ content: 'Untitled' }),
-      )
-
-      // New Ctrl+Alt+M fires
-      fireEvent.keyDown(window, { key: 'm', ctrlKey: true, altKey: true })
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith(
-          'create_page_in_space',
-          expect.objectContaining({ content: 'Untitled' }),
-        )
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
       })
+      expect(screen.queryByRole('dialog', { name: t('newPageDialog.title') })).toBeNull()
+
+      // New Ctrl+Alt+M does
+      fireEvent.keyDown(window, { key: 'm', ctrlKey: true, altKey: true })
+      expect(
+        await screen.findByRole('dialog', { name: t('newPageDialog.title') }),
+      ).toBeInTheDocument()
     })
 
     it('rebinding goToToday: new keys fire, old Alt+T does not', async () => {
@@ -1742,35 +1745,7 @@ describe('App', () => {
       expect(screen.getByRole('button', { name: t('action.retry') })).toBeInTheDocument()
     })
 
-    it('Ctrl+N shows error toast when page creation fails', async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === 'list_spaces')
-          return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
-        if (cmd === 'list_all_pages_in_space') return []
-        if (cmd === 'create_page_in_space') {
-          throw new Error('Disk full')
-        }
-        return emptyPage
-      })
-
-      render(<App />)
-
-      await waitFor(() => {
-        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
-      })
-
-      fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
-
-      await waitFor(() => {
-        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('error.createPageFailed'))
-      })
-
-      // Navigation should NOT have changed
-      expect(useNavigationStore.getState().currentView).toBe('journal')
-      expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)
-    })
-
-    it('New Page sidebar button shows error toast when creation fails', async () => {
+    it('a failed create from Ctrl+N shows the error in the dialog and does not navigate', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_spaces')
@@ -1788,13 +1763,42 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      const sidebar = getSidebar()
-      await user.click(sidebar.getByText(t('sidebar.newPage')))
+      fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
+      await createFromNewPageDialog(user)
 
-      await waitFor(() => {
-        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('error.createPageFailed'))
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        t('pageBrowser.createFailed', { error: 'Error: Disk full' }),
+      )
+      expect(screen.getByRole('dialog', { name: t('newPageDialog.title') })).toBeInTheDocument()
+      // Navigation should NOT have changed
+      expect(useNavigationStore.getState().currentView).toBe('journal')
+      expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)
+    })
+
+    it('a failed create from the sidebar New Page shows the error in the dialog', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_spaces')
+          return [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }]
+        if (cmd === 'list_all_pages_in_space') return []
+        if (cmd === 'create_page_in_space') {
+          throw new Error('Disk full')
+        }
+        return emptyPage
       })
 
+      render(<App />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      await user.click(getSidebar().getByText(t('sidebar.newPage')))
+      await createFromNewPageDialog(user)
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        t('pageBrowser.createFailed', { error: 'Error: Disk full' }),
+      )
       // Navigation should NOT have changed
       expect(useNavigationStore.getState().currentView).toBe('journal')
       expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)

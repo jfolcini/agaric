@@ -34,15 +34,16 @@ import {
   typeMarkerVerified,
   waitForAppReady,
   waitForToast,
+  openNewPageDialog,
 } from './helpers'
 
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 
 const rowsWith = (task: string) => $$(`[data-testid="sortable-block"]*=${task}`).getElements()
 
-/** Create page `title` from the Pages view; it opens with its first block in the editor. */
+/** Create page `title` in the New page dialog; it opens with its first block in the editor. */
 async function openNewPageTitled(title: string): Promise<void> {
-  await navigateTo('Pages')
+  await openNewPageDialog()
   await typeInputVerified('#new-page-name', title)
   await browser.keys(['Enter'])
   await $(EDITOR).waitForDisplayed({ timeout: ACTION_TIMEOUT })
