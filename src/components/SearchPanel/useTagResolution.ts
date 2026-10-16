@@ -26,7 +26,7 @@
  * space-scoped: the same name can map to a different tag_id (or none) in
  * another space, so it is dropped on a space switch.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands, type TagCacheRow } from '@/lib/bindings'
@@ -52,9 +52,12 @@ export function useTagResolution(
   const [tagNameMap, setTagNameMap] = useState<Map<string, string | null>>(new Map())
   // #5255 — bumped by the name-change subscriber below. A lookup in flight
   // when a name change lands caches nothing for that subscriber to drop, and
-  // may have read the tag list before the change committed: re-running the
-  // resolve effect cancels it and asks again.
+  // may have read the tag list before the change committed: `reloadKey`
+  // re-runs the resolve effect to ask again, and `nameChangesRef` discards the
+  // stale answer at once, since one landing before React commits the change
+  // would otherwise pass `cancelled` and settle the name as unknown for good.
   const [reloadKey, setReloadKey] = useState(0)
+  const nameChangesRef = useRef(0)
 
   const resolution = useMemo<TagResolution>(() => {
     const tagIds: string[] = []
@@ -87,11 +90,12 @@ export function useTagResolution(
     )
     if (unsettled.length === 0) return
     let cancelled = false
+    const nameChanges = nameChangesRef.current
     // #717 — record the settled outcome either way: an exact match resolves
     // to its id; no match settles as `null` so the caller can project a
     // matches-nothing filter instead of silently dropping the tag constraint.
     const settle = (tags: readonly TagCacheRow[]) => {
-      if (cancelled) return
+      if (cancelled || nameChanges !== nameChangesRef.current) return
       setTagNameMap((prev) => {
         const next = new Map(prev)
         for (const lower of unsettled) {
@@ -136,6 +140,7 @@ export function useTagResolution(
         const mayNameUnknownTag =
           change.kind === 'invalidated' || (change.entity === 'tag' && change.kind !== 'removed')
         if (!mayNameUnknownTag) return
+        nameChangesRef.current += 1
         setReloadKey((key) => key + 1)
         setTagNameMap((prev) => {
           const resolvedOnly = new Map([...prev].filter(([, id]) => id !== null))
