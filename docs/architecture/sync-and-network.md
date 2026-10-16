@@ -113,7 +113,7 @@ The legacy CBOR path (`SnapshotOffer` / `SnapshotAccept` / `SnapshotReject` → 
 `src-tauri/agaric-sync/src/sync_daemon/` runs a long-lived task with a `tokio::select!` over:
 
 - **mDNS browse stream** — new peer announcements.
-- **`SyncTrigger` channel** — change-triggered sync (debounced ~3 s).
+- **`SyncTrigger` channel** — change-triggered sync (debounced by `DEFAULT_DEBOUNCE`).
 - **Periodic resync tick** — coarse retry for missed change-trigger events.
 - **Foreground notify** — wakes the loop on app-foreground transition.
 

@@ -122,7 +122,7 @@ async function waitInFreshView(
       await open()
       return false
     },
-    { timeout: NAV_TIMEOUT, interval: 3_000, timeoutMsg: what },
+    { timeout: NAV_TIMEOUT, interval: 1_000, timeoutMsg: what },
   )
 }
 
@@ -153,7 +153,7 @@ async function waitInOpenView(holds: () => Promise<boolean>, what: () => string)
         if (await syncIdle()) await $(SYNC_BUTTON).click()
         return false
       },
-      { timeout: NAV_TIMEOUT, interval: 5_000 },
+      { timeout: NAV_TIMEOUT, interval: 1_000 },
     )
     .catch(() => {
       throw new Error(what())

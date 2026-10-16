@@ -87,8 +87,7 @@ function sameBlockFields(a: FlatBlock, b: FlatBlock): boolean {
  * re-running `useRowDragState`, the viewport observe-ref, a
  * `useSyncExternalStore` subscription and the drop-indicator computation.
  * `load()` is on the remote-write hot path (`reloadChangedPageStores` calls it
- * per changed page on every `sync:complete` / MCP `blocks:changed` tick), so
- * with a peer typing this repeated every sync debounce (~3 s).
+ * per changed page on every `sync:complete` / MCP `blocks:changed` tick).
  *
  * Returns a NEW array (Zustand subscribers still see a changed `blocks`
  * reference); only the ENTRIES are shared with the previous state. One extra

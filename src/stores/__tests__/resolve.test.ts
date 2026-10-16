@@ -641,8 +641,7 @@ describe('preload in-flight coalescing (#753)', () => {
 // `reloadChangedPageStores` already computes the owning-page id set an inbound
 // sync / MCP write touched, uses it to target the page-store reloads, and used
 // to throw it away before calling `preload`. The scan then re-listed the WHOLE
-// space on every `sync:complete` with `ops_received > 0` — roughly every 3 s
-// while a peer types.
+// space on every `sync:complete` with `ops_received > 0`.
 //
 // The page half of the scan now collapses to ONE `batch_resolve` when the set
 // is present. The TAG half deliberately does not: tags carry no changed-id

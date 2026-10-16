@@ -491,7 +491,7 @@ impl SyncDaemon {
         // `wait_for_debounced_change`.
         //
         // Debouncing here bought nothing and cost the pairing dialog the whole
-        // 3 s window before the QUIC endpoint was even bound — which is the wait
+        // window before the QUIC endpoint was even bound — which is the wait
         // `start_pairing_armed` sits in to put an address in the QR. This branch
         // does not sync; it runs one `should_start_active` query and either
         // starts the daemon or goes back to sleep. Not debouncing also leaves
