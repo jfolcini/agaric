@@ -670,7 +670,7 @@ describe('StaticBlock', () => {
     // Visual arrow indicator
     const arrow = link?.querySelector('[aria-hidden="true"]')
     expect(arrow).not.toBeNull()
-    expect(arrow?.textContent).toBe('↗')
+    expect(arrow?.tagName.toLowerCase()).toBe('svg')
   })
 
   // -- Bold / italic / code marks ---------------------------------------------
@@ -713,7 +713,7 @@ describe('StaticBlock', () => {
     const content = '**[click](https://example.com)**'
     const { container } = render(<StaticBlock blockId="B1" content={content} onFocus={vi.fn()} />)
     // #1737: the link element wraps the marked text — the mark no longer crosses
-    // the ↗ icon / sr-only affordance.
+    // the arrow icon / sr-only affordance.
     const link = container.querySelector('.external-link')
     expect(link).toBeInTheDocument()
     const strong = link?.querySelector('strong')

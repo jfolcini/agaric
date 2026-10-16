@@ -982,7 +982,7 @@ describe('MetricCard', () => {
 })
 
 // ---------------------------------------------------------------------------
-// SectionGroupHeader — chip-style sub-section header used in DuePanel /
+// SectionGroupHeader — sub-section label used in DuePanel /
 // DonePanel. Sibling to SectionTitle (kept separate; see component header).
 // ---------------------------------------------------------------------------
 
@@ -999,11 +999,11 @@ describe('SectionGroupHeader', () => {
     expect(container.querySelector('[data-slot="section-group-header"]')).toBeInTheDocument()
   })
 
-  it('applies the chip chrome (bg-muted/50, rounded) and the section-label weight', () => {
+  it('applies the section-label weight with no fill or rounding', () => {
     const { container } = render(<SectionGroupHeader>Doing</SectionGroupHeader>)
     const el = q(container, '[data-slot="section-group-header"]')
-    expect(getClasses(el)).toContain('bg-muted/50')
-    expect(getClasses(el)).toContain('rounded')
+    expect(getClasses(el)).not.toMatch(/(^|\s)bg-/)
+    expect(getClasses(el)).not.toMatch(/(^|\s)rounded/)
     expect(getClasses(el)).toContain('font-medium')
     expect(getClasses(el)).not.toContain('uppercase')
   })
@@ -1014,7 +1014,7 @@ describe('SectionGroupHeader', () => {
     )
     const el = q(container, '[data-slot="section-group-header"]')
     expect(getClasses(el)).toContain('due-panel-group-header')
-    expect(getClasses(el)).toContain('bg-muted/50')
+    expect(getClasses(el)).toContain('font-medium')
   })
 
   it('renders the caller element when asChild is true', () => {
@@ -1025,7 +1025,7 @@ describe('SectionGroupHeader', () => {
     )
     const el = screen.getByTestId('custom-heading')
     expect(el.tagName).toBe('H3')
-    expect(el.className).toContain('bg-muted/50')
+    expect(el.className).toContain('font-medium')
   })
 
   it('forwards ref', () => {
