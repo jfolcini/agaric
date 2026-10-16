@@ -425,20 +425,9 @@ jobs:
         with:
           toolchain: 1.95.0
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
-          # ONE shared bench cache across all shards (own key — the bench/test
-          # profile tree matches neither the lint nor the llvm-cov instrumented
-          # tree, issue #813). The expensive, shard-invariant cost is the agaric
-          # lib + deps + cargo-registry downloads; caching it once and having
-          # every shard RESTORE it is the real win. Only shard 0 SAVES (on main)
-          # so the four shards never race to write the same key — the per-shard
-          # bench objects that differ are cheap to recompile on top of the warm
-          # lib.
-          shared-key: rust-bench
-          save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 0 }}
+      # No rust-cache: a saved entry was evicted before the next week's run
+      # could restore it (the repo is over its cache limit), and each save
+      # evicted a gate cache that is reused.
 
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -702,9 +691,7 @@ jobs:
     needs: select-lanes
     if: needs.select-lanes.outputs.bench_slo == 'true'
     runs-on: ubuntu-24.04
-    # Setup + cold bench-profile build + every probe took up to 41.4 min
-    # (run 38857201664, 2026-10-16; the cache was cold there, as on every
-    # branch dispatch). 45 left under 4 min of slack; 55 gives about a quarter.
+    # A cold bench-profile build plus every probe, with about a quarter spare.
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -740,16 +727,7 @@ jobs:
         with:
           toolchain: 1.95.0
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
-          # Own bench-profile cache (separate key from the smoke shards so this
-          # job's single writer never races them). Caches the agaric lib + deps
-          # + cargo registry + the interactive_slo bench, so week-over-week this
-          # job restores warm.
-          shared-key: rust-bench-slo
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # No rust-cache, for the reason on `bench-smoke`.
 
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -903,16 +881,14 @@ jobs:
   # bench-perf-gates (#639) — the `#[ignore]`d 20k-row perf gates, on their own
   # runner. In one job with `bench-slo` the test-profile compile started after
   # the bench-profile build and the probes, so a cap hit cancelled the gates
-  # without running them (run 38857201664). Gated by the `bench-slo` lane.
+  # without running them. Gated by the `bench-slo` lane.
   # ---------------------------------------------------------------------------
   bench-perf-gates:
     needs: select-lanes
     if: needs.select-lanes.outputs.bench_slo == 'true'
     runs-on: ubuntu-24.04
-    # In the shared job this leg took up to 9.2 min to finish (cold test-profile
-    # compile up to 7.2 min, plus retries of a failing gate) and was cancelled
-    # at 10.5 min still retrying, in runs dated 2026-10-15. Plus about 1.5 min
-    # of setup, 25 leaves room for a slower runner.
+    # A cold test-profile compile plus a failing gate's retries, with room for
+    # a slower runner.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -945,16 +921,7 @@ jobs:
         with:
           toolchain: 1.95.0
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
-          shared-key: rust-bench-perf-gates
-          # Never saved: no deep-check rust cache was restored by a later run
-          # (2026-10-16 audit: bench-slo 5/5 and full-suite-nextest 4/4
-          # misses), because the repo is over its 10 GB cache limit and each
-          # save evicts gate caches that are reused.
-          save-if: false
+      # No rust-cache, for the reason on `bench-smoke`.
 
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -1045,6 +1012,10 @@ jobs:
       # different slice of the surface, and the slices that DID run are still
       # the week's deliverable.
       fail-fast: false
+      # Leaves one PR gate's parallel jobs a runner each beside the other deep
+      # lanes still running; uncapped, the shards held the account's runners
+      # and queued every PR gate behind them.
+      max-parallel: 6
       matrix:
         # #3393 — the shard counts are DERIVED, not guessed. A shard's
         # capacity is floor((MUTANTS_WALL_BUDGET - baseline) / one viable
@@ -1099,7 +1070,14 @@ jobs:
         # and the indices must run 0..n-1 or the missing index is a slice
         # nobody tests — indistinguishable downstream from a smaller package.
         # `scripts/check-mutants-scope.mjs` checks both.
+        #
+        # `agaric-sync` is listed first because its shard 0 is the cache saver
+        # (see `save-if` below): under `max-parallel` the first rows start
+        # first, so the later waves restore the tree it saves.
         include:
+          - { package: agaric-sync, shard: 0, shards: 3 }
+          - { package: agaric-sync, shard: 1, shards: 3 }
+          - { package: agaric-sync, shard: 2, shards: 3 }
           - { package: agaric-store, shard: 0, shards: 3 }
           - { package: agaric-store, shard: 1, shards: 3 }
           - { package: agaric-store, shard: 2, shards: 3 }
@@ -1121,9 +1099,6 @@ jobs:
           - { package: agaric-engine, shard: 15, shards: 18 }
           - { package: agaric-engine, shard: 16, shards: 18 }
           - { package: agaric-engine, shard: 17, shards: 18 }
-          - { package: agaric-sync, shard: 0, shards: 3 }
-          - { package: agaric-sync, shard: 1, shards: 3 }
-          - { package: agaric-sync, shard: 2, shards: 3 }
     # Job-level so the run step and the guard step below quote the SAME
     # number: the guard names the budget in its partial-coverage notice, and
     # two copies of it would drift (#3386).
@@ -2105,7 +2080,7 @@ jobs:
     # target count, currently 8:
     #
     #   setup (apt, toolchain, node, npm, install-action)   ~10 min
-    #   N nightly ASan builds, COLD rust-cache              24-40 min
+    #   N nightly ASan builds, cold (no rust-cache)         24-40 min
     #   N targets x 300s of fuzzing                         ~40 min
     #   cmin, at its own step bound                         up to 30 min
     #   artifact uploads                                     ~2 min
@@ -2117,10 +2092,8 @@ jobs:
     # not a second declaration of it — and re-deriving them for a larger N is
     # the work that warning exists to prompt.
     #
-    # The build range is the five-target 15-25 min figure scaled to eight. On a
-    # warm cache (`save-if` on main keeps main warm) the build term is a
-    # fraction of that and the job finishes far inside the bound; the number
-    # exists for the cold-cache worst case, which is the one that would fail.
+    # The build range is the five-target 15-25 min figure scaled to eight, and
+    # every run pays it: the job has no rust-cache.
     #
     # Headroom matters more here than elsewhere because of HOW this overruns: a
     # JOB timeout is a cancellation, which correctly skips the corpus save, so
@@ -2141,7 +2114,7 @@ jobs:
 
       # Placed IMMEDIATELY after checkout, before every setup step, and that
       # position is load-bearing rather than tidy (#4503 review). It depends on
-      # nothing in between — apt, the nightly toolchain, rust-cache, node, npm
+      # nothing in between — apt, the nightly toolchain, node, npm
       # and install-action are all irrelevant to extracting a corpus tarball —
       # and running it first buys two things:
       #
@@ -2156,8 +2129,8 @@ jobs:
       - name: Restore the accumulated fuzz corpus (#4496)
         # Coverage-guided fuzzing only reaches depth if the corpus ACCUMULATES.
         # Before this, `src-tauri/fuzz/corpus/` was uploaded as an artifact and
-        # never restored — the `Swatinem/rust-cache` step covers `~/.cargo` and
-        # `target/`, not the corpus — so every weekly run restarted all five
+        # never restored — the `Swatinem/rust-cache` step then covered `~/.cargo`
+        # and `target/`, not the corpus — so every weekly run restarted all five
         # targets from the seeds committed to git (8 files over 2 targets at the
         # time; the other three had no corpus directory at all). Each run then
         # re-explored the same shallow frontier that `-max_total_time` reaches
@@ -2297,12 +2270,8 @@ jobs:
         with:
           toolchain: nightly
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri/fuzz
-          shared-key: rust-fuzz
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # No rust-cache: the nightly toolchain is part of rust-cache's key, so a
+      # week-old entry can never match.
 
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -2706,9 +2675,8 @@ jobs:
         # updated (GitHub's cache is immutable per key), freezing the corpus at
         # whatever the first run produced.
         #
-        # Gated on `main` for the same reason the `Swatinem/rust-cache` step
-        # above carries `save-if: github.ref == 'refs/heads/main'`. Nothing
-        # prunes these entries explicitly, but they do NOT accumulate.
+        # Gated on `main` so feature-branch dispatches never spend the cache
+        # budget. Nothing prunes these entries explicitly, but they do NOT accumulate.
         # `restore-keys` touches only the NEWEST entry, so every
         # older one goes unaccessed for a week and is evicted by the same 7-day
         # idle rule described on the restore step. Steady state is about two.
@@ -3033,11 +3001,8 @@ jobs:
           echo "After:" && df -h /
 
       - name: Toolchain (apt, mold, Rust, Node, npm ci)
+        # No rust-shared-key: a weekly lane's cache is evicted before the next run.
         uses: ./.github/actions/toolchain
-        with:
-          # One key per job class (#813): this leg's tree is the clippy /
-          # rustdoc check profile, the nextest legs' is the test profile.
-          rust-shared-key: rust-full-suite-prek
 
       - name: Prepare externalBin placeholder (FEAT-4f)
         # Tauri's build.rs validates externalBin paths on every cargo
@@ -3188,9 +3153,10 @@ jobs:
     needs: select-lanes
     if: needs.select-lanes.outputs.full_suite == 'true'
     runs-on: ubuntu-24.04
-    # Full vitest on Node 24, then the Node 22 floor run (typecheck + vitest
-    # again). No Rust: the vitest tree runs against the tauri mock.
-    timeout-minutes: 40
+    # Typecheck + vitest on the Node 22 floor only: the PR gate's `vitest` job
+    # already runs the suite on Node 24. No Rust: vitest runs against the
+    # tauri mock. One suite run plus setup, with headroom for suite growth.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -3198,24 +3164,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install npm dependencies
-        run: npm ci
-
-      - name: Vitest (full suite)
-        run: npx vitest run
-
       - name: Install Node 22 (the `engines.node` floor)
         # The Node floor is checked weekly here, not per PR. Pinned to the
         # exact floor of `engines.node` (^22.22.2), not a floating 22, so the
         # lane tests the lowest version we claim to support — keep in lockstep
-        # with package.json. Last in the job: it replaces the Node 24 every
-        # step above ran on.
+        # with package.json.
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.22.2
@@ -3292,12 +3245,8 @@ jobs:
           echo "After:" && df -h /
 
       - name: Toolchain (apt, mold, Rust, Node, npm ci)
+        # No rust-shared-key: a weekly lane's cache is evicted before the next run.
         uses: ./.github/actions/toolchain
-        with:
-          # Both shards build the same test tree (the partition is applied at
-          # run time), so one key serves both; rust-cache keeps the first
-          # finisher's save and skips the second (#813).
-          rust-shared-key: rust-full-suite-nextest
 
       - name: Prepare externalBin placeholder (FEAT-4f)
         # Tauri's build.rs validates externalBin paths on every cargo
