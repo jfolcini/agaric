@@ -5,13 +5,21 @@
 ## Running
 
 ```sh
-gh workflow run e2e-tauri-weekly.yml --ref <branch>     # on demand, ~20 min
+gh workflow run e2e-tauri-weekly.yml --ref <branch>     # on demand
 gh run list --workflow e2e-tauri-weekly.yml --branch <branch> --limit 3
 ```
 
-It also runs Mondays 02:43 UTC and on PRs to `main` that match the workflow's `paths` filter (`src/`, `src-tauri/`, `e2e-tauri/`, manifests; not `e2e/` or `scripts/`). It is not a required check (#4671).
+It also runs weekly and on PRs to `main` that match the workflow's `paths` filter (`src/`, `src-tauri/`, `e2e-tauri/`, manifests; not `e2e/` or `scripts/`). It is not a required check (#4671), so read its result on the PR before merging; a new spec has shown nothing until its control case has run there.
 
-Locally you need Linux with `webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `cargo install tauri-driver --locked`, and a built binary (`npm run tauri -- build --debug --no-bundle`). Then `WDIO_SKIP_TAURI_BUILD=1 xvfb-run -a dbus-run-session -- npm run test:e2e-tauri`. A dev box without those runs nothing; `npm run typecheck:e2e-tauri` and `npx vitest run e2e-tauri` are the local checks.
+Locally you need Linux with `webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `openbox`, and `cargo install tauri-driver --locked`. Build as the workflow does, then run under a window manager (without one `document.hasFocus()` stays false and `waitForAppReady` fails, #5457):
+
+```sh
+npm run tauri -- build --debug --no-bundle --config '{"build":{"beforeBuildCommand":"npm run build"}}'
+(cd src-tauri && cargo build -p agaric-diagnostics --bin e2e_sync_peer)
+WDIO_SKIP_TAURI_BUILD=1 xvfb-run -a dbus-run-session -- bash -c 'openbox & npm run test:e2e-tauri'
+```
+
+The `--config` skips `prepare-external-bins.mjs`'s release build of the unused `agaric-mcp` sidecar; `wdio.conf.ts`'s own build, when `WDIO_SKIP_TAURI_BUILD` is unset, does not pass it and pays that cost. A dev box without those runs nothing; `npm run typecheck:e2e-tauri` and `npx vitest run e2e-tauri` are the local checks.
 
 `gh run view --log` prints nothing for this repo; read a failed job with `gh api /repos/jfolcini/agaric/actions/jobs/<job_id>/logs` and `gh run download <run_id>` for the `e2e-tauri-diagnostics` artifact (screenshots, app log, the visibility verdict).
 
@@ -22,3 +30,9 @@ Locally you need Linux with `webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `cargo i
 - **Persistence is a nav round-trip.** Create through the UI, leave the view through the sidebar (`navigateTo`), come back, and assert the re-queried DOM: `blockStaticByMarker`, `reopenPageByTitle`, `expectAbsent`. Never `browser.refresh()`: it can drop the IPC bridge (see `block-persist-reload.e2e.ts`).
 - **A UI rename breaks this lane silently.** `helpers.ts`'s header lists every label and selector the specs depend on; renaming one updates `helpers.ts` in the same PR, since no required check will catch it.
 - Waits are generous (`NAV_TIMEOUT` / `ACTION_TIMEOUT` = 60 s) because the runner is shared; never `browser.pause` to wait for state, `waitUntil` on the DOM instead. Typed text goes through `typeMarkerVerified` / `typeInputVerified`, which read back and retype dropped keystrokes.
+- **Never self-skip on an environment precondition** (focus, driver): fail, as `waitForAppReady` does, so the lane reds instead of passing vacuously.
+- **Click only to focus, and never an element whose layout is still settling** (an image resolving, a badge mounting): WebDriver clicks a centre computed before the shift (`focusForTyping`).
+- **After Enter, wait for `enterBlankSibling`.** The create is a round-trip, and until it answers the source block's emptied editor also reads blank.
+- **The week view mounts a day lazily and renders off-screen rows as placeholders**; see `e2e/AGENTS.md` § Flakes.
+- **Two-device specs** (`sync-peer.ts`): a session is a pull by the device that dials, so a peer write reaches the app when the app syncs: press the sidebar Sync button, not Settings' "Sync now", whose navigation remounts the view under test. For a concurrent edit, the app writes and closes its editor before the peer writes. `sync-two-device.e2e.ts` and `sync-refresh.e2e.ts` carry the details.
+- **A wedged run where every later `POST /session` times out** is an orphaned app holding the single-instance D-Bus name; `reapSessionApp` in `wdio.conf.ts` exists for it.

@@ -4,22 +4,27 @@ Criterion benches under `src-tauri/benches/`. `interactive_slo` additionally enf
 
 ## CI lanes
 
-`.github/workflows/scheduled-deep-checks.yml` (weekly Monday cron + `workflow_dispatch`, not per-PR) runs two lanes:
+`.github/workflows/scheduled-deep-checks.yml` (weekly Monday cron + `workflow_dispatch`, not per-PR) runs three bench lanes:
 
 - **`bench-smoke`** — sharded. Each shard builds its slice with `cargo bench --no-run --bench …`, then runs every binary once with `--test` (criterion's single-shot, no-measurement mode). A fixture that drifted from the schema panics here. This validates seeds, not perf.
-- **`bench-slo`** — warm-runs the workflow's `SLO_BENCHES` (`interactive_slo`) plus the `#[ignore]`d 20k-row gates, apart from the smoke shards so a smoke timeout cannot skip it and cold timings cannot trip `assert_under_budget`. The `slo_include_problem` dispatch input adds the cache/counterfactual probes.
+- **`bench-slo`** — warm-runs the workflow's `SLO_BENCHES` (`interactive_slo`), apart from the smoke shards so a smoke timeout cannot skip it and cold timings cannot trip `assert_under_budget`. The `slo_include_problem` dispatch input adds the cache/counterfactual probes.
+- **`bench-perf-gates`** — `cargo nextest run --workspace --run-ignored=only`: every `#[ignore]`d test, which is the 20k-row perf gates, the measurement harnesses and `conformance_fuzz`. It has no `lanes` name of its own; selecting `bench-slo` runs it too.
 
 ## Verifying a bench change: CI is the arbiter
 
 Do not compile the release bench graph locally: `[profile.release]` is thin LTO with `codegen-units = 1`, which takes hours and gets OOM-killed on a shared box. Dispatch the lane on your branch instead; a non-`main` dispatch is a dry run that files nothing:
 
 ```bash
-gh workflow run scheduled-deep-checks.yml --ref <branch> -f lanes=bench-smoke   # or bench-slo
+gh workflow run scheduled-deep-checks.yml --ref <branch> -f lanes=bench-smoke   # or bench-slo (also runs bench-perf-gates)
 ```
+
+PR CI runs none of these lanes, so dispatch `lanes=bench-slo` on the branch and merge on its result for any change to SQL an SLO probe or perf gate times: a cache rebuild, a count recompute, a list, graph or agenda read, or a seed helper the gates use. Never `lanes=all` for this: it also starts the mutants shards, which starve PR runners.
 
 A non-zero exit or `panicked at` in `bench-smoke` is a real fixture failure. An `assert_under_budget` failure under cold `--test` is not (cold runs inflate heavy benches 10x or more); only the warm `bench-slo` number gates.
 
-The `#[ignore]`d gates in `bench-slo` run under nextest's `profile.default` (no `--profile`), so they are killed at 2x30s; a slow one needs an override in `src-tauri/.config/nextest.toml`.
+`bench-perf-gates` runs under nextest's `profile.default` (no `--profile`), so an ignored test is killed at 2x30 s unless `src-tauri/.config/nextest.toml` overrides it, as it does for the `_perf_gate_20k_pages` gates.
+
+**Budgets.** A new probe reports through `report_measurement_only` until `bench-slo` has measured it, then gets a budget of about twice the mean of recent warm runs, never one run or a placeholder. An `assert_under_budget` panic aborts every later probe in the run, so before raising a budget on a branch whose SQL matches `main`, normalise the probe against a sibling probe in the same log: a shared rise is runner noise.
 
 Optional probes: `if problem_skipped("<name> @ 100K") { return }` gates the cache and MostLinked probes behind `SLO_INCLUDE_PROBLEM=1`; the permanently over-budget revert probe has its own `SLO_INCLUDE_REVERT=1`.
 

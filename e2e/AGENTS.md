@@ -7,7 +7,7 @@
 Authoritative values are in [`playwright.config.ts`](../playwright.config.ts).
 
 - Test dir `e2e/`, Chromium only, base URL `http://localhost:5173`.
-- Web server: `npm run build:e2e && npm run preview:e2e` — a static production build served by `vite preview`. `VITE_E2E=1` keeps the tauri mock in the bundle (`src/main.tsx` gates the import on it); a plain prod build tree-shakes it out.
+- Web server: `npm run build:e2e && npm run preview:e2e` — a static production build served by `vite preview`. `VITE_E2E=1` keeps the tauri mock in the bundle (`src/main.tsx` gates the import on it); a plain prod build tree-shakes it out. `build:e2e` runs `tsc -b`, so a type error anywhere (a stray import in a scratch spec) surfaces only as "Process from config.webServer was not able to start"; run `npm run build:e2e` to read it.
 
 ```sh
 npm run test:e2e                              # whole suite
@@ -39,8 +39,9 @@ Root rule: [AGENTS.md § Testing invariants](../AGENTS.md#testing-invariants-ant
   npx vitest run src/lib/tauri-mock src/lib/__tests__/tauri-mock.test.ts
   ```
 
-  Red `conformance.test.ts` means the mock diverges: fix the handler under `src/lib/tauri-mock/handlers/`, never the backend. A divergence unsafe to mirror becomes a `.skip` with a `// DRIFT(#763)` comment plus an issue.
+  Red `conformance.test.ts` means the mock diverges: fix the handler under `src/lib/tauri-mock/handlers/`, never the backend. A divergence unsafe to mirror becomes a `.skip` with a `// DRIFT(#763)` comment plus an issue, unless a decision says the mock never mirrors it: #5071 keeps the markdown grammar in Rust only (`markdown_imports`, and the render steps in `QUERY_STEPS_BACKEND_ONLY`).
 - Author handler behaviour from the Rust command, not from the issue or the existing mock, and reject what the backend rejects (out-of-range `limit`, unknown ids, refusals); a clamp turns a backend error the user hits into a green test. Then grep for tests that encode the old behaviour and run all of `src/lib`.
+- Handlers return copies of stored rows, as the real IPC returns fresh objects: a live row mutated in place keeps the same identity, and the React Compiler keeps rendering the old one.
 - Order and fold like SQLite: `BINARY` is UTF-8 byte order and `NOCASE` folds ASCII only, so mock sorts use `compareUtf8Bytes` / `compareNocase` (`src/lib/sqlite-collation.ts`), never `localeCompare`, `toLowerCase` or `<` on user text.
 
 ## Patterns
@@ -59,9 +60,9 @@ test('edits a block', async ({ page }) => {
 })
 ```
 
-- No page objects: flat tests, shared behaviour in `e2e/helpers.ts`.
+- No page objects: flat tests, shared behaviour in `e2e/helpers.ts`. Cross-test setup is a fixture on the exported `test`: a module-level `beforeEach` in a shared module binds only to the first spec file a worker loads.
 - Select with `data-testid` / `data-slot`, not CSS classes.
-- `installIpcRecorder` / `getInvokeCalls` / `clearInvokeCalls` assert on IPC traffic.
+- `installIpcRecorder` / `getInvokeCalls` / `clearInvokeCalls` assert on IPC traffic. The recorder sees only calls made after boot; counting boot IPC wraps the assignment instead (`boot-ipc-counts.spec.ts`).
 - `fullyParallel` is on; a spec whose tests share global state sets `test.describe.configure({ mode: 'serial' })`.
 - Changing a shared control's visibility, a label, a selector or seed data, or removing a behaviour: grep `e2e/` (including `helpers.ts`), `e2e-tauri/` and `scripts/` (`android-e2e-safe-area.mjs`) in the same PR, and run the specs it hits. A spec may assert the bug itself; re-premise it rather than keep the bug.
 - Mobile behaviour keys on the user agent (`src/lib/platform/index.ts`), not the viewport. A mobile spec sets the whole device (`viewport`, `userAgent`, `isMobile`, `hasTouch` from `devices['iPhone 13']`, as `mobile-editor.spec.ts` does).
@@ -70,7 +71,9 @@ test('edits a block', async ({ page }) => {
 ## Flakes
 
 - Reproduce before fixing ([standard 6](../src/__tests__/AGENTS.md#quality-standards)): `npx playwright test e2e/<file>.spec.ts --repeat-each=30 --workers=8 --retries=0` (local `retries: 2` hides it), under CPU load or CDP `Emulation.setCPUThrottlingRate`. The same assertion failing every time points at ordering, not a race.
-- Do not build caret state from mid-stream `Home` / `End` / `ArrowLeft`: a dropped key is invisible. Type the whole string, assert it (`toHaveText`), then place the caret with `selectEditorRange`.
+- Do not build caret state from mid-stream `Home` / `End` / `ArrowLeft`: ProseMirror reads a native caret move on the next `selectionchange`, which Chrome fires late or coalesces, so the next key or paste sees the old selection. Type the whole string, assert it (`toHaveText`), then place the caret with `selectEditorRange`, which dispatches `selectionchange` itself.
+- After a view change, App moves focus to the view's primary element one frame later. Assert the focus you need with `toBeFocused()` before a key chord, or the chord lands in that element.
+- A week-view day mounts its tree only once scrolled into view (`useEnteredViewport` in `DaySection.tsx`), and `BlockTree` renders rows outside the scroller as placeholder `li`s (`useViewportObserver`), so a click that scrolls can detach a locator resolved earlier. Scroll the day or row's `li` into view first, and check a date-keyed spec under `page.clock` on every weekday.
 - `expect(promise).resolves`, `locator.evaluateAll`, `allTextContents` and `count()` read once and never retry. Use web-first matchers (`toHaveCount`, `toHaveText([...])`) or `expect.poll`.
 - Assert the thing under test before any remount or navigation, which re-fetch and hide stale UI; a persistence round-trip is a separate assertion. `toContainText` passes with extra text, and a negative matcher (`toBeHidden`, `not.toBeVisible`) passes for unrelated reasons; see either go red without the fix.
 - Click a block through `focusBlock` / `focusBlockById`, which hit a corner: a centre click lands on a chip or link.
@@ -118,7 +121,7 @@ It judges `position: absolute` children against their CSS containing block, not 
 
 ## Performance runs
 
-`perf.spec.ts`'s journey run is skipped unless `AGARIC_PERF=1`: it seeds a 500-page vault through the mock and prints per-journey frontend cost (INP, long animation frames, peak rendered blocks, React commits, main-thread time per chunk) to `test-results/perf-*`. Its other tests run on every PR: opening a 500-block page renders only the initial window (#5329), and opening Agenda, Pages, Tags or Search on 500 seeded rows renders at most 60 rows and makes exactly the view's `ipcOnOpen` IPC calls (#5366); opening a page and following a link chip each make exactly their pinned set of calls (#5445). A deliberate change to a view's open path re-measures that count from the failure message, which lists the calls. `AGARIC_PERF_CPU=4` throttles the CPU; `AGARIC_PERF_TRACE=1` saves a Chrome trace per journey. Backend query time comes from `AGARIC_OTEL=1` on the real app or the `interactive_slo` bench.
+`perf.spec.ts`'s journey run is skipped unless `AGARIC_PERF=1`: it seeds a 500-page vault through the mock and prints per-journey frontend cost (INP, long animation frames, peak rendered blocks, React commits, main-thread time per chunk) to `test-results/perf-*`. Its other tests run on every PR: opening a 500-block page renders only the initial window (#5329), and opening Agenda, Pages, Tags or Search on 500 seeded rows renders at most 60 rows and makes exactly the view's `ipcOnOpen` IPC calls (#5366); opening a page and following a link chip each make exactly their pinned set of calls (#5445). A deliberate change to a view's open path re-measures that count from the failure message, which lists the calls. `AGARIC_PERF_CPU=4` throttles the CPU; `AGARIC_PERF_TRACE=1` saves a Chrome trace per journey. Backend query time comes from `AGARIC_OTEL=1` on the real app or the `interactive_slo` bench. Time inside the page (`performance.now()` in `evaluate`), never around an `expect` or `waitFor`, whose poll backoff rounds the wait up.
 
 ```sh
 AGARIC_PERF=1 npx playwright test e2e/perf.spec.ts

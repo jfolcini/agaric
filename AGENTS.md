@@ -91,7 +91,7 @@ Some dependencies ship as a stack. Move the whole stack in one commit, or leave 
 - **SQLx + `.sqlx/` caches:** bump the crate and run `just gen-sqlx` in the same commit.
 - **specta + tauri-specta:** same exact `=2.0.0-rc.*`; `ts_bindings_up_to_date` fails on drift.
 - **iroh:** `iroh`, `iroh-base`, `iroh-dns` at one exact `=` pin across `agaric-sync` and `agaric-store`; `iroh-mdns-address-lookup` is a caret range resolved against that pin, so re-resolve it in the same commit as any `iroh` bump (its `Endpoint` trait bounds compile only against one `iroh` line).
-- **`src-tauri/fuzz/Cargo.lock`:** the fuzz crate is its own workspace that path-depends on the parent crates, so changing any `src-tauri/**/Cargo.toml` requirement invalidates it and `verify-lockfiles` reds. Refresh with `cd src-tauri/fuzz && cargo metadata --format-version 1 >/dev/null`. Never `cargo update` or `cargo generate-lockfile` there (it lifts deliberate holds). `scripts/bump-version.sh` handles this for releases.
+- **`src-tauri/fuzz/Cargo.lock`:** the fuzz crate is its own workspace that path-depends on the parent crates, so changing any `src-tauri/**/Cargo.toml` requirement invalidates it and `verify-lockfiles` reds. Refresh with `cd src-tauri/fuzz && cargo metadata --format-version 1 >/dev/null`. Never a bare `cargo update` or `cargo generate-lockfile` there (they lift deliberate holds); a targeted `cargo update -p <crate> --precise <ver>` is fine once the lock diff shows nothing else moved. `scripts/bump-version.sh` handles this for releases.
 
 If you bump `X` and wonder whether `Y` moves too, it does, in the same commit.
 
@@ -115,7 +115,7 @@ Single user, multiple devices they own, no cloud. There is no malicious actor.
 
 - **State:** Zustand stores in `src/stores/`. `usePageBlockStore` is a per-page factory (`createPageBlockStore(pageId)` + `PageBlockContext`); `useBlockStore` holds focus and selection only.
 - **Editor:** one roving TipTap instance per mounted `BlockTree` (invariant 4) with the extensions in `src/editor/extensions/`. Serializer: `src/editor/markdown-serializer.ts`, no external deps.
-- **Logging:** `src/lib/logger.ts` dual-writes console + Rust IPC. Never swallow errors silently; `.catch(() => {})` is banned, use `logger.warn` / `logger.error`.
+- **Logging:** `src/lib/logger.ts` writes to the console and, at `warn` and `error` only, to the Rust log; production drops `debug` and `info`, so a milestone that must reach the log calls `logFrontend` (`@/lib/ipc-helpers`). Never swallow errors silently; `.catch(() => {})` is banned, use `logger.warn` / `logger.error`.
 - **Style:** 2-space indent, single quotes, no semicolons, 100 columns (oxfmt).
 
 ## Frontend Development Guidelines
@@ -214,7 +214,7 @@ Maintainer only, through `scripts/release.sh <version>`; the tag push publishes.
 
 ### Acceptance is falsification
 
-A test that cannot fail covers nothing. Before calling a test done, break the code it covers, see it go red, restore. Falsify against a copy (`cp f /tmp/f.bak`, mutate, `cmp` to confirm the mutation applied, run, restore, `cmp`), never in place: stubs left by an interrupted run have shipped (#4287). The red must be the assertion you predicted; a build break or startup failure is not a kill. Run `git diff` before your final message. Where mutation testing reaches the code, a killed mutant is the strongest form:
+A test that cannot fail covers nothing. Before calling a test done, break the code it covers, see it go red, restore. Falsify in one shell command that backs up (`cp f /tmp/f.bak`), restores on exit (`trap 'cp /tmp/f.bak f' EXIT`), mutates, confirms the mutation applied (`! cmp -s`), and runs: a mutation left between tool calls by an interrupted run has shipped (#4287). The red must be the assertion you predicted; a build break or startup failure is not a kill. Run `git diff` before your final message. Where mutation testing reaches the code, a killed mutant is the strongest form:
 
 ```bash
 node scripts/run-mutation.mjs <module>       # frontend

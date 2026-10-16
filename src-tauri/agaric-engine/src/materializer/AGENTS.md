@@ -7,7 +7,7 @@ What a change to derived state (caches, FTS, link graphs, `page_id` / `space_id`
 `invalidations_for_op` (`src-tauri/agaric-engine/src/materializer/dispatch.rs`) maps an op to its rebuild tasks; `FULL_CACHE_REBUILD_TASKS` is the correctness-preserving default.
 
 - Before narrowing or skipping a rebuild (a per-op arm, a `block_type_hint` / `move_same_page` hint, a scoped rebuild), list every source table and predicate the cache reads: A content-block delete still moves `tags_cache.usage_count`; a same-page move can carry a nested page.
-- Pin the narrowing with a test asserting the narrowed result equals a full rebuild.
+- Pin the narrowing with a test asserting the narrowed result equals a full rebuild, and pin the narrowing itself: that equality also holds when the op falls back to the full rebuild, so plant a row no rebuild would write, for a block the op does not touch, and assert the op leaves it.
 - An absent hint (`None`) keeps the full set. Sync, replay and boot pass none.
 
 ## A new derived table or cache

@@ -44,10 +44,12 @@ The agent name is the client's `clientInfo.name`, sanitised once by `sanitize_ag
 `RmcpAdapter::call_tool` calls `emit_tool_completion` after every `tools/call`; handlers never call it directly. The event carries:
 
 - `tool_name`.
-- `summary` — built per tool by `summarise.rs`. May include structural counts, dates, property keys, number/date/bool property values, and eight-character ULID prefixes. Never block content, page titles, tag display names, search queries, or `value_text`.
+- `summary` — built per tool by `summarise.rs`. May include structural counts, dates, property keys, number/date/bool property values, and eight-character ULID prefixes of ids taken from the result, or of an argument that parses as a ULID (`id_arg_prefix`): an id argument may be a page title or tag name. Never block content, page titles, tag display names, search queries, or `value_text`.
 - `result` — `ActivityResult::Ok` or `Err(short_message)`, clipped to `ERROR_CLIP_CAP`.
 - `session_id` — the connection's ULID.
-- `op_ref` + `additional_op_refs` — drained from the `LAST_APPEND` task-local. One entry per tool call, however many ops it wrote.
+- `op_ref` + `additional_op_refs` — drained from the `LAST_APPEND` task-local. One entry per tool call, however many ops it wrote, so a consumer that reverts it (`ActivityFeed.tsx`'s Undo and session revert) sends every ref, and `useMcpActivityFeed.ts` keeps them all.
+
+An RW write tells open views to reload through `view_notify.rs`. A tool that touches no page (a top-level tag) emits no `blocks:changed`: the frontend reads an empty page set as "reload every mounted page".
 
 ## JSON-RPC error codes
 
@@ -76,11 +78,15 @@ Separate sockets let an agent connect to RO only and let the user disable RW ind
 
 Every tool requires `space_id` except `list_spaces` and `list_property_defs` (property definitions are vault-wide), and confines the call to that space: listings return its rows, and a tool that addresses a block or page by id rejects a target in another space (`validate_block_in_space`, or `get_page_inner` for `get_page`). It is not isolation: `list_spaces` returns every space and any tool accepts any of them.
 
+An RW tool checks inside its own write transaction through `with_space_guard` (`handler_utils.rs`), never a separate transaction before it. The guard fails open unless the write opens a `CommandTx` in the same task, so a new guarded tool joins `each_write_tool_opens_one_command_transaction_5402`.
+
+A change to what a tool requires or returns updates, in the same PR, its `list_tools` description, the surface's `instructions()` primer (`mod.rs`), `docs/features/agent-access.md`, `docs/architecture/integrations.md` and `docs/architecture/threat-model.md`. Grep them for the old wording.
+
 ## Testing
 
 No single test drives the full production stack:
 
-- `tools_ro/tests.rs`, `tools_rw/tests.rs` — validation, happy path, and one error path per tool via `registry.call_tool()` against a real DB. **Every new tool needs a test here.**
+- `tools_ro/tests.rs`, `tools_rw/tests.rs` — validation, happy path, and one error path per tool via `registry.call_tool()` against a real DB. **Every new tool needs a test here.** Summariser tests use ids that differ within their first eight characters, or a swapped id prints the same prefix.
 - `rmcp_adapter::tests` — wire framing over `tokio::io::duplex`, mostly against `MockRoRegistry`.
 - `server/tests.rs`, `server/tests_rmcp.rs` — `run_connection`, shutdown gate, grace period against a real `UnixListener` with stub registries. **Every new protocol-error path needs a test in `server/tests_rmcp.rs`.**
 - `stub_binary_roundtrips_initialize_over_uds` (`mod.rs`, `ci-smoke` feature) spawns the real `agaric-mcp` binary but only round-trips `initialize`.

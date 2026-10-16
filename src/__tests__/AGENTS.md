@@ -19,6 +19,14 @@
 
 **A zero-call assertion needs a positive control.** `not.toHaveBeenCalled()` passes just as well behind a dead spy or before a debounce fires, and a throwing `mockImplementation` that never reaches the code under test leaves the swallow-and-warn path unexercised. Assert `toHaveBeenCalled()` in a sibling case, or temporarily invert to `toHaveBeenCalledTimes(99)` and read the observed count (before `mockRestore()`, which clears it). **Run the whole file, never `-t` filtered**: a filtered run skips the earlier test whose write froze the binding, so the spy is live under the filter and dead in CI.
 
+**Test shapes that stay green with the fix reverted** (the Rust list is in [`src-tauri/tests/AGENTS.md`](../../src-tauri/tests/AGENTS.md)):
+
+- A regex over source or CSS. happy-dom evaluates neither media queries nor `var()`; measure the rendered result in Playwright.
+- A test that fakes the platform API behind which a native-only fix lives (`visualViewport` for a Kotlin fix).
+- One gesture that fires two triggers, so deleting either handler stays green: one case per trigger.
+- A "does not X twice" test whose stub throws before the count it asserts.
+- A test shape justified by a comment about the mock ("the mock ignores X"): read the handler, the comment may be stale.
+
 No vitest globals — import explicitly (`import { describe, expect, it, vi } from 'vitest'`).
 
 ## Running tests
@@ -74,7 +82,8 @@ Changing `src/lib/tauri-mock/`: [`e2e/AGENTS.md` § The mock is a contract](../.
 ## Mutation triage
 
 - Start from `reports/mutation/<module>/mutation.json` (exact line, column, mutator, replacement), not the HTML summary.
-- A new test file kills nothing until it is listed in the module's `tests` in [`stryker.modules.mjs`](../../stryker.modules.mjs).
+- A new test file kills nothing until it is listed in the module's `tests` in [`stryker.modules.mjs`](../../stryker.modules.mjs). Before writing a test for a survivor, check whether an existing one already pins it and is only missing from that list.
+- Locate a survivor by mutator and source text, not the issue's line number, which is from the run's commit. A mutation issue stays open until the next weekly run finds nothing, so `git log origin/main --grep '#N'` before starting.
 - A survivor in an unobservable guard: delete the guard, do not write equivalence prose. An "unreachable" claim must match a `NoCoverage` status in that JSON.
 
 ## Quality standards
@@ -84,6 +93,6 @@ Changing `src/lib/tauri-mock/`: [`e2e/AGENTS.md` § The mock is a contract](../.
 3. **Debounces** use `vi.useFakeTimers()` + `vi.advanceTimersByTime()`, never a real wait.
 4. **Call assertions are exact.** Where a test asserts an `invoke`, pin the exact args, `null` vs `undefined` included.
 5. **i18n.** Assert on `t('key')`, not English strings.
-6. **Flaky tests are bugs.** Causes seen: debounce races, store or module-state leaks, `vi.doMock` / `resetModules` with a `Promise.all` of imports (use one hoisted `vi.mock`), a DOM node held across an `await`, today's date, weekday or locale, and machine load. Reproduce the cause and A/B it; a raised timeout or a green rerun is not a fix. This holds for Playwright too.
+6. **Flaky tests are bugs.** Causes seen: debounce races, store or module-state leaks, `vi.doMock` / `resetModules` with a `Promise.all` of imports (use one hoisted `vi.mock`), a DOM node held across an `await`, today's date, weekday or locale, and machine load. Reproduce the cause and A/B it; a raised timeout or a green rerun is not a fix. This holds for Playwright too. A failure you call a known flake names its open issue; if none exists, reproduce it and fix or file it.
 7. **vitest does not typecheck.** After a rename or signature change run `npm run typecheck`, then grep tests for the old symbol and old `vi.mock` paths, which `tsc` cannot see and which silently stop intercepting.
 8. **Full suite before the first push of a UI change** (`npx vitest run --shard=1/4` … `4/4`). Targeted runs miss tests that pin a class, a label, or a mock name.
