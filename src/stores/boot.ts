@@ -37,6 +37,7 @@ import { formatDate, getCalendarMonthRange } from '@/lib/date-utils'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { getLogBackendSink } from '@/lib/logger-transport'
 import { prefetchPageSubtree } from '@/lib/prefetch-page-subtree'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
@@ -74,6 +75,21 @@ function prefetchBootJournal(): void {
     })
 }
 
+/**
+ * #5419 — the boot-timing milestone `scripts/measure-boot.mjs` reads from the
+ * Rust log. Production drops `logger.info`, so this goes straight to the
+ * backend sink, which `main.tsx` sets to `logFrontend`.
+ */
+function logBootResolved(outcome: 'ready' | 'error'): void {
+  const sink = getLogBackendSink()
+  if (!sink) return
+  sink('info', 'stores/boot', 'boot resolved', null, null, JSON.stringify({ outcome })).catch(
+    (err: unknown) => {
+      logger.warn('stores/boot', 'boot resolved milestone did not reach the log', undefined, err)
+    },
+  )
+}
+
 interface BootStore {
   state: BootState
   error: string | null
@@ -105,8 +121,10 @@ export const useBootStore = create<BootStore>((set) => ({
         state: 'error',
         error: formatErrorForDisplay(outcome.error, { fallback: i18n.t('boot.spacesLoadFailed') }),
       })
+      logBootResolved('error')
       return
     }
     set({ state: 'ready', error: null })
+    logBootResolved('ready')
   },
 }))

@@ -25,15 +25,20 @@
  *    a hard failure can recover to `'ready'` on a subsequent success.
  *  - a non-Error hard-error value falls back to the generic
  *    `boot.spacesLoadFailed` copy instead of a useless `String(err)`.
+ *  - #5419: every `boot()` writes one `boot resolved` line with its outcome
+ *    to the backend log, the milestone `scripts/measure-boot.mjs` times.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { logger } from '@/lib/logger'
+import { setLogBackendSink } from '@/lib/logger-transport'
 import { useBootStore } from '@/stores/boot'
 import type { SpaceRefreshOutcome } from '@/stores/space'
 
 let mockOutcome: SpaceRefreshOutcome = { kind: 'ok' }
 const mockRefreshAvailableSpaces = vi.fn(async () => {})
+const mockLogSink = vi.fn(async () => {})
 
 vi.mock('@/stores/space', () => ({
   useSpaceStore: {
@@ -51,6 +56,9 @@ beforeEach(() => {
   useBootStore.setState({ state: 'booting', error: null })
   mockRefreshAvailableSpaces.mockClear()
   mockOutcome = { kind: 'ok' }
+  mockLogSink.mockReset()
+  mockLogSink.mockResolvedValue(undefined)
+  setLogBackendSink(mockLogSink)
 })
 
 describe('useBootStore', () => {
@@ -101,5 +109,39 @@ describe('useBootStore', () => {
     expect(mockRefreshAvailableSpaces).toHaveBeenCalledTimes(2)
     expect(useBootStore.getState().state).toBe('ready')
     expect(useBootStore.getState().error).toBeNull()
+  })
+
+  describe('boot resolved milestone (#5419)', () => {
+    const resolvedLine = (outcome: string) =>
+      ['info', 'stores/boot', 'boot resolved', null, null, JSON.stringify({ outcome })] as const
+
+    it('writes one line per boot, carrying the outcome, across a failed boot and its retry', async () => {
+      mockOutcome = { kind: 'hard-error', error: new Error('backend unreachable') }
+      await useBootStore.getState().boot()
+      expect(mockLogSink.mock.calls).toEqual([resolvedLine('error')])
+
+      mockOutcome = { kind: 'ok' }
+      await useBootStore.getState().boot()
+      expect(mockLogSink.mock.calls).toEqual([resolvedLine('error'), resolvedLine('ready')])
+    })
+
+    it('a rejected log write is warned about and leaves boot ready', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      const failure = new Error('ipc down')
+      mockLogSink.mockRejectedValue(failure)
+
+      await useBootStore.getState().boot()
+
+      expect(useBootStore.getState().state).toBe('ready')
+      await vi.waitFor(() =>
+        expect(warn).toHaveBeenCalledWith(
+          'stores/boot',
+          'boot resolved milestone did not reach the log',
+          undefined,
+          failure,
+        ),
+      )
+      warn.mockRestore()
+    })
   })
 })
