@@ -2,11 +2,11 @@
 // ─────────────────────────────────────────────────────────────────────
 // `android_re` liveness guard (#3847 follow-up).
 //
-// `_validate.yml`'s `android_re` decides whether `ci.yml`'s `android-build`
-// runs (it rides out as a `workflow_call` output). It is a
-// list of literal paths, and a literal path that no longer exists does not
-// fail — it silently matches nothing, so the job it guards stops running
-// and CI stays green. That is how the #2621 crate split disabled the
+// `scripts/classify-changes.sh`'s `android_re` decides whether `ci.yml`'s
+// `android-build` runs (it rides out as a `_validate.yml` `workflow_call`
+// output). It is a list of literal paths, and a literal path that no
+// longer exists does not fail — it silently matches nothing, so the job it
+// guards stops running and CI stays green. That is how the #2621 crate split disabled the
 // Android build for `agaric-sync` without anyone noticing.
 //
 // The first attempt to repair that regex made the SAME mistake one level
@@ -30,14 +30,14 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..')
-const VALIDATE_YML = join(REPO_ROOT, '.github/workflows/_validate.yml')
+const CLASSIFIER = join(REPO_ROOT, 'scripts/classify-changes.sh')
 
-/** Extract the `android_re='…'` value from _validate.yml. */
+/** Extract the `android_re='…'` value from the classifier. */
 function readAndroidRe(src) {
   const m = src.match(/android_re='(?<re>[^']+)'/)
   if (!m?.groups?.re) {
     throw new Error(
-      "could not find `android_re='…'` in _validate.yml — did the variable get renamed?",
+      "could not find `android_re='…'` in scripts/classify-changes.sh — did the variable get renamed?",
     )
   }
   return m.groups.re
@@ -69,7 +69,7 @@ function expand(alt) {
 }
 
 function main() {
-  const re = readAndroidRe(readFileSync(VALIDATE_YML, 'utf8'))
+  const re = readAndroidRe(readFileSync(CLASSIFIER, 'utf8'))
   // Strip the outer `^( … )` wrapper, then split on top-level `|`.
   const body = re.replace(/^\^\(/, '').replace(/\)$/, '')
   const alternatives = []
@@ -101,7 +101,7 @@ function main() {
 
   if (missing.length > 0) {
     console.error(
-      `ERROR: _validate.yml's \`android_re\` names ${missing.length} path(s) that do not exist:`,
+      `ERROR: scripts/classify-changes.sh's \`android_re\` names ${missing.length} path(s) that do not exist:`,
     )
     for (const p of missing) console.error(`  - ${p}`)
     console.error(
@@ -112,7 +112,9 @@ function main() {
     process.exit(1)
   }
 
-  console.log(`OK: all ${checked} literal path(s) in _validate.yml's \`android_re\` exist`)
+  console.log(
+    `OK: all ${checked} literal path(s) in scripts/classify-changes.sh's \`android_re\` exist`,
+  )
 }
 
 main()

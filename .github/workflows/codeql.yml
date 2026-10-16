@@ -17,15 +17,14 @@ name: CodeQL
 #     code is idle. Tuesday 06:00 UTC — staggered from scorecard.yml's Monday.
 #   * workflow_dispatch: manual re-run for debugging.
 #
-# Why ALL THREE languages every run (no PR-side "changed-language" gating):
-#   code scanning diffs a PR's results against the base branch PER CONFIGURATION
-#   (`/language:<lang>`). If a PR skips a language that `main` analyzes, the PR
-#   check reports "N configurations present on main were not found" — a neutral
-#   but noisy warning on every PR that doesn't touch that language. Skipping a
-#   language on PRs also under-scans a security tool, which this workflow's own
-#   fail-closed stance ("doubt always runs everything") rejects. build-mode:none
-#   makes each analysis cheap enough (5–10 min, no Tauri system deps) that
-#   always running all three is the right trade.
+# Which languages: a PR analyzes only the languages its diff touches
+#   (`scripts/classify-changes.sh`'s `codeql_languages`; an unrecognized path
+#   selects all three); push to main, schedule and dispatch analyze all three.
+#   The reason is PR runner time (`Analyze rust` is the longest job a docs or
+#   frontend PR would otherwise pay for), and push to main still analyzes
+#   every language after the merge. A PR that skips a
+#   language shows a neutral "configurations present on main were not found"
+#   note on its code-scanning check, which is not a required context.
 on:
   push:
     branches: [main]
@@ -49,13 +48,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      languages: ${{ steps.classify.outputs.codeql_languages }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history so the three-dot diff can resolve the merge-base.
+          fetch-depth: 0
+          persist-credentials: false
+      - id: classify
+        shell: bash
+        # No PUSH_BEFORE: every non-PR event classifies as the full set.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/classify-changes.sh >> "$GITHUB_OUTPUT"
+
   analyze:
     name: Analyze ${{ matrix.language }}
+    needs: detect
+    # Skipped only on a diff that touches no language (docs). A failed
+    # `detect` leaves `languages` empty, which runs all three.
+    if: ${{ !cancelled() && needs.detect.outputs.languages != '[]' }}
     runs-on: ubuntu-24.04
-    # Per language, from the matrix: JS/TS and Actions run in 1–4 min; Rust
-    # (build-mode: none) measured 19.7 min on 2026-09-02 (run 33637027967),
-    # so its cap is 45 (+50% headroom, rounded up) and the others keep 15.
-    timeout-minutes: ${{ matrix.timeout }}
+    # JS/TS and Actions run in 1–4 min; Rust (build-mode: none) measured
+    # 19.7 min on 2026-09-02 (run 33637027967), so its cap is 45 (+50%
+    # headroom, rounded up) and the others keep 15.
+    timeout-minutes: ${{ matrix.language == 'rust' && 45 || 15 }}
     permissions:
       # Required: upload SARIF results to GitHub Code Scanning (Security tab).
       security-events: write
@@ -68,21 +91,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # All three languages, every run — see the header comment for why PRs
-        # do not gate on which files changed. build-mode: none lets CodeQL
-        # analyze without invoking a build — avoids pulling Tauri's system deps
-        # (libwebkit2gtk-4.1-dev, etc.) just to satisfy the extractor. Rust
-        # GA'd build-mode:none in 2025.
-        include:
-          - language: actions
-            build-mode: none
-            timeout: 15
-          - language: javascript-typescript
-            build-mode: none
-            timeout: 15
-          - language: rust
-            build-mode: none
-            timeout: 45
+        # The languages `detect` picked; see the header comment.
+        language: ${{ fromJSON(needs.detect.outputs.languages || '["actions","javascript-typescript","rust"]') }}
 
     steps:
       - name: Checkout
@@ -94,7 +104,10 @@ jobs:
         uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
+          # Analyze without invoking a build, so no Tauri system deps
+          # (libwebkit2gtk-4.1-dev, etc.) just to satisfy the extractor. Rust
+          # GA'd build-mode:none in 2025.
+          build-mode: none
           # Query suite AND per-query filters live in the config file. Do not
           # re-add a `queries:` input here: a bare value REPLACES the config
           # file's selection (only a `+` prefix merges), which would silently

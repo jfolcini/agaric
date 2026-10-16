@@ -117,10 +117,10 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 # Workflows, the lint-tool configs the CI `lint` job keys on, and the
 # repo's own tooling under `scripts/` and `.claude/`.
 #
-# `^scripts/` and `^\.claude/` are deliberate, and mirror `_validate.yml`'s
+# `^scripts/` and `^\.claude/` are deliberate, and mirror `classify-changes.sh`'s
 # `ci_re`; the rationale (tooling is attributable: its guards run in Phase
 # A and CI's `lint` job; the scripts a suite consumes are routed to that
-# suite) lives once, in the comment above `ci_re` in `_validate.yml`. The
+# suite) lives once, in the comment above `ci_re` in `classify-changes.sh`. The
 # scripts a local phase depends on are routed by `RS_SCRIPT_RE` /
 # `HOOK_OWNER_*_RE` below. The one routing the two sides do not share: the
 # coverage and bundle-budget scripts and their JSON baselines are `ci`
@@ -169,15 +169,16 @@ RS_SCRIPT_RE='^scripts/(setup-dev-db|check-sqlx-cache-drift|test-related-rust)\.
 #
 # The TS list also carries every script a `src/**/*.test.ts` imports or
 # spawns (the seven `check-*.mjs` guards with unit tests in `src/__tests__/`,
-# and `scripts/lib/js-scanner.mjs`): their tests run only in Phase C, so a
-# guard-only edit must flip HAS_TS or its own tests never execute. Mirrors
-# `_validate.yml`'s `frontend_re`; add to both when a script gains a test.
+# `scripts/lib/js-scanner.mjs`, and `scripts/classify-changes.sh`): their
+# tests run only in Phase C, so a guard-only edit must flip HAS_TS or its own
+# tests never execute. Mirrors
+# `classify-changes.sh`'s `frontend_re`; add to both when a script gains a test.
 #
 # check-migrations-immutable.sh, check-session-log-numbering.sh and
 # cargo-audit-guard.sh used to be covered by self-test hooks outside every
 # skip list; #4556 Phase 2 deleted those, so they get shellcheck alone here.
 HOOK_OWNER_RS_RE='^scripts/check-unsafe-allowlist\.sh$'
-HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|mutation-reports|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$'
+HOOK_OWNER_TS_RE='^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|mutation-reports|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$|^scripts/classify-changes\.sh$'
 
 # ── Node dependency preflight (#3656) ──────────────────────────────
 # A `git worktree add` checkout has no `node_modules` — it is not a
@@ -512,7 +513,7 @@ fi
 # `verify-ci-equivalent-selftest` prek hook — `manual` stage, so in CI on
 # every PR rather than at commit time (#4556 Phase 2). It also carries the
 # #4424 divergence ratchet, which compares this file's `CI_PATH_RE` against
-# `_validate.yml`'s `ci_re` (and the `_tracked` exclusion that derives from
+# `classify-changes.sh`'s `ci_re` (and the `_tracked` exclusion that derives from
 # it). It does not cover the skip list: there is only one now, and CI reads it
 # through `--print-skip` above. Runs BEFORE the bypass guard and the
 # multi-minute verifier body, so it is fast and side-effect free.
@@ -641,11 +642,11 @@ if [ "${1:-}" = "--self-test" ]; then
     st_hook 'scripts/push.sh'                    "$HOOK_OWNER_RS_RE" no  'push.sh is not a hook owner'
     st_hook 'scripts/check-migrations-immutable.sh' "$HOOK_OWNER_RS_RE" no 'nor is check-migrations-immutable.sh'
 
-    # RATCHET the documented divergence from `_validate.yml`'s `ci_re`. The
+    # RATCHET the documented divergence from `classify-changes.sh`'s `ci_re`. The
     # comment this replaces ("mirrors _validate.yml's classifier") went stale
     # precisely because nothing checked it. Assert the difference is EXACTLY
     # the four toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`,
-    # `.gitleaks.toml`): anchored to the repo root in `_validate.yml`
+    # `.gitleaks.toml`): anchored to the repo root in `classify-changes.sh`
     # (`^prek\.toml$`, …) but UNANCHORED here (`prek\.toml$`, …), so ANY path
     # merely ENDING in one of those filenames — a nested copy
     # (`docs/prek.toml`) or a differently prefixed file at the repo root
@@ -654,14 +655,14 @@ if [ "${1:-}" = "--self-test" ]; then
     # to CI now, and the tooling-path checks above assert that.)
     # Every other CI path — including these same filenames at the repo TOP
     # LEVEL, where anchored and unanchored agree — must still agree with
-    # _validate.yml, or the divergence is wider than documented.
+    # classify-changes.sh, or the divergence is wider than documented.
     #
     # Hence the `.+` on each toml alternative in the exclusion below. An
     # UNANCHORED `prek\.toml$` also strips the root copies, so all four of
     # prek.toml / .taplo.toml / lychee.toml / .gitleaks.toml — every one of
     # them tracked and at the root — would leave `_tracked` entirely and
     # never be compared, while this comment claimed they were. Deleting
-    # `^prek\.toml$` from `_validate.yml`'s `ci_re` (a NARROWING edit, the
+    # `^prek\.toml$` from `classify-changes.sh`'s `ci_re` (a NARROWING edit, the
     # unsafe direction) then still reported green. `.+` excludes only the
     # nested and prefixed copies that are the actual documented divergence.
     #
@@ -669,9 +670,9 @@ if [ "${1:-}" = "--self-test" ]; then
     # this self-test runs BEFORE the `cd "$REPO_ROOT"` further down, so a
     # relative path would silently vanish (and this whole ratchet with it)
     # when invoked from any directory other than the repo root.
-    _vy="$(dirname "${BASH_SOURCE[0]}")/../.github/workflows/_validate.yml"
+    _vy="$(dirname "${BASH_SOURCE[0]}")/classify-changes.sh"
     if [ ! -f "$_vy" ]; then
-        st_bad "divergence ratchet: found _validate.yml" "no such file: $_vy"
+        st_bad "divergence ratchet: found classify-changes.sh" "no such file: $_vy"
     else
         _vci_matches=$(sed -n "s/^[[:space:]]*ci_re='\(.*\)'[[:space:]]*$/\1/p" "$_vy")
         _vci_count=$(printf '%s\n' "$_vci_matches" | sed '/^$/d' | wc -l)
@@ -679,9 +680,9 @@ if [ "${1:-}" = "--self-test" ]; then
             # Fail closed the same way the sibling guards in this block do
             # (`[ ! -f "$_vy" ]`, `[ -z "$_tracked" ]`): a `head -1` here
             # would silently compare against only the FIRST `ci_re=` line
-            # if `_validate.yml` ever grows a second one in another job,
+            # if `classify-changes.sh` ever grows a second one,
             # leaving the second diverge unwatched instead of caught.
-            st_bad "divergence ratchet: found exactly one _validate.yml ci_re= line" \
+            st_bad "divergence ratchet: found exactly one classify-changes.sh ci_re= line" \
                 "found $_vci_count (expected 1)"
         else
             _vci="$_vci_matches"
@@ -692,10 +693,10 @@ if [ "${1:-}" = "--self-test" ]; then
                 printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _ours=yes
                 printf '%s\n' "$_p" | grep -qE "$_vci" && _theirs=yes
                 if [ "$_ours" = yes ] && [ "$_theirs" = yes ]; then
-                    st_ok "divergence ratchet: $_p is CI here AND in _validate.yml (tooling is attributable)"
+                    st_ok "divergence ratchet: $_p is CI here AND in classify-changes.sh (tooling is attributable)"
                 else
-                    st_bad "divergence ratchet: $_p is CI here AND in _validate.yml" \
-                        "ours=$_ours theirs=$_theirs — keep CI_PATH_RE and _validate.yml's ci_re in step"
+                    st_bad "divergence ratchet: $_p is CI here AND in classify-changes.sh" \
+                        "ours=$_ours theirs=$_theirs — keep CI_PATH_RE and classify-changes.sh's ci_re in step"
                 fi
             done
             # The four toml arms are unanchored here but anchored there, so
@@ -710,13 +711,13 @@ if [ "${1:-}" = "--self-test" ]; then
                 printf '%s\n' "$_p" | grep -qE "$CI_PATH_RE" && _a=yes
                 printf '%s\n' "$_p" | grep -qE "$_vci" && _b=yes
                 if [ "$_a" = yes ] && [ "$_b" = no ]; then
-                    st_ok "divergence ratchet: unanchored $_p is CI here and NOT in _validate.yml (documented, unanchored-toml divergence)"
+                    st_ok "divergence ratchet: unanchored $_p is CI here and NOT in classify-changes.sh (documented, unanchored-toml divergence)"
                 else
-                    st_bad "divergence ratchet: unanchored $_p is CI here and NOT in _validate.yml" \
+                    st_bad "divergence ratchet: unanchored $_p is CI here and NOT in classify-changes.sh" \
                         "ours=$_a theirs=$_b — if the toml arms got (un)anchored to match, update the divergence note"
                 fi
             done
-            # ...and every OTHER CI path must still agree with _validate.yml,
+            # ...and every OTHER CI path must still agree with classify-changes.sh,
             # or the divergence is wider than documented. "Every other" used
             # to mean a hardcoded five-path list — .github/workflows/ci.yml,
             # prek.toml, .taplo.toml, lychee.toml, .gitleaks.toml — which
@@ -751,13 +752,13 @@ if [ "${1:-}" = "--self-test" ]; then
             # `CI_PATH_RE`) — so ANY tracked path merely ending in one of
             # those four filenames (a nested `docs/prek.toml`, a
             # differently-prefixed `myprek.toml`) is CI here and not in
-            # `_validate.yml`'s anchored `ci_re`, same as (a). Omitting (b)
+            # `classify-changes.sh`'s anchored `ci_re`, same as (a). Omitting (b)
             # here would make this loop flag that exact documented case as
             # "wider than documented" and tell you to update a note that
             # already says it — the failure this fix (#4424) closes.
             _tracked=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." ls-files | grep -vE '.+prek\.toml$|.+\.taplo\.toml$|.+lychee\.toml$|.+\.gitleaks\.toml$')
             if [ -z "$_tracked" ]; then
-                st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with _validate.yml" \
+                st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with classify-changes.sh" \
                     "git ls-files returned no tracked paths — the comparison would silently pass having checked zero"
             else
                 _ours_list=$(printf '%s\n' "$_tracked" | grep -E "$CI_PATH_RE" | sort -u)
@@ -768,9 +769,9 @@ if [ "${1:-}" = "--self-test" ]; then
                 )
                 _count=$(printf '%s\n' "$_tracked" | wc -l)
                 if [ -z "$_mismatch" ]; then
-                    st_ok "divergence ratchet: every tracked path outside the documented divergence agrees with _validate.yml ($_count paths compared)"
+                    st_ok "divergence ratchet: every tracked path outside the documented divergence agrees with classify-changes.sh ($_count paths compared)"
                 else
-                    st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with _validate.yml" \
+                    st_bad "divergence ratchet: every tracked path outside the documented divergence agrees with classify-changes.sh" \
                         "$(printf '%s' "$_mismatch" | tr '\n' ' ')"
                 fi
             fi
@@ -2174,11 +2175,11 @@ else
 
     # Fail-closed for UNRECOGNIZED non-docs paths.
     #
-    # DIVERGENCE FROM `_validate.yml` (#4419, 2026-08-26; ratcheted by the
+    # DIVERGENCE FROM `classify-changes.sh` (#4419, 2026-08-26; ratcheted by the
     # "divergence ratchet" --self-test checks below, #4424): this classifier
-    # differs from `_validate.yml`'s `ci_re` in one documented way: the four
+    # differs from `classify-changes.sh`'s `ci_re` in one documented way: the four
     # toml arms (`prek.toml`, `.taplo.toml`, `lychee.toml`, `.gitleaks.toml`)
-    # are anchored to the repo root in `_validate.yml` (`^prek\.toml$`, …)
+    # are anchored to the repo root in `classify-changes.sh` (`^prek\.toml$`, …)
     # but UNANCHORED here (`prek\.toml$`, …), so ANY path merely ENDING in
     # one of those filenames — a nested copy (`docs/prek.toml`) or a
     # differently prefixed file at the repo root (`myprek.toml`) alike — is
@@ -2193,10 +2194,10 @@ else
     # path that is not yet tracked (a future `^Justfile$`, say, before any
     # Justfile is committed) still passes silently — so this note itself is
     # what they mean by "update the divergence note" on failure. Widening
-    # `_validate.yml` to match is a separate change with its own blast
+    # `classify-changes.sh` to match is a separate change with its own blast
     # radius.
     #
-    # Otherwise mirrors `_validate.yml`'s classifier: a changed file matching neither docs nor any known category
+    # Otherwise mirrors `classify-changes.sh`: a changed file matching neither docs nor any known category
     # (frontend/backend/ci) — e.g. rust-toolchain.toml, .cargo/config.toml, a
     # root *.sh — is a build/toolchain change we cannot attribute to a suite.
     # Without this the per-category SKIP below would drop nearly every hook for
