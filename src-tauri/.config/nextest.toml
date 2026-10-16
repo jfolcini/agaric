@@ -83,7 +83,7 @@ setup = "iroh-no-proxy-windows"
 #
 #   * apply_reproject_proptest::{b2,b3,b4} (#1683) — drive dozens of generated
 #     op-chains through the full engine→SQL reprojection pipeline (a Loro engine +
-#     DB pools per case); B4 runs ~30s even alone.
+#     DB pools per case).
 #   (#3612 dropped perf26_draft_recovery_at_10k_ops from this list. Its ~50s was
 #   never its own subject: the fixture seeded 10K ops via `append_local_op_in_tx`,
 #   which does not materialize them, so `recover_at_boot`'s Step 1.5 boot replay

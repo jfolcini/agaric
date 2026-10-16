@@ -62,7 +62,7 @@
 //!   dispatcher (`apply_op_tx`) yields byte-identical `blocks` /
 //!   `block_properties` / `block_links` SQL state.
 
-use crate::db::init_pool;
+use crate::commands::tests::common::init_pool_from_template;
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_engine::loro::projection::reproject_dense_positions;
@@ -131,9 +131,7 @@ const TAG_ID: &str = "01HZ0000000000000000TAGTAG";
 
 async fn fresh_pool(name: &str) -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
-    let pool = init_pool(&dir.path().join(format!("{name}.db")))
-        .await
-        .unwrap();
+    let pool = init_pool_from_template(&dir.path().join(format!("{name}.db"))).await;
     (pool, dir)
 }
 

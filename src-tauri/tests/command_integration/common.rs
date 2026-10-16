@@ -2,7 +2,6 @@
 
 pub use agaric_lib::commands::*;
 pub use agaric_lib::db::ReadPool;
-pub use agaric_lib::db::init_pool;
 // kept (#2897): test-prelude re-exports consumed by sibling integration-test
 // modules via `use super::common::*` (siblings see only pub items).
 pub use agaric_core::error::AppError;
@@ -23,7 +22,7 @@ pub const DEV: &str = "cmd-test-device-001";
 pub async fn test_pool() -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
     let db_path: PathBuf = dir.path().join("test.db");
-    let pool = init_pool(&db_path).await.unwrap();
+    let pool = agaric_lib::commands::tests::common::init_pool_from_template(&db_path).await;
     (pool, dir)
 }
 
