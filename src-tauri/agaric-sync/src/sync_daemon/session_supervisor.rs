@@ -3524,7 +3524,12 @@ mod tests {
         );
     }
 
-    /// The freshness window is two resync intervals, inclusive at the boundary.
+    /// The freshness window is two resync intervals.
+    ///
+    /// The edge is pinned a second either side of it, not at it: the fixture
+    /// ages its stamp from the wall clock and the predicate reads the clock
+    /// again, so an arm at exactly two intervals turns dark on a millisecond
+    /// tick between the two reads.
     ///
     /// Both edges are pinned because both are wrong in a way the other would
     /// not catch: one interval would go false on a healthy pair (a peer becomes
@@ -3544,7 +3549,7 @@ mod tests {
         let interval = std::time::Duration::from_secs(60);
         for (label, age_ms, inside_window) in [
             ("one interval — well inside the window", 60_000, true),
-            ("exactly two intervals — the inclusive edge", 120_000, true),
+            ("a second inside two intervals", 119_000, true),
             ("a second past two intervals — outside", 121_000, false),
         ] {
             let typed = Arc::new(RecordingEventSink::new());
