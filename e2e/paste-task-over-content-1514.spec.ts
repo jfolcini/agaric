@@ -1,4 +1,4 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, selectEditorRange, test, waitForBoot } from './helpers'
 
 /**
  * E2E for #1514: pasting a single GFM task line over a NON-EMPTY block must NOT
@@ -73,10 +73,12 @@ test.describe('Paste GFM task line over non-empty block (#1514)', () => {
     const editor = await freshBlock(page)
 
     await editor.type('hello world')
-    await expect(editor).toContainText('hello world')
+    await expect(editor).toHaveText('hello world')
 
-    // Place the caret mid-text (after "hello"): five Left presses from the end.
-    for (let i = 0; i < 6; i++) await editor.press('ArrowLeft')
+    // Caret after "hello", not by arrow keys: the editor reads a key-moved caret
+    // on the next `selectionchange`, which the browser fires a moment later, so
+    // a paste dispatched straight after the last press lands where it was before.
+    await selectEditorRange(page, 'hello'.length, 'hello'.length)
 
     await pasteText(editor, '- [x] done')
 
