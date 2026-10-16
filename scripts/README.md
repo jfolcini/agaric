@@ -6,6 +6,7 @@ indexed in `prek.toml`. Most are invoked indirectly (pre-commit hooks,
 
 | Script | What it does | Invoked by |
 | --- | --- | --- |
+| `classify-changes.sh` | Classify a diff into the CI lanes it must run (fail-closed: anything it cannot classify runs everything). | `_validate.yml` `detect-changes`, `codeql.yml`, `e2e-tauri-weekly.yml`. |
 | `fix-appimage-icons.sh` | Backfill AppImage icon paths in the bundled Linux artifact. | Release tooling (manual). |
 | `patch-android-build.sh` | Tauri Android build post-processing (aarch64 + x86_64 only, 64-bit Rust targets — see AGENTS.md §Android). | Tauri CLI via `tauri.conf.json`. |
 | `prepare-external-bins.mjs` | Stage the `agaric-mcp` stub (and any future external sidecars) next to the app bundle under the per-platform suffix `tauri-cli` expects. | Tauri build hook. |

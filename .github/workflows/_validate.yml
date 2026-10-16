@@ -11,7 +11,7 @@ name: Validate (prek-equivalent)
 # enumerated below,
 # fanned out from a `detect-changes` per-category classifier that is
 # fail-closed (an unrecognized or undiffable path runs everything):
-#   - detect-changes — classifies the diff into docs_only/frontend/backend/ci.
+#   - detect-changes — classifies the diff (`scripts/classify-changes.sh`).
 #   - verify-version-agreement — always-on mutual-agreement check across
 #                        every file scripts/bump-version.sh bumps, the fuzz
 #                        crate's own lock included (#2975); no path gating,
@@ -28,13 +28,13 @@ name: Validate (prek-equivalent)
 #                        ONLY on a docs-only diff (exactly one of
 #                        lint/docs-lint runs per push/PR).
 #   - vitest          — the frontend suite, sharded 3 ways; each shard emits a
-#                        blob report. Gated on frontend changes. Node 24
-#                        (primary).
+#                        blob report. Gated on frontend changes, minus a diff
+#                        of real-backend specs alone. Node 24 (primary).
 #   - vitest-coverage — replays all shard blobs into one report, gates the #749
 #                        coverage thresholds on it, and runs the production
 #                        build + bundle-size gate. Paired with vitest.
 #   - playwright      — the e2e suite, sharded 3 ways; gated on frontend
-#                        changes.
+#                        changes, minus a diff confined to `e2e-tauri/`.
 #   - cargo-tests     — backend `cargo nextest` + llvm-cov instrumentation,
 #                        sharded 2 ways; gated on backend changes.
 #   - cargo-coverage  — merges the cargo-tests shard coverage into one
@@ -106,23 +106,15 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # detect-changes (#833, extended) — per-category change classifier.
-  # Emits four OR-semantics booleans from a fail-closed three-dot diff:
-  #   docs_only : every path matches the docs allowlist (drives lint/docs-lint).
-  #   frontend  : any src/, e2e/, *.ts/tsx/js/jsx/css, package*.json, vite/
-  #               vitest/tailwind/postcss/tsconfig config, index.html.
-  #   backend   : any src-tauri/, *.rs, Cargo.*, migrations, .sqlx/.
-  #   ci        : any .github/, prek.toml, .taplo.toml, lychee.toml, .gitleaks.toml.
-  #   desktop   : a Linux-bundle-relevant path — `ci.yml`'s `build` gates on it.
-  #   android   : an Android-package-relevant path — `ci.yml`'s `android-build`
-  #               gates on it. Both ride out as `workflow_call` outputs.
-  # A path may match several; a backend change that regenerates src/lib/bindings.ts
-  # also flips frontend (bindings-drift / mock-parity tests run) — keep that.
+  # detect-changes (#833, extended) — per-category change classifier. The
+  # classification lives in `scripts/classify-changes.sh` (its header lists
+  # every output), shared with `codeql.yml` and `e2e-tauri-weekly.yml` and
+  # unit-tested in `src/__tests__/classify-changes.test.ts`.
   # SECURITY (read with validate-all): this classifier is the ONLY thing that lets
   # a skipped sibling pass the gate, so it is allowlist-based and FAIL-CLOSED — any
-  # diff-compute error makes full_suite emit docs_only=false + frontend/backend/
-  # ci=true (run everything), and validate-all also fails closed if this job is not
-  # success. A classifier error only ever costs CI minutes, never weakens the gate.
+  # diff-compute error emits the full set (run everything), and validate-all also
+  # fails closed if this job is not success. A classifier error only ever costs
+  # CI minutes, never weakens the gate.
   # ---------------------------------------------------------------------------
   detect-changes:
     runs-on: ubuntu-24.04
@@ -135,12 +127,13 @@ jobs:
       ci: ${{ steps.classify.outputs.ci }}
       desktop: ${{ steps.classify.outputs.desktop }}
       android: ${{ steps.classify.outputs.android }}
+      vitest: ${{ steps.classify.outputs.vitest }}
+      playwright: ${{ steps.classify.outputs.playwright }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history so the three-dot `base...head` diff can resolve the
-          # merge-base for PRs whose head sits behind `main` (same rationale
-          # as ci.yml's detect-changes).
+          # merge-base for PRs whose head sits behind `main`.
           fetch-depth: 0
           persist-credentials: false
       - id: classify
@@ -151,203 +144,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
           PUSH_AFTER: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-
-          # Helper: emit the "run everything" classification and exit 0. Used
-          # for every fail-closed branch so the full suite runs whenever we are
-          # not 100% certain what the diff touches. docs_only=false keeps the
-          # heavy `lint` job on; frontend/backend/ci=true force every
-          # category's heavy jobs to run. A classifier error costs CI minutes,
-          # never a weakened gate.
-          full_suite() {
-            echo "$1"
-            {
-              echo "docs_only=false"
-              echo "docs=true"
-              echo "frontend=true"
-              echo "backend=true"
-              echo "ci=true"
-              echo "desktop=true"
-              echo "android=true"
-            } >> "$GITHUB_OUTPUT"
-            exit 0
-          }
-
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            base="$PR_BASE_SHA"
-            head="$PR_HEAD_SHA"
-          else
-            # push (feature branch / main) or tag (release.yml). The
-            # release tag path almost never resolves a meaningful `before`
-            # and is never docs-only anyway — fail-closed handles it.
-            base="$PUSH_BEFORE"
-            head="$PUSH_AFTER"
-          fi
-
-          # New-branch / orphan-push: github.event.before is all-zeros and
-          # there is nothing to diff against → fail closed (full suite).
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-            full_suite "Base sha unresolved — running full validate suite (fail-closed)."
-          fi
-
-          # Force-push rewrote the old tip out of the runner clone, or a tag
-          # push has no reachable predecessor → fail closed (full suite).
-          if ! git cat-file -e "$base" 2>/dev/null; then
-            full_suite "Base sha $base unreachable — running full validate suite (fail-closed)."
-          fi
-
-          # Three-dot (symmetric-difference) diff: ONLY the files this branch
-          # changed relative to the merge-base, never files where `main`
-          # moved ahead while the branch sat behind. A two-dot diff would
-          # report those base-side changes too and could mislabel a real
-          # code PR as docs-only when main had unrelated doc churn — exactly
-          # the bypass we must avoid. Capture into a variable and check the
-          # exit code explicitly: a failed diff MUST fail closed, not be
-          # swallowed by a process substitution under `set -euo pipefail`.
-          if ! diff_out=$(git diff --name-only "$base"..."$head"); then
-            full_suite "::warning::git diff $base...$head failed — running full validate suite (fail-closed)."
-          fi
-
-          changed=()
-          if [ -n "$diff_out" ]; then
-            mapfile -t changed <<< "$diff_out"
-          fi
-
-          # An empty diff is NOT treated as docs-only. There is nothing to
-          # fast-path (no docs changed either) and a zero-file diff is more
-          # likely a base/head confusion than an intentional no-op PR, so we
-          # fail closed and run the full suite.
-          if [ "${#changed[@]}" -eq 0 ]; then
-            full_suite "Empty diff — running full validate suite (fail-closed)."
-          fi
-
-          echo "Changed files:"
-          printf '  %s\n' "${changed[@]}"
-
-          # Conservative docs allowlist, anchored at repo root. A path is
-          # "docs" iff it matches one of these. Deliberately narrow — when in
-          # doubt, a path is NOT docs and the full suite runs.
-          #   - any Markdown file anywhere (READMEs, session logs, **/*.md)
-          #   - anything under docs/
-          #   - the LICENSE / NOTICE / AUTHORS / CHANGELOG text files
-          # NOT included (intentionally): lockfiles, .toml/.yml/.yaml config,
-          # source under src/ or src-tauri/, workflow YAML, prek.toml, AGENTS.md
-          # changes that also touch code, etc. ANY of those ⇒ docs_only=false.
-          docs_re='^(docs/|.*\.md$|LICENSE([.-].*)?$|NOTICE$|AUTHORS$|CHANGELOG$)'
-
-          # Per-category regexes (OR semantics: a file may match several; each
-          # category flips true if ANY changed file matches). Anchored where a
-          # root anchor is meaningful. Note `^src-tauri/` already subsumes the
-          # Cargo/migrations alternatives, but they are listed explicitly so
-          # the intent is legible and robust to future anchor tweaks.
-          backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/|^scripts/(check-sqlx-cache-drift|check-unsafe-allowlist)\.sh$|^scripts/coverage-ratchet\.mjs$|^scripts/coverage-baseline\.json$)'
-          frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$|^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/(coverage-ratchet|print-coverage-thresholds|check-bundle-budget(\.test)?)\.mjs$|^scripts/(bundle-budgets|coverage-baseline)\.json$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|mutation-reports|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$|^src-tauri/src/commands/(queries|blocks/queries|pages/metadata)\.rs$|^src-tauri/agaric-store/src/(fts/(toggle_filter|metadata_filter)|query/engine)\.rs$)'
-          # `scripts/` and `.claude/` are tooling: the guards and their manual-stage
-          # self-tests run in `lint` (a `scripts/*.test.mjs` runs wherever it is
-          # named: `pr-diff-base` in `lint`, `check-bundle-budget` in
-          # `vitest-coverage`),
-          # so a tooling-only PR is `ci` and pays no suite. The few files a suite
-          # consumes are routed to that suite above, data files included, so a
-          # re-baseline PR still runs the gate that reads it: the sqlx drift
-          # check and the unsafe allowlist to backend; the axe/test-naming hook
-          # owners, the bundle-budget guard with its `bundle-budgets.json`,
-          # the two coverage scripts, and every script a `src/**/*.test.ts`
-          # imports or spawns (the seven `check-*.mjs` guards with unit tests in
-          # `src/__tests__/`, plus `scripts/lib/js-scanner.mjs`) to frontend,
-          # since only the vitest shards run those tests, and likewise the six
-          # Rust files `conformance-coverage.test.ts` parses for their dispatch
-          # (a Rust-only refactor of one of them, #4988, reached main with the
-          # guard never run and broke the 0.13.0 release run); the ratchet and its
-          # `coverage-baseline.json` also to backend, since `cargo-coverage`
-          # runs it with `--gate`. Adding a vitest test for another script
-          # means adding that script here too. A script that no suite executes
-          # is linted by `lint`'s oxlint/oxfmt, which the shared SKIP list keeps
-          # on whenever `ci` is present.
-          # `scripts/verify-ci-equivalent.sh` keeps the same `ci` set
-          # (`CI_PATH_RE`; its self-test ratchets the two against each other)
-          # but leaves the coverage/bundle scripts and their baselines as `ci`
-          # alone: no local phase runs either coverage gate or the bundle
-          # budget, so there is no suite to route them to.
-          ci_re='(^\.github/|^scripts/|^\.claude/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$)'
-
-          # Bundle/packaging gates for `ci.yml`'s two build jobs. Narrow on
-          # purpose: logic correctness lives in the suites above, so these only
-          # guard bundling / packaging / cross-compile drift. Android is
-          # deliberately NOT every `src-tauri/**` change — host Rust almost
-          # always cross-compiles — so it names the scaffold/conf files, the
-          # cross-compile dependency graph, and each file carrying an
-          # `cfg(target_os = "android")` / `cfg(mobile)` gate. Move one of those
-          # files and move its entry here in the same commit;
-          # `scripts/check-android-trigger.mjs` asserts every literal path
-          # listed still exists. Both name `.github/actions/`: the build jobs
-          # run their toolchain preamble through the composites there, so a
-          # SHA bump inside one is a change to the bundle job and must run it.
-          desktop_re='^(src-tauri/|\.cargo/config\.toml\.example$|scripts/(fix-appimage-icons\.sh|prepare-external-bins\.mjs)$|package(-lock)?\.json$|\.github/workflows/ci\.yml$|\.github/actions/)'
-          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/build\.rs$|src-tauri/src/(lib|lifecycle|android_jni)\.rs$|src-tauri/agaric-store/src/db/mod\.rs$|src-tauri/agaric-sync/src/android_context\.rs$|src-tauri/agaric-sync/src/sync_daemon/(android_multicast|android_network_block|mod|session_supervisor)\.rs$|scripts/patch-android-build\.sh$|scripts/check-android-so-alignment\.mjs$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$|\.github/actions/)'
-
-          # Single pass over the changed set. docs_only stays true only while
-          # EVERY path matches the docs allowlist; the three category flags are
-          # sticky-true once any matching path is seen. No `break` — every path
-          # must be inspected for the category flags even after docs_only flips.
-          #
-          # FAIL-CLOSED default for UNRECOGNIZED non-docs paths: a changed file
-          # that is neither docs NOR any known category (frontend/backend/ci) —
-          # e.g. rust-toolchain.toml, .cargo/config.toml, rustfmt.toml, a root
-          # Justfile / Dockerfile / flake.nix / *.sh — is a build/toolchain
-          # change we cannot attribute to a suite. Under per-category gating,
-          # BOTH vitest and cargo-tests would skip and it could merge with no
-          # heavy suite at all (a strictness regression vs the pre-#833 gate,
-          # which ran EVERYTHING on any non-docs change). So we pin
-          # frontend=backend=ci=true for such a path, genuinely restoring
-          # "anything we don't explicitly recognize runs the full suite" — ci
-          # too, so a build/toolchain script (e.g. scripts/*.sh) still runs the
-          # shell-lint + skip-ci-verify guards. Recognized-but-unsuited
-          # categories (a pure `ci` change like a workflow/prek.toml edit) do
-          # NOT trip this — `lint` (incl. zizmor) already covers them.
-          docs_only=true
-          docs=false
-          frontend=false
-          backend=false
-          ci=false
-          desktop=false
-          android=false
-          for f in "${changed[@]}"; do
-            # Did this path match ANY known non-docs category?
-            matched_cat=false
-            if [[ "$f" =~ $docs_re ]]; then docs=true; fi
-            if [[ "$f" =~ $frontend_re ]]; then frontend=true; matched_cat=true; fi
-            if [[ "$f" =~ $backend_re ]]; then backend=true; matched_cat=true; fi
-            if [[ "$f" =~ $ci_re ]]; then ci=true; matched_cat=true; fi
-            # Bundle gates only: they do not participate in `matched_cat`, so
-            # they never suppress the fail-closed branch below.
-            if [[ "$f" =~ $desktop_re ]]; then desktop=true; fi
-            if [[ "$f" =~ $android_re ]]; then android=true; fi
-            if [[ ! "$f" =~ $docs_re ]]; then
-              if [ "$docs_only" = "true" ]; then
-                echo "Non-docs path detected: $f → docs_only=false (full lint suite)."
-              fi
-              docs_only=false
-              if [ "$matched_cat" = "false" ]; then
-                echo "Unrecognized non-docs path: $f → pinning frontend=backend=ci=true (fail-closed full suite)."
-                frontend=true
-                backend=true
-                ci=true
-              fi
-            fi
-          done
-
-          echo "docs_only=$docs_only docs=$docs frontend=$frontend backend=$backend ci=$ci"
-          echo "desktop=$desktop android=$android"
-          {
-            echo "docs_only=$docs_only"
-            echo "docs=$docs"
-            echo "frontend=$frontend"
-            echo "backend=$backend"
-            echo "ci=$ci"
-            echo "desktop=$desktop"
-            echo "android=$android"
-          } >> "$GITHUB_OUTPUT"
+        run: bash scripts/classify-changes.sh >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
   # verify-version-agreement (#2975) — the version mutual-agreement check over
@@ -730,7 +527,7 @@ jobs:
         # non-docs PR runs, which is what makes it the home for anything
         # under `scripts/` that must execute on a tooling-only change (the
         # coverage scripts are the exception, routed to the suites that call
-        # them by `detect-changes`' backend_re / frontend_re).
+        # them by `scripts/classify-changes.sh`'s backend_re / frontend_re).
         #
         # Named explicitly rather than globbed: a glob here would silently
         # adopt every future `scripts/*.test.mjs` into this job, including
@@ -1313,10 +1110,13 @@ jobs:
     needs: detect-changes
     # Run the frontend unit/integration suite iff the diff touches frontend
     # files (src/, e2e/, .ts/.tsx/.js/.jsx/.css, package[-lock].json, the
-    # vite/vitest/tailwind/postcss configs, tsconfig*.json, index.html). Fail-
-    # open is impossible: the classifier fails CLOSED (frontend=true on any
-    # diff error), and a classifier failure fails the gate outright.
-    if: needs.detect-changes.outputs.frontend == 'true'
+    # vite/vitest/tailwind/postcss configs, tsconfig*.json, index.html), unless
+    # every changed path is docs or an `e2e-tauri/*.e2e.ts` spec, which only
+    # WebdriverIO runs. A changed `e2e-tauri/` helper still runs it: the
+    # `e2e-tauri/*.test.ts` files that test the helpers run here. Fail-open is
+    # impossible: the classifier fails CLOSED (vitest=true on any diff error),
+    # and a classifier failure fails the gate outright.
+    if: needs.detect-changes.outputs.vitest == 'true'
     runs-on: ubuntu-24.04
     # #4818 — the one-job full suite outgrew its cap: observed on main
     # 2026-09-07 at 14m38s and 18m09s against a 20-min budget, and cancelled
@@ -1535,10 +1335,11 @@ jobs:
   # ---------------------------------------------------------------------------
   playwright:
     needs: detect-changes
-    # Run the E2E browser suite iff the diff touches frontend files (same
-    # `frontend` category as vitest). Fail-closed classifier — see
+    # Run the E2E browser suite iff the diff touches frontend files (the
+    # `frontend` category), unless every changed path is docs or under
+    # `e2e-tauri/`, which this suite never reads. Fail-closed classifier — see
     # detect-changes.
-    if: needs.detect-changes.outputs.frontend == 'true'
+    if: needs.detect-changes.outputs.playwright == 'true'
     runs-on: ubuntu-24.04
     # 35 min = the measured 25-43s preamble + the install-deps step's
     # worst-known-legitimate 21m10s (300s attempt-1 bound + 30s SIGKILL grace
@@ -1967,12 +1768,13 @@ jobs:
   # slowly. `if: always()` is load-bearing: a plain needs: would SKIP this job on
   # a sibling failure, and a skipped REQUIRED check counts as PASSING — a red
   # sibling would stay mergeable. It always runs and decides from sibling results:
-  #   - detect-changes must have SUCCEEDED; else pin frontend=backend=true,
-  #     docs_only=false and fail (fail-closed).
+  #   - detect-changes must have SUCCEEDED; else pin vitest=playwright=backend=
+  #     true, docs_only=false and fail (fail-closed).
   #   - success always OK; failure/cancelled NEVER OK; skipped OK only when the
-  #     job's category is absent — lint iff docs_only; vitest/playwright iff
-  #     !frontend; cargo-tests/cargo-coverage/mcp-tests iff !backend; docs-lint is
-  #     the complement (success iff docs_only, else skipped).
+  #     job's category is absent — lint iff docs_only; vitest/vitest-coverage iff
+  #     !vitest; playwright iff !playwright; cargo-tests/cargo-coverage/mcp-tests
+  #     iff !backend; docs-lint is the complement (success iff docs_only, else
+  #     skipped).
   # INVARIANT: under classifier failure or any category true, that category's
   # heavy jobs MUST be success — no code change rides in on a skip (classifier is
   # allowlist-based + fail-closed; a backend change that regenerates bindings also
@@ -1995,10 +1797,11 @@ jobs:
           # — outputs live under .outputs there, but reading the resolved value
           # here is clearer). Each is passed via env, never inline-interpolated
           # into the script body. Empty/anything-but-"true" is treated as the
-          # category being ABSENT (i.e. not docs-only / no frontend / no
-          # backend); the gate normalises them below.
+          # category being ABSENT (i.e. not docs-only / no vitest / no
+          # playwright / no backend); the gate normalises them below.
           DOCS_ONLY: ${{ needs.detect-changes.outputs.docs_only }}
-          FRONTEND: ${{ needs.detect-changes.outputs.frontend }}
+          VITEST: ${{ needs.detect-changes.outputs.vitest }}
+          PLAYWRIGHT: ${{ needs.detect-changes.outputs.playwright }}
           BACKEND: ${{ needs.detect-changes.outputs.backend }}
         run: |
           set -euo pipefail
@@ -2025,25 +1828,28 @@ jobs:
           }
 
           classifier="$(result_of detect-changes)"
-          echo "detect-changes result=$classifier docs_only=${DOCS_ONLY:-<empty>} frontend=${FRONTEND:-<empty>} backend=${BACKEND:-<empty>}"
+          echo "detect-changes result=$classifier docs_only=${DOCS_ONLY:-<empty>} vitest=${VITEST:-<empty>} playwright=${PLAYWRIGHT:-<empty>} backend=${BACKEND:-<empty>}"
 
           # ---- Resolve category booleans, fail-closed -----------------------
           # On a SUCCESSFUL classifier, trust its outputs (normalised so only
           # the literal string "true" counts as present). Otherwise we cannot
-          # trust any category: PIN frontend=true, backend=true, docs_only=false
-          # (require/run everything) and fail the gate — a classifier that did
-          # not succeed can never let a heavy job pass on a skip.
+          # trust any category: PIN vitest=playwright=backend=true,
+          # docs_only=false (require/run everything) and fail the gate — a
+          # classifier that did not succeed can never let a heavy job pass on a
+          # skip.
           docs_only="false"
-          frontend="true"
+          vitest="true"
+          playwright="true"
           backend="true"
           if [ "$classifier" = "success" ]; then
             docs_only="false"; if [ "$DOCS_ONLY" = "true" ]; then docs_only="true"; fi
-            frontend="false"; if [ "$FRONTEND" = "true" ]; then frontend="true"; fi
+            vitest="false"; if [ "$VITEST" = "true" ]; then vitest="true"; fi
+            playwright="false"; if [ "$PLAYWRIGHT" = "true" ]; then playwright="true"; fi
             backend="false"; if [ "$BACKEND" = "true" ]; then backend="true"; fi
           else
-            gate_fail "detect-changes did not succeed (result=$classifier) — failing gate (fail-closed); pinning frontend=backend=true, docs_only=false."
+            gate_fail "detect-changes did not succeed (result=$classifier) — failing gate (fail-closed); pinning vitest=playwright=backend=true, docs_only=false."
           fi
-          echo "resolved: docs_only=$docs_only frontend=$frontend backend=$backend"
+          echo "resolved: docs_only=$docs_only vitest=$vitest playwright=$playwright backend=$backend"
 
           # verify-version-agreement is always-on (#2975) — no category gates
           # it, so a skip is never acceptable.
@@ -2055,15 +1861,16 @@ jobs:
           lint_skip_ok="false"; if [ "$docs_only" = "true" ]; then lint_skip_ok="true"; fi
           check_job lint "$lint_skip_ok"
 
-          # frontend suite: skip allowed only when the frontend category is
-          # absent from the diff.
-          fe_skip_ok="false"; if [ "$frontend" != "true" ]; then fe_skip_ok="true"; fi
-          check_job vitest "$fe_skip_ok"
+          # frontend suites: each skip allowed only when the classifier said
+          # that suite has nothing to run.
+          vitest_skip_ok="false"; if [ "$vitest" != "true" ]; then vitest_skip_ok="true"; fi
+          check_job vitest "$vitest_skip_ok"
           # #4818 — the #749 coverage thresholds moved out of `vitest` and
           # into this job when vitest was sharded, so it has to be gated for
           # the coverage floor to keep existing.
-          check_job vitest-coverage "$fe_skip_ok"
-          check_job playwright "$fe_skip_ok"
+          check_job vitest-coverage "$vitest_skip_ok"
+          pw_skip_ok="false"; if [ "$playwright" != "true" ]; then pw_skip_ok="true"; fi
+          check_job playwright "$pw_skip_ok"
 
           # backend suite (+ its transitive coverage): skip allowed only when
           # the backend category is absent from the diff.
@@ -2094,4 +1901,4 @@ jobs:
             echo "::error::validate-all gate FAILED (see above)."
             exit 1
           fi
-          echo "validate-all gate PASSED (docs_only=$docs_only frontend=$frontend backend=$backend)."
+          echo "validate-all gate PASSED (docs_only=$docs_only vitest=$vitest playwright=$playwright backend=$backend)."

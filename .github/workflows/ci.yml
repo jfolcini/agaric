@@ -95,11 +95,12 @@ jobs:
   # on tag push, which is the only place macOS/Windows artifacts must
   # actually ship.
   #
-  # Path-gated on `validate.outputs.desktop == 'true'` (the classifier lives
-  # in `_validate.yml` and rides out as a `workflow_call` output) — only diffs
-  # touching desktop bundle-relevant paths (`src-tauri/**`, bundling
-  # scripts, JS manifests, this workflow) pay the ~24 min runner slot.
-  # Frontend-only and docs-only PRs skip it entirely.
+  # Path-gated on `validate.outputs.desktop == 'true'` (the classifier is
+  # `scripts/classify-changes.sh`, run by `_validate.yml` and riding out as a
+  # `workflow_call` output) — only diffs touching desktop bundle-relevant
+  # paths (`src-tauri/**` minus test-only Rust files, bundling scripts, JS
+  # manifests, this workflow) pay the ~24 min runner slot. Frontend-only,
+  # docs-only and Rust-tests-only PRs skip it entirely.
   #
   # If a Tauri / wry / cargo-tauri bump breaks a non-Linux target, the
   # tag-push release will surface it — the solo maintainer tagging the

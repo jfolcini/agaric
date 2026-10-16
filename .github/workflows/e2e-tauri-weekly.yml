@@ -7,7 +7,8 @@
 # later. It is still not part of the PR gate — not a job of `_validate.yml`,
 # not in `validate-all`'s `needs`, and not a required status-check context
 # (`branch-protection-assert.yml` pins those to `dco` + `validate-all`) — so a
-# red run here never blocks a merge; it remains a high-fidelity canary.
+# red run here never blocks a merge; it remains a high-fidelity canary. Its
+# `e2e-tauri-gate` job reports on every PR, so it can become one.
 #
 # Unlike the Playwright `e2e/` suite (which drives the app in headless Chromium
 # against the JS Tauri mock), this lane builds the REAL Agaric debug binary and
@@ -79,50 +80,12 @@ on:
     # runner pool. Keep these two crons apart when changing either. See #3168.
     - cron: '43 2 * * 1'
   workflow_dispatch: {}
+  # Every PR to main, with no `paths:` filter: a `paths`-skipped workflow
+  # produces no check run at all, and a required context that never reports
+  # blocks the merge forever (#4671). `detect` decides whether the heavy job
+  # runs; `gate` always reports.
   pull_request:
     branches: [main]
-    # WHY THIS IS PATH-FILTERED, AND WHY THIS SET (#4671).
-    #
-    # One serial job (`maxInstances: 1`) that compiles the real Tauri debug
-    # binary and drives it in a WebKitWebView — ~17-22 min, see the cron note
-    # above. Starting that for a docs- or session-log-only PR, which this repo
-    # merges constantly, tells nobody anything and takes a runner away from the
-    # lanes that do gate the merge. So the filter is exactly "could this diff
-    # change what this lane BUILDS or RUNS": the Rust app, the frontend bundle
-    # the binary serves, the specs and their runner, and the manifests all of
-    # that resolves from.
-    #
-    # The spellings below are `_validate.yml`'s `detect-changes` vocabulary
-    # rather than a second one that would drift against it: `backend` is
-    # `src-tauri/`, which already subsumes the Cargo manifests, the migrations,
-    # `tauri.conf.json` and all four `.sqlx/` caches; `frontend` is `src/`,
-    # `index.html`, the vite config, the `tsconfig*.json` projects `tsc -b`
-    # walks, and `package*.json`.
-    #
-    # This filter and a REQUIRED context cannot coexist: a `paths`-skipped
-    # workflow produces no check run at all, and branch protection waits
-    # forever on an absent one. Adding this lane to the ruleset while this
-    # block stands is the one change that must not happen — see #4671.
-    paths:
-      - 'src/**'
-      - 'src-tauri/**'
-      - 'e2e-tauri/**'
-      - 'wdio.conf.ts'
-      - 'index.html'
-      # Copied verbatim into `dist/`, so the real binary serves it.
-      - 'public/**'
-      - 'vite.config.ts'
-      - 'tsconfig*.json'
-      - 'package.json'
-      - 'package-lock.json'
-      - '.github/workflows/e2e-tauri-weekly.yml'
-      # Deliberately NOT listed: `e2e/`, the rest of `scripts/`, and
-      # `.github/actions/`. Each can break this lane (the first two through the
-      # `tsc -b` half of `npm run build`, the third through the apt preamble),
-      # and each is already covered by a job that gates the merge — prek's
-      # `tsc` hook inside `validate / lint`, and the sibling `_validate.yml`
-      # jobs that use the same composites. Starting a native build to re-learn
-      # it would be pure waste.
 
 # Per-REF, so a new push supersedes only that PR's own in-flight run: PR runs
 # carry `refs/pull/<n>/merge` and cron runs `refs/heads/main`, disjoint groups.
@@ -134,8 +97,35 @@ permissions:
   contents: read
 
 jobs:
+  # Is this diff relevant to the lane? `scripts/classify-changes.sh`'s
+  # `real_backend`: could the change alter what this lane BUILDS or RUNS (the
+  # Rust app minus test-only files, the frontend bundle, the specs and their
+  # runner, the manifests). One serial native build tells a docs-only or
+  # Rust-tests-only PR nothing. Schedule and dispatch have no
+  # diff and classify as relevant.
+  detect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      real_backend: ${{ steps.classify.outputs.real_backend }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history so the three-dot diff can resolve the merge-base.
+          fetch-depth: 0
+          persist-credentials: false
+      - id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/classify-changes.sh >> "$GITHUB_OUTPUT"
+
   e2e-tauri:
     name: Real-backend WebdriverIO smoke
+    needs: detect
+    if: needs.detect.outputs.real_backend == 'true'
     runs-on: ubuntu-24.04
     # Generous ceiling: cold Rust debug build of the whole Tauri app + apt +
     # cargo-install tauri-driver + the WebKitWebView run. Bounds a wedged run.
@@ -364,3 +354,39 @@ jobs:
           path: e2e-tauri/artifacts/
           if-no-files-found: ignore
           retention-days: 14
+
+  # The one stable context this workflow emits on every PR, so it can become a
+  # required check (#4671). `if: always()` is load-bearing: a skipped required
+  # check counts as passing. Mirrors `validate-all`: `detect` must succeed, the
+  # lane must succeed, and a skipped lane is accepted only when `detect` said
+  # the diff is not relevant.
+  gate:
+    name: e2e-tauri-gate
+    needs: [detect, e2e-tauri]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Assert the real-backend lane passed or was not needed
+        env:
+          DETECT: ${{ needs.detect.result }}
+          RELEVANT: ${{ needs.detect.outputs.real_backend }}
+          LANE: ${{ needs.e2e-tauri.result }}
+        run: |
+          set -euo pipefail
+          echo "detect=$DETECT real_backend=${RELEVANT:-<empty>} e2e-tauri=$LANE"
+          if [ "$DETECT" != "success" ]; then
+            echo "::error::detect result=$DETECT; failing closed."
+            exit 1
+          fi
+          case "$LANE" in
+            success) ;;
+            skipped)
+              if [ "$RELEVANT" != "false" ]; then
+                echo "::error::the lane was skipped but detect said real_backend='${RELEVANT}', not 'false'."
+                exit 1
+              fi ;;
+            *)
+              echo "::error::e2e-tauri result=$LANE."
+              exit 1 ;;
+          esac
