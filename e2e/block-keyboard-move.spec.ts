@@ -6,6 +6,7 @@ import {
   installIpcRecorder,
   openPage,
   reopenPage,
+  replaceEditorText,
   test,
   waitForBoot,
 } from './helpers'
@@ -173,8 +174,8 @@ test.describe('Keyboard block movement', () => {
       await openPage(page, PAGE)
       const gs3 = (await blockIds(page))[2] as string
 
-      const editor = await focusBlock(page, 2)
-      await editor.fill(EDITED)
+      await focusBlock(page, 2)
+      await replaceEditorText(page, EDITED)
       await page.keyboard.press(key)
 
       // The editor stays on the same block, so the text must still be there.

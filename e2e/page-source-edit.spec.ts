@@ -63,6 +63,10 @@ async function openSourceMode(page: Page, shows = WELCOME): Promise<Locator> {
   await page.getByRole('menuitem', { name: 'Edit as Markdown', exact: true }).click()
   const editor = page.getByRole('textbox', { name: 'Markdown source', exact: true })
   await expect(editor).toContainText(shows)
+  // The buffer focuses itself a task after its text shows, and ProseMirror
+  // writes its own selection back over the DOM's shortly after a focus: a
+  // click or key sent before then is undone.
+  await expect(editor).toBeFocused()
   return editor
 }
 

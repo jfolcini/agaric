@@ -1032,6 +1032,27 @@ export async function focusBlockById(page: Page, blockId: string) {
 }
 
 /**
+ * Replace the focused block editor's text with `text`; `''` empties it. Not
+ * `locator.fill`: ProseMirror reads its native select-all only on a later
+ * `selectionchange`, so fill's Delete can act on the old caret, and the
+ * editor's own selection sync shortly after a focus can undo the select-all
+ * before fill's text goes in, appending instead. The select-all here goes
+ * through ProseMirror's state, and not by Mod-a, which a mobile profile's
+ * iPhone user agent maps to Meta.
+ */
+export async function replaceEditorText(page: Page, text: string): Promise<void> {
+  await page
+    .locator('[data-testid="block-editor"] [contenteditable="true"]')
+    .evaluate((el) =>
+      (
+        el as HTMLElement & { editor: { commands: { selectAll: () => boolean } } }
+      ).editor.commands.selectAll(),
+    )
+  await page.keyboard.press('Delete')
+  if (text !== '') await page.keyboard.insertText(text)
+}
+
+/**
  * Escape any `contentEditable` / input focus so the next Ctrl+Z is handled
  * by `useUndoShortcuts` (which skips `contentEditable` targets) instead of
  * ProseMirror's in-editor undo.

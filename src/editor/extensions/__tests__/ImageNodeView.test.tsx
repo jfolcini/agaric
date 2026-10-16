@@ -205,6 +205,21 @@ describe('ImageNodeView resize (#4712)', () => {
     expect(updateAttributes).toHaveBeenCalledExactlyOnceWith({ alt: 'a cat|622' })
   })
 
+  it('resizes from the width laid out now, before the observer has re-rendered it', async () => {
+    layOutImageAt(300)
+    const user = userEvent.setup()
+    const { handle, updateAttributes } = renderNodeView('a cat|300')
+    // The image relaid out at 200, and the observer's update has not rendered yet.
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(200)
+    handle().focus()
+
+    await user.keyboard('{ArrowRight}')
+    fireEvent.pointerDown(handle(), { clientX: 100, pointerId: 1 })
+    fireEvent.pointerUp(handle(), { clientX: 150, pointerId: 1 })
+
+    expect(updateAttributes.mock.calls).toEqual([[{ alt: 'a cat|210' }], [{ alt: 'a cat|250' }]])
+  })
+
   it('never narrows below the minimum width', async () => {
     layOutImageAt(36)
     const user = userEvent.setup()
