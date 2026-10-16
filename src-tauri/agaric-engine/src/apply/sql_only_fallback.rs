@@ -76,8 +76,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// the whole class of tests silently exercising the SQL-only fallback
 /// instead of the production engine path (the #891 false-drift source)
 /// is structurally impossible. Two genuinely-legitimate triggers remain,
-/// both intrinsic to the per-space CRDT model + the #1257 "LOCAL path
-/// engine-applies but boot-replay owns cursor" reconciliation contract.
+/// both intrinsic to the per-space CRDT model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SqlOnlyFallbackReason {
     /// `agaric_store::space::resolve_block_space(...)` returned `None` — the

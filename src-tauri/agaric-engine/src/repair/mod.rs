@@ -103,7 +103,7 @@ fn housekeeping(label: &str) -> ActorContext {
 
 /// `space_id` if it is a live, registered space; else Personal — the same
 /// choice the boot backfill makes for a space-less page (`pages_without_space`
-/// → `migrate_pages_to_personal_space_batched`). A block with no space
+/// → `migrate_pages_to_personal_space`). A block with no space
 /// therefore goes where the rest of its era's space-less content went.
 async fn destination_space(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,

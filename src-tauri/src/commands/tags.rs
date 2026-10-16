@@ -356,8 +356,8 @@ async fn apply_tag_to_block_resolved(
     // before (#1323 convergence). The plain `INSERT` → `INSERT OR IGNORE` swap is
     // inert: the dup-check above already returned `Ok(None)` if the row existed,
     // so the row is always absent here. We do NOT call `apply_op_tx` /
-    // `advance_apply_cursor`: the apply cursor stays put on the LOCAL path so boot
-    // replay re-applies idempotently (the safety net — #1257). If the source
+    // `advance_apply_cursor`: the snapshot pass, not the command, moves the apply
+    // cursor past LOCAL ops (#5418; see `apply_op_projected`). If the source
     // block's space can't be resolved (#2250: `SpaceUnresolved`, the only
     // remaining sql_only trigger), the helper FALLS BACK to
     // `apply_add_tag_sql_only`, which runs the SAME projection + inheritance — so
@@ -495,8 +495,8 @@ pub(crate) async fn remove_tag_in_tx(
     // `remove_inherited_tag` runs the IDENTICAL `block_tag_inherited` cleanup — so
     // BOTH `block_tags` AND `block_tag_inherited` end up identical to before
     // (#1323 convergence). We do NOT call `apply_op_tx` / `advance_apply_cursor`:
-    // the apply cursor stays put on the LOCAL path so boot replay re-applies
-    // idempotently (the safety net — #1257). If the block's space can't be resolved
+    // the snapshot pass, not the command, moves the apply cursor past LOCAL ops
+    // (#5418; see `apply_op_projected`). If the block's space can't be resolved
     // (#2250: `SpaceUnresolved`, the only remaining sql_only trigger), the
     // helper FALLS BACK to `apply_remove_tag_sql_only`,
     // which runs the SAME projection + cleanup — so the removal is never skipped

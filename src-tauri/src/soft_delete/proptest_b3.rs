@@ -344,9 +344,8 @@ proptest! {
     /// in the projection). So the "re-apply" half instead calls the
     /// production SQL projection `project_delete_block_to_sql` directly
     /// with a FRESH, strictly-later timestamp — the same RE-PROJECTION boot
-    /// replay performs for a locally-authored delete op (the local command
-    /// path deliberately does not advance the apply cursor, so the op
-    /// re-projects at the next boot — #1257). Note boot replay re-projects
+    /// replay performs for a locally-authored delete op committed after the
+    /// last snapshot pass (#5418). Note boot replay re-projects
     /// with the op's ORIGINAL `created_at`, not a new value, so with a fresh
     /// timestamp this is strictly the SHAPE of that re-projection and
     /// literally an independent concurrent delete racing in from another

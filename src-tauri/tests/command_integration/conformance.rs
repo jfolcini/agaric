@@ -2145,8 +2145,8 @@ async fn move_same_parent_tail_clamp_matches_fe_new_index() {
 /// Next boot replay (the #1245 / #1249 bug). routes the create through
 /// `apply_create_block_via_loro` inside the same `CommandTx` — engine apply +
 /// `project_create_block_to_sql` + `reproject_dense_positions` — but
-/// deliberately does NOT advance `materializer_apply_cursor` (so boot replay
-/// re-applies idempotently; #1248).
+/// deliberately does NOT advance `materializer_apply_cursor` (the snapshot pass
+/// does, #5418; #1248).
 ///
 /// This test drives the REAL command path (`create_block_inner` + `settle()`)
 /// for an insert at index 0 BETWEEN two existing siblings and asserts, WITHOUT
@@ -3704,8 +3704,8 @@ async fn local_add_tag_is_engine_fresh_1257() {
 /// Routes the move through `apply_move_block_via_loro` inside the same
 /// `CommandTx` — engine apply + `project_move_block_to_sql` +
 /// `reproject_dense_positions` over BOTH the old and new parent sibling groups —
-/// but deliberately does NOT advance `materialized_through_seq` (so boot replay
-/// re-applies idempotently; #1248).
+/// but deliberately does NOT advance `materialized_through_seq` (the snapshot
+/// pass does, #5418; #1248).
 ///
 /// This test drives the REAL command path (`move_block_inner` + `settle()`) to
 /// move a block from parent A into parent B at a MIDDLE index and asserts,

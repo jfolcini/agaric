@@ -222,7 +222,7 @@ async fn page_holds_token(
 /// this is how pages move between spaces, both when the user reassigns
 /// one (a `set_property` op on [`crate::op::SPACE_PROPERTY_KEY`]) and
 /// when the boot backfill claims an unscoped page for Personal
-/// (`agaric_engine::spaces::migrate_pages_to_personal_space_batched`).
+/// (`agaric_engine::spaces::migrate_pages_to_personal_space`).
 /// The enforcement gate only applies to user-defined ref properties
 /// (`linked_page`, `project`, etc.).
 pub async fn validate_ref_property_cross_space(
@@ -532,7 +532,7 @@ mod tests {
         // #2239: the `space` property itself is the space-move carve-out —
         // pointing it at a block in a DIFFERENT space is exactly how a page
         // moves between spaces (a user reassignment, or the boot backfill
-        // `migrate_pages_to_personal_space_batched`). The cross-space gate
+        // `migrate_pages_to_personal_space`). The cross-space gate
         // MUST exempt `SPACE_PROPERTY_KEY` even when the source and target
         // live in different spaces. Every other ref key rejects that same
         // shape (`ref_property_rejects_cross_space`), so this pins the

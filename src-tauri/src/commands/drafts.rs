@@ -163,12 +163,12 @@ pub async fn flush_draft_inner(
     //    collapsed apply-projection entry point (`apply_op_projected`) IN this
     //    same tx so `blocks.content` is written and the per-space Loro engine
     //    is updated ATOMICALLY with the op append. `advance_cursor = false`:
-    //    the LOCAL path leaves the apply cursor put so boot replay re-applies
-    //    idempotently (#1257). Without this the op sat unmaterialized until the
-    //    next boot replay — SQL/engine stayed stale after an unmount flush
-    //    (typing appeared reverted on navigate-back; FTS/link reindex indexed
-    //    the pre-flush text). The returned `ApplyEffects` is empty for Edit, so
-    //    it is discarded.
+    //    the snapshot pass, not the command, moves the apply cursor past LOCAL
+    //    ops (#5418; see `apply_op_projected`). Without this the op sat
+    //    unmaterialized until the next boot replay — SQL/engine stayed stale
+    //    after an unmount flush (typing appeared reverted on navigate-back;
+    //    FTS/link reindex indexed the pre-flush text). The returned
+    //    `ApplyEffects` is empty for Edit, so it is discarded.
     let record =
         draft::flush_draft_in_tx(&mut tx, device_id, block_id_str, &content, prev_edit).await?;
     crate::materializer::apply_op_projected(&mut tx, &record, materializer.loro_state(), false)

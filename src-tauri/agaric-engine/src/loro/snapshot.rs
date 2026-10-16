@@ -87,16 +87,20 @@ fn now_ms() -> i64 {
 /// The highest locally-authored `op_log.seq`, read before a pass collects any
 /// engine (#5418).
 ///
-/// Every apply path, local commands and undo included, mutates the op's
-/// per-space engine inside the transaction that commits the op, so every op
-/// this read can see is already in its engine, and an export taken after the
-/// read holds it. Two engine writes land after their op's commit, and boot replay
-/// restores neither: a delete or restore cohort's fan-out (replay recomputes
-/// the cohort from SQL rows that already carry the change, so it comes out
-/// empty) and an op parked in `materializer_retry_queue` (durable on its own,
-/// the cursor having already passed it). Replicated rows never reach an
-/// engine through the op log. A read error degrades to 0, which claims
-/// nothing.
+/// An op's engine write normally commits with the op, so an export taken after
+/// this read holds every op at or below it. Some engine writes land after the
+/// commit instead:
+///
+/// * the post-commit fan-out of the delete, restore and purge commands
+///   (`commands::blocks::crud`); the batch delete and every restore and purge
+///   make all of their engine writes there. A pass that reads the head before
+///   the fan-out lands persists rows without it and moves the cursor past the
+///   op. The fan-out re-dirties its engine, so the next pass persists it; a
+///   crash before then leaves the engine without it.
+/// * an op parked in `materializer_retry_queue`, durable on its own.
+///
+/// Replicated rows never reach an engine through the op log. A read error
+/// degrades to 0, which claims nothing.
 async fn op_log_head(pool: &SqlitePool) -> i64 {
     sqlx::query_scalar!(r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#)
         .fetch_one(pool)
@@ -348,8 +352,9 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // sync-inbox replay on boot regardless).
     // #3309 — but its `applied_through_seq` watermark is NOT left frozen:
     // see `advance_clean_space_watermarks` at the end of this function.
-    // /C2: read the head BEFORE collecting any engine, so every op at or
-    // below it is in each export this pass takes (see `op_log_head`).
+    // /C2: read the head BEFORE collecting any engine, so each export this
+    // pass takes holds the ops at or below it (`op_log_head` lists the engine
+    // writes that land later).
     let head = op_log_head(pool).await;
     let applied_through_seq = snapshot_watermark(head);
     // #607 review: capture the clear-generation BEFORE collecting doc
@@ -481,9 +486,9 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 /// * that space is absent from `attempted` — so it was clean at the
 ///   dirty-set cut, i.e. its persisted blob equals its in-memory engine.
 ///
-/// The engine in turn reflects every op up to the pass's op-log head, of
-/// which `applied_through_seq` is one less (see [`op_log_head`] — the
-/// per-space engine apply happens inside the op's own transaction). This
+/// The engine in turn reflects the ops up to the pass's op-log head, of
+/// which `applied_through_seq` is one less, bar the engine writes that land
+/// after their op's commit (see [`op_log_head`]). This
 /// last premise holds for a rehydrated engine only AFTER
 /// `recovery::boot::recover_at_boot` has run: between rehydration and the
 /// heal+replay, an engine reflects only its own row's watermark while the
@@ -631,7 +636,8 @@ async fn advance_clean_space_watermarks(
 /// replays only the ops committed after it instead of the whole session.
 ///
 /// Boot replay restores two things for an op: its engine state, which the
-/// pass has just made durable, and its per-block index fan-out (FTS, links,
+/// pass has just made durable (bar the late writes `op_log_head` lists), and
+/// its per-block index fan-out (FTS, links,
 /// tag refs; #3298), which lives in the background queue's memory until it
 /// runs. So the queue is drained before the cursor stops covering those ops.
 /// A pass that left a dirty engine unwritten moves nothing: a space whose
@@ -1567,6 +1573,26 @@ mod tests {
             apply_cursor(&pool).await,
             7,
             "boot replay must start after the head the pass persisted"
+        );
+    }
+
+    /// #5418 — an op with no engine write (an attachment, a SQL-only fallback)
+    /// leaves every engine clean. The pass still moves the cursor past it, so
+    /// boot does not replay a tail of them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn quiescent_pass_advances_the_apply_cursor_5418() {
+        let (pool, _dir) = fresh_pool().await;
+        let materializer = crate::materializer::Materializer::new(pool.clone());
+        seed_op_log_head(&pool, 7).await;
+
+        let saved = save_engines_and_advance_cursor(&pool, &materializer).await;
+        materializer.shutdown();
+
+        assert_eq!(saved, 0, "no engine is dirty");
+        assert_eq!(
+            apply_cursor(&pool).await,
+            7,
+            "boot replay must start after the head even when no engine was written"
         );
     }
 

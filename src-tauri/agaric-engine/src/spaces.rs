@@ -27,21 +27,12 @@ use sqlx::SqlitePool;
 
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
-use agaric_store::db::{MAX_SQL_PARAMS, now_ms};
+use agaric_store::db::now_ms;
 use agaric_store::op::{CreateBlockPayload, OpPayload, SetPropertyPayload};
 use agaric_store::op_log::{self, OpRecord};
 
 use crate::block_ops::set_property_in_tx;
 use crate::loro::shared::LoroState;
-
-/// Chunk size for the batched `block_properties` UPSERT in
-/// [`migrate_pages_to_personal_space_batched`].
-///
-/// `block_properties` is `(block_id, key, value_text, value_num, value_date,
-/// value_ref)` — six bound params per row. SQLite caps bind parameters at
-/// [`MAX_SQL_PARAMS`] (999) per statement, giving 166 rows per chunk. Mirrors
-/// the chunked-INSERT convention from `cache/block_tag_refs.rs`.
-pub const PROPERTIES_INSERT_CHUNK: usize = MAX_SQL_PARAMS / 6;
 
 /// Reserved ULID for the seeded "Personal" space.
 ///
@@ -250,43 +241,20 @@ pub async fn ensure_accent_color_property(
     Ok(true)
 }
 
-/// Batched migrator that assigns `space = SPACE_PERSONAL_ULID` to
-/// every page in `page_ids`.
+/// Assign `space = SPACE_PERSONAL_ULID` to every page in `page_ids`: one
+/// `SetProperty(space)` op per page, applied in this transaction through the
+/// shared projection like any other op. For the `space` key that stamps
+/// `blocks.space_id` on the page group and hydrates the page's subtree into
+/// Personal's engine (#2326). The apply has to happen here: a snapshot pass
+/// moves the apply cursor past these ops (#5418), so boot never replays them,
+/// and a page missing from the engine never syncs and is lost to a
+/// reprojection from the engine.
 ///
-/// This is the perf path for the every-boot backfill: a
-/// 5000-page first-boot vault used to round-trip ~20k SQL statements
-/// inside one bootstrap transaction (the per-page `set_property_in_tx`
-/// loop did 4 round-trips per page — definitions lookup, block existence
-/// probe, op_log append, property UPSERT). The batched form collapses
-/// the property-definitions read to one call and the per-row UPSERTs to
-/// chunked multi-row INSERTs of [`PROPERTIES_INSERT_CHUNK`] rows each.
-///
-/// # Inherited invariants
-///
-/// - **Op log append-only.** Each page still gets its own
-///   `SetProperty` op via [`op_log::append_local_op_in_tx`] because the
-///   per-row hash chain (`prev_hash` advance, `parent_seqs`) is part of
-///   the op_log contract. Batching the op_log writes is a separate,
-///   larger refactor and is out of scope here.
-/// - **`block_type` / liveness predicate.** [`pages_without_space`] already
-///   filters to live pages with `block_type = 'page'`, so the per-page
-///   block-existence probe in `set_property_in_tx` is redundant and is
-///   intentionally skipped here. (The original heading named an
-///   `is_conflict = 0` predicate; liveness is now enforced solely by
-///   `deleted_at IS NULL` — the conflict-copy exclusion went with the
-///   column in migration 0058.)
-/// - **UPSERT semantics.** The chunked write uses `INSERT OR REPLACE`
-///   to mirror `set_property_in_tx`'s row materialisation contract.
-///   Steady-state runs see zero candidate pages (the
-///   `pages_without_space` `NOT EXISTS` filter short-circuits) so this
-///   is exercised only on the first migration boot.
-/// - **Seeded property definitions.** Validates that the
-///   `property_definitions` row for `'space'` is present (seeded by
-///   migration `0035_spaces.sql`). A missing row indicates a
-///   fundamentally broken DB and we surface it instead of silently
-///   skipping validation.
-pub async fn migrate_pages_to_personal_space_batched(
+/// [`pages_without_space`] selects pages with no `space_id`, so the apply has
+/// no old space to prune (#2907).
+pub async fn migrate_pages_to_personal_space(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &LoroState,
     device_id: &str,
     page_ids: &[String],
     records: &mut Vec<OpRecord>,
@@ -295,13 +263,8 @@ pub async fn migrate_pages_to_personal_space_batched(
         return Ok(());
     }
 
-    // Step A — cache property_definitions for `space` once. The seeded
-    // row from migration 0035_spaces.sql is `('space', 'ref', NULL, …)`.
-    // Per-page `set_property_in_tx` reads this row inside the loop; the
-    // values are constant per migration call so a single read suffices.
-    // The lookup also doubles as a "is the seed migration in place"
-    // sanity check — a missing row indicates a broken DB and surfaces
-    // here instead of silently skipping the type validation.
+    // The `space` definition is seeded by migration 0035_spaces.sql; a
+    // missing row means a broken DB, surfaced before any op is appended.
     let def = sqlx::query!("SELECT value_type FROM property_definitions WHERE key = 'space'")
         .fetch_optional(&mut **tx)
         .await?;
@@ -313,13 +276,6 @@ pub async fn migrate_pages_to_personal_space_batched(
         ));
     }
 
-    // Step B — append one `SetProperty` op per page. AGENTS.md
-    // invariant #1 (op log is append-only) plus the hash-chain
-    // semantics in `append_local_op_in_tx` (each op reads the previous
-    // op's `seq` and computes a blake3 over `parent_seqs`) make these
-    // serial calls non-batchable today. A future
-    // `append_local_ops_in_tx_batch` helper would be a separate
-    // op_log-API change.
     for page_id in page_ids {
         let payload = OpPayload::SetProperty(SetPropertyPayload {
             block_id: BlockId::from_trusted(page_id),
@@ -331,49 +287,9 @@ pub async fn migrate_pages_to_personal_space_batched(
             value_bool: None,
         });
         let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
+        crate::apply::kernel::apply_op_projected(tx, &record, state, false).await?;
         records.push(record);
     }
-
-    // Step C — chunked `UPDATE blocks SET space_id` (Phase 2: the
-    // `blocks.space_id` column is the SOLE source of truth; the
-    // `block_properties(key='space')` row is no longer materialized).
-    // The op-log `SetProperty(space)` appends above remain the
-    // append-only record; here we only project them onto the column.
-    //
-    // Each page's space membership covers the page block itself
-    // (`id IN (chunk)`) and every block whose `page_id` points at one of
-    // these pages (`page_id IN (chunk)`), matching the
-    // `id=? OR page_id=?` grouping used elsewhere for space membership.
-    //
-    // SQLite caps bind parameters at MAX_SQL_PARAMS (999) per statement.
-    // Each chunk binds the personal-space ref once plus the chunk ids
-    // twice (once per `IN` list), so the bind budget per statement is
-    // `1 + 2*chunk_len`. Reusing PROPERTIES_INSERT_CHUNK (= 166) keeps us
-    // well under the cap (1 + 2*166 = 333 < 999).
-    for chunk in page_ids.chunks(PROPERTIES_INSERT_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "?").collect();
-        let placeholders = placeholders.join(", ");
-        let sql = format!(
-            "UPDATE blocks SET space_id = ? \
-             WHERE id IN ({placeholders}) OR page_id IN ({placeholders})"
-        );
-        // dynamic-sql: the two `IN (...)` lists are built from the chunk
-        // length at runtime, so the placeholder count varies per statement —
-        // no fixed arity for the compile-checked macro to validate.
-        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
-        q = q.bind(SPACE_PERSONAL_ULID);
-        // First `IN (...)` list — the page block ids themselves.
-        for page_id in chunk {
-            q = q.bind(page_id);
-        }
-        // Second `IN (...)` list — children whose `page_id` is one of them.
-        for page_id in chunk {
-            q = q.bind(page_id);
-        }
-        q.execute(&mut **tx).await?;
-    }
-    let pages: Vec<&str> = page_ids.iter().map(String::as_str).collect();
-    agaric_store::cache::sync_pages_cache_space_ids(tx, &pages).await?;
 
     Ok(())
 }

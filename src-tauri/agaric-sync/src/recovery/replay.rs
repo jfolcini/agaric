@@ -268,8 +268,9 @@ pub(super) async fn compacted_floor_above(
 /// bounds it is `save_all_engines`: since #2201 that pass re-encodes only
 /// DIRTY spaces, but it also advances `applied_through_seq` for every space
 /// it did not re-encode (`snapshot::advance_clean_space_watermarks`) — a
-/// clean engine already reflects every applied op, so the claim is true
-/// without rewriting the blob. Every row therefore tracks the apply cursor
+/// clean engine already reflects the ops below the pass's head, bar the late
+/// engine writes `snapshot::op_log_head` lists, so the claim holds without
+/// rewriting the blob. Every row therefore tracks the apply cursor
 /// to within roughly one snapshot interval, and so does this `MIN`.
 ///
 /// Do NOT "optimise" this to `MAX`, nor narrow it to a per-space subset:
@@ -473,9 +474,9 @@ async fn plan_cursor_rewind(pool: &SqlitePool) -> Result<Option<RewindPlan>, App
 ///
 /// `dispatch_background_or_warn` because the ops are already durably applied:
 /// a saturated queue must not fail the boot, and a shed task persists itself to
-/// `materializer_retry_queue` (#423). NOT `enqueue_full_cache_rebuild`: the
-/// cursor never advances on the local path, so replay has ops on essentially
-/// every launch and that one-liner would run nine O(vault) rebuilds per start.
+/// `materializer_retry_queue` (#423). NOT `enqueue_full_cache_rebuild`: replay
+/// has ops on essentially every launch (at least the one the snapshot watermark
+/// withholds), and that one-liner would run nine O(vault) rebuilds per start.
 ///
 /// # What this still does not close
 ///

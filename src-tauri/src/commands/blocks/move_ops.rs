@@ -303,10 +303,9 @@ pub(crate) async fn move_block_in_tx(
     //    (a "chunk of one"), that maintenance runs INLINE per-op — synchronously,
     //    before this call returns — which preserves the #774 in-tx slot semantics
     //    the batch path (`move_blocks_batch_inner`) relies on. We pass
-    //    `advance_cursor = false`: the apply cursor (`materialized_through_seq`)
-    //    stays put on the LOCAL path so boot replay re-applies these ops
-    //    idempotently — the intended safety net while local engine-apply hardens
-    //    (#1248 / #1257). The op-log append above is unchanged, and the
+    //    `advance_cursor = false`: the snapshot pass, not the command, moves the
+    //    apply cursor past LOCAL ops (#5418; see `apply_op_projected`). The
+    //    op-log append above is unchanged, and the
     //    cycle/TOCTOU/depth checks above still gate this user-driven move (the
     //    helper's own cycle probe no-op-warns; the command already surfaced the
     //    error). If the block's space can't be resolved (#2250: `SpaceUnresolved`,

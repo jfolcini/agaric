@@ -373,8 +373,8 @@ pub async fn apply_set_property_via_loro(
 
     // #2250 (#1257 reconciliation): if the block is absent from this space's
     // engine tree — projected SQL-only during a no-space window and never
-    // reconciled into the engine (the #1257 LOCAL-applies / boot-replay-owns
-    // window, or a cross-space case) — `apply_set_property_typed` would error.
+    // reconciled into the engine, or a cross-space case — `apply_set_property_typed`
+    // would error.
     // (The #2326 create-then-`SetProperty(space)` case is handled by the space
     // branch above, which hydrates the subtree.) Fall back to the authoritative
     // payload-keyed SQL projection and let boot-replay reconcile the engine.
@@ -858,10 +858,11 @@ fn seed_nodes_into_engine(
 /// CRDT representation — the OPPOSITE of the `reload_registry_from_db` re-seed
 /// warning (which concerns blocks peers already hold).
 ///
-/// ## Non-transactional engine mutation
-/// Per the pre-existing engine-vs-SQL contract, the engine seed is not rolled
-/// back if the caller's tx aborts; the seeded nodes are harmless/idempotent and
-/// self-correct on retry. We do NOT try to make it transactional.
+/// ## Engine rollback
+/// The seed goes through `for_space_recording`, so a caller that armed
+/// `CommandTx::arm_engine_rollback` (#2604) has it rewound if its tx aborts. An
+/// unarmed caller keeps the seeded nodes, which are idempotent and self-correct
+/// on retry.
 async fn hydrate_page_subtree_into_engine(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
