@@ -48,8 +48,11 @@
 //! (`commands::reconciliation::compute_reconciliation_report`, which calls
 //! [`reconcile_all`]) so the oracle can be pointed at a real vault — years of
 //! op history no fixture can manufacture. That command reads through the
-//! reader pool and writes nothing: a divergence is data to return, never a
-//! panic and never a repair. Everything that WRITES (the `settle_*` helpers
+//! reader pool and an export of each engine, and writes nothing: a divergence
+//! is data to return, never a panic and never a repair. Repair stays out on
+//! purpose (#5628): rebuilding on a non-empty report erases the evidence the
+//! check exists to produce, and no rebuild repairs SQL that has drifted from
+//! the engine. Everything that WRITES (the `settle_*` helpers
 //! that run production's deferred maintainers) or exists to fail a test loudly
 //! (`assert_*`, the `*_reconciliation_failure` formatters, the coverage
 //! counters) lives in `harness.rs` under `cfg(test)` and is re-exported from
@@ -79,6 +82,8 @@
 //! | `agenda_cache` (the date roll-up, #3345) | `blocks`, `block_properties` **and** `block_tags` | `rebuild_agenda_cache(_split)` (the `RebuildAgendaCache` task) — audited by [`reconcile_agenda_cache`], NOT by [`reconcile`] |
 //! | `projected_agenda_cache` (the recurrence horizon, #3345) | `blocks` **and** `block_properties`, plus a `today` the caller supplies | `rebuild_projected_agenda_cache(_split)` (the `RebuildProjectedAgendaCache` task) — audited by [`reconcile_projected_agenda`], NOT by [`reconcile`] |
 //! | `pages_cache.{title_sort_key,last_edited_ms,space_id}` (the Pages sort keys, #5371) | the cached `pages_cache.title`; `op_log` and `blocks.page_id` for a floor; the page's `blocks.space_id` | the page-row rebuild, its restore insert (`insert_missing_pages_cache_rows`) and the page-create INSERT (key, space) / `raise_pages_last_edited_ms` on every op-landing path (last edited) / `sync_pages_cache_space_ids` in a `space` op's projection (space) — audited by [`reconcile_pages_cache_sort_keys`], NOT by [`reconcile`] |
+//! | SQL `blocks` ITSELF against the Loro engine (#5628) | the live engine docs — not a SQL table | the per-op projections in `loro::projection` (`project_*_to_sql`) after every engine apply / the SQL-only fallbacks, which write SQL without the engine — audited by [`reconcile_engine`], NOT by [`reconcile`] |
+//! | `block_tag_inherited` (tag inheritance, #5628) | `blocks` — `parent_id`, `deleted_at` — **and** `block_tags` | the in-transaction arms of `tag_inheritance::apply_op_tag_inheritance`, the purge cascades, `loro_sync`'s post-import refresh / `rebuild_all` (the `RebuildTagInheritanceCache` task) — row membership in [`reconcile`], `inherited_from` in [`reconcile_block_tag_inherited_provenance`] only |
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
 //!
@@ -235,6 +240,11 @@ pub struct BaseBlock {
     /// The promoted TODO state. `Some("DONE")` takes a repeating block out of
     /// the projected agenda entirely.
     todo_state: Option<String>,
+    /// The promoted priority. Read only to compare against the engine.
+    priority: Option<String>,
+    /// The dense sibling rank the engine's tree order projects to. Read only
+    /// to compare against the engine.
+    position: Option<i64>,
 }
 
 /// One `attachments` row, reduced to the columns the blob store depends on.
@@ -255,7 +265,7 @@ async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
     // same way would make the oracle a copy of the code it audits.
     let rows = sqlx::query!(
         "SELECT id, parent_id, page_id, block_type, content, deleted_at, space_id, due_date, \
-         scheduled_date, todo_state FROM blocks"
+         scheduled_date, todo_state, priority, position FROM blocks"
     )
     .fetch_all(pool)
     .await?;
@@ -272,6 +282,8 @@ async fn dump_blocks(pool: &SqlitePool) -> Result<Vec<BaseBlock>, AppError> {
             due_date: r.due_date,
             scheduled_date: r.scheduled_date,
             todo_state: r.todo_state,
+            priority: r.priority,
+            position: r.position,
         })
         .collect())
 }
@@ -1590,6 +1602,506 @@ pub async fn reconcile_tags_cache(
         });
     }
 
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Artefact 14 — `block_tag_inherited`, materialised tag inheritance (#5628)
+// ---------------------------------------------------------------------------
+
+/// How many parents up a tag can reach a block. Production's walk seeds a
+/// tagger's children at depth 0 and recurses while `depth < 100`
+/// (`tag_inh_descendant_tags_full!`), so the farthest tagger sits 101 parents
+/// up. Real trees are far shallower (`MAX_BLOCK_DEPTH`); the bound only bites
+/// on a `parent_id` cycle, where it also ends the walk.
+const TAG_INHERITANCE_REACH: usize = 101;
+
+/// The `(block_id, tag_id) → inherited_from` map `block_tag_inherited` must
+/// hold.
+///
+/// Transcribed from the definition on `tag_inheritance::rebuild_all` — the
+/// arbiter every incremental maintainer converges on (#3876) — and folded
+/// UPWARD from each block in Rust rather than re-expressed as its recursive
+/// CTE:
+///
+/// * only explicit `block_tags` edges are sources; inline `block_tag_refs`
+///   never inherit;
+/// * a live block inherits every tag a STRICT ancestor holds, climbing
+///   through live blocks only — the climb stops at the first tombstone, so a
+///   tombstoned tagger is never a source either;
+/// * the NEAREST such ancestor is `inherited_from`;
+/// * a block that holds the tag itself still inherits it from above (#3876);
+/// * neither the tag block's liveness nor any `block_type` is consulted.
+///
+/// No `visited` set, deliberately: production's `UNION ALL` recursion walks a
+/// `parent_id` cycle until its depth cap, so a cycle member inherits even its
+/// own tag, and a climb capped at [`TAG_INHERITANCE_REACH`] does the same.
+fn fold_block_tag_inherited(
+    blocks: &[BaseBlock],
+    block_tags: &[(String, String)],
+) -> BTreeMap<(String, String), String> {
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+    let mut tags_held: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (block_id, tag_id) in block_tags {
+        tags_held
+            .entry(block_id.as_str())
+            .or_default()
+            .push(tag_id.as_str());
+    }
+
+    let mut out = BTreeMap::new();
+    for block in blocks.iter().filter(|b| b.deleted_at.is_none()) {
+        let mut parent_id = block.parent_id.as_deref();
+        for _ in 0..TAG_INHERITANCE_REACH {
+            let Some(ancestor) = parent_id.and_then(|p| by_id.get(p)) else {
+                break;
+            };
+            if ancestor.deleted_at.is_some() {
+                break;
+            }
+            for tag_id in tags_held.get(ancestor.id.as_str()).into_iter().flatten() {
+                out.entry((block.id.clone(), (*tag_id).to_owned()))
+                    .or_insert_with(|| ancestor.id.clone());
+            }
+            parent_id = ancestor.parent_id.as_deref();
+        }
+    }
+    out
+}
+
+/// [`fold_block_tag_inherited`] over the caller's `blocks` dump and a fresh
+/// `block_tags` read.
+pub async fn rebuild_block_tag_inherited_from_base(
+    pool: &SqlitePool,
+    blocks: &[BaseBlock],
+) -> Result<BTreeMap<(String, String), String>, AppError> {
+    Ok(fold_block_tag_inherited(
+        blocks,
+        &dump_block_tags(pool).await?,
+    ))
+}
+
+async fn dump_block_tag_inherited(
+    pool: &SqlitePool,
+) -> Result<BTreeMap<(String, String), String>, AppError> {
+    let rows = sqlx::query!("SELECT block_id, tag_id, inherited_from FROM block_tag_inherited")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ((r.block_id, r.tag_id), r.inherited_from))
+        .collect())
+}
+
+const BLOCK_TAG_INHERITED_OWNER: &str = "the in-transaction arms of \
+     tag_inheritance::apply_op_tag_inheritance (inherit_parent_tags on create, \
+     remove_subtree_inherited on delete, recompute_subtree_inheritance on move, restore and a \
+     page's space migration, propagate_tag_to_descendants / remove_inherited_tag on add / \
+     remove tag), the purge cascades and loro_sync's post-import refresh, backstopped by \
+     rebuild_all (the RebuildTagInheritanceCache task): tag filters and inherited-tag queries \
+     read this table, so a missing row hides a block from a filter that should match it";
+
+const BLOCK_TAG_INHERITED_PROVENANCE_OWNER: &str = "propagate_tag_to_descendants is a plain \
+     INSERT OR IGNORE, so tagging a nearer ancestor after a farther one keeps the farther one \
+     here until the RebuildTagInheritanceCache task add_tag enqueues has run (#2669); on a \
+     settled vault a mismatch is a maintainer that stored the wrong ancestor";
+
+/// `block_tag_inherited` MEMBERSHIP against the fold, both directions,
+/// MISSING first, each sorted by `(block, tag)`.
+///
+/// Membership only: every in-transaction arm must leave exactly these rows,
+/// so this belongs in the per-op gate. Provenance does not — see
+/// [`reconcile_block_tag_inherited_provenance`].
+fn diff_block_tag_inherited_rows(
+    expected: &BTreeMap<(String, String), String>,
+    stored: &BTreeMap<(String, String), String>,
+    out: &mut Vec<Divergence>,
+) {
+    for ((block_id, tag_id), inherited_from) in expected {
+        if stored.contains_key(&(block_id.clone(), tag_id.clone())) {
+            continue;
+        }
+        out.push(Divergence {
+            artefact: "block_tag_inherited.row",
+            key: format!("{block_id} -> {tag_id}"),
+            expected: format!(
+                "a row inherited from {inherited_from} (the nearest live ancestor holding the \
+                 tag, reached through live blocks)"
+            ),
+            actual: "no row in block_tag_inherited".to_owned(),
+            owner: BLOCK_TAG_INHERITED_OWNER,
+        });
+    }
+    for ((block_id, tag_id), inherited_from) in stored {
+        if expected.contains_key(&(block_id.clone(), tag_id.clone())) {
+            continue;
+        }
+        out.push(Divergence {
+            artefact: "block_tag_inherited.row",
+            key: format!("{block_id} -> {tag_id}"),
+            expected: "no row (the block is tombstoned, or no live ancestor reached through \
+                       live blocks holds the tag in block_tags)"
+                .to_owned(),
+            actual: format!("a row inherited from {inherited_from}"),
+            owner: BLOCK_TAG_INHERITED_OWNER,
+        });
+    }
+}
+
+/// `block_tag_inherited.inherited_from` against the fold, for the rows both
+/// sides hold.
+///
+/// Kept out of [`reconcile`]: `add_tag`'s in-transaction arm leaves a stale
+/// ancestor here by design and relies on the vault-wide rebuild it enqueues
+/// (#2669). Running that rebuild as a per-op settle would also repair every
+/// delete and restore a generated chain drives, which is what the gate exists
+/// to audit. A whole-vault run after the app has settled is the place for it.
+pub async fn reconcile_block_tag_inherited_provenance(
+    pool: &SqlitePool,
+    blocks: &[BaseBlock],
+) -> Result<Vec<Divergence>, AppError> {
+    let expected = rebuild_block_tag_inherited_from_base(pool, blocks).await?;
+    let stored = dump_block_tag_inherited(pool).await?;
+    Ok(expected
+        .iter()
+        .filter_map(|(key, want)| {
+            let got = stored.get(key)?;
+            (got != want).then(|| Divergence {
+                artefact: "block_tag_inherited.inherited_from",
+                key: format!("{} -> {}", key.0, key.1),
+                expected: want.clone(),
+                actual: got.clone(),
+                owner: BLOCK_TAG_INHERITED_PROVENANCE_OWNER,
+            })
+        })
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Artefact 15 — SQL `blocks` against the Loro engine (#5628)
+// ---------------------------------------------------------------------------
+
+/// The promoted property keys the engine holds like any other key, each with
+/// the divergence it reports as.
+const ENGINE_PROMOTED_COLUMNS: [(&str, &str); 4] = [
+    ("todo_state", "engine.blocks.todo_state"),
+    ("priority", "engine.blocks.priority"),
+    ("due_date", "engine.blocks.due_date"),
+    ("scheduled_date", "engine.blocks.scheduled_date"),
+];
+
+/// One engine node, reduced to the `blocks` columns the engine owns.
+struct EngineBlock {
+    block_type: String,
+    content: String,
+    parent_id: Option<String>,
+    /// Dense rank in the doc's tree order — the value SQL `position` projects.
+    position: i64,
+    /// [`ENGINE_PROMOTED_COLUMNS`] order.
+    promoted: [Option<String>; 4],
+    /// No `deleted_at` register on the node.
+    live: bool,
+}
+
+/// Every engine the registry holds, read without writing anything.
+#[derive(Default)]
+struct EngineView {
+    /// Keyed `(space_id, block_id)`.
+    blocks: BTreeMap<(String, String), EngineBlock>,
+    /// Every space with an engine, including empty ones: a block SQL places
+    /// in one of these must be in it.
+    spaces: BTreeSet<String>,
+}
+
+/// An engine property value as a promoted SQL column holds it. Transcribed
+/// from `PropertyValue::as_legacy_string`, which the SQL projection renders
+/// these four keys with and which is private to `agaric-engine`.
+fn engine_scalar(value: &agaric_engine::loro::engine::PropertyValue) -> Option<String> {
+    use agaric_engine::loro::engine::PropertyValue;
+    match value {
+        PropertyValue::Str(s) => Some(s.clone()),
+        PropertyValue::Num(n) => Some(n.to_string()),
+        PropertyValue::Bool(b) => Some(b.to_string()),
+        PropertyValue::Null => None,
+    }
+}
+
+/// Every node of one exported doc: the import-then-read that
+/// `db::recovery::reproject_space_from_engine` runs on a persisted snapshot,
+/// without its SQL writes.
+fn read_engine_space(bytes: &[u8]) -> Result<Vec<(String, EngineBlock)>, AppError> {
+    let mut engine = agaric_engine::loro::engine::LoroEngine::new();
+    engine.import(bytes)?;
+    let ids = engine.live_blocks_preorder();
+    let id_refs: Vec<&str> = ids.iter().map(agaric_core::ulid::BlockId::as_str).collect();
+    let cores = engine.read_blocks_bulk(&id_refs)?;
+    let mut out = Vec::with_capacity(id_refs.len());
+    for (block_id, core) in id_refs.into_iter().zip(cores) {
+        let core = core.ok_or_else(|| {
+            AppError::validation(format!("engine enumerates {block_id} but cannot read it"))
+        })?;
+        let properties = engine.read_all_properties_typed(block_id)?;
+        let promoted = ENGINE_PROMOTED_COLUMNS.map(|(key, _)| {
+            properties
+                .iter()
+                .find(|(k, _)| k == key)
+                .and_then(|(_, value)| engine_scalar(value))
+        });
+        out.push((
+            block_id.to_owned(),
+            EngineBlock {
+                block_type: core.block_type,
+                content: core.content,
+                parent_id: core.parent_id,
+                position: core.position,
+                promoted,
+                live: engine.read_deleted_at(block_id)?.is_none(),
+            },
+        ));
+    }
+    Ok(out)
+}
+
+/// Read every engine the registry holds.
+///
+/// The LIVE registry, exported doc by doc, not `loro_doc_state`: a persisted
+/// snapshot lags the engine by every op since the last snapshot pass, which
+/// would read as a divergence on every recent edit. `snapshot_all_engines`
+/// neither marks a space dirty nor creates an engine. A doc that cannot be
+/// exported or read fails the run, as a table the oracle cannot read does.
+fn read_engine_view(
+    state: &agaric_engine::loro::shared::LoroState,
+) -> Result<EngineView, AppError> {
+    let mut view = EngineView::default();
+    for (space_id, bytes) in state.registry.snapshot_all_engines() {
+        let space_id = space_id.as_str().to_owned();
+        for (block_id, block) in read_engine_space(&bytes?)? {
+            view.blocks.insert((space_id.clone(), block_id), block);
+        }
+        view.spaces.insert(space_id);
+    }
+    Ok(view)
+}
+
+const ENGINE_ROW_MISSING_OWNER: &str = "the block's ops took the SQL-only fallback \
+     (SqlOnlyFallbackReason::EngineMissingTarget, or SpaceUnresolved before its space \
+     resolved) and nothing replayed them into the engine: since #5418 a snapshot pass advances \
+     the apply cursor, so boot replays only the ops after it. The engine is what syncs and what \
+     an engine-first recovery reprojects, so this block reaches no peer and does not survive \
+     that recovery";
+
+const ENGINE_ROW_EXTRA_OWNER: &str = "a purge or projection cleared SQL without the engine, or \
+     an inbound import's projection never committed: a peer importing this doc, or an \
+     engine-first recovery, brings the block back";
+
+const ENGINE_COLUMN_OWNER: &str = "the per-op projections in agaric-engine's loro::projection \
+     (project_*_to_sql), which every apply path runs after the engine apply, and the SQL-only \
+     fallbacks that write SQL without the engine (a cross-space move, the #5418 replay \
+     window): SQL shows one value while the next sync merge and an engine-first recovery act \
+     on the engine's";
+
+const ENGINE_LIVENESS_OWNER: &str = "a delete that reached SQL but not the engine: the \
+     post-commit cohort fan-out (dispatch_delete_descendants) skipped or not yet run, or a \
+     delete replayed at boot that could not resolve its space (#5630). While it stands the \
+     #1257 freshness gate in loro_sync::prepare_outgoing refuses to export this space, so \
+     sync stops for it";
+
+/// Row membership in both directions: an engine node SQL has no row for, and
+/// a LIVE SQL block whose resolved space has a doc that lacks it. A block
+/// whose space resolves to nothing, or to a space with no engine, is expected
+/// in no doc; a tombstone is left out the way `resolve_block_space` leaves it
+/// out when routing an op.
+fn diff_engine_membership(
+    view: &EngineView,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+    out: &mut Vec<Divergence>,
+) {
+    for block_id in by_id.keys() {
+        let Some(space_id) = fold_block_space(by_id, block_id) else {
+            continue;
+        };
+        if !view.spaces.contains(&space_id)
+            || view
+                .blocks
+                .contains_key(&(space_id.clone(), (*block_id).to_owned()))
+        {
+            continue;
+        }
+        out.push(Divergence {
+            artefact: "engine.blocks.row",
+            key: format!("{space_id} / {block_id}"),
+            expected: format!("a node in space {space_id}'s engine"),
+            actual: "a live SQL row the engine does not hold".to_owned(),
+            owner: ENGINE_ROW_MISSING_OWNER,
+        });
+    }
+    for (space_id, block_id) in view.blocks.keys() {
+        if by_id.contains_key(block_id.as_str()) {
+            continue;
+        }
+        out.push(Divergence {
+            artefact: "engine.blocks.row",
+            key: format!("{space_id} / {block_id}"),
+            expected: "a blocks row (the engine holds the node)".to_owned(),
+            actual: "no row in blocks".to_owned(),
+            owner: ENGINE_ROW_EXTRA_OWNER,
+        });
+    }
+}
+
+/// Each block's 1-based place among the siblings BOTH sides hold under the
+/// same parent, as `(engine place, SQL place)`, keyed `(space, block)`.
+///
+/// Places, not rank values: a purge takes the node out of the engine tree
+/// and leaves its SQL siblings' ranks with a gap, which is the same order
+/// under other numbers — every reader orders by `(position, id)`. Siblings on
+/// one side only, or under another parent, are reported by the membership
+/// and `parent_id` arms and left out here so they do not shift every later
+/// sibling's place.
+fn sibling_places(
+    view: &EngineView,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+) -> BTreeMap<(String, String), (usize, usize)> {
+    type Sibling<'a> = (&'a str, i64, Option<i64>);
+    let mut groups: BTreeMap<(&str, Option<&str>), Vec<Sibling<'_>>> = BTreeMap::new();
+    for ((space_id, block_id), engine) in &view.blocks {
+        let Some(sql) = by_id.get(block_id.as_str()) else {
+            continue;
+        };
+        if sql.parent_id == engine.parent_id {
+            groups
+                .entry((space_id.as_str(), engine.parent_id.as_deref()))
+                .or_default()
+                .push((block_id.as_str(), engine.position, sql.position));
+        }
+    }
+    let mut places = BTreeMap::new();
+    for ((space_id, _), mut siblings) in groups {
+        siblings.sort_by_key(|&(id, engine_rank, _)| (engine_rank, id));
+        let engine_places: BTreeMap<&str, usize> = siblings
+            .iter()
+            .enumerate()
+            .map(|(place, &(id, _, _))| (id, place + 1))
+            .collect();
+        // SQLite's ascending `ORDER BY position` puts NULL first, as `None` sorts.
+        siblings.sort_by_key(|&(id, _, sql_position)| (sql_position, id));
+        for (place, &(id, _, _)) in siblings.iter().enumerate() {
+            places.insert(
+                (space_id.to_owned(), id.to_owned()),
+                (engine_places[id], place + 1),
+            );
+        }
+    }
+    places
+}
+
+/// Every engine-owned column of every node SQL also holds, then the one
+/// liveness direction production already requires to be empty (#1257).
+///
+/// `deleted_at` is not compared value for value: the register holds a delete
+/// seed on the import path but the whole cohort on the op path
+/// (`reproject_block_deleted_at_from_engine`), so only "live in the engine,
+/// deleted in SQL" is a defect on every path. SQL NULL content reads as the
+/// empty string the engine holds for it.
+fn diff_engine_columns(
+    view: &EngineView,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+    out: &mut Vec<Divergence>,
+) {
+    let places = sibling_places(view, by_id);
+    for ((space_id, block_id), engine) in &view.blocks {
+        let Some(sql) = by_id.get(block_id.as_str()) else {
+            continue;
+        };
+        let key = format!("{space_id} / {block_id}");
+        let mut differ = |artefact: &'static str, expected: String, actual: String, owner| {
+            if expected != actual {
+                out.push(Divergence {
+                    artefact,
+                    key: key.clone(),
+                    expected,
+                    actual,
+                    owner,
+                });
+            }
+        };
+        let sql_promoted = [
+            &sql.todo_state,
+            &sql.priority,
+            &sql.due_date,
+            &sql.scheduled_date,
+        ];
+        let o = ENGINE_COLUMN_OWNER;
+        differ(
+            "engine.blocks.block_type",
+            engine.block_type.clone(),
+            sql.block_type.clone(),
+            o,
+        );
+        differ(
+            "engine.blocks.content",
+            engine.content.clone(),
+            sql.content.clone().unwrap_or_default(),
+            o,
+        );
+        differ(
+            "engine.blocks.parent_id",
+            format!("{:?}", engine.parent_id),
+            format!("{:?}", sql.parent_id),
+            o,
+        );
+        if let Some((engine_place, sql_place)) = places.get(&(space_id.clone(), block_id.clone())) {
+            differ(
+                "engine.blocks.position",
+                format!("place {engine_place} among the siblings both sides hold"),
+                format!("place {sql_place} among the siblings both sides hold"),
+                o,
+            );
+        }
+        for ((_, artefact), (want, got)) in ENGINE_PROMOTED_COLUMNS
+            .iter()
+            .zip(engine.promoted.iter().zip(sql_promoted))
+        {
+            differ(artefact, format!("{want:?}"), format!("{got:?}"), o);
+        }
+        if let (true, Some(deleted_at)) = (engine.live, sql.deleted_at) {
+            out.push(Divergence {
+                artefact: "engine.blocks.deleted_at",
+                key,
+                expected: "live (the engine node carries no delete register)".to_owned(),
+                actual: format!("soft-deleted at {deleted_at}"),
+                owner: ENGINE_LIVENESS_OWNER,
+            });
+        }
+    }
+}
+
+/// SQL `blocks` against the Loro engine — the merge truth for text, the tree
+/// and typed scalar properties (AGENTS.md invariant 2). Every other artefact
+/// audits a cache against SQL base tables; this one audits the base table.
+///
+/// Compared: row membership, `block_type`, `content`, `parent_id`, sibling
+/// order (see [`sibling_places`]) and the four promoted property columns,
+/// plus "live in the engine, deleted in SQL". Not compared, each because a correct vault
+/// legitimately differs: the other `block_properties` rows (typed by
+/// `property_definitions`, and a dangling `value_ref` is dropped on purpose),
+/// `block_tags` (a purged tag's id stays in the engine's tag map), the
+/// reverse liveness direction (see [`diff_engine_columns`]), and page aliases
+/// (the lower page id holds a contested alias, #5387).
+///
+/// The engine side is read through the engine's own read API, the calls
+/// `db::recovery::reproject_space_from_engine` makes; none of the projection
+/// writers it audits runs. Divergences come back membership first, then
+/// columns, in a stable order.
+pub fn reconcile_engine(
+    state: &agaric_engine::loro::shared::LoroState,
+    blocks: &[BaseBlock],
+) -> Result<Vec<Divergence>, AppError> {
+    let view = read_engine_view(state)?;
+    let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
+    let mut out = Vec::new();
+    diff_engine_membership(&view, &by_id, &mut out);
+    diff_engine_columns(&view, &by_id, &mut out);
     Ok(out)
 }
 
@@ -3013,6 +3525,15 @@ pub async fn reconcile(
     let expected_fts = rebuild_fts_index_from_base(blocks);
     diff_fts_blocks(&expected_fts, &read_fts_blocks(pool).await?, &mut out);
 
+    // Artefact 14 (membership only), independent of `page_id` for the same
+    // reason: it folds `parent_id`, `deleted_at` and `block_tags`.
+    let expected_inherited = rebuild_block_tag_inherited_from_base(pool, blocks).await?;
+    diff_block_tag_inherited_rows(
+        &expected_inherited,
+        &dump_block_tag_inherited(pool).await?,
+        &mut out,
+    );
+
     Ok(out)
 }
 
@@ -3020,16 +3541,18 @@ pub async fn reconcile(
 /// behind `commands::reconciliation::compute_reconciliation_report` (#4886).
 ///
 /// [`reconcile`] is the per-op gate the drivers assert after every generated
-/// op. The seven artefacts it leaves out are triaged deep checks — see
+/// op. The artefacts it leaves out are triaged deep checks — see
 /// [`reconcile_block_links`] for the lane decision — whose MISSING arms can
 /// fire on eventual-consistency residue (a reindex not yet drained, a loss
 /// that predates #4118, the purge window) rather than on a defect. A
 /// whole-vault, user-triggered run IS the triage lane, so it runs all of them
 /// and lets the report carry the artefact name; the reader decides.
 ///
+/// `engines` is the live engine registry [`reconcile_engine`] reads.
+///
 /// `today` pins the projected-agenda rebuild. The caller records it in the
 /// report so a run that straddles local midnight is diagnosable rather than a
-/// phantom divergence. The order is [`reconcile`]'s, then the seven in the
+/// phantom divergence. The order is [`reconcile`]'s, then the rest in the
 /// order the header table lists them, so `first` stays deterministic.
 ///
 /// # One `blocks` dump, not one snapshot (#4901)
@@ -3037,8 +3560,8 @@ pub async fn reconcile(
 /// `blocks` is read once and every artefact folds that slice, so the
 /// `blocks`-derived expectations agree with each other and the sweep does not
 /// pull every row's `content` a dozen times. That is NOT snapshot isolation:
-/// `block_links`, `block_properties`, `block_tags`, `attachments` and every
-/// derived table are still read in their own autocommit statements, so a
+/// `block_links`, `block_properties`, `block_tags`, `attachments`, every
+/// derived table and the engine docs are still read on their own, so a
 /// write that lands between the dump and a later read still reports as a
 /// divergence a second run will not reproduce
 /// (`a_write_after_the_blocks_dump_still_reads_as_a_divergence_4901` pins
@@ -3047,6 +3570,7 @@ pub async fn reconcile(
 /// pool — not taken here.
 pub async fn reconcile_all(
     pool: &SqlitePool,
+    engines: &agaric_engine::loro::shared::LoroState,
     today: chrono::NaiveDate,
 ) -> Result<Vec<Divergence>, AppError> {
     let blocks = dump_blocks(pool).await?;
@@ -3058,6 +3582,8 @@ pub async fn reconcile_all(
     out.extend(reconcile_agenda_cache(pool, &blocks).await?);
     out.extend(reconcile_projected_agenda(pool, &blocks, today).await?);
     out.extend(reconcile_pages_cache_sort_keys(pool, &blocks).await?);
+    out.extend(reconcile_block_tag_inherited_provenance(pool, &blocks).await?);
+    out.extend(reconcile_engine(engines, &blocks)?);
     Ok(out)
 }
 

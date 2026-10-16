@@ -808,8 +808,9 @@ export const commands = {
 	 */
 	readLogsForReport: (redact: boolean) => typedError<LogFileEntry[], AppError>(__TAURI_INVOKE("read_logs_for_report", { redact })),
 	/**
-	 *  Tauri command: rebuild every derived artefact from base tables and report
-	 *  where the live vault disagrees. Reader pool; writes nothing.
+	 *  Tauri command: rebuild every derived artefact from base tables, compare
+	 *  `blocks` with the Loro engine, and report where the live vault disagrees.
+	 *  Reader pool and engine exports; writes nothing.
 	 */
 	computeReconciliationReport: () => typedError<ReconciliationReport, AppError>(__TAURI_INVOKE("compute_reconciliation_report")),
 	/**  Tauri command: return the current MCP RO status for the Settings tab. */
@@ -4232,8 +4233,8 @@ export type StatusInfo = {
 	 *  SQL-only projection, and — since #4472 — the post-commit engine
 	 *  fan-outs (`dispatch_delete_descendants` / `dispatch_unswept_cohort`)
 	 *  that skip a cohort member absent from the target space's engine. Both
-	 *  mean "this block is not represented in that space's engine; boot
-	 *  replay reconciles", which is why they share a counter; the two are
+	 *  mean "this block is not represented in that space's engine", which
+	 *  is why they share a counter; the two are
 	 *  still separable at triage by the `op` field — the in-tx recorders
 	 *  carry the op's own name (`delete_block`, `move_block`, …), and each
 	 *  fan-out carries a name unique to its site (`delete_block_cohort` for

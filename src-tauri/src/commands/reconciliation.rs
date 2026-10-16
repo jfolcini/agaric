@@ -4,10 +4,11 @@
 //! derived artefact, diffed against the incrementally-maintained state — at
 //! the live vault, and reports what diverged in a shape a user can paste into
 //! a bug report. Read-and-compare only: every read goes through the reader
-//! pool and nothing is written, so a divergence is data in the return value,
-//! never a panic and never a repair. Rebuilding every artefact whole-table is not
-//! a boot cost; this runs when the user asks (an opt-in setting, the follow-up
-//! commit), and the caller should let the app settle first — a run that
+//! pool or an export of the engines and nothing is written, so a divergence is
+//! data in the return value, never a panic and never a repair. Rebuilding every
+//! artefact whole-table is not a boot cost; this runs when the user asks (an
+//! opt-in setting, the follow-up commit), and the caller should let the app
+//! settle first — a run that
 //! overlaps a background rebuild or an inbound sync can see a state one
 //! maintainer has left and the next has not yet reached, which reads as a
 //! divergence a second run will not reproduce.
@@ -34,8 +35,10 @@ use tauri::State;
 use tracing::instrument;
 
 use crate::db::ReadPool;
+use crate::materializer::Materializer;
 use crate::reconciliation_oracle::{self, Divergence};
 use agaric_core::error::AppError;
+use agaric_engine::loro::shared::LoroState;
 
 use super::sanitize_internal_error;
 
@@ -102,19 +105,21 @@ fn group_by_artefact(divergences: &[Divergence]) -> Vec<ArtefactDivergences> {
     groups
 }
 
-/// Run every oracle artefact against `pool` and shape the result.
+/// Run every oracle artefact against `pool` and the engines in `engines`, and
+/// shape the result.
 ///
 /// `today` is the date the projected-agenda rebuild is pinned to; the wrapper
 /// passes the local clock, tests pass a constant.
-#[instrument(skip(pool), err)]
+#[instrument(skip(pool, engines), err)]
 pub async fn compute_reconciliation_report_inner(
     pool: &SqlitePool,
+    engines: &LoroState,
     today: chrono::NaiveDate,
 ) -> Result<ReconciliationReport, AppError> {
     let blocks_scanned: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
         .fetch_one(pool)
         .await?;
-    let divergences = reconciliation_oracle::reconcile_all(pool, today).await?;
+    let divergences = reconciliation_oracle::reconcile_all(pool, engines, today).await?;
     Ok(ReconciliationReport {
         blocks_scanned,
         today: today.format("%Y-%m-%d").to_string(),
@@ -123,17 +128,19 @@ pub async fn compute_reconciliation_report_inner(
     })
 }
 
-/// Tauri command: rebuild every derived artefact from base tables and report
-/// where the live vault disagrees. Reader pool; writes nothing.
+/// Tauri command: rebuild every derived artefact from base tables, compare
+/// `blocks` with the Loro engine, and report where the live vault disagrees.
+/// Reader pool and engine exports; writes nothing.
 #[tauri::command]
 #[specta::specta]
 pub async fn compute_reconciliation_report(
     pool: State<'_, ReadPool>,
+    materializer: State<'_, Materializer>,
 ) -> Result<ReconciliationReport, AppError> {
     // The clock production's `rebuild_projected_agenda_cache` reads, so the
     // rebuild is pinned to the same day the cache was built for.
     let today = chrono::Local::now().date_naive();
-    compute_reconciliation_report_inner(&pool.0, today)
+    compute_reconciliation_report_inner(&pool.0, materializer.loro_state(), today)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -143,7 +150,6 @@ mod tests {
     use super::*;
 
     use crate::commands::blocks::crud::create_block_inner;
-    use crate::materializer::Materializer;
     use agaric_core::ulid::BlockId;
     use tempfile::TempDir;
 
@@ -227,7 +233,7 @@ mod tests {
     async fn a_settled_vault_reports_no_divergences() {
         let (pool, _dir, mat, _page_id) = settled_vault().await;
 
-        let report = compute_reconciliation_report_inner(&pool, pinned_today())
+        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
             .await
             .expect("report");
 
@@ -253,7 +259,7 @@ mod tests {
         .await
         .expect("corrupt the count");
 
-        let report = compute_reconciliation_report_inner(&pool, pinned_today())
+        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
             .await
             .expect("report");
 
@@ -288,7 +294,7 @@ mod tests {
         .await
         .expect("corrupt the sort keys");
 
-        let report = compute_reconciliation_report_inner(&pool, pinned_today())
+        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
             .await
             .expect("report");
 
@@ -323,7 +329,7 @@ mod tests {
             .await
             .expect("corrupt the space");
 
-        let report = compute_reconciliation_report_inner(&pool, pinned_today())
+        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
             .await
             .expect("report");
 
@@ -335,6 +341,144 @@ mod tests {
                 sample_keys: vec![page_id],
             }],
             "the row in the wrong space, nothing else"
+        );
+        mat.shutdown();
+    }
+
+    /// A user space holding a page with four children, built through the
+    /// command path, so the engine and SQL hold what production writes.
+    /// Returns the space, the page and the children, in that order.
+    async fn vault_in_a_space() -> (SqlitePool, TempDir, Materializer, Vec<String>) {
+        let dir = TempDir::new().expect("tempdir");
+        let pool = crate::db::init_pool(&dir.path().join("engine.db"))
+            .await
+            .expect("init_pool");
+        let mat = Materializer::new(pool.clone());
+        mat.set_app_data_dir(dir.path().to_path_buf());
+        let space = crate::commands::spaces::create_space_inner(
+            &pool,
+            DEV,
+            &mat,
+            "Oracle space".to_owned(),
+            None,
+        )
+        .await
+        .expect("create space");
+        let page = crate::commands::spaces::create_page_in_space_inner(
+            &pool,
+            DEV,
+            &mat,
+            None,
+            "Engine page".to_owned(),
+            space.to_string(),
+        )
+        .await
+        .expect("create page");
+        let mut ids = vec![space.to_string(), page.to_string()];
+        for text in ["first child", "second child", "third child", "fourth child"] {
+            let child = create_block_inner(
+                &pool,
+                DEV,
+                &mat,
+                "content".to_owned(),
+                text.to_owned(),
+                Some(page.clone()),
+                None,
+            )
+            .await
+            .expect("create child");
+            ids.push(child.id.to_string());
+        }
+        mat.flush_background().await.expect("flush_background");
+        (pool, dir, mat, ids)
+    }
+
+    /// #5628 — `blocks` against the Loro engine on a vault the command path
+    /// built: it agrees as built, then each engine-owned column written behind
+    /// the engine's back reports as its own artefact, on its own block, and so
+    /// does a row on either side only.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sql_written_behind_the_engine_is_reported_per_column_5628() {
+        const SQL_ONLY: &str = "01SQLONLY56280000000000000";
+        let (pool, _dir, mat, ids) = vault_in_a_space().await;
+        let [space, page, first, second, third, fourth] = ids.as_slice() else {
+            panic!("the fixture returns six ids");
+        };
+
+        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
+            .await
+            .expect("report");
+        assert_eq!(
+            report.artefacts,
+            Vec::new(),
+            "a vault built through commands agrees with its engine and its caches"
+        );
+
+        // dynamic-sql: test-only writes behind the engine's back.
+        for (sql, binds) in [
+            (
+                "UPDATE blocks SET content = 'edited in SQL' WHERE id = ?",
+                vec![first.as_str()],
+            ),
+            (
+                "UPDATE blocks SET position = 9 WHERE id = ?",
+                vec![first.as_str()],
+            ),
+            (
+                "UPDATE blocks SET block_type = 'tag', parent_id = ?, deleted_at = 1 WHERE id = ?",
+                vec![first.as_str(), second.as_str()],
+            ),
+            // A rank gap with the order kept, as a purged sibling leaves: no divergence.
+            (
+                "UPDATE blocks SET priority = '1', position = position + 10 WHERE id = ?",
+                vec![page.as_str()],
+            ),
+            ("DELETE FROM blocks WHERE id = ?", vec![third.as_str()]),
+            (
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                 space_id) VALUES (?, 'content', 'SQL only', ?, 4, ?, ?)",
+                vec![SQL_ONLY, page.as_str(), page.as_str(), space.as_str()],
+            ),
+        ] {
+            let mut query = sqlx::query(sql);
+            for bind in binds {
+                query = query.bind(bind);
+            }
+            query.execute(&pool).await.expect("write behind the engine");
+        }
+
+        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
+            .await
+            .expect("report");
+        let mut engine: Vec<(String, Vec<String>)> = report
+            .artefacts
+            .into_iter()
+            .filter(|a| a.artefact.starts_with("engine."))
+            .map(|a| {
+                let mut keys = a.sample_keys;
+                keys.sort();
+                (a.artefact, keys)
+            })
+            .collect();
+        engine.sort();
+        let at = |ids: &[&str]| {
+            let mut keys: Vec<String> = ids.iter().map(|id| format!("{space} / {id}")).collect();
+            keys.sort();
+            keys
+        };
+        assert_eq!(
+            engine,
+            vec![
+                ("engine.blocks.block_type".to_owned(), at(&[second])),
+                ("engine.blocks.content".to_owned(), at(&[first])),
+                ("engine.blocks.deleted_at".to_owned(), at(&[second])),
+                ("engine.blocks.parent_id".to_owned(), at(&[second])),
+                ("engine.blocks.position".to_owned(), at(&[first, fourth])),
+                ("engine.blocks.priority".to_owned(), at(&[page])),
+                ("engine.blocks.row".to_owned(), at(&[SQL_ONLY, third])),
+            ],
+            "each column names its block, a reorder names both swapped siblings, and a \
+             rank gap that keeps the order names none"
         );
         mat.shutdown();
     }
@@ -351,7 +495,7 @@ mod tests {
             .await
             .expect("drop agenda_cache");
 
-        let err = compute_reconciliation_report_inner(&pool, pinned_today())
+        let err = compute_reconciliation_report_inner(&pool, &LoroState::new(), pinned_today())
             .await
             .expect_err("a missing derived table is an error, not zero divergences");
 

@@ -87,13 +87,15 @@ async fn resolve_op_space(
 ///
 /// In production both arms are unreachable on a well-formed, FULLY
 /// RECONCILED op log: space resolution succeeds on every well-formed op,
-/// and once boot-replay has reconciled the engine with SQL every target
-/// block is present in its space's tree. `EngineMissingTarget` is not
+/// and once every op has reached its engine every target block is present
+/// in its space's tree. `EngineMissingTarget` is not
 /// dead code, though — its real triggers are the #1257 reconciliation
 /// window (SQL has the row, the engine tree has not caught up yet) and
 /// cross-space moves, which a single-space engine mutation cannot
 /// represent; see [`super::sql_only_fallback`]'s module docs. Both stay
-/// soft: SQL is authoritative and boot-replay reconciles the engine.
+/// soft: SQL is authoritative, and since #5418 boot replay re-applies only
+/// the ops after the last snapshot pass, so the engine keeps its old state;
+/// the integrity check reports the gap.
 ///
 /// The SQL-only fallback also exists so that
 /// materializer / recovery / sync_daemon tests can thread synthetic
@@ -153,7 +155,8 @@ pub async fn apply_create_block_via_loro(
     // created before its `SetProperty(space)`) and so never entered the engine
     // — `apply_create_block` would silently drop the child to the engine root
     // (parent → None), diverging from SQL. Defer to the authoritative SQL
-    // projection instead and let boot-replay reconcile. (No parent ⇒ a
+    // projection instead; the engine stays without the child, which the
+    // integrity check reports. (No parent ⇒ a
     // top-level create, which needs no parent lookup.)
     let create_result: Option<(BlockSnapshot, Vec<String>)> = {
         let mut guard = state
@@ -260,7 +263,8 @@ pub async fn apply_edit_block_via_loro(
     // #2250 (#1257 reconciliation): if the block is absent from this space's
     // engine tree (projected SQL-only during a no-space window),
     // `apply_edit_via_diff_splice` would error. Fall back to the authoritative
-    // SQL projection (`None` below) and let boot-replay reconcile.
+    // SQL projection (`None` below); the integrity check reports the block
+    // missing from the engine.
     let snapshot: Option<BlockSnapshot> = {
         let mut guard = state
             .registry
@@ -396,7 +400,8 @@ pub async fn apply_set_property_via_loro(
     // would error.
     // (The #2326 create-then-`SetProperty(space)` case is handled by the space
     // branch above, which hydrates the subtree.) Fall back to the authoritative
-    // payload-keyed SQL projection and let boot-replay reconcile the engine.
+    // payload-keyed SQL projection; the integrity check reports the block
+    // missing from the engine.
     // Mirrors the block-absent guard in `apply_edit_block_via_loro` /
     // `apply_delete_block_via_loro` (same `EngineMissingTarget` reason, same
     // `record` call, same sql_only path).
@@ -637,7 +642,7 @@ async fn renest_page(
                 page_id,
                 parent_id,
                 "re-nest after a space-move undo: page or parent missing from the engine; \
-                 left at the root (boot replay reconciles)",
+                 left at the root (boot replay no longer re-applies this, #5418)",
             );
             return Ok(());
         }
@@ -840,8 +845,8 @@ fn seed_nodes_into_engine(
 /// When a page is created before its `SetProperty(space)` (the create-then-
 /// assign ordering, e.g. #2249), every block in its group is projected SQL-only
 /// during the no-space window and never enters any engine — so their later ops
-/// take the `EngineMissingTarget` fallback until a boot-replay reconciles the
-/// engine. This helper closes that window: as soon as the space is assigned we
+/// take the `EngineMissingTarget` fallback, and since #5418 boot replay does
+/// not re-apply them. This helper closes that window: as soon as the space is assigned we
 /// seed the whole subtree (tree nodes + properties + tags) into the per-space
 /// engine so subsequent ops route through the live engine path.
 ///
@@ -979,8 +984,8 @@ pub async fn apply_delete_block_via_loro(
     // #2250 (#1257 reconciliation): if the block was projected SQL-only during
     // a no-space window and never entered this space's engine,
     // `apply_delete_block` would error ("block not found"). Fall back to the
-    // authoritative SQL cascade for the tombstone; boot-replay reconciles the
-    // engine.
+    // authoritative SQL cascade for the tombstone; the integrity check
+    // reports the block missing from the engine.
     let engine_applied = {
         let mut guard = state
             .registry
@@ -1047,8 +1052,8 @@ fn move_block_in_engine(
     // engine) or (b) the move is cross-space (the target parent lives in
     // another space's tree). A single-engine `apply_move_block*` in either
     // case corrupts parent linkage (it drops the block to the root), so we
-    // fall back to the authoritative SQL projection below and let
-    // boot-replay reconcile the per-space engines.
+    // fall back to the authoritative SQL projection below; the engines keep
+    // the old placement, which the integrity check reports.
     let block_in_engine = engine.read_block(p.block_id.as_str())?.is_some();
     let parent_in_engine = match new_parent {
         Some(pid) => engine.read_block(pid)?.is_some(),

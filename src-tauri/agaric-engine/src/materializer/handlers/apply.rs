@@ -503,7 +503,8 @@ async fn fan_out_restore(
         Ok(p) => p,
         Err(e) => {
             // #2031: the SQL restore already committed but we cannot fan out to
-            // the engine — it stays divergent until boot replay reconciles.
+            // the engine — it stays divergent (boot replay no longer re-applies
+            // the op, #5418).
             // Meter the skip so it is observable.
             super::descendant_fanout_dropped::record();
             tracing::warn!(
@@ -602,7 +603,7 @@ async fn fan_out_restore(
 /// its dispatch, in which case the mirror is skipped for a block the engine now
 /// knows. That is not a new class: the whole post-commit fan-out is already
 /// non-atomic with respect to the engine (each `engine_apply` takes and
-/// releases the guard independently), and the next boot replay reconciles it.
+/// releases the guard independently); the integrity check reports what it leaves.
 /// Noted, not fixed.
 ///
 /// # Metering
@@ -964,8 +965,8 @@ pub(crate) async fn dispatch_unswept_cohort(
     // its dispatch, and the mirror is then skipped for a block the engine now
     // knows. The probe holds the guard across no `.await` and drops it before
     // `engine_apply` takes its own, so this adds no new class — the whole
-    // post-commit fan-out is already non-atomic w.r.t. the engine, and boot
-    // replay reconciles. Noted, not fixed. See #4473's analysis.
+    // post-commit fan-out is already non-atomic w.r.t. the engine, and the
+    // integrity check reports what it leaves. Noted, not fixed. See #4473's analysis.
     let absent = known_absent_from_engine(
         state,
         space_id,

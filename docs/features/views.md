@@ -133,7 +133,7 @@ Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed 
   - **Data** — import / export (see [import-export.md](import-export.md)), and *Open edit history*, which opens the History view.
 - **Help**
   - **Help** — *Report a bug*, debug mode, show the welcome tour again, update check.
-  - **App health** — the integrity check: *Run check* rebuilds every derived table from your notes and lists the rows that disagree. A bug report filed from Help afterwards carries the result, until you leave Settings. Materializer metrics follow it (see Status above). The tab's id is still `status`.
+  - **App health** — the integrity check: *Run check* rebuilds every derived table from your notes, compares your notes with the sync engine's copy, and lists the rows that disagree. A bug report filed from Help afterwards carries the result, until you leave Settings. Materializer metrics follow it (see Status above). The tab's id is still `status`.
 
 Tabs are deep-linkable via `?settings=<tab>` (parsed inside the Settings view itself, no router involved) and via `agaric://settings/<tab>`. The retired `history` id opens Data. The last-used tab persists in `localStorage`.
 
