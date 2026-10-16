@@ -47,6 +47,10 @@ async function children(
   return resp.items
 }
 
+async function childContents(page: Page, parentId: string): Promise<(string | null)[]> {
+  return (await children(page, parentId)).map((r) => r.content)
+}
+
 function row(page: Page, blockId: string): Locator {
   return page.locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`)
 }
@@ -55,7 +59,17 @@ function rowsWithText(page: Page, text: string): Locator {
   return page.locator('[data-testid="sortable-block"]').filter({ hasText: text })
 }
 
+/**
+ * The row's list item. A row off screen renders as a bare placeholder `<li>`
+ * with no `sortable-block` inside (useViewportObserver), and the days of a week
+ * do not all fit on screen, so this is the handle that exists either way.
+ */
+function rowSlot(page: Page, blockId: string): Locator {
+  return page.locator(`li[data-block-id="${blockId}"]`)
+}
+
 async function ctrlSelect(page: Page, blockId: string): Promise<void> {
+  await rowSlot(page, blockId).scrollIntoViewIfNeeded()
   await row(page, blockId)
     .locator('[data-testid="block-static"]')
     .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
@@ -67,12 +81,11 @@ async function ctrlSelect(page: Page, blockId: string): Promise<void> {
  * today's.
  */
 async function seedSecondDay(page: Page): Promise<{ otherBlock: string; otherFirst: boolean }> {
-  await expect(row(page, TODAY_BLOCK)).toBeVisible()
-  const days = page.locator('section[id^="journal-2"]')
-  const ids = await days.evaluateAll((els) => els.map((el) => el.id))
-  const todayId = await row(page, TODAY_BLOCK).evaluate(
+  const todayId = await rowSlot(page, TODAY_BLOCK).evaluate(
     (el) => el.closest('section[id^="journal-2"]')?.id ?? '',
   )
+  const days = page.locator('section[id^="journal-2"]')
+  const ids = await days.evaluateAll((els) => els.map((el) => el.id))
   const emptyDay = days.filter({ hasText: 'No blocks for' }).first()
   const otherId = (await emptyDay.getAttribute('id')) as string
   const otherDay = page.locator(`section[id="${otherId}"]`)
@@ -90,6 +103,20 @@ async function seedSecondDay(page: Page): Promise<{ otherBlock: string; otherFir
   return { otherBlock, otherFirst: ids.indexOf(otherId) < ids.indexOf(todayId) }
 }
 
+/**
+ * Seed the second day, then return both blocks in selection order. The second
+ * is the anchor, whose tree handles the chord.
+ */
+async function seedAndOrder(
+  page: Page,
+  laterFirst: boolean,
+): Promise<{ first: string; anchor: string; otherBlock: string; otherFirst: boolean }> {
+  const { otherBlock, otherFirst } = await seedSecondDay(page)
+  const [earlier, later] = otherFirst ? [otherBlock, TODAY_BLOCK] : [TODAY_BLOCK, otherBlock]
+  const [first, anchor] = laterFirst ? [later, earlier] : [earlier, later]
+  return { first, anchor, otherBlock, otherFirst }
+}
+
 test.describe('Week view: block clipboard across two days', () => {
   test.beforeEach(async ({ context, page }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
@@ -99,49 +126,56 @@ test.describe('Week view: block clipboard across two days', () => {
     await page.getByRole('tab', { name: 'Weekly view' }).click()
   })
 
-  test('copy puts both days on the clipboard, in day order', async ({ page }) => {
-    const { otherBlock, otherFirst } = await seedSecondDay(page)
-    const [earlier, later] = otherFirst ? [otherBlock, TODAY_BLOCK] : [TODAY_BLOCK, otherBlock]
-    await blurEditors(page)
-    // The later day holds the anchor (the last selected), so its tree handles
-    // the chord and must still put the earlier day first.
-    await ctrlSelect(page, earlier)
-    await ctrlSelect(page, later)
+  for (const laterFirst of [false, true]) {
+    const order = laterFirst ? 'later day selected first' : 'earlier day selected first'
 
-    await page.keyboard.press('Control+c')
-    await expect.poll(() => readClipboard(page)).toBe(dayOrder(otherFirst))
-  })
+    test(`copy puts both days on the clipboard, in day order (${order})`, async ({ page }) => {
+      const { first, anchor, otherFirst } = await seedAndOrder(page, laterFirst)
+      await blurEditors(page)
+      await ctrlSelect(page, first)
+      await ctrlSelect(page, anchor)
 
-  test('cut puts both days on the clipboard and removes both', async ({ page }) => {
-    const { otherBlock, otherFirst } = await seedSecondDay(page)
-    const otherPage = (await ipc<{ parent_id: string }>(page, 'get_block', { blockId: otherBlock }))
-      .parent_id
-    await blurEditors(page)
-    await ctrlSelect(page, TODAY_BLOCK)
-    await ctrlSelect(page, otherBlock)
+      await page.keyboard.press('Control+c')
+      await expect.poll(() => readClipboard(page)).toBe(dayOrder(otherFirst))
+    })
 
-    await page.keyboard.press('Control+x')
-    await expect.poll(() => readClipboard(page)).toBe(dayOrder(otherFirst))
-    await expect.poll(async () => (await children(page, otherPage)).length).toBe(0)
-    await expect
-      .poll(async () => (await children(page, TODAY_PAGE)).map((r) => r.id))
-      .not.toContain(TODAY_BLOCK)
-  })
+    test(`cut puts both days on the clipboard and removes both (${order})`, async ({ page }) => {
+      const { first, anchor, otherBlock, otherFirst } = await seedAndOrder(page, laterFirst)
+      const otherPage = (
+        await ipc<{ parent_id: string }>(page, 'get_block', { blockId: otherBlock })
+      ).parent_id
+      await blurEditors(page)
+      await ctrlSelect(page, first)
+      await ctrlSelect(page, anchor)
 
-  test('paste lands once, after the last selected block', async ({ page }) => {
-    const { otherBlock } = await seedSecondDay(page)
-    const otherPage = (await ipc<{ parent_id: string }>(page, 'get_block', { blockId: otherBlock }))
-      .parent_id
-    await ipc(page, 'plugin:clipboard-manager|write_text', { text: `- ${PASTED}\n` })
-    await blurEditors(page)
-    await ctrlSelect(page, TODAY_BLOCK)
-    await ctrlSelect(page, otherBlock)
+      await page.keyboard.press('Control+x')
+      await expect.poll(() => readClipboard(page)).toBe(dayOrder(otherFirst))
+      await expect.poll(async () => (await children(page, otherPage)).length).toBe(0)
+      await expect
+        .poll(async () => (await children(page, TODAY_PAGE)).map((r) => r.id))
+        .not.toContain(TODAY_BLOCK)
+    })
 
-    await page.keyboard.press('Control+v')
-    await expect
-      .poll(async () => (await children(page, otherPage)).map((r) => r.content))
-      .toEqual([OTHER_TEXT, PASTED])
-    expect((await children(page, TODAY_PAGE)).map((r) => r.content)).not.toContain(PASTED)
-    await expect(rowsWithText(page, PASTED)).toHaveCount(1)
-  })
+    test(`paste lands once, after the last selected block (${order})`, async ({ page }) => {
+      const { first, anchor, otherBlock } = await seedAndOrder(page, laterFirst)
+      const otherPage = (
+        await ipc<{ parent_id: string }>(page, 'get_block', { blockId: otherBlock })
+      ).parent_id
+      const [anchorPage, anchorText, restPage] =
+        anchor === TODAY_BLOCK
+          ? [TODAY_PAGE, TODAY_TEXT, otherPage]
+          : [otherPage, OTHER_TEXT, TODAY_PAGE]
+      const afterPaste = await childContents(page, anchorPage)
+      afterPaste.splice(afterPaste.indexOf(anchorText) + 1, 0, PASTED)
+      await ipc(page, 'plugin:clipboard-manager|write_text', { text: `- ${PASTED}\n` })
+      await blurEditors(page)
+      await ctrlSelect(page, first)
+      await ctrlSelect(page, anchor)
+
+      await page.keyboard.press('Control+v')
+      await expect.poll(() => childContents(page, anchorPage)).toEqual(afterPaste)
+      expect(await childContents(page, restPage)).not.toContain(PASTED)
+      await expect(rowsWithText(page, PASTED)).toHaveCount(1)
+    })
+  }
 })
