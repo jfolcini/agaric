@@ -93,6 +93,7 @@ assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob)); // tests
 - Created and last-edited times come from `ulid_created_ms_sql` / `last_edited_ms_sql` (`src-tauri/agaric-store/src/filters/primitive.rs`), never `MIN`/`MAX` over `op_log` alone: compaction deletes old ops.
 - An "empty" or "equal" predicate evaluated in both TS and SQL must agree. JS `.trim()` strips all Unicode whitespace; SQLite `TRIM(x)` strips only U+0020. Test a newline and an NBSP.
 - Emit events and channel sends through `crate::main_thread` (`emit`, `UiChannel`). An emit off the main thread deadlocks against an in-flight IPC; `clippy.toml` bans the direct calls, so never `#[expect]` that lint outside `main_thread.rs`.
+- An engine write that lands after COMMIT (the delete, restore and purge fan-outs) is listed in `op_log_head`'s doc (`src-tauri/agaric-engine/src/loro/snapshot.rs`). A new one joins that list, or runs only at boot before the periodic pass starts: a snapshot pass that reads the head between the commit and the engine write moves the cursor past an op the engine never got, and a crash then loses it.
 - Derived-row changes owe the checklist in [`src-tauri/agaric-engine/src/materializer/AGENTS.md`](../../agaric-engine/src/materializer/AGENTS.md).
 
 ## Boot-time repairs and sweeps
@@ -101,7 +102,7 @@ Precedents: `src-tauri/src/repair.rs` (driving `src-tauri/agaric-engine/src/repa
 
 - Each gets its own `CommandTx` with the engine rollback armed. A failure logs and rolls back that repair only; a boot-fatal transaction such as `bootstrap_spaces` is never shared.
 - Ops are appended under `Actor::Housekeeping`. Positional undo admits only `user` / `agent:%` origins, so the user's first Ctrl+Z after boot cannot revert a repair.
-- Every change is an op applied through `apply_op_projected`. A raw `UPDATE blocks` is undone by the next replay and diverges from peers.
+- Every change is an op applied through `apply_op_projected`. A raw `UPDATE blocks` never reaches the engine: peers never see it, a reprojection from the engine loses it, and boot replay does not heal it, since replay starts at the apply cursor, which the snapshot pass also advances.
 - A second run is a no-op, with a test: the selection is empty the second time, a marker gates a closed population (`repair_misfiled_tag_spaces`), or a cursor walks an open one (`sweep_leaked_empty_blocks`).
 
 ## Markdown export and import

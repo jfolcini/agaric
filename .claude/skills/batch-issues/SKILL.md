@@ -57,6 +57,7 @@ Each builder cell is a point on the Pareto frontier of [Artificial Analysis's In
 - **High risk pays for `xhigh`.** `max` is the last escalation, not a default, because its first token is slow.
 - **Sonnet `max` reviews high-risk diffs.** It is off the frontier on purpose: a second model, so builder and reviewer do not share blind spots, and Anthropic's strongest on Terminal-Bench.
 - **Haiku `high` does discovery**, the cheapest point that reads code reliably. Rerun on `sonnet` when its answer comes back thin or contradicts the code.
+- **Explore and Plan agents cannot write files** (they have no Write or Edit tool). Brief them to return the result in their final message, or use a general-purpose agent when a file must exist.
 
 Unsure: one row up. A builder that keeps failing is relaunched one step up the frontier (`sonnet` `high` → `opus` `high` → `opus` `xhigh` → `opus` `max`), not retried. Recheck the frontier when a model ships.
 

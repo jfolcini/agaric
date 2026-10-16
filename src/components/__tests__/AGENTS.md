@@ -63,7 +63,7 @@ it('has no a11y violations', async () => {
 })
 ```
 
-One audit per distinct visual state (focused / unfocused, open / closed). axe cannot see focus loss: every dialog, menu, or popover test that closes it (confirm, cancel, Escape) asserts `document.activeElement` is back on the trigger.
+One audit per distinct visual state (focused / unfocused, open / closed). axe cannot see focus loss: every dialog, menu, or popover test that closes it (confirm, cancel, Escape) asserts `document.activeElement` is back on the trigger. A dialog opened from a store or a shortcut has no `Dialog.Trigger`, so Radix returns focus to `<body>`: handle `onCloseAutoFocus` and focus the captured opener while focus is still on `<body>`, so a close that navigated keeps its focus (`CommandPalette.tsx`). The vitest DOM does not reproduce Radix's close-time focus, so pin it with `toBeFocused()` in Playwright.
 
 ## Mocking
 
