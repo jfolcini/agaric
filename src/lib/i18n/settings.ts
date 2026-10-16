@@ -220,7 +220,7 @@ export const settings: Record<string, string> = {
   'agentAccess.confirmDisconnectAction': 'Disconnect all',
   'agentAccess.rwToggleLabel': 'Read-write access',
   'agentAccess.rwToggleDescription':
-    'Let agents create, edit, tag, and delete blocks over a separate local socket. Every write is reversible from the activity feed.',
+    'Let agents read, search, create, edit, tag, and delete blocks over a separate local socket. Every write is reversible from the activity feed.',
   'agentAccess.rwToggleOnSuccess': 'Read-write agent access enabled',
   'agentAccess.rwToggleOffSuccess': 'Read-write agent access disabled',
   'agentAccess.rwSocketPathLabel': 'Read-write socket path',

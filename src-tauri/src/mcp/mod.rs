@@ -66,6 +66,37 @@ macro_rules! ids_and_tokens_primer {
     };
 }
 
+/// The read tools' rules, which both surfaces serve (#5379).
+macro_rules! read_tools_primer {
+    () => {
+        "Where ids come from:\n\
+         - spaces: `list_spaces`. Call it first.\n\
+         - pages and blocks: `list_pages`, `search`, `get_page`, `get_journal`, \
+         `list_journal`, `list_trash`.\n\
+         - tags: `list_tags`, one space at a time.\n\
+         Spaces: every tool but `list_spaces` and `list_property_defs` requires \
+         `space_id`; nothing defaults it. A call on a block or page in another space \
+         is refused.\n\
+         Dates are YYYY-MM-DD; `get_journal` also takes `today` or `yesterday`, on \
+         this device's clock.\n\
+         History: `page_history` and `block_history` show who changed what, and \
+         when.\n\
+         Long reads: `get_page`, `list_backlinks` and `get_page_markdown` stop at a \
+         size budget with `truncated: true`; pass `next_cursor` back as `cursor` to \
+         read on.\n\
+         Names: in a tool that takes `space_id`, a page or tag argument that is not \
+         a ULID is a page's title or alias, or a tag's name, in that space; \
+         `resolve` looks many up at once.\n\
+         Query: `query` filters one space's blocks with a `where` tree (its ids are \
+         ULIDs, not names), then sorts, groups (`group_by`) or counts (`aggregate`); \
+         its description has the grammar. E.g. LastEdited {spec: Range {start, end}}, \
+         DueDate {predicate: Between {from, to}}, HasProperty {key, predicate: Gt \
+         {value: {type: Num, value: 3}}}, State {values: [TODO]} with group_by \
+         {type: Page}. Tag matches attached tags, TagOrRef also inline #refs; neither \
+         matches inherited ones.\n"
+    };
+}
+
 /// Which MCP surface a serve loop / adapter instance fronts.
 ///
 /// #693 — the RO and RW sockets share the accept-loop and adapter
@@ -102,52 +133,21 @@ impl McpSurface {
                 "Agaric MCP read-only server: reads a local, block-based notes vault. \
                  Use tools/list for the tools.\n",
                 ids_and_tokens_primer!(),
-                "Where ids come from:\n\
-                 - spaces: `list_spaces`. Call it first.\n\
-                 - pages and blocks: `list_pages`, `search`, `get_page`, `get_journal`, \
-                 `list_journal`, `list_trash`.\n\
-                 - tags: `list_tags`, one space at a time.\n\
-                 Spaces: every tool but `list_spaces` and `list_property_defs` requires \
-                 `space_id`; nothing defaults it. A read of a block or page in another space \
-                 is refused.\n\
-                 Dates are YYYY-MM-DD; `get_journal` also takes `today` or `yesterday`, on \
-                 this device's clock.\n\
-                 History: `page_history` and `block_history` show who changed what, and \
-                 when.\n\
-                 Long reads: `get_page`, `list_backlinks` and `get_page_markdown` stop at a \
-                 size budget with `truncated: true`; pass `next_cursor` back as `cursor` to \
-                 read on.\n\
-                 Names: in a tool that takes `space_id`, a page or tag argument that is not \
-                 a ULID is a page's title or alias, or a tag's name, in that space; \
-                 `resolve` looks many up at once.\n\
-                 Query: `query` filters one space's blocks with a `where` tree (its ids are \
-                 ULIDs, not names), then sorts, groups (`group_by`) or counts (`aggregate`); \
-                 its description has the grammar. E.g. LastEdited {spec: Range {start, end}}, \
-                 DueDate {predicate: Between {from, to}}, HasProperty {key, predicate: Gt \
-                 {value: {type: Num, value: 3}}}, State {values: [TODO]} with group_by \
-                 {type: Page}. Tag matches attached tags, TagOrRef also inline #refs; neither \
-                 matches inherited ones.\n",
+                read_tools_primer!(),
             ),
             McpSurface::ReadWrite => concat!(
-                "Agaric MCP read-write server: writes to a local, block-based notes vault. \
-                 Use tools/list for the tools. Every mutation is recorded in the \
+                "Agaric MCP read-write server: reads and writes a local, block-based notes \
+                 vault. Use tools/list for the tools. Every mutation is recorded in the \
                  user-visible activity feed and is reversible from the app.\n",
                 ids_and_tokens_primer!(),
-                "Where ids come from:\n\
-                 - spaces: `list_spaces`. Call it first.\n\
-                 - pages, blocks and tags: the other Agaric MCP server's `list_pages`, \
-                 `search` and `list_tags`; a write that creates blocks returns them with \
-                 their ids.\n\
-                 Spaces: every tool but `list_spaces` requires `space_id`; nothing defaults \
-                 it. A write to an existing block in another space is refused.\n\
-                 Dates are YYYY-MM-DD; `capture` also takes `today` or `yesterday`, on this \
-                 device's clock.\n\
+                read_tools_primer!(),
+                "Writes: a write that creates blocks returns them with their ids. `capture` \
+                 also takes `today` or `yesterday` as its date.\n\
                  Undo: a write that changed something returns `op_refs`; pass them to \
                  `undo` to revert it. `delete_block` is a soft delete that `restore_block` \
                  reverses.\n\
-                 Names: a page or tag argument that is not a ULID is a page's title or alias, \
-                 or a tag's name, in the call's space. In written content, `[[Name]]` and \
-                 `#name` link the page or tag of that name, creating it when none matches.\n",
+                 In written content, `[[Name]]` and `#name` link the page or tag of that \
+                 name, creating it when none matches.\n",
             ),
         }
     }
@@ -1071,8 +1071,7 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
 ///
 /// Mirrors [`spawn_mcp_ro_task`] but reads the RW marker
 /// ([`MCP_RW_ENABLED_MARKER`]) and builds a [`tools_rw::ReadWriteTools`]
-/// registry bound to the **writer** pool — every RW tool but `list_spaces`
-/// mutates; `list_spaces` reads `read_pool`.
+/// registry: its write tools use `write_pool`, its read tools `read_pool`.
 ///
 /// When the marker is absent, logs at info level and returns. When the
 /// socket is already bound by another instance, logs at warn level and

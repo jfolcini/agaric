@@ -66,9 +66,9 @@ When `mcp_disconnect_all` fires mid-call, `run_connection` gives the in-flight c
 ## Read-only vs read-write surfaces
 
 - `tools_ro.rs` mounts on the RO socket / pipe: search, list, fetch.
-- `tools_rw.rs` mounts on the RW socket / pipe: create, update, delete, tag, move to space, ….
+- `tools_rw.rs` mounts on the RW socket / pipe: create, update, delete, tag, move to space, …, then every `tools_ro` tool through the `ReadOnlyTools` it holds. A read tool is added to `tools_ro.rs` only.
 
-Separate sockets let an agent connect to RO only and let the user disable RW independently (`McpLifecycle::enabled`). A read-only tool that needs to write belongs on the RW surface; do not add a mutation path to RO beyond the one carve-out below.
+Separate sockets let an agent connect to RO only and let the user disable RW independently (`McpLifecycle::enabled`). RW is a superset, so disabling RO does not stop an RW client reading. A read-only tool that needs to write belongs on the RW surface; do not add a mutation path to RO beyond the one carve-out below.
 
 ### `journal_for_date` — bounded create carve-out (#2719)
 

@@ -60,42 +60,51 @@ async fn settle(mat: &Materializer) {
 // list_tools — snapshot of the wire contract
 // -------------------------------------------------------------------
 
+/// The write tools in their order, then every read-only tool in RO's order,
+/// each name once (#5379).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_tools_advertises_the_rw_tools() {
     let (tools, _mat, _pool, _space, _dir) = mk_tools().await;
     let descs = tools.list_tools();
     let names: Vec<&str> = descs.iter().map(|d| d.name.as_str()).collect();
+    let ro = crate::mcp::tools_ro::list_tool_descriptions();
+    let mut expected = vec![
+        "append_block",
+        "update_block_content",
+        "set_property",
+        "add_tag",
+        "create_page",
+        "delete_block",
+        "append_markdown",
+        "move_page_to_space",
+        "create_tag",
+        "delete_property",
+        "undo",
+        "capture",
+        "move_blocks",
+        "remove_tag",
+        "restore_block",
+        "batch",
+        "edit_page_markdown",
+        "set_page_aliases",
+    ];
+    expected.extend(ro.iter().map(|d| d.name.as_str()));
     assert_eq!(
-        names,
-        vec![
-            "append_block",
-            "update_block_content",
-            "set_property",
-            "add_tag",
-            "create_page",
-            "delete_block",
-            "list_spaces",
-            "append_markdown",
-            "move_page_to_space",
-            "create_tag",
-            "delete_property",
-            "undo",
-            "capture",
-            "move_blocks",
-            "remove_tag",
-            "restore_block",
-            "batch",
-            "edit_page_markdown",
-            "set_page_aliases",
-        ],
-        "tool order is part of the wire contract — do not re-order; new tools are appended",
+        names, expected,
+        "tool order is part of the wire contract: write tools, then the read-only ones",
+    );
+    let unique: std::collections::HashSet<&str> = names.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        names.len(),
+        "a tool is listed twice: {names:?}"
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn snapshot_tool_descriptions() {
-    let (tools, _mat, _pool, _space, _dir) = mk_tools().await;
-    let descs = tools.list_tools();
+#[test]
+fn snapshot_tool_descriptions() {
+    // The read tools' descriptions are `tools_ro`'s snapshot.
+    let descs = write_tool_descriptions();
     let wire: Value = serde_json::to_value(&descs).unwrap();
     insta::assert_yaml_snapshot!("tool_descriptions_rw", wire);
 }
@@ -1125,69 +1134,6 @@ async fn list_spaces_happy_path_returns_spaces_with_default_flag() {
         .await
         .expect("a list_spaces id must satisfy a space_id-requiring RW tool");
     assert_eq!(page["block_type"], "page");
-}
-
-/// #2728 error path: strict boundary — unknown fields are rejected with a
-/// Validation error (→ -32602), same as every other RW tool.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_spaces_rw_rejects_unknown_field() {
-    let (tools, _mat, _pool, _space, _dir) = mk_tools().await;
-    let err = tools
-        .call_tool("list_spaces", json!({"bogus": 1}), &test_ctx_agent())
-        .await
-        .expect_err("must reject unknown field");
-    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
-}
-
-/// #2728: `list_spaces` on the RW registry must remain a PURE READ —
-/// unlike every other tool in this file it must not append any `op_log` /
-/// `blocks` row and must not emit `blocks:changed` /
-/// `block:properties-changed` (every mutating RW tool emits at least one
-/// of those after it commits; see the `#2505` tests above).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_spaces_rw_performs_no_mutation() {
-    let (tools, mat, pool, _space, emitter, _dir) = mk_tools_recording().await;
-    settle(&mat).await;
-
-    let blocks_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let ops_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-
-    tools
-        .call_tool("list_spaces", json!({}), &test_ctx_agent())
-        .await
-        .expect("list_spaces happy path");
-
-    let blocks_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let ops_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-
-    assert_eq!(
-        blocks_before, blocks_after,
-        "list_spaces must not write any block row",
-    );
-    assert_eq!(
-        ops_before, ops_after,
-        "list_spaces must not append any op_log row",
-    );
-    assert!(
-        emitter.blocks_changed().is_empty(),
-        "list_spaces must not emit blocks:changed (pure read)",
-    );
-    assert!(
-        emitter.property_changed().is_empty(),
-        "list_spaces must not emit block:properties-changed (pure read)",
-    );
 }
 
 // -------------------------------------------------------------------
@@ -3482,6 +3428,103 @@ async fn list_spaces_answers_while_the_writers_are_busy_5402() {
         .map(|s| s["id"].as_str().unwrap())
         .collect();
     assert!(ids.contains(&space.as_str()), "got {spaces}");
+}
+
+/// A read tool on RW is RO's handler: the same call returns the same JSON on
+/// both registries (#5379).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reads_through_rw_match_ro_5379() {
+    let (rw, mat, pool, space, _dir) = mk_tools().await;
+    let ro = crate::mcp::tools_ro::ReadOnlyTools::new(
+        pool.clone(),
+        pool.clone(),
+        mat.clone(),
+        DEV.to_string(),
+    );
+    let page = mk_page(&pool, &mat, &space, "Haystack").await;
+    mk_child_of(&pool, &mat, &page, "needle in the haystack").await;
+    settle(&mat).await;
+
+    for (tool, args) in [
+        ("get_page", json!({"page_id": page, "space_id": space})),
+        ("search", json!({"query": "needle", "space_id": space})),
+    ] {
+        let via_rw = rw
+            .call_tool(tool, args.clone(), &test_ctx_agent())
+            .await
+            .unwrap_or_else(|e| panic!("{tool} on RW: {e:?}"));
+        let via_ro = ro
+            .call_tool(tool, args, &test_ctx_agent())
+            .await
+            .unwrap_or_else(|e| panic!("{tool} on RO: {e:?}"));
+        assert_eq!(via_rw, via_ro, "{tool} differs between RW and RO");
+        if tool == "search" {
+            assert_eq!(
+                via_rw["items"].as_array().map(Vec::len),
+                Some(1),
+                "got {via_rw}"
+            );
+        }
+    }
+}
+
+/// On split pools, a block RW writes is readable through RW's read tools
+/// straight after (#5379).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rw_reads_its_own_write_5379() {
+    let dir = TempDir::new().unwrap();
+    let pools = crate::db::init_pools(&dir.path().join("split.db"))
+        .await
+        .unwrap();
+    let mat = Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+    let tools = ReadWriteTools::new(
+        pools.write.clone(),
+        pools.read.clone(),
+        mat.clone(),
+        DEV.to_string(),
+    );
+    let space = mk_space(&pools.write, "Readable").await;
+    let page = mk_page(&pools.write, &mat, &space, "Page").await;
+    settle(&mat).await;
+
+    let written = tools
+        .call_tool(
+            "append_block",
+            json!({"parent_id": page, "content": "written by RW", "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("append_block");
+    let read = tools
+        .call_tool(
+            "get_block",
+            json!({"block_id": written["id"], "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("get_block on RW");
+    assert_eq!(read["content"], "written by RW");
+}
+
+/// A journal page `journal_for_date` creates on RW reaches open views, as it
+/// does on RO (#5379, #5314).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn journal_for_date_on_rw_notifies_open_views_5379() {
+    let (tools, _mat, _pool, space, emitter, _dir) = mk_tools_recording().await;
+    let date = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
+    let created = tools
+        .call_tool(
+            "journal_for_date",
+            json!({"date": date, "space_id": space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("journal_for_date on RW");
+    let page_id = created["id"].as_str().expect("id present").to_string();
+    assert_eq!(emitter.blocks_changed(), vec![vec![page_id]]);
 }
 
 // -------------------------------------------------------------------
