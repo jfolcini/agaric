@@ -11,7 +11,8 @@
  *
  * Also pins: a failed lookup IPC settles as unresolved (conservative —
  * Empty results beat unfiltered ones), the space-switch cache drop still
- * re-resolves, and a tag name change re-resolves unknown names (#5255).
+ * re-resolves, and a tag name change re-resolves unknown names (#5255),
+ * including one whose lookup is still in flight when the change lands.
  *
  * NOTE: `tagNames` props are module-level constants — the resolve
  * effect's dep array includes `tagNames`, so an inline literal would
@@ -225,6 +226,67 @@ describe('useTagResolution', () => {
 
     act(() => {
       publish()
+    })
+
+    await waitFor(() => {
+      expect(result.current).toEqual({ tagIds: ['TAG_TYPO'], pending: false, hasUnresolved: false })
+    })
+  })
+
+  // #5255 — a pull invalidates twice: on `sync:complete`, before the tags_cache
+  // rebuild commits, and on `blocks:changed`, after it. The first re-lookup can
+  // read the pre-rebuild list, so its answer must not stand when the second
+  // invalidation lands while it is still in flight.
+  async function settleTypoAsUnknownThenHoldItsReLookup() {
+    mockedListTags.mockResolvedValue([])
+    const { result } = renderHook(() => useTagResolution(TYPO, 'SPACE_A'))
+    await waitFor(() => {
+      expect(result.current.hasUnresolved).toBe(true)
+    })
+    const settledCallCount = mockedListTags.mock.calls.length
+    let answerPreRebuild!: (tags: TagCacheRow[]) => void
+    mockedListTags.mockReturnValueOnce(
+      new Promise<TagCacheRow[]>((resolve) => {
+        answerPreRebuild = resolve
+      }),
+    )
+    act(() => {
+      invalidateNameCaches()
+    })
+    await waitFor(() => {
+      expect(mockedListTags).toHaveBeenCalledTimes(settledCallCount + 1)
+    })
+    return { result, answerPreRebuild }
+  }
+
+  const typoTag = makeTag({ tag_id: 'TAG_TYPO', name: 'typo' })
+
+  it('re-resolves when a name change lands while the previous re-lookup is in flight', async () => {
+    const { result, answerPreRebuild } = await settleTypoAsUnknownThenHoldItsReLookup()
+    mockedListTags.mockResolvedValue([typoTag])
+
+    act(() => {
+      invalidateNameCaches()
+    })
+    await act(async () => {
+      answerPreRebuild([])
+    })
+
+    await waitFor(() => {
+      expect(result.current).toEqual({ tagIds: ['TAG_TYPO'], pending: false, hasUnresolved: false })
+    })
+  })
+
+  it('re-resolves when a name change lands after the previous re-lookup settled', async () => {
+    const { result, answerPreRebuild } = await settleTypoAsUnknownThenHoldItsReLookup()
+    await act(async () => {
+      answerPreRebuild([])
+    })
+    expect(result.current.hasUnresolved).toBe(true)
+    mockedListTags.mockResolvedValue([typoTag])
+
+    act(() => {
+      invalidateNameCaches()
     })
 
     await waitFor(() => {

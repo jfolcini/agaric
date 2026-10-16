@@ -50,6 +50,11 @@ export function useTagResolution(
   // lowercased name → tag id, or `null` when the lookup settled with no
   // exact match (#717 — "attempted, definitively unresolved").
   const [tagNameMap, setTagNameMap] = useState<Map<string, string | null>>(new Map())
+  // #5255 — bumped by the name-change subscriber below. A lookup in flight
+  // when a name change lands caches nothing for that subscriber to drop, and
+  // may have read the tag list before the change committed: re-running the
+  // resolve effect cancels it and asks again.
+  const [reloadKey, setReloadKey] = useState(0)
 
   const resolution = useMemo<TagResolution>(() => {
     const tagIds: string[] = []
@@ -109,7 +114,7 @@ export function useTagResolution(
     return () => {
       cancelled = true
     }
-  }, [tagNames, tagNameMap, currentSpaceId])
+  }, [tagNames, tagNameMap, currentSpaceId, reloadKey])
 
   // Drop the space-scoped cache on space switch. The functional
   // bail-out keeps the Map identity when it is already empty, so the
@@ -131,6 +136,7 @@ export function useTagResolution(
         const mayNameUnknownTag =
           change.kind === 'invalidated' || (change.entity === 'tag' && change.kind !== 'removed')
         if (!mayNameUnknownTag) return
+        setReloadKey((key) => key + 1)
         setTagNameMap((prev) => {
           const resolvedOnly = new Map([...prev].filter(([, id]) => id !== null))
           return resolvedOnly.size === prev.size ? prev : resolvedOnly
