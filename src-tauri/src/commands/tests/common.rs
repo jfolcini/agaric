@@ -7,7 +7,7 @@ use agaric_core::ulid::BlockId;
 // `tests/commands/prelude.rs` by the moved command suites (#4499 phase 0d).
 pub use agaric_store::space::{SpaceId, SpaceScope};
 use sqlx::SqlitePool;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 // -- Deterministic test fixtures --
@@ -41,6 +41,31 @@ pub async fn test_pool() -> (SqlitePool, TempDir) {
     let db_path: PathBuf = dir.path().join("test.db");
     let pool = init_pool(&db_path).await.unwrap();
     (pool, dir)
+}
+
+/// A fresh database of its own at `db_path`, opened by `init_pool`, for a
+/// test that builds many pools: migrating is most of what a pool costs, so
+/// this process migrates once and every call starts from a copy of that.
+/// `init_pool` still runs on the copy and applies anything missing.
+pub async fn init_pool_from_template(db_path: &Path) -> SqlitePool {
+    static MIGRATED: tokio::sync::OnceCell<Vec<u8>> = tokio::sync::OnceCell::const_new();
+    let template = MIGRATED
+        .get_or_init(|| async {
+            let dir = TempDir::new().unwrap();
+            let pool = init_pool(&dir.path().join("template.db")).await.unwrap();
+            // Not a copy of `template.db`: migrated pages may still sit in its WAL.
+            let snapshot = dir.path().join("snapshot.db");
+            sqlx::query("VACUUM INTO ?")
+                .bind(snapshot.to_str().expect("temp path is UTF-8"))
+                .execute(&pool)
+                .await
+                .unwrap();
+            pool.close().await;
+            std::fs::read(&snapshot).unwrap()
+        })
+        .await;
+    std::fs::write(db_path, template).unwrap();
+    init_pool(db_path).await.unwrap()
 }
 
 /// Insert a block directly into the blocks table (bypasses command layer).
@@ -291,4 +316,31 @@ pub async fn live_children(pool: &SqlitePool, parent: &BlockId) -> Vec<String> {
     .fetch_all(pool)
     .await
     .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A row written through one caller's pool, before the next caller's pool
+    /// exists, is absent from it: no two callers share a database, and the
+    /// template is never a database a caller writes to.
+    #[tokio::test]
+    async fn init_pool_from_template_gives_each_caller_its_own_database() {
+        const BLOCK: &str = "01HZ0000000000000000000001";
+        let dir = TempDir::new().unwrap();
+        let first = init_pool_from_template(&dir.path().join("first.db")).await;
+        insert_block(&first, BLOCK, "page", "first", None, None).await;
+
+        let second = init_pool_from_template(&dir.path().join("second.db")).await;
+        let seen: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(BLOCK)
+            .fetch_one(&second)
+            .await
+            .unwrap();
+        assert_eq!(
+            seen, 0,
+            "the second pool must not see a block written through the first"
+        );
+    }
 }

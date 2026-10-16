@@ -7897,15 +7897,16 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
 /// the responder's `LoroSync` blew the initiator's `recv_json` cap,
 /// every session failed, and the scheduler retried forever.
 ///
-/// This test seeds the responder with one block holding ~4 MB of
-/// incompressible content (asserting the premise: the exported
-/// snapshot really is over `LORO_INLINE_MAX_BYTES`), drives a full
+/// This test seeds the responder with one block holding incompressible
+/// content 10% over `LORO_INLINE_MAX_BYTES` (asserting the premise: the
+/// exported snapshot really is over it), drives a full
 /// session through the REAL `handle_incoming_sync` responder over a
 /// QUIC pair (so the production send path runs — since #3464 an
 /// over-threshold payload rides one frame rather than the retired
 /// chunked encoding), pumps the initiator via the same helpers
 /// `run_sync_session` uses, and asserts the session completes and the
-/// 4 MB block lands in the initiator's DB byte-for-byte.
+/// block lands in the initiator's DB byte-for-byte. Its cost grows with
+/// the content, so the content is sized from the threshold.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
     use crate::sync_constants::LORO_INLINE_MAX_BYTES;
@@ -7916,13 +7917,13 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
     const BLOCK: &str = "01HZ611BLKXXXXXXXXXXXXXXXX";
     let space = agaric_store::space::SpaceId::from_trusted("01HZ611SPACEXXXXXXXXXXXXXX");
 
-    // ~4 MB of LCG-generated printable ASCII — high-entropy enough
+    // LCG-generated printable ASCII — high-entropy enough
     // that Loro's snapshot encoding cannot compress it back under the
     // inline threshold (the premise assert below verifies, so a future
     // Loro compression change fails loudly instead of silently
     // downgrading this test to the inline path).
     let big_content: String = {
-        let target = 4_000_000usize;
+        let target = LORO_INLINE_MAX_BYTES + LORO_INLINE_MAX_BYTES / 10;
         let mut s = String::with_capacity(target);
         let mut x: u32 = 0x2545_F491;
         while s.len() < target {
@@ -7956,7 +7957,7 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
     )
     .await;
     // Drain the materializer's background queue (search-index etc. for
-    // the 4 MB block) BEFORE the session: its write transactions are
+    // the oversized block) BEFORE the session: its write transactions are
     // long at this content size and would contend with the session's
     // `BEGIN IMMEDIATE` bookkeeping ("database is locked").
     resp_mat.flush_background().await.unwrap();
@@ -8071,7 +8072,7 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
         "responder must complete the oversized-snapshot session, got {resp_result:?}"
     );
 
-    // ── The 4 MB block landed on the initiator byte-for-byte ─────────
+    // ── The oversized block landed on the initiator byte-for-byte ────
     let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
         .bind(BLOCK)
         .fetch_optional(&init_pool)
