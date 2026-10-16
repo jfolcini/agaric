@@ -80,6 +80,12 @@ const DRIFT_SKIP = new Set<string>([
   // independently-deleted descendant. The `cascade_delete_subtree` and
   // `restore_after_cascade_independent_child` fixtures are therefore no longer
   // skipped and now assert mock == backend.
+  //
+  // DRIFT(#763), decided in #5071: the markdown and bibliography grammar has
+  // one implementation, in Rust, and the mock's importers are deliberate
+  // approximations of it (`handlers/pages.ts`), so this fixture pins the
+  // backend alone.
+  'markdown_imports',
 ])
 
 /**
@@ -115,8 +121,7 @@ const DRIFT_SKIP = new Set<string>([
  */
 const QUERY_DRIFT_SKIP = new Set<string>([
   // #3826 found four READ divergences and filed them rather than accommodating
-  // them; #3870 / #3871 / #3872 / #3873 fixed all four in the MOCK, so this set
-  // is now empty and every query fixture in the tree asserts mock == backend:
+  // them; #3870 / #3871 / #3872 / #3873 fixed all four in the MOCK:
   //   - #3870 `list_blocks` honours `limit` + the `(position, id)` keyset
   //     cursor (`query_list_blocks_pagination`),
   //   - #3871 the mock derives `block_tag_inherited` (`query_inherited_tags`),
@@ -125,6 +130,13 @@ const QUERY_DRIFT_SKIP = new Set<string>([
   //   - #3873 `list_tags_for_block` sorts by tag id, so
   //     `query_point_reads_tags`'s `tags_two_surviving_in_id_order` step pins
   //     the sequence (every step does, since #4670).
+  //
+  // DRIFT(#763), decided in #5071, and not a divergence to fix: the markdown
+  // grammar has one implementation, in Rust, and the mock's renders are
+  // deliberate approximations of it (`handlers/pages.ts`), so each step is
+  // compared against a backend-authored sibling document on the Rust side
+  // alone (`document_result` in conformance_query.rs).
+  'markdown_documents',
 ])
 
 describe('tauri-mock ⇄ backend conformance (#763)', () => {

@@ -1,0 +1,606 @@
+{
+  "description": "#5366 — READ differential over `search_blocks`'s STRUCTURAL filters: `stateFilter`, `priorityFilter`, `dueFilter`, `propertyFilters`, `tagIds`, `includePageGlobs` and `excludePageGlobs`. `query_search_blocks_modes.json` pins the dispatch arms with no filter beyond `parentId`, so the mock's metadata, tag and page-glob predicates (`searchStructuralCandidates`, `handlers/search.ts`) were checked against nothing. Every step uses a blank query, so it takes the filter-only arm (`fts_fetch_filter_only_page`, `ORDER BY b.id DESC` over seed ids): the order is comparable on both stacks and the result set is the filter alone. Metadata arrives through ops. Seed: S1 `Alpha Project` page holds S2 (TODO, priority 1, due 2026-01-10, effort=high), S3 (DONE, priority 2, due 2026-03-20, tagged), S4 (TODO, priority 3, effort=low) and S5 (nothing set); S6 `Beta Archive` page holds S7 (DONE, priority 1, due 2026-02-01, effort=high, tagged) S8 (TODO, due 2026-04-15) and the tag S9.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B3",
+        "tag_id": "B9"
+      },
+      {
+        "block_id": "B7",
+        "tag_id": "B9"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha Project",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "task one",
+        "deleted_at": null,
+        "due_date": "2026-01-10",
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": "1",
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "task two",
+        "deleted_at": null,
+        "due_date": "2026-03-20",
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": "2",
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "task three",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": "3",
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "plain note",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Beta Archive",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "task four",
+        "deleted_at": null,
+        "due_date": "2026-02-01",
+        "id": "B7",
+        "page_id": "B6",
+        "parent_id": "B6",
+        "position": 1,
+        "priority": "1",
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "task five",
+        "deleted_at": null,
+        "due_date": "2026-04-15",
+        "id": "B8",
+        "page_id": "B6",
+        "parent_id": "B6",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "tag",
+        "content": "urgent",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B6",
+        "parent_id": "B6",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 18,
+      "ops": [
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "key": "effort",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effort",
+          "op_type": "set_property"
+        },
+        {
+          "key": "effort",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "effort",
+        "value": "high",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B4",
+        "key": "effort",
+        "value": "low",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B7",
+        "key": "effort",
+        "value": "high",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_state_todo",
+      "rows": ["B8", "B4", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_priority_2_or_3",
+      "rows": ["B4", "B3"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_due_on_or_after",
+      "rows": ["B8", "B7", "B3"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_property_effort_high",
+      "rows": ["B7", "B2"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_tag_urgent",
+      "rows": ["B7", "B3"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_include_page_glob",
+      "rows": ["B5", "B4", "B3", "B2", "B1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_exclude_page_glob",
+      "rows": ["B9", "B8", "B7", "B6"],
+      "total_count": null
+    }
+  ],
+  "name": "query_search_blocks_filters",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "TODO"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "state": "DONE"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "state": "TODO"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "state": "DONE"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "state": "TODO"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "level": "1"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "level": "2"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "level": "3"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "level": "1"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2026-01-10"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "date": "2026-03-20"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "date": "2026-02-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "date": "2026-04-15"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "effort",
+        "value": {
+          "value_text": "high"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "effort",
+        "value": {
+          "value_text": "low"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "key": "effort",
+        "value": {
+          "value_text": "high"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "tagId": "S9"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S7",
+        "tagId": "S9"
+      },
+      "command": "add_tag"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "stateFilter": ["TODO"]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`stateFilter` keeps the three TODO blocks and drops the two DONE ones and every block with no state.",
+      "name": "search_state_todo"
+    },
+    {
+      "args": {
+        "filter": {
+          "priorityFilter": ["2", "3"],
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`priorityFilter` is set membership: both listed levels are kept, priority 1 and no priority are dropped.",
+      "name": "search_priority_2_or_3"
+    },
+    {
+      "args": {
+        "filter": {
+          "dueFilter": {
+            "op": {
+              "date": "2026-02-01",
+              "op": "gte"
+            }
+          },
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`dueFilter` `gte` on S7's own due date: S7 is kept by the inclusive bound (a `gt` drops it), S2 is due before it, and blocks with no due date are dropped.",
+      "name": "search_due_on_or_after"
+    },
+    {
+      "args": {
+        "filter": {
+          "propertyFilters": [
+            {
+              "key": "effort",
+              "value": "high"
+            }
+          ],
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`propertyFilters` matches the value, not just the key: S4 carries `effort=low` and is dropped.",
+      "name": "search_property_effort_high"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagIds": ["S9"]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "`tagIds` keeps the two blocks tagged S9.",
+      "name": "search_tag_urgent"
+    },
+    {
+      "args": {
+        "filter": {
+          "includePageGlobs": ["alpha"],
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "A bare `includePageGlobs` token is wrapped `*alpha*` and matched against the lowercased page title, so the Alpha page and its children are kept and the Beta page's are dropped.",
+      "name": "search_include_page_glob"
+    },
+    {
+      "args": {
+        "filter": {
+          "excludePageGlobs": ["alpha"],
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          }
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "The `excludePageGlobs` mirror of the step above: the Alpha page and its children are dropped.",
+      "name": "search_exclude_page_glob"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Alpha Project",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "task one",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "task two",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "task three",
+        "id": "S4",
+        "parent_id": "S1",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "plain note",
+        "id": "S5",
+        "parent_id": "S1",
+        "position": 4
+      },
+      {
+        "block_type": "page",
+        "content": "Beta Archive",
+        "id": "S6",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "task four",
+        "id": "S7",
+        "parent_id": "S6",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "task five",
+        "id": "S8",
+        "parent_id": "S6",
+        "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "urgent",
+        "id": "S9",
+        "parent_id": "S6",
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

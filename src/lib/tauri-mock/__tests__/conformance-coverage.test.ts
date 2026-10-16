@@ -218,13 +218,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
     'back, where the mock upserts a constant row and skips the seven-day freshness ' +
     'short-circuit entirely (handlers/links.ts)',
 
-  // ── Import / quick capture (composes covered create/edit ops) ──
-  import_bibliography: 'covered by import-bibliography.test.ts',
-  import_markdown:
-    'composes create_block/edit_block (block_crud_basic.json); the parser is covered by the ' +
-    'Rust tests in agaric-engine/src/import.rs and by ' +
-    '../e2e-tauri/import-markdown-nesting.e2e.ts, not by the Playwright e2e, which runs ' +
-    "the mock's line splitter",
+  // ── Quick capture ──
   quick_capture_block:
     'the local DATE is the input, not the scope: `chrono::Local::now()` names the journal ' +
     'page, so the date lands in `blocks[].content` and a backend-authored `expected` binds ' +
@@ -399,20 +393,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   compute_block_vs_current_diff:
     'selected by an `op_log` `(historical_created_at, historical_seq)` point — an op ' +
     'coordinate each stack generates independently, not fixture-expressible',
-  export_page_markdown:
-    'the obstacle is the TOKEN GRAMMAR, not the projection: a bare-scalar rows location ' +
-    'exists and a string attribute passes through verbatim, but conformance_query.rs (via ' +
-    'attr_value) refuses a rendered attribute containing `#` or `->` — its own token ' +
-    'separators — and a markdown export opens `# Title`. Debt, owned by #5071',
-  get_page_source:
-    'pinning it needs a TS port of commands/pages/markdown.rs (via render_page_source) in the ' +
-    'mock — the TS copy of the page grammar #5140 exists to delete — and conformance_query.rs ' +
-    '(via attr_value) refuses the `#` every tag renders to; an out-of-band comparison is the ' +
-    '#5071 question. Debt, owned by #5071',
-  get_blocks_source:
-    'the clipboard render of the same grammar: pinning it needs the same TS port of ' +
-    'commands/pages/markdown.rs (via render_page_source) and meets the same `#` separator ' +
-    'in conformance_query.rs (via attr_value) as get_page_source. Debt, owned by #5071',
 
   // ── Process / environment / telemetry status (no domain state) ──
   collect_bug_report_metadata: 'no domain state — host + build metadata',
@@ -635,17 +615,13 @@ const PINNING_BLOCKED_MUTATING: ReadonlySet<string> = new Set([
  * ratchet exists to make visible. Both directions now name the command in the
  * diff — pin one and delete its line here, waive one and add it.
  */
-const NOT_YET_PINNED_MUTATING: readonly string[] = ['import_bibliography', 'import_markdown']
+const NOT_YET_PINNED_MUTATING: readonly string[] = []
 
 /**
- * The read leg's debt, and it is NOT zero. Each of these is waived because the
- * snapshot or the query harness is too narrow, which a widening fixes — and
- * each has a mutating counterpart already counted as debt above:
- * `export_page_markdown`, `get_page_source` and `get_blocks_source` against
- * `import_markdown` / `import_bibliography` (the query projection binds row sets
- * and cannot compare a rendered `String`).
+ * The read leg's debt. A waiver belongs here when the snapshot or the query
+ * harness is too narrow, which a widening fixes.
  *
- * Pinning the write is most of the work for the read, so #5057 burns these down
+ * Pinning the write is most of the work for the read, so #5057 burned these down
  * by table rather than by command. Drafts came off this list that way: one
  * fixture drives all five commands, the four writers through the command leg
  * and `list_drafts` as the read that observes what they left behind. So did
@@ -654,11 +630,7 @@ const NOT_YET_PINNED_MUTATING: readonly string[] = ['import_bibliography', 'impo
  * `spaces_lifecycle.json`'s `create_space` — which is what the #5056 check
  * below predicted would happen.
  */
-const NOT_YET_PINNED_READ: readonly string[] = [
-  'export_page_markdown',
-  'get_blocks_source',
-  'get_page_source',
-]
+const NOT_YET_PINNED_READ: readonly string[] = []
 
 /**
  * #5056 — the check that makes the read-leg classification falsifiable instead
@@ -677,9 +649,9 @@ const NOT_YET_PINNED_READ: readonly string[] = [
  * A rename needs no check here: every name below that is still waived is a key
  * of `NO_FIXTURE_ALLOWLIST` or `READ_NO_QUERY_ALLOWLIST`, and both already
  * assert their keys exist in `bindings.ts`, so a rename reds there first and
- * nearer the stale entry. A name that has since been PINNED — `list_spaces`,
- * #5057 — stays listed so re-waiving it as blocked still reddens, and a rename
- * reds on its fixture step instead.
+ * nearer the stale entry. A name that has since been PINNED — `list_spaces`
+ * (#5057), the markdown pair (#5071) — stays listed so re-waiving it as blocked
+ * still reddens, and a rename reds on its fixture step instead.
  */
 const READ_WRITE_TABLE_PAIRS: Readonly<
   Record<string, { readonly reads: readonly string[]; readonly writes: readonly string[] }>
@@ -720,13 +692,25 @@ function notYetPinned(
  * exemption cannot quietly become the resting state. The guard below fails both
  * ways: an undeclared backend-only command, and a declared one that has since
  * gained a live (non-skipped) fixture — delete the entry when its issue lands.
+ *
+ * The markdown renders are the one exception, and backend-only IS their resting
+ * state: #5071 decided the grammar keeps one implementation, in Rust, so the
+ * mock is never diffed on a document.
  */
 const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
-  // Empty, and worth keeping empty. `list_blocks` (#3870) and
-  // `list_inherited_tags_for_block` (#3871) were the only two entries: both
-  // fixtures were `QUERY_DRIFT_SKIP`ped for a real mock divergence, and both
-  // divergences are now FIXED IN THE MOCK rather than waived, so every read
-  // command with a query step is diffed across both stacks again.
+  // `list_blocks` (#3870) and `list_inherited_tags_for_block` (#3871) were the
+  // only divergence entries: both fixtures were `QUERY_DRIFT_SKIP`ped for a
+  // real mock divergence, and both divergences are now FIXED IN THE MOCK rather
+  // than waived. Keep it that way.
+  export_page_markdown:
+    'decided in #5071: one markdown grammar, in Rust; the export is pinned against a ' +
+    'backend-authored sibling document',
+  get_page_source:
+    'decided in #5071: one markdown grammar, in Rust; the source buffer is pinned against ' +
+    'a backend-authored sibling document',
+  get_blocks_source:
+    'decided in #5071: one markdown grammar, in Rust; the clipboard copy is pinned ' +
+    'against a backend-authored sibling document',
 }
 
 // ---------------------------------------------------------------------------
@@ -770,10 +754,10 @@ const QUERY_STEPS_BACKEND_ONLY: Readonly<Record<string, string>> = {
  * "write-path formatting code, not a read command's query dispatch". True of
  * the tag-lookup helper — but not of `export_page_markdown`, which lives in
  * the same file and matched the same grep, yet is in fact a READ-ONLY IPC
- * command. It is waived instead via `READ_NO_QUERY_ALLOWLIST` (see that
- * entry) because it returns a rendered markdown `String`, not canonical
- * block-id rows the query projection can bind — not because it is a write
- * path. Recorded here so a later sweep does not repeat the misclassification.
+ * command. It answers a rendered markdown `String`, not canonical block-id
+ * rows the query projection can bind, so its query step compares a sibling
+ * document instead (#5071) — and it has no dispatch to manifest. Recorded here
+ * so a later sweep does not repeat the misclassification.
  *
  * `filtered_blocks_query_inner`
  * (`src-tauri/src/commands/queries.rs`) carries its own "at most one of

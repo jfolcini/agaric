@@ -182,14 +182,25 @@ pub fn resolve_op_ref_label(label: &str, op_refs: &[(String, i64)]) -> (String, 
         .clone()
 }
 
-/// List the fixture files, sorted by name for deterministic test order.
-fn fixture_paths() -> Vec<PathBuf> {
+/// `<repo>/conformance/fixtures`, which also holds the sibling documents
+/// `conformance_query::document_result` writes.
+pub(super) fn fixtures_dir() -> PathBuf {
     // CARGO_MANIFEST_DIR == <repo>/src-tauri; fixtures live at <repo>/conformance.
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("src-tauri has a parent")
         .join("conformance")
-        .join("fixtures");
+        .join("fixtures")
+}
+
+/// Whether this run authors the backend's expectations instead of asserting them.
+pub(super) fn update_mode() -> bool {
+    std::env::var("CONFORMANCE_UPDATE").as_deref() == Ok("1")
+}
+
+/// List the fixture files, sorted by name for deterministic test order.
+fn fixture_paths() -> Vec<PathBuf> {
+    let dir = fixtures_dir();
     let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("read conformance dir {}: {e}", dir.display()))
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -1642,7 +1653,7 @@ async fn run_fixture(path: &PathBuf) {
     // #4670 — the mutating-command leg, same contract as the two above.
     let ops_value = relabel_records(&replay.op_records, &labels);
 
-    if std::env::var("CONFORMANCE_UPDATE").as_deref() == Ok("1") {
+    if update_mode() {
         fixture["expected"] = snapshot_value;
         if queries_value.is_null() {
             // A fixture with no `queries` keeps no `expected_queries` key.
