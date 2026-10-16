@@ -711,6 +711,10 @@ async fn handle_background_task_inner(
             // row, not a full-table stream).
             cache::refresh_tag_usage_count(pool, tag_id).await
         }
+        // Single-pool for the same reason: one block's rows on the write tx.
+        MaterializeTask::UpdateProjectedAgendaBlock { block_id } => {
+            cache::update_projected_agenda_block(pool, block_id).await
+        }
         MaterializeTask::ReindexBlockLinks { block_id } => {
             // #2397 LOAD-BEARING: this task is the SOLE writer of the
             // `page_link_cache` rollup (`reindex_page_link_cache_for_block`

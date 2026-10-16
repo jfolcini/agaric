@@ -202,15 +202,17 @@ async fn read_projected_agenda_horizon(
     // projector run today would place it at `today + 7`. Trusting a
     // stale-by-a-day cache to prove "this window is genuinely empty" would
     // therefore hide such a task on the day it is actually due. A rebuild is
-    // enqueued at boot, on every date/repeat/todo property mutation, and by
-    // the `projected_agenda_midnight` maintenance job, so this holds for the
-    // ordinary read; when it does not, the empty-window read falls through to
-    // the projector exactly as it did before this change. (That job fires on
-    // the UTC day boundary while the rebuild anchors on the LOCAL date, so
-    // west-of-UTC installs left running overnight sit on a stale reference
-    // date — and therefore on the pre-#3160 cost — until the next UTC
-    // rollover. Aligning the job to the local day is tracked separately; it
-    // is a latency question, not a correctness one, because of this check.)
+    // enqueued at boot and by the `projected_agenda_midnight` maintenance job,
+    // and a date/repeat/todo property mutation re-anchors a cache whose
+    // reference date is not today (`update_projected_agenda_block`), so this
+    // holds for the ordinary read; when it does not, the empty-window read
+    // falls through to the projector exactly as it did before this change.
+    // (That job fires on the UTC day boundary while the rebuild anchors on
+    // the LOCAL date, so west-of-UTC installs left running overnight sit on a
+    // stale reference date — and therefore on the pre-#3160 cost — until the
+    // next UTC rollover. Aligning the job to the local day is tracked
+    // separately; it is a latency question, not a correctness one, because of
+    // this check.)
     //
     // A row written by a pre-0105 binary has `rebuild_today = NULL` and is
     // likewise treated as unproven until the next rebuild fills it in.
@@ -562,8 +564,8 @@ pub async fn list_projected_agenda_inner_with_today(
     //
     // Freshness: a repeating block created since the last rebuild is not in
     // the cache, so it is not in this page. That is the same staleness every
-    // materializer-backed read carries (the mutation enqueues
-    // `RebuildProjectedAgendaCache` on the same drain), and the old shape did
+    // materializer-backed read carries (the mutation enqueues its
+    // projected-agenda refresh on the same drain), and the old shape did
     // not actually avoid it — it surfaced such a block only when no OTHER
     // block projected into the window, which is inconsistent rather than
     // fresh.

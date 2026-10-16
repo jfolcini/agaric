@@ -108,5 +108,6 @@ mod idempotency;
 mod lifecycle;
 mod metrics_dedup;
 mod pages_cache_parity;
+mod projected_agenda_block;
 mod read_pool_concurrency;
 mod retry_metrics;

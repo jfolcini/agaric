@@ -546,6 +546,92 @@ async fn rebuild_projected_agenda_cache_split_impl(
 }
 
 // ---------------------------------------------------------------------------
+// update_projected_agenda_block (#5423)
+// ---------------------------------------------------------------------------
+
+/// Recompute one block's `projected_agenda_cache` rows, after a property op on
+/// that block, instead of re-projecting every repeating block in the vault.
+///
+/// The rows are projected from the horizon row's `rebuild_today`, the date
+/// every other block's rows and the advertised span were projected from. When
+/// that is not `today`, or no rebuild has run yet, a per-block write would mix
+/// two reference dates in one cache, so the full rebuild runs instead and
+/// re-anchors it. Device-local time, as in [`rebuild_projected_agenda_cache`].
+pub async fn update_projected_agenda_block(
+    pool: &SqlitePool,
+    block_id: &str,
+) -> Result<(), AppError> {
+    let today = chrono::Local::now().date_naive();
+    update_projected_agenda_block_with_today(pool, block_id, today).await
+}
+
+/// Pinned-today variant of [`update_projected_agenda_block`], for the same
+/// reason as [`rebuild_projected_agenda_cache_with_today`].
+pub async fn update_projected_agenda_block_with_today(
+    pool: &SqlitePool,
+    block_id: &str,
+    today: chrono::NaiveDate,
+) -> Result<(), AppError> {
+    let today_str = today.format("%Y-%m-%d").to_string();
+    // The anchor check and the row rewrite share one write transaction, so a
+    // full rebuild cannot re-anchor the cache between them.
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_projected_agenda_block").await?;
+    let rebuild_today: Option<String> =
+        sqlx::query_scalar!("SELECT rebuild_today FROM projected_agenda_horizon WHERE id = 0")
+            .fetch_optional(&mut *tx)
+            .await?
+            .flatten();
+    if rebuild_today.as_deref() != Some(today_str.as_str()) {
+        tx.rollback().await?;
+        return rebuild_projected_agenda_cache_with_today(pool, today).await;
+    }
+
+    sqlx::query!(
+        "DELETE FROM projected_agenda_cache WHERE block_id = ?",
+        block_id
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // The full rebuild's qualifying predicate, narrowed to one block.
+    let row: Option<CacheRepeatingRow> = sqlx::query_as!(
+        CacheRepeatingRow,
+        r#"SELECT b.id AS "id: agaric_core::ulid::BlockId",
+                b.due_date, b.scheduled_date,
+                bp.value_text AS repeat_rule,
+                bp_until.value_date AS repeat_until,
+                bp_count.value_num AS repeat_count,
+                bp_seq.value_num AS repeat_seq
+         FROM blocks b
+         JOIN block_properties bp ON bp.block_id = b.id AND bp.key = 'repeat'
+         LEFT JOIN block_properties bp_until ON bp_until.block_id = b.id AND bp_until.key = 'repeat-until'
+         LEFT JOIN block_properties bp_count ON bp_count.block_id = b.id AND bp_count.key = 'repeat-count'
+         LEFT JOIN block_properties bp_seq ON bp_seq.block_id = b.id AND bp_seq.key = 'repeat-seq'
+         WHERE b.id = ?1
+           AND b.deleted_at IS NULL
+           AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
+           AND bp.value_text IS NOT NULL
+           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)
+           AND NOT EXISTS (
+               SELECT 1 FROM block_properties tp
+               WHERE tp.block_id = b.page_id AND tp.key = 'template'
+           )"#,
+        block_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if let Some(row) = row {
+        let mut entries = Vec::new();
+        project_block_into(&row, today, &mut entries);
+        flush_projection_chunk(&mut tx, &entries).await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Local-timezone documentation pin
 // ---------------------------------------------------------------------------
 
@@ -945,6 +1031,113 @@ mod tests {
             BACKWARD_WINDOW_DAYS + i64::try_from(HORIZON_OCCURRENCES).unwrap(),
             "the forward horizon keeps its full HORIZON_OCCURRENCES rows"
         );
+    }
+
+    /// Every `projected_agenda_cache` row, in key order.
+    async fn dump_cache(pool: &SqlitePool) -> Vec<(String, String, String)> {
+        sqlx::query_as(
+            "SELECT block_id, projected_date, source FROM projected_agenda_cache \
+             ORDER BY block_id, projected_date, source",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    /// The horizon row as `(horizon_date, rebuild_today)`.
+    async fn horizon_row(pool: &SqlitePool) -> Option<(String, Option<String>)> {
+        sqlx::query_as("SELECT horizon_date, rebuild_today FROM projected_agenda_horizon")
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+    }
+
+    fn ymd(d: chrono::NaiveDate) -> String {
+        d.format("%Y-%m-%d").to_string()
+    }
+
+    /// #5423 — the per-block refresh projects from the stored `rebuild_today`,
+    /// which this test pins far from the wall clock, so a projection anchored
+    /// anywhere else lands on different dates. The subject's base date sits
+    /// inside the backward window, so both windows carry rows for it.
+    #[tokio::test]
+    async fn per_block_refresh_projects_from_rebuild_today_5423() {
+        let (pool, _dir) = test_pool().await;
+        let today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+        let days_ago = |n: i64| ymd(today - chrono::Duration::days(n));
+        insert_repeating_block(&pool, "PABKEEP1", &ymd(today), "daily", None).await;
+        insert_repeating_block(&pool, "PABSUBJ1", &days_ago(30), "daily", None).await;
+        rebuild_projected_agenda_cache_with_today(&pool, today)
+            .await
+            .unwrap();
+        let horizon_before = horizon_row(&pool).await;
+
+        sqlx::query(
+            "UPDATE block_properties SET value_text = 'weekly' WHERE block_id = 'PABSUBJ1'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        update_projected_agenda_block_with_today(&pool, "PABSUBJ1", today)
+            .await
+            .unwrap();
+        let refreshed = dump_cache(&pool).await;
+        assert_eq!(
+            horizon_row(&pool).await,
+            horizon_before,
+            "the per-block path must leave the horizon row alone"
+        );
+
+        rebuild_projected_agenda_cache_with_today(&pool, today)
+            .await
+            .unwrap();
+        assert_eq!(
+            refreshed,
+            dump_cache(&pool).await,
+            "one block's refresh must equal a full rebuild at the same today"
+        );
+    }
+
+    /// #5423 — without a horizon row, or with one anchored to another day, the
+    /// per-block refresh runs the full rebuild, which re-anchors every block's
+    /// rows and the horizon to `today`.
+    #[tokio::test]
+    async fn per_block_refresh_re_anchors_a_stale_or_missing_horizon_5423() {
+        let today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+        let expected_horizon = Some((
+            ymd(today + chrono::Duration::days(HORIZON_DAYS)),
+            Some(ymd(today)),
+        ));
+        for stale_anchor in [None, Some(today - chrono::Duration::days(1))] {
+            let (pool, _dir) = test_pool().await;
+            let base = ymd(today - chrono::Duration::days(10));
+            insert_repeating_block(&pool, "PABKEEP2", &base, ".+1w", None).await;
+            insert_repeating_block(&pool, "PABSUBJ2", &base, "daily", None).await;
+            if let Some(anchor) = stale_anchor {
+                rebuild_projected_agenda_cache_with_today(&pool, anchor)
+                    .await
+                    .unwrap();
+            }
+
+            update_projected_agenda_block_with_today(&pool, "PABSUBJ2", today)
+                .await
+                .unwrap();
+            let refreshed = dump_cache(&pool).await;
+            assert_eq!(
+                horizon_row(&pool).await,
+                expected_horizon,
+                "anchor {stale_anchor:?}: the horizon must be re-anchored to today"
+            );
+
+            rebuild_projected_agenda_cache_with_today(&pool, today)
+                .await
+                .unwrap();
+            assert_eq!(
+                refreshed,
+                dump_cache(&pool).await,
+                "anchor {stale_anchor:?}: every block's rows must be re-projected from today"
+            );
+        }
     }
 
     /// #2601 — the bounded materialization caps a never-ending recurrence at

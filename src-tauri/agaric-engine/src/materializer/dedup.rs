@@ -5,20 +5,15 @@ use std::sync::Arc;
 
 pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     // Swap to `FxHashSet`. `Discriminant` keys hash trivially under
-    // FxHasher (no SipHash setup cost); the per-id sets below key on the
-    // task id itself (`Arc<str>`) rather than a 64-bit fingerprint of it —
-    // see #2911: a fingerprint collision between two DISTINCT ids would
-    // silently drop the second id's task. Inserting the `Arc<str>` is a
-    // cheap refcount bump, not a string clone. The sets are short-lived
-    // (one drain).
+    // FxHasher (no SipHash setup cost); the per-id set below keys on the
+    // task kind and the id itself (`Arc<str>`) rather than a 64-bit
+    // fingerprint of the id — see #2911: a fingerprint collision between two
+    // DISTINCT ids would silently drop the second id's task. Inserting the
+    // `Arc<str>` is a cheap refcount bump, not a string clone. The sets are
+    // short-lived (one drain).
     let mut seen_d: FxHashSet<mem::Discriminant<MaterializeTask>> = FxHashSet::default();
-    let mut seen_bl: FxHashSet<Arc<str>> = FxHashSet::default();
-    let mut seen_btr: FxHashSet<Arc<str>> = FxHashSet::default();
-    let mut seen_fu: FxHashSet<Arc<str>> = FxHashSet::default();
-    let mut seen_fr: FxHashSet<Arc<str>> = FxHashSet::default();
-    let mut seen_frr: FxHashSet<Arc<str>> = FxHashSet::default();
-    let mut seen_tu: FxHashSet<Arc<str>> = FxHashSet::default();
-    let mut seen_spid: FxHashSet<Arc<str>> = FxHashSet::default();
+    let mut seen_ids: FxHashSet<(mem::Discriminant<MaterializeTask>, Arc<str>)> =
+        FxHashSet::default();
     // #2042 / #5275: RebuildPagesCacheCounts and RebuildTagsCache are held
     // aside and emitted exactly once at the END of the batch (see the arms +
     // tail below).
@@ -27,54 +22,22 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     let mut result = Vec::with_capacity(tasks.len());
     for task in tasks {
         match &task {
-            MaterializeTask::ReindexBlockLinks { block_id } => {
-                if seen_bl.insert(Arc::clone(block_id)) {
-                    result.push(task);
-                }
-            }
-            MaterializeTask::ReindexBlockTagRefs { block_id } => {
-                if seen_btr.insert(Arc::clone(block_id)) {
-                    result.push(task);
-                }
-            }
-            MaterializeTask::UpdateFtsBlock { block_id } => {
-                if seen_fu.insert(Arc::clone(block_id)) {
-                    result.push(task);
-                }
-            }
-            MaterializeTask::ReindexFtsReferences { block_id } => {
-                if seen_frr.insert(Arc::clone(block_id)) {
-                    result.push(task);
-                }
-            }
-            MaterializeTask::RemoveFtsBlock { block_id } => {
-                if seen_fr.insert(Arc::clone(block_id)) {
-                    result.push(task);
-                }
-            }
-            // #676: keyed by `tag_id`, NOT discriminant — two
-            // `RefreshTagUsageCount` for DIFFERENT tags in the same drain
-            // must both survive (collapsing them by discriminant would drop
-            // one tag's usage_count refresh). Same per-key dedup shape as the
-            // per-block tasks above; only exact-`tag_id` duplicates collapse.
-            MaterializeTask::RefreshTagUsageCount { tag_id } => {
-                if seen_tu.insert(Arc::clone(tag_id)) {
-                    result.push(task);
-                }
-            }
-            // #2540: keyed by `block_id`, NOT discriminant — two
-            // `SetBlockPageId` for DIFFERENT blocks in the same drain must both
-            // survive. This is the per-block `page_id`/`space_id` backstop
-            // (task_handlers.rs) that fills a block whose owning page the in-tx
-            // stamp could not resolve; every non-page create enqueues one
-            // (dispatch.rs), so a multi-block paste/import burst co-locates many
-            // in one drain. Collapsing by discriminant would keep only the first
-            // and leave every later block with NULL page_id/space_id until an
-            // unrelated lifecycle op enqueues a full RebuildPageIds. Same
-            // per-key dedup shape as ReindexBlockLinks; only exact-`block_id`
-            // duplicates collapse.
-            MaterializeTask::SetBlockPageId { block_id } => {
-                if seen_spid.insert(Arc::clone(block_id)) {
+            // Per-id tasks collapse only on an exact (kind, id) repeat: two of
+            // one kind for DIFFERENT ids in one drain must both survive. A
+            // discriminant collapse would drop one tag's usage_count refresh
+            // (#676), or leave every block of a paste/import burst but the
+            // first with NULL page_id/space_id until an unrelated lifecycle op
+            // enqueues a full RebuildPageIds (#2540, the `SetBlockPageId`
+            // backstop every non-page create enqueues).
+            MaterializeTask::ReindexBlockLinks { block_id: id }
+            | MaterializeTask::ReindexBlockTagRefs { block_id: id }
+            | MaterializeTask::UpdateFtsBlock { block_id: id }
+            | MaterializeTask::ReindexFtsReferences { block_id: id }
+            | MaterializeTask::RemoveFtsBlock { block_id: id }
+            | MaterializeTask::RefreshTagUsageCount { tag_id: id }
+            | MaterializeTask::SetBlockPageId { block_id: id }
+            | MaterializeTask::UpdateProjectedAgendaBlock { block_id: id } => {
+                if seen_ids.insert((mem::discriminant(&task), Arc::clone(id))) {
                     result.push(task);
                 }
             }
@@ -173,6 +136,7 @@ mod tests {
             |block_id| MaterializeTask::ReindexFtsReferences { block_id },
             |block_id| MaterializeTask::RemoveFtsBlock { block_id },
             |block_id| MaterializeTask::SetBlockPageId { block_id },
+            |block_id| MaterializeTask::UpdateProjectedAgendaBlock { block_id },
             |tag_id| MaterializeTask::RefreshTagUsageCount { tag_id },
         ];
 

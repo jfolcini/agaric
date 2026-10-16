@@ -2055,8 +2055,9 @@ fn fold_projected_agenda_from_base(
 }
 
 const PROJECTED_AGENDA_OWNER: &str = "rebuild_projected_agenda_cache(_split) (the \
-     RebuildProjectedAgendaCache task) — and, one level up, the arms of \
-     materializer::dispatch::invalidations_for_op that enqueue it: a missing row is a repeating \
+     RebuildProjectedAgendaCache task) and its per-block refresh update_projected_agenda_block \
+     (UpdateProjectedAgendaBlock) — and, one level up, the arms of \
+     materializer::dispatch::invalidations_for_op that enqueue them: a missing row is a repeating \
      task that never appears on its future date, and an extra one is a task shown on a day its \
      rule does not name";
 
