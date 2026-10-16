@@ -1983,7 +1983,8 @@ async fn run_initiator_session(
 }
 
 /// Post-session bookkeeping for a session that completed: reset the backoff,
-/// cache the address that worked, and TOFU-bind the announced key.
+/// cache the address that worked, and TOFU-bind an unbound peer's announced key,
+/// which closes the pairing window.
 async fn record_session_success(
     ctx: &SyncSessionContext<'_>,
     peer: &DiscoveredPeer,
@@ -2023,15 +2024,29 @@ async fn record_session_success(
     // `bind_endpoint_id` touches only its own column, so re-binding preserves
     // this peer's version vectors and sync state — a device that merely
     // re-paired must not be reset.
-    if pinned.is_none()
-        && let Err(e) = peer_refs::bind_endpoint_id(ctx.pool, peer_id, announced_key).await
-    {
-        tracing::warn!(
-            peer_id,
-            endpoint_id = %announced_key,
-            error = %e,
-            "failed to bind the peer's endpoint id (TOFU)"
-        );
+    if pinned.is_none() {
+        match peer_refs::bind_endpoint_id(ctx.pool, peer_id, announced_key).await {
+            // The bind consumes the pairing window, as the responder's does
+            // (#1519). Left armed until its TTL, the window keeps this device
+            // dialling and admitting unknown peers, so a peer unpaired here is
+            // re-paired on its next announcement. Clearing with no pairing
+            // pending is a no-op; a failed clear leaves the marker to its TTL.
+            Ok(()) => {
+                if let Err(e) = peer_refs::clear_pending_pairing(ctx.pool).await {
+                    tracing::warn!(
+                        peer_id,
+                        error = %e,
+                        "failed to clear the pending-pairing marker after binding (#1519)"
+                    );
+                }
+            }
+            Err(e) => tracing::warn!(
+                peer_id,
+                endpoint_id = %announced_key,
+                error = %e,
+                "failed to bind the peer's endpoint id (TOFU)"
+            ),
+        }
     }
     // #2539 (item 2): NO daemon-level `SyncEvent::Complete` here —
     // exactly ONE terminal Complete is emitted per session per role,

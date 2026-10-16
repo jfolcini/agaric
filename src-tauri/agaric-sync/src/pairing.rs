@@ -453,8 +453,9 @@ const QR_ENDPOINT_BIND_BUDGET: std::time::Duration = std::time::Duration::from_s
 /// to it and pairing would deadlock. Setting the pending-pairing marker
 /// (the same TTL-bounded marker the joiner's [`confirm_pairing`] sets)
 /// flips `should_start_active` to `true`; `notify_change()` wakes a dormant
-/// daemon immediately instead of waiting for its next poll. The marker is
-/// cleared once a real `peer_ref` exists (`should_start_active`).
+/// daemon immediately instead of waiting for its next poll. Whichever side
+/// binds the new peer's key clears the marker: the responder in
+/// `bind_peer_to_key`, the initiator in `record_session_success`.
 #[instrument(skip(pool, pairing_state, scheduler, device_id), err)]
 pub async fn start_pairing_armed(
     pool: &SqlitePool,

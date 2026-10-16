@@ -10248,6 +10248,7 @@ struct PairingOutcome3507 {
     joiner_events: Vec<SyncEvent>,
     /// Whether each device's pairing window is still open afterwards.
     host_still_pending: bool,
+    joiner_still_pending: bool,
     /// The keys the two endpoints actually authenticated with, so the rows
     /// above can be checked against an identity the test did not choose.
     host_key: String,
@@ -10525,6 +10526,7 @@ async fn drive_two_device_pairing_windowed_3507(
         host_events: host_sink.events(),
         joiner_events: joiner_sink.events(),
         host_still_pending: peer_refs::is_pending_pairing(&host_pool).await.unwrap(),
+        joiner_still_pending: peer_refs::is_pending_pairing(&joiner_pool).await.unwrap(),
         host_key,
         joiner_key,
         host_block_on_joiner: sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
@@ -10651,6 +10653,11 @@ async fn two_devices_pair_bind_each_other_and_converge_3507() {
         !out.host_still_pending,
         "the host must clear its pending-pairing marker once it has bound the \
          joiner, so a later unpaired device cannot ride the same open window"
+    );
+    assert!(
+        !out.joiner_still_pending,
+        "the joiner dialled, so its own bind must clear its marker too: its window is \
+         what lets it dial and admit unpaired devices"
     );
 }
 
@@ -10841,6 +10848,251 @@ async fn the_rejecting_device_surfaces_its_own_rejection_3491() {
          it must also tell its own user, got {:?}",
         out.host_events
     );
+}
+
+// ── The host dials: the initiator's bind closes its pairing window ──────────
+//
+// Which device dials first is mDNS timing and goes either way, so a first pair
+// can complete with the host as the initiator. The #3507 driver always has the
+// joiner dial, so it never reached this arm.
+
+const DIALLING_HOST: &str = "HOSTDIALS";
+const DIALLED_JOINER: &str = "JOINDIALLED";
+
+/// One session with the host as the initiator: production `try_sync_with_peer`
+/// on the host against production `handle_incoming_sync` on the joiner, which
+/// serves on `harness`. The host reads its refs from its pool, as each daemon
+/// round does. Returns the host's events.
+async fn host_dials_joiner(
+    harness: &ServiceHarness,
+    peer: &mdns::DiscoveredPeer,
+    host_pool: &SqlitePool,
+    host_mat: &Materializer,
+    host_sched: &SyncScheduler,
+    joiner_pool: &SqlitePool,
+    joiner_mat: &Materializer,
+) -> Vec<SyncEvent> {
+    let joiner_task = spawn_responder(
+        harness,
+        joiner_pool.clone(),
+        DIALLED_JOINER,
+        joiner_mat.clone(),
+        Arc::new(SyncScheduler::new()),
+        Arc::new(RecordingEventSink::new()),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let host_sink = Arc::new(RecordingEventSink::new());
+    let host_sink_dyn: Arc<dyn SyncEventSink> = host_sink.clone();
+    let host_apply: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(host_mat.clone());
+    let host_cancel = AtomicBool::new(false);
+    let ctx = SyncSessionContext {
+        pool: host_pool,
+        device_id: DIALLING_HOST,
+        materializer: &host_apply,
+        scheduler: host_sched,
+        event_sink: &host_sink_dyn,
+        cancel: &host_cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    let host_refs = peer_refs::list_peer_refs(host_pool).await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(&ctx, peer, &host_refs, None),
+    )
+    .await
+    .expect("try_sync_with_peer must finish inside its own connect budget");
+    let joiner_result = tokio::time::timeout(std::time::Duration::from_secs(40), joiner_task)
+        .await
+        .expect("the joiner's responder must resolve once the host's session ends")
+        .expect("the responder task must not panic");
+    assert!(
+        joiner_result.is_ok(),
+        "the joiner's responder must return Ok, got {joiner_result:?}"
+    );
+    host_sink.events()
+}
+
+/// A host that completes the first pair as the initiator clears its marker, as
+/// the responder does (#1519). Left armed to its TTL, the host dials every
+/// device it discovers and admits any unknown one holding the code, so a joiner
+/// unpaired in that window is re-paired on its next announcement: it still
+/// admits the host by key.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_host_that_dials_the_first_pair_closes_its_pairing_window() {
+    let (host_pool, _host_dir) = test_pool().await;
+    let host_mat = Materializer::new(host_pool.clone());
+    let host_sched = Arc::new(SyncScheduler::new());
+    let host_passphrase = crate::pairing::start_pairing_armed(
+        &host_pool,
+        &std::sync::Mutex::new(None),
+        &host_sched,
+        DIALLING_HOST,
+    )
+    .await
+    .expect("the host arms its pairing window")
+    .passphrase;
+    let proof = peer_refs::get_pending_pairing_proof(&host_pool)
+        .await
+        .unwrap()
+        .expect("the host's window holds the proof of its code");
+
+    let (joiner_pool, _joiner_dir) = test_pool().await;
+    let joiner_mat = Materializer::new(joiner_pool.clone());
+    crate::pairing::confirm_pairing(
+        &joiner_pool,
+        &std::sync::Mutex::new(None),
+        &SyncScheduler::new(),
+        host_passphrase,
+        None,
+    )
+    .await
+    .expect("the joiner arms its window with the host's code");
+
+    let harness = ServiceHarness::new().await;
+    let mut host_discovered: HashMap<String, (mdns::DiscoveredPeer, tokio::time::Instant)> =
+        HashMap::new();
+    let peer = process_discovery_event(
+        resolved_event_for_service(DIALLED_JOINER, &harness),
+        DIALLING_HOST,
+        &mut host_discovered,
+        &[],
+        peer_refs::is_pending_pairing(&host_pool).await.unwrap(),
+    )
+    .expect("the host's open window dials an unpaired device it discovers");
+    host_dials_joiner(
+        &harness,
+        &peer,
+        &host_pool,
+        &host_mat,
+        &host_sched,
+        &joiner_pool,
+        &joiner_mat,
+    )
+    .await;
+
+    assert_eq!(
+        peer_refs::get_peer_ref(&host_pool, DIALLED_JOINER)
+            .await
+            .unwrap()
+            .and_then(|r| r.endpoint_id),
+        Some(harness.service.endpoint_id().to_string()),
+        "precondition: the host's session binds the joiner's key"
+    );
+    assert_eq!(
+        peer_refs::get_peer_ref(&joiner_pool, DIALLING_HOST)
+            .await
+            .unwrap()
+            .and_then(|r| r.endpoint_id),
+        Some(client_key(&harness)),
+        "precondition: the joiner binds the host's key, so it admits the host by key \
+         from now on"
+    );
+    assert!(
+        !peer_refs::is_pending_pairing(&host_pool).await.unwrap(),
+        "the host's own bind must clear its pending-pairing marker"
+    );
+
+    // The user unpairs the joiner on the host only.
+    peer_refs::delete_peer_ref(&host_pool, DIALLED_JOINER)
+        .await
+        .unwrap();
+    let host_refs = peer_refs::list_peer_refs(&host_pool).await.unwrap();
+    assert_eq!(
+        process_discovery_event(
+            resolved_event_for_service(DIALLED_JOINER, &harness),
+            DIALLING_HOST,
+            &mut host_discovered,
+            &host_refs,
+            peer_refs::is_pending_pairing(&host_pool).await.unwrap(),
+        ),
+        None,
+        "the unpaired joiner's next announcement must not be dialled: the joiner \
+         admits the host by key, so that session would bind it again"
+    );
+
+    // An unknown device holding the code is refused at S-1. The pre-held lock
+    // makes an admitted connection answer Busy instead of running a session.
+    let host_service = ServiceHarness::new().await;
+    let _guard = host_sched
+        .try_lock_peer(&client_key(&host_service))
+        .unwrap();
+    let host_task = spawn_responder(
+        &host_service,
+        host_pool.clone(),
+        DIALLING_HOST,
+        host_mat.clone(),
+        host_sched.clone(),
+        Arc::new(RecordingEventSink::new()),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let mut stranger = host_service.dial().await;
+    send_sync_message(
+        &mut stranger.send,
+        &head_exchange(vec![fake_head("STRANGER")], Some(proof)),
+    )
+    .await
+    .unwrap();
+    let response = recv_sync_message(&mut stranger.recv).await.unwrap();
+    assert_rejected(&response, &Rejection::Unpaired);
+    close_and_join_ok(stranger, host_task).await;
+
+    host_mat.shutdown();
+    joiner_mat.shutdown();
+}
+
+/// The clear's other half: a session that binds nothing leaves the window
+/// alone. `record_session_success` runs after every successful session, and a
+/// window opened to pair a second device has to survive the host's routine
+/// syncs with the device it already has.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_routine_sync_with_a_bound_peer_leaves_the_pairing_window_open() {
+    let (host_pool, _host_dir) = test_pool().await;
+    let host_mat = Materializer::new(host_pool.clone());
+    let host_sched = Arc::new(SyncScheduler::new());
+    let (joiner_pool, _joiner_dir) = test_pool().await;
+    let joiner_mat = Materializer::new(joiner_pool.clone());
+
+    // Paired before this window opened: each side holds the other's key.
+    let harness = ServiceHarness::new().await;
+    peer_refs::bind_endpoint_id(
+        &host_pool,
+        DIALLED_JOINER,
+        &harness.service.endpoint_id().to_string(),
+    )
+    .await
+    .unwrap();
+    bind_client_as(&joiner_pool, DIALLING_HOST, &harness).await;
+    peer_refs::set_pending_pairing(
+        &host_pool,
+        &crate::pairing::pairing_proof("the second device's code"),
+    )
+    .await
+    .unwrap();
+
+    let events = host_dials_joiner(
+        &harness,
+        &discovered_service_peer(DIALLED_JOINER, &harness),
+        &host_pool,
+        &host_mat,
+        &host_sched,
+        &joiner_pool,
+        &joiner_mat,
+    )
+    .await;
+    assert!(
+        saw_complete_3507(&events),
+        "precondition: the routine sync completed, got {events:?}"
+    );
+    assert!(
+        peer_refs::is_pending_pairing(&host_pool).await.unwrap(),
+        "a session that bound nothing must not clear a pairing window opened for \
+         another device"
+    );
+
+    host_mat.shutdown();
+    joiner_mat.shutdown();
 }
 
 // ── #4230: bookkeeping keyed on an UNVERIFIED claimed device id ─────────────
