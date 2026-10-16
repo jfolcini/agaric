@@ -18,7 +18,8 @@
  *  - `previousFocusedElement` — the DOM element that had focus when
  *    Cmd+K opened, used as the insertion target for `[[page]]`
  *    autocomplete (Enter inserts the link into the previously focused
- *    block). Cleared on close.
+ *    block), and the element `CommandPalette` returns focus to on close.
+ *    Cleared on close.
  *
  * The cmdk shell consumes this state but holds its own internal
  * highlighted-item index — we no longer mirror keyboard nav in the
@@ -88,7 +89,8 @@ interface CommandPaletteState {
   pendingViewQuery: string | null
   /**
    * DOM element that had focus when the palette opened. Used to
-   * insert a `[[Page Title]]` link via `[[page]]` autocomplete.
+   * insert a `[[Page Title]]` link via `[[page]]` autocomplete, and
+   * as the focus target when the palette closes.
    * `null` when the palette was opened cold (no editor focus) — the
    * autocomplete mode degrades to plain page navigation in that case.
    */

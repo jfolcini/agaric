@@ -83,6 +83,43 @@ test.describe('desktop palette (Phase 5.T2)', () => {
     await expect(page.getByTestId('header-label')).toHaveText('Pages')
   })
 
+  test('Escape returns focus to the element that opened the palette (#5639)', async ({ page }) => {
+    const pagesButton = page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+    await pagesButton.click()
+    await expect(page.getByTestId('header-label')).toHaveText('Pages')
+    await pagesButton.focus()
+    await expect(pagesButton).toBeFocused()
+
+    await page.keyboard.press('Control+k')
+    const paletteInput = page.getByTestId('command-palette-input')
+    await expect(paletteInput).toBeFocused()
+
+    await page.keyboard.press('Escape')
+    await expect(paletteInput).toBeHidden()
+    await expect(pagesButton).toBeFocused()
+  })
+
+  test('escalating to the search view leaves focus on its input, not the opener', async ({
+    page,
+  }) => {
+    const pagesButton = page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+    await pagesButton.click()
+    await expect(page.getByTestId('header-label')).toHaveText('Pages')
+    await pagesButton.focus()
+    await expect(pagesButton).toBeFocused()
+
+    await page.keyboard.press('Control+k')
+    const paletteInput = page.getByTestId('command-palette-input')
+    await paletteInput.fill('jour')
+    await page.getByTestId('palette-escalation-footer').click()
+    await expect(paletteInput).toBeHidden()
+    await expect(page.getByPlaceholder('Search blocks...')).toBeFocused()
+  })
+
   test('palette opens from an editor view when focus is on the sidebar first', async ({ page }) => {
     // context-aware dispatch: opening while in an editor
     // surface is gated; navigating to a page first puts focus in the
