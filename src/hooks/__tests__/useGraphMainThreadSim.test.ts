@@ -7,7 +7,7 @@
  * forces are configured, the handle's lifecycle methods stop the simulation
  * cleanly, and reduced-motion preference uses a fixed-tick path. Whether that
  * path's layout settles is checked against the real d3-force in
- * `src/workers/__tests__/graph-worker-reduced-motion.test.ts`.
+ * `src/lib/__tests__/graph-reduced-motion.test.ts`.
  */
 
 import { renderHook } from '@testing-library/react'
