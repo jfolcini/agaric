@@ -3533,7 +3533,7 @@ export type RecoveryStatus = {
 export type ReminderSettings = {
 	/**
 	 *  Master switch. Off by default: a fresh install never notifies until
-	 *  the user opts in from Settings → Notifications.
+	 *  the user opts in from Settings → Tasks & reminders.
 	 */
 	enabled: boolean,
 	/**  Local wall-clock time, `HH:MM`, at which a task due today is notified. */

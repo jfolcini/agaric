@@ -15,10 +15,6 @@
 //!
 //! ## Surface
 //!
-//! - [`save_snapshot`] — exports the engine's current state via
-//!   [`LoroEngine::export_snapshot`] and writes it to `loro_doc_state`
-//!   under the supplied `space_id`.  Idempotent; an existing row is
-//!   replaced (`INSERT OR REPLACE`).
 //! - [`load_snapshot`] — reads back the bytes for a given `space_id`,
 //!   returning `Ok(None)` if no row exists.
 //! - [`load_all_space_snapshots`] — enumerate every persisted
@@ -60,7 +56,7 @@
 //!
 //! ## Failure semantics
 //!
-//! `save_snapshot` and `load_snapshot` return `Result<_, AppError>`.
+//! `load_snapshot` returns `Result<_, AppError>`.
 //! The periodic scheduler ([`save_all_engines`]) is the place that
 //! must NEVER abort the process: it catches per-space errors and
 //! logs `tracing::warn!`, mirroring the
@@ -152,21 +148,6 @@ async fn write_snapshot_row(
     .bind(applied_through_seq)
     .execute(pool)
     .await?;
-    Ok(())
-}
-
-/// Persist the engine's current snapshot to `loro_doc_state`.
-///
-/// `applied_through_seq` records the op-log seq the blob reflects (see
-/// `snapshot_watermark`) so boot can detect a stale snapshot.
-pub async fn save_snapshot(
-    pool: &SqlitePool,
-    space_id: &SpaceId,
-    engine: &LoroEngine,
-) -> Result<(), AppError> {
-    let applied_through_seq = snapshot_watermark(op_log_head(pool).await);
-    let bytes = engine.export_snapshot()?;
-    write_snapshot_row(pool, space_id, bytes, applied_through_seq).await?;
     Ok(())
 }
 
@@ -745,6 +726,18 @@ mod tests {
     use super::*;
     use crate::loro::engine::PropertyValue;
     use tempfile::TempDir;
+
+    /// One space's save, outside `save_all_engines`' dirty tracking.
+    async fn save_snapshot(
+        pool: &SqlitePool,
+        space_id: &SpaceId,
+        engine: &LoroEngine,
+    ) -> Result<(), AppError> {
+        let applied_through_seq = snapshot_watermark(op_log_head(pool).await);
+        let bytes = engine.export_snapshot()?;
+        write_snapshot_row(pool, space_id, bytes, applied_through_seq).await?;
+        Ok(())
+    }
 
     const SPACE_A: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
     const SPACE_B: &str = "01BX5ZZKBKACTAV9WEVGEMMVRZ";

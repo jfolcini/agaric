@@ -1170,8 +1170,8 @@ jobs:
         # #749's coverage thresholds are DISABLED here and enforced on the
         # merged report instead. A shard sees only a share of the suite, so
         # leaving the thresholds on would fail every shard on arithmetic, not
-        # on a coverage regression. They still gate; they gate once, downstream, on the
-        # whole picture.
+        # on a coverage regression. They still gate; they gate once,
+        # downstream, on the whole picture.
         run: |
           npx vitest run \
             --shard=${{ matrix.shard }}/3 \

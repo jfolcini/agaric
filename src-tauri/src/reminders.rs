@@ -54,7 +54,7 @@ const TITLE_MAX_CHARS: usize = 60;
 #[serde(rename_all = "camelCase")]
 pub struct ReminderSettings {
     /// Master switch. Off by default: a fresh install never notifies until
-    /// the user opts in from Settings → Notifications.
+    /// the user opts in from Settings → Tasks & reminders.
     pub enabled: bool,
     /// Local wall-clock time, `HH:MM`, at which a task due today is notified.
     pub time: String,

@@ -85,13 +85,13 @@ Xcode Command Line Tools (`xcode-select --install`). The rest installs via `brew
 ### Android
 
 - Android SDK (cmdline-tools, platform-tools, build-tools).
-- Android NDK r27 (any 27.x patch; CI pins `27.2.12479018`).
+- Android NDK r27 (any 27.x patch; CI pins a specific build but local can float).
 - JDK 17.
 - Rust targets: `rustup target add aarch64-linux-android x86_64-linux-android` (32-bit ABIs are intentionally not supported).
 
 Set `ANDROID_HOME` / `ANDROID_NDK_HOME` per Tauri's [Android setup](https://v2.tauri.app/start/prerequisites/#android).
 
-`sdkmanager` is now a deprecated wrapper around the `android` CLI, whose first run downloads it to `~/.android/bin` and hangs silently meanwhile. Package names take slashes, and licenses need no separate step:
+`sdkmanager` is now a deprecated wrapper around the `android` CLI, whose first run downloads it to `~/.android/bin` and hangs silently meanwhile. Package names take slashes, licenses need no separate step, and the versions below are the ones `.github/workflows/ci.yml` installs:
 
 ```bash
 android sdk install platform-tools platforms/android-36 build-tools/36.0.0 ndk/27.2.12479018 \
@@ -277,7 +277,7 @@ The guard also checks the second half of the requirement on APKs: a library the 
 
 ## Releasing
 
-One command, from a clean `main`. First burn down, in an ordinary PR, every kill-date marker at or below the new version (`git grep -n 'REMOVE[ ]AFTER'`): the `remove-after-markers` hook fails the bump commit itself.
+One command, from a clean `main`. First burn down, in an ordinary PR, every kill-date marker at or below the new version: the `remove-after-markers` hook fails the bump commit itself and names each one.
 
 ```bash
 scripts/release.sh <new-version>          # e.g. scripts/release.sh 0.2.1

@@ -20,11 +20,8 @@
 #
 # `tauri-driver` is a CARGO binary (installed below), not an npm package. On
 # Linux it proxies `WebKitWebDriver` from the `webkit2gtk-driver` apt package.
-# Docs: https://v2.tauri.app/develop/tests/webdriver/
-#
-# Runtime validation of this harness is deferred to the first scheduled run or
-# a manual `workflow_dispatch` (WebKitWebDriver cannot run on a dev box without
-# a display / the driver packages).
+# Docs: https://v2.tauri.app/develop/tests/webdriver/ . Running it on a dev
+# box: e2e-tauri/AGENTS.md § Running.
 #
 # -----------------------------------------------------------------------------
 # SPEC SCOPE — why this lane runs `e2e-tauri/*.e2e.ts` and NOT the 100+ specs

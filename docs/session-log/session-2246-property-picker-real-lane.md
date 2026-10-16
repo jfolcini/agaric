@@ -3,7 +3,7 @@
 #5365's last open properties scenario: a `key:: value` line picked through
 the `::` picker (#2675) and blurred. Committing it takes two calls,
 `setProperty` and then an edit that strips the line
-(`src/lib/inline-property-commit.ts`). The mock lane cannot show one landing
+(`src/stores/inline-property-commit.ts`). The mock lane cannot show one landing
 without the other. The maintainer ruled that `escape-property-line`'s typed
 line does not count, so this scenario drives the picker itself.
 
