@@ -30,6 +30,8 @@ Optional probes: `if problem_skipped("<name> @ 100K") { return }` gates the cach
 
 Before quoting a measured number in docs or a PR, check the fixture seeded what the bench claims; a dangling FK or a wrong scale changes the number, not the build.
 
+Boot time (replay, sync start) is not a bench: `scripts/measure-boot.mjs` times release binaries against a copy of a real vault, A/B interleaved; its header has the recipe.
+
 Smoke shards build once with `cargo bench --no-run` and run the prebuilt binaries; separate `cargo bench --bench <name>` calls race on `libagaric_lib.*` (cargo #6313) and fail with `E0308 ... expected Pool<Sqlite>, found a different Pool<Sqlite>`.
 
 ## Shape probes: observe results outside timing
