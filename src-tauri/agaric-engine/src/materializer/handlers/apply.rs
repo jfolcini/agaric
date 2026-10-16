@@ -503,9 +503,7 @@ async fn fan_out_restore(
         Ok(p) => p,
         Err(e) => {
             // #2031: the SQL restore already committed but we cannot fan out to
-            // the engine — it stays divergent (boot replay no longer re-applies
-            // the op, #5418).
-            // Meter the skip so it is observable.
+            // the engine — it stays divergent. Meter the skip so it is observable.
             super::descendant_fanout_dropped::record();
             tracing::warn!(
                 seq = root_record.seq,
@@ -526,8 +524,8 @@ async fn fan_out_restore(
         Ok(Some(s)) => s,
         Ok(None) => {
             // #2031: SQL restore committed but the root block has no resolvable
-            // space, so the engine cohort cannot be mirrored and stays divergent
-            // until boot replay. Meter the skip.
+            // space, so the engine cohort cannot be mirrored and stays divergent.
+            // Meter the skip.
             super::descendant_fanout_dropped::record();
             tracing::trace!(
                 block_id = root_payload.block_id.as_str(),

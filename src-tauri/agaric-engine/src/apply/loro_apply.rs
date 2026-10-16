@@ -642,7 +642,7 @@ async fn renest_page(
                 page_id,
                 parent_id,
                 "re-nest after a space-move undo: page or parent missing from the engine; \
-                 left at the root (boot replay no longer re-applies this, #5418)",
+                 left at the root",
             );
             return Ok(());
         }
@@ -845,9 +845,8 @@ fn seed_nodes_into_engine(
 /// When a page is created before its `SetProperty(space)` (the create-then-
 /// assign ordering, e.g. #2249), every block in its group is projected SQL-only
 /// during the no-space window and never enters any engine — so their later ops
-/// take the `EngineMissingTarget` fallback, and since #5418 boot replay does
-/// not re-apply them. This helper closes that window: as soon as the space is assigned we
-/// seed the whole subtree (tree nodes + properties + tags) into the per-space
+/// take the `EngineMissingTarget` fallback. This helper closes that window: as
+/// soon as the space is assigned we seed the whole subtree (tree nodes + properties + tags) into the per-space
 /// engine so subsequent ops route through the live engine path.
 ///
 /// ## Order & scope
@@ -1953,9 +1952,9 @@ pub async fn apply_delete_property_via_loro(
 //
 // - Space resolution fails (orphan block, no `space` ancestor,
 //   pre-spaces row, fresh page-create with no `SetProperty(space)`
-//   yet). These rows write SQL but skip the engine apply; a
-//   later op-log replay will reconcile engine state if the row gets a
-//   space.
+//   yet). These rows write SQL but skip the engine apply; a page's
+//   subtree enters the engine when the page gets its space
+//   (`hydrate_page_subtree_into_engine`).
 // - The resolved space's engine tree is missing the block (or a
 //   `MoveBlock`'s target parent).
 //

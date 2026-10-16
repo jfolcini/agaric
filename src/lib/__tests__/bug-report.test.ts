@@ -431,7 +431,7 @@ describe('the integrity section in a bug report', () => {
   })
 
   // The section shares the prefill URL budget with `logs`, and its worst case
-  // is the oracle's full surface: 21 artefacts x SAMPLE_KEYS_PER_ARTEFACT
+  // is the oracle's full surface: every artefact x SAMPLE_KEYS_PER_ARTEFACT
   // ULIDs. Uncapped that is kilobytes, and GitHub drops an over-long prefill
   // silently — taking the description the reporter typed with it.
   it('caps the integrity section in `notes` while the copied body keeps it whole', () => {
