@@ -169,7 +169,7 @@ jobs:
           # one. This lane's tree is a `tauri build --debug` of the whole app
           # (dev profile) plus the `e2e_sync_peer` binary, and matches none
           # of `rust-lint` / `rust-cov` / `rust-mcp` / `rust-release` /
-          # `rust-bench*` / `rust-full-suite`.
+          # `rust-mutants`.
           shared-key: rust-e2e-tauri
           # Only runs on `main` write the cache; a `workflow_dispatch` from a
           # feature branch reads main's cache and writes only an ephemeral

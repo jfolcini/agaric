@@ -10,7 +10,9 @@ inputs:
       `Swatinem/rust-cache` `shared-key`. One per job class (#813): rust-cache
       keeps a single entry per (os, shared-key, lockfile), so two job classes
       sharing a key means only the first finisher's `target/` tree survives.
-    required: true
+      Empty skips the cargo cache, for a lane whose saves are never restored.
+    required: false
+    default: ''
   rust:
     description: >-
       Install the Rust half (system deps, mold, toolchain, cargo cache). `lint`
@@ -77,7 +79,7 @@ runs:
         components: clippy,rustfmt
 
     - name: Rust cache
-      if: inputs.rust == 'true'
+      if: inputs.rust == 'true' && inputs.rust-shared-key != ''
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
         workspaces: src-tauri
