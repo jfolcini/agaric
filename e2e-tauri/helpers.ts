@@ -303,30 +303,25 @@ export async function openJournalBlockEditor(): Promise<void> {
  * Type `text` into the focused block editor and VERIFY it landed intact,
  * retrying up to `MAX_TYPE_ATTEMPTS` times.
  *
- * `browser.keys(text.split(''))` streams one key event per character into the
- * live WebKit/TipTap editor. Under a janky first render (e.g. right after a
- * boot that full-replays the op-log, or while boot-time FTS/tag-ref rebuilds are
- * still firing) individual keystrokes are dropped — the real-backend lane
- * observed e.g. "wdio-journal-crossview" landing as "wdio-journal-crosview" and
- * "wdio real backend smoke …" losing its spaces. The block still committed and
- * rendered as a StaticBlock, but with mangled text, so a `*=${marker}` substring
- * assertion could never match. This read-back-and-retype loop makes the typed
- * text an asserted invariant rather than a best-effort stream: after typing we
- * compare the editor's text to `text`, and on mismatch select-all + delete and
- * retype. It throws (with both strings) rather than committing corrupt text.
+ * Keystrokes sent through WebKitGTK's driver can be lost (see
+ * `distinctKeyChunks`), and a block with mangled text still commits, so a
+ * `*=${marker}` substring assertion could never match. This read-back-and-retype
+ * loop makes the typed text an asserted invariant rather than a best-effort
+ * stream: after typing we compare the editor's text to `text`, and on mismatch
+ * select-all + delete and retype. It throws (with both strings) rather than
+ * committing corrupt text.
  *
  * The roving editor must already be open and focused (call
  * `openJournalBlockEditor` first). The editor element is re-resolved on every
  * attempt so a mid-type ProseMirror re-render can't leave us holding a stale
  * handle. Does NOT commit — the caller presses Enter/Escape after this resolves.
  */
-export async function typeMarkerVerified(text: string, readBackTimeout = 3_000): Promise<void> {
+export async function typeMarkerVerified(text: string): Promise<void> {
   await typeVerified(
     '[data-testid="block-editor"] [contenteditable="true"]',
     text,
     (selector) => $(selector).getText(),
     'block editor',
-    readBackTimeout,
   )
 }
 
@@ -361,6 +356,27 @@ async function focusForTyping(selector: string): Promise<void> {
 }
 
 /**
+ * Split `text` into runs in which no character repeats, each to go out as its
+ * own `browser.keys` call. That call presses every key down before it releases
+ * any, and WebKitGTK's driver loses a key pressed again while it is still held:
+ * an adjacent repeat (`[[` arrives as `[`) and every space after the first
+ * (`zap of ink` arrives as `zap ofink`).
+ */
+export function distinctKeyChunks(text: string): string[] {
+  const chunks: string[] = []
+  let chunk = ''
+  for (const ch of text) {
+    if (chunk.includes(ch)) {
+      chunks.push(chunk)
+      chunk = ''
+    }
+    chunk += ch
+  }
+  if (chunk !== '') chunks.push(chunk)
+  return chunks
+}
+
+/**
  * Shared implementation behind `typeMarkerVerified` / `typeInputVerified`;
  * called directly for any other text box, such as the page title.
  *
@@ -373,43 +389,42 @@ export async function typeVerified(
   text: string,
   readBack: (selector: string) => Promise<string>,
   what: string,
-  readBackTimeout = 3_000,
 ): Promise<void> {
   const MAX_TYPE_ATTEMPTS = 3
+  // A read-back unchanged this long has settled: the keys are all dispatched
+  // before `browser.keys` resolves, so a wrong text that stops moving is final.
+  const READ_BACK_SETTLED_MS = 400
   const editorSelector = selector
   let lastSeen = ''
   for (let attempt = 1; attempt <= MAX_TYPE_ATTEMPTS; attempt++) {
     await $(editorSelector).waitForDisplayed({ timeout: ACTION_TIMEOUT })
     await focusForTyping(editorSelector)
-    if (attempt === 1) {
-      await browser.keys(text.split(''))
-    } else {
-      // Run 30057838392 proved the drop is DETERMINISTIC, not a race: adjacent
-      // duplicate characters coalesce ("crossview"→"crosview" identically on
-      // all attempts; "22"/"88" digit pairs each lost one). A plain retype can
-      // therefore never converge. On retries, pace each keystroke so WebKit's
-      // key handling sees distinct events even for repeated characters.
-      for (const ch of text) {
-        await browser.keys([ch])
-        await browser.pause(40)
-      }
+    // A retry types one key at a time, in case the drop was not the driver's.
+    const chunks = attempt === 1 ? distinctKeyChunks(text) : Array.from(text)
+    for (const chunk of chunks) {
+      await browser.keys(Array.from(chunk))
+      await browser.pause(40)
     }
     // Poll briefly: ProseMirror applies the transaction and re-renders text
     // asynchronously, so read back under a short waitUntil rather than once.
-    let matched = false
+    let previous: string | undefined
+    let changedAt = Date.now()
     try {
       await browser.waitUntil(
         async () => {
           lastSeen = (await readBack(editorSelector)).trim()
-          return lastSeen === text
+          if (lastSeen !== previous) {
+            previous = lastSeen
+            changedAt = Date.now()
+          }
+          return lastSeen === text || Date.now() - changedAt >= READ_BACK_SETTLED_MS
         },
-        { timeout: readBackTimeout, interval: 200 },
+        { timeout: 3_000, interval: 200 },
       )
-      matched = true
     } catch {
-      matched = false
+      // Still changing after the budget: `lastSeen` decides, as for a settled read.
     }
-    if (matched) return
+    if (lastSeen === text) return
     if (attempt < MAX_TYPE_ATTEMPTS) {
       // Clear the mangled attempt: select-all + delete, then retype.
       await focusForTyping(editorSelector)
@@ -438,9 +453,9 @@ export async function typeVerified(
  * Assumes the Journal view is active (call `navigateTo('Journal')` first if a
  * prior step moved away).
  */
-export async function addBlockWithMarker(marker: string, readBackTimeout?: number): Promise<void> {
+export async function addBlockWithMarker(marker: string): Promise<void> {
   await openJournalBlockEditor()
-  await typeMarkerVerified(marker, readBackTimeout)
+  await typeMarkerVerified(marker)
   await browser.keys(['Enter'])
   await browser.keys(['Escape'])
 

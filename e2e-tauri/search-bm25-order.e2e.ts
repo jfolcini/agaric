@@ -40,10 +40,7 @@ describe('Agaric real-backend search ranking (#4671)', () => {
     await navigateTo('Journal')
 
     await addBlockWithMarker(SPARSE)
-    // The longer sentence gets a longer read-back budget: ProseMirror settles
-    // fifty keystrokes of transactions on the CI runner more slowly than the
-    // ~20-character markers the default budget was measured against.
-    await addBlockWithMarker(DENSE, 10_000)
+    await addBlockWithMarker(DENSE)
     const sparseId = await blockStaticByMarker(SPARSE).getAttribute('data-block-id')
     const denseId = await blockStaticByMarker(DENSE).getAttribute('data-block-id')
 
