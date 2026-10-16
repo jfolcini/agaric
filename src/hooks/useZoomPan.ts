@@ -119,9 +119,11 @@ export function useZoomPan({
       }
       const handled = (): boolean => {
         const step = pans[e.key]
-        if (e.key === '+' || e.key === '=') zoomBy(ZOOM_STEP)
-        else if (e.key === '-' || e.key === '_') zoomBy(-ZOOM_STEP)
-        else if (e.key === '0') resetZoom()
+        // Ctrl/⌘ with these keys is the interface zoom (#5646).
+        const zoomKey = e.ctrlKey || e.metaKey ? null : e.key
+        if (zoomKey === '+' || zoomKey === '=') zoomBy(ZOOM_STEP)
+        else if (zoomKey === '-' || zoomKey === '_') zoomBy(-ZOOM_STEP)
+        else if (zoomKey === '0') resetZoom()
         else if (zoomed && step) panBy(step.x, step.y)
         else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
           return onUnzoomedArrow?.(e.key) ?? false

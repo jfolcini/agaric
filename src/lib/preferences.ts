@@ -1015,8 +1015,8 @@ const FONT_SIZE_PREFERENCE: PreferenceDefinition<FontSize> = {
  * Interface zoom factors (`src/hooks/useInterfaceZoom.ts`, #5646): Chrome's
  * page-zoom steps, capped at the largest that keeps the default window
  * (`tauri.conf.json`) at least as wide as the narrowest layout
- * `e2e/mobile-overflow.spec.ts` sweeps. `e2e/interface-zoom.spec.ts` checks
- * the cap against both.
+ * `e2e/mobile-overflow.spec.ts` sweeps. `e2e/interface-zoom.spec.ts` lays
+ * every view out at the default window over the cap.
  */
 export const INTERFACE_ZOOM_LEVELS = [
   0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5,

@@ -20,8 +20,6 @@ import {
   writePreference,
 } from '@/lib/preferences'
 
-export type { InterfaceZoom } from '@/lib/preferences'
-
 /** The level one step in `direction` from `zoom`, held at the ends of the range. */
 export function stepInterfaceZoom(zoom: InterfaceZoom, direction: 1 | -1): InterfaceZoom {
   const index = INTERFACE_ZOOM_LEVELS.indexOf(zoom) + direction
