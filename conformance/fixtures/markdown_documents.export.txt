@@ -1,0 +1,17 @@
+# Field Notes
+
+---
+aliases: [Notebook]
+tags: [research]
+season: autumn
+---
+
+- [map.png](attachment:ATT2)
+- ## Findings
+  - **Bold**, *italic* and `code` ^000000000000000000000000S3
+    - deeper
+- first line
+  second line
+  - [report.pdf](attachment:ATT1)
+- see [[#^000000000000000000000000S3]]
+- read [[Reading List]] for #research

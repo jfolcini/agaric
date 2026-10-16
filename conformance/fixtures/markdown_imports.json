@@ -1,0 +1,477 @@
+{
+  "description": "#5071 — the two importers, each fed a multi-line document spelled inline as the op's `content`, into a space an op creates (`C1`; an import refuses a target that is not a space). The markdown document is shaped as Agaric's own export writes one: a title heading the filename already names, then front matter, then a section heading over nesting two deep, a block whose text runs over two lines, a task checkbox, a page link, a tag and a block property. The link and the tag name the seeded S1 and S3, moved into `C1` first: a name the import resolved to a block it CREATED would land in `content` as that block's id, minted per run, which no recorded snapshot can hold. The bibliography document is two BibTeX entries and a third that repeats the first one's key. The snapshot pins every block, property and tag the imports wrote, and each return pins its counts. The grammar has one implementation, in Rust: the mock's importers are deliberate approximations (one flat block per line, placeholder reference pages), so this fixture is backend-only on the mock (`DRIFT_SKIP` in conformance.test.ts). Seed: S1 (Seed Catalogue); S2 (Tags) > S3 (garden). Re-author `expected` / `expected_ops` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Seed Catalogue",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Tags",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "garden",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Library",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Garden Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "## Beds",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B5",
+        "parent_id": "B5",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Plant **tomatoes** in spring",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B5",
+        "parent_id": "B6",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Water daily",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B8",
+        "page_id": "B5",
+        "parent_id": "B7",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Mornings only",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B5",
+        "parent_id": "B8",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "A block that runs\nover two lines",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B10",
+        "page_id": "B5",
+        "parent_id": "B6",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "Order seeds",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B11",
+        "page_id": "B5",
+        "parent_id": "B6",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "TODO"
+      },
+      {
+        "block_type": "content",
+        "content": "See [[000000000000000000000000S1]] and #[000000000000000000000000S3]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B12",
+        "page_id": "B5",
+        "parent_id": "B6",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Lovelace 1843",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B13",
+        "page_id": "B13",
+        "parent_id": null,
+        "position": 5,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Turing 1950",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B14",
+        "page_id": "B14",
+        "parent_id": null,
+        "position": 6,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 29,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "season",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "owner",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "citation-key",
+          "op_type": "set_property"
+        },
+        {
+          "key": "reference-type",
+          "op_type": "set_property"
+        },
+        {
+          "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "key": "year",
+          "op_type": "set_property"
+        },
+        {
+          "key": "journal",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "citation-key",
+          "op_type": "set_property"
+        },
+        {
+          "key": "reference-type",
+          "op_type": "set_property"
+        },
+        {
+          "key": "authors",
+          "op_type": "set_property"
+        },
+        {
+          "key": "year",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B12",
+        "source_page_id": "B5",
+        "target_id": "B1"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "B4",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B5",
+        "key": "season",
+        "value": "spring",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B12",
+        "key": "owner",
+        "value": "ada",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B13",
+        "key": "authors",
+        "value": "Lovelace, Ada",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B13",
+        "key": "citation-key",
+        "value": "lovelace1843",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B13",
+        "key": "journal",
+        "value": "Scientific Memoirs",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B13",
+        "key": "reference-type",
+        "value": "article",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B13",
+        "key": "year",
+        "value": 1843.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B14",
+        "key": "authors",
+        "value": "Turing, Alan",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B14",
+        "key": "citation-key",
+        "value": "turing1950",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B14",
+        "key": "reference-type",
+        "value": "book",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B14",
+        "key": "year",
+        "value": 1950.0,
+        "value_type": "Num"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_space_to_import_into",
+      "returns": ["create_space#space_id=B4"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_named_blocks_join_the_space",
+      "returns": ["move_blocks_to_space#moved=2"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_nested_page",
+      "returns": ["B5#page_title=Garden Notes#blocks_created=7#properties_set=3"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "two_references_and_a_repeat",
+      "returns": ["import_bibliography#pages_created=2#entries_skipped=1#properties_set=9"]
+    }
+  ],
+  "name": "markdown_imports",
+  "ops": [
+    {
+      "args": {
+        "name": "Library"
+      },
+      "command": "create_space",
+      "comment": "The target space, named `C1` below.",
+      "name": "a_space_to_import_into",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S1", "S2"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "The page and the tag the document names, so the import resolves them in its target space to ids the fixture fixed.",
+      "name": "the_named_blocks_join_the_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "# Garden Notes\n\n---\nseason: spring\n---\n\n## Beds\n- Plant **tomatoes** in spring\n  - Water daily\n    - Mornings only\n- A block that runs\n  over two lines\n- [ ] Order seeds\n- See [[Seed Catalogue]] and #garden\n  owner:: ada\n",
+        "filename": "Garden Notes.md",
+        "spaceId": "C1"
+      },
+      "command": "import_markdown",
+      "comment": "The title comes from the filename, so the leading heading that repeats it is no block and the front matter after it is the page's property; the section heading is a block the list nests under; indentation is nesting and a continuation line stays in its block; the checkbox is the task state; the link and the tag resolve to S1 and S3; `owner::` is the last block's property.",
+      "name": "a_nested_page",
+      "via": "command"
+    },
+    {
+      "args": {
+        "content": "@article{lovelace1843,\n  author = {Lovelace, Ada},\n  title = {Notes on the Analytical Engine},\n  journal = {Scientific Memoirs},\n  year = {1843}\n}\n\n@book{turing1950,\n  author = {Turing, Alan},\n  title = {Computing Machinery and Intelligence},\n  year = {1950}\n}\n\n@article{lovelace1843,\n  author = {Lovelace, Ada},\n  title = {A repeated key},\n  year = {1843}\n}\n",
+        "spaceId": "C1"
+      },
+      "command": "import_bibliography",
+      "comment": "No `format`, so the leading `@` selects BibTeX. Each entry is a reference page named for its author and year, carrying the citation fields as typed properties; the third repeats the first one's citation key and is skipped.",
+      "name": "two_references_and_a_repeat",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Seed Catalogue",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Tags",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "garden",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
