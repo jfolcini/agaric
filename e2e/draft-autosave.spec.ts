@@ -118,6 +118,63 @@ async function liveEditorBlockId(page: import('@playwright/test').Page): Promise
   return page.locator('[data-testid="block-editor"]').first().getAttribute('data-block-id')
 }
 
+/** Invoke a command against the mock backend, as a re-query of durable state. */
+async function query(
+  page: import('@playwright/test').Page,
+  cmd: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  return page.evaluate(
+    async ([c, a]) => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__?: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      return internals?.invoke(c, a)
+    },
+    [cmd, args] as const,
+  )
+}
+
+/** The block's `edit_block` ops in its op-log history. */
+async function editOps(
+  page: import('@playwright/test').Page,
+  blockId: string | null,
+): Promise<number> {
+  const res = (await query(page, 'get_block_history', {
+    blockId,
+    opTypeFilter: 'edit_block',
+    cursor: null,
+    limit: 100,
+  })) as { items?: unknown[] } | undefined
+  if (!Array.isArray(res?.items)) throw new Error('get_block_history returned no items')
+  return res.items.length
+}
+
+/**
+ * Leave the page through the global "focus search" chord while the block is
+ * still focused. The view swap unmounts the block with no blur reaching it,
+ * so Effect B's unmount-while-focused branch runs and the block stays live.
+ * Resolves once that branch has dispatched its draft IPC; the mock applies a
+ * command synchronously, so the effect is visible from then on.
+ */
+async function navigateAwayWithoutBlur(
+  page: import('@playwright/test').Page,
+  editor: import('@playwright/test').Locator,
+  blockId: string | null,
+): Promise<void> {
+  await editor.press('Control+Shift+F')
+  await expect
+    .poll(async () =>
+      [
+        ...(await getInvokeCalls(page, 'flush_draft')),
+        ...(await getInvokeCalls(page, 'delete_draft')),
+      ].some((c) => c['blockId'] === blockId),
+    )
+    .toBe(true)
+}
+
 test.describe('Draft autosave', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
@@ -191,6 +248,41 @@ test.describe('Draft autosave', () => {
 
     const discardedIds = (await getInvokeCalls(page, 'delete_draft')).map((c) => c['blockId'])
     expect(discardedIds).not.toContain(blockId)
+  })
+
+  // #5423 — an unmount with no blur used to save and flush the block's
+  // content even when it equalled the committed baseline, appending an
+  // `edit_block` with unchanged content to the op log.
+  test('leaving a still-focused, unedited block appends no edit_block op', async ({ page }) => {
+    await openPage(page, PAGE)
+    const editor = await focusBlock(page, 0)
+    const blockId = await liveEditorBlockId(page)
+    const before = await editOps(page, blockId)
+
+    await navigateAwayWithoutBlur(page, editor, blockId)
+
+    expect(await editOps(page, blockId)).toBe(before)
+  })
+
+  test('leaving a still-focused block with typed text flushes that text as one edit_block op', async ({
+    page,
+  }) => {
+    await openPage(page, PAGE)
+    const editor = await focusBlock(page, 0)
+    const blockId = await liveEditorBlockId(page)
+    const before = await editOps(page, blockId)
+
+    await editor.press('Control+a')
+    await editor.pressSequentially('typed, never blurred')
+    await navigateAwayWithoutBlur(page, editor, blockId)
+
+    await expect
+      .poll(
+        async () =>
+          ((await query(page, 'get_block', { blockId })) as { content?: string })?.content,
+      )
+      .toBe('typed, never blurred')
+    expect(await editOps(page, blockId)).toBe(before + 1)
   })
 
   test('clearing a block back to empty discards the pending draft immediately, without waiting for the debounce', async ({
