@@ -1223,20 +1223,20 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
 // ── Main-thread simulation ───────────────────────────────────────────
 
 /**
- * With `settleMoved` (reduced motion) the simulation never runs while a node
- * is held, since nothing draws its ticks; `settleMoved` runs once the last
- * node is let go, and only if one moved, so a click leaves the layout as is.
+ * Under reduced motion (`still`) the simulation does not run while a node is
+ * held: only the held node is drawn, at the pointer, and the layout settles
+ * once the last node is let go, only if one moved, so a click leaves it as is.
  */
 function createMainThreadDrag(
   sim: Simulation<GraphNode, GraphEdge>,
-  settleMoved?: () => void,
+  still?: { draw: () => void; settle: () => void },
 ): ReturnType<typeof drag<SVGGElement, GraphNode>> {
   let moved = false
   return drag<SVGGElement, GraphNode>()
     .on('start', (event, d) => {
       if (!event.active) {
         moved = false
-        if (!settleMoved) sim.alphaTarget(0.3).restart()
+        if (!still) sim.alphaTarget(0.3).restart()
       }
       d.fx = d.x
       d.fy = d.y
@@ -1245,13 +1245,17 @@ function createMainThreadDrag(
       moved = true
       d.fx = event.x
       d.fy = event.y
+      if (!still) return
+      d.x = event.x
+      d.y = event.y
+      still.draw()
     })
     .on('end', (event, d) => {
       d.fx = null
       d.fy = null
       if (event.active) return
-      if (!settleMoved) sim.alphaTarget(0)
-      else if (moved) settleMoved()
+      if (!still) sim.alphaTarget(0)
+      else if (moved) still.settle()
     })
 }
 
@@ -1294,11 +1298,14 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
       live.applyPositions()
     }
     // A moved node leaves its links stretched until the layout settles again.
-    const settleReleased = (): void => {
-      sim.alpha(RESIZE_ALPHA)
-      settleNow()
+    const still = {
+      draw: () => live.applyPositions(),
+      settle: () => {
+        sim.alpha(RESIZE_ALPHA)
+        settleNow()
+      },
     }
-    ctx.node.call(createMainThreadDrag(sim, settleReleased))
+    ctx.node.call(createMainThreadDrag(sim, still))
     settleNow()
     ctx.onSettled(sim.nodes())
     return {
@@ -1315,7 +1322,7 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
       },
       onUpdate: (next) => {
         live.applyPositions = next.applyPositions
-        next.node.call(createMainThreadDrag(sim, settleReleased))
+        next.node.call(createMainThreadDrag(sim, still))
         applyMainThreadUpdate(sim, next)
         settleNow()
       },

@@ -1,8 +1,9 @@
 /**
- * Under reduced motion the worker lays the graph out at once, as the
- * main-thread fallback does, instead of posting every tick of an animated
- * settle. Runs the real d3-force, so the posted layout is compared with the
- * main-thread path's, and each path's layout is checked for having settled.
+ * Under reduced motion both paths, the worker and the main-thread fallback,
+ * lay the graph out at once instead of animating the settle, and a dragged
+ * node moves alone. Runs the real d3-force, so the worker's layout is compared
+ * with the main-thread path's, and each path's layout is checked for having
+ * settled.
  */
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -122,19 +123,27 @@ describe('main-thread layout under reduced motion', () => {
     return { r, counts, handle, hub, hubNode: r.simNodes[IDS.indexOf('hub')] as GraphNode }
   }
 
-  it('settles at once when a dragged node is let go, then stays still', async () => {
+  it('draws only the dragged node at the pointer, then settles at once from where it is let go', async () => {
     const { r, counts, handle, hub, hubNode } = mountForDrag()
     const { x = 0, y = 0 } = hubNode
+    const others = () => positionsOf(r.simNodes.filter((n) => n !== hubNode))
+    const before = others()
     mouse(hub, 'mousedown', 0, 0)
     mouse(window, 'mousemove', 80, 40)
-    expect([hubNode.fx, hubNode.fy]).toEqual([x + 80, y + 40])
+    expect(counts.applied).toBe(1)
+    expect(hubNode.x).toBeCloseTo(x + 80)
+    expect(hubNode.y).toBeCloseTo(y + 40)
     await afewFrames()
+    expect(counts.applied).toBe(1)
+    expect(others()).toEqual(before)
 
     counts.applied = 0
     mouse(window, 'mouseup', 80, 40)
     expect(counts.applied).toBe(1)
     const released = positionsOf(r.simNodes)
     expectLinksSettled(released, IDS)
+    // A layout settled from the hub's old spot would leave it within a few px of it.
+    expect(Math.hypot((hubNode.x ?? 0) - x, (hubNode.y ?? 0) - y)).toBeGreaterThan(10)
 
     await afewFrames()
     expect(counts.applied).toBe(1)
@@ -261,11 +270,19 @@ describe('graph worker under reduced motion', () => {
     expect(posted.map((m) => m.type)).toEqual(['done', 'done'])
   })
 
-  it('lays out at once when a dragged node is let go, then posts nothing', async () => {
+  it('moves only the dragged node, lays out at once when it is let go, then posts nothing', async () => {
     start()
+    const held = Float32Array.from(
+      (posted[0] as Extract<WorkerOutboundMessage, { type: 'done' }>).positions,
+    )
+    held.set([480, 340], IDS.indexOf('hub') * 2)
+    posted = []
     send({ type: 'drag', phase: 'start', nodeId: 'hub', x: 400, y: 300 })
     send({ type: 'drag', phase: 'drag', nodeId: 'hub', x: 480, y: 340 })
+    expect(posted.map((m) => m.type)).toEqual(['tick'])
+    expect((posted[0] as Extract<WorkerOutboundMessage, { type: 'tick' }>).positions).toEqual(held)
     await afewFrames()
+    expect(posted.map((m) => m.type)).toEqual(['tick'])
 
     posted = []
     send({ type: 'drag', phase: 'end', nodeId: 'hub', x: 480, y: 340 })

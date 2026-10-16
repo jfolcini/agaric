@@ -263,8 +263,8 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
         const node = simNodes.find((n) => n.id === msg.nodeId)
         if (!node) break
 
-        // Under reduced motion the simulation wakes only once the node moves,
-        // so a click posts nothing and leaves the layout as it was.
+        // Under reduced motion the simulation does not run while the node is
+        // held: only the held node moves, and a click posts nothing.
         switch (msg.phase) {
           case 'start': {
             dragMoved = false
@@ -274,17 +274,19 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
             break
           }
           case 'drag': {
-            if (reducedMotion && !dragMoved) simulation.alphaTarget(0.3).restart()
             dragMoved = true
             node.fx = msg.x
             node.fy = msg.y
+            if (!reducedMotion) break
+            node.x = msg.x
+            node.y = msg.y
+            postPositions('tick')
             break
           }
           case 'end': {
             simulation.alphaTarget(0)
             node.fx = null
             node.fy = null
-            // Settle rather than stop: a stop would freeze the neighbours mid-pull.
             if (reducedMotion && dragMoved) settle(simulation.alpha(RESIZE_ALPHA))
             break
           }
