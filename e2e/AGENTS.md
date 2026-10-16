@@ -49,16 +49,19 @@ Root rule: [AGENTS.md § Testing invariants](../AGENTS.md#testing-invariants-ant
 Import `test` / `expect` and helpers from `./helpers`, not `@playwright/test`:
 
 ```ts
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, replaceEditorText, test, waitForBoot } from './helpers'
 
 test.beforeEach(async ({ page }) => { await waitForBoot(page) })   // goto('/') + wait for the shell
 
 test('edits a block', async ({ page }) => {
   await openPage(page, 'Getting Started')
-  await (await focusBlock(page, 0)).fill('Hello, world!')
+  await focusBlock(page, 0)
+  await replaceEditorText(page, 'Hello, world!')
   await expect(page.getByText('Hello, world!')).toBeVisible()
 })
 ```
+
+- Replace a block editor's text with `replaceEditorText`, never `locator.fill`: `fill` selects all natively, ProseMirror reads that selection only later, and the text is appended or the block never empties.
 
 - No page objects: flat tests, shared behaviour in `e2e/helpers.ts`. Cross-test setup is a fixture on the exported `test`: a module-level `beforeEach` in a shared module binds only to the first spec file a worker loads.
 - Select with `data-testid` / `data-slot`, not CSS classes.

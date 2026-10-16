@@ -1073,7 +1073,8 @@ jobs:
         #
         # `agaric-sync` is listed first because its shard 0 is the cache saver
         # (see `save-if` below): under `max-parallel` the first rows start
-        # first, so the later waves restore the tree it saves.
+        # first. rust-cache saves in its post step, so only the shards that
+        # start after that shard finishes restore its tree.
         include:
           - { package: agaric-sync, shard: 0, shards: 3 }
           - { package: agaric-sync, shard: 1, shards: 3 }

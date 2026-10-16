@@ -81,11 +81,6 @@ function viewportGridAttrs(args: {
   }
 }
 
-/** A namespace row's `+`: the New page dialog, pre-filled with the namespace. */
-function createUnder(namespacePath: string): void {
-  openNewPageDialog(`${namespacePath}/`)
-}
-
 interface PageBrowserProps {
   /** Called when a page is selected. */
   onPageSelect?: (pageId: string, title?: string) => void
@@ -689,7 +684,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                     isStarred={isStarred}
                     toggleStar={toggleStar}
                     onPageSelect={onPageSelect}
-                    onCreateUnder={createUnder}
+                    onCreateUnder={(path) => openNewPageDialog(`${path}/`)}
                     onDeleteRequest={setDeleteTarget}
                     selectedIds={multiSelected}
                     onToggleMultiSelect={handleMultiSelectRowClick}

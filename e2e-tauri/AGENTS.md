@@ -16,8 +16,10 @@ Locally you need Linux with `webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `openbox
 ```sh
 npm run tauri -- build --debug --no-bundle --config '{"build":{"beforeBuildCommand":"npm run build"}}'
 (cd src-tauri && cargo build -p agaric-diagnostics --bin e2e_sync_peer)
-WDIO_SKIP_TAURI_BUILD=1 xvfb-run -a dbus-run-session -- bash -c 'openbox & npm run test:e2e-tauri'
+env -u WAYLAND_DISPLAY GDK_BACKEND=x11 WDIO_SKIP_TAURI_BUILD=1 xvfb-run -a dbus-run-session -- bash -c 'openbox & npm run test:e2e-tauri'
 ```
+
+On a Wayland desktop, `xvfb-run` sets only `DISPLAY`, so without the `env` prefix GTK opens the app on the desktop session instead of Xvfb, and the focus check fails.
 
 The `--config` skips `prepare-external-bins.mjs`'s release build of the unused `agaric-mcp` sidecar; `wdio.conf.ts`'s own build, when `WDIO_SKIP_TAURI_BUILD` is unset, does not pass it and pays that cost. A dev box without those runs nothing; `npm run typecheck:e2e-tauri` and `npx vitest run e2e-tauri` are the local checks.
 

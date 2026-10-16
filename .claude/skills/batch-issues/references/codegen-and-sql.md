@@ -10,7 +10,7 @@ Only CI's four `prepare --check` lanes and, partially, the `check-sqlx-cache-dri
 
 After every regen, read `git status --short src-tauri/.sqlx src-tauri/*/.sqlx`. A mass deletion is a wipe (wrong scope, a stale `dev.db`, or another cargo build holding the lock), not a cleanup: restore those directories from `HEAD` and re-run with nothing else building. One or two deleted entries whose queries no longer exist are a prior PR's leftovers: keep them in the diff and say so.
 
-The hook flags a crate that swaps one shared query for another (it drops a query its siblings still use and adds a new one, so the diff net-removes no `query!` site). Once `just gen-sqlx` over all four caches has produced that deletion, commit with `SKIP=check-sqlx-cache-drift` and the reason in the message; CI's per-crate `prepare --check` lanes are the gate.
+The hook flags a crate that swaps one shared query for another (it drops a query its siblings still use and adds a new one, so the diff net-removes no `query!` site). Once `just gen-sqlx` over all four caches has produced that deletion, commit with `SKIP=check-sqlx-cache-drift` and the reason in the message. The pre-push verify runs the same guard over the range, out of a commit `SKIP`'s reach, so the push takes `SKIP_CI_VERIFY='<reason>'`; CI's per-crate `prepare --check` lanes are the gate.
 
 `prepare --check` exiting 0 with "potentially unused queries found in .sqlx" is not clean: the cache holds entries no query produces. Regenerate.
 
