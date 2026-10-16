@@ -27,6 +27,7 @@ import { useAppKeyboardShortcuts } from '@/hooks/useAppKeyboardShortcuts'
 import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
 import { useDeepLinkRouter } from '@/hooks/useDeepLinkRouter'
 import { useFontSize } from '@/hooks/useFontSize'
+import { useInterfaceZoom } from '@/hooks/useInterfaceZoom'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useLanguage } from '@/hooks/useLanguage'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -252,6 +253,8 @@ function App() {
   const { isDark } = useTheme()
   // Apply the editor font-size preference from boot, before Settings mounts.
   useFontSize()
+  // Apply the interface zoom from boot (#5646).
+  useInterfaceZoom()
   // Apply the global animation-speed preference app-wide from boot (the Settings
   // Select mounts the same hook for the control). #animation-speed-tuning
   useMotionPreference()

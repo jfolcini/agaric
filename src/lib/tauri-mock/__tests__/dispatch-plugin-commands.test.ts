@@ -86,6 +86,7 @@ describe('dispatch — modeled plugin:* commands resolve (#760)', () => {
     'plugin:app|register_listener',
     'plugin:app|remove_listener',
     'plugin:window|set_title',
+    'plugin:webview|set_webview_zoom',
     'plugin:deep-link|get_current',
     'plugin:clipboard-manager|write_text',
     'plugin:shell|open',

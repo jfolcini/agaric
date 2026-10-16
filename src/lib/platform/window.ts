@@ -1,4 +1,5 @@
 import { logger } from '@/lib/logger'
+import { isMobilePlatform } from '@/lib/platform'
 
 // ---------------------------------------------------------------------------
 // Window title — visual-identity surface
@@ -30,5 +31,27 @@ export async function setWindowTitle(title: string): Promise<void> {
     await getCurrentWindow().setTitle(title)
   } catch (err) {
     logger.warn('window', 'setTitle() failed or window plugin unavailable', { title }, err)
+  }
+}
+
+// One shared import, so two quick zoom steps resume in the order they were
+// made; separate `import()` calls can resolve out of order and leave the
+// webview at the older level.
+let webviewApi: Promise<typeof import('@tauri-apps/api/webview')> | undefined
+
+/**
+ * Set the webview's page zoom, where `1` is 100% (#5646). Page zoom reflows the
+ * layout to the narrower width, as a browser's Ctrl+= does. Desktop only: Tauri
+ * registers `set_webview_zoom` behind `#[cfg(desktop)]`, so mobile never calls it.
+ * A failure is logged; the zoom just stays where it was.
+ */
+export async function setWebviewZoom(factor: number): Promise<void> {
+  if (isMobilePlatform()) return
+  try {
+    webviewApi ??= import('@tauri-apps/api/webview')
+    const { getCurrentWebview } = await webviewApi
+    await getCurrentWebview().setZoom(factor)
+  } catch (err) {
+    logger.warn('window', 'setZoom() failed or webview API unavailable', { factor }, err)
   }
 }

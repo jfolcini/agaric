@@ -33,6 +33,17 @@ describe('useZoomPan', () => {
     expect(transform()).toContain('scale(0.5)')
   })
 
+  it('leaves Ctrl/⌘ with + - 0 to the interface zoom', () => {
+    render(<Surface />)
+    fireEvent.keyDown(window, { key: '=', ctrlKey: true })
+    fireEvent.keyDown(window, { key: '+', metaKey: true })
+    expect(transform()).toContain('scale(1)')
+    fireEvent.keyDown(window, { key: '=' })
+    fireEvent.keyDown(window, { key: '-', ctrlKey: true })
+    fireEvent.keyDown(window, { key: '0', metaKey: true })
+    expect(transform()).toContain('scale(1.25)')
+  })
+
   it('pans on a plain wheel and zooms on Ctrl + wheel in pan mode', () => {
     render(<Surface wheel="pan" />)
     // The pan limit comes from the zoomed content; the wheel lands around it.

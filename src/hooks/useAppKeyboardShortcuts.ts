@@ -37,6 +37,7 @@ import { addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date
 import { useEffect } from 'react'
 
 import { getPaletteCommand } from '@/hooks/palette-commands'
+import { changeInterfaceZoom } from '@/hooks/useInterfaceZoom'
 import { announce } from '@/lib/announcer'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { notify } from '@/lib/notify'
@@ -306,6 +307,22 @@ function tryCreateNewPage(e: KeyboardEvent): boolean {
   return true
 }
 
+/**
+ * `interfaceZoomIn` / `interfaceZoomOut` / `interfaceZoomReset` (Ctrl+= / Ctrl+-
+ * / Ctrl+0) step the interface zoom (#5646). They fire while typing too, as a
+ * browser's zoom keys do.
+ */
+function tryInterfaceZoom(e: KeyboardEvent): boolean {
+  let direction: 1 | -1 | 0
+  if (matchesShortcutBinding(e, 'interfaceZoomIn')) direction = 1
+  else if (matchesShortcutBinding(e, 'interfaceZoomOut')) direction = -1
+  else if (matchesShortcutBinding(e, 'interfaceZoomReset')) direction = 0
+  else return false
+  e.preventDefault()
+  changeInterfaceZoom(direction)
+  return true
+}
+
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -342,7 +359,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
   }, [t])
 
   // ── Global shortcuts (findInPage, focusSearch, runLastCommand,
-  //    paletteOpen, createNewPage) ──
+  //    paletteOpen, interface zoom, createNewPage) ──
   // All go through matchesShortcutBinding so rebinding in Settings takes
   // Effect. Each shortcut's action lives in a module-level `try*`
   // helper that returns true once it consumes the event, keeping this
@@ -356,6 +373,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
       if (tryFocusSearch(e)) return
       if (tryRunLastCommand(e, t)) return
       if (tryPaletteOpen(e)) return
+      if (tryInterfaceZoom(e)) return
       tryCreateNewPage(e)
     }
     window.addEventListener('keydown', handleGlobalShortcuts)

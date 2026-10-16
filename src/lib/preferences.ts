@@ -1012,6 +1012,37 @@ const FONT_SIZE_PREFERENCE: PreferenceDefinition<FontSize> = {
 }
 
 /**
+ * Interface zoom factors (`src/hooks/useInterfaceZoom.ts`, #5646): Chrome's
+ * page-zoom steps, capped at the largest that keeps the default window
+ * (`tauri.conf.json`) at least as wide as the narrowest layout
+ * `e2e/mobile-overflow.spec.ts` sweeps. `e2e/interface-zoom.spec.ts` lays
+ * every view out at the default window over the cap.
+ */
+export const INTERFACE_ZOOM_LEVELS = [
+  0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5,
+] as const
+
+export type InterfaceZoom = (typeof INTERFACE_ZOOM_LEVELS)[number]
+
+function isInterfaceZoom(value: number): value is InterfaceZoom {
+  return (INTERFACE_ZOOM_LEVELS as readonly number[]).includes(value)
+}
+
+/** `agaric-interface-zoom` — device-scoped webview zoom factor, a bare number string. */
+const INTERFACE_ZOOM_PREFERENCE: PreferenceDefinition<InterfaceZoom> = {
+  key: 'agaric-interface-zoom',
+  scope: 'device',
+  version: 1,
+  defaultValue: 1,
+  parse: (raw) => {
+    const n = Number(raw)
+    if (isInterfaceZoom(n)) return n
+    throw new Error(`invalid interface zoom: ${raw}`)
+  },
+  serialize: (value) => String(value),
+}
+
+/**
  * `agaric:deadlineWarningDays` — overdue-warning lead time in days
  * (`src/hooks/useDuePanelData.ts`,
  * `src/components/agenda/DeadlineWarningSection.tsx`). Legacy on-disk
@@ -1488,6 +1519,7 @@ export const PREFERENCES = {
   tooltipDelay: TOOLTIP_DELAY_PREFERENCE,
   language: LANGUAGE_PREFERENCE,
   fontSize: FONT_SIZE_PREFERENCE,
+  interfaceZoom: INTERFACE_ZOOM_PREFERENCE,
   deadlineWarningDays: DEADLINE_WARNING_DAYS_PREFERENCE,
   lastUpdateCheck: LAST_UPDATE_CHECK_PREFERENCE,
   updateStatus: UPDATE_STATUS_PREFERENCE,

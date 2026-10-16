@@ -166,6 +166,9 @@ export const PLUGIN_HANDLERS: Record<string, Handler> = {
   // Core window plugin — `setWindowTitle` re-stamps the OS title on every
   // space switch.
   'plugin:window|set_title': returnNull,
+  // Core webview plugin, desktop only — the interface zoom (#5646). The
+  // browser has no webview to zoom, so success is the whole model.
+  'plugin:webview|set_webview_zoom': returnNull,
   // Deep-link is registered on desktop AND mobile; `null` is the real
   // "launched normally, no pending URL" response for `getCurrent()`.
   'plugin:deep-link|get_current': returnNull,
