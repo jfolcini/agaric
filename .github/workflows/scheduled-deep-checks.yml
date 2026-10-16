@@ -949,9 +949,12 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
-          # Own key: a test-profile cache, and one writer per key.
           shared-key: rust-bench-perf-gates
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # Never saved: no deep-check rust cache was restored by a later run
+          # (2026-10-16 audit: bench-slo 5/5 and full-suite-nextest 4/4
+          # misses), because the repo is over its 10 GB cache limit and each
+          # save evicts gate caches that are reused.
+          save-if: false
 
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
