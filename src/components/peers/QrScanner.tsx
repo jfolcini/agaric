@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode'
+import { useEffect, useEffectEvent, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -9,6 +10,13 @@ import { logger } from '@/lib/logger'
 // See docs/architecture/sync-and-network.md § Pairing for the
 // platform constraint (Android CAMERA permission + file-upload + 4-word
 // manual-entry fallbacks).
+
+/** One camera start; the effect cleanup ends it. */
+interface CameraSession {
+  cancelled: boolean
+  /** Stops the camera; html5-qrcode throws from stop() unless it is running. */
+  stop: (() => Promise<void>) | null
+}
 
 interface QrScannerProps {
   onScan: (data: string) => void
@@ -34,31 +42,12 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
     () => `qr-scanner-region-${generatedId.replace(/:/g, '')}`,
     [generatedId],
   )
-  const [scanning, setScanning] = useState(false)
+  // The camera starts on mount, so the scanner is scanning until it fails or reads a code.
+  const [scanning, setScanning] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Bumped by "Retry camera"; each value is one camera session.
+  const [attempt, setAttempt] = useState(0)
   const scannerRef = useRef<HTMLDivElement>(null)
-  // html5-qrcode throws (not rejects) from stop() unless the camera is running,
-  // so every stop goes through stopIfStarted.
-  const scannerInstanceRef = useRef<{ stopIfStarted: () => Promise<void> } | null>(null)
-  const unmountedRef = useRef(false)
-  // #758 item 2: html5-qrcode keeps decoding frames (fps: 10) while the async
-  // stop() settles, so the decode callback can fire multiple times for one
-  // physical scan. Latch on the first decode and drop the rest.
-  const hasScannedRef = useRef(false)
-
-  // Cleanup scanner on unmount to prevent camera leaks
-  useEffect(() => {
-    unmountedRef.current = false
-    return () => {
-      unmountedRef.current = true
-      if (scannerInstanceRef.current) {
-        scannerInstanceRef.current.stopIfStarted().catch((err: unknown) => {
-          logger.warn('QrScanner', 'Failed to stop scanner on unmount', undefined, err)
-        })
-        scannerInstanceRef.current = null
-      }
-    }
-  }, [])
 
   // Translate a getUserMedia / html5-qrcode failure into an actionable,
   // localized message. getUserMedia rejects with a DOMException whose `name`
@@ -80,7 +69,21 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
     return t('qrScanner.cameraError')
   }
 
-  const startScanning = async () => {
+  const failCamera = (message: string) => {
+    setError(message)
+    setScanning(false)
+    onError?.(message)
+    // Notify the parent so it can fall back to manual entry rather
+    // than leave the user staring at the in-scanner error indefinitely.
+    onCameraDenied?.()
+  }
+
+  const startCamera = useEffectEvent(async (session: CameraSession) => {
+    // StrictMode mounts, cleans up and remounts in one commit. Starting a
+    // microtask later lets that cleanup cancel before the camera is asked for.
+    await Promise.resolve()
+    if (session.cancelled) return
+
     // getUserMedia is only exposed in a secure context backed by a
     // media-capable WebView. On Android the app must hold the CAMERA
     // permission AND be served from a secure origin (tauri.localhost) for
@@ -92,44 +95,47 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
         'QrScanner',
         'navigator.mediaDevices.getUserMedia is unavailable (insecure context or unsupported WebView)',
       )
-      const message = t('qrScanner.cameraUnavailable')
-      setError(message)
-      setScanning(false)
-      onError?.(message)
-      onCameraDenied?.()
+      failCamera(t('qrScanner.cameraUnavailable'))
       return
     }
 
+    const element = scannerRef.current
+    if (!element) return
+
     try {
-      // Dynamic import to avoid bundling html5-qrcode on desktop
-      const { Html5Qrcode, Html5QrcodeScannerState } = await import('html5-qrcode')
-
-      if (!scannerRef.current) return
-
-      const scanner = new Html5Qrcode(scannerRef.current.id)
+      const scanner = new Html5Qrcode(element.id)
       const stopIfStarted = () =>
         scanner.getState() === Html5QrcodeScannerState.NOT_STARTED
           ? Promise.resolve()
           : Promise.resolve().then(() => scanner.stop())
-      scannerInstanceRef.current = { stopIfStarted }
-      hasScannedRef.current = false
-      setScanning(true)
-      setError(null)
+      session.stop = stopIfStarted
+      // #758 item 2: html5-qrcode keeps decoding frames (fps: 10) while the
+      // async stop() settles, so the decode callback can fire multiple times
+      // for one physical scan. Latch on the first decode and drop the rest.
+      let scanned = false
 
       await scanner.start(
         { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
+        {
+          fps: 10,
+          // Ask for a square stream so the video fills the square viewfinder.
+          // No object-fit crop: html5-qrcode maps the qrbox to stream pixels
+          // by the video element's rendered size.
+          aspectRatio: 1,
+          // Sized from the rendered video, so the frame always sits inside it.
+          qrbox: (width, height) => {
+            const side = Math.floor(Math.min(width, height) * 0.7)
+            return { width: side, height: side }
+          },
+        },
         (decodedText) => {
-          // Guard against duplicate decode callbacks: stop() is async, so the
-          // camera keeps decoding the same QR for a few frames after the
-          // first hit — without this latch onScan would fire repeatedly.
-          if (hasScannedRef.current) return
-          hasScannedRef.current = true
+          if (scanned) return
+          scanned = true
 
           stopIfStarted().catch((err: unknown) => {
             logger.warn('QrScanner', 'Failed to stop scanner after successful scan', undefined, err)
           })
-          scannerInstanceRef.current = null
+          session.stop = null
           setScanning(false)
 
           // Parse QR data safely — try JSON, fall back to raw text
@@ -146,9 +152,9 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
           // QR code not detected in frame — normal, keep scanning
         },
       )
-      // Unmounted while start() was pending: the cleanup could not stop a
+      // Closed while start() was pending: the cleanup could not stop a
       // camera that had not started yet. A failure here is not an init failure.
-      if (unmountedRef.current) {
+      if (session.cancelled) {
         stopIfStarted().catch((err: unknown) => {
           logger.warn('QrScanner', 'Failed to stop scanner on unmount', undefined, err)
         })
@@ -158,28 +164,36 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
       // message to the aria-live region (raw `err.message` is untranslated and
       // often a cryptic browser/library string). #1888
       logger.warn('QrScanner', 'Camera initialization failed', undefined, err)
-      const message = cameraErrorMessage(err)
-      setError(message)
-      setScanning(false)
-      scannerInstanceRef.current = null
-      onError?.(message)
-      // Notify the parent so it can fall back to manual entry rather
-      // than leave the user staring at the in-scanner error indefinitely.
-      onCameraDenied?.()
+      session.stop = null
+      // The parent already closed the scanner; there is no one to tell.
+      if (session.cancelled) return
+      failCamera(cameraErrorMessage(err))
     }
-  }
+  })
+
+  // Choosing to scan is the user's go-ahead: the camera starts on mount.
+  useEffect(() => {
+    const session: CameraSession = { cancelled: false, stop: null }
+    // oxlint-disable-next-line react/set-state-in-effect -- startCamera sets state only after its first await, never synchronously in this effect
+    void startCamera(session)
+    return () => {
+      session.cancelled = true
+      session.stop?.().catch((err: unknown) => {
+        logger.warn('QrScanner', 'Failed to stop scanner on unmount', undefined, err)
+      })
+    }
+  }, [attempt])
 
   return (
     <div className="flex flex-col items-center gap-2">
       <section
-        className="w-full max-w-64 aspect-square bg-muted rounded-md flex flex-col items-center justify-center"
+        className="w-full max-w-64 aspect-square overflow-hidden bg-muted rounded-md flex flex-col items-center justify-center"
         aria-label={t('qrScanner.viewportLabel')}
       >
-        {/* html5-qrcode empties this node on start(); React must render nothing in it. */}
+        {/* html5-qrcode empties this node on start(); React must render nothing in it.
+            A camera that ignores the square request renders centred: a wide image
+            letterboxed, a tall one clipped by the section, its frame still in view. */}
         <div id={scannerId} ref={scannerRef} className="w-full" />
-        {!scanning && !error && (
-          <p className="text-sm text-muted-foreground">{t('qrScanner.cameraPreview')}</p>
-        )}
         {error && (
           <p
             className="qr-scanner-error text-sm text-destructive px-4 text-center"
@@ -189,9 +203,18 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
           </p>
         )}
       </section>
-      {!scanning && (
-        <Button variant="outline" size="sm" onClick={startScanning} className="touch-target">
-          {error ? t('qrScanner.retryCameraButton') : t('qrScanner.scanQrCodeButton')}
+      {error && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setError(null)
+            setScanning(true)
+            setAttempt((n) => n + 1)
+          }}
+          className="touch-target"
+        >
+          {t('qrScanner.retryCameraButton')}
         </Button>
       )}
       {scanning && (

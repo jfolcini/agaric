@@ -194,9 +194,7 @@ export const sync: Record<string, string> = {
   'device.resetCount_one': '{{count}} reset',
   'device.resetCount_other': '{{count}} resets',
   'qrScanner.viewportLabel': 'QR code scanner viewport',
-  'qrScanner.cameraPreview': 'Camera preview',
   'qrScanner.retryCameraButton': 'Retry camera',
-  'qrScanner.scanQrCodeButton': 'Scan QR code',
   'qrScanner.scanningMessage': 'Scanning...',
   'qrScanner.cameraError': 'Camera access failed. Check camera permissions and try again.',
   'qrScanner.cameraUnavailable':

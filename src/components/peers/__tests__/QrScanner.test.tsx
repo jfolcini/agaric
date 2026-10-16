@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -17,6 +18,7 @@ let mockScanFireCount = 1
 // 'hanging': start() stays pending (camera prompt open) until the test calls this.
 let mockRejection: unknown = new Error('Camera access denied')
 let releaseHangingStart: (() => void) | null = null
+let failHangingStart: ((err: unknown) => void) | null = null
 
 const mockStop = vi.fn().mockResolvedValue(undefined)
 // #1615: capture the element id each Html5Qrcode instance is constructed with
@@ -56,11 +58,12 @@ vi.mock('html5-qrcode', () => ({
         return Promise.reject(mockRejection)
       }
       if (mockStartBehavior === 'hanging') {
-        return new Promise<void>((resolve) => {
+        return new Promise<void>((resolve, reject) => {
           releaseHangingStart = () => {
             reachScanning()
             resolve()
           }
+          failHangingStart = reject
         })
       }
       reachScanning()
@@ -89,6 +92,7 @@ beforeEach(() => {
   mockScanFireCount = 1
   constructedIds.length = 0
   releaseHangingStart = null
+  failHangingStart = null
   mockRejection = new Error('Camera access denied')
   // jsdom leaves navigator.mediaDevices undefined; QrScanner now guards on it
   // and bails before touching html5-qrcode when getUserMedia is missing. Stub
@@ -101,14 +105,61 @@ beforeEach(() => {
 })
 
 describe('QrScanner', () => {
-  it('renders without crashing', () => {
+  // #5386: choosing to scan is the go-ahead; a second "Scan QR code" press is not.
+  it('starts the camera on mount, with no button to press', async () => {
+    mockStartBehavior = 'pending'
     render(<QrScanner onScan={vi.fn()} />)
-    expect(screen.getByText('Camera preview')).toBeInTheDocument()
+
+    expect(await screen.findByText(t('qrScanner.scanningMessage'))).toBeInTheDocument()
+    expect(constructedIds).toHaveLength(1)
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('shows scan button', () => {
+  it('Retry camera after a denied camera starts it again', async () => {
+    mockRejection = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const user = userEvent.setup()
     render(<QrScanner onScan={vi.fn()} />)
-    expect(screen.getByRole('button', { name: /scan qr code/i })).toBeInTheDocument()
+    const retry = await screen.findByRole('button', { name: /retry camera/i })
+
+    mockStartBehavior = 'pending'
+    await user.click(retry)
+
+    expect(await screen.findByText(t('qrScanner.scanningMessage'))).toBeInTheDocument()
+    expect(screen.queryByText(t('qrScanner.cameraDenied'))).not.toBeInTheDocument()
+    expect(constructedIds).toHaveLength(2)
+  })
+
+  // StrictMode mounts, unmounts and remounts at once: one camera, not two.
+  it('starts one camera under StrictMode', async () => {
+    mockStartBehavior = 'pending'
+    const { container } = render(
+      <StrictMode>
+        <QrScanner onScan={vi.fn()} />
+      </StrictMode>,
+    )
+
+    expect(await screen.findByText(t('qrScanner.scanningMessage'))).toBeInTheDocument()
+    expect(constructedIds).toHaveLength(1)
+    expect(container.querySelectorAll('video')).toHaveLength(1)
+  })
+
+  it('a start that fails after a quick close is not reported to the gone parent', async () => {
+    mockStartBehavior = 'hanging'
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const onError = vi.fn()
+    const onCameraDenied = vi.fn()
+    const { unmount } = render(
+      <QrScanner onScan={vi.fn()} onError={onError} onCameraDenied={onCameraDenied} />,
+    )
+    await waitFor(() => expect(failHangingStart).not.toBeNull())
+    unmount()
+
+    await act(async () => {
+      failHangingStart?.(Object.assign(new Error('denied'), { name: 'NotAllowedError' }))
+    })
+    expect(onError).not.toHaveBeenCalled()
+    expect(onCameraDenied).not.toHaveBeenCalled()
   })
 
   it('passes accessibility audit', async () => {
@@ -132,7 +183,6 @@ describe('QrScanner', () => {
   // (which keys its render target on element id) collides when two scanners are
   // mounted at once.
   it('passes the rendered region id to the Html5Qrcode constructor (#1615)', async () => {
-    const user = userEvent.setup()
     mockStartBehavior = 'pending'
 
     render(<QrScanner onScan={vi.fn()} />)
@@ -143,8 +193,6 @@ describe('QrScanner', () => {
     expect(regionId).toBeTruthy()
     // Sanitized useId value: no colons (valid CSS selector / getElementById id).
     expect(regionId).not.toContain(':')
-
-    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
 
     await waitFor(() => {
       expect(constructedIds).toHaveLength(1)
@@ -167,14 +215,10 @@ describe('QrScanner', () => {
   })
 
   it('calls onError when camera access fails', async () => {
-    const user = userEvent.setup()
     const onScan = vi.fn()
     const onError = vi.fn()
 
     render(<QrScanner onScan={onScan} onError={onError} />)
-
-    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
-    await user.click(scanBtn)
 
     // #1888: the user-facing error is the translated catalog string (not the
     // raw, untranslated `err.message`), and the same translated text is passed
@@ -187,10 +231,7 @@ describe('QrScanner', () => {
   // #1888: the announced (aria-live="assertive") error text is routed through
   // t() — never the raw browser/library error string.
   it('renders the translated camera error in the assertive live region (#1888)', async () => {
-    const user = userEvent.setup()
     render(<QrScanner onScan={vi.fn()} onError={vi.fn()} />)
-
-    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
 
     const errorEl = await screen.findByText(t('qrScanner.cameraError'))
     expect(errorEl).toBeInTheDocument()
@@ -203,15 +244,11 @@ describe('QrScanner', () => {
   // auto-switch to manual entry rather than leave the user staring at the
   // in-scanner error indefinitely.
   it('calls onCameraDenied when camera access fails', async () => {
-    const user = userEvent.setup()
     const onScan = vi.fn()
     const onError = vi.fn()
     const onCameraDenied = vi.fn()
 
     render(<QrScanner onScan={onScan} onError={onError} onCameraDenied={onCameraDenied} />)
-
-    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
-    await user.click(scanBtn)
 
     expect(await screen.findByText(t('qrScanner.cameraError'))).toBeInTheDocument()
     expect(onCameraDenied).toHaveBeenCalledTimes(1)
@@ -225,14 +262,11 @@ describe('QrScanner', () => {
   it('bails with an unavailable message when navigator.mediaDevices is missing', async () => {
     Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined })
 
-    const user = userEvent.setup()
     const onScan = vi.fn()
     const onError = vi.fn()
     const onCameraDenied = vi.fn()
 
     render(<QrScanner onScan={onScan} onError={onError} onCameraDenied={onCameraDenied} />)
-
-    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
 
     expect(await screen.findByText(t('qrScanner.cameraUnavailable'))).toBeInTheDocument()
     expect(onError).toHaveBeenCalledWith(t('qrScanner.cameraUnavailable'))
@@ -246,14 +280,10 @@ describe('QrScanner', () => {
     mockStartBehavior = 'scan'
     mockScanData = 'success'
 
-    const user = userEvent.setup()
     const onScan = vi.fn()
     const onCameraDenied = vi.fn()
 
     render(<QrScanner onScan={onScan} onCameraDenied={onCameraDenied} />)
-
-    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
-    await user.click(scanBtn)
 
     await waitFor(() => {
       expect(onScan).toHaveBeenCalledWith('success')
@@ -262,13 +292,8 @@ describe('QrScanner', () => {
   })
 
   it('shows Retry camera button after error', async () => {
-    const user = userEvent.setup()
     render(<QrScanner onScan={vi.fn()} onError={vi.fn()} />)
 
-    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
-    await user.click(scanBtn)
-
-    // After error, button text should change to "Retry camera"
     expect(await screen.findByRole('button', { name: /retry camera/i })).toBeInTheDocument()
   })
 
@@ -276,13 +301,9 @@ describe('QrScanner', () => {
     mockStartBehavior = 'scan'
     mockScanData = 'hello-world'
 
-    const user = userEvent.setup()
     const onScan = vi.fn()
 
     render(<QrScanner onScan={onScan} />)
-
-    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
-    await user.click(scanBtn)
 
     await waitFor(() => {
       expect(onScan).toHaveBeenCalledWith('hello-world')
@@ -293,13 +314,9 @@ describe('QrScanner', () => {
     mockStartBehavior = 'scan'
     mockScanData = JSON.stringify('passphrase-data')
 
-    const user = userEvent.setup()
     const onScan = vi.fn()
 
     render(<QrScanner onScan={onScan} />)
-
-    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
-    await user.click(scanBtn)
 
     await waitFor(() => {
       expect(onScan).toHaveBeenCalledWith('passphrase-data')
@@ -310,40 +327,27 @@ describe('QrScanner', () => {
     mockStartBehavior = 'scan'
     mockScanData = 'raw-passphrase'
 
-    const user = userEvent.setup()
     const onScan = vi.fn()
 
     render(<QrScanner onScan={onScan} />)
-
-    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
-    await user.click(scanBtn)
 
     await waitFor(() => {
       expect(onScan).toHaveBeenCalledWith('raw-passphrase')
     })
   })
 
-  it('success: scanner stops after scan (button reappears)', async () => {
+  it('success: scanner stops after scan', async () => {
     mockStartBehavior = 'scan'
     mockScanData = 'some-data'
 
-    const user = userEvent.setup()
     const onScan = vi.fn()
 
     render(<QrScanner onScan={onScan} />)
 
-    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
-    await user.click(scanBtn)
-
-    // After successful scan, scanning stops and button should reappear
     await waitFor(() => {
       expect(onScan).toHaveBeenCalled()
     })
-
-    // Button should be visible again (not "Scanning..." text)
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /scan qr code/i })).toBeInTheDocument()
-    })
+    await waitFor(() => expect(mockStop).toHaveBeenCalledTimes(1))
     expect(screen.queryByText('Scanning...')).not.toBeInTheDocument()
   })
 
@@ -355,12 +359,9 @@ describe('QrScanner', () => {
     mockScanData = 'dup-passphrase'
     mockScanFireCount = 3
 
-    const user = userEvent.setup()
     const onScan = vi.fn()
 
     render(<QrScanner onScan={onScan} />)
-
-    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
 
     await waitFor(() => {
       expect(onScan).toHaveBeenCalledWith('dup-passphrase')
@@ -373,33 +374,10 @@ describe('QrScanner', () => {
     expect(onScan).toHaveBeenCalledTimes(1)
   })
 
-  it('cleanup: stops scanner on unmount', async () => {
-    // Use 'pending' mode so scanner starts but onSuccess never fires —
-    // scannerInstanceRef stays set and the cleanup effect is what calls stop().
-    mockStartBehavior = 'pending'
-
-    const user = userEvent.setup()
-    const onScan = vi.fn()
-
-    const { unmount } = render(<QrScanner onScan={onScan} />)
-
-    const scanBtn = screen.getByRole('button', { name: /scan qr code/i })
-    await user.click(scanBtn)
-
-    // Unmount while scanner is running (no scan result yet)
-    unmount()
-
-    // The cleanup effect should have called stop()
-    await waitFor(() => expect(mockStop).toHaveBeenCalled())
-  })
-
   // Issue #5386: the real start() empties its element; React must own nothing in it.
   it('keeps the preview rendered after start() empties its element (#5386)', async () => {
     mockStartBehavior = 'pending'
-    const user = userEvent.setup()
     const { container } = render(<QrScanner onScan={vi.fn()} />)
-
-    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
 
     expect(await screen.findByText(t('qrScanner.scanningMessage'))).toBeInTheDocument()
     expect(container.querySelector('video')).not.toBeNull()
@@ -408,21 +386,17 @@ describe('QrScanner', () => {
 
   it('unmount with a running camera stops it without throwing (#5386)', async () => {
     mockStartBehavior = 'pending'
-    const user = userEvent.setup()
     const { unmount } = render(<QrScanner onScan={vi.fn()} />)
-    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
     await screen.findByText(t('qrScanner.scanningMessage'))
 
     expect(() => unmount()).not.toThrow()
     await waitFor(() => expect(mockStop).toHaveBeenCalledTimes(1))
   })
 
-  it('unmount while start is pending throws nothing and stops once start settles (#5386)', async () => {
+  it('a quick close while start is pending throws nothing and stops once start settles (#5386)', async () => {
     mockStartBehavior = 'hanging'
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    const user = userEvent.setup()
     const { unmount } = render(<QrScanner onScan={vi.fn()} />)
-    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
     await waitFor(() => expect(releaseHangingStart).not.toBeNull())
 
     expect(() => unmount()).not.toThrow()
@@ -443,11 +417,9 @@ describe('QrScanner', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     const onError = vi.fn()
     const onCameraDenied = vi.fn()
-    const user = userEvent.setup()
     const { unmount } = render(
       <QrScanner onScan={vi.fn()} onError={onError} onCameraDenied={onCameraDenied} />,
     )
-    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
     await waitFor(() => expect(releaseHangingStart).not.toBeNull())
     unmount()
 
@@ -470,12 +442,9 @@ describe('QrScanner', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     mockStartBehavior = 'error'
     const denied = Object.assign(new Error('denied'), { name: 'NotAllowedError' })
-    const user = userEvent.setup()
     const onCameraDenied = vi.fn()
     mockRejection = denied
     render(<QrScanner onScan={vi.fn()} onCameraDenied={onCameraDenied} />)
-
-    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
 
     expect(await screen.findByText(t('qrScanner.cameraDenied'))).toBeInTheDocument()
     expect(onCameraDenied).toHaveBeenCalledTimes(1)
