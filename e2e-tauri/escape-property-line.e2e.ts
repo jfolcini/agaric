@@ -128,10 +128,14 @@ describe('Agaric real-backend key:: value lines (#5448, #2675)', () => {
 
     for (const chunk of distinctKeyChunks('::loc')) await browser.keys(Array.from(chunk))
     await waitForPickerToOffer('location')
-    await $('[data-testid="suggestion-item"][aria-selected="true"]*=location').waitForDisplayed({
-      timeout: ACTION_TIMEOUT,
-      timeoutMsg: 'the :: picker never selected location',
-    })
+    // WebdriverIO's `*=` text match takes no attribute selector, so read the text.
+    await browser.waitUntil(
+      async () => {
+        const selected = $('[data-testid="suggestion-item"][aria-selected="true"]')
+        return (await selected.isExisting()) && (await selected.getText()).includes('location')
+      },
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the :: picker never selected location' },
+    )
     await browser.keys(['Enter'])
     await browser.waitUntil(async () => (await editorText()) === PICKED_KEY, {
       timeout: ACTION_TIMEOUT,
