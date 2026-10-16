@@ -137,6 +137,21 @@ describe('getPayloadRawContent', () => {
     expect(getPayloadRawContent(makeEntry(payload, 'remove_page_alias'))).toBe('#plans')
   })
 
+  it('returns null for an alias payload whose alias is an empty string', () => {
+    const entry = makeEntry(JSON.stringify({ page_id: 'PG1', alias: '' }), 'add_page_alias')
+    expect(getPayloadRawContent(entry)).toBeNull()
+  })
+
+  it('returns null when an alias is not a string', () => {
+    const entry = makeEntry(JSON.stringify({ page_id: 'PG1', alias: ['#plans'] }), 'add_page_alias')
+    expect(getPayloadRawContent(entry)).toBeNull()
+  })
+
+  it('renders a stray alias only for the alias op types', () => {
+    const entry = makeEntry(JSON.stringify({ block_id: 'BLK1', alias: '#plans' }), 'move_block')
+    expect(getPayloadRawContent(entry)).toBeNull()
+  })
+
   it('returns the old → new transition for a rename_attachment payload', () => {
     const entry = makeEntry(
       JSON.stringify({
@@ -234,6 +249,14 @@ describe('getPropertyPayload', () => {
   })
 })
 
+/**
+ * #3756 EQUIVALENCE LEDGER — `history-utils.ts` mutants no input can distinguish.
+ *
+ * 7:42 [ConditionalExpression] `parsed !== null` -> true — `typeof null` is
+ *   `'object'` and `Array.isArray(null)` is false, so a `null` payload takes the
+ *   true arm and returns `parsed`, which is that same `null`. The operand stays:
+ *   it narrows `object | null` to `object`, so the cast does not hide a `null`.
+ */
 describe('parsePayloadObject', () => {
   it('returns the parsed object for an object payload', () => {
     expect(parsePayloadObject('{"block_id":"B1"}')).toEqual({ block_id: 'B1' })

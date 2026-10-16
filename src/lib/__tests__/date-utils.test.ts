@@ -277,12 +277,16 @@ describe('formatDateDisplay — locale tracking (#4555)', () => {
     }
   })
 
-  it('reuses one formatter per locale (#5440)', () => {
-    formatDateDisplay(new Date(2026, 5, 17))
+  // A locale no other test formats with, so the first call here is the cache
+  // miss: the per-test coverage that picks which tests run against a mutant
+  // must see this test execute the store, not only the hit (#3752).
+  it('reuses one formatter per locale (#5440)', async () => {
+    await i18n.changeLanguage('fr')
     const construct = vi.spyOn(Intl, 'DateTimeFormat')
     try {
       for (let day = 1; day <= 5; day++) formatDateDisplay(new Date(2026, 5, day))
-      expect(construct).not.toHaveBeenCalled()
+      expect(formatDateDisplay(new Date(2026, 5, 17))).toBe('mer. 17 juin 2026')
+      expect(construct).toHaveBeenCalledTimes(1)
     } finally {
       construct.mockRestore()
     }
