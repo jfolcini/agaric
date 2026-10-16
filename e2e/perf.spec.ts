@@ -34,7 +34,8 @@
  *
  * `perf: boot JS executed share (#5441)` is opt-in too: it loads the app cold and prints how
  * many JS files and bytes load by the first block and by first block + 2 s, and what share of
- * them V8 ran.
+ * them V8 ran. So is `perf: boot main-thread profile (#5440)`: script, style and layout time
+ * per source over several cold boots.
  *
  * The other tests are NOT opt-in: rendered-row and IPC counts are
  * deterministic, unlike the timings, so they pin the big page's initial render
@@ -44,7 +45,7 @@
 
 import { writeFileSync } from 'node:fs'
 
-import type { CDPSession, Page } from '@playwright/test'
+import type { Browser, CDPSession, Page } from '@playwright/test'
 
 import { expect, navigateToView, test } from './helpers'
 
@@ -706,6 +707,263 @@ test('perf: boot JS executed share (#5441)', async ({ page }) => {
     expect(row.executedPct).toBeGreaterThan(0)
     expect(row.executedPct).toBeLessThan(100)
   }
+})
+
+const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+/** Each generated line's mapping segments as `[column, source index]` (source map v3). */
+function decodeMappings(mappings: string): Array<Array<[number, number]>> {
+  let source = 0
+  return mappings.split(';').map((line) => {
+    let column = 0
+    return line
+      .split(',')
+      .filter(Boolean)
+      .map((segment): [number, number] => {
+        const fields: number[] = []
+        let value = 0
+        let shift = 0
+        for (const ch of segment) {
+          const digit = BASE64.indexOf(ch)
+          value += (digit & 31) << shift
+          shift += 5
+          if (digit & 32) continue
+          fields.push(value & 1 ? -(value >>> 1) : value >>> 1)
+          value = 0
+          shift = 0
+        }
+        column += fields[0] ?? 0
+        source += fields[1] ?? 0
+        return [column, source]
+      })
+  })
+}
+
+/**
+ * Names the source a script position maps to: the npm package, or the path under `src/`.
+ * Without a `.map` next to the script it falls back to the chunk's file name.
+ */
+async function loadSourceNamer(
+  page: Page,
+  urls: Iterable<string>,
+): Promise<(url: string, line: number, column: number) => string> {
+  const maps = new Map<string, { sources: string[]; lines: Array<Array<[number, number]>> }>()
+  for (const url of new Set(urls)) {
+    if (!url.endsWith('.js')) continue
+    const res = await page.request.get(`${url}.map`)
+    if (!res.ok() || !res.headers()['content-type']?.includes('json')) continue
+    const map = (await res.json()) as { sources: string[]; mappings: string }
+    maps.set(url, { sources: map.sources, lines: decodeMappings(map.mappings) })
+  }
+  return (url, line, column) => {
+    const chunk = url.split('/').pop() || '(native)'
+    const segments = maps.get(url)?.lines[line] ?? []
+    let at = -1
+    for (let lo = 0, hi = segments.length - 1; lo <= hi;) {
+      const mid = (lo + hi) >> 1
+      if ((segments[mid]?.[0] ?? 0) <= column) {
+        at = mid
+        lo = mid + 1
+      } else hi = mid - 1
+    }
+    const source = maps.get(url)?.sources[segments[at]?.[1] ?? -1]
+    if (!source) return chunk
+    const pkg = /node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(source)?.[1]
+    return pkg ?? source.replace(/^.*?\/src\//, 'src/')
+  }
+}
+
+interface CpuProfile {
+  startTime: number
+  nodes: Array<{
+    id: number
+    children?: number[]
+    callFrame: { url: string; functionName: string; lineNumber: number; columnNumber: number }
+  }>
+  samples?: number[]
+  timeDeltas?: number[]
+}
+
+interface TraceEvent {
+  name: string
+  ts: number
+  dur?: number
+  pid: number
+  tid: number
+  args?: {
+    name?: string
+    beginData?: { stackTrace?: Array<{ url: string; lineNumber: number; columnNumber: number }> }
+  }
+}
+
+/** Median and range over the boots, one row per metric seen in any boot. */
+function summarize(boots: Array<Map<string, number>>): Array<Record<string, string | number>> {
+  const keys = [...new Set(boots.flatMap((b) => [...b.keys()]))]
+  return keys.map((metric) => {
+    const values = boots.map((b) => b.get(metric) ?? 0).toSorted((a, b) => a - b)
+    const round = (ms: number) => Math.round(ms * 10) / 10
+    return {
+      metric,
+      median: round(values[Math.floor(values.length / 2)] ?? 0),
+      min: round(values[0] ?? 0),
+      max: round(values.at(-1) ?? 0),
+    }
+  })
+}
+
+interface BootCapture {
+  profile: CpuProfile
+  traceEvents: TraceEvent[]
+  /** Navigation start, in the profile's and the trace's microsecond clock. */
+  navUs: number
+  fcp: number
+  firstBlock: number
+  sourceOf: (url: string, line: number, column: number) => string
+}
+
+/** One cold boot in a fresh context, profiled and traced from navigation to the first block. */
+async function captureBoot(browser: Browser): Promise<BootCapture> {
+  const { baseURL = '', storageState = { cookies: [], origins: [] } } = test.info().project.use
+  const context = await browser.newContext({ baseURL, storageState })
+  const page = await context.newPage()
+  await page.addInitScript((): void => {
+    new MutationObserver((_, observer) => {
+      if (!document.querySelector('[data-testid="block-static"]')) return
+      Object.assign(window, { __firstBlock__: performance.now() })
+      observer.disconnect()
+    }).observe(document, { childList: true, subtree: true })
+  })
+  // Same origin first, so the boot navigation keeps the renderer the profiler is attached to.
+  await page.goto('/favicon.svg')
+  const cdp = await context.newCDPSession(page)
+  await cdp.send('Performance.enable')
+  await cdp.send('Profiler.enable')
+  await cdp.send('Profiler.setSamplingInterval', { interval: 100 })
+  if (CPU > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU })
+  await browser.startTracing(page, {
+    categories: ['devtools.timeline', 'disabled-by-default-devtools.timeline.stack'],
+  })
+  await cdp.send('Profiler.start')
+  await page.goto('/')
+  await page.locator('[data-testid="block-static"]').first().waitFor()
+  await page.evaluate(
+    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+  )
+  const { profile } = (await cdp.send('Profiler.stop')) as unknown as { profile: CpuProfile }
+  const { traceEvents } = JSON.parse((await browser.stopTracing()).toString()) as {
+    traceEvents: TraceEvent[]
+  }
+  const { metrics } = await cdp.send('Performance.getMetrics')
+  const { fcp, firstBlock } = await page.evaluate(() => ({
+    fcp: performance.getEntriesByName('first-contentful-paint')[0]?.startTime ?? 0,
+    firstBlock: (window as unknown as { __firstBlock__: number }).__firstBlock__,
+  }))
+  const sourceOf = await loadSourceNamer(page, [
+    ...profile.nodes.map((n) => n.callFrame.url),
+    ...traceEvents.flatMap((e) => e.args?.beginData?.stackTrace?.map((f) => f.url) ?? []),
+  ])
+  await context.close()
+  const navUs = (metrics.find((m) => m.name === 'NavigationStart')?.value ?? 0) * 1e6
+  return { profile, traceEvents, navUs, fcp, firstBlock, sourceOf }
+}
+
+/** Script time up to the first block: in all, per source, and `cn()`'s first call. */
+function cpuMetrics(boot: BootCapture, add: (metric: string, ms: number) => void): void {
+  const { profile, navUs, firstBlock, sourceOf } = boot
+  const source = new Map<number, string>()
+  const parent = new Map<number, number>()
+  for (const n of profile.nodes) {
+    const { url, functionName, lineNumber, columnNumber } = n.callFrame
+    source.set(n.id, url ? sourceOf(url, lineNumber, columnNumber) : functionName)
+    for (const child of n.children ?? []) parent.set(child, n.id)
+  }
+  const under = (id: number | undefined, src: string): boolean =>
+    id !== undefined && (source.get(id) === src || under(parent.get(id), src))
+  // A sample's time is its delta from the previous one.
+  const deltas = profile.timeDeltas ?? []
+  let at = profile.startTime
+  let firstTwCall: 'pending' | 'running' | 'done' = 'pending'
+  ;(profile.samples ?? []).forEach((id, i) => {
+    at += deltas[i] ?? 0
+    const ms = (deltas[i + 1] ?? 0) / 1000
+    const sinceNav = (at - navUs) / 1000
+    const name = source.get(id) ?? ''
+    if (sinceNav > firstBlock || name === '(idle)' || name === '(program)') return
+    add('script', ms)
+    add(`self ${name}`, ms)
+    // The first `cn()` that reaches tailwind-merge, for as long as `cn()` stays on the stack.
+    const inCn = under(id, 'src/lib/utils.ts')
+    if (firstTwCall === 'pending' && inCn && under(id, 'tailwind-merge')) {
+      add('tailwind-merge first call at', sinceNav)
+      firstTwCall = 'running'
+    } else if (firstTwCall === 'running' && !inCn && name !== '(garbage collector)') {
+      firstTwCall = 'done'
+    }
+    if (firstTwCall === 'running') add('tailwind-merge first call (config build)', ms)
+  })
+}
+
+/** Style and layout on the page's main thread up to the first block; a stack means a script read forced it. */
+function layoutMetrics(boot: BootCapture, add: (metric: string, ms: number) => void): void {
+  const { traceEvents, navUs, firstBlock, sourceOf } = boot
+  const mainThreads = new Set(
+    traceEvents
+      .filter((e) => e.name === 'thread_name' && e.args?.name === 'CrRendererMain')
+      .map((e) => `${e.pid}:${e.tid}`),
+  )
+  for (const e of traceEvents) {
+    if (e.name !== 'Layout' && e.name !== 'UpdateLayoutTree') continue
+    if (!mainThreads.has(`${e.pid}:${e.tid}`) || e.ts > navUs + firstBlock * 1000) continue
+    const ms = (e.dur ?? 0) / 1000
+    add('style+layout', ms)
+    const reader = e.args?.beginData?.stackTrace?.[0]
+    if (!reader) continue
+    add('style+layout forced', ms)
+    // Trace stack positions are 1-based; profile and source map positions are 0-based.
+    add(`forced ${sourceOf(reader.url, reader.lineNumber - 1, reader.columnNumber - 1)}`, ms)
+  }
+}
+
+/**
+ * #5440 — where boot spends the main thread, from navigation to the first rendered block. Boots
+ * `AGARIC_PERF_BOOTS` (default 7) times, each in a fresh context, and prints each metric's median
+ * and range in ms: first contentful paint (the BootGate spinner) and first block; script and
+ * style+layout time; the style+layout a script forced by reading layout (`forced <source>`, the
+ * reading frame's source); script self time per source (`self <source>`); and when and how long
+ * tailwind-merge's first call runs, which builds its config. Per-source rows name the source only
+ * on a build with source maps, served by `preview:e2e`:
+ *
+ *   VITE_E2E=1 npx vite build --sourcemap && npm run preview:e2e
+ */
+test('perf: boot main-thread profile (#5440)', async ({ browser }) => {
+  test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
+  test.setTimeout(10 * 60_000)
+  const boots: Array<Map<string, number>> = []
+  for (let i = 0; i < Number(process.env['AGARIC_PERF_BOOTS'] ?? 7); i++) {
+    const boot = await captureBoot(browser)
+    const row = new Map<string, number>([
+      ['first contentful paint', boot.fcp],
+      ['first block', boot.firstBlock],
+    ])
+    const add = (metric: string, ms: number) => row.set(metric, (row.get(metric) ?? 0) + ms)
+    cpuMetrics(boot, add)
+    layoutMetrics(boot, add)
+    boots.push(row)
+  }
+
+  const rows = summarize(boots)
+  const fixed = rows.filter((r) => !String(r.metric).startsWith('self '))
+  const selfRows = rows
+    .filter((r) => String(r.metric).startsWith('self '))
+    .toSorted((a, b) => Number(b.median) - Number(a.median))
+    .slice(0, 15)
+  await saveOutput('boot-profile.json', JSON.stringify({ cpuThrottle: CPU, rows }, null, 2))
+  console.log(`\nboot profile (CPU ×${CPU}, ${boots.length} boots, ms: median [min, max])`)
+  console.table([...fixed, ...selfRows])
+  // A run that saw no paint, script or style work measured nothing.
+  expect(rows.find((r) => r.metric === 'first contentful paint')?.median ?? 0).toBeGreaterThan(0)
+  expect(rows.find((r) => r.metric === 'script')?.median ?? 0).toBeGreaterThan(0)
+  expect(rows.find((r) => r.metric === 'style+layout')?.median ?? 0).toBeGreaterThan(0)
 })
 
 /**
