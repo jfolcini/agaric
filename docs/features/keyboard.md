@@ -84,7 +84,7 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 | `Ctrl+F` | Find within the current page (in-page find bar) |
 | `F3` / `Shift+F3` | Next / previous in-page match |
 | `Ctrl+Shift+F` | Open the **Search** view (find across pages) |
-| `Ctrl+K` | Open the command palette (outside the editor) |
+| `Ctrl+K` | Open the command palette (outside the editor); the header Search button opens the same palette |
 | `?` | Open the **Keyboard Shortcuts** panel |
 | `Escape` | Close all overlays; clear selection |
 | `Ctrl+1` … `Ctrl+9` | Switch to the Nth space (alphabetical) |

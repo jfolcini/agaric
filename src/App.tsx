@@ -2,6 +2,7 @@ import { lazy, type ReactElement, Suspense, useCallback, useEffect, useRef, useS
 import { useTranslation } from 'react-i18next'
 
 import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
+import { HeaderSearchButton } from '@/components/common/HeaderSearchButton'
 import { HistoryNavButtons } from '@/components/common/HistoryNavButtons'
 import { GlobalDateControls, JournalControls } from '@/components/JournalPage'
 import { AppSidebar } from '@/components/layout/AppSidebar'
@@ -610,18 +611,12 @@ function App() {
                     <GlobalDateControls />
                   </>
                 )}
-                {/* Sole touch entry point for the unified search sheet.
-                    Desktop hides the trigger entirely — keyboard users
-                    open the underlying surfaces via Ctrl+F / Cmd+K /
-                    Ctrl+Shift+F. Gating at this JSX level keeps the
-                    component from re-rendering / re-subscribing on every
-                    navigation change for desktop sessions.
-                    `useShouldShowMobileChrome()` widens the
-                    gate from `< 768 px` to "phone OR (tablet AND no
-                    hardware keyboard)" so iPad-portrait touch users get
-                    the trigger while iPad-with-keyboard sessions still
-                    get the desktop UI + Cmd+K. */}
-                {shouldShowMobileChrome && <SearchSheetTrigger />}
+                {/* One search trigger per chrome. Mobile chrome — phone OR
+                    (tablet AND no hardware keyboard), per
+                    `useShouldShowMobileChrome()` — gets the sheet trigger;
+                    every other session gets the button that opens the same
+                    Ctrl+K palette the shortcut does. */}
+                {shouldShowMobileChrome ? <SearchSheetTrigger /> : <HeaderSearchButton />}
               </div>
             </header>
             {/*
