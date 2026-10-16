@@ -1765,20 +1765,6 @@ jobs:
           cargo llvm-cov report --lcov --workspace \
             --output-path coverage-${{ matrix.shard }}.lcov
 
-      - name: Cargo test --doc (executable doc-comment examples)
-        # nextest (the step above) does NOT run doc-tests — they compile as
-        # their own per-example binaries outside the nextest harness. Without
-        # this step a broken `/// ```` example on a pure helper would rot
-        # silently (#2555). Doc-tests aren't partitioned, so one shard is
-        # enough: shard 2, the shorter of the two, so the ~5 min lands on the
-        # lane that finishes first instead of extending the job's critical
-        # path. Cheap while there are few doc-tests; the per-example binary is
-        # the real cost as adoption grows, which is why the convention is pure
-        # helpers only.
-        if: matrix.shard == 2
-        working-directory: src-tauri
-        run: cargo test --doc --workspace
-
       - name: Upload shard coverage artifact
         # Partial lcov for this shard. Retained 7 days — the merged artifact
         # the `cargo-coverage` job publishes is the long-lived one.
@@ -1935,10 +1921,11 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------------------
-  # mcp-tests — agaric-mcp sidecar build, UDS smoke test, and externalBin
-  # staging verification. Split out of cargo-tests so MCP-sidecar failures
-  # surface on a dedicated check (and vice versa: a flaky coverage run
-  # doesn't gate MCP signal). Uses its own `rust-mcp` Swatinem cache key
+  # mcp-tests — agaric-mcp sidecar build, UDS smoke test, externalBin
+  # staging verification, and the workspace doc-tests (off the cargo-tests
+  # critical path; see that step). Split out of cargo-tests so MCP-sidecar
+  # failures surface on a dedicated check (and vice versa: a flaky coverage
+  # run doesn't gate MCP signal). Uses its own `rust-mcp` Swatinem cache key
   # (issue #813) — its release + debug-smoke tree matches neither the
   # lint tree nor the llvm-cov instrumented tree.
   # ---------------------------------------------------------------------------
@@ -1951,8 +1938,9 @@ jobs:
     runs-on: ubuntu-24.04
     # MCP build + smoke is much lighter than the full nextest+llvm-cov
     # run on cargo-tests: one dev-profile compile of `src-tauri` shared by
-    # the `agaric-mcp` bin and the smoke test. 9.7 min measured with the old
-    # release build (2026-09-02), less now; the apt step is bounded by the
+    # the `agaric-mcp` bin and the smoke test. 5.0-5.8 min measured before the
+    # doc-tests moved here, which took 2.9-3.1 min on cargo-tests (runs
+    # 38849989109 / 38860006295, 2026-10-16); the apt step is bounded by the
     # apt-install action and the .deb cache (#1464). 20 min.
     timeout-minutes: 20
     steps:
@@ -2001,6 +1989,20 @@ jobs:
 
       - name: Verify externalBin artifact exists
         run: test -x src-tauri/binaries/agaric-mcp-x86_64-unknown-linux-gnu
+
+      - name: Cargo test --doc (executable doc-comment examples)
+        # nextest does NOT run doc-tests — they compile as their own
+        # per-example binaries outside the nextest harness. Without this step
+        # a broken `/// ```` example on a pure helper would rot silently
+        # (#2555). Here, not on a `cargo-tests` shard: there the plain build
+        # shared nothing with the llvm-cov tree and added 2.9-3.1 min to the
+        # critical-path shard (runs 38849989109 / 38860006295, 2026-10-16),
+        # while this job's dev tree already holds the deps and finishes in
+        # 5-6 min. Cheap while there are few doc-tests; the per-example binary
+        # is the real cost as adoption grows, which is why the convention is
+        # pure helpers only.
+        working-directory: src-tauri
+        run: cargo test --doc --workspace
 
   # ---------------------------------------------------------------------------
   # validate-all — the single required aggregate gate (branch protection + the

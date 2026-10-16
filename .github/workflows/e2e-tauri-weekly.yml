@@ -115,9 +115,6 @@ on:
       - 'tsconfig*.json'
       - 'package.json'
       - 'package-lock.json'
-      # `tauri.conf.json`'s `beforeBuildCommand` runs this ahead of the vite
-      # build; it produces the `externalBin` sidecar the binary needs.
-      - 'scripts/prepare-external-bins.mjs'
       - '.github/workflows/e2e-tauri-weekly.yml'
       # Deliberately NOT listed: `e2e/`, the rest of `scripts/`, and
       # `.github/actions/`. Each can break this lane (the first two through the
@@ -170,7 +167,7 @@ jobs:
           # Per-job-class key (issue #813): rust-cache keeps ONE immutable
           # cache per key, so lanes with different target trees must not share
           # one. This lane's tree is a `tauri build --debug` of the whole app
-          # (dev profile, real binary + externalBin sidecar) and matches none
+          # (dev profile) plus the `e2e_sync_peer` binary, and matches none
           # of `rust-lint` / `rust-cov` / `rust-mcp` / `rust-release` /
           # `rust-bench*` / `rust-full-suite`.
           shared-key: rust-e2e-tauri
@@ -271,11 +268,18 @@ jobs:
       - name: Build Agaric debug binary
         # `tauri build --debug --no-bundle` compiles the real app to
         # src-tauri/target/debug/agaric (Cargo bin name) without producing
-        # installers. tauri.conf.json's beforeBuildCommand runs
-        # prepare-external-bins.mjs (builds the agaric-mcp sidecar) + the vite
-        # build, so the frontend + externalBin are ready. Plain build (no
-        # VITE_E2E) → the app talks to the real backend, not the JS mock.
-        run: npm run tauri -- build --debug --no-bundle
+        # installers. Plain build (no VITE_E2E) → the app talks to the real
+        # backend, not the JS mock.
+        #
+        # `--config` narrows tauri.conf.json's beforeBuildCommand to the vite
+        # build. The default also runs prepare-external-bins.mjs, a RELEASE
+        # build of the agaric-mcp sidecar no spec runs (the MCP spec speaks
+        # to the app's own socket) and no bundle ships (`--no-bundle`; no
+        # `externalBin` entry either): 12.3 of 17 min cold (run 38859986472),
+        # 4.2 of 5.4 min on a warm cache (run 38815251099), 2026-10-15/16.
+        run: >-
+          npm run tauri -- build --debug --no-bundle
+          --config '{"build":{"beforeBuildCommand":"npm run build"}}'
 
       - name: Build the sync peer
         # The second device the sync specs pair the app with (#5365): a
