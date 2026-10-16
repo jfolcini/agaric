@@ -1,4 +1,10 @@
-import { deleteBlockViaContextMenu, expect, navigateToView, test } from './helpers'
+import {
+  createPageFromPagesView,
+  deleteBlockViaContextMenu,
+  expect,
+  navigateToView,
+  test,
+} from './helpers'
 
 /**
  * Editor lifecycle: CRUD operations, navigation, persistence.
@@ -148,12 +154,8 @@ test.describe('Editor lifecycle', () => {
       .click()
     await expect(page.getByTestId('header-label')).toHaveText('Pages')
 
-    const input = page.getByPlaceholder('New page name...')
-    await input.fill('E2E Test Page')
-    await input.press('Enter')
-
-    // New page should appear in the list
-    await expect(page.getByText('E2E Test Page')).toBeVisible()
+    // The New page dialog creates the page and opens it.
+    await createPageFromPagesView(page, 'E2E Test Page')
   })
 
   test('blocks persist within the same page session', async ({ page }) => {

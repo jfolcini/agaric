@@ -1,24 +1,25 @@
 /**
  * PageBrowserHeader — header for `PageBrowser`.
  *
- * Owns the row of buttons that open the page-adjacent views (#5269), the
- * create-page form, the search/filter input, and the sort dropdown. The
- * list state lives in the orchestrator (`PageBrowser`) and is passed in as
- * props; the view buttons read the navigation store and the trash count
+ * Search first (#5637): the first row is the search input, the sort
+ * dropdown, saved views and the New page button that opens the New page
+ * dialog; below it, the buttons that open the page-adjacent views (#5269).
+ * The search input is the view's primary focus only with a fine pointer, so
+ * entering the view on a phone does not raise the keyboard over the list.
+ * The list state lives in the orchestrator (`PageBrowser`) and is passed in
+ * as props; the view buttons read the navigation store and the trash count
  * themselves.
- *
- * Extracted from `PageBrowser.tsx`.
  */
 
 import { Plus, Search } from 'lucide-react'
 import type React from 'react'
+import { type RefObject, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SavedViewsDropdown } from '@/components/PageBrowser/SavedViewsDropdown'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
-import { Label } from '@/components/ui/label'
 import { SearchInput } from '@/components/ui/search-input'
 import {
   Select,
@@ -27,27 +28,30 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import type { SortOption } from '@/hooks/usePageBrowserSort'
+import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
 import { useTrashCount } from '@/hooks/useTrashCount'
 import { NAV_ITEMS } from '@/lib/nav-items'
+import { openNewPageDialog } from '@/lib/overlay-events'
 import type { SavedPagesView } from '@/lib/preferences'
 import { useNavigationStore } from '@/stores/navigation'
+
+/** Registered on touch so the view falls back to its container, not the search input. */
+const NO_PRIMARY_FOCUS: RefObject<HTMLElement | null> = { current: null }
 
 const VIEW_BUTTONS = (['tags', 'graph', 'query', 'templates', 'trash'] as const).flatMap((view) =>
   NAV_ITEMS.filter((item) => item.id === view),
 )
 
 export interface PageBrowserHeaderProps {
-  formRef: React.RefObject<HTMLFormElement | null>
-  newPageInputRef: React.RefObject<HTMLInputElement | null>
-  newPageName: string
-  onNewPageNameChange: (value: string) => void
-  isCreating: boolean
-  onSubmit: () => void
-  /** When true, renders the search + sort row (the create form is always rendered). */
-  showSearchAndSort: boolean
+  /**
+   * When true, renders the count, sort and saved views. Search and New page
+   * always render: search is the view's primary focus, taken before the
+   * first page load lands.
+   */
+  showSortAndViews: boolean
   filterText: string
   onFilterTextChange: (value: string) => void
   sortOption: SortOption
@@ -87,13 +91,7 @@ export interface PageBrowserHeaderProps {
 }
 
 export function PageBrowserHeader({
-  formRef,
-  newPageInputRef,
-  newPageName,
-  onNewPageNameChange,
-  isCreating,
-  onSubmit,
-  showSearchAndSort,
+  showSortAndViews,
   filterText,
   onFilterTextChange,
   sortOption,
@@ -111,6 +109,9 @@ export function PageBrowserHeader({
   const { t } = useTranslation()
   const setView = useNavigationStore((s) => s.setView)
   const trashCount = useTrashCount()
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const isTouch = useIsTouch()
+  useRegisterPrimaryFocus(isTouch ? NO_PRIMARY_FOCUS : searchInputRef)
   // PageBrowser pagination UX + small muted text near
   // the search input so users always know roughly how many pages
   // they're looking at. Three forms, each with a basis-consistent
@@ -146,6 +147,78 @@ export function PageBrowserHeader({
   })()
   return (
     <div className="page-browser-header space-y-2">
+      {/* `flex-wrap` lets the controls stack onto a second line on narrow
+          viewports instead of overflowing. The search field keeps a sensible
+          min-width so it never collapses to an unusable sliver before wrapping. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[12rem]">
+          <Search
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <SearchInput
+            ref={searchInputRef}
+            value={filterText}
+            onChange={(e) => onFilterTextChange(e.target.value)}
+            placeholder={t('pageBrowser.searchPlaceholder')}
+            className="pl-8"
+            aria-label={t('pageBrowser.searchPlaceholder')}
+          />
+        </div>
+        {showSortAndViews && (
+          <>
+            {countLabel != null && (
+              <span
+                className="text-xs text-muted-foreground whitespace-nowrap"
+                data-testid="page-browser-count"
+              >
+                {countLabel}
+              </span>
+            )}
+            <Select value={sortOption} onValueChange={(v) => onSortChange(v as SortOption)}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <SelectTrigger
+                    className="w-auto min-w-[7rem]"
+                    aria-label={t('pageBrowser.sortLabel')}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                </TooltipTrigger>
+                <TooltipContent>{t('pageBrowser.sortPersistedTooltip')}</TooltipContent>
+              </Tooltip>
+              <SelectContent>
+                <SelectItem value="alphabetical">{t('pageBrowser.sortAlphabetical')}</SelectItem>
+                <SelectItem value="recent">{t('pageBrowser.sortRecent')}</SelectItem>
+                <SelectItem value="created">{t('pageBrowser.sortCreated')}</SelectItem>
+                <SelectItem value="recently-modified">
+                  {t('pageBrowser.sortRecentlyModified')}
+                </SelectItem>
+                <SelectItem value="most-linked">{t('pageBrowser.sortMostLinked')}</SelectItem>
+                <SelectItem value="most-content">{t('pageBrowser.sortMostContent')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <SavedViewsDropdown
+              views={savedViews}
+              activeView={activeSavedView}
+              onApply={onApplySavedView}
+              onDelete={onDeleteSavedView}
+              onSaveCurrentView={onSaveCurrentView}
+            />
+          </>
+        )}
+        {/* Icon-only below `sm`, so on a phone it can sit beside sort and
+            saved views. */}
+        <Button
+          className="ml-auto max-sm:w-9 max-sm:px-0 max-sm:[@media(pointer:coarse)]:w-11"
+          aria-label={t('pageBrowser.newPage')}
+          onClick={() => openNewPageDialog()}
+        >
+          <Plus />
+          <span className="max-sm:sr-only">{t('pageBrowser.newPage')}</span>
+        </Button>
+      </div>
+
       <div className="flex items-center gap-1">
         {VIEW_BUTTONS.map(({ id: view, icon: Icon, labelKey }) => {
           const label = t(labelKey)
@@ -175,93 +248,6 @@ export function PageBrowserHeader({
           )
         })}
       </div>
-
-      {/* Create page form */}
-      <form
-        ref={formRef}
-        onSubmit={(e) => {
-          e.preventDefault()
-          onSubmit()
-        }}
-        className="flex flex-col sm:flex-row sm:items-center gap-2"
-      >
-        <Label htmlFor="new-page-name" className="sr-only">
-          {t('pageBrowser.createPageInputLabel')}
-        </Label>
-        <SearchInput
-          ref={newPageInputRef}
-          id="new-page-name"
-          value={newPageName}
-          onChange={(e) => onNewPageNameChange(e.target.value)}
-          placeholder={t('pageBrowser.newPagePlaceholder')}
-          className="flex-1"
-        />
-        <Button type="submit" variant="outline" disabled={isCreating || !newPageName.trim()}>
-          {isCreating ? <Spinner /> : <Plus className="h-4 w-4" />}
-          {t('pageBrowser.newPage')}
-        </Button>
-      </form>
-
-      {/* Search/filter input + sort dropdown */}
-      {/* `flex-wrap` lets the search/sort/saved-views controls
-          stack onto a second line on narrow viewports instead of
-          overflowing. The search field keeps a sensible min-width so it
-          never collapses to an unusable sliver before wrapping. */}
-      {showSearchAndSort && (
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[12rem]">
-            <Search
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <SearchInput
-              value={filterText}
-              onChange={(e) => onFilterTextChange(e.target.value)}
-              placeholder={t('pageBrowser.searchPlaceholder')}
-              className="pl-8"
-              aria-label={t('pageBrowser.searchPlaceholder')}
-            />
-          </div>
-          {countLabel != null && (
-            <span
-              className="text-xs text-muted-foreground whitespace-nowrap"
-              data-testid="page-browser-count"
-            >
-              {countLabel}
-            </span>
-          )}
-          <Select value={sortOption} onValueChange={(v) => onSortChange(v as SortOption)}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <SelectTrigger
-                  className="w-auto min-w-[7rem]"
-                  aria-label={t('pageBrowser.sortLabel')}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-              </TooltipTrigger>
-              <TooltipContent>{t('pageBrowser.sortPersistedTooltip')}</TooltipContent>
-            </Tooltip>
-            <SelectContent>
-              <SelectItem value="alphabetical">{t('pageBrowser.sortAlphabetical')}</SelectItem>
-              <SelectItem value="recent">{t('pageBrowser.sortRecent')}</SelectItem>
-              <SelectItem value="created">{t('pageBrowser.sortCreated')}</SelectItem>
-              <SelectItem value="recently-modified">
-                {t('pageBrowser.sortRecentlyModified')}
-              </SelectItem>
-              <SelectItem value="most-linked">{t('pageBrowser.sortMostLinked')}</SelectItem>
-              <SelectItem value="most-content">{t('pageBrowser.sortMostContent')}</SelectItem>
-            </SelectContent>
-          </Select>
-          <SavedViewsDropdown
-            views={savedViews}
-            activeView={activeSavedView}
-            onApply={onApplySavedView}
-            onDelete={onDeleteSavedView}
-            onSaveCurrentView={onSaveCurrentView}
-          />
-        </div>
-      )}
     </div>
   )
 }

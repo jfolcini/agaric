@@ -1,200 +1,94 @@
 /**
- * usePageCreation — the create-page flow for the Pages view.
+ * usePageCreation — the create handler behind the New page dialog.
  *
- * Owns the new-page name input state, the in-flight `isCreating` flag,
- * the form/input refs (incl. primary-focus registration and the
- * unmount-cancelled focus timer), and the two creation handlers:
+ * `createPage(name)` creates a page in the active space and returns it, or
+ * the page that already carries `name` exactly (`create_page_in_space`
+ * resolves an existing title to that page). A blank name picks the first free
+ * `Untitled N`. A failure is mapped to a message in `createError` (a
+ * duplicate-name conflict is user-actionable, anything else is not) and
+ * `createPage` returns `null`, so the caller can keep its form open.
  *
- *  - `handleCreatePage`: creates a page in the active space, then either
- *    optimistically prepends a `BlockRow` + bumps the count chip (the
- *    common unfiltered case) or `reload()`s when chips are active
- *and finally selects the new page. Distinguishes
- *    duplicate-name conflicts from generic failures for the toast.
- *  - `handleCreateUnder`: seeds the input with a namespace prefix and
- * Focuses it after a 0ms timer (cancelled on unmount, #).
- *
- * Extracted verbatim from `PageBrowser.tsx` (#1263). Pure move — same
- * effects, same deps, same timing, same optimistic-update behaviour.
+ * The Pages list is not patched here: every local write marks it stale
+ * (`watchLocalWrites` → `invalidatePageBrowserData`), and the caller opens the
+ * new page, which unmounts the list anyway.
  */
 
-import {
-  type Dispatch,
-  type RefObject,
-  type SetStateAction,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
+import { announce } from '@/lib/announcer'
 import { isConflict, unwrap } from '@/lib/app-error'
-import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
 import { notifyPageAdded } from '@/lib/name-change-bus'
-import { notify } from '@/lib/notify'
 import { untitledTitle } from '@/lib/untitled-page'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
-interface UsePageCreationParams {
-  wireFilters: FilterPrimitive[]
-  reload: () => void
-  setPages: Dispatch<SetStateAction<(BlockRow | PageWithMetadataRow)[]>>
-  setDisplayTotalCount: Dispatch<SetStateAction<number | undefined>>
-  onPageSelect?: ((pageId: string, title?: string) => void) | undefined
+export interface CreatedPage {
+  id: string
+  title: string
 }
 
 interface UsePageCreationResult {
-  newPageName: string
-  setNewPageName: Dispatch<SetStateAction<string>>
   isCreating: boolean
-  handleCreatePage: () => Promise<void>
-  handleCreateUnder: (namespacePath: string) => void
-  formRef: RefObject<HTMLFormElement | null>
-  newPageInputRef: RefObject<HTMLInputElement | null>
+  /** Why the last `createPage` failed, or `null`. */
+  createError: string | null
+  clearCreateError: () => void
+  createPage: (name: string) => Promise<CreatedPage | null>
 }
 
-export function usePageCreation({
-  wireFilters,
-  reload,
-  setPages,
-  setDisplayTotalCount,
-  onPageSelect,
-}: UsePageCreationParams): UsePageCreationResult {
+export function usePageCreation(): UsePageCreationResult {
   const { t } = useTranslation()
-
   const [isCreating, setIsCreating] = useState(false)
-  const [newPageName, setNewPageName] = useState('')
-  const formRef = useRef<HTMLFormElement>(null)
-  const newPageInputRef = useRef<HTMLInputElement>(null)
-  // Register the "new page" input as the primary-focus target for this view
-  // so switching to Pages via sidebar lands the cursor in the create form
-  // Instead of the generic #main-content container.
-  useRegisterPrimaryFocus(newPageInputRef)
-  // Tracks the handleCreateUnder focus setTimeout so we can cancel it on
-  // Unmount and avoid focusing a stale DOM node (#).
-  const pendingFocusRef = useRef<number | null>(null)
+  const [createError, setCreateError] = useState<string | null>(null)
+  // A double Enter must not create twice.
+  const inFlightRef = useRef(false)
 
-  // Clear any pending focus timer on unmount.
-  useEffect(
-    () => () => {
-      if (pendingFocusRef.current !== null) {
-        window.clearTimeout(pendingFocusRef.current)
-        pendingFocusRef.current = null
-      }
-    },
-    [],
-  )
+  const clearCreateError = useCallback(() => setCreateError(null), [])
 
-  const handleCreatePage = useCallback(
-    async function handleCreatePage() {
-      const trimmedName = newPageName.trim()
-      // Phase 2 — a page must belong to a space. On the rare
-      // first-boot path where `SpaceStore` has not yet hydrated we
-      // refuse to create and surface a toast rather than silently
-      // creating an unscoped page. The `isReady` gate above normally
-      // prevents this branch from firing.
+  const createPage = useCallback(
+    async (rawName: string): Promise<CreatedPage | null> => {
+      if (inFlightRef.current) return null
       const activeSpaceId = useSpaceStore.getState().currentSpaceId
       if (activeSpaceId == null) {
-        notify.error(t('pageBrowser.spaceNotReady'))
-        return
+        setCreateError(t('pageBrowser.spaceNotReady'))
+        return null
       }
+      inFlightRef.current = true
       setIsCreating(true)
+      setCreateError(null)
       try {
         // #4723 — `create_page_in_space` RESOLVES an existing title to that
-        // page instead of creating one. The paginated list only holds the
-        // loaded window, so ask the space for every page before creating:
-        // a resolve beyond the load-more boundary would otherwise prepend a
-        // duplicate row and bump the count.
+        // page instead of creating one, so read the space's titles first: a
+        // blank name needs a free `Untitled N`, and an exact title is opened.
         const spacePages = unwrap(
           await commands.listAllPagesInSpace({ kind: 'active', space_id: activeSpaceId }, null),
         )
-        // A blank input means "New page", so it picks the first free
-        // `Untitled N` exactly as the sidebar button, the chord and the
-        // palette do — otherwise submitting the form empty twice reopens the
-        // first Untitled page instead of creating a second one (#4723).
-        const name = trimmedName || untitledTitle(spacePages.map((page) => page.content))
+        const name = rawName.trim() || untitledTitle(spacePages.map((page) => page.content))
         const existing = spacePages.find((page) => page.content === name)
-        if (existing) {
-          setNewPageName('')
-          onPageSelect?.(existing.id, name)
-          setIsCreating(false)
-          return
-        }
-        const newId = unwrap(await commands.createPageInSpace(null, name, activeSpaceId))
-        // #4338 — a page the user has just NAMED is the strongest picker
-        // candidate there is; publish it so a warm `pagesListRef` can offer it
-        // to `[[` without waiting for a space switch to clear the cache.
-        notifyPageAdded(newId, name, activeSpaceId)
-        setNewPageName('')
-        // The optimistic prepend assumes the new page belongs
-        // at the top of the *current* result set. That only holds when no
-        // compound-filter chips are active: with chips the server decides
-        // membership (the new page may or may not match), and the prepended
-        // row also lacks the metadata the page rows read. When chips are
-        // active we refetch from page 1 instead, so the new page surfaces
-        // only if it actually matches — and with full metadata. The fast
-        // optimistic path is kept for the unfiltered case (the common one).
-        if (wireFilters.length > 0) {
-          reload()
-        } else {
-          const newPage: BlockRow = {
-            id: newId,
-            block_type: 'page',
-            content: name,
-            parent_id: null,
-            position: null,
-            deleted_at: null,
-            todo_state: null,
-            priority: null,
-            due_date: null,
-            scheduled_date: null,
-            page_id: newId,
-          }
-          setPages((prev) => [newPage, ...prev])
-          // Keep the count chip in step with the optimistic prepend (mirror
-          // of the D20 delete decrement). The chip-active branch above
-          // refetches, which re-runs the backend COUNT, so no manual bump
-          // is needed there.
-          setDisplayTotalCount((cur) => (typeof cur === 'number' ? cur + 1 : cur))
-        }
-        onPageSelect?.(newId, name)
+        if (existing) return { id: existing.id, title: name }
+        const id = unwrap(await commands.createPageInSpace(null, name, activeSpaceId))
+        // #4338 — publish so a warm `[[` picker cache offers the page at once.
+        notifyPageAdded(id, name, activeSpaceId)
+        useResolveStore.getState().set(id, name, false)
+        announce(t('announce.newPageCreated'))
+        return { id, title: name }
       } catch (error) {
-        // Issue #106 — distinguish duplicate-name conflicts from generic
-        // DB failures. A conflict is user-actionable ("pick a different
-        // name"), not a system error worth a Retry button.
-        if (isConflict(error)) {
-          notify.error(t('pageBrowser.duplicateName'))
-        } else {
-          notify.error(t('pageBrowser.createFailed', { error: String(error) }), {
-            action: { label: t('pageBrowser.retry'), onClick: () => handleCreatePage() },
-          })
-        }
+        logger.warn('usePageCreation', 'create page failed', { name: rawName }, error)
+        setCreateError(
+          isConflict(error)
+            ? t('pageBrowser.duplicateName')
+            : t('pageBrowser.createFailed', { error: String(error) }),
+        )
+        return null
+      } finally {
+        inFlightRef.current = false
+        setIsCreating(false)
       }
-      setIsCreating(false)
     },
-    [newPageName, setPages, setDisplayTotalCount, t, onPageSelect, wireFilters, reload],
+    [t],
   )
 
-  const handleCreateUnder = useCallback((namespacePath: string) => {
-    setNewPageName(`${namespacePath}/`)
-    if (pendingFocusRef.current !== null) {
-      window.clearTimeout(pendingFocusRef.current)
-    }
-    pendingFocusRef.current = window.setTimeout(() => {
-      pendingFocusRef.current = null
-      formRef.current?.querySelector<HTMLInputElement>('input')?.focus()
-    }, 0)
-  }, [])
-
-  return {
-    newPageName,
-    setNewPageName,
-    isCreating,
-    handleCreatePage,
-    handleCreateUnder,
-    formRef,
-    newPageInputRef,
-  }
+  return { isCreating, createError, clearCreateError, createPage }
 }

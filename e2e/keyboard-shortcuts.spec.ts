@@ -526,11 +526,15 @@ test.describe('Global shortcuts', () => {
     await expect(page.getByTestId('command-palette-input')).toBeVisible()
   })
 
-  test('Ctrl+N creates new page', async ({ page }) => {
-    // Press Ctrl+N to create a new page
+  test('Ctrl+N opens the New page dialog; Enter creates an Untitled page', async ({ page }) => {
     await page.keyboard.down('Control')
     await page.keyboard.press('n')
     await page.keyboard.up('Control')
+
+    // The title field takes focus, so Enter creates at once (#5637).
+    const input = page.getByRole('textbox', { name: 'New page title' })
+    await expect(input).toBeFocused()
+    await input.press('Enter')
 
     // Verify navigation to the new page (page editor with "Untitled" title)
     await expect(page.locator('[aria-label="Page title"]')).toBeVisible()

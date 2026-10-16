@@ -36,7 +36,14 @@
  * this spec is the first.
  */
 
-import { expect, focusBlockById, openPage, test, waitForBoot } from './helpers'
+import {
+  createPageFromPagesView,
+  expect,
+  focusBlockById,
+  openPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 test.describe('Breadcrumb navigation — BlockZoomBar zoom trail', () => {
   test.beforeEach(async ({ page }) => {
@@ -193,13 +200,8 @@ test.describe('Breadcrumb navigation — PageHeader namespace path', () => {
       .click()
     await expect(page.locator('header').getByText('Pages')).toBeVisible()
 
-    const newPageInput = page.getByPlaceholder('New page name...')
-    await newPageInput.fill('Work/Project/Page A')
-    await newPageInput.press('Enter')
-
-    // Open the new page from the list.
-    await page.getByText('Work/Project/Page A', { exact: true }).click()
-    await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+    // Creating the page opens it.
+    await createPageFromPagesView(page, 'Work/Project/Page A')
 
     // PageHeader namespace breadcrumb: title has 3 `/`-separated segments,
     // so the trail has 3 crumbs (no Home — `PageHeader` does not render one).

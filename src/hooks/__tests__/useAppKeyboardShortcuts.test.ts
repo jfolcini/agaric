@@ -11,17 +11,16 @@
  * already exercises.
  */
 
-import { fireEvent, renderHook, waitFor } from '@testing-library/react'
+import { fireEvent, renderHook } from '@testing-library/react'
 import { format } from 'date-fns'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAppKeyboardShortcuts } from '@/hooks/useAppKeyboardShortcuts'
-import type { NameChange } from '@/lib/name-change-bus'
-import { subscribeToNameChanges } from '@/lib/name-change-bus'
+import { OPEN_NEW_PAGE_DIALOG_EVENT } from '@/lib/overlay-events'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
-import { selectPageStack, useTabsStore } from '@/stores/tabs'
+import { useTabsStore } from '@/stores/tabs'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
@@ -29,14 +28,6 @@ vi.mock('@/lib/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }))
 
-// #2927 phase 7 — the hook creates through `@/lib/untitled-page`, which calls
-// `commands.createPageInSpace` from `@/lib/bindings` directly. The spy sees the
-// real wire arguments `(parentId, content, spaceId)`; the shim wraps its
-// fulfilment in the `{ status: 'ok', data }` envelope `unwrap` expects.
-// #4723 — the helper reads the space's page list first to pick a free
-// `Untitled N`, so that command is mocked too.
-const mockedCreate = vi.hoisted(() => vi.fn(async () => 'NEW_PAGE_ID_00000000000000'))
-const mockedListPages = vi.hoisted(() => vi.fn(async (): Promise<unknown[]> => []))
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -45,10 +36,6 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       // Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
       recordPageOpen: () => Promise.resolve({ status: 'ok', data: null }),
-      createPageInSpace: (...args: unknown[]) =>
-        mockedCreate(...(args as [])).then((data: unknown) => ({ status: 'ok', data })),
-      listAllPagesInSpace: (...args: unknown[]) =>
-        mockedListPages(...(args as [])).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -166,69 +153,21 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     }
   })
 
-  it('Ctrl+N (createNewPage) routes through createPageInSpace and navigates', async () => {
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
-
-    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
-
-    // The handler dispatches asynchronously; wait one microtask cycle.
-    await Promise.resolve()
-    await Promise.resolve()
-
-    expect(mockedCreate).toHaveBeenCalledWith(null, 'Untitled', 'SPACE_PERSONAL')
-  })
-
-  // #4723 — `create_page_in_space` resolves an existing title to that page, so
-  // a second Ctrl+N with an un-renamed "Untitled" around used to navigate into
-  // it instead of creating anything.
-  it('Ctrl+N creates the first free Untitled title and navigates to the NEW page', async () => {
-    mockedListPages.mockResolvedValueOnce([
-      { id: 'P_OLD_0000000000000000000', content: 'Untitled' },
-    ])
-    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
-
-    fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
-
-    await waitFor(() =>
-      expect(mockedCreate).toHaveBeenCalledWith(null, 'Untitled 2', 'SPACE_PERSONAL'),
-    )
-    await waitFor(() =>
-      expect(selectPageStack(useTabsStore.getState())).toContainEqual(
-        expect.objectContaining({ pageId: 'NEW_PAGE_ID_00000000000000', title: 'Untitled 2' }),
-      ),
-    )
-  })
-
-  // #4338 — the chord creates a page from module scope, with no
-  // `useBlockResolve()` anywhere in reach. It publishes on the bus instead.
-  // "Untitled" looks picker-irrelevant, but it is the flow that mattered
-  // most: `applyPageNameChange`'s 'renamed' arm bails on an id the cache has
-  // never seen, so without the create event the title the user types next
-  // was dropped too, and the page never entered a warm cache at all.
-  it("Ctrl+N publishes an 'added' event to the name-change bus", async () => {
-    const changes: NameChange[] = []
-    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+  // #5637 — the chord opens the New page dialog; the page is made there.
+  it('Ctrl+N (createNewPage) opens the New page dialog and creates nothing itself', () => {
+    const opened: string[] = []
+    const listener = (e: Event) => opened.push((e as CustomEvent<string>).detail)
+    window.addEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
     try {
       renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
-
-      fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
-
-      // The handler is a `.then` chain off the create IPC, so the emission
-      // lands several microtasks after the keydown returns.
-      await waitFor(() =>
-        expect(changes).toEqual([
-          {
-            kind: 'added',
-            entity: 'page',
-            id: 'NEW_PAGE_ID_00000000000000',
-            name: 'Untitled',
-            spaceId: 'SPACE_PERSONAL',
-          },
-        ]),
-      )
+      const event = new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, cancelable: true })
+      window.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(true)
     } finally {
-      unsubscribe()
+      window.removeEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
     }
+    expect(opened).toEqual([''])
+    expect(useNavigationStore.getState().currentView).toBe('journal')
   })
 })
 

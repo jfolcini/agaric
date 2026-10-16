@@ -24,9 +24,9 @@ Reachable via the sidebar Search icon or `Ctrl+Shift+F` (this is the find-across
 
 ## Pages
 
-Browse every page in the active space.
+Browse every page in the active space. The first row is search, then sort, saved views and a **New page** button. Search takes focus when you open the view with a mouse or trackpad, never on a touch screen, so a phone's keyboard does not cover the list. While the search text names no page, the results start with a **Create page "…"** row that opens the New page dialog with that title.
 
-- **Tree view** (default): pages organised by `/`-delimited namespace, e.g. `Projects/Website/Backlog`. Folders show a count badge and a `+` button to create a child page inline.
+- **Tree view** (default): pages organised by `/`-delimited namespace, e.g. `Projects/Website/Backlog`. Folders show a count badge and a `+` button that creates a child page through the New page dialog.
 - **Flat view**: every page, no hierarchy.
 - **Sort dropdown**: Alphabetical, Last opened, Created, Last edited, Most linked, Most content. Every sort orders all the pages in the space, not just the loaded ones. Alphabetical ignores accents and case (`Émile` sorts with E); Last edited counts an edit to any block on the page; Last opened is this device's own history, never synced.
 - **Filter chips** narrow the list ([../PAGES.md](../PAGES.md)). A space starts with *Exclude journal pages*, which hides the `YYYY-MM-DD` pages until you remove it.
@@ -35,7 +35,7 @@ Browse every page in the active space.
 - **Inline rename**: right-click → Rename, or click the page in the **PageEditor** and rename inline in the title. A title is unique within its space: renaming onto an existing title is refused, and creating one (including via `[[name]]`) opens the existing page.
 - **Starred pages**: starred pages appear in a separate flat list above the tree.
 
-To create a new page: the *New Page* button at the top of the sidebar. The new page opens in the active tab.
+To create a new page: the *New Page* button in the sidebar or in the Pages header, `Ctrl+N`, or the palette's *Create new page*. Each opens the **New page** dialog. As you type a title it lists up to five pages with a similar name (the same matching as the `[[` link picker, aliases included), each with an *Open* button. When a page already has that title or alias, ignoring case, the dialog says so, *Open it* replaces *Create*, and Create is disabled. Enter creates the page, which opens in the active tab; a blank title makes the first free `Untitled N`. A namespace folder's `+` opens the dialog with the namespace filled in and shows the parent path.
 
 ## Tags
 

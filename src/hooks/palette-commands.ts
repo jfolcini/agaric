@@ -51,13 +51,10 @@ import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { SHOW_SHORTCUTS_EVENT, TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
-import { createUntitledPage } from '@/lib/untitled-page'
+import { openNewPageDialog, SHOW_SHORTCUTS_EVENT, TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
-import { useResolveStore } from '@/stores/resolve'
 import { showPageInGraph } from '@/stores/show-page-in-graph'
-import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 export type PaletteCommandCategory = 'navigate' | 'action'
@@ -222,28 +219,12 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     labelKey: 'palette.cmdCreateNewPage',
     category: 'action',
     icon: FilePlus2,
-    // Mirrors `tryCreateNewPage` in `useAppKeyboardShortcuts.ts` (the
-    // `createNewPage` chord, Ctrl+Alt+N by default) — same guard, same
-    // resolve-cache seeding, same error handling, reachable from the
-    // palette without an editor/shortcut route.
+    // Same as the `createNewPage` chord (`tryCreateNewPage`): open the New
+    // page dialog (#5637).
     shortcutId: 'createNewPage',
     run: ({ onClose }) => {
       onClose()
-      const { currentSpaceId, isReady } = useSpaceStore.getState()
-      if (!isReady || currentSpaceId == null) {
-        notify.error(t('space.notReady'))
-        return
-      }
-      createUntitledPage(currentSpaceId)
-        .then(({ id, title }) => {
-          useResolveStore.getState().set(id, title, false)
-          useTabsStore.getState().navigateToPage(id, title)
-          announce(t('announce.newPageCreated'))
-        })
-        .catch((err: unknown) => {
-          logger.error('palette-commands', 'Failed to create page via palette', undefined, err)
-          notify.error(t('error.createPageFailed'))
-        })
+      openNewPageDialog()
     },
   },
   {

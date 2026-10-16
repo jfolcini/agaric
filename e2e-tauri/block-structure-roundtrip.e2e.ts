@@ -28,6 +28,7 @@ import {
   typeInputVerified,
   typeMarkerVerified,
   waitForAppReady,
+  openNewPageDialog,
 } from './helpers'
 
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
@@ -77,9 +78,9 @@ async function waitForOutline(markers: string[], expected: string[], what: strin
   return seen
 }
 
-/** Create page `title` from the Pages view; it opens with its first block in the editor. */
+/** Create page `title` in the New page dialog; it opens with its first block in the editor. */
 async function openNewPageTitled(title: string): Promise<void> {
-  await navigateTo('Pages')
+  await openNewPageDialog()
   await typeInputVerified('#new-page-name', title)
   await browser.keys(['Enter'])
   await $(EDITOR).waitForDisplayed({ timeout: ACTION_TIMEOUT })

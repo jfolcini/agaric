@@ -49,3 +49,18 @@ export const SHOW_SHORTCUTS_EVENT = 'agaric:showShortcuts'
  * context threading required.
  */
 export const TOGGLE_SIDEBAR_EVENT = 'agaric:toggleSidebar'
+
+/**
+ * Global "open the New page dialog" DOM event; `detail` is the title to
+ * pre-fill. Every new-page entry point (sidebar button, `createNewPage`
+ * chord, palette command, the Pages view) dispatches it, and the
+ * always-mounted dialog-state owner (`useAppDialogs`) opens the one dialog.
+ * Same one-shot-signal rationale as `SHOW_SHORTCUTS_EVENT`.
+ */
+export const OPEN_NEW_PAGE_DIALOG_EVENT = 'agaric:openNewPageDialog'
+
+export function openNewPageDialog(initialTitle = ''): void {
+  window.dispatchEvent(
+    new CustomEvent<string>(OPEN_NEW_PAGE_DIALOG_EVENT, { detail: initialTitle }),
+  )
+}

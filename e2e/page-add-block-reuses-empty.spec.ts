@@ -1,4 +1,4 @@
-import { expect, navigateToView, test, waitForBoot } from './helpers'
+import { createPageFromPagesView, expect, navigateToView, test, waitForBoot } from './helpers'
 
 /**
  * "Add block" on a page whose last block is already empty focuses that block
@@ -13,11 +13,7 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
 test('Add block focuses the empty seed block of a fresh page', async ({ page }) => {
   await waitForBoot(page)
   await navigateToView(page, 'Pages')
-  await page.getByPlaceholder('New page name...').fill('Seeded Page')
-  await page
-    .getByTestId('view-header-outlet')
-    .getByRole('button', { name: /New Page/i })
-    .click()
+  await createPageFromPagesView(page, 'Seeded Page')
 
   const rows = page.locator('[data-testid="sortable-block"]')
   const editor = page.locator('[data-testid="block-editor"]')

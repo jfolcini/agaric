@@ -231,14 +231,12 @@ function emit(change: NameChange): void {
  * nothing: no template filter, no journal filter, no "Untitled" filter. A
  * warm cache that lacks any of these rows is simply wrong about the space:
  *
- *  - `App.tsx` (sidebar / New Page button), `useAppKeyboardShortcuts.ts`
- *    (the `createNewPage` chord) and `palette-commands.ts` (the palette
- *    command) create an "Untitled" page and navigate to it. Not picker-
- *    relevant at the moment of creation — but they are the flow the
- *    dropped-rename paragraph above is about.
- *  - `usePageCreation.ts` (the Pages view create form) and
- *    `TemplatesView.tsx` create a NAMED page the user just typed; a `[[`
- *    link to it is the next thing they are likely to want.
+ *  - `usePageCreation.ts` (the New page dialog, which the sidebar button,
+ *    the `createNewPage` chord, the palette command and the Pages view all
+ *    open) and `TemplatesView.tsx` create a NAMED page the user just typed —
+ *    or, for a blank title, an "Untitled" page, the flow the dropped-rename
+ *    paragraph above is about; a `[[` link to it is the next thing they are
+ *    likely to want.
  *  - `useJournalBlockCreation.ts` creates a date page — #4358's subject, and
  *    the same shape as the date picker's own create (#4319).
  *  - a paste (`pasteBlocks`) creates a page for a pasted `[[Name]]` that did

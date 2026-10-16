@@ -10,14 +10,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// #4338 — the palette's `create-new-page` command creates through
-// `@/lib/untitled-page`, which calls `commands.createPageInSpace` from
-// `@/lib/bindings` directly (its hand-written wrapper was retired, #4411).
-// Spread the real module so every other importer still binds what it expects,
-// and intercept the create plus the #4723 page-list read that precedes it;
-// resolve the OK-envelope shape so the real `unwrap` at the call site runs.
-const mockedCreatePageInSpace = vi.hoisted(() => vi.fn())
-const mockedListPages = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -26,18 +18,12 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       // Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
       recordPageOpen: () => Promise.resolve({ status: 'ok', data: null }),
-      createPageInSpace: (...args: unknown[]) =>
-        mockedCreatePageInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
-      listAllPagesInSpace: (...args: unknown[]) =>
-        mockedListPages(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
 
 import { getPaletteCommand, PALETTE_COMMANDS } from '@/hooks/palette-commands'
-import type { NameChange } from '@/lib/name-change-bus'
-import { subscribeToNameChanges } from '@/lib/name-change-bus'
-import { SHOW_SHORTCUTS_EVENT } from '@/lib/overlay-events'
+import { OPEN_NEW_PAGE_DIALOG_EVENT, SHOW_SHORTCUTS_EVENT } from '@/lib/overlay-events'
 import {
   type LocalGraphPreference,
   PREFERENCES,
@@ -87,71 +73,20 @@ describe('PALETTE_COMMANDS — keyboard-shortcuts entry (#922)', () => {
   })
 })
 
-// #4338 — the palette is one of the creation sites #4338 names by hand. It
-// runs from module scope with no `useBlockResolve()` in reach, so a page
-// created here never touched a warm `pagesListRef` before the bus emission.
-describe('PALETTE_COMMANDS — create-new-page publishes to the name-change bus (#4338)', () => {
-  beforeEach(() => {
-    mockedCreatePageInSpace.mockReset()
-    mockedListPages.mockReset()
-    mockedListPages.mockResolvedValue([])
-    useSpaceStore.setState({
-      currentSpaceId: 'SPACE_TEST',
-      availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
-      isReady: true,
-    })
-  })
-
-  it("publishes an 'added' event for the page it creates", async () => {
-    mockedCreatePageInSpace.mockResolvedValue('P_PALETTE_000000000000000')
-    const changes: NameChange[] = []
-    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
+// #5637 — "New page" opens the New page dialog; the page is made there.
+describe('PALETTE_COMMANDS — create-new-page opens the New page dialog', () => {
+  it('closes the palette and opens the dialog with no title', () => {
+    const onClose = vi.fn()
+    const opened: string[] = []
+    const listener = (e: Event) => opened.push((e as CustomEvent<string>).detail)
+    window.addEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
     try {
-      getPaletteCommand('create-new-page')?.run({ onClose: vi.fn(), onEscalate: vi.fn() })
-
-      // `run` is synchronous; the emission lands in the create promise's
-      // `.then`, several microtasks later.
-      await vi.waitFor(() =>
-        expect(changes).toEqual([
-          {
-            kind: 'added',
-            entity: 'page',
-            id: 'P_PALETTE_000000000000000',
-            name: 'Untitled',
-            spaceId: 'SPACE_TEST',
-          },
-        ]),
-      )
+      getPaletteCommand('create-new-page')?.run({ onClose, onEscalate: vi.fn() })
     } finally {
-      unsubscribe()
+      window.removeEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
     }
-  })
-
-  // #4723 — the palette used to pass the literal 'Untitled', which
-  // `create_page_in_space` resolves to the page already carrying that title.
-  it('creates the first free Untitled title when the space already holds one', async () => {
-    mockedListPages.mockResolvedValue([{ id: 'P_OLD_0000000000000000000', content: 'Untitled' }])
-    mockedCreatePageInSpace.mockResolvedValue('P_PALETTE_000000000000000')
-
-    getPaletteCommand('create-new-page')?.run({ onClose: vi.fn(), onEscalate: vi.fn() })
-
-    await vi.waitFor(() =>
-      expect(mockedCreatePageInSpace).toHaveBeenCalledWith(null, 'Untitled 2', 'SPACE_TEST'),
-    )
-  })
-
-  it('publishes nothing when the space store is not ready — no page was created', () => {
-    useSpaceStore.setState({ currentSpaceId: null, isReady: false })
-    const changes: NameChange[] = []
-    const unsubscribe = subscribeToNameChanges((c) => changes.push(c))
-    try {
-      getPaletteCommand('create-new-page')?.run({ onClose: vi.fn(), onEscalate: vi.fn() })
-
-      expect(mockedCreatePageInSpace).not.toHaveBeenCalled()
-      expect(changes).toEqual([])
-    } finally {
-      unsubscribe()
-    }
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(opened).toEqual([''])
   })
 })
 

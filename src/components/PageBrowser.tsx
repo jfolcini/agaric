@@ -7,8 +7,7 @@
  *
  * Top-level orchestrator: it composes a set of cohesive hooks — data +
  * delete (`usePageBrowserData`), compound/text filters
- * (`usePageBrowserFilters`), the create-page flow (`usePageCreation`),
- * sort/grouping (`usePageBrowserSort` / `usePageBrowserGrouping`), and the
+ * (`usePageBrowserFilters`), sort/grouping (`usePageBrowserSort` / `usePageBrowserGrouping`), and the
  * virtualized-list concerns (scroll-restoration, auto-load, keyboard) — then
  * renders `PageBrowserHeader` + `PageBrowserRowRenderer` inside a virtualized
  * List (#1263).
@@ -25,6 +24,7 @@ import { ListErrorState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { ViewHeader } from '@/components/layout/ViewHeader'
+import { PageBrowserCreateRow } from '@/components/PageBrowser/PageBrowserCreateRow'
 import { PageBrowserFilterRow } from '@/components/PageBrowser/PageBrowserFilterRow'
 import { PageBrowserHeader } from '@/components/PageBrowser/PageBrowserHeader'
 import { PageBrowserRowRenderer } from '@/components/PageBrowser/PageBrowserRowRenderer'
@@ -36,7 +36,6 @@ import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchTool
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Spinner } from '@/components/ui/spinner'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '@/hooks/useListMultiSelect'
 import { usePageBrowserAutoLoad } from '@/hooks/usePageBrowserAutoLoad'
@@ -45,13 +44,13 @@ import { usePageBrowserGrouping } from '@/hooks/usePageBrowserGrouping'
 import { usePageBrowserKeyboard } from '@/hooks/usePageBrowserKeyboard'
 import { usePageBrowserScrollRestoration } from '@/hooks/usePageBrowserScrollRestoration'
 import { usePageBrowserSort } from '@/hooks/usePageBrowserSort'
-import { usePageCreation } from '@/hooks/usePageCreation'
 import { useSavedPagesViews } from '@/hooks/useSavedPagesViews'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 import type { BlockRow } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
+import { openNewPageDialog } from '@/lib/overlay-events'
 import type { SavedPagesView } from '@/lib/preferences'
 import { dropOtherSpacesTagChips, type PagesViewTuple } from '@/lib/saved-pages-views'
 import { isExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
@@ -80,6 +79,11 @@ function viewportGridAttrs(args: {
     'aria-label': hasStarred ? t('pageBrowser.pageListGrouped') : t('pageBrowser.pageList'),
     ...(activeDescendantId ? { 'aria-activedescendant': activeDescendantId } : {}),
   }
+}
+
+/** A namespace row's `+`: the New page dialog, pre-filled with the namespace. */
+function createUnder(namespacePath: string): void {
+  openNewPageDialog(`${namespacePath}/`)
 }
 
 interface PageBrowserProps {
@@ -111,17 +115,13 @@ function PageBrowserSettledEmptyState({
   isError,
   isFiltering,
   journalPagesHidden,
-  isCreating,
   onRetry,
-  onCreatePage,
 }: {
   isError: boolean
   isFiltering: boolean
   /** The default journal chip is on, so the space may hold journal pages (#5370). */
   journalPagesHidden: boolean
-  isCreating: boolean
   onRetry: () => void
-  onCreatePage: () => void
 }): React.ReactElement | null {
   const { t } = useTranslation()
   if (isError) {
@@ -145,10 +145,9 @@ function PageBrowserSettledEmptyState({
           variant="ghost"
           size="sm"
           className="mt-3 mx-auto flex items-center gap-1"
-          onClick={onCreatePage}
-          disabled={isCreating}
+          onClick={() => openNewPageDialog()}
         >
-          {isCreating ? <Spinner /> : <Plus className="h-4 w-4" />}
+          <Plus className="h-4 w-4" />
           {t('pageBrowser.createFirst')}
         </Button>
       }
@@ -189,10 +188,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     filterAnnouncePendingRef,
   } = usePageBrowserFilters(currentSpaceId)
 
-  // Data-fetch orchestration + delete flow (#1263). `pages` is typed as
-  // the union: the query returns `PageWithMetadataRow`, but the
-  // optimistic create path prepends a raw `BlockRow`. The grouping
-  // pipeline reads only the shared `BlockRow` fields.
+  // Data-fetch orchestration + delete flow (#1263). The grouping pipeline
+  // reads only the `BlockRow` fields of each row.
   const {
     pages,
     loading,
@@ -200,9 +197,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     hasMore,
     loadMore,
     reload,
-    setPages,
     displayTotalCount,
-    setDisplayTotalCount,
     deletingId,
     setDeleteTarget,
     deleteConfirmDialogProps,
@@ -212,23 +207,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     sortOption,
     wireFilters,
     wireFiltersKey,
-  })
-
-  // Create-page flow (#1263).
-  const {
-    newPageName,
-    setNewPageName,
-    isCreating,
-    handleCreatePage,
-    handleCreateUnder,
-    formRef,
-    newPageInputRef,
-  } = usePageCreation({
-    wireFilters,
-    reload,
-    setPages,
-    setDisplayTotalCount,
-    onPageSelect,
   })
 
   const { starredIds, isStarred, toggle: toggleStar } = useStarredPages()
@@ -350,11 +328,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   )
   const isSinglePageVault = pages.length <= 1 && !hasAnyNamespacedPage
 
-  // The grouping pipeline reads only the shared `id` / `content`
-  // fields, which both the optimistic `BlockRow` and the query's
-  // `PageWithMetadataRow` carry. The metadata extras (`lastModifiedAt`,
-  // `inboundLinkCount`, etc.) are preserved on the row object and
-  // re-read at the leaf via a typed cast in `PageBrowserRowRenderer`.
+  // The grouping pipeline reads only the `id` / `content` fields the
+  // query's `PageWithMetadataRow` shares with `BlockRow`. The metadata
+  // extras (`lastModifiedAt`, `inboundLinkCount`, etc.) are preserved on the
+  // row object and re-read at the leaf via a typed cast in
+  // `PageBrowserRowRenderer`.
   // Cast to `BlockRow[]` at the grouping boundary so the
   // `usePageBrowserGrouping` signature stays `BlockRow`-typed.
   const textFilteredPagesAsBlockRows = textFilteredPages as unknown as BlockRow[]
@@ -576,13 +554,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     <div className="page-browser space-y-4">
       <ViewHeader>
         <PageBrowserHeader
-          formRef={formRef}
-          newPageInputRef={newPageInputRef}
-          newPageName={newPageName}
-          onNewPageNameChange={setNewPageName}
-          isCreating={isCreating}
-          onSubmit={handleCreatePage}
-          showSearchAndSort={pages.length > 0}
+          showSortAndViews={pages.length > 0}
           filterText={filterText}
           onFilterTextChange={setFilterText}
           sortOption={sortOption}
@@ -622,6 +594,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         />
       )}
 
+      <PageBrowserCreateRow query={filterText} pages={pages} aliasMatchId={aliasMatchId} />
+
       {/* #81 / batch-action toolbar. Rendered only when ≥1 page
           is selected (mirrors Trash/History). After a successful bulk op
           it clears the selection and `reload()`s so the existing query
@@ -645,9 +619,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           isError={isError}
           isFiltering={isFiltering}
           journalPagesHidden={hasChipFilters}
-          isCreating={isCreating}
           onRetry={reload}
-          onCreatePage={handleCreatePage}
         />
       )}
 
@@ -717,7 +689,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                     isStarred={isStarred}
                     toggleStar={toggleStar}
                     onPageSelect={onPageSelect}
-                    onCreateUnder={handleCreateUnder}
+                    onCreateUnder={createUnder}
                     onDeleteRequest={setDeleteTarget}
                     selectedIds={multiSelected}
                     onToggleMultiSelect={handleMultiSelectRowClick}

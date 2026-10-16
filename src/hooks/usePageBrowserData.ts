@@ -7,12 +7,12 @@
  *    the query key) with the v2-cursor recovery wrapper and the
  *    `InvalidFilter` toast path.
  *  - `useInfiniteQuery` wiring (pages / loading / hasMore / loadMore /
- *    reload / setPages / totalCount).
+ *    reload / totalCount).
  * The locally-retained `displayTotalCount` (+ D20): adopts
  *    the hook's first-page total, ignores cursor-page `null`s, resets on a
  *    query-basis change, and decrements on an optimistic delete.
  *  - The delete flow via `usePageDelete`, with the count-decrementing
- *    `setPagesForDelete` interceptor.
+ *    `setPagesForDelete` interceptor over `removeFromCache`.
  *
  * #2634 — migrated off `usePaginatedQuery` onto TanStack `useInfiniteQuery`
  * directly (staged retirement of the generic hook; matching the merged
@@ -29,7 +29,6 @@
  */
 
 import { type InfiniteData, keepPreviousData, useInfiniteQuery } from '@tanstack/react-query'
-import type { Dispatch, SetStateAction } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -110,14 +109,10 @@ interface UsePageBrowserDataParams {
 }
 
 interface UsePageBrowserDataResult {
-  // `pages` is typed as the union: the query returns
-  // `PageWithMetadataRow`, but the optimistic create path prepends a
-  // raw `BlockRow`. The grouping pipeline reads only the shared
-  // `BlockRow` fields, so callers can treat the unified shape as
-  // `BlockRow`. The metadata fields (when present) flow through
-  // unchanged and `<PageRow>` reads them via a typed cast in
-  // `PageBrowserRowRenderer`.
-  pages: (BlockRow | PageWithMetadataRow)[]
+  // The grouping pipeline reads only the fields these rows share with
+  // `BlockRow`; the metadata fields flow through unchanged and `<PageRow>`
+  // reads them via a typed cast in `PageBrowserRowRenderer`.
+  pages: PageWithMetadataRow[]
   loading: boolean
   /**
    * #3306 — the last load SETTLED IN FAILURE and there is nothing cached to
@@ -139,9 +134,7 @@ interface UsePageBrowserDataResult {
   hasMore: boolean
   loadMore: () => void
   reload: () => void
-  setPages: Dispatch<SetStateAction<(BlockRow | PageWithMetadataRow)[]>>
   displayTotalCount: number | undefined
-  setDisplayTotalCount: Dispatch<SetStateAction<number | undefined>>
   deletingId: ReturnType<typeof usePageDelete>['deletingId']
   setDeleteTarget: ReturnType<typeof usePageDelete>['setDeleteTarget']
   deleteConfirmDialogProps: ReturnType<typeof usePageDelete>['confirmDialogProps']
@@ -160,7 +153,7 @@ export function usePageBrowserData({
   // `useCallback` closed over — the stale-guard. `wireFilters` is `useMemo`'d
   // on `[filters]`, so its identity only changes on a real chip add/remove;
   // TanStack deep-hashes it deterministically. Held in a ref too so the stable
-  // `setPages` setter can target this exact cache entry without re-deriving.
+  // `removeFromCache` can target this exact cache entry without re-deriving.
   const queryKey = useMemo(
     () => [PAGE_BROWSER_QUERY_ROOT, currentSpaceId, sortOption, wireFilters] as const,
     [currentSpaceId, sortOption, wireFilters],
@@ -183,7 +176,7 @@ export function usePageBrowserData({
   } = useInfiniteQuery(
     {
       queryKey,
-      queryFn: async ({ pageParam }): Promise<PageResponse<BlockRow | PageWithMetadataRow>> => {
+      queryFn: async ({ pageParam }): Promise<PageResponse<PageWithMetadataRow>> => {
         // #5415 — the IPC requires a space; with none known, nothing is
         // dispatched. The `enabled: spaceIsReady` gate below normally holds
         // the query before this branch fires.
@@ -278,8 +271,8 @@ export function usePageBrowserData({
   // malformed response needs it read back on THIS render. `pages` itself,
   // and the returned object below, carry the same finding downstream by
   // construction, so each site carries its own #4406 disable.
-  const lastGoodPagesRef = useRef<(BlockRow | PageWithMetadataRow)[]>([])
-  const pages = useMemo<(BlockRow | PageWithMetadataRow)[]>(() => {
+  const lastGoodPagesRef = useRef<PageWithMetadataRow[]>([])
+  const pages = useMemo<PageWithMetadataRow[]>(() => {
     const raw = data?.pages
     if (raw == null) return []
     // oxlint-disable-next-line react/refs -- `lastGoodPagesRef` is a `useMemo` cache written and read inside the same render (frontend.md § Latest-value mirrors' "different hazard" bucket); an effect write would empty it exactly when a malformed response needs it read back on THIS render — the read-back on a malformed page; see #4406
@@ -346,68 +339,24 @@ export function usePageBrowserData({
     }
   }, [isError, isFetching, errorUpdatedAt, error, t])
 
-  // Direct setter for optimistic list mutations (the old `setItems`). Reshapes
-  // the cached `InfiniteData` in place of a flat `useState` array, WITHOUT
-  // mutating any cached object. Two shapes:
-  //  - a pure removal (the delete path filters one row out) preserves per-page
-  //    structure + pagination — map each page, drop the removed rows, mint
-  //    fresh page objects;
-  //  - a growth/replace (the optimistic create prepends a raw `BlockRow`)
-  //    collapses into a single page carrying the last page's pagination
-  //    metadata, so `loadMore` still resolves the next cursor.
-  // Stable identity (empty deps, key read from a ref) matching the old
-  // `useState` setter, so downstream `useCallback`s don't churn.
-  const setPages = useCallback<Dispatch<SetStateAction<(BlockRow | PageWithMetadataRow)[]>>>(
-    (action) => {
-      queryClient.setQueryData<InfiniteData<PageResponse<BlockRow | PageWithMetadataRow>>>(
-        queryKeyRef.current,
-        (prev) => {
-          const prevItems = prev?.pages.flatMap((p) => p?.items ?? []) ?? []
-          const nextItems =
-            typeof action === 'function'
-              ? (
-                  action as (
-                    p: (BlockRow | PageWithMetadataRow)[],
-                  ) => (BlockRow | PageWithMetadataRow)[]
-                )(prevItems)
-              : action
-          // No cache entry yet (or empty): seed a single self-contained page.
-          if (!prev || prev.pages.length === 0) {
-            return {
-              pages: [{ items: nextItems, next_cursor: null, has_more: false, total_count: null }],
-              pageParams: [undefined],
-            }
-          }
-          const prevIds = new Set(prevItems.map((i) => i.id))
-          const nextIds = new Set(nextItems.map((i) => i.id))
-          const isPureRemoval =
-            nextItems.length <= prevItems.length && nextItems.every((i) => prevIds.has(i.id))
-          if (isPureRemoval) {
-            return {
-              ...prev,
-              pages: prev.pages.map((p) => ({
-                ...p,
-                items: p.items.filter((i) => nextIds.has(i.id)),
-              })),
-            }
-          }
-          const last = prev.pages.at(-1)
-          return {
-            pages: [
-              {
-                items: nextItems,
-                next_cursor: last?.next_cursor ?? null,
-                has_more: last?.has_more ?? false,
-                total_count: last?.total_count ?? null,
-              },
-            ],
-            pageParams: [undefined],
-          }
+  // Drops rows from the cached `InfiniteData` (the delete path filters one
+  // out), keeping each page's pagination so `loadMore` still resolves the next
+  // cursor, and minting fresh page objects instead of mutating cached ones.
+  // Stable identity (key read from a ref), so downstream callbacks don't churn.
+  const removeFromCache = useCallback((kept: readonly { id: string }[]) => {
+    const keptIds = new Set(kept.map((row) => row.id))
+    queryClient.setQueryData<InfiniteData<PageResponse<PageWithMetadataRow>>>(
+      queryKeyRef.current,
+      (prev) =>
+        prev && {
+          ...prev,
+          pages: prev.pages.map((p) => ({
+            ...p,
+            items: p.items.filter((row) => keptIds.has(row.id)),
+          })),
         },
-      )
-    },
-    [],
-  )
+    )
+  }, [])
 
   // + D20 — locally-retained total for the count chip.
   //
@@ -450,10 +399,9 @@ export function usePageBrowserData({
     setDisplayTotalCount(undefined)
   }, [currentSpaceId, sortOption, wireFiltersKey])
 
-  // `usePageDelete` adapts the metadata-rich union type; its
-  // updater is typed against `BlockRow[]`. The two row shapes share
-  // every field the deletion path reads (`id`), so we narrow at the
-  // boundary with a typed cast instead of widening `usePageDelete`.
+  // `usePageDelete`'s updater is typed against `BlockRow[]`. The two row
+  // shapes share every field the deletion path reads (`id`), so we cast at
+  // the boundary instead of widening `usePageDelete`.
   //
   // The delete path mutates `pages` directly (optimistic
   // filter-out on a successful `delete_block`) and never re-runs the
@@ -461,15 +409,14 @@ export function usePageBrowserData({
   // intercept the delete-only setter here: when the hook's updater
   // produces a strictly shorter array (the success path filters one row
   // out), decrement the retained total by the same delta. We only ever
-  // *decrease* here — the create path has its own setter / count handling
-  // — so a no-op or growth leaves the total untouched. Tying the
+  // *decrease* here, so a no-op leaves the total untouched. Tying the
   // decrement to the actual array shrink (rather than the confirm click)
   // means a failed delete, which leaves `pages` unchanged, also leaves
   // the count unchanged.
   //
   // E15 — a commit-synced snapshot of `pages` so `setPagesForDelete` can
   // compute the array delta WITHOUT reading `prev` from inside a
-  // `setPages` updater. Keeping the delta math (and the dependent
+  // cache updater. Keeping the delta math (and the dependent
   // `setDisplayTotalCount`) outside the updater makes the path idempotent
   // under React StrictMode's double-invoke.
   const setPagesSnapshotRef = useRef(pages)
@@ -478,22 +425,22 @@ export function usePageBrowserData({
   })
   const setPagesForDelete = useCallback(
     (updater: (prev: BlockRow[]) => BlockRow[]) => {
-      // E15 — the count decrement must NOT live inside the `setPages`
+      // E15 — the count decrement must NOT live inside the cache
       // updater: React StrictMode (dev) double-invokes a `useState`
       // updater to surface impurity, and a nested `setDisplayTotalCount`
       // is a side effect, so it would fire — and decrement — twice.
       // Compute the delta against the *current* pages snapshot, apply the
       // page mutation idempotently, then fire the count decrement exactly
       // once outside the updater.
-      const prevRows = setPagesSnapshotRef.current as BlockRow[]
+      const prevRows = setPagesSnapshotRef.current as unknown as BlockRow[]
       const next = updater(prevRows)
-      setPages(next as (BlockRow | PageWithMetadataRow)[])
+      removeFromCache(next)
       if (next.length < prevRows.length) {
         const removed = prevRows.length - next.length
         setDisplayTotalCount((cur) => (typeof cur === 'number' ? Math.max(0, cur - removed) : cur))
       }
     },
-    [setPages],
+    [removeFromCache],
   )
   const {
     deletingId,
@@ -508,9 +455,7 @@ export function usePageBrowserData({
     hasMore,
     loadMore,
     reload,
-    setPages,
     displayTotalCount,
-    setDisplayTotalCount,
     deletingId,
     setDeleteTarget,
     deleteConfirmDialogProps,

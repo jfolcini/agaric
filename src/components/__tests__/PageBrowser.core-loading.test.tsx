@@ -18,6 +18,8 @@ import {
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import type { BlockRow } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
+import { OPEN_NEW_PAGE_DIALOG_EVENT } from '@/lib/overlay-events'
 import {
   _resetPrefetchPageSubtreeForTest,
   PAGE_PREFETCH_DWELL_MS,
@@ -404,69 +406,38 @@ describe('PageBrowser', () => {
 
     expect(onPageSelect).toHaveBeenCalledWith('P1', 'Click me')
   })
-  describe('new page loading state', () => {
-    it('disables "New Page" button during creation', async () => {
+  // #5637 — creating moved into the New page dialog; the view only opens it.
+  describe('new page entry points', () => {
+    async function openedTitles(click: () => Promise<void>): Promise<string[]> {
+      const opened: string[] = []
+      const listener = (e: Event) => opened.push((e as CustomEvent<string>).detail)
+      window.addEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
+      try {
+        await click()
+      } finally {
+        window.removeEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
+      }
+      return opened
+    }
+
+    it('the empty state offers no inline create form, only the dialog', async () => {
       const user = userEvent.setup()
-      // `create_page_in_space` never resolves, so the button stays disabled.
-      stubInvoke({
-        list_pages_with_metadata: () => emptyPage,
-        create_page_in_space: () => new Promise<string>(() => {}),
-      })
-
+      stubInvoke({ list_pages_with_metadata: () => emptyPage })
       render(<PageBrowser />)
-
       await waitFor(() => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
 
-      const input = screen.getByPlaceholderText('New page name...')
-      await user.type(input, 'Test Page')
+      const fromHeader = await openedTitles(() =>
+        user.click(screen.getByRole('button', { name: t('pageBrowser.newPage') })),
+      )
+      const fromEmptyState = await openedTitles(() =>
+        user.click(screen.getByRole('button', { name: t('pageBrowser.createFirst') })),
+      )
 
-      const newPageBtn = screen.getByRole('button', { name: /New Page/i })
-      await user.click(newPageBtn)
-
-      // Button should be disabled while creating
-      expect(newPageBtn).toBeDisabled()
-    })
-
-    it('re-enables "New Page" button after creation completes', async () => {
-      const user = userEvent.setup()
-      // Mock create_page_in_space to resolve on demand.
-      let resolveCreate!: (v: string) => void
-      const p = new Promise<string>((r) => {
-        resolveCreate = r
-      })
-      stubInvoke({
-        list_pages_with_metadata: () => emptyPage,
-        create_page_in_space: () => p,
-      })
-
-      render(<PageBrowser />)
-
-      await waitFor(() => {
-        expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
-      })
-
-      const input = screen.getByPlaceholderText('New page name...')
-      await user.type(input, 'Test Page')
-
-      const newPageBtn = screen.getByRole('button', { name: /New Page/i })
-      await user.click(newPageBtn)
-
-      // Button should be disabled while creating
-      expect(newPageBtn).toBeDisabled()
-
-      // Resolve the create call — wrapper returns the new page's ULID
-      resolveCreate('P_NEW')
-
-      // After creation, input is cleared so button is disabled due to empty input
-      await waitFor(() => {
-        expect(input).toHaveValue('')
-      })
-
-      // Type new text to prove isCreating was reset — button should re-enable
-      await user.type(input, 'Another Page')
-      expect(newPageBtn).toBeEnabled()
+      expect(fromHeader).toEqual([''])
+      expect(fromEmptyState).toEqual([''])
+      expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'create_page_in_space')).toBe(false)
     })
   })
 })

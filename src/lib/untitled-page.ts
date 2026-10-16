@@ -1,18 +1,12 @@
 /**
- * The shared "New page" create, used by the three entry points that offer a
- * page with no name yet: the sidebar button (`App.tsx`), the `createNewPage`
- * chord (`useAppKeyboardShortcuts.ts`) and the palette command
- * (`palette-commands.ts`).
+ * The title a page created with no name gets (#4723): the New page dialog
+ * (`usePageCreation`) uses it for a blank title.
  *
- * #4723 — `create_page_in_space` RESOLVES an existing title to that page
- * instead of creating a second one, so passing the literal 'Untitled' twice
- * reopens the first Untitled page the user left un-renamed. Picking the first
- * free `Untitled N` before the create keeps every "New page" a new page.
+ * `create_page_in_space` RESOLVES an existing title to that page instead of
+ * creating a second one, so passing the literal 'Untitled' twice would reopen
+ * the first Untitled page the user left un-renamed. Picking the first free
+ * `Untitled N` before the create keeps every "New page" a new page.
  */
-
-import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
-import { notifyPageAdded } from '@/lib/name-change-bus'
 
 const BASE_TITLE = 'Untitled'
 
@@ -30,20 +24,4 @@ export function untitledTitle(titles: Iterable<string | null>): string {
     candidate = `${BASE_TITLE} ${suffix}`
   }
   return candidate
-}
-
-/**
- * Creates an untitled page in `spaceId` and publishes it on the name-change
- * bus (#4338 — a warm `pagesListRef` learns about the page without waiting
- * for a space switch). Returns the id and the title it settled on; callers
- * seed their resolve cache and navigate with that title, never the literal.
- */
-export async function createUntitledPage(spaceId: string): Promise<{ id: string; title: string }> {
-  const pages = unwrap(
-    await commands.listAllPagesInSpace({ kind: 'active', space_id: spaceId }, null),
-  )
-  const title = untitledTitle(pages.map((page) => page.content))
-  const id = unwrap(await commands.createPageInSpace(null, title, spaceId))
-  notifyPageAdded(id, title, spaceId)
-  return { id, title }
 }

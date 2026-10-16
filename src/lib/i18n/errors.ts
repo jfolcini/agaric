@@ -41,6 +41,7 @@ export const errors: Record<string, string> = {
   'errorBoundary.section.bugReport': 'Bug report',
   'errorBoundary.section.quickCaptureButton': 'Quick capture button',
   'errorBoundary.section.quickCapture': 'Quick capture',
+  'errorBoundary.section.newPage': 'New page',
   'errorBoundary.section.syncSetup': 'Sync setup',
   'errorBoundary.section.notifications': 'Notifications',
   'error.loadBlocksFailed': 'Failed to load blocks',

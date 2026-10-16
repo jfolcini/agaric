@@ -40,12 +40,11 @@ import { announce } from '@/lib/announcer'
 import { writeText as clipboardWriteText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
-import { TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
+import { OPEN_NEW_PAGE_DIALOG_EVENT, TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { type PageRef, useRecentPagesStore } from '@/stores/recent-pages'
-import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
@@ -55,7 +54,7 @@ import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 // subscriber, not a bespoke announce call in the palette itself.
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 
-// #2942 — `create-new-page` / `go-to-today` / `export-page-markdown` call
+// #2942 — `go-to-today` / `export-page-markdown` call
 // through `notify.error`/`notify.success` on their guard/error/success paths.
 vi.mock('@/lib/notify', () => ({
   notify: { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn() },
@@ -79,11 +78,6 @@ vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
   }
 })
 
-// #2942 — `create-new-page` retired its wrapper (#4411); the
-// palette command now calls `commands.createPageInSpace` directly and
-// unwraps the `Result` envelope, so the mock backs the `commands.*` surface
-// and resolves the `{ status: 'ok', data }` shape.
-const mockedCreatePageInSpace = vi.hoisted(() => vi.fn())
 // #2942 — `export-page-markdown` palette command.
 const mockExportPageMarkdown = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/bindings', async (importOriginal) => {
@@ -92,10 +86,6 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
     ...actual,
     commands: {
       ...actual.commands,
-      createPageInSpace: (...args: unknown[]) =>
-        mockedCreatePageInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
-      // #4723 — `createUntitledPage` reads the space's pages before creating.
-      listAllPagesInSpace: () => Promise.resolve({ status: 'ok', data: [] }),
       exportPageMarkdown: (...args: unknown[]) =>
         mockExportPageMarkdown(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
@@ -1182,45 +1172,24 @@ describe('CommandPalette — commands mode', () => {
     expect(useCommandPaletteStore.getState().open).toBe(false)
   })
 
-  it('selecting "create-new-page" creates a page in the current space, navigates to it, and announces (#2942)', async () => {
-    mockedCreatePageInSpace.mockResolvedValue('PAGE_NEW')
-    const navigateToPage = vi.fn()
-    useTabsStore.setState({ navigateToPage })
-    render(<CommandPalette />)
-    openPalette()
-    fireEvent.click(screen.getByTestId('palette-mode-chip'))
-    await waitFor(() => {
-      expect(screen.getByTestId('palette-cmd-create-new-page')).toBeInTheDocument()
-    })
-    fireEvent.click(screen.getByTestId('palette-cmd-create-new-page'))
+  // #5637 — the command opens the New page dialog; the page is made there.
+  it('selecting "create-new-page" closes the palette and opens the New page dialog', async () => {
+    const opened: string[] = []
+    const listener = (e: Event) => opened.push((e as CustomEvent<string>).detail)
+    window.addEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
+    try {
+      render(<CommandPalette />)
+      openPalette()
+      fireEvent.click(screen.getByTestId('palette-mode-chip'))
+      await waitFor(() => {
+        expect(screen.getByTestId('palette-cmd-create-new-page')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('palette-cmd-create-new-page'))
+    } finally {
+      window.removeEventListener(OPEN_NEW_PAGE_DIALOG_EVENT, listener)
+    }
     expect(useCommandPaletteStore.getState().open).toBe(false)
-    await waitFor(() => {
-      // `commands.createPageInSpace` is positional: (parentId, content, spaceId).
-      expect(mockedCreatePageInSpace).toHaveBeenCalledWith(null, 'Untitled', 'SPACE_TEST')
-    })
-    await waitFor(() => {
-      expect(navigateToPage).toHaveBeenCalledWith('PAGE_NEW', 'Untitled')
-    })
-    expect(useResolveStore.getState().resolveTitle('PAGE_NEW')).toBe('Untitled')
-    expect(useResolveStore.getState().resolveStatus('PAGE_NEW')).toBe('active')
-    expect(announce).toHaveBeenCalledWith(t('announce.newPageCreated'))
-  })
-
-  it('selecting "create-new-page" with no ready space shows an error toast and does not call the IPC (#2942)', async () => {
-    // Flip only `isReady` — leaving `currentSpaceId` untouched avoids
-    // re-triggering the cross-store space-switch subscriber (keyed off
-    // `currentSpaceId`, not `isReady`) that several per-space stores
-    // (tabs, navigation, journal, recent-pages) attach in production.
-    useSpaceStore.setState({ isReady: false })
-    render(<CommandPalette />)
-    openPalette()
-    fireEvent.click(screen.getByTestId('palette-mode-chip'))
-    await waitFor(() => {
-      expect(screen.getByTestId('palette-cmd-create-new-page')).toBeInTheDocument()
-    })
-    fireEvent.click(screen.getByTestId('palette-cmd-create-new-page'))
-    expect(mockedNotify.error).toHaveBeenCalledWith(t('space.notReady'))
-    expect(mockedCreatePageInSpace).not.toHaveBeenCalled()
+    expect(opened).toEqual([''])
   })
 
   it('selecting "go-to-today" switches to the journal view, sets today\'s date, and announces (#2942)', async () => {
