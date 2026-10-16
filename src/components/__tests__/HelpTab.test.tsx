@@ -3,6 +3,7 @@
  *
  * Validates:
  *  - Report-a-bug button renders + fires onReportBugClick
+ *  - Debug mode and the welcome tour follow it and persist (#5629)
  *  - Updates card renders on desktop with the "Check for updates now" button
  *  - Updates card shows the mobile hint instead of the button on mobile
  *  - axe(container) audit clean on both UAs
@@ -16,7 +17,8 @@ import { axe } from 'vitest-axe'
 import { HelpTab } from '@/components/settings/HelpTab'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { t } from '@/lib/i18n'
-import type { UpdateStatusValue } from '@/lib/preferences'
+import { isOnboardingDone, markOnboardingDone } from '@/lib/onboarding'
+import { PREFERENCES, readPreference, type UpdateStatusValue } from '@/lib/preferences'
 
 // Stub the updater hook surface — the manual button shouldn't actually
 // reach into the Tauri updater plugin from inside a unit test, and the
@@ -69,6 +71,44 @@ describe('HelpTab', () => {
     await user.click(btn)
 
     expect(onReportBugClick).toHaveBeenCalledOnce()
+  })
+
+  // #5629 — Debug mode and the welcome tour moved here from General, under
+  // Report a bug and above Updates.
+  it('orders Report a bug, Debug mode, the welcome tour, then Updates', () => {
+    render(<HelpTab onReportBugClick={vi.fn()} />)
+
+    const rowTitles = Array.from(document.querySelectorAll('[data-slot="setting-row"]')).map(
+      (row) => row.querySelector('p, label')?.textContent,
+    )
+    expect(rowTitles).toEqual([
+      t('help.reportBugTitle'),
+      t('settings.debugMode.label'),
+      t('settings.showWelcomeTour.title'),
+      t('help.updateTitle'),
+    ])
+  })
+
+  it('Debug mode persists the flag across a remount', async () => {
+    const user = userEvent.setup()
+    const { unmount } = render(<HelpTab onReportBugClick={vi.fn()} />)
+
+    await user.click(screen.getByRole('switch', { name: t('settings.debugMode.label') }))
+    expect(readPreference(PREFERENCES.debugMode)).toBe(true)
+
+    unmount()
+    render(<HelpTab onReportBugClick={vi.fn()} />)
+    expect(screen.getByRole('switch', { name: t('settings.debugMode.label') })).toBeChecked()
+  })
+
+  it('Show tour clears the onboarding flag so the welcome window returns', async () => {
+    markOnboardingDone()
+    const user = userEvent.setup()
+    render(<HelpTab onReportBugClick={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: t('settings.showWelcomeTour.button') }))
+
+    expect(isOnboardingDone()).toBe(false)
   })
 
   it('renders the Updates card with the Check-now button on desktop', () => {

@@ -1,41 +1,18 @@
 /**
  * SettingsView -- tabbed settings panel (F-30).
  *
- * Tabs:
- *  - General   -- DeadlineWarningSection + AutostartRow + QuickCaptureRow
- *  - Spaces -- SpacesTab: open-on-launch space, create / rename / delete (#5362)
- *  - Properties -- PropertyDefinitionsList
- * Appearance -- theme selector (7 themes) + font size selector
- *  - Keyboard -- KeyboardTab
- *  - Data -- DataTab (lazy)
- *  - Edit history -- a row into the History view (#5361)
- *  - Sync & Devices -- DeviceManagement
- *  - App health (id `status`) -- StatusPanel (#5269: formerly its own view)
- *    + IntegrityCheckSection (#5360)
- * Agent access -- AgentAccessTab
- * Help -- Report a bug; updates
- *
- * (in progress): the General / Appearance / Help tabs and the
- * AutostartRow / QuickCaptureRow blocks have been lifted to siblings
- * under `./settings/`. The remaining tabs are still rendered inline via
- * their pre-existing top-level sibling components. The
- * `useSettingsTab()` hook for localStorage + URL persistence is the
- * One piece of SettingsView row still pending — it stays
- * inlined here for now.
- *
- * #1108: the tabs are presented as a grouped vertical rail (see
- * `TAB_GROUPS`) — Workspace / Integrations / Data & Sync / Help — rather
- * than one flat horizontal strip. Grouping lowers the altitude of the
- * experimental/niche tabs and removed the old horizontal-overflow
- * `onWheel` (deltaY→scrollLeft) workaround.
+ * The rail is `TAB_GROUPS` (#1108): four labelled groups in a vertical tablist
+ * from `sm` up, and a grouped Select on phones (#5344). Each tab's body lives
+ * in its own component; this view owns the active tab (`?settings=<id>`, the
+ * deep-link handoff slot, localStorage) and the integrity result that Help's
+ * Report a bug carries (#5360).
  */
 
-import { History } from 'lucide-react'
 import type React from 'react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { StatusPanel } from '@/components/agenda/StatusPanel'
+import { StatusPanel, SyncStatusCard } from '@/components/agenda/StatusPanel'
 import { DeviceManagement } from '@/components/peers/DeviceManagement'
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
@@ -48,7 +25,6 @@ import { IntegrityCheckSection } from '@/components/settings/IntegrityCheckSecti
 import { KeyboardTab } from '@/components/settings/KeyboardTab'
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { SpacesTab } from '@/components/settings/SpacesTab'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Select,
@@ -59,7 +35,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { SettingRow } from '@/components/ui/setting-row'
 import { useReconciliationReport } from '@/hooks/useReconciliationReport'
 import { dispatchBugReport } from '@/lib/bug-report-events'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
@@ -75,85 +50,18 @@ const DataTab = lazy(() =>
 
 type SettingsTab =
   | 'general'
-  | 'spaces'
-  | 'properties'
   | 'appearance'
   | 'editor'
   | 'keyboard'
-  | 'data'
-  | 'history'
-  | 'sync'
-  | 'status'
-  | 'agent'
   | 'notifications'
+  | 'spaces'
+  | 'properties'
+  | 'agent'
+  | 'sync'
+  | 'data'
   | 'help'
+  | 'status'
 
-const TAB_IDS: SettingsTab[] = [
-  'general',
-  'spaces',
-  'properties',
-  'appearance',
-  'editor',
-  'keyboard',
-  'data',
-  'history',
-  'sync',
-  'status',
-  'agent',
-  'notifications',
-  'help',
-]
-
-/**
- * Load the active tab. Resolution order:
- *   1. `?settings=<tab>` query param — enables shareable deep links.
- *   2. localStorage (`agaric-settings-active-tab`) — restores the user's
- *      last-visited tab across navigations within the app.
- *   3. `'general'` fallback.
- *
- * All three layers validate against the `SettingsTab` union so a
- * removed/renamed tab or a hand-crafted URL can't leave the panel in an
- * inconsistent state.
- */
-function readActiveTab(): SettingsTab {
-  const fromUrl = getSettingsTabFromUrl(TAB_IDS as readonly string[])
-  if (fromUrl !== null) return fromUrl as SettingsTab
-  const stored = readPreference(PREFERENCES.settingsActiveTab)
-  if (stored !== '' && (TAB_IDS as readonly string[]).includes(stored)) {
-    return stored as SettingsTab
-  }
-  return 'general'
-}
-
-const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
-  general: 'settings.tabGeneral',
-  spaces: 'settings.tabSpaces',
-  properties: 'settings.tabProperties',
-  appearance: 'settings.tabAppearance',
-  editor: 'settings.tabEditor',
-  keyboard: 'settings.tabKeyboard',
-  data: 'settings.tabData',
-  history: 'settings.tabHistory',
-  sync: 'settings.tabSync',
-  status: 'settings.tabStatus',
-  agent: 'settings.tabAgentAccess',
-  notifications: 'settings.tabNotifications',
-  help: 'settings.tabHelp',
-}
-
-// #1108 — shallow grouping for the tab rail. Instead of 11 flat peers in a
-// single horizontal, wheel-scrollable strip (where experimental/niche tabs
-// like Google Calendar / Agent access sat at the same altitude as core
-// ones), the tabs are bucketed into labeled sections rendered as a vertical
-// settings rail. Grouping lowers the visual weight of the niche tabs and
-// removes the horizontal overflow that the old `onWheel` workaround papered
-// over. The `TAB_IDS` union, `TAB_LABEL_KEYS`, and persistence
-// (`readActiveTab` / `?settings=` / localStorage) are unchanged — only the
-// presentation is grouped.
-//
-// INVARIANT: every `SettingsTab` appears in exactly one group, and the
-// flattened group order matches `TAB_IDS`. A vitest assertion guards this so
-// a newly-added tab can't silently fall out of the rail.
 interface TabGroup {
   /** i18n key for the section header. */
   readonly labelKey: string
@@ -162,21 +70,23 @@ interface TabGroup {
   readonly tabs: readonly SettingsTab[]
 }
 
+// The rail, top to bottom. Tab ids are deep-link targets, so a tab keeps its
+// id when it moves or is relabelled (`notifications` is Tasks & reminders).
 const TAB_GROUPS: readonly TabGroup[] = [
   {
     id: 'workspace',
     labelKey: 'settings.groupWorkspace',
-    tabs: ['general', 'spaces', 'appearance', 'editor', 'keyboard', 'properties'],
+    tabs: ['general', 'appearance', 'editor', 'keyboard', 'notifications', 'spaces', 'properties'],
   },
   {
     id: 'integrations',
     labelKey: 'settings.groupIntegrations',
-    tabs: ['notifications', 'agent'],
+    tabs: ['agent'],
   },
   {
     id: 'data',
     labelKey: 'settings.groupData',
-    tabs: ['data', 'history', 'sync'],
+    tabs: ['sync', 'data'],
   },
   {
     id: 'help',
@@ -185,10 +95,50 @@ const TAB_GROUPS: readonly TabGroup[] = [
   },
 ]
 
+const TAB_IDS: readonly string[] = TAB_GROUPS.flatMap((group) => group.tabs)
+
+/** The Edit history tab became a row in Data (#5629), so its old links land there. */
+const RETIRED_HISTORY_TAB = 'history'
+
+/** A tab id from a URL, localStorage or a deep link, or `null` if no tab has it. */
+function resolveTab(id: string): SettingsTab | null {
+  if (id === RETIRED_HISTORY_TAB) return 'data'
+  return TAB_IDS.includes(id) ? (id as SettingsTab) : null
+}
+
+/**
+ * Load the active tab. Resolution order:
+ *   1. `?settings=<tab>` query param — enables shareable deep links.
+ *   2. localStorage (`agaric-settings-active-tab`) — restores the user's
+ *      last-visited tab across navigations within the app.
+ *   3. `'general'` fallback.
+ *
+ * Every layer goes through `resolveTab`, so a removed tab or a hand-crafted
+ * URL can't leave the panel in an inconsistent state.
+ */
+function readActiveTab(): SettingsTab {
+  const fromUrl = getSettingsTabFromUrl([...TAB_IDS, RETIRED_HISTORY_TAB])
+  return resolveTab(fromUrl ?? readPreference(PREFERENCES.settingsActiveTab)) ?? 'general'
+}
+
+const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
+  general: 'settings.tabGeneral',
+  appearance: 'settings.tabAppearance',
+  editor: 'settings.tabEditor',
+  keyboard: 'settings.tabKeyboard',
+  notifications: 'settings.tabNotifications',
+  spaces: 'settings.tabSpaces',
+  properties: 'settings.tabProperties',
+  agent: 'settings.tabAgentAccess',
+  sync: 'settings.tabSync',
+  data: 'settings.tabData',
+  help: 'settings.tabHelp',
+  status: 'settings.tabStatus',
+}
+
 export function SettingsView(): React.ReactElement {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<SettingsTab>(readActiveTab)
-  const setView = useNavigationStore((s) => s.setView)
   // Held here, not in the App health tab that runs it, so Help's Report a bug
   // can carry the latest result (#5360).
   const integrity = useReconciliationReport('SettingsView')
@@ -203,9 +153,10 @@ export function SettingsView(): React.ReactElement {
   const pendingSettingsTab = useNavigationStore((s) => s.pendingSettingsTab)
   useEffect(() => {
     if (pendingSettingsTab === null) return
-    if ((TAB_IDS as readonly string[]).includes(pendingSettingsTab)) {
+    const requested = resolveTab(pendingSettingsTab)
+    if (requested !== null) {
       // oxlint-disable-next-line react/set-state-in-effect -- consumes the navigation store's one-shot deep-link handoff slot; the tab is also user-driven, so it cannot be derived from `pendingSettingsTab`; see #4407
-      setActiveTab(pendingSettingsTab as SettingsTab)
+      setActiveTab(requested)
     }
     // Clear only if the slot still holds the value this effect consumed —
     // passive effects flush asynchronously after commit, so a SECOND deep
@@ -254,7 +205,7 @@ export function SettingsView(): React.ReactElement {
           <SelectTrigger aria-label={t('sidebar.settings')} className="sm:hidden">
             <SelectValue />
           </SelectTrigger>
-          {/* All thirteen tabs fit on a phone; the shared 24rem cap would hide the last ones. */}
+          {/* Every tab fits on a phone; the shared 24rem cap would hide the last ones. */}
           <SelectContent className="max-h-(--radix-select-content-available-height)">
             {TAB_GROUPS.map((group) => (
               <SelectGroup key={group.id}>
@@ -339,6 +290,14 @@ export function SettingsView(): React.ReactElement {
         >
           {activeTab === 'general' && <GeneralTab />}
 
+          {activeTab === 'appearance' && <AppearanceTab />}
+
+          {activeTab === 'editor' && <EditorTab />}
+
+          {activeTab === 'keyboard' && <KeyboardTab />}
+
+          {activeTab === 'notifications' && <NotificationsTab />}
+
           {activeTab === 'spaces' && <SpacesTab />}
 
           {activeTab === 'properties' && (
@@ -349,11 +308,14 @@ export function SettingsView(): React.ReactElement {
             </Card>
           )}
 
-          {activeTab === 'appearance' && <AppearanceTab />}
+          {activeTab === 'agent' && <AgentAccessTab />}
 
-          {activeTab === 'editor' && <EditorTab />}
-
-          {activeTab === 'keyboard' && <KeyboardTab />}
+          {activeTab === 'sync' && (
+            <div className="space-y-6">
+              <SyncStatusCard />
+              <DeviceManagement />
+            </div>
+          )}
 
           {activeTab === 'data' && (
             <Suspense fallback={<LoadingSkeleton count={4} height="h-6" />}>
@@ -361,44 +323,19 @@ export function SettingsView(): React.ReactElement {
             </Suspense>
           )}
 
-          {/* HistoryView is a full-page view: it portals its filter bar into the
-              shell header and takes Space / Enter / arrows on `document`, so the
-              tab opens it rather than hosting it. */}
-          {activeTab === 'history' && (
-            <Card>
-              <CardContent>
-                <SettingRow
-                  label={t('settings.history.label')}
-                  description={t('settings.history.description')}
-                >
-                  <Button variant="outline" size="sm" onClick={() => setView('history')}>
-                    <History />
-                    {t('settings.history.openButton')}
-                  </Button>
-                </SettingRow>
-              </CardContent>
-            </Card>
-          )}
-
-          {activeTab === 'sync' && <DeviceManagement />}
-
-          {activeTab === 'status' && (
-            <div className="space-y-4">
-              <StatusPanel />
-              <IntegrityCheckSection {...integrity} />
-            </div>
-          )}
-
-          {activeTab === 'agent' && <AgentAccessTab />}
-
-          {activeTab === 'notifications' && <NotificationsTab />}
-
           {activeTab === 'help' && (
             <HelpTab
               onReportBugClick={() =>
                 dispatchBugReport({ message: '', integrityReport: integrity.report ?? undefined })
               }
             />
+          )}
+
+          {activeTab === 'status' && (
+            <div className="space-y-6">
+              <IntegrityCheckSection {...integrity} />
+              <StatusPanel />
+            </div>
           )}
         </div>
       </div>

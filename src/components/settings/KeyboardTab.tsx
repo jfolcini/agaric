@@ -1,6 +1,7 @@
 /**
  * KeyboardTab — keyboard shortcut customization panel.
- * Shows all shortcuts grouped by category with inline editing.
+ * The system-wide quick-capture chord comes first, then every in-app shortcut
+ * grouped by category with inline editing.
  */
 
 import { Check, Pencil, X } from 'lucide-react'
@@ -9,6 +10,7 @@ import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { QuickCaptureRow } from '@/components/settings/QuickCaptureRow'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card'
@@ -135,6 +137,7 @@ export function KeyboardTab(): React.ReactElement {
           <CardDescription>{t('keyboard.settings.description')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          <QuickCaptureRow />
           <div>
             {[...grouped.entries()].map(([category, items]) => (
               <div key={category} className="mb-6">

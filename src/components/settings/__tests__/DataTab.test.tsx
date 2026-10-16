@@ -8,6 +8,7 @@
  *  - Shows import result after success
  *  - Export button calls exportGraphAsZip
  * Export filename embeds the sanitized active space name
+ *  - The Edit history row opens the History view (#5629)
  *  - Shows error toast on export failure
  *  - Has no a11y violations (axe)
  */
@@ -20,6 +21,7 @@ import { axe } from 'vitest-axe'
 import { DataTab } from '@/components/settings/DataTab'
 import type { SpaceRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 
 const mockExportGraphAsZip = vi.fn()
@@ -121,7 +123,7 @@ describe('DataTab', () => {
     expect(screen.getByText('Import')).toBeInTheDocument()
     expect(screen.getByText('Export all pages')).toBeInTheDocument()
     expect(screen.getByText('Choose files')).toBeInTheDocument()
-    expect(screen.getByText('Export all')).toBeInTheDocument()
+    expect(screen.getByText('Export this space')).toBeInTheDocument()
   })
 
   it('data.importDesc is the card description in the header, like the other tabs', () => {
@@ -150,6 +152,24 @@ describe('DataTab', () => {
     expect(row).not.toBeNull()
     expect(row).toContainElement(screen.getByRole('button', { name: t(buttonKey) }))
     expect(row?.querySelectorAll('button')).toHaveLength(1)
+  })
+
+  // #5629 — Edit history was its own tab; it is now this row, and it opens
+  // the full-page History view.
+  it('the Edit history row opens the History view', async () => {
+    useNavigationStore.setState({ currentView: 'settings' })
+    const user = userEvent.setup()
+    const { container } = render(<DataTab />)
+
+    const open = screen.getByRole('button', { name: t('settings.history.openButton') })
+    expect(open.closest('[data-slot="setting-row"]')).toHaveTextContent(
+      t('settings.history.description'),
+    )
+    expect(await axe(container)).toHaveNoViolations()
+
+    await user.click(open)
+
+    expect(useNavigationStore.getState().currentView).toBe('history')
   })
 
   it('import button triggers file input click', async () => {
@@ -370,11 +390,7 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    // Exact string match (not `/Export all/i`, #2964) — the new
-    // "Export all spaces" button's accessible name contains "Export all" as
-    // a substring, which a substring-matching regex would ambiguously match
-    // too. An exact-name match still targets this single-space button only.
-    const exportBtn = screen.getByRole('button', { name: 'Export all' })
+    const exportBtn = screen.getByRole('button', { name: 'Export this space' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -410,11 +426,7 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    // Exact string match (not `/Export all/i`, #2964) — the new
-    // "Export all spaces" button's accessible name contains "Export all" as
-    // a substring, which a substring-matching regex would ambiguously match
-    // too. An exact-name match still targets this single-space button only.
-    const exportBtn = screen.getByRole('button', { name: 'Export all' })
+    const exportBtn = screen.getByRole('button', { name: 'Export this space' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -434,11 +446,7 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    // Exact string match (not `/Export all/i`, #2964) — the new
-    // "Export all spaces" button's accessible name contains "Export all" as
-    // a substring, which a substring-matching regex would ambiguously match
-    // too. An exact-name match still targets this single-space button only.
-    const exportBtn = screen.getByRole('button', { name: 'Export all' })
+    const exportBtn = screen.getByRole('button', { name: 'Export this space' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -462,11 +470,7 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    // Exact string match (not `/Export all/i`, #2964) — the new
-    // "Export all spaces" button's accessible name contains "Export all" as
-    // a substring, which a substring-matching regex would ambiguously match
-    // too. An exact-name match still targets this single-space button only.
-    const exportBtn = screen.getByRole('button', { name: 'Export all' })
+    const exportBtn = screen.getByRole('button', { name: 'Export this space' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -496,11 +500,7 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    // Exact string match (not `/Export all/i`, #2964) — the new
-    // "Export all spaces" button's accessible name contains "Export all" as
-    // a substring, which a substring-matching regex would ambiguously match
-    // too. An exact-name match still targets this single-space button only.
-    const exportBtn = screen.getByRole('button', { name: 'Export all' })
+    const exportBtn = screen.getByRole('button', { name: 'Export this space' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -510,7 +510,7 @@ describe('DataTab', () => {
   })
 
   // #2964 — whole-vault "Export all spaces" action, a sibling of the
-  // single active-space "Export all" button above (which
+  // single active-space "Export this space" button above (which
   // `exportAllSpacesAsZip` never touches, and vice versa).
   describe('export all spaces (#2964)', () => {
     it('the new button triggers exportAllSpacesAsZip and downloads the ZIP, leaving the single-space button untouched', async () => {
@@ -542,7 +542,7 @@ describe('DataTab', () => {
       expect(mockExportGraphAsZip).not.toHaveBeenCalled()
     })
 
-    it('the old single-space "Export all" button still triggers exportGraphAsZip only', async () => {
+    it('the single-space "Export this space" button still triggers exportGraphAsZip only', async () => {
       const user = userEvent.setup()
       const mockBlob = new Blob(['zip'], { type: 'application/zip' })
       mockExportGraphAsZip.mockResolvedValueOnce({
@@ -554,7 +554,7 @@ describe('DataTab', () => {
 
       render(<DataTab />)
 
-      const exportBtn = screen.getByRole('button', { name: 'Export all' })
+      const exportBtn = screen.getByRole('button', { name: 'Export this space' })
       await user.click(exportBtn)
 
       await waitFor(() => {

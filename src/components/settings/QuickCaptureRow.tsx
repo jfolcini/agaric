@@ -1,5 +1,5 @@
 /**
- * QuickCaptureRow — `t('settings.quickCapture.label')` row inside the General settings tab.
+ * QuickCaptureRow — `t('settings.quickCapture.label')` row, first in the Keyboard settings tab.
  *
  * Surfaces the user-configured global hotkey and an `t('settings.quickCapture.editButton')` button.
  * Clicking edit opens an inline editor (Input + Save / Cancel) where

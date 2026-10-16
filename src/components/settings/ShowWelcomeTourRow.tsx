@@ -1,6 +1,6 @@
 /**
  * ShowWelcomeTourRow — `t('settings.showWelcomeTour.title')` row inside the
- * General settings tab.
+ * Help settings tab.
  *
  * The first-run `WelcomeModal` is dismissed permanently the first time the
  * user closes it (any close path — "Get Started", clicking outside, Escape,

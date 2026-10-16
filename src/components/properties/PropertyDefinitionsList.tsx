@@ -42,6 +42,9 @@ import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'url'] as const
 
+/** Every space block carries this key, so deleting its definition always fails. */
+const SPACE_MARKER_KEY = 'is_space'
+
 export function PropertyDefinitionsList(): React.ReactElement {
   const { t } = useTranslation()
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
@@ -187,8 +190,10 @@ export function PropertyDefinitionsList(): React.ReactElement {
     [editOptionsValue, t],
   )
 
+  // Hidden from the list only: the duplicate-key check still sees it.
+  const visibleDefs = definitions.filter((d) => d.key !== SPACE_MARKER_KEY)
   // Unicode-aware fold.
-  const filteredDefs = definitions.filter((d) => matchesSearchFolded(d.key, searchFilter))
+  const filteredDefs = visibleDefs.filter((d) => matchesSearchFolded(d.key, searchFilter))
 
   return (
     <div className="space-y-6">
@@ -272,7 +277,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
 
       <ListViewState
         loading={loading}
-        items={definitions}
+        items={visibleDefs}
         skeleton={<LoadingSkeleton count={3} height="h-10" data-testid="properties-loading" />}
         error={loadError && t('property.loadFailed')}
         onRetry={loadDefinitions}

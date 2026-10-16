@@ -2,16 +2,11 @@
  * Tests for SettingsView component (F-30).
  *
  * Validates:
- *  - Renders with 9 tabs
- * General tab shows deadline warning section (TaskStatesSection removed)
- *  - Properties tab shows property definitions
- *  - Appearance tab shows theme toggle
- *  - Sync tab shows device management
- * Agent access tab
- * Google Calendar tab (experimental)
- *  - Tab switching works
- *  - Theme toggle changes localStorage and document class
- *  - Font size selector updates localStorage and CSS variable
+ *  - The rail order and grouping (#1108, #5629), and the phone Select
+ *  - Each tab's panel, including the controls moved between tabs (#5629)
+ *  - Theme, font size, animation, week start and journal date format persist
+ *  - The active tab: `?settings=`, localStorage, the deep-link handoff slot,
+ *    and old tab ids (`history`) landing on their new home
  *  - axe a11y audit
  */
 
@@ -39,25 +34,6 @@ vi.mock('@tauri-apps/plugin-autostart', () => ({
   enable: mockEnable,
   disable: mockDisable,
   isEnabled: mockIsEnabled,
-}))
-
-// Mock @tauri-apps/plugin-global-shortcut for the
-// QuickCaptureRow tests. Per-test overrides drive the success / failure
-// paths.
-const mockShortcutRegister = vi.fn()
-const mockShortcutUnregister = vi.fn()
-const mockShortcutIsRegistered = vi.fn()
-vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
-  register: mockShortcutRegister,
-  unregister: mockShortcutUnregister,
-  isRegistered: mockShortcutIsRegistered,
-}))
-
-// Mock the useIsMobile hook so the desktop / mobile branches
-// of the QuickCaptureRow are deterministic in jsdom.
-const mockUseIsMobile = vi.fn(() => false)
-vi.mock('@/hooks/useIsMobile', () => ({
-  useIsMobile: () => mockUseIsMobile(),
 }))
 
 // Mock child components to isolate SettingsView logic
@@ -90,6 +66,7 @@ vi.mock('@/components/settings/DataTab', () => ({
 
 vi.mock('@/components/agenda/StatusPanel', () => ({
   StatusPanel: () => <div data-testid="status-panel">Status Content</div>,
+  SyncStatusCard: () => <div data-testid="sync-status-card">Sync status</div>,
 }))
 
 // AgentAccessTab is rendered inside the "Agent access"
@@ -101,6 +78,45 @@ vi.mock('@/components/settings/AgentAccessTab', () => ({
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
+
+// The rail as #5629 lays it out, top to bottom.
+const RAIL_TAB_IDS = [
+  'general',
+  'appearance',
+  'editor',
+  'keyboard',
+  'notifications',
+  'spaces',
+  'properties',
+  'agent',
+  'sync',
+  'data',
+  'help',
+  'status',
+] as const
+
+// Every tab id from before #5629, and the tab it opens now: links and stored
+// preferences written then must still land somewhere real.
+const OLD_TAB_LANDINGS = [
+  ['general', 'general'],
+  ['spaces', 'spaces'],
+  ['properties', 'properties'],
+  ['appearance', 'appearance'],
+  ['editor', 'editor'],
+  ['keyboard', 'keyboard'],
+  ['data', 'data'],
+  ['history', 'data'],
+  ['sync', 'sync'],
+  ['status', 'status'],
+  ['agent', 'agent'],
+  ['notifications', 'notifications'],
+  ['help', 'help'],
+] as const
+
+function expectTabSelected(id: string): void {
+  expect(document.getElementById(`settings-tab-${id}`)).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByRole('tabpanel')).toHaveAttribute('id', `settings-panel-${id}`)
+}
 
 const ALL_THEME_CLASSES = [
   'dark',
@@ -136,15 +152,6 @@ beforeEach(() => {
   mockDisable.mockReset()
   mockIsEnabled.mockReset()
   mockIsEnabled.mockRejectedValue(new Error('autostart unavailable'))
-  // Reset global-shortcut + isMobile mocks each test.
-  mockShortcutRegister.mockReset()
-  mockShortcutUnregister.mockReset()
-  mockShortcutIsRegistered.mockReset()
-  mockShortcutRegister.mockResolvedValue(undefined)
-  mockShortcutUnregister.mockResolvedValue(undefined)
-  mockUseIsMobile.mockReset()
-  mockUseIsMobile.mockReturnValue(false)
-  localStorage.removeItem('agaric:quickCaptureShortcut')
   // The Notifications tab renders the real NotificationsTab, which loads its
   // preferences on mount (#4554).
   vi.mocked(invoke).mockImplementation(
@@ -167,30 +174,12 @@ describe('SettingsView', () => {
     )
   })
 
-  it('renders with 13 tabs', () => {
+  // #5629 — the rail order is `TAB_GROUPS`.
+  it('lists the tabs in rail order', () => {
     render(<SettingsView />)
 
-    const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(13)
-    // Every tab is still present and reachable, regardless of which group
-    // it now lives in.
-    const labels = tabs.map((tab) => tab.textContent)
-    expect(labels).toEqual(
-      expect.arrayContaining([
-        t('settings.tabGeneral'),
-        t('settings.tabSpaces'),
-        t('settings.tabProperties'),
-        t('settings.tabAppearance'),
-        t('settings.tabEditor'),
-        t('settings.tabKeyboard'),
-        t('settings.tabData'),
-        t('settings.tabHistory'),
-        t('settings.tabSync'),
-        t('settings.tabStatus'),
-        t('settings.tabAgentAccess'),
-        t('settings.tabNotifications'),
-        t('settings.tabHelp'),
-      ]),
+    expect(screen.getAllByRole('tab').map((tab) => tab.id)).toEqual(
+      RAIL_TAB_IDS.map((id) => `settings-tab-${id}`),
     )
   })
 
@@ -239,22 +228,23 @@ describe('SettingsView', () => {
           t('settings.groupWorkspace'),
           [
             t('settings.tabGeneral'),
-            t('settings.tabSpaces'),
             t('settings.tabAppearance'),
             t('settings.tabEditor'),
             t('settings.tabKeyboard'),
+            t('settings.tabNotifications'),
+            t('settings.tabSpaces'),
             t('settings.tabProperties'),
           ],
         ],
         [
           'settings-group-integrations',
           t('settings.groupIntegrations'),
-          [t('settings.tabNotifications'), t('settings.tabAgentAccess')],
+          [t('settings.tabAgentAccess')],
         ],
         [
           'settings-group-data',
           t('settings.groupData'),
-          [t('settings.tabData'), t('settings.tabHistory'), t('settings.tabSync')],
+          [t('settings.tabSync'), t('settings.tabData')],
         ],
         [
           'settings-group-help',
@@ -286,18 +276,17 @@ describe('SettingsView', () => {
 
       const allTabNames = [
         t('settings.tabGeneral'),
-        t('settings.tabSpaces'),
-        t('settings.tabProperties'),
         t('settings.tabAppearance'),
         t('settings.tabEditor'),
         t('settings.tabKeyboard'),
-        t('settings.tabData'),
-        t('settings.tabHistory'),
-        t('settings.tabSync'),
-        t('settings.tabStatus'),
-        t('settings.tabAgentAccess'),
         t('settings.tabNotifications'),
+        t('settings.tabSpaces'),
+        t('settings.tabProperties'),
+        t('settings.tabAgentAccess'),
+        t('settings.tabSync'),
+        t('settings.tabData'),
         t('settings.tabHelp'),
+        t('settings.tabStatus'),
       ]
 
       for (const name of allTabNames) {
@@ -344,14 +333,16 @@ describe('SettingsView', () => {
     })
   })
 
-  it('Notifications tab renders the NotificationsTab panel', async () => {
+  it('Tasks & reminders tab holds the deadline warning and the reminders', async () => {
     const user = userEvent.setup()
     render(<SettingsView />)
 
     const notificationsTab = screen.getByRole('tab', { name: t('settings.tabNotifications') })
     await user.click(notificationsTab)
     expect(notificationsTab).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByTestId('notifications-enabled-switch')).toBeInTheDocument()
+    const panel = within(screen.getByTestId('settings-panel-notifications'))
+    expect(panel.getByTestId('deadline-warning-section')).toBeInTheDocument()
+    expect(panel.getByTestId('notifications-enabled-switch')).toBeInTheDocument()
   })
 
   it('Help tab dispatches BUG_REPORT_EVENT on click', async () => {
@@ -412,33 +403,14 @@ describe('SettingsView', () => {
     }
   })
 
-  // #5361 — Edit history has its own tab; it opens the full-page History view.
-  it('Edit history tab opens the History view', async () => {
-    useNavigationStore.setState({ currentView: 'settings' })
-    const user = userEvent.setup()
-    const { container } = render(<SettingsView />)
-
-    const historyTab = screen.getByRole('tab', { name: t('settings.tabHistory') })
-    await user.click(historyTab)
-    expect(historyTab).toHaveAttribute('aria-selected', 'true')
-
-    const panel = screen.getByTestId('settings-panel-history')
-    const open = within(panel).getByRole('button', { name: t('settings.history.openButton') })
-    expect(open.closest('[data-slot="setting-row"]')).toHaveTextContent(
-      t('settings.history.description'),
-    )
-    expect(await axe(container)).toHaveNoViolations()
-
-    await user.click(open)
-
-    expect(useNavigationStore.getState().currentView).toBe('history')
-  })
-
-  it('General tab shows deadline warning section by default (no TaskStatesSection)', () => {
+  it('General tab shows language, week start, and journal date format by default', () => {
     render(<SettingsView />)
 
-    expect(screen.queryByTestId('task-states-section')).not.toBeInTheDocument()
-    expect(screen.getByTestId('deadline-warning-section')).toBeInTheDocument()
+    const panel = within(screen.getByTestId('settings-panel-general'))
+    expect(panel.getByLabelText(t('settings.languageLabel'))).toBeInTheDocument()
+    expect(panel.getByLabelText(t('settings.weekStartLabel'))).toBeInTheDocument()
+    expect(panel.getByLabelText(t('settings.journalDateFormatLabel'))).toBeInTheDocument()
+    expect(screen.queryByTestId('deadline-warning-section')).not.toBeInTheDocument()
   })
 
   it('Properties tab shows property definitions', async () => {
@@ -468,7 +440,7 @@ describe('SettingsView', () => {
   })
 
   it.each([
-    ['settings.tabGeneral', () => screen.getByTestId('deadline-warning-section')],
+    ['settings.tabGeneral', () => screen.getByLabelText(t('settings.languageLabel'))],
     ['settings.tabAppearance', () => screen.getByLabelText(t('settings.themeLabel'))],
     ['settings.tabEditor', () => screen.getByTestId('emoji-picker-toggle')],
     ['settings.tabProperties', () => screen.getByTestId('property-definitions-list')],
@@ -481,20 +453,25 @@ describe('SettingsView', () => {
     expect(control().closest('[data-slot="card-content"]')).not.toBeNull()
   })
 
-  it('Sync tab shows device management', async () => {
+  it('Sync tab shows the sync status card, then device management', async () => {
     const user = userEvent.setup()
     render(<SettingsView />)
 
     const syncTab = screen.getByRole('tab', { name: t('settings.tabSync') })
     await user.click(syncTab)
 
-    expect(screen.getByTestId('device-management')).toBeInTheDocument()
+    const panel = within(screen.getByTestId('settings-panel-sync'))
+    const status = panel.getByTestId('sync-status-card')
+    expect(
+      status.compareDocumentPosition(panel.getByTestId('device-management')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   // #5269 — the former Status view is a Settings tab. #5360 — the tab is App
-  // health, in the Help group, and the integrity check follows the status
-  // panel with no enable switch: Run is the opt-in.
-  it('App health tab shows the status panel, then the integrity check', async () => {
+  // health, in the Help group, with no enable switch: Run is the opt-in.
+  // #5629 — the integrity check leads, and sync status moved to Sync & devices.
+  it('App health tab shows the integrity check, then the status panel', async () => {
     const user = userEvent.setup()
     const { container } = render(<SettingsView />)
 
@@ -503,9 +480,10 @@ describe('SettingsView', () => {
     const panel = within(screen.getByTestId('settings-panel-status'))
     const statusPanel = panel.getByTestId('status-panel')
     const run = panel.getByTestId('integrity-run-button')
-    expect(statusPanel.compareDocumentPosition(run) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    expect(run.compareDocumentPosition(statusPanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
+    expect(panel.queryByTestId('sync-status-card')).not.toBeInTheDocument()
     expect(run).toBeEnabled()
     expect(panel.queryByRole('switch')).not.toBeInTheDocument()
     expect(vi.mocked(invoke)).not.toHaveBeenCalledWith('compute_reconciliation_report')
@@ -519,7 +497,7 @@ describe('SettingsView', () => {
     // Default: General tab is active
     const generalTab = screen.getByRole('tab', { name: t('settings.tabGeneral') })
     expect(generalTab).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByTestId('deadline-warning-section')).toBeInTheDocument()
+    expect(screen.getByLabelText(t('settings.languageLabel'))).toBeInTheDocument()
 
     // Switch to Properties
     const propertiesTab = screen.getByRole('tab', { name: t('settings.tabProperties') })
@@ -527,7 +505,7 @@ describe('SettingsView', () => {
     expect(propertiesTab).toHaveAttribute('aria-selected', 'true')
     expect(generalTab).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByTestId('property-definitions-list')).toBeInTheDocument()
-    expect(screen.queryByTestId('deadline-warning-section')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(t('settings.languageLabel'))).not.toBeInTheDocument()
 
     // Switch to Appearance
     const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
@@ -701,16 +679,15 @@ describe('SettingsView', () => {
       localStorage.removeItem('week-start-preference')
     })
 
-    async function openAppearance() {
+    async function openGeneral() {
       const user = userEvent.setup()
       render(<SettingsView />)
-      const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
-      await user.click(appearanceTab)
+      await user.click(screen.getByRole('tab', { name: t('settings.tabGeneral') }))
       return user
     }
 
     it('renders a week-start Select labelled and defaulting to Monday', async () => {
-      await openAppearance()
+      await openGeneral()
 
       const select = screen.getByLabelText(t('settings.weekStartLabel'))
       expect(select).toBeInTheDocument()
@@ -719,7 +696,7 @@ describe('SettingsView', () => {
     })
 
     it('renders both Monday and Sunday options', async () => {
-      await openAppearance()
+      await openGeneral()
       expect(
         screen.getByRole('option', { name: t('settings.weekStartMonday') }),
       ).toBeInTheDocument()
@@ -729,7 +706,7 @@ describe('SettingsView', () => {
     })
 
     it('changing the value writes "0" to localStorage when Sunday is picked', async () => {
-      const user = await openAppearance()
+      const user = await openGeneral()
       const select = screen.getByLabelText(t('settings.weekStartLabel'))
 
       await user.selectOptions(select, '0')
@@ -745,7 +722,7 @@ describe('SettingsView', () => {
     it('changing the value writes "1" to localStorage when Monday is picked', async () => {
       // Pre-seed Sunday so we can assert the round-trip back to Monday.
       localStorage.setItem('week-start-preference', '0')
-      const user = await openAppearance()
+      const user = await openGeneral()
       const select = screen.getByLabelText(t('settings.weekStartLabel'))
       expect(select).toHaveValue('0')
 
@@ -759,7 +736,7 @@ describe('SettingsView', () => {
 
     it('initialises the select value from a persisted Sunday preference', async () => {
       localStorage.setItem('week-start-preference', '0')
-      await openAppearance()
+      await openGeneral()
       expect(screen.getByLabelText(t('settings.weekStartLabel'))).toHaveValue('0')
     })
 
@@ -767,7 +744,7 @@ describe('SettingsView', () => {
     // names the chosen day, otherwise the only cue is calendar grids
     // silently re-laying out.
     it('shows a success toast naming the chosen day on change', async () => {
-      const user = await openAppearance()
+      const user = await openGeneral()
       const select = screen.getByLabelText(t('settings.weekStartLabel'))
 
       await user.selectOptions(select, '0')
@@ -792,16 +769,15 @@ describe('SettingsView', () => {
       localStorage.removeItem('journal-date-format')
     })
 
-    async function openAppearance() {
+    async function openGeneral() {
       const user = userEvent.setup()
       render(<SettingsView />)
-      const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
-      await user.click(appearanceTab)
+      await user.click(screen.getByRole('tab', { name: t('settings.tabGeneral') }))
       return user
     }
 
     it('renders a journal-date-format Select defaulting to the localized preset', async () => {
-      await openAppearance()
+      await openGeneral()
       const select = screen.getByLabelText(t('settings.journalDateFormatLabel'))
       expect(select).toBeInTheDocument()
       // Default is the existing localized rendering — the no-change baseline.
@@ -809,7 +785,7 @@ describe('SettingsView', () => {
     })
 
     it('changing the value persists the chosen format token to localStorage', async () => {
-      const user = await openAppearance()
+      const user = await openGeneral()
       const select = screen.getByLabelText(t('settings.journalDateFormatLabel'))
 
       await user.selectOptions(select, 'MMMM d, yyyy')
@@ -822,12 +798,12 @@ describe('SettingsView', () => {
 
     it('initialises the select value from a persisted preference', async () => {
       localStorage.setItem('journal-date-format', 'dd/MM/yyyy')
-      await openAppearance()
+      await openGeneral()
       expect(screen.getByLabelText(t('settings.journalDateFormatLabel'))).toHaveValue('dd/MM/yyyy')
     })
 
     it('shows a success toast with a worked example on change', async () => {
-      const user = await openAppearance()
+      const user = await openGeneral()
       const select = screen.getByLabelText(t('settings.journalDateFormatLabel'))
 
       await user.selectOptions(select, 'MMMM d, yyyy')
@@ -841,8 +817,7 @@ describe('SettingsView', () => {
     it('the journal-date-format control is accessibly labelled (no a11y violations)', async () => {
       const user = userEvent.setup()
       const { container } = render(<SettingsView />)
-      const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
-      await user.click(appearanceTab)
+      await user.click(screen.getByRole('tab', { name: t('settings.tabGeneral') }))
       // The control must be reachable by its accessible name.
       expect(screen.getByLabelText(t('settings.journalDateFormatLabel'))).toBeInTheDocument()
       const results = await axe(container)
@@ -954,7 +929,7 @@ describe('SettingsView', () => {
 
       const generalTab = screen.getByRole('tab', { name: t('settings.tabGeneral') })
       expect(generalTab).toHaveAttribute('aria-selected', 'true')
-      expect(screen.getByTestId('deadline-warning-section')).toBeInTheDocument()
+      expect(screen.getByLabelText(t('settings.languageLabel'))).toBeInTheDocument()
     })
   })
 
@@ -968,6 +943,21 @@ describe('SettingsView', () => {
       const keyboardTab = screen.getByRole('tab', { name: t('settings.tabKeyboard') })
       expect(keyboardTab).toHaveAttribute('aria-selected', 'true')
       expect(screen.getByTestId('keyboard-settings-tab')).toBeInTheDocument()
+    })
+
+    it.each(OLD_TAB_LANDINGS)('?settings=%s lands on the %s tab', (oldId, landing) => {
+      window.history.replaceState(null, '', `/?settings=${oldId}`)
+      render(<SettingsView />)
+
+      expectTabSelected(landing)
+      expect(new URLSearchParams(window.location.search).get('settings')).toBe(landing)
+    })
+
+    it.each(OLD_TAB_LANDINGS)('a stored %s tab reopens on the %s tab', (oldId, landing) => {
+      localStorage.setItem('agaric-settings-active-tab', oldId)
+      render(<SettingsView />)
+
+      expectTabSelected(landing)
     })
 
     it('URL value takes precedence over localStorage', () => {
@@ -1123,6 +1113,22 @@ describe('SettingsView', () => {
       )
     })
 
+    it.each(OLD_TAB_LANDINGS)(
+      'a deep link to %s while Settings is open lands on the %s tab',
+      async (oldId, landing) => {
+        // Start elsewhere so a link that lands on General still has to move.
+        localStorage.setItem('agaric-settings-active-tab', landing === 'help' ? 'keyboard' : 'help')
+        render(<SettingsView />)
+
+        useNavigationStore.getState().setPendingSettingsTab(oldId)
+
+        await waitFor(() => {
+          expectTabSelected(landing)
+        })
+        expect(useNavigationStore.getState().pendingSettingsTab).toBeNull()
+      },
+    )
+
     it('drops unknown tab names but still clears the slot', async () => {
       render(<SettingsView />)
 
@@ -1211,9 +1217,8 @@ describe('SettingsView', () => {
       expect(
         screen.queryByRole('switch', { name: t('settings.autostart.label') }),
       ).not.toBeInTheDocument()
-      // The DeadlineWarningSection sibling stays visible — only the
-      // autostart row is conditionally hidden.
-      expect(screen.getByTestId('deadline-warning-section')).toBeInTheDocument()
+      // The sibling rows stay visible — only the autostart row is hidden.
+      expect(screen.getByLabelText(t('settings.languageLabel'))).toBeInTheDocument()
     })
 
     it('renders the toggle on desktop and reads the initial state (disabled)', async () => {
@@ -1319,123 +1324,6 @@ describe('SettingsView', () => {
         expect(toast.error).toHaveBeenCalledWith(t('settings.autostart.toggleFailed'))
       })
       expect(toggle).toHaveAttribute('aria-checked', 'true')
-    })
-  })
-
-  // ── Quick-capture shortcut row (General tab) ─────────────
-  describe('Quick capture shortcut', () => {
-    it('renders with the default chord on first paint and exposes an Edit button', () => {
-      render(<SettingsView />)
-
-      const row = screen.getByTestId('quick-capture-settings-row')
-      expect(row).toBeInTheDocument()
-
-      // Default chord on Linux jsdom (isMac() returns false): Ctrl+Alt+N
-      const binding = screen.getByTestId('quick-capture-shortcut-binding')
-      expect(binding).toHaveTextContent('Ctrl+Alt+N')
-      expect(
-        screen.getByRole('button', { name: t('settings.quickCapture.editButton') }),
-      ).toBeInTheDocument()
-    })
-
-    it('reads the persisted chord from localStorage on mount', () => {
-      localStorage.setItem('agaric:quickCaptureShortcut', 'Ctrl+Shift+J')
-      render(<SettingsView />)
-
-      expect(screen.getByTestId('quick-capture-shortcut-binding')).toHaveTextContent('Ctrl+Shift+J')
-    })
-
-    it('Edit button reveals the inline input + Save / Cancel buttons', async () => {
-      const user = userEvent.setup()
-      render(<SettingsView />)
-
-      await user.click(screen.getByTestId('quick-capture-shortcut-edit'))
-
-      expect(screen.getByTestId('quick-capture-shortcut-input')).toBeInTheDocument()
-      expect(screen.getByTestId('quick-capture-shortcut-save')).toBeInTheDocument()
-      expect(screen.getByTestId('quick-capture-shortcut-cancel')).toBeInTheDocument()
-    })
-
-    it('Cancel restores the previous binding without touching the plugin or storage', async () => {
-      const user = userEvent.setup()
-      render(<SettingsView />)
-
-      await user.click(screen.getByTestId('quick-capture-shortcut-edit'))
-      const input = screen.getByTestId('quick-capture-shortcut-input')
-      await user.clear(input)
-      await user.type(input, 'Ctrl+Shift+J')
-      await user.click(screen.getByTestId('quick-capture-shortcut-cancel'))
-
-      expect(mockShortcutRegister).not.toHaveBeenCalled()
-      expect(mockShortcutUnregister).not.toHaveBeenCalled()
-      expect(localStorage.getItem('agaric:quickCaptureShortcut')).toBe(null)
-      // The view returns to read-only mode with the prior binding.
-      expect(screen.getByTestId('quick-capture-shortcut-binding')).toHaveTextContent('Ctrl+Alt+N')
-    })
-
-    it('Save persists the new chord to localStorage after a probe register/unregister', async () => {
-      const user = userEvent.setup()
-      mockShortcutRegister.mockResolvedValueOnce(undefined)
-      mockShortcutUnregister.mockResolvedValueOnce(undefined)
-
-      render(<SettingsView />)
-
-      await user.click(screen.getByTestId('quick-capture-shortcut-edit'))
-      const input = screen.getByTestId('quick-capture-shortcut-input')
-      await user.clear(input)
-      await user.type(input, 'Ctrl+Shift+J')
-      await user.click(screen.getByTestId('quick-capture-shortcut-save'))
-
-      await waitFor(() => {
-        expect(localStorage.getItem('agaric:quickCaptureShortcut')).toBe('Ctrl+Shift+J')
-      })
-      // The probe registers and then unregisters the new chord; App.tsx
-      // is the one that re-binds it with the live handler via the
-      // synthetic storage event.
-      expect(mockShortcutRegister).toHaveBeenCalledWith('Ctrl+Shift+J', expect.any(Function))
-      expect(mockShortcutUnregister).toHaveBeenCalledWith('Ctrl+Shift+J')
-      expect(screen.getByTestId('quick-capture-shortcut-binding')).toHaveTextContent('Ctrl+Shift+J')
-    })
-
-    // Every component that calls IPC must have a mockRejectedValue path.
-    it('shows a toast and does NOT persist the new chord when probe register() rejects', async () => {
-      const user = userEvent.setup()
-      mockShortcutUnregister.mockResolvedValue(undefined)
-      // The probe register rejects; we should toast and leave
-      // localStorage untouched. App.tsx still owns the previous
-      // binding so the user is not left without a working chord.
-      mockShortcutRegister.mockRejectedValueOnce(new Error('shortcut conflict'))
-
-      render(<SettingsView />)
-      await user.click(screen.getByTestId('quick-capture-shortcut-edit'))
-      const input = screen.getByTestId('quick-capture-shortcut-input')
-      await user.clear(input)
-      await user.type(input, 'Ctrl+Shift+J')
-      await user.click(screen.getByTestId('quick-capture-shortcut-save'))
-
-      await waitFor(() => {
-        expect(toast.error).toHaveBeenCalledWith(t('settings.quickCapture.saveFailed'))
-      })
-      // The localStorage write only happens on success, so the saved
-      // chord must still be the default.
-      expect(localStorage.getItem('agaric:quickCaptureShortcut')).toBe(null)
-    })
-
-    it('hides the entire row on a mobile platform (#742: capability gate, not width)', () => {
-      // #742: visibility follows isMobilePlatform() (the UA capability check
-      // registerGlobalShortcut uses), NOT the viewport-width useIsMobile hook.
-      const originalUA = navigator.userAgent
-      Object.defineProperty(navigator, 'userAgent', {
-        configurable: true,
-        get: () =>
-          'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
-      })
-      try {
-        render(<SettingsView />)
-        expect(screen.queryByTestId('quick-capture-settings-row')).not.toBeInTheDocument()
-      } finally {
-        Object.defineProperty(navigator, 'userAgent', { configurable: true, get: () => originalUA })
-      }
     })
   })
 })

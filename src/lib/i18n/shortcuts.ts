@@ -207,7 +207,7 @@ export const shortcuts: Record<string, string> = {
   // Quick capture — announced in the help panel so the global
   // hotkey is discoverable. The actual binding is sourced at runtime
   // from `loadQuickCaptureShortcut()` (platform-specific default, user
-  // overridable in Settings → General).
+  // overridable in Settings → Keyboard).
   'keyboard.category.quickCapture': 'Quick capture',
   'keyboard.quickCapture.openDialog': 'Open quick capture (system-wide)',
   // Deep links — `agaric://…` URLs the OS routes back into the app.

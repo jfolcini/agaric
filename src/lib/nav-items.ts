@@ -7,9 +7,9 @@
  *
  * #5269 — the sidebar lists only the daily surfaces (`SIDEBAR_NAV_ITEMS`)
  * plus Settings in its footer. The other views are opened from the Pages
- * header or Settings › Edit history; `NAV_ITEMS` still carries them, for those
- * buttons and for the header label, window title and view-change
- * announcement.
+ * header or the Edit history row in Settings › Data; `NAV_ITEMS` still
+ * carries them, for those buttons and for the header label, window title and
+ * view-change announcement.
  */
 
 import {

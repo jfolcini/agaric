@@ -11,6 +11,7 @@
  *  - High-water marks displayed under queue depth cards
  *  - Health color classes applied based on queue depth (green/default/amber)
  *  - Tooltip triggers present for all metric labels; content appears on hover
+ *  - SyncStatusCard: sync state and metrics once a device is paired, nothing before
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -24,7 +25,7 @@ import {
   mockInvokeCommands,
   type TypedInvokeHandlers,
 } from '@/__tests__/helpers/invoke'
-import { StatusPanel } from '@/components/agenda/StatusPanel'
+import { StatusPanel, SyncStatusCard } from '@/components/agenda/StatusPanel'
 
 // Mock DeviceManagement to prevent its own IPC calls from interfering
 vi.mock('@/components/peers/DeviceManagement', () => ({
@@ -32,8 +33,7 @@ vi.mock('@/components/peers/DeviceManagement', () => ({
 }))
 
 // Controllable sync store state for tests that need non-default values.
-const { mockSyncStoreState, mockSetState } = vi.hoisted(() => ({
-  mockSetState: vi.fn(),
+const { mockSyncStoreState } = vi.hoisted(() => ({
   mockSyncStoreState: {
     state: 'idle' as string,
     error: null as string | null,
@@ -41,10 +41,8 @@ const { mockSyncStoreState, mockSetState } = vi.hoisted(() => ({
     lastSyncedAt: null as string | null,
     opsReceived: 0,
     opsSent: 0,
-    setState: undefined as unknown as ReturnType<typeof vi.fn>,
   },
 }))
-mockSyncStoreState.setState = mockSetState
 
 vi.mock('@/stores/sync', () => ({
   useSyncStore: (selector: (s: typeof mockSyncStoreState) => unknown) =>
@@ -105,18 +103,6 @@ const mockStatus: CommandReturns['get_status'] = {
   audit_ingest_last_stall: null,
 }
 
-/**
- * What `start_sync` resolves with: `SyncSessionInfo`. The retry test used to
- * let the catch-all hand it a `StatusInfo` (#4668).
- */
-const mockSyncSession: CommandReturns['start_sync'] = {
-  state: 'idle',
-  local_device_id: 'LOCAL',
-  remote_device_id: 'REMOTE',
-  ops_received: 0,
-  ops_sent: 0,
-}
-
 beforeEach(() => {
   vi.clearAllMocks()
   // Reset sync store to defaults
@@ -126,7 +112,6 @@ beforeEach(() => {
   mockSyncStoreState.lastSyncedAt = null
   mockSyncStoreState.opsReceived = 0
   mockSyncStoreState.opsSent = 0
-  mockSetState.mockClear()
 })
 
 describe('StatusPanel', () => {
@@ -163,6 +148,16 @@ describe('StatusPanel', () => {
     render(<StatusPanel />)
 
     expect(await screen.findByText('Materializer status')).toBeInTheDocument()
+  })
+
+  it('leaves sync status to SyncStatusCard (#5629)', async () => {
+    // Paired, so a sync card inside the panel would render.
+    mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+    stubInvoke({ get_status: () => mockStatus })
+    render(<StatusPanel />)
+    await screen.findByText('Materializer status')
+
+    expect(screen.queryByTestId('sync-panel-title')).not.toBeInTheDocument()
   })
 
   // #5269 — the panel is the body of Settings › App health, whose `<h1>` belongs
@@ -651,13 +646,10 @@ describe('StatusPanel', () => {
 
   describe('Last synced display', () => {
     it('shows relative time when lastSyncedAt is set', async () => {
-      stubInvoke({ get_status: () => mockStatus })
       mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
       mockSyncStoreState.lastSyncedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString()
 
-      render(<StatusPanel />)
-
-      await screen.findByText('Foreground queue')
+      render(<SyncStatusCard />)
 
       // formatRelativeTime (i18n) resolves sidebar.minutesAgo -> "5m ago"
       const lastSyncedEl = document.querySelector('.sync-last-synced')
@@ -665,49 +657,40 @@ describe('StatusPanel', () => {
     })
 
     it('shows "--" when lastSyncedAt is null', async () => {
-      stubInvoke({ get_status: () => mockStatus })
       mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
       mockSyncStoreState.lastSyncedAt = null
 
-      render(<StatusPanel />)
-
-      await screen.findByText('Foreground queue')
+      render(<SyncStatusCard />)
 
       const lastSyncedEl = document.querySelector('.sync-last-synced')
       expect(lastSyncedEl?.textContent).toBe('--')
     })
   })
 
-  describe('sync section', () => {
-    it('shows "Not configured" when sync has no peers', async () => {
-      // Default mock has peers: [] — should show "Not configured"
-      stubInvoke({ get_status: () => mockStatus })
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
-      expect(screen.getByText('Not configured')).toBeInTheDocument()
+  // #5629 — the sync card left App health for the top of Sync & devices.
+  describe('SyncStatusCard', () => {
+    // #5629 — with nothing paired, the device list's empty state says so.
+    it('renders nothing when no device is paired', () => {
+      const { container } = render(<SyncStatusCard />)
+      expect(container).toBeEmptyDOMElement()
     })
 
     it('shows sync state indicator when peers exist', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'idle'
-      stubInvoke({ get_status: () => mockStatus })
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      render(<SyncStatusCard />)
       expect(screen.getByText('Idle')).toBeInTheDocument()
     })
 
     // #1076: the full Sync panel (state dot, error, peer count, ops
     // metrics) was permanently unreachable dead UI because store `peers`
-    // was always `[]`. With the store now wired to the backend, peers
-    // existing must swap the "Not configured" placeholder for the panel.
-    it('renders the full Sync panel (not "Not configured") when peers exist (#1076)', async () => {
+    // was always `[]`. With the store wired to the backend, peers existing
+    // must render it.
+    it('renders the full Sync panel when peers exist (#1076)', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'idle'
-      stubInvoke({ get_status: () => mockStatus })
-      const { container } = render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      const { container } = render(<SyncStatusCard />)
 
-      expect(screen.queryByTestId('sync-panel-not-configured')).not.toBeInTheDocument()
       expect(container.querySelector('.sync-panel-details')).toBeInTheDocument()
       expect(container.querySelector('.sync-state-dot')).toBeInTheDocument()
 
@@ -719,9 +702,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'error'
       mockSyncStoreState.error = 'Connection lost'
-      stubInvoke({ get_status: () => mockStatus })
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      render(<SyncStatusCard />)
       expect(screen.getByText('Connection lost')).toBeInTheDocument()
       // The sync error must be a live region so screen readers announce it.
       const alert = screen.getByRole('alert')
@@ -729,86 +710,12 @@ describe('StatusPanel', () => {
       expect(alert).toHaveClass('sync-panel-error')
     })
 
-    // #2059 — the sync-error state must offer a recovery affordance
-    // (a "Sync now" / Retry button), matching DeviceManagement.
-    describe('error-state retry affordance (#2059)', () => {
-      it('renders a Sync now retry button when sync state is error', async () => {
-        mockSyncStoreState.peers = [{ peerId: 'P1' }]
-        mockSyncStoreState.state = 'error'
-        mockSyncStoreState.error = 'Connection lost'
-        stubInvoke({ get_status: () => mockStatus })
-        render(<StatusPanel />)
-        await screen.findByText('Materializer status')
-
-        const retry = screen.getByTestId('sync-panel-retry')
-        expect(retry).toBeInTheDocument()
-        expect(retry).toHaveTextContent('Sync now')
-        expect(retry).toHaveAccessibleName('Retry sync with all paired devices')
-      })
-
-      it('does not render the retry button in non-error states', async () => {
-        mockSyncStoreState.peers = [{ peerId: 'P1' }]
-        mockSyncStoreState.state = 'idle'
-        stubInvoke({ get_status: () => mockStatus })
-        render(<StatusPanel />)
-        await screen.findByText('Materializer status')
-        expect(screen.queryByTestId('sync-panel-retry')).not.toBeInTheDocument()
-      })
-
-      it('re-syncs every paired peer and flips sync state on click', async () => {
-        const user = userEvent.setup()
-        mockSyncStoreState.peers = [{ peerId: 'P1' }, { peerId: 'P2' }]
-        mockSyncStoreState.state = 'error'
-        mockSyncStoreState.error = 'Connection lost'
-        // get_status (polling) + start_sync (per peer) all succeed. The
-        // catch-all this replaced handed `start_sync` a `StatusInfo`; it
-        // returns `SyncSessionInfo` (#4668).
-        stubInvoke({ get_status: () => mockStatus, start_sync: () => mockSyncSession })
-        render(<StatusPanel />)
-        await screen.findByText('Materializer status')
-
-        await user.click(screen.getByTestId('sync-panel-retry'))
-
-        await waitFor(() => {
-          expect(mockedInvoke).toHaveBeenCalledWith(
-            'start_sync',
-            expect.objectContaining({ peerId: 'P1' }),
-          )
-          expect(mockedInvoke).toHaveBeenCalledWith(
-            'start_sync',
-            expect.objectContaining({ peerId: 'P2' }),
-          )
-        })
-
-        // Flips to syncing for the run, then back to idle on success.
-        expect(mockSetState).toHaveBeenCalledWith('syncing')
-        await waitFor(() => {
-          expect(mockSetState).toHaveBeenCalledWith('idle', null)
-        })
-      })
-
-      it('has no a11y violations in the sync-error state', async () => {
-        mockSyncStoreState.peers = [{ peerId: 'P1' }]
-        mockSyncStoreState.state = 'error'
-        mockSyncStoreState.error = 'Connection lost'
-        stubInvoke({ get_status: () => mockStatus })
-        const { container } = render(<StatusPanel />)
-        await screen.findByText('Materializer status')
-        await screen.findByTestId('sync-panel-retry')
-
-        const results = await axe(container)
-        expect(results).toHaveNoViolations()
-      })
-    })
-
     it('shows sync metrics (peers count, ops received/sent)', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }, { peer_id: 'P2' }]
       mockSyncStoreState.state = 'syncing'
       mockSyncStoreState.opsReceived = 99
       mockSyncStoreState.opsSent = 17
-      stubInvoke({ get_status: () => mockStatus })
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      render(<SyncStatusCard />)
       expect(screen.getByText('Peers')).toBeInTheDocument()
       const peerCount = document.querySelector('.sync-peer-count')
       expect(peerCount?.textContent).toBe('2')
@@ -821,9 +728,7 @@ describe('StatusPanel', () => {
     it('shows "Syncing..." state label during active sync', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'syncing'
-      stubInvoke({ get_status: () => mockStatus })
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      render(<SyncStatusCard />)
       expect(screen.getByText('Syncing...')).toBeInTheDocument()
     })
 
@@ -838,8 +743,7 @@ describe('StatusPanel', () => {
       it('renders a CheckCircle-style icon for the idle state', async () => {
         mockSyncStoreState.peers = [{ peer_id: 'P1' }]
         mockSyncStoreState.state = 'idle'
-        stubInvoke({ get_status: () => mockStatus })
-        render(<StatusPanel />)
+        render(<SyncStatusCard />)
         await screen.findByText('Idle')
         expect(screen.getByTestId('sync-state-icon-idle')).toBeInTheDocument()
       })
@@ -848,8 +752,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.peers = [{ peer_id: 'P1' }]
         mockSyncStoreState.state = 'error'
         mockSyncStoreState.error = 'boom'
-        stubInvoke({ get_status: () => mockStatus })
-        render(<StatusPanel />)
+        render(<SyncStatusCard />)
         await screen.findByText('Error')
         expect(screen.getByTestId('sync-state-icon-error')).toBeInTheDocument()
       })
@@ -857,8 +760,7 @@ describe('StatusPanel', () => {
       it('renders a spinning RefreshCw icon for the syncing state', async () => {
         mockSyncStoreState.peers = [{ peer_id: 'P1' }]
         mockSyncStoreState.state = 'syncing'
-        stubInvoke({ get_status: () => mockStatus })
-        render(<StatusPanel />)
+        render(<SyncStatusCard />)
         await screen.findByText('Syncing...')
         const icon = screen.getByTestId('sync-state-icon-syncing')
         expect(icon).toBeInTheDocument()
@@ -869,10 +771,8 @@ describe('StatusPanel', () => {
     it('shows tooltip on sync metric label hover', async () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'idle'
-      stubInvoke({ get_status: () => mockStatus })
       const user = userEvent.setup()
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      render(<SyncStatusCard />)
       // Hover over "Ops received" metric label
       const label = screen.getByText('Ops received')
       await user.hover(label)

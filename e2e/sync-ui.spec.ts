@@ -1,29 +1,24 @@
-import { expect, navigateToView, test, waitForBoot } from './helpers'
+import { expect, navigateToView, openSettingsTab, test, waitForBoot } from './helpers'
 
 // Sync UI tests share mocked peer / pairing state within the
 // describe block and are sensitive to parallel mock-state collisions.
 test.describe.configure({ mode: 'serial' })
 
 test.describe('Sync UI', () => {
-  // --- StatusPanel (Settings › App health: materializer + sync summary) ---
-  //
-  // Moved DeviceManagement out of StatusPanel; the panel now only
-  // exposes materializer stats and a high-level sync summary. The two
-  // assertions below target what actually lives in StatusPanel today.
-  test.describe('Status panel', () => {
+  // --- SyncStatusCard (top of Settings › Sync & devices, #5629) ----------
+  test.describe('Sync status card', () => {
     test.beforeEach(async ({ page }) => {
       await waitForBoot(page)
-      await navigateToView(page, 'Status')
+      await navigateToView(page, 'Settings')
+      await openSettingsTab(page, 'Sync & devices')
+      await expect(page.getByTestId('settings-panel-sync')).toBeVisible()
     })
 
-    test('shows sync status section', async ({ page }) => {
-      await expect(page.locator('[data-testid="sync-panel-title"]')).toBeVisible()
-      await expect(page.getByText('Sync status')).toBeVisible()
-    })
-
-    test('shows not configured when no peers', async ({ page }) => {
-      // With empty sync store, should show "not configured" or similar
-      await expect(page.locator('[data-testid="sync-panel-not-configured"]')).toBeVisible()
+    // With nothing paired the device list's empty state says so; the card
+    // would only repeat it above Pair new device.
+    test('is absent while no device is paired', async ({ page }) => {
+      await expect(page.getByTestId('device-no-peers')).toBeVisible()
+      await expect(page.getByTestId('sync-panel-title')).toHaveCount(0)
     })
   })
 

@@ -2,7 +2,7 @@
  * Tests for PropertyDefinitionsList component.
  *
  * Validates:
- *  - Renders property definitions list
+ *  - Renders property definitions list, without the internal `is_space` (#5629)
  *  - Search/filter functionality
  *  - Delete with confirmation
  *  - Has no a11y violations (axe)
@@ -80,6 +80,32 @@ describe('PropertyDefinitionsList', () => {
     expect(await screen.findByText('Status')).toBeInTheDocument()
     expect(screen.getByText('Priority')).toBeInTheDocument()
     expect(screen.getByText('Due')).toBeInTheDocument()
+  })
+
+  // #5629 — every space block carries `is_space`, so its delete always failed.
+  it('hides the internal is_space definition', async () => {
+    stubDefs(pageOf([makePropDef('is_space', 'select', '["true"]'), makePropDef('status')]))
+
+    render(<PropertyDefinitionsList />)
+
+    expect(await screen.findByText('Status')).toBeInTheDocument()
+    expect(screen.queryByText('Is Space')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: t('properties.deleteDefinition', { key: 'is_space' }) }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('typing is_space keeps Create disabled and says the key exists', async () => {
+    const user = userEvent.setup()
+    stubDefs(pageOf([makePropDef('is_space', 'select', '["true"]'), makePropDef('status')]))
+
+    render(<PropertyDefinitionsList />)
+    await screen.findByText('Status')
+
+    await user.type(screen.getByLabelText(t('propertiesView.createKey')), 'is_space')
+
+    expect(screen.getByRole('button', { name: t('propertiesView.create') })).toBeDisabled()
+    expect(screen.getByText(t('propertiesView.duplicateKey'))).toBeInTheDocument()
   })
 
   it('shows loading state initially', () => {

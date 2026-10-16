@@ -1,5 +1,5 @@
 /**
- * AppearanceTab — language + theme + font size + week-start preference selectors.
+ * AppearanceTab — theme, font size, animation speed and tooltip delay selectors.
  *
  * Delegates each preference to its shared hook. The hooks are
  * localStorage-backed and re-read across windows via synthetic `storage`
@@ -20,19 +20,9 @@ import {
 } from '@/components/ui/select'
 import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { type FontSize, useFontSize } from '@/hooks/useFontSize'
-import {
-  JOURNAL_DATE_FORMATS,
-  type JournalDateFormat,
-  useJournalDateFormat,
-} from '@/hooks/useJournalDateFormat'
-import { useLanguage } from '@/hooks/useLanguage'
 import { type MotionPreference, useMotionPreference } from '@/hooks/useMotionPreference'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { type TooltipDelay, useTooltipDelay } from '@/hooks/useTooltipDelay'
-import { useWeekStart } from '@/hooks/useWeekStart'
-import { formatJournalTitle } from '@/lib/date-utils'
-import { type LanguagePreference } from '@/lib/i18n/locales'
-import { notify } from '@/lib/notify'
 
 /**
  * Theme select uses 'system' as the user-facing alias for the internal 'auto'
@@ -47,18 +37,8 @@ type ThemeSelectValue =
   | 'dracula'
   | 'one-dark-pro'
 
-// #1448 — each journal date-format preset maps to an i18n label key.
-const JOURNAL_DATE_FORMAT_LABELS: Record<JournalDateFormat, string> = {
-  locale: 'settings.journalDateFormatLocale',
-  'yyyy-MM-dd': 'settings.journalDateFormatIso',
-  'MMMM d, yyyy': 'settings.journalDateFormatLong',
-  'dd/MM/yyyy': 'settings.journalDateFormatSlash',
-  'EEE, MMM d': 'settings.journalDateFormatWeekday',
-}
-
 // The trigger fills a phone row; from `sm` up it sits beside the label at a
-// fixed width instead of stretching across the panel. The journal date format
-// is wider because its option labels carry a worked example.
+// fixed width instead of stretching across the panel.
 const SELECT_TRIGGER_WIDTH = 'sm:w-48'
 
 /** Map the existing useTheme preference names to user-facing select values. */
@@ -74,27 +54,10 @@ function selectToTheme(value: string): ThemePreference {
 
 export function AppearanceTab(): React.ReactElement {
   const { t } = useTranslation()
-  // #4555 — the UI language. `system` follows the device; the other values
-  // pin a locale. Anything not yet translated falls back to English.
-  const { language, setLanguage } = useLanguage()
   const { theme, setTheme } = useTheme()
   const { motion, setMotion } = useMotionPreference()
   const { tooltipDelay, setTooltipDelay } = useTooltipDelay()
   const { fontSize, setFontSize } = useFontSize()
-  // Surface the previously hidden week-start preference. The hook
-  // returns `0 | 1` (Sunday | Monday); the Select primitive only deals
-  // in strings so we coerce on read/write.
-  const { weekStartsOn, setWeekStart } = useWeekStart()
-  // #1448 — DISPLAY-ONLY journal date format. The stored journal page content
-  // stays ISO `yyyy-MM-dd`; this only changes how titles are rendered.
-  const { journalDateFormat, setJournalDateFormat } = useJournalDateFormat()
-
-  const handleLanguageChange = useCallback(
-    (value: string) => {
-      setLanguage(value as LanguagePreference)
-    },
-    [setLanguage],
-  )
 
   const handleThemeChange = useCallback(
     (value: string) => {
@@ -124,67 +87,9 @@ export function AppearanceTab(): React.ReactElement {
     [setTooltipDelay],
   )
 
-  // Week-start coercion. Select values are strings; the hook
-  // and underlying localStorage key are typed `0 | 1`. We accept only
-  // `'0'` and `'1'` and ignore anything else (defensive — the Select
-  // can only emit values from the items we render).
-  // Surface a toast so the change is not silent; the only
-  // other visible cue today is calendar grids re-laying out.
-  // #1448 — DISPLAY-ONLY journal date format picker. Persists the chosen
-  // date-fns token string; the stored journal page content is never touched.
-  const handleJournalDateFormatChange = useCallback(
-    (value: string) => {
-      const fmt = value as JournalDateFormat
-      setJournalDateFormat(fmt)
-      // Show a concrete worked example so the abstract token string is legible.
-      notify.success(
-        t('settings.journalDateFormatUpdated', {
-          example: formatJournalTitle('2026-06-17', fmt),
-        }),
-      )
-    },
-    [setJournalDateFormat, t],
-  )
-
-  const handleWeekStartChange = useCallback(
-    (value: string) => {
-      if (value === '0') {
-        setWeekStart(0)
-        notify.success(t('settings.weekStartUpdated', { day: t('settings.weekStartSunday') }))
-      } else if (value === '1') {
-        setWeekStart(1)
-        notify.success(t('settings.weekStartUpdated', { day: t('settings.weekStartMonday') }))
-      }
-    },
-    [setWeekStart, t],
-  )
-
   return (
     <Card>
       <CardContent className="space-y-6">
-        {/* Language (#4555). Above Theme because it changes every other label
-            on this screen. */}
-        <SettingRow
-          label={t('settings.languageLabel')}
-          controlId="language-select"
-          description={t('settings.languageHelp')}
-        >
-          <Select value={language} onValueChange={handleLanguageChange}>
-            <SelectTrigger
-              id="language-select"
-              className={SELECT_TRIGGER_WIDTH}
-              aria-describedby={settingDescriptionId('language-select')}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="system">{t('settings.languageSystem')}</SelectItem>
-              <SelectItem value="en">{t('settings.languageEnglish')}</SelectItem>
-              <SelectItem value="es">{t('settings.languageSpanish')}</SelectItem>
-            </SelectContent>
-          </Select>
-        </SettingRow>
-
         {/* Theme selector */}
         <SettingRow label={t('settings.themeLabel')} controlId="theme-select">
           <Select value={themeToSelect(theme)} onValueChange={handleThemeChange}>
@@ -263,48 +168,6 @@ export function AppearanceTab(): React.ReactElement {
               <SelectItem value="instant">{t('settings.tooltipDelayInstant')}</SelectItem>
               <SelectItem value="fast">{t('settings.tooltipDelayFast')}</SelectItem>
               <SelectItem value="default">{t('settings.tooltipDelayDefault')}</SelectItem>
-            </SelectContent>
-          </Select>
-        </SettingRow>
-
-        {/* Week-start preference. Previously a half-shipped feature
-            exposed only via the `week-start-preference` localStorage key.
-            Surfacing it in Appearance lets users pick Monday / Sunday-
-            first weeks without devtools. */}
-        <SettingRow label={t('settings.weekStartLabel')} controlId="week-start-select">
-          <Select value={String(weekStartsOn)} onValueChange={handleWeekStartChange}>
-            <SelectTrigger id="week-start-select" className={SELECT_TRIGGER_WIDTH}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">{t('settings.weekStartMonday')}</SelectItem>
-              <SelectItem value="0">{t('settings.weekStartSunday')}</SelectItem>
-            </SelectContent>
-          </Select>
-        </SettingRow>
-
-        {/* Journal date format (#1448). DISPLAY-ONLY: the stored journal page
-            content stays ISO `yyyy-MM-dd`; this only governs how titles render,
-            so switching it can never orphan an existing journal. */}
-        <SettingRow
-          label={t('settings.journalDateFormatLabel')}
-          controlId="journal-date-format-select"
-          description={t('settings.journalDateFormatHelp')}
-        >
-          <Select value={journalDateFormat} onValueChange={handleJournalDateFormatChange}>
-            <SelectTrigger
-              id="journal-date-format-select"
-              className="sm:w-72"
-              aria-describedby={settingDescriptionId('journal-date-format-select')}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {JOURNAL_DATE_FORMATS.map((fmt) => (
-                <SelectItem key={fmt} value={fmt}>
-                  {t(JOURNAL_DATE_FORMAT_LABELS[fmt])}
-                </SelectItem>
-              ))}
             </SelectContent>
           </Select>
         </SettingRow>

@@ -1,12 +1,13 @@
 /**
  * DeviceManagement — panel for managing device identity and paired peers (#219).
  *
- * Embeddable in Settings / Status area. Shows:
- *  - Local device ID
- *  - List of paired peers (with last-synced time, reset count)
+ * The body of Settings › Sync & devices, below the sync status card. Shows, in
+ * order (#5629: the main action first, the device ID last):
  *  - `t('device.pairNewDeviceButton')` button (opens PairingDialog)
- *  - `t('device.syncNowButton')` per peer
- *  - `t('device.unpairButton')` per peer with confirmation
+ *  - List of paired peers (with last-synced time, reset count),
+ *    `t('device.syncNowButton')` and `t('device.unpairButton')` per peer
+ *  - The internet-fallback switch
+ *  - Local device ID
  *
  * Follows StatusPanel.tsx layout patterns.
  */
@@ -269,36 +270,6 @@ export function DeviceManagement(): React.ReactElement {
 
           {deviceId && (
             <>
-              {/* The copy icon is small enough to stay beside the ID on phones too. */}
-              <SettingRow
-                className="mb-4 flex-row items-center gap-4"
-                label={
-                  <span data-testid="local-device-id-label">{t('device.localDeviceIdLabel')}</span>
-                }
-                description={
-                  <span className="font-mono break-all" data-testid="local-device-id-value">
-                    {deviceId}
-                  </span>
-                }
-              >
-                <IconButton
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={async () => {
-                    try {
-                      await writeText(deviceId)
-                      notify.success(t('device.deviceIdCopied'))
-                    } catch (err) {
-                      reportIpcError('DeviceManagement', 'device.copyFailed', err, t)
-                    }
-                  }}
-                  tooltip={t('device.copyDeviceIdLabel')}
-                  ariaLabel={t('device.copyDeviceIdLabel')}
-                >
-                  <Copy />
-                </IconButton>
-              </SettingRow>
-
               {/* #2506 — mDNS-disabled banner. Only rendered once the daemon
                   has actually reported a failed init (live event or
                   mount-time backfill); the always-on hint below covers the
@@ -353,10 +324,6 @@ export function DeviceManagement(): React.ReactElement {
                 {t('status.manualIpHint')}
               </p>
 
-              {/* #4549 — the opt-in internet fallback, above the peers list so
-                  a user whose sync is failing finds it without scrolling. */}
-              <InternetRelaySetting />
-
               {/* Pair New Device button */}
               <Button
                 size="sm"
@@ -367,7 +334,7 @@ export function DeviceManagement(): React.ReactElement {
               </Button>
 
               {/* Paired peers list */}
-              <div className="device-peers">
+              <div className="device-peers mb-4">
                 <h2 className="text-sm font-medium mb-2">
                   {t('device.pairedDevicesTitle')} ({peers.length})
                 </h2>
@@ -415,6 +382,39 @@ export function DeviceManagement(): React.ReactElement {
                   )}
                 </ListViewState>
               </div>
+
+              {/* #4549 — the opt-in internet fallback. */}
+              <InternetRelaySetting />
+
+              {/* The copy icon is small enough to stay beside the ID on phones too. */}
+              <SettingRow
+                className="flex-row items-center gap-4"
+                label={
+                  <span data-testid="local-device-id-label">{t('device.localDeviceIdLabel')}</span>
+                }
+                description={
+                  <span className="font-mono break-all" data-testid="local-device-id-value">
+                    {deviceId}
+                  </span>
+                }
+              >
+                <IconButton
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={async () => {
+                    try {
+                      await writeText(deviceId)
+                      notify.success(t('device.deviceIdCopied'))
+                    } catch (err) {
+                      reportIpcError('DeviceManagement', 'device.copyFailed', err, t)
+                    }
+                  }}
+                  tooltip={t('device.copyDeviceIdLabel')}
+                  ariaLabel={t('device.copyDeviceIdLabel')}
+                >
+                  <Copy />
+                </IconButton>
+              </SettingRow>
             </>
           )}
 

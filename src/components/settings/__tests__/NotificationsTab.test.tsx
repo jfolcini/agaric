@@ -1,5 +1,6 @@
 /**
- * Tests for NotificationsTab — Settings slice (#138, reminders #4554).
+ * Tests for NotificationsTab — the Tasks & reminders tab (#138, reminders
+ * #4554, deadline warning #5629).
  *
  * The backend is a mocked `commands` pair over an in-memory settings store,
  * so every assertion is on what the store HOLDS after an interaction, never
@@ -14,6 +15,7 @@
  *  - A rejected save toasts and rolls the UI back to the stored value.
  *  - A rejected load toasts and keeps the defaults.
  *  - "Request permission" / "Send test notification" behave as before.
+ *  - The deadline warning leads the tab and persists its days.
  *  - `axe(container)` a11y audit returns zero violations.
  */
 
@@ -67,6 +69,7 @@ let stored: Settings
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.removeItem('agaric:deadlineWarningDays')
   stored = { enabled: false, time: '09:00' }
   mockEnsure.mockResolvedValue(true)
   mockNotify.mockResolvedValue(ok(null))
@@ -100,10 +103,31 @@ describe('NotificationsTab', () => {
     expect(screen.getByTestId('notifications-request-permission-button')).toBeEnabled()
   })
 
-  it('names the tab once: no panel title repeats "Notifications"', async () => {
+  it('names the tab once: no panel title repeats the tab label', async () => {
     await renderLoaded()
-    expect(screen.queryByText('Notifications')).not.toBeInTheDocument()
+    expect(screen.queryByText(t('settings.tabNotifications'))).not.toBeInTheDocument()
     expect(screen.getByText(t('notifications.description'))).toBeInTheDocument()
+  })
+
+  // #5629 — moved here from General: it drives the Agenda's Upcoming list.
+  it('the deadline warning leads the tab and persists its days across a remount', async () => {
+    const user = userEvent.setup()
+    const { unmount } = await renderLoaded()
+
+    const days = screen.getByRole('spinbutton', { name: t('propertiesView.deadlineWarning') })
+    expect(
+      days.compareDocumentPosition(screen.getByTestId('notifications-enabled-switch')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    await user.clear(days)
+    await user.type(days, '7')
+    expect(localStorage.getItem('agaric:deadlineWarningDays')).toBe('7')
+
+    unmount()
+    render(<NotificationsTab />)
+    expect(
+      screen.getByRole('spinbutton', { name: t('propertiesView.deadlineWarning') }),
+    ).toHaveValue(7)
   })
 
   it('labels the reminder time by its row and describes it with the help text', async () => {

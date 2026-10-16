@@ -10,7 +10,14 @@
 
 import { devices } from '@playwright/test'
 
-import { expect, navigateMobile, navigateToView, test, waitForBoot } from './helpers'
+import {
+  expect,
+  navigateMobile,
+  navigateToView,
+  openSettingsTab,
+  test,
+  waitForBoot,
+} from './helpers'
 
 const iPhone13 = devices['iPhone 13']
 
@@ -46,7 +53,7 @@ test.describe('Settings on a phone', () => {
     await page.getByRole('combobox', { name: 'Settings', exact: true }).click()
 
     const options = page.getByRole('option')
-    await expect(options).toHaveCount(13)
+    await expect(options).toHaveCount(12)
     for (const option of await options.all()) {
       await expect(option).toBeInViewport({ ratio: 1 })
       // Polled: the list zooms in from 95%, so an early read is a few px short.
@@ -57,28 +64,29 @@ test.describe('Settings on a phone', () => {
   })
 })
 
-// The device's own 390x664 viewport: at 844px the General tab fits without
-// scrolling, so its last control never reaches the bottom.
+// The device's own 390x664 viewport. Keyboard is the longest tab, so its last
+// control is the one that reaches the bottom of the scroll.
 test.describe('Settings on a phone, scrolled to the end', () => {
   test.use({ ...phone, viewport: iPhone13.viewport })
 
-  test('the last General control clears the quick-capture button', async ({ page }) => {
+  test('the last Keyboard control clears the quick-capture button', async ({ page }) => {
     await waitForBoot(page)
     await navigateMobile(page, 'Settings')
-    const showTour = page
-      .getByTestId('settings-panel-general')
-      .getByRole('button', { name: 'Show tour', exact: true })
-    await expect(showTour).toBeVisible()
+    await openSettingsTab(page, 'Keyboard')
+    const resetAll = page
+      .getByTestId('settings-panel-keyboard')
+      .getByRole('button', { name: 'Reset all to defaults', exact: true })
+    await expect(resetAll).toBeVisible()
     await page.locator('#main-content').evaluate((el) => {
       el.scrollTop = el.scrollHeight
     })
 
-    const control = await showTour.boundingBox()
+    const control = await resetAll.boundingBox()
     const fab = await page.getByTestId('quick-capture-fab').boundingBox()
-    if (control === null || fab === null) throw new Error('Show tour or the FAB has no box')
+    if (control === null || fab === null) throw new Error('Reset all or the FAB has no box')
     expect(
       control.y + control.height,
-      `Show tour ends at ${control.y + control.height}px, the FAB starts at ${fab.y}px`,
+      `Reset all ends at ${control.y + control.height}px, the FAB starts at ${fab.y}px`,
     ).toBeLessThanOrEqual(fab.y)
   })
 })
