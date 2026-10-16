@@ -2294,9 +2294,9 @@ async fn local_create_is_engine_fresh_and_dense_1257() {
         "create_block_inner must return the persisted dense rank",
     );
 
-    // (c) Apply cursor must NOT advance: the LOCAL path engine-applies but boot
-    //     replay still owns cursor progress (#1248 / #1257). The op DID land in
-    //     the op_log.
+    // (c) Apply cursor must NOT advance: the LOCAL path engine-applies, and the
+    //     snapshot pass, not the command, moves the cursor (#5418). The op DID
+    //     land in the op_log.
     let cursor_after = apply_cursor(&pool).await;
     let seq_after = max_seq(&pool).await;
     assert!(
@@ -3387,9 +3387,9 @@ async fn local_delete_block_cohort_engine_fanout_2344() {
 //       / read_tags membership),
 //   (b) the SQL matches the engine, AND
 //   (c) the apply cursor (`materialized_through_seq`) did NOT advance while
-//       `op_log.seq` DID — proving boot replay still owns cursor progress and
-//       the local path is the engine-apply-without-cursor-advance shape (#1248
-//       / #1257).
+//       `op_log.seq` DID — proving the local path is the
+//       engine-apply-without-cursor-advance shape and leaves the cursor to the
+//       snapshot pass (#5418).
 //
 // Each test constructs its OWN materializer (`test_materializer`) and thus its
 // OWN `Arc<LoroState>` / engine registry (#2249 — no process global), so tests
@@ -4047,7 +4047,8 @@ async fn local_delete_restore_tombstones_cohort_no_phantom_1257() {
     }
 
     // (c) Apply cursor must NOT advance while op_log.seq did. The LOCAL path
-    //     engine-applies but boot replay still owns cursor progress.
+    //     engine-applies, and the snapshot pass, not the command, moves the
+    //     cursor (#5418).
     let cursor_after = apply_cursor(&pool).await;
     let seq_after = max_seq(&pool).await;
     assert!(

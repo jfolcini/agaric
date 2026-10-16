@@ -41,8 +41,8 @@ pub use handlers::purge_block_sql_cascade;
 // PRE-CAPTURE each root's subtree cohort + space BEFORE the SQL soft-delete (a
 // post-delete `resolve_block_space` returns None — the #1257 phantom) and then
 // drive the captured cohort onto the per-space Loro engine post-commit, using
-// the SAME engine apply the boot-replay / sync `ApplyOp` path uses. The apply
-// cursor is never advanced (boot-replay / `dispatch_op` concern). The
+// the SAME engine apply the boot-replay / sync `ApplyOp` path uses. The
+// command does not advance the apply cursor; the snapshot pass does (#5418). The
 // `apply_*_via_loro` CASCADE helpers' visibility is also raised to `pub(crate)`
 // (re-exported via `handlers::mod`) to complete the engine-apply surface
 // established and which `merge::engine_apply` mirrors; the multi-root command
@@ -60,8 +60,9 @@ pub use handlers::purge_block_sql_cascade;
 // #3834: `dispatch_restore_ancestors` joins the re-export list. Both LOCAL
 // restore command sites (`restore_block_inner`, `restore_blocks_by_ids_inner`)
 // now drive the restored ancestor chain onto the engine themselves post-commit
-// — the `apply_op` replay arm that used to be cited for it never runs for a
-// locally authored op (the local path leaves the apply cursor put).
+// — the `apply_op` replay arm that used to be cited for it reaches a locally
+// authored op only through boot replay, when the chain is already live in SQL
+// and the arm fans nothing out.
 // #4285: `reindex_restored_cohort_links` joins it for the same reason — the
 // LOCAL restore paths repair the restored cohort's LINK edges themselves
 // post-commit, because `invalidations_for_op` sees only the seed's id.

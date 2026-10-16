@@ -98,8 +98,8 @@ pub mod recurrence;
 /// The spaces-bootstrap sibling core (#2621 THE INVERSION) — the
 /// transaction-scoped inner core of the boot-time spaces bootstrap: the
 /// seeded-space ULID/accent consts, the idempotent seeded-block /
-/// `is_space` / `accent_color` writers, the batched page-space backfill,
-/// and the orphan-tag majority-space assignment. Builds on the sibling
+/// `is_space` / `accent_color` writers, the page-space backfill, and the
+/// orphan-tag majority-space assignment. Builds on the sibling
 /// `block_ops` writer (`set_property_in_tx`) and the store
 /// (`agaric_store::{op_log, op, db}`); carries the spaces `sqlx::query!` sites.
 /// The app keeps the `CommandTx` / `Materializer` orchestration behind an

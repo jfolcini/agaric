@@ -99,6 +99,12 @@ fn now_ms() -> i64 {
 ///   crash before then leaves the engine without it.
 /// * an op parked in `materializer_retry_queue`, durable on its own.
 ///
+/// Draft recovery (`recovery::draft_recovery`), the empty-block sweep
+/// (`soft_delete::empty_block_sweep`) and the boot repairs (`repair`) also
+/// write the engine after commit, but they run only at boot and await those
+/// writes before the periodic pass is spawned, so no pass reads a head between
+/// their commit and their engine write.
+///
 /// Replicated rows never reach an engine through the op log. A read error
 /// degrades to 0, which claims nothing.
 async fn op_log_head(pool: &SqlitePool) -> i64 {

@@ -394,7 +394,8 @@ mod tests {
         places_the_synced_in_tag_after(None).await;
     }
 
-    /// The pre-lock probe must see a space-less page as well as a tag.
+    /// The pre-lock probe must see a space-less page as well as a tag, and the
+    /// page it places must reach Personal's engine.
     #[tokio::test]
     async fn the_pass_places_a_space_less_page_in_personal_4717() {
         let (pool, _dir) = seeded_pool().await;
@@ -418,6 +419,16 @@ mod tests {
         assert_eq!(
             space_of(&pool, &page_id).await,
             Some(SPACE_PERSONAL_ULID.to_string())
+        );
+        // #5418 — the column is half of it: Personal's engine holds the page too.
+        let mut personal = materializer
+            .loro_state()
+            .registry
+            .for_space(&SpaceId::from_trusted(SPACE_PERSONAL_ULID), DEV)
+            .unwrap();
+        assert!(
+            personal.engine_mut().contains_block(&page_id),
+            "the placed page must be in Personal's engine, not only in SQL"
         );
         materializer.shutdown();
     }

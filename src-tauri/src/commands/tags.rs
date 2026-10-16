@@ -316,9 +316,9 @@ async fn apply_tag_to_block_resolved(
                 // took the `EngineMissingTarget` fallback and sync shipped engine
                 // state MISSING the tag block, letting peers hold `block_tags`
                 // refs to a tag they lack until a boot replay self-healed (the
-                // #1323 drift class). `advance_cursor = false` — the LOCAL path
-                // leaves the apply cursor put so boot replay stays idempotent
-                // (#1257), matching the `AddTag` call below.
+                // #1323 drift class). `advance_cursor = false`: the snapshot
+                // pass, not the command, moves the apply cursor past LOCAL ops
+                // (#5418), matching the `AddTag` call below.
                 crate::materializer::apply_op_projected(tx, &set_space_record, state, false)
                     .await?;
                 // Reflect the adoption in the caller's tag-space handle so a
@@ -363,8 +363,7 @@ async fn apply_tag_to_block_resolved(
     // `apply_add_tag_sql_only`, which runs the SAME projection + inheritance — so
     // the association is never skipped and we never crash.
     // #2325/#2250: route through the collapsed single-entry-point projection
-    // (`advance_cursor = false` — the LOCAL path leaves the apply cursor put so
-    // boot replay stays idempotent, #1257). `apply_op_projected` re-derives the
+    // (`advance_cursor = false`, as above). `apply_op_projected` re-derives the
     // `AddTagPayload` from `op_record.payload` and runs the SAME
     // `apply_add_tag_via_loro` (AddTag carries no post-commit cohort fan-out, so
     // the returned `ApplyEffects` is empty and discarded).

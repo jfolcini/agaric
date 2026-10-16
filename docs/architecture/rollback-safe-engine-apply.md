@@ -20,8 +20,9 @@ So a COMMIT failure — or a crash — **between** the engine apply and the SQL
 COMMIT leaves the **engine ahead of committed SQL**. The reconciliation net is
 asymmetric (pinned by #2603's crash-injection test):
 
-- **LOCAL** ops (`advance_cursor = false`) self-heal on boot replay — the op is
-  in the local `op_log`, replayed idempotently.
+- **LOCAL** ops (`advance_cursor = false`) self-heal on boot replay until a
+  snapshot pass moves the cursor past them (#5418) — the op is in the local
+  `op_log`, replayed idempotently.
 - **REMOTE** ops (`advance_cursor = true`) never land in the local `op_log`
   (#490-M1), so boot replay can't see them; the only net is the #2504
   disaster-recovery `reproject_blocks_from_engine`.
@@ -184,9 +185,10 @@ The primitives wire into the tx lifecycle via a per-tx **revert log** on
   space. The `RevertScope`'s `Drop` is a panic-only safety-net for an unwind
   between arming and detaching. Together these cover the commit-failure,
   mid-apply-error, and panic paths.
-- **Cursor interaction (design-Q).** Unchanged: the apply cursor advances only
-  inside the committed tx (`advance_apply_cursor`), so a reverted engine and a
-  rolled-back cursor stay consistent by construction.
+- **Cursor interaction (design-Q).** Unchanged: an apply advances the cursor
+  only inside the committed tx (`advance_apply_cursor`), so a reverted engine and
+  a rolled-back cursor stay consistent by construction. The snapshot pass moves
+  it past LOCAL ops only after it has persisted their engine state (#5418).
 
 ### Status
 
