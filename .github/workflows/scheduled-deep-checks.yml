@@ -3034,7 +3034,7 @@ jobs:
 
       - name: Install sqlx-cli (custom features, cargo fallback)
         # Same as the lint job: sqlx-cli's feature set isn't in taiki-e's binary
-        # list, so compile from source (cached via rust-cache cache-bin).
+        # list, so compile from source on every run (this lane has no cargo cache).
         run: |
           if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
 
