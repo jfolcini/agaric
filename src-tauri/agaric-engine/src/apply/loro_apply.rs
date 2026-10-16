@@ -11,8 +11,9 @@ use super::*;
 async fn resolve_doc_space(
     conn: &mut sqlx::SqliteConnection,
     block_id: &agaric_core::ulid::BlockId,
+    replay: bool,
 ) -> Result<Option<agaric_store::space::SpaceId>, AppError> {
-    if let Some(space) = agaric_store::space::resolve_block_space(&mut *conn, block_id).await? {
+    if let Some(space) = resolve_op_space(&mut *conn, block_id, replay).await? {
         return Ok(Some(space));
     }
     let id = block_id.as_str();
@@ -21,6 +22,22 @@ async fn resolve_doc_space(
             .fetch_optional(&mut *conn)
             .await?;
     Ok(registered.map(|s| agaric_store::space::SpaceId::from_trusted(&s)))
+}
+
+/// [`agaric_store::space::resolve_block_space`], which skips tombstones. On
+/// boot replay SQL already holds the ops after this one, so the tombstone may
+/// come from a later op and the row resolves through its own `space_id`, the
+/// space the op reached when it was first applied (#5630).
+async fn resolve_op_space(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &agaric_core::ulid::BlockId,
+    replay: bool,
+) -> Result<Option<agaric_store::space::SpaceId>, AppError> {
+    let space = agaric_store::space::resolve_block_space(&mut *conn, block_id).await?;
+    if space.is_some() || !replay {
+        return Ok(space);
+    }
+    agaric_store::space::resolve_soft_deleted_block_space(&mut *conn, block_id).await
 }
 
 /// Apply CreateBlock through the engine then project to SQL.
@@ -115,7 +132,7 @@ pub async fn apply_create_block_via_loro(
         None => p.block_id.clone(),
     };
     let Some(space_id) =
-        agaric_store::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
+        resolve_op_space(&mut *conn, &resolution_anchor, replay_dirty.is_some()).await?
     else {
         super::sql_only_fallback::record(
             "create_block",
@@ -227,11 +244,12 @@ pub async fn apply_edit_block_via_loro(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &EditBlockPayload,
+    replay: bool,
 ) -> Result<(), AppError> {
     use crate::loro::engine::BlockSnapshot;
     use crate::loro::projection;
 
-    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id, replay).await? else {
         super::sql_only_fallback::record(
             "edit_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -290,6 +308,7 @@ pub async fn apply_set_property_via_loro(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &SetPropertyPayload,
+    replay: bool,
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
@@ -363,7 +382,7 @@ pub async fn apply_set_property_via_loro(
         return Ok(());
     }
 
-    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id, replay).await? else {
         super::sql_only_fallback::record(
             "set_property",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -946,7 +965,10 @@ pub async fn apply_delete_block_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
+    // Not `replay`: when SQL already holds a replayed delete, the post-commit
+    // cohort fan-out carries it to the engine, seed and cascade alike
+    // (`kernel::apply_delete_block_op`, #5630).
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id, false).await? else {
         super::sql_only_fallback::record(
             "delete_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1125,11 +1147,14 @@ fn mirror_swept_cohort_into_engine(
 /// (its tombstone was inherited from a concurrent cascade on its old parent).
 /// The first statement of this function resolves the space with
 /// [`agaric_store::space::resolve_block_space`], which filters
-/// `deleted_at IS NULL` (AGENTS.md invariant #9), so a tombstoned subject never
-/// reaches this arm at all — it is routed to
+/// `deleted_at IS NULL` (AGENTS.md invariant #9), so off boot replay a
+/// tombstoned subject never reaches this arm — it is routed to
 /// [`super::sql_only::apply_move_block_sql_only`], where the un-sweep lives.
 /// Calling it here too would be unreachable code, and the `#891` fallback-count
-/// assertions in `move_convergence_tests` pin that routing.
+/// assertions in `move_convergence_tests` pin that routing. On boot replay a
+/// subject tombstoned by a LATER op does reach this arm (#5630, `resolve_op_space`),
+/// and has nothing to un-sweep: a local move needs a live subject, so the
+/// tombstone was not there when the move was first applied.
 ///
 /// The consequence used to be the open half of #4204 (its "finding 3"):
 /// because the tombstoned-subject move runs on the engine-LESS arm, nothing
@@ -1140,7 +1165,7 @@ fn mirror_swept_cohort_into_engine(
 /// branch).
 ///
 /// #4390 closed that, and NOT by bolting the mirror on here: this arm still
-/// never sees a tombstoned subject, so there is no call site here for it to
+/// never sees a tombstone to un-sweep, so there is no call site here for it to
 /// live at, and a post-commit fan-out belongs outside this function either
 /// way. The fix threads the cleared ids out of the `sql_only` arm instead —
 /// which is why THIS function's return type changed too, forwarding what its
@@ -1172,7 +1197,7 @@ pub async fn apply_move_block_via_loro(
 ) -> Result<Vec<String>, AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
+    let Some(space_id) = resolve_op_space(&mut *conn, &p.block_id, replay_dirty.is_some()).await?
     else {
         super::sql_only_fallback::record(
             "move_block",
@@ -1287,7 +1312,10 @@ pub async fn apply_restore_block_via_loro(
         Some(parent) => BlockId::from_trusted(&parent),
         None => p.block_id.clone(),
     };
-    let Some(space_id) = resolve_doc_space(&mut *conn, &resolution_anchor).await? else {
+    // Not `replay`: a restore may target a block under a parent that was
+    // already tombstoned when it first ran (#1884 restores that parent), so a
+    // tombstone on the anchor does not mean a later op stamped it.
+    let Some(space_id) = resolve_doc_space(&mut *conn, &resolution_anchor, false).await? else {
         super::sql_only_fallback::record(
             "restore_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1742,10 +1770,11 @@ pub async fn apply_add_tag_via_loro(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &AddTagPayload,
+    replay: bool,
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id, replay).await? else {
         super::sql_only_fallback::record(
             "add_tag",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1784,10 +1813,11 @@ pub async fn apply_remove_tag_via_loro(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &RemoveTagPayload,
+    replay: bool,
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id, replay).await? else {
         super::sql_only_fallback::record(
             "remove_tag",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1818,9 +1848,10 @@ pub async fn apply_add_page_alias_via_loro(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &AddPageAliasPayload,
+    replay: bool,
 ) -> Result<(), AppError> {
     let page_id = p.page_id.as_str();
-    if let Some(space_id) = resolve_doc_space(&mut *conn, &p.page_id).await? {
+    if let Some(space_id) = resolve_doc_space(&mut *conn, &p.page_id, replay).await? {
         let mut guard = state
             .registry
             .for_space_recording(&space_id, device_id, &state.revert)?;
@@ -1841,9 +1872,10 @@ pub async fn apply_remove_page_alias_via_loro(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &RemovePageAliasPayload,
+    replay: bool,
 ) -> Result<(), AppError> {
     let page_id = p.page_id.as_str();
-    if let Some(space_id) = resolve_doc_space(&mut *conn, &p.page_id).await? {
+    if let Some(space_id) = resolve_doc_space(&mut *conn, &p.page_id, replay).await? {
         let mut guard = state
             .registry
             .for_space_recording(&space_id, device_id, &state.revert)?;
@@ -1872,10 +1904,11 @@ pub async fn apply_delete_property_via_loro(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &DeletePropertyPayload,
+    replay: bool,
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id, replay).await? else {
         super::sql_only_fallback::record(
             "delete_property",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,

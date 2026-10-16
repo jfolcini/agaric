@@ -3550,14 +3550,14 @@ async fn replay_timing_5418() {
 
 /// #5418 — apply `payload` the way a LOCAL command does: append it and apply
 /// it to SQL and the engine in one `BEGIN IMMEDIATE` transaction, leaving the
-/// apply cursor where it is, then hand its index fan-out to the background
-/// queue.
+/// apply cursor where it is, then run a delete's post-commit cohort fan-out
+/// (`dispatch_deletes`) and hand the index fan-out to the background queue.
 async fn apply_like_a_command(
     pool: &SqlitePool,
     mat: &Materializer,
     device_id: &str,
     payload: OpPayload,
-) {
+) -> agaric_store::op_log::OpRecord {
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "test_local_apply_5418")
         .await
         .unwrap();
@@ -3569,19 +3569,30 @@ async fn apply_like_a_command(
     )
     .await
     .unwrap();
-    agaric_engine::apply::kernel::apply_op_projected(&mut tx, &record, mat.loro_state(), false)
-        .await
-        .unwrap();
+    let effects =
+        agaric_engine::apply::kernel::apply_op_projected(&mut tx, &record, mat.loro_state(), false)
+            .await
+            .unwrap();
     tx.commit().await.unwrap();
+    agaric_engine::materializer::dispatch_delete_descendants(
+        &record,
+        &effects.deleted_cohort,
+        effects.delete_space_id.as_ref(),
+        mat.loro_state(),
+    )
+    .await;
     mat.dispatch_background_or_warn(&record);
+    record
 }
 
 /// One block as the #5418 crash test compares engines: what the engine reads
-/// back for it, and its tombstone.
+/// back for it, its tombstone, its tags and its properties.
 type EngineBlock = (
     String,
     Option<agaric_engine::loro::engine::BlockSnapshot>,
     Option<String>,
+    Vec<String>,
+    Vec<(String, agaric_engine::loro::engine::PropertyValue)>,
 );
 
 fn engine_blocks(
@@ -3603,6 +3614,8 @@ fn engine_blocks(
                 (*id).to_string(),
                 engine.read_block(id).unwrap(),
                 engine.read_deleted_at(id).unwrap(),
+                engine.read_tags(id).unwrap(),
+                engine.read_all_properties_typed(id).unwrap(),
             )
         })
         .collect()
@@ -3629,12 +3642,9 @@ async fn crash_after_a_snapshot_pass_replays_only_the_tail_5418() {
     ids.push(PAGE_ID);
     let mut snapshotted = oracle_workload(PAGE_ID, &child_ids, TOTAL);
     // Children 5..=9 are created after the pass, then moved among and edited,
-    // against siblings only the snapshot holds. The workload's final delete is
-    // left out: a delete replayed over SQL that already holds it resolves no
-    // space (`resolve_block_space` skips tombstones) and never reaches the
-    // engine, a replay gap the cursor does not change.
-    let mut tail = snapshotted.split_off(SNAPSHOTTED);
-    tail.pop();
+    // against siblings only the snapshot holds; child 9 is edited and then
+    // deleted, so SQL already shows it deleted when its edit replays (#5630).
+    let tail = snapshotted.split_off(SNAPSHOTTED);
     let (pool, _dir) = test_pool().await;
 
     let session = Materializer::new(pool.clone());
@@ -3693,8 +3703,242 @@ async fn crash_after_a_snapshot_pass_replays_only_the_tail_5418() {
     );
     assert_eq!(
         read_cursor(&pool).await,
-        i64::try_from(TOTAL - 1).unwrap(),
+        i64::try_from(TOTAL).unwrap(),
         "replay catches the cursor up to the head"
+    );
+    boot.shutdown();
+}
+
+/// #5630 — a crash leaves ops in the replayed tail on a block, and on a page,
+/// that later ops in the same tail delete. SQL already shows them deleted when
+/// those ops replay, so each op must still reach the engine through the space
+/// the row names, and each delete must reach it with its whole cascade.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_tail_ops_on_blocks_deleted_later_reach_the_engine_5630() {
+    use agaric_engine::loro::engine::PropertyValue;
+    use agaric_store::op::{
+        AddPageAliasPayload, AddTagPayload, DeleteBlockPayload, DeletePropertyPayload,
+        MoveBlockPayload, RemovePageAliasPayload, RemoveTagPayload, SetPropertyPayload,
+    };
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005630PG";
+    const X: &str = "T5630X";
+    const Y: &str = "T5630Y";
+    const Z: &str = "T5630Z";
+    const W: &str = "T5630W";
+    const TAG0: &str = "T5630TAG0";
+    const TAG1: &str = "T5630TAG1";
+    let device_id = "dev-5630-crash";
+    let ids = [X, Y, Z, W, PAGE_ID];
+    let id = BlockId::test_id;
+    let create = |block: &str, parent: &str, index: i64| {
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: id(block),
+            block_type: "content".into(),
+            parent_id: Some(id(parent)),
+            position: None,
+            index: Some(index),
+            content: block.into(),
+        })
+    };
+    let set_property = |key: &str, value_text: Option<&str>, value_date: Option<&str>| {
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: id(X),
+            key: key.into(),
+            value_text: value_text.map(str::to_owned),
+            value_num: None,
+            value_date: value_date.map(str::to_owned),
+            value_ref: None,
+            value_bool: None,
+        })
+    };
+    let snapshotted = vec![
+        create(X, PAGE_ID, 0),
+        create(Y, X, 0),
+        create(W, PAGE_ID, 1),
+        set_property("due_date", None, Some("2026-10-01")),
+        OpPayload::AddTag(AddTagPayload {
+            block_id: id(X),
+            tag_id: id(TAG0),
+        }),
+        OpPayload::AddPageAlias(AddPageAliasPayload {
+            page_id: id(PAGE_ID),
+            alias: "old alias".into(),
+        }),
+    ];
+    let edits_before_x_is_deleted = vec![
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: id(X),
+            to_text: "X edited".into(),
+            prev_edit: None,
+        }),
+        set_property("todo_state", Some("TODO"), None),
+        OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: id(X),
+            key: "due_date".into(),
+        }),
+        OpPayload::AddTag(AddTagPayload {
+            block_id: id(X),
+            tag_id: id(TAG1),
+        }),
+        OpPayload::RemoveTag(RemoveTagPayload {
+            block_id: id(X),
+            tag_id: id(TAG0),
+        }),
+        create(Z, X, 1),
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: id(W),
+            new_parent_id: Some(id(X)),
+            new_position: 3,
+            new_index: Some(2),
+        }),
+    ];
+    let edits_before_the_page_is_deleted = vec![
+        OpPayload::RemovePageAlias(RemovePageAliasPayload {
+            page_id: id(PAGE_ID),
+            alias: "old alias".into(),
+        }),
+        OpPayload::AddPageAlias(AddPageAliasPayload {
+            page_id: id(PAGE_ID),
+            alias: "new alias".into(),
+        }),
+    ];
+    let delete = |block: &str| {
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: id(block),
+        })
+    };
+    let (pool, _dir) = test_pool().await;
+
+    let session = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
+    for tag in [TAG0, TAG1] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', ?, NULL, 0)",
+        )
+        .bind(tag)
+        .bind(tag)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    for op in snapshotted {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let saved =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    assert_eq!(saved, 1, "the pass persists the one space");
+    for op in edits_before_x_is_deleted {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let x_deleted_at = apply_like_a_command(&pool, &session, device_id, delete(X))
+        .await
+        .created_at
+        .to_string();
+    for op in edits_before_the_page_is_deleted {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let page_deleted_at = apply_like_a_command(&pool, &session, device_id, delete(PAGE_ID))
+        .await
+        .created_at
+        .to_string();
+    let page_aliases = |mat: &Materializer| {
+        let space = agaric_store::space::SpaceId::from_trusted(SPACE);
+        let mut guard = mat
+            .loro_state()
+            .registry
+            .for_space(&space, device_id)
+            .unwrap();
+        guard.engine_mut().read_page_aliases(PAGE_ID).unwrap()
+    };
+    let session_engine = engine_blocks(&session, device_id, SPACE, &ids);
+    let session_aliases = page_aliases(&session);
+    let session_sql = projected_rows(&pool).await;
+    // The crash: no exit save, so the tail is in the op log and SQL only.
+    session.shutdown();
+    drop(session);
+
+    let boot = Materializer::new(pool.clone());
+    let registry = &boot.loro_state().registry;
+    let rehydrated =
+        agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id).await;
+    assert_eq!(
+        rehydrated, 1,
+        "the pass's snapshot is what boot starts from"
+    );
+    super::boot::reset_recovery_guard();
+    let report = recover_at_boot(&pool, device_id, &boot, registry)
+        .await
+        .unwrap();
+    boot.flush_background().await.unwrap();
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+
+    let booted = engine_blocks(&boot, device_id, SPACE, &ids);
+    let block = |wanted: &str| booted.iter().find(|b| b.0 == wanted).unwrap();
+    let x = block(X);
+    let property = |key: &str| x.4.iter().find(|(k, _)| k == key).map(|(_, v)| v);
+    assert_eq!(
+        x.1.as_ref().map(|s| s.content.as_str()),
+        Some("X edited"),
+        "the edit reached the engine"
+    );
+    assert_eq!(
+        property("todo_state"),
+        Some(&PropertyValue::Str("TODO".into())),
+        "the property set reached the engine"
+    );
+    assert_eq!(
+        property("due_date"),
+        None,
+        "the property delete reached the engine"
+    );
+    assert_eq!(
+        x.3,
+        vec![TAG1.to_string()],
+        "the tag add and remove reached the engine"
+    );
+    assert_eq!(
+        block(Z).1.as_ref().and_then(|s| s.parent_id.as_deref()),
+        Some(X),
+        "the create under X reached the engine"
+    );
+    assert_eq!(
+        block(W).1.as_ref().and_then(|s| s.parent_id.as_deref()),
+        Some(X),
+        "the move under X reached the engine"
+    );
+    for deleted in [X, Y, Z, W] {
+        assert_eq!(
+            block(deleted).2.as_deref(),
+            Some(x_deleted_at.as_str()),
+            "{deleted} is deleted in the engine at X's delete"
+        );
+    }
+    assert_eq!(
+        block(PAGE_ID).2.as_deref(),
+        Some(page_deleted_at.as_str()),
+        "the page is deleted in the engine at its own delete"
+    );
+    assert_eq!(
+        page_aliases(&boot),
+        Some(vec!["new alias".to_string()]),
+        "the alias remove and add reached the engine"
+    );
+    assert_eq!(
+        booted, session_engine,
+        "the engine must match the session's"
+    );
+    assert_eq!(page_aliases(&boot), session_aliases);
+    assert_eq!(
+        projected_rows(&pool).await,
+        session_sql,
+        "SQL must match the session's"
     );
     boot.shutdown();
 }

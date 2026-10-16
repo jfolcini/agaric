@@ -450,11 +450,11 @@ pub(crate) async fn inherited_cohort_before_move(
 ///
 /// The mirror cannot live HERE, nor in `apply_move_block_via_loro`: a move
 /// whose subject is TOMBSTONED — the only kind this helper ever sees — is
-/// routed to [`apply_move_block_sql_only`] by `resolve_block_space`'s
-/// `deleted_at IS NULL` filter, and that arm has no engine by construction. So
-/// #4390 threads the answer OUT instead: this helper returns the ids it
-/// cleared, [`apply_move_block_sql_only`] returns them to its caller,
-/// `apply_op_tx` re-reads their FINAL `deleted_at` into
+/// routed, off boot replay, to [`apply_move_block_sql_only`] by
+/// `resolve_block_space`'s `deleted_at IS NULL` filter, and that arm has no
+/// engine by construction. So #4390 threads the answer OUT instead: this
+/// helper returns the ids it cleared, [`apply_move_block_sql_only`] returns
+/// them to its caller, `apply_op_tx` re-reads their FINAL `deleted_at` into
 /// `ApplyEffects::unswept_cohort`, and the post-commit
 /// `materializer::handlers::apply::dispatch_unswept_cohort` mirrors that final
 /// state onto the per-space engine — the shape of #2868's purge fix

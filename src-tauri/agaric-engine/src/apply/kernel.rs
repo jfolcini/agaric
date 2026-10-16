@@ -556,13 +556,14 @@ async fn apply_page_alias_op(
     state: &crate::loro::shared::LoroState,
     record: &OpRecord,
     op_type: OpType,
+    replay: bool,
 ) -> Result<(), AppError> {
     if op_type == OpType::AddPageAlias {
         let p: AddPageAliasPayload = serde_json::from_str(&record.payload)?;
-        apply_add_page_alias_via_loro(conn, state, &record.device_id, &p).await
+        apply_add_page_alias_via_loro(conn, state, &record.device_id, &p, replay).await
     } else {
         let p: RemovePageAliasPayload = serde_json::from_str(&record.payload)?;
-        apply_remove_page_alias_via_loro(conn, state, &record.device_id, &p).await
+        apply_remove_page_alias_via_loro(conn, state, &record.device_id, &p, replay).await
     }
 }
 
@@ -586,6 +587,7 @@ pub async fn apply_op_tx_with_mode(
     // (every non-replay caller — `ApplyMode::Normal`) means each touched sibling
     // group reprojects inline. Threaded to the create/move handlers below.
     let replay_dirty = mode.replay_dirty();
+    let replay = replay_dirty.is_some();
     let op_type = OpType::from_str(&record.op_type).map_err(|e| {
         AppError::validation(format!("unknown op_type '{}': {}", record.op_type, e))
     })?;
@@ -606,10 +608,10 @@ pub async fn apply_op_tx_with_mode(
                     .await?;
         }
         OpType::EditBlock => {
-            pre_state = apply_edit_block_op(conn, state, record).await?;
+            pre_state = apply_edit_block_op(conn, state, record, replay).await?;
         }
         OpType::DeleteBlock => {
-            pre_state = apply_delete_block_op(conn, state, record, &mut effects).await?;
+            pre_state = apply_delete_block_op(conn, state, record, replay, &mut effects).await?;
         }
         OpType::RestoreBlock => {
             pre_state = apply_restore_block_op(conn, state, record, &mut effects).await?;
@@ -629,19 +631,19 @@ pub async fn apply_op_tx_with_mode(
         }
         OpType::AddTag => {
             let p: AddTagPayload = serde_json::from_str(&record.payload)?;
-            apply_add_tag_via_loro(conn, state, &record.device_id, &p).await?;
+            apply_add_tag_via_loro(conn, state, &record.device_id, &p, replay).await?;
         }
         OpType::RemoveTag => {
             let p: RemoveTagPayload = serde_json::from_str(&record.payload)?;
-            apply_remove_tag_via_loro(conn, state, &record.device_id, &p).await?;
+            apply_remove_tag_via_loro(conn, state, &record.device_id, &p, replay).await?;
         }
         OpType::SetProperty => {
             let p: SetPropertyPayload = serde_json::from_str(&record.payload)?;
-            apply_set_property_via_loro(conn, state, &record.device_id, &p).await?;
+            apply_set_property_via_loro(conn, state, &record.device_id, &p, replay).await?;
         }
         OpType::DeleteProperty => {
             let p: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
-            apply_delete_property_via_loro(conn, state, &record.device_id, &p).await?;
+            apply_delete_property_via_loro(conn, state, &record.device_id, &p, replay).await?;
         }
         OpType::AddAttachment => {
             // Attachments stay on the SQL-only path — they don't go
@@ -658,7 +660,7 @@ pub async fn apply_op_tx_with_mode(
             apply_rename_attachment_tx(conn, p).await?;
         }
         OpType::AddPageAlias | OpType::RemovePageAlias => {
-            apply_page_alias_op(conn, state, record, op_type).await?;
+            apply_page_alias_op(conn, state, record, op_type, replay).await?;
         }
     }
     // Maintain `pages_cache.{inbound_link_count,child_block_count}`.
@@ -712,13 +714,14 @@ async fn apply_edit_block_op(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
     record: &OpRecord,
+    replay: bool,
 ) -> Result<PreOpState, AppError> {
     let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
     let pre_state = PreOpState::Edit {
         block_id: p.block_id.as_str().to_owned(),
         to_text: p.to_text.clone(),
     };
-    apply_edit_block_via_loro(conn, state, &record.device_id, &p).await?;
+    apply_edit_block_via_loro(conn, state, &record.device_id, &p, replay).await?;
 
     Ok(pre_state)
 }
@@ -729,6 +732,7 @@ async fn apply_delete_block_op(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
     record: &OpRecord,
+    replay: bool,
     effects: &mut ApplyEffects,
 ) -> Result<PreOpState, AppError> {
     let p: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
@@ -745,8 +749,20 @@ async fn apply_delete_block_op(
     // pass to `engine_apply` (post-UPDATE every cohort row has
     // `deleted_at IS NOT NULL`, so a fresh `resolve_block_space`
     // call would return `None` — see `ApplyEffects` doc).
-    let cohort = collect_delete_cohort(conn, &p).await?;
-    let delete_space_id = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?;
+    let mut cohort = collect_delete_cohort(conn, &p).await?;
+    let mut delete_space_id =
+        agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?;
+    // #5630: on boot replay SQL may already hold this delete, so no row is
+    // active to capture. Its cascade is then the rows stamped with its
+    // timestamp, and the seed's own `space_id` still names the engine.
+    if replay
+        && cohort.is_empty()
+        && let Some(space) =
+            agaric_store::space::resolve_soft_deleted_block_space(&mut *conn, &p.block_id).await?
+    {
+        cohort = collect_cohort_deleted_at(conn, p.block_id.as_str(), record.created_at).await?;
+        delete_space_id = Some(space);
+    }
     apply_delete_block_via_loro(conn, state, &record.device_id, &p, record.created_at).await?;
     effects.deleted_cohort = cohort;
     effects.delete_space_id = delete_space_id;
@@ -942,6 +958,16 @@ pub async fn collect_restore_cohort(
     conn: &mut sqlx::SqliteConnection,
     p: &RestoreBlockPayload,
 ) -> Result<Vec<String>, AppError> {
+    collect_cohort_deleted_at(conn, p.block_id.as_str(), p.deleted_at_ref).await
+}
+
+/// The cohort one delete stamped at `deleted_at`: the seed and every
+/// descendant reached through rows carrying that same timestamp.
+async fn collect_cohort_deleted_at(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    deleted_at: i64,
+) -> Result<Vec<String>, AppError> {
     // #1055: mirror `project_restore_block_to_sql`'s cohort-contiguous
     // walk exactly so the captured fanout set equals the rows the UPDATE
     // clears (the recursive arm descends only through same-cohort blocks).
@@ -951,8 +977,8 @@ pub async fn collect_restore_cohort(
     // SQL while leaving it tombstoned in the engine.
     let walked = agaric_store::block_descendants::collect_subtree_ids_unbounded(
         &mut *conn,
-        p.block_id.as_str(),
-        agaric_store::block_descendants::DescendantWalkFilter::Cohort(p.deleted_at_ref),
+        block_id,
+        agaric_store::block_descendants::DescendantWalkFilter::Cohort(deleted_at),
     )
     .await?;
     // The walker admits the seed unconditionally; post-filter to exactly the
@@ -966,7 +992,7 @@ pub async fn collect_restore_cohort(
          WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2",
     )
     .bind(&payload)
-    .bind(p.deleted_at_ref)
+    .bind(deleted_at)
     .fetch_all(&mut *conn)
     .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
