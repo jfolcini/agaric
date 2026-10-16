@@ -1,4 +1,4 @@
-# Session 2156 — Agenda group headers and the external-link icon
+# Session 2157 — Agenda group headers and the external-link icon
 
 Two things looked broken in dark mode.
 
