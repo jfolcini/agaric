@@ -741,14 +741,11 @@ impl LoroEngine {
         };
         let mut depth = 0usize;
         let mut cur = node;
+        // Terminates without a hop cap: Loro's tree state is acyclic (a
+        // cycle-forming move is rejected locally and resolved on merge).
         while let Some(TreeParentId::Node(p)) = tree.parent(cur) {
             depth += 1;
             cur = p;
-            // Defensive bound against a pathological cycle (the tree is
-            // convergent/cycle-safe, so this never trips in practice).
-            if depth > 1_000_000 {
-                break;
-            }
         }
         depth
     }
@@ -764,7 +761,7 @@ impl LoroEngine {
             return false;
         };
         let mut cur = node;
-        let mut guard = 0usize;
+        // Terminates for the same reason as `tree_depth_of`: the tree is acyclic.
         while let Some(TreeParentId::Node(p)) = tree.parent(cur) {
             if let Ok(meta) = tree.get_meta(p)
                 && let Ok(pb) = read_string(&meta, FIELD_BLOCK_ID)
@@ -773,10 +770,6 @@ impl LoroEngine {
                 return true;
             }
             cur = p;
-            guard += 1;
-            if guard > 1_000_000 {
-                break;
-            }
         }
         false
     }
