@@ -346,7 +346,9 @@ test.describe('/attach through the file chooser', () => {
 
     await attachThroughSlashCommand(page, oversized)
 
-    await expect(toast(page, 'File is 50.0 MB — max is 50 MB')).toBeVisible()
+    await expect(
+      toast(page, 'File is 50.0 MB — max is 50 MB. Compress it and try again.'),
+    ).toBeVisible()
     await expectOnlyALaterAllowedAttachLands(page)
   })
 })
