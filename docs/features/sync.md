@@ -21,7 +21,7 @@ Agaric syncs across your own devices over local WiFi. **No cloud, no accounts, a
 3. On scan / entry, each device proves it knows the passphrase and the two add each other to their peer lists. There is no certificate exchange: the connection itself authenticates each device's cryptographic key, and that key is remembered on first contact (TOFU) — subsequent connections must present the same one.
 4. The first sync runs immediately. Large vaults use **snapshot catch-up** (see below) so you don't wait for thousands of small operations.
 
-If the camera isn't available (no permission, headless device), you can also upload a screenshot of the QR code.
+If the camera fails (no permission, no camera), the scanner says why and offers *Retry camera*; *Type passphrase* stays available.
 
 If you click the Sync button before any device is paired, the **NoPeersDialog** appears with a direct path into the pairing flow.
 

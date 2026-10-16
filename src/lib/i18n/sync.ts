@@ -22,7 +22,6 @@ export const sync: Record<string, string> = {
   'pairing.startFailed': 'Failed to start pairing: {{message}}',
   'pairing.pairFailed': 'Pairing failed: {{message}}',
   'pairing.unpairFailed': 'Failed to unpair device: {{message}}',
-  'pairing.cameraError': 'Camera error: {{error}}',
   // #3463 (review): `confirm_pairing` arms a local proof only — it does not
   // validate the passphrase against the peer, so this device cannot claim
   // the pairing succeeded. Deliberately not "Device paired successfully".
@@ -102,7 +101,6 @@ export const sync: Record<string, string> = {
   'pairing.pairButton': 'Pair',
   'pairing.pairedDevicesTitle': 'Paired devices',
   'pairing.noPairedDevices': 'No paired devices yet.',
-  'pairing.cameraDeniedFallback': 'Camera access denied \u2014 switched to manual entry',
   'pairing.confirmCloseTitle': 'Cancel pairing?',
   'pairing.confirmCloseDescription':
     'Pairing is in progress. Closing this dialog will cancel the handshake and the other device will need to start over.',

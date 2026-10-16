@@ -20,16 +20,9 @@ interface CameraSession {
 
 interface QrScannerProps {
   onScan: (data: string) => void
-  onError?: (error: string) => void
-  /**
-   * Fired when camera initialization fails (typically a permission
-   * denial). The parent can react by auto-switching to a manual entry mode
-   * so the user is never stuck staring at the in-scanner error message.
-   */
-  onCameraDenied?: () => void
 }
 
-export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
+export function QrScanner({ onScan }: QrScannerProps) {
   const { t } = useTranslation()
   // #1615: html5-qrcode keys its render target on the element id, so a
   // hardcoded id would collide if two scanners are mounted at once. Derive a
@@ -48,22 +41,29 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
   // Bumped by "Retry camera"; each value is one camera session.
   const [attempt, setAttempt] = useState(0)
   const scannerRef = useRef<HTMLDivElement>(null)
+  const retryRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (error) retryRef.current?.focus()
+  }, [error])
 
   // Translate a getUserMedia / html5-qrcode failure into an actionable,
   // localized message. getUserMedia rejects with a DOMException whose `name`
   // distinguishes the cause, so the user (and our logs) can tell a permission
-  // denial apart from a missing camera or an unsupported WebView.
+  // denial apart from a missing camera or an unsupported WebView. html5-qrcode
+  // passes that failure on as a string that embeds the name:
+  // "Error getting userMedia, error = NotAllowedError: Permission denied".
   const cameraErrorMessage = (err: unknown): string => {
-    const name =
-      err && typeof err === 'object' && 'name' in err ? String((err as { name: unknown }).name) : ''
-    if (name === 'NotAllowedError' || name === 'SecurityError') {
+    const cause =
+      typeof err === 'string'
+        ? err
+        : err && typeof err === 'object' && 'name' in err
+          ? String((err as { name: unknown }).name)
+          : ''
+    if (/\b(NotAllowedError|SecurityError)\b/.test(cause)) {
       return t('qrScanner.cameraDenied')
     }
-    if (
-      name === 'NotFoundError' ||
-      name === 'DevicesNotFoundError' ||
-      name === 'OverconstrainedError'
-    ) {
+    if (/\b(NotFoundError|DevicesNotFoundError|OverconstrainedError)\b/.test(cause)) {
       return t('qrScanner.cameraNotFound')
     }
     return t('qrScanner.cameraError')
@@ -72,10 +72,6 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
   const failCamera = (message: string) => {
     setError(message)
     setScanning(false)
-    onError?.(message)
-    // Notify the parent so it can fall back to manual entry rather
-    // than leave the user staring at the in-scanner error indefinitely.
-    onCameraDenied?.()
   }
 
   const startCamera = useEffectEvent(async (session: CameraSession) => {
@@ -165,7 +161,8 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
       // often a cryptic browser/library string). #1888
       logger.warn('QrScanner', 'Camera initialization failed', undefined, err)
       session.stop = null
-      // The parent already closed the scanner; there is no one to tell.
+      // A cancelled session (closed, or replaced by Retry) must not paint its
+      // failure over the session that superseded it.
       if (session.cancelled) return
       failCamera(cameraErrorMessage(err))
     }
@@ -194,17 +191,14 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
             A camera that ignores the square request renders centred: a wide image
             letterboxed, a tall one clipped by the section, its frame still in view. */}
         <div id={scannerId} ref={scannerRef} className="w-full" />
-        {error && (
-          <p
-            className="qr-scanner-error text-sm text-destructive px-4 text-center"
-            aria-live="assertive"
-          >
-            {error}
-          </p>
-        )}
+        {/* Mounted empty, so screen readers announce the error when it is filled in. */}
+        <p className="text-sm text-destructive px-4 text-center" aria-live="assertive">
+          {error}
+        </p>
       </section>
       {error && (
         <Button
+          ref={retryRef}
           variant="outline"
           size="sm"
           onClick={() => {

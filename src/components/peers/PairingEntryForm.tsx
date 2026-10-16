@@ -9,7 +9,7 @@
 
 import { Camera } from 'lucide-react'
 import type React from 'react'
-import { lazy, Suspense, useCallback, useId } from 'react'
+import { lazy, Suspense, useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
@@ -19,7 +19,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
-import { notify } from '@/lib/notify'
 
 // Lazy-load QrScanner to avoid bundling html5-qrcode on desktop
 const LazyQrScanner = lazy(() =>
@@ -33,7 +32,6 @@ export interface PairingEntryFormProps {
   onWordChange: (index: number, value: string) => void
   onWordKeyDown: (index: number, e: React.KeyboardEvent<HTMLInputElement>) => void
   onQrScan: (data: string) => void
-  onQrError: (err: string) => void
   onCancel: () => void
   onPair: () => void
   pairLoading: boolean
@@ -47,7 +45,6 @@ export function PairingEntryForm({
   onWordChange,
   onWordKeyDown,
   onQrScan,
-  onQrError,
   onCancel,
   onPair,
   pairLoading,
@@ -56,15 +53,6 @@ export function PairingEntryForm({
   const { t } = useTranslation()
   // Stable id prefix so visible ordinal Labels can htmlFor each input.
   const inputIdPrefix = useId()
-
-  // When the QR scanner fails to acquire the camera (typically a
-  // permission denial), auto-switch back to manual word entry and surface
-  // a toast so the user understands what happened. Without this fallback
-  // the user would be stuck looking at an in-scanner error.
-  const handleCameraDenied = useCallback(() => {
-    onEntryModeChange('manual')
-    notify.info(t('pairing.cameraDeniedFallback'))
-  }, [onEntryModeChange, t])
 
   return (
     <>
@@ -152,11 +140,7 @@ export function PairingEntryForm({
               </div>
             }
           >
-            <LazyQrScanner
-              onScan={onQrScan}
-              onError={(err) => onQrError(err)}
-              onCameraDenied={handleCameraDenied}
-            />
+            <LazyQrScanner onScan={onQrScan} />
           </Suspense>
         </div>
       )}

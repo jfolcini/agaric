@@ -176,6 +176,30 @@ test.describe('at phone width', () => {
     await expectFillsViewfinder(page)
   })
 
+  // A denied camera keeps the user on the scanner; the form's own toggle is the way out.
+  test('a denied camera stays on the scanner, focuses Retry, and Type passphrase leaves it', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      navigator.mediaDevices.getUserMedia = () =>
+        Promise.reject(new DOMException('Permission denied', 'NotAllowedError'))
+    })
+    const viewfinder = await startScanner(page)
+    await expect(viewfinder).toContainText('Camera permission denied')
+    const dialog = activeDialog(page).or(activeSheet(page))
+    const retry = dialog.getByRole('button', { name: 'Retry camera', exact: true })
+    await expect(retry).toBeFocused()
+    const typePassphrase = dialog.getByRole('button', { name: 'Type passphrase', exact: true })
+    for (const button of [retry, typePassphrase]) {
+      await expect(button).toBeInViewport()
+      expect((await button.boundingBox())?.height).toBeGreaterThanOrEqual(44)
+    }
+
+    await typePassphrase.tap()
+    await expect(dialog.getByRole('textbox')).toHaveCount(4)
+    await expect(viewfinder).toHaveCount(0)
+  })
+
   // A camera that ignores the square aspect request keeps its own shape.
   for (const [shape, width, height] of [
     ['portrait', 480, 640],
