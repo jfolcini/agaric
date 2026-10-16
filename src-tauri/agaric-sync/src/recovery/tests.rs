@@ -3551,7 +3551,8 @@ async fn replay_timing_5418() {
 /// #5418 — apply `payload` the way a LOCAL command does: append it and apply
 /// it to SQL and the engine in one `BEGIN IMMEDIATE` transaction, leaving the
 /// apply cursor where it is, then run a delete's post-commit cohort fan-out
-/// (`dispatch_deletes`) and hand the index fan-out to the background queue.
+/// (`dispatch_delete_descendants`) and hand the index fan-out to the
+/// background queue.
 async fn apply_like_a_command(
     pool: &SqlitePool,
     mat: &Materializer,
@@ -3939,6 +3940,114 @@ async fn crash_tail_ops_on_blocks_deleted_later_reach_the_engine_5630() {
         projected_rows(&pool).await,
         session_sql,
         "SQL must match the session's"
+    );
+    boot.shutdown();
+}
+
+/// #5630 — a block moved into a node, moved back out, then the node deleted,
+/// all in the replayed tail. The node's delete is already in SQL when the
+/// moves replay, so the first move lands W under a tombstone the session never
+/// saw there; W must come out live, in SQL and in the engine.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_tail_move_in_move_out_then_delete_the_old_parent_5630() {
+    use agaric_store::op::{DeleteBlockPayload, MoveBlockPayload};
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005630PG";
+    const A: &str = "T5630PA";
+    const P: &str = "T5630PP";
+    const Q: &str = "T5630PQ";
+    const W: &str = "T5630PW";
+    let device_id = "dev-5630-move-out";
+    let ids = [A, P, Q, W, PAGE_ID];
+    let id = BlockId::test_id;
+    let create = |block: &str, parent: &str, index: i64| {
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: id(block),
+            block_type: "content".into(),
+            parent_id: Some(id(parent)),
+            position: None,
+            index: Some(index),
+            content: block.into(),
+        })
+    };
+    let move_to = |block: &str, parent: &str, index: i64| {
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: id(block),
+            new_parent_id: Some(id(parent)),
+            new_position: index + 1,
+            new_index: Some(index),
+        })
+    };
+    let (pool, _dir) = test_pool().await;
+    let session = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
+    for op in [
+        create(A, PAGE_ID, 0),
+        create(P, PAGE_ID, 1),
+        create(Q, PAGE_ID, 2),
+        create(W, A, 0),
+    ] {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let saved =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    assert_eq!(saved, 1, "the pass persists the one space");
+    for op in [
+        move_to(W, P, 0),
+        move_to(W, Q, 0),
+        OpPayload::DeleteBlock(DeleteBlockPayload { block_id: id(P) }),
+    ] {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let session_engine = engine_blocks(&session, device_id, SPACE, &ids);
+    let session_sql = projected_rows(&pool).await;
+    // The crash: no exit save, so the tail is in the op log and SQL only.
+    session.shutdown();
+    drop(session);
+
+    let boot = Materializer::new(pool.clone());
+    let registry = &boot.loro_state().registry;
+    let rehydrated =
+        agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id).await;
+    assert_eq!(
+        rehydrated, 1,
+        "the pass's snapshot is what boot starts from"
+    );
+    super::boot::reset_recovery_guard();
+    let report = recover_at_boot(&pool, device_id, &boot, registry)
+        .await
+        .unwrap();
+    boot.flush_background().await.unwrap();
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+
+    let w_deleted_at: Option<i64> =
+        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(W)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(w_deleted_at, None, "W is live in SQL, as in the session");
+    let booted = engine_blocks(&boot, device_id, SPACE, &ids);
+    let w = booted.iter().find(|b| b.0 == W).unwrap();
+    assert_eq!(w.2, None, "W is live in the engine");
+    assert_eq!(
+        w.1.as_ref().and_then(|s| s.parent_id.as_deref()),
+        Some(Q),
+        "W sits under Q in the engine"
+    );
+    assert_eq!(
+        projected_rows(&pool).await,
+        session_sql,
+        "SQL must match the session's"
+    );
+    assert_eq!(
+        booted, session_engine,
+        "the engine must match the session's"
     );
     boot.shutdown();
 }

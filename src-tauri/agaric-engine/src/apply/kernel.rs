@@ -412,7 +412,9 @@ impl ChunkAccumulator {
 /// the cohort is alive again so `dispatch_restore_descendants`
 /// can resolve the space inline; post-delete-UPDATE the cohort is
 /// dead, so we capture the space at the same pre-UPDATE moment as the
-/// cohort itself.
+/// cohort itself. Boot replay over SQL that already holds the delete is the
+/// exception: there is no pre-UPDATE moment, so both come from the rows the
+/// delete stamped (#5630, `apply_delete_block_op`).
 #[derive(Debug, Default)]
 pub struct ApplyEffects {
     /// Block ids restored by a `RestoreBlock` apply — seed AND every
@@ -435,11 +437,13 @@ pub struct ApplyEffects {
     /// was `DeleteBlock`. Captured BEFORE the UPDATE so the
     /// `descendants_cte_active!()` filter still matches (post-UPDATE
     /// every cohort row has `deleted_at IS NOT NULL` and the CTE would
-    /// skip them all).
+    /// skip them all) — except on boot replay over SQL that already holds
+    /// the delete, where it is the rows stamped with the delete's timestamp.
     pub deleted_cohort: Vec<String>,
     /// Space id resolved for the `DeleteBlock` seed at PRE-UPDATE
-    /// time. `None` for every other op type and for delete ops on
-    /// blocks that have no resolvable space (a permitted but rare
+    /// time, or on boot replay over SQL that already holds the delete, from
+    /// the seed's own `space_id`. `None` for every other op type and for
+    /// delete ops on blocks that have no resolvable space (a permitted but rare
     /// state — pre-spaces data). Required because
     /// `resolve_block_space` filters `deleted_at IS NULL`; a
     /// post-commit resolve attempt would fail on every cohort row.
@@ -727,7 +731,8 @@ async fn apply_edit_block_op(
 }
 
 /// `DeleteBlock`: capture the descendant cohort and the block's space BEFORE
-/// the UPDATE — both are unrecoverable afterwards — then project.
+/// the UPDATE — afterwards only boot replay recovers them, from the delete's
+/// timestamp — then project.
 async fn apply_delete_block_op(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,

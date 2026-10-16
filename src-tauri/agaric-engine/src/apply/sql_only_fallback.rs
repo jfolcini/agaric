@@ -7,10 +7,11 @@
 //! `docs/architecture/sql-only-convergence.md` for the full design):
 //!
 //! 1. [`SqlOnlyFallbackReason::SpaceUnresolved`] —
-//!    [`agaric_store::space::resolve_block_space`] misses, so the op has no
-//!    per-space engine to route to (orphan block, no `space` ancestor,
-//!    pre-spaces row, or a fresh page-create with no `SetProperty(space)`
-//!    yet).
+//!    [`agaric_store::space::resolve_block_space`] misses (on boot replay,
+//!    `loro_apply::resolve_op_space`, which also reads a tombstoned row's own
+//!    `space_id`), so the op has no per-space engine to route to (orphan
+//!    block, no `space` ancestor, pre-spaces row, or a fresh page-create
+//!    with no `SetProperty(space)` yet).
 //! 2. [`SqlOnlyFallbackReason::EngineMissingTarget`] — the space
 //!    resolved, but the block (or a MoveBlock's target parent) is absent
 //!    from that space's engine tree, so a single-space engine mutation
@@ -79,8 +80,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// both intrinsic to the per-space CRDT model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SqlOnlyFallbackReason {
-    /// `agaric_store::space::resolve_block_space(...)` returned `None` — the
-    /// block's space could not be resolved (orphan block, no `space`
+    /// `agaric_store::space::resolve_block_space(...)` returned `None` (on
+    /// boot replay, `loro_apply::resolve_op_space`, which also reads a
+    /// tombstoned row's own `space_id`) — the block's space could not be
+    /// resolved (orphan block, no `space`
     /// ancestor, pre-spaces row, or a fresh page-create with no
     /// `SetProperty(space)` yet). A soft fallback: the op still projects
     /// to SQL, and space resolution succeeds on a well-formed op once its

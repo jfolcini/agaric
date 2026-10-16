@@ -1132,8 +1132,9 @@ fn mirror_swept_cohort_into_engine(
 /// both fields into SQL. No sibling-shift on either side (see
 /// projection helper's docstring for the rationale).
 ///
-/// #4112 — the tail runs `super::sql_only::sweep_move_under_tombstoned_ancestor`
-/// before the tag maintenance: a replayed move can land a LIVE block under a
+/// #4112 — off boot replay (see the tail's #5630 note), the tail runs
+/// `super::sql_only::sweep_move_under_tombstoned_ancestor` before the tag
+/// maintenance: a replayed move can land a LIVE block under a
 /// TOMBSTONED ancestor (concurrent delete-on-A / move-on-B), which is the one
 /// shape the local command path's `deleted_at IS NULL` probes make unreachable
 /// locally. See that helper for why the answer is a sweep into the ancestor's
@@ -1146,15 +1147,17 @@ fn mirror_swept_cohort_into_engine(
 /// gap. The un-sweep only ever fires on a subject whose own row is TOMBSTONED
 /// (its tombstone was inherited from a concurrent cascade on its old parent).
 /// The first statement of this function resolves the space with
-/// [`agaric_store::space::resolve_block_space`], which filters
+/// `resolve_op_space`, which off boot replay is
+/// [`agaric_store::space::resolve_block_space`] and filters
 /// `deleted_at IS NULL` (AGENTS.md invariant #9), so off boot replay a
 /// tombstoned subject never reaches this arm — it is routed to
 /// [`super::sql_only::apply_move_block_sql_only`], where the un-sweep lives.
 /// Calling it here too would be unreachable code, and the `#891` fallback-count
 /// assertions in `move_convergence_tests` pin that routing. On boot replay a
-/// subject tombstoned by a LATER op does reach this arm (#5630, `resolve_op_space`),
-/// and has nothing to un-sweep: a local move needs a live subject, so the
-/// tombstone was not there when the move was first applied.
+/// subject SQL already shows tombstoned does reach this arm (#5630,
+/// `resolve_op_space`) and needs no un-sweep: a local move needs a live
+/// subject, so that tombstone is end state stamped by this move's own live
+/// sweep or by a later op, never one the subject inherited when it moved.
 ///
 /// The consequence used to be the open half of #4204 (its "finding 3"):
 /// because the tombstoned-subject move runs on the engine-LESS arm, nothing
@@ -1246,8 +1249,17 @@ pub async fn apply_move_block_via_loro(
     // applies); see `sweep_move_under_tombstoned_ancestor` for why a sweep
     // rather than the local path's rejection is the convergent answer. The
     // `sql_only` arm runs the byte-identical tail, so the two arms cannot
-    // drift.
-    match sweep_move_under_tombstoned_ancestor(&mut *conn, p.block_id.as_str()).await? {
+    // drift — except on boot replay, where this arm does not sweep. SQL
+    // already holds the ops after this move, so a tombstone above it may be a
+    // later delete's, and sweeping would stamp the subject with state it never
+    // had here; that delete's own replay stamps it if it is still under it
+    // (#5630).
+    let swept = if replay_dirty.is_some() {
+        None
+    } else {
+        sweep_move_under_tombstoned_ancestor(&mut *conn, p.block_id.as_str()).await?
+    };
+    match swept {
         None => {
             tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
         }
@@ -1255,9 +1267,9 @@ pub async fn apply_move_block_via_loro(
             mirror_swept_cohort_into_engine(state, device_id, &space_id, cohort_ts, &cohort)?;
         }
     }
-    // #4390: the engine arm un-sweeps nothing — a tombstoned subject never
-    // reaches it (see this function's #4204/#4188 note) — so there is never
-    // anything for the post-commit mirror to do on this path.
+    // #4390: the engine arm un-sweeps nothing (see this function's #4204/#4188
+    // note), so there is never anything for the post-commit mirror to do on
+    // this path.
     Ok(Vec::new())
 }
 
