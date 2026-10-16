@@ -12,6 +12,7 @@ import {
   onceLeakMessage,
   takeOnceLeaks,
 } from '@/__tests__/helpers/once-residue'
+import { __resetAnnouncerForTests } from '@/lib/announcer'
 import { _resetGraphStructureEventsForTest } from '@/lib/graph-structure-events'
 import '@/lib/i18n'
 import { setLogLevel } from '@/lib/logger'
@@ -183,6 +184,10 @@ beforeEach(() => {
 // without vitest globals. Register it explicitly.
 afterEach(() => {
   cleanup()
+  // Drain the announcer queue after unmount: a queued message re-arms a real
+  // timer that, firing after the file's environment is torn down, throws
+  // `document is not defined` as an unhandled error.
+  __resetAnnouncerForTests()
 })
 
 // #2596 — the read-path TanStack Query client is a module-level singleton
