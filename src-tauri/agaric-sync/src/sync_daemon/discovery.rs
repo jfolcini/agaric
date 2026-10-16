@@ -89,9 +89,8 @@ pub fn mdns_is_reaching_us(seen_at: Option<tokio::time::Instant>) -> bool {
 /// during the pairing window neither device has a `peer_ref` for the other
 /// yet, so without this clause no one would ever *initiate* the first sync
 /// and pairing deadlocks (#2008). On a successful unpaired session the
-/// initiator TOFU-binds the peer's key (`bind_endpoint_id` in
-/// `try_sync_with_peer`), after which clause 4 carries it and the pending
-/// marker is cleared.
+/// initiator TOFU-binds the peer's key and clears the pending marker
+/// (`record_session_success`), after which clause 4 carries it.
 ///
 /// # #3502 — why clause 2 sits above clause 3
 ///
