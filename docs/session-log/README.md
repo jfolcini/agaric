@@ -5,9 +5,9 @@ Per-session entries. **One file per session.**
 ## Layout
 
 - `session-NNN-<slug>.md` — one file per session. `NNN` is **never zero-padded** (`session-846-...`, `session-1381-...`); the slug is derived from the session title. The padding rule is not cosmetic: a leading zero makes the guard misreport its own window, and can make it reject the *next* file in the same commit. See [Why the padding rule is not cosmetic](#why-the-padding-rule-is-not-cosmetic).
-- `sessions-NNNN-NNNN.md` — frozen archives of 100 sessions each (`sessions-0001-0100.md` … `sessions-1801-1900.md`), newest first, one `## Session N` section per session.
+- `sessions-NNNN-NNNN.md` — frozen archives of 100 sessions each (`sessions-0001-0100.md` … `sessions-2001-2100.md`), newest first, one `## Session N` section per session.
 
-Once a full hundred of individual files has merged (all of 1901–2000, say), fold it into the next archive in one maintainer PR: demote each file's headings one level, concatenate newest first, delete the files (`SKIP=session-log-immutable git commit …`), and point every link at the archive. Keep the newest, still-partial hundred as individual files; the numbering guard reads its max from them.
+Once a full hundred of individual files has merged (all of 2101–2200, say), fold it into the next archive in one maintainer PR: demote each file's headings one level, concatenate newest first, delete the files (`SKIP=session-log-immutable git commit …`), and point every link at the archive. Keep the newest, still-partial hundred as individual files; the numbering guard reads its max from them.
 
 ## Discovery
 

@@ -1,9 +1,0 @@
-# Session 2056 — Graph: labels at a constant size, by importance, never overlapping
-
-Set out to work #5430: every node was labelled, always, at 12 px inside the zoom transform — 1.2 px at the minimum zoom, 48 px at the maximum — so labels overlapped at any realistic size, and the halo that keeps text readable over edges appeared only on hover.
-
-What shipped: each zoom event sets `font-size = 12/k` and the halo width `3/k` once on the nodes layer, so labels keep their on-screen size; every label carries a `--background` halo. A pure `visibleLabels` (`src/lib/graph-labels.ts`) chooses labels in screen pixels: the current page and the hovered, focused or selected node with its neighbours always; the rest once their on-screen radius reaches 6 px, hubs first, a greedy pass in degree order hiding any label whose box would overlap one already placed. Boxes are estimated from character count (0.62 em per character, 1.25 em tall), which errs wide for the bundled Inter. The pass runs after setup and filter patches, on settle, on zoom end and on highlight changes, never per tick.
-
-Traps: the first settle placed labels at the pre-fit zoom and the fit's zoom end placed them again, so dozens appeared and vanished as a fresh graph opened; the settle now leaves placement to the fit when one follows. The greedy pass is not monotonic: zooming in can swap a lower-degree label for a hub's that newly fits, while the total keeps rising. Left as known limits: a node drawn later can paint its dot over an earlier node's label (labels live inside their node's group), wide all-caps and CJK titles are under-estimated, and the pass is O(n × placed), fine to a couple of thousand nodes.
-
-Ran: vitest over the graph lib, hooks, workers and components (418 passed), `npm run typecheck`, `npm run lint`, knip, oxfmt, and `e2e/graph-view.spec.ts` (21) and `e2e/graph-restore.spec.ts` (2).
