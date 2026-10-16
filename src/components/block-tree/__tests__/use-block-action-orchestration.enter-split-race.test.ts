@@ -25,7 +25,7 @@
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import type { TFunction } from 'i18next'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
@@ -37,6 +37,7 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks as mockBlocks, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import type { MountedBlocks } from '@/lib/zoom-scope'
+import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
@@ -313,5 +314,122 @@ describe('#5272 — a caret split creates the after-text before shortening the s
     expect(pageStore.getState().blocksById.get(BLOCK_GS_1)?.content).toBe(PRE_SPLIT)
     expect(handle.mount).toHaveBeenCalledWith(BLOCK_GS_1, PRE_SPLIT)
     expect(setFocused).not.toHaveBeenCalled()
+  })
+})
+
+// Enter then a fast Tab: until Enter's create lands, focus still names the
+// block Enter left, so the chord restructured that block instead of the one
+// Enter was creating. The chord now waits for the Enter. Real store over the
+// real mock; only the create is held open, as the IPC round trip holds it.
+describe('a block chord pressed while Enter is creating acts on the block Enter creates', () => {
+  const { BLOCK_GS_1, BLOCK_GS_2, BLOCK_GS_3, BLOCK_GS_4, BLOCK_GS_5, PAGE_GETTING_STARTED } =
+    SEED_IDS
+
+  /** Live children of `parentId` in the mock, in position order. */
+  function childrenOf(parentId: string): string[] {
+    return [...mockBlocks.values()]
+      .filter((b) => b['parent_id'] === parentId && b['deleted_at'] === null)
+      .toSorted((a, b) => (a['position'] as number) - (b['position'] as number))
+      .map((b) => b['id'] as string)
+  }
+
+  type Chord = 'handleIndent' | 'handleDedent' | 'handleMoveUp' | 'handleMoveDown'
+
+  /** Enter on GS_2, `chord` while the create is in flight, then let the create land. */
+  async function enterThen(chord: Chord, { nested }: { nested: boolean }): Promise<string> {
+    seedBlocks()
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    useUndoStore.setState({ pages: new Map() })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    const pageStore = createPageBlockStore(PAGE_GETTING_STARTED)
+    await pageStore.getState().load()
+    if (nested) await pageStore.getState().indent(BLOCK_GS_2)
+    useBlockStore.getState().setFocused(BLOCK_GS_2)
+    let release: () => void = () => undefined
+    const createHeld = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let created = ''
+    const s = pageStore.getState()
+    const { result } = renderHook(() =>
+      useBlockActionOrchestration({
+        focusedBlockId: BLOCK_GS_2,
+        collapsedVisible: pageStore.getState().blocks as unknown as MountedBlocks,
+        blocks: pageStore.getState().blocks,
+        rovingEditor: makeHandle(BLOCK_GS_2, 'second'),
+        setFocused: (id) => useBlockStore.getState().setFocused(id),
+        setSelected: vi.fn(),
+        handleFlush: vi.fn(() => null),
+        pageStore,
+        remove: s.remove,
+        moveBlocks: s.moveBlocks,
+        edit: s.edit,
+        indent: s.indent,
+        dedent: s.dedent,
+        moveUp: s.moveUp,
+        moveDown: s.moveDown,
+        createBelow: async (afterBlockId, content) => {
+          await createHeld
+          created = (await s.createBelow(afterBlockId, content)) ?? ''
+          return created
+        },
+        discardDraft: vi.fn(),
+        t,
+      }),
+    )
+    await act(async () => {
+      const enter = result.current.handleEnterSave()
+      result.current[chord]()
+      release()
+      await enter
+    })
+    expect(created).not.toBe('')
+    return created
+  }
+
+  it('Tab indents the new block under the one Enter left', async () => {
+    const created = await enterThen('handleIndent', { nested: false })
+    await waitFor(() => expect(childrenOf(BLOCK_GS_2)).toEqual([created]))
+    expect(childrenOf(BLOCK_GS_1)).toEqual([])
+  })
+
+  it('Shift+Tab dedents the new block and leaves the one Enter left nested', async () => {
+    const created = await enterThen('handleDedent', { nested: true })
+    await waitFor(() => expect(childrenOf(BLOCK_GS_1)).toEqual([BLOCK_GS_2]))
+    expect(childrenOf(PAGE_GETTING_STARTED)).toEqual([
+      BLOCK_GS_1,
+      created,
+      BLOCK_GS_3,
+      BLOCK_GS_4,
+      BLOCK_GS_5,
+    ])
+  })
+
+  it('move up moves the new block above the one Enter left', async () => {
+    const created = await enterThen('handleMoveUp', { nested: false })
+    await waitFor(() =>
+      expect(childrenOf(PAGE_GETTING_STARTED)).toEqual([
+        BLOCK_GS_1,
+        created,
+        BLOCK_GS_2,
+        BLOCK_GS_3,
+        BLOCK_GS_4,
+        BLOCK_GS_5,
+      ]),
+    )
+  })
+
+  it('move down moves the new block, not the one Enter left', async () => {
+    const created = await enterThen('handleMoveDown', { nested: false })
+    await waitFor(() =>
+      expect(childrenOf(PAGE_GETTING_STARTED)).toEqual([
+        BLOCK_GS_1,
+        BLOCK_GS_2,
+        BLOCK_GS_3,
+        created,
+        BLOCK_GS_4,
+        BLOCK_GS_5,
+      ]),
+    )
   })
 })

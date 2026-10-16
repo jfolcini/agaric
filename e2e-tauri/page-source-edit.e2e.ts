@@ -27,6 +27,7 @@ import {
   setPageSourceLines,
   typeMarkerVerified,
   waitForAppReady,
+  enterBlankSibling,
 } from './helpers'
 
 const FIRST = runScopedMarker('wdio-src-first')
@@ -35,15 +36,6 @@ const THIRD = runScopedMarker('wdio-src-third')
 const EDITED = runScopedMarker('wdio-src-edited')
 
 const rowsWith = (marker: string) => $$(`[data-testid="sortable-block"]*=${marker}`).getElements()
-
-/** Enter moves the editor to a new, empty sibling. */
-async function nextBlock(): Promise<void> {
-  await browser.keys(['Enter'])
-  await $('[data-testid="block-editor"] p.is-editor-empty').waitForExist({
-    timeout: ACTION_TIMEOUT,
-    timeoutMsg: 'Enter did not open an empty block',
-  })
-}
 
 /** Leave the page editor and come back, so the rows are the backend's. */
 async function reopenTheNewPage(marker: string): Promise<void> {
@@ -57,9 +49,9 @@ describe('Agaric real-backend source mode (#5140 Phase 4b)', () => {
     await waitForAppReady()
     await openNewPage()
     await typeMarkerVerified(FIRST)
-    await nextBlock()
+    await enterBlankSibling()
     await typeMarkerVerified(SECOND)
-    await nextBlock()
+    await enterBlankSibling()
     await typeMarkerVerified(THIRD)
     // The sidebar click blurs and commits the last block.
     await reopenTheNewPage(THIRD)

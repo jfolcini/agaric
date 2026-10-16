@@ -355,8 +355,10 @@ export function useBlockActionOrchestration({
   // Re-entrancy guard: prevents rapid Backspace presses from duplicating deletes.
   const deleteInProgress = useRef(false)
 
-  // Re-entrancy guard: prevents rapid Enter presses from creating duplicate blocks.
-  const enterSaveInProgress = useRef(false)
+  // The Enter in flight. A second Enter meanwhile is dropped so it cannot
+  // create a duplicate block; a restructure chord waits for it
+  // (`afterEnterSettles`).
+  const enterInFlight = useRef<Promise<void> | null>(null)
 
   // Re-entrancy guard for merges: handleMergeWithPrev/handleMergeById unmount
   // the roving editor (resetting its doc to empty) BEFORE awaiting the edit
@@ -609,51 +611,6 @@ export function useBlockActionOrchestration({
     [pageStore],
   )
 
-  const handleIndent = useCallback(() => {
-    if (!focusedBlockId) return
-    const blockId = focusedBlockId
-    const content = captureEditor()
-    handleFlush()
-    // R6 (#405): announce on RESOLUTION so assistive tech reports the real
-    // outcome — a no-op (already at outermost level) or a backend rejection
-    // must not announce a phantom "indented".
-    void announceMoveResult(indent(blockId), t, 'announce.blockIndented')
-    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
-  }, [captureEditor, focusedBlockId, handleFlush, indent, remountBaseline, t])
-
-  const handleDedent = useCallback(() => {
-    if (!focusedBlockId) return
-    const blockId = focusedBlockId
-    const content = captureEditor()
-    handleFlush()
-    void announceMoveResult(dedent(blockId), t, 'announce.blockDedented')
-    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
-  }, [captureEditor, focusedBlockId, handleFlush, dedent, remountBaseline, t])
-
-  const handleMoveUp = useCallback(() => {
-    if (!focusedBlockId) return
-    const content = captureEditor()
-    handleFlush()
-    const blockId = focusedBlockId
-    // R6 (#405): announce + scroll on RESOLUTION — a boundary no-op or backend
-    // rejection must not announce a phantom "moved up".
-    void announceMoveResult(moveUp(blockId), t, 'announce.blockMovedUp', () =>
-      scrollFocusedBlockIntoView(blockId),
-    )
-    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
-  }, [captureEditor, focusedBlockId, handleFlush, moveUp, remountBaseline, t])
-
-  const handleMoveDown = useCallback(() => {
-    if (!focusedBlockId) return
-    const content = captureEditor()
-    handleFlush()
-    const blockId = focusedBlockId
-    void announceMoveResult(moveDown(blockId), t, 'announce.blockMovedDown', () =>
-      scrollFocusedBlockIntoView(blockId),
-    )
-    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
-  }, [captureEditor, focusedBlockId, handleFlush, moveDown, remountBaseline, t])
-
   const handleIndentById = useCallback(
     (id: string) => {
       const content = id === focusedBlockIdRef.current ? captureEditor() : null
@@ -735,6 +692,104 @@ export function useBlockActionOrchestration({
     },
     [captureEditor, handleFlush, moveDown, remountBaseline, t],
   )
+
+  // Until Enter's create lands, focus still names the block Enter left, so a
+  // chord pressed in that window (Enter, Tab) would restructure it. Run the
+  // chord on the block focused once Enter settles instead: the one it created.
+  const afterEnterSettles = useCallback((chord: (id: string) => Promise<void>): boolean => {
+    const enter = enterInFlight.current
+    if (!enter) return false
+    void enter.then(() => {
+      const id = useBlockStore.getState().focusedBlockId
+      if (id) void chord(id)
+    })
+    return true
+  }, [])
+
+  const handleIndent = useCallback(() => {
+    if (afterEnterSettles(handleIndentById)) return
+    if (!focusedBlockId) return
+    const blockId = focusedBlockId
+    const content = captureEditor()
+    handleFlush()
+    // R6 (#405): announce on RESOLUTION so assistive tech reports the real
+    // outcome — a no-op (already at outermost level) or a backend rejection
+    // must not announce a phantom "indented".
+    void announceMoveResult(indent(blockId), t, 'announce.blockIndented')
+    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
+  }, [
+    afterEnterSettles,
+    captureEditor,
+    focusedBlockId,
+    handleFlush,
+    handleIndentById,
+    indent,
+    remountBaseline,
+    t,
+  ])
+
+  const handleDedent = useCallback(() => {
+    if (afterEnterSettles(handleDedentById)) return
+    if (!focusedBlockId) return
+    const blockId = focusedBlockId
+    const content = captureEditor()
+    handleFlush()
+    void announceMoveResult(dedent(blockId), t, 'announce.blockDedented')
+    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
+  }, [
+    afterEnterSettles,
+    captureEditor,
+    focusedBlockId,
+    handleFlush,
+    handleDedentById,
+    dedent,
+    remountBaseline,
+    t,
+  ])
+
+  const handleMoveUp = useCallback(() => {
+    if (afterEnterSettles(handleMoveUpById)) return
+    if (!focusedBlockId) return
+    const content = captureEditor()
+    handleFlush()
+    const blockId = focusedBlockId
+    // R6 (#405): announce + scroll on RESOLUTION — a boundary no-op or backend
+    // rejection must not announce a phantom "moved up".
+    void announceMoveResult(moveUp(blockId), t, 'announce.blockMovedUp', () =>
+      scrollFocusedBlockIntoView(blockId),
+    )
+    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
+  }, [
+    afterEnterSettles,
+    captureEditor,
+    focusedBlockId,
+    handleFlush,
+    handleMoveUpById,
+    moveUp,
+    remountBaseline,
+    t,
+  ])
+
+  const handleMoveDown = useCallback(() => {
+    if (afterEnterSettles(handleMoveDownById)) return
+    if (!focusedBlockId) return
+    const content = captureEditor()
+    handleFlush()
+    const blockId = focusedBlockId
+    void announceMoveResult(moveDown(blockId), t, 'announce.blockMovedDown', () =>
+      scrollFocusedBlockIntoView(blockId),
+    )
+    rovingEditorRef.current.mount(blockId, remountBaseline(blockId, content))
+  }, [
+    afterEnterSettles,
+    captureEditor,
+    focusedBlockId,
+    handleFlush,
+    handleMoveDownById,
+    moveDown,
+    remountBaseline,
+    t,
+  ])
 
   /**
    * Shared merge orchestration: edit `prevBlockId` with the merged content,
@@ -1036,7 +1091,7 @@ export function useBlockActionOrchestration({
       })
       return
     }
-    if (enterSaveInProgress.current) {
+    if (enterInFlight.current) {
       logger.warn(
         'useBlockActionOrchestration',
         'Enter press dropped — previous save still in progress',
@@ -1046,7 +1101,10 @@ export function useBlockActionOrchestration({
       )
       return
     }
-    enterSaveInProgress.current = true
+    let settle: () => void = () => undefined
+    enterInFlight.current = new Promise<void>((resolve) => {
+      settle = resolve
+    })
     try {
       // Capture content before flush so we can re-mount on failure
       const savedContent = rovingEditorRef.current.getMarkdown?.() ?? ''
@@ -1175,7 +1233,8 @@ export function useBlockActionOrchestration({
       announce(t('announce.blockCreated'))
       await continueListStyle(newBlockId, listStyle)
     } finally {
-      enterSaveInProgress.current = false
+      enterInFlight.current = null
+      settle()
     }
   }, [
     focusedBlockId,

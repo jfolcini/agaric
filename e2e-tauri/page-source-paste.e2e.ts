@@ -31,6 +31,7 @@ import {
   waitForAppReady,
   waitForToast,
   openNewPageDialog,
+  enterBlankSibling,
 } from './helpers'
 
 const FIRST = runScopedMarker('wdio-paste-first')
@@ -74,15 +75,6 @@ function lineWith(lines: SourceLine[], marker: string): number {
   return index
 }
 
-/** Enter moves the editor to a new, empty sibling. */
-async function nextBlock(): Promise<void> {
-  await browser.keys(['Enter'])
-  await $('[data-testid="block-editor"] p.is-editor-empty').waitForExist({
-    timeout: ACTION_TIMEOUT,
-    timeoutMsg: 'Enter did not open an empty block',
-  })
-}
-
 /** Leave the page editor and come back, so the rows are the backend's. */
 async function reopenPage(title: string, marker: string): Promise<void> {
   await navigateTo('Journal')
@@ -112,9 +104,9 @@ describe('Agaric real-backend source-mode cut, copy and paste (#5160 phase 5-5b)
     await waitForAppReady()
     await openNewPage()
     await typeMarkerVerified(FIRST)
-    await nextBlock()
+    await enterBlankSibling()
     await typeMarkerVerified(SECOND)
-    await nextBlock()
+    await enterBlankSibling()
     await typeMarkerVerified(THIRD)
     // The sidebar click blurs and commits the last block.
     await reopenPage('Untitled', THIRD)
@@ -192,9 +184,9 @@ describe('Agaric real-backend source-mode cut, copy and paste (#5160 phase 5-5b)
       timeout: ACTION_TIMEOUT,
     })
     await typeMarkerVerified(OTHER_ONE)
-    await nextBlock()
+    await enterBlankSibling()
     await typeMarkerVerified(OTHER_TWO)
-    await nextBlock()
+    await enterBlankSibling()
     await typeMarkerVerified(OTHER_THREE)
     await reopenPage(OTHER_PAGE, OTHER_THREE)
     const otherIds = await rowIds()
