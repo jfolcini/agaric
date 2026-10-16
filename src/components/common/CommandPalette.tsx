@@ -115,6 +115,7 @@ export function CommandPalette(): React.ReactElement | null {
   const { t } = useTranslation()
   const open = useCommandPaletteStore((s) => s.open)
   const closeStore = useCommandPaletteStore((s) => s.close)
+  const opener = useCommandPaletteStore((s) => s.previousFocusedElement)
 
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Title, Description } = parts
@@ -146,6 +147,14 @@ export function CommandPalette(): React.ReactElement | null {
         // Stop the dialog from auto-focusing its close button on open;
         // we want focus on the input.
         onOpenAutoFocus={(e: Event) => e.preventDefault()}
+        // Radix returns focus to a `Dialog.Trigger`, and the palette has none,
+        // so focus would drop to <body>. Restore the opener instead (`opener`
+        // is this render's value; `close()` clears the store), unless the
+        // close navigated and focus already landed somewhere.
+        onCloseAutoFocus={(e: Event) => {
+          e.preventDefault()
+          if (document.activeElement === document.body) opener?.focus()
+        }}
         // preventDefault when the action menu owns Escape; the menu's
         // own keydown handler will close itself, leaving the palette
         // open.
