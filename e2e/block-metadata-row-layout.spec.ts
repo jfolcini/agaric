@@ -16,6 +16,7 @@ import {
   focusBlockById,
   openPage,
   openPageMobile,
+  replaceEditorText,
   saveBlock,
   test,
   waitForBoot,
@@ -114,8 +115,8 @@ test.describe('Block metadata row layout, desktop (#5332)', () => {
 
   test('on a wrapped block, the leading controls stay on the FIRST line', async ({ page }) => {
     const row = taskRow(page)
-    const editor = await focusBlockById(page, (await row.getAttribute('data-block-id')) ?? '')
-    await editor.fill(LONG_TEXT)
+    await focusBlockById(page, (await row.getAttribute('data-block-id')) ?? '')
+    await replaceEditorText(page, LONG_TEXT)
     await saveBlock(page, 'Escape')
     // That Escape leaves the block selected, which hides its task checkbox;
     // a second Escape clears the selection.

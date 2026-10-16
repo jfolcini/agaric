@@ -40,6 +40,7 @@ import {
   navigateToView,
   openMobileSidebar,
   openSettingsTab,
+  replaceEditorText,
   test,
   waitForBoot,
 } from './helpers'
@@ -413,13 +414,13 @@ for (const profile of PROFILES) {
 
       // Baseline: one short line of real text — the height a single-line block
       // is SUPPOSED to have at this width.
-      await editor.fill('x')
+      await replaceEditorText(page, 'x')
       await expect(editor).toHaveText('x')
       const filledHeight = await rowHeight()
 
       // Empty it: TipTap's Placeholder extension flags the paragraph and the
       // long `editor.emptyBlockPlaceholder` hint renders through `::before`.
-      await editor.fill('')
+      await replaceEditorText(page, '')
       const para = page
         .locator('[data-testid="block-editor"] .ProseMirror p.is-editor-empty')
         .first()

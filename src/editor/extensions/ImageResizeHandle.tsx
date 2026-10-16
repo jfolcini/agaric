@@ -31,6 +31,20 @@ function clampWidth(width: number): number {
   return Math.max(MIN_WIDTH, Math.round(width))
 }
 
+/** The `<img>` the handle sits beside, whose width it reads and resizes. */
+function imageBeside(handle: Element | null): HTMLImageElement | null {
+  return handle?.parentElement?.querySelector('img') ?? null
+}
+
+/**
+ * The image's width now. A gesture starts from this, not from `range`: the
+ * observer's update to `range` renders a beat after the resize, so a key or
+ * press landing in between would resize from the width before it.
+ */
+function laidOutWidth(handle: Element): number {
+  return imageBeside(handle)?.offsetWidth ?? 0
+}
+
 interface Drag {
   startX: number
   startWidth: number
@@ -70,7 +84,7 @@ export function ImageResizeHandle({
   const dragRef = useRef<Drag | null>(null)
 
   useEffect(() => {
-    const img = ref.current?.parentElement?.querySelector('img')
+    const img = imageBeside(ref.current)
     const editor = ref.current?.closest('[contenteditable="true"]')
     if (!img || !editor) return undefined
     const observer = new ResizeObserver(() =>
@@ -90,7 +104,7 @@ export function ImageResizeHandle({
     if (direction !== undefined) {
       e.preventDefault()
       const step = e.shiftKey ? KEY_STEP_LARGE : KEY_STEP
-      onCommit(clampWidth(range.width + direction * step))
+      onCommit(clampWidth(laidOutWidth(e.currentTarget) + direction * step))
     } else if (e.key === 'Home') {
       e.preventDefault()
       onCommit(null)
@@ -121,7 +135,7 @@ export function ImageResizeHandle({
         // selects nor drags the image node.
         e.preventDefault()
         e.currentTarget.setPointerCapture(e.pointerId)
-        dragRef.current = { startX: e.clientX, startWidth: range.width }
+        dragRef.current = { startX: e.clientX, startWidth: laidOutWidth(e.currentTarget) }
       }}
       onPointerMove={(e) => {
         if (dragRef.current !== null) onPreview(widthAt(e.clientX, dragRef.current))

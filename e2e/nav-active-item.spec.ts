@@ -58,6 +58,10 @@ for (const theme of ['light', 'dark'] as const) {
     })
 
     test('settings tab rail', async ({ page }) => {
+      // The tabs fade their fill too. Mid-fade from transparent reads
+      // `oklab(0 0 0 / 0)`, unequal as a string to the rest value
+      // `rgba(0, 0, 0, 0)`, so every comparison below would pass or fail on it.
+      await page.addStyleTag({ content: '* { transition: none !important; }' })
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
       await page.getByRole('tab', { name: 'Appearance' }).click()
       await expectHoverDiffersFromActive(
