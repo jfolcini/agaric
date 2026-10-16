@@ -17,8 +17,7 @@
  *    directly on a tinted rounded row reads as two notched boxes.
  *  - Folding both into one primitive with a `density`/`variant` flag
  *    would create a CVA matrix where most variant combinations are
- *    illegal (e.g. chip background only makes sense at the larger
- *    density). The cleaner path is two siblings with the same naming
+ *    illegal. The cleaner path is two siblings with the same naming
  *    convention.
  *
  * Renders as `<div>` by default; pass `asChild` (Radix Slot) to render
