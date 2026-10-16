@@ -82,6 +82,10 @@ export function useDraftAutosave(
     (): string => rovingEditorRef.current?.getMarkdown() ?? '',
     [rovingEditorRef],
   )
+  const readBaseline = useCallback(
+    (): string | undefined => rovingEditorRef.current?.originalMarkdown,
+    [rovingEditorRef],
+  )
   const isEditorEmpty = useCallback(
     (): boolean => rovingEditorRef.current?.editor?.isEmpty ?? true,
     [rovingEditorRef],
@@ -293,7 +297,8 @@ export function useDraftAutosave(
   // - block switch (`blockId` → other id): ref is non-null → flush the
   //   OLD block (the closure-captured `blockId`).
   // - unmount while focused: no re-render happened, ref still holds this
-  //   `blockId` → flush it. (Unmount while blurred never registers a
+  //   `blockId` → flush it, or delete its row when the live content equals
+  //   the committed baseline. (Unmount while blurred never registers a
   //   cleanup — the effect early-returns on null.)
   //
   // #1065 — additionally skip the flush when this block was discarded
@@ -355,6 +360,15 @@ export function useDraftAutosave(
       // the save below).
       const isUnmountWhileFocused = blockIdRef.current === blockId
       const latest = isUnmountWhileFocused ? readLive() : ''
+      // Unchanged since the last durable commit: flushing would append an
+      // `edit_block` with unchanged content. Drop the row instead, since a
+      // debounced row may hold text the user has since undone.
+      if (latest && latest === readBaseline()) {
+        retryOnPoolBusy(() => commands.deleteDraft(blockId).then(unwrap)).catch((err: unknown) => {
+          logger.warn('useDraftAutosave', 'deleteDraft of unchanged block failed', { blockId }, err)
+        })
+        return
+      }
       const ensureSaved = latest
         ? retryOnPoolBusy(() => commands.saveDraft(blockId, latest).then(unwrap)).catch(
             (err: unknown) => {
@@ -373,7 +387,7 @@ export function useDraftAutosave(
         }),
       )
     }
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- #715/#770 gap 2: keyed on `blockId` ALONE so content changes can never re-trigger the flush. `readLive` is referentially stable (memoized on the stable `rovingEditorRef`), so listing it would not change re-run behavior; it is serialized on demand at cleanup time.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- #715/#770 gap 2: keyed on `blockId` ALONE so content changes can never re-trigger the flush. `readLive` and `readBaseline` are referentially stable (memoized on the stable `rovingEditorRef`), so listing them would not change re-run behavior; both are read on demand at cleanup time.
   }, [blockId])
 
   // Effect C — background/close flush of the live content. The debounced

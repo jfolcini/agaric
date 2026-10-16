@@ -63,7 +63,9 @@ const mockedDeleteDraft = mockDeleteDraft
  * derived from it (mirrors the real serializer: an empty doc → '' markdown).
  * `activeBlockId` gates cross-block fires/flushes.
  */
-function makeEditor(init: { activeBlockId?: string | null; markdown?: string } = {}) {
+function makeEditor(
+  init: { activeBlockId?: string | null; markdown?: string; originalMarkdown?: string } = {},
+) {
   const getSpy = vi.fn(() => state.markdown)
   const state = {
     activeBlockId: init.activeBlockId ?? 'BLOCK_1',
@@ -81,7 +83,7 @@ function makeEditor(init: { activeBlockId?: string | null; markdown?: string } =
     },
     mount: vi.fn(),
     unmount: vi.fn(() => null),
-    originalMarkdown: '',
+    originalMarkdown: init.originalMarkdown ?? '',
     splitAtCaret: vi.fn(() => null),
     setOnUpdate: vi.fn(),
     markCommitted: vi.fn(),
@@ -470,7 +472,9 @@ describe('useDraftAutosave', () => {
   // content (serialized on demand), not just the ≤2s-stale debounced row.
   describe('issue #770 gap 2 — unmount-while-focused saves latest content', () => {
     it('serializes and persists live content via saveDraft before flushing on unmount', async () => {
-      const { ref, state } = makeEditor({ markdown: 'hello' })
+      // Baseline differs from the live text, so the unchanged-content skip
+      // must not apply.
+      const { ref, state } = makeEditor({ markdown: 'hello', originalMarkdown: 'committed' })
       const { result, unmount } = renderAutosave(ref)
       act(() => {
         result.current.onContentChange()
@@ -497,6 +501,33 @@ describe('useDraftAutosave', () => {
       expect(mockedSaveDraft).toHaveBeenLastCalledWith('BLOCK_1', 'hello world')
       expect(mockedFlushDraft).toHaveBeenCalledTimes(1)
       expect(mockedFlushDraft).toHaveBeenCalledWith('BLOCK_1')
+    })
+
+    // #5423 — content equal to the committed baseline has nothing to flush;
+    // flushing would append an `edit_block` with unchanged content.
+    it('unchanged content on unmount deletes the draft row instead of saving and flushing', async () => {
+      const { ref, state } = makeEditor({ markdown: 'hello', originalMarkdown: 'hello' })
+      const { result, unmount } = renderAutosave(ref)
+
+      // A debounced row holding an edit the user then undid back to the baseline.
+      state.markdown = 'hello typo'
+      act(() => {
+        result.current.onContentChange()
+      })
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+      state.markdown = 'hello'
+      mockedSaveDraft.mockClear()
+
+      unmount()
+      await flushMicrotasks()
+
+      expect(mockedSaveDraft).not.toHaveBeenCalled()
+      expect(mockedFlushDraft).not.toHaveBeenCalled()
+      expect(mockedDeleteDraft).toHaveBeenCalledTimes(1)
+      expect(mockedDeleteDraft).toHaveBeenCalledWith('BLOCK_1')
     })
 
     it('unmount save respects #1065 (a discarded block is not resurrected)', async () => {
