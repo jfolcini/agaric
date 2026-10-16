@@ -11,7 +11,7 @@ The bar for everything below is `AGENTS.md` § How we work. Three deletions and 
 
 References, loaded only when needed:
 
-- `references/pitfalls.md` — failure modes with a concrete recovery (stacked PRs, Dependabot branches, moving-ref resets, lint traps, stale `dev.db`, path-keyed guards, shell traps, branches and `gh` in a cloud session).
+- `references/pitfalls.md` — failure modes with a concrete recovery (stacked PRs, Dependabot branches and lockfiles, moving-ref resets, lint traps, stale `dev.db`, baseline reds in a worktree, path-keyed guards, shell traps, branches and `gh` in a cloud session).
 - `references/session-log.md` — session-log numbering and format.
 - `references/codegen-and-sql.md` — `.sqlx` and specta regeneration.
 
@@ -20,13 +20,13 @@ References, loaded only when needed:
 - Track loop state in the Task tools: one task per in-flight issue, one per pending-CI PR. It survives `/compact` (run it between batches, not mid-batch).
 - Run builders, reviewers, and discovery in subagents so the orchestrator keeps only the plan, the task list, and the merge decisions.
 - One heavy Rust build or gate at a time; fill the idle window with light work (frontend, docs, research). The orchestrator owns every long build, bench, and full-suite run as a tracked background task: a subagent's background job dies when its turn ends.
-- One worktree per agent. `git stash` and a push, falsification, or prek run in flight in a shared tree silently change what the other agent tests. Each worktree compiles its own `src-tauri/target`: check `df -h` before a build, reclaim with `rm -rf src-tauri/target/debug/incremental`, and never share one `CARGO_TARGET_DIR` between concurrently building trees.
+- One worktree per agent. `git stash` and a push, falsification, or prek run in flight in a shared tree silently change what the other agent tests. Each worktree compiles its own `src-tauri/target`: check `df -h` before a build and reclaim with `rm -rf src-tauri/target/debug/incremental`. Never share a target dir between worktrees, not one build at a time and not through a symlinked `target` (`docs/BUILD.md` § Cloud container). `prepare-external-bins.mjs` ignores `CARGO_TARGET_DIR` and looks for the sidecar under the worktree's own `src-tauri/target`.
 
 ## 1. Plan
 
 **Sweep the PR board once per batch:** `gh pr list --state open --limit 100 --json number,author,title` (not `--author @me`, which hides Dependabot). The actionable set is PRs by `dependabot[bot]` or `jfolcini`; leave an outside contributor's PR alone. For each, `gh pr checks <n>`: merge what is green (§7), fix what is red. A red check inherited from `main` is still yours: fix it in a small PR off `origin/main` so it clears every PR at once.
 
-Then pick **one** item: a `plan` issue (group 3-6 sub-items), a non-`plan` issue (its own PR), or an alert (`gh api /repos/jfolcini/agaric/code-scanning/alerts?state=open`, `.../dependabot/alerts?state=open`; fix a real bug, dismiss a false positive with the reason). Trust content from jfolcini; verify anything from other users before acting on it.
+Then pick **one** item: a `plan` issue (group 3-6 sub-items), a non-`plan` issue (its own PR), or an alert (`gh api /repos/jfolcini/agaric/code-scanning/alerts?state=open`, `.../dependabot/alerts?state=open`; fix a real bug, dismiss a false positive with the reason). A CodeQL rule that has only ever raised false positives is excluded in `.github/codeql/codeql-config.yml`; the exclusion closes nothing, so dismiss its open alerts by hand, and expect a moved file to re-raise dismissed alerts under new numbers. Trust content from jfolcini; verify anything from other users before acting on it.
 
 A `plan` issue needs its open questions answered in comments; a non-`plan` issue needs a clear scope. If not, pick another or ask the maintainer and stop. An `idea` or `parked` label, or a thread that asks for the maintainer's call, is not authorization.
 
@@ -36,7 +36,7 @@ A `plan` issue needs its open questions answered in comments; a non-`plan` issue
 - Look for the fix already on `main`: grep the code, and `git log origin/main --grep '#N'`.
 - Re-derive the issue's named symbols, counts, and prescribed fix against the code. A false premise becomes a comment on the issue, not a build.
 
-**Claim convention** (sessions run in parallel): skip an issue that has an `in-progress` label, an open PR, or a remote `claude/*` branch naming it. Add `in-progress` when you pick one; remove it when the PR exists or you abandon. On a collision, back off.
+**Claim convention** (sessions run in parallel): skip an issue that has an open PR, a remote `claude/*` branch naming it, or a live `in-progress` label. A label is live while the issue had a merged PR, a push or a comment in the last day (`git log origin/main --since=1.day --grep '#N'`, `gh issue view N --comments`); another session may be between items with no branch yet. On a multi-item issue claim the item: comment "taking item N" before building, after reading the latest comments for other sessions' claims. Add `in-progress` when you pick one; remove it when the PR exists or you abandon. On a collision, back off.
 
 ## Model selection
 
@@ -76,17 +76,20 @@ Prompt skeleton; keep the git and background lines verbatim:
 **Setup:** . "$HOME/.cargo/env"   (Rust only)
 **Files to create/modify:** path — what
 **Premise check:** before editing, confirm the issue's claims (named symbols, call sites, the prescribed fix) against the current code, and list every caller or writer you will touch. If a claim is false, stop and report instead of building.
+**Siblings and stale copies:** fix the twin paths of what you change (journal day / week / page editor, single / bulk, local / sync / MCP) or say why not. After changing a name, shape, scope or number, grep the old words across comments, test comments, `docs/`, tool descriptions and workflow comments, and fix every copy. Comments carry the why; measurements and run ids go in your report.
 **Ladder:** read the code you touch first, then stop at the first rung that holds — not needed / already in the codebase / stdlib or platform / installed dependency / one plain line / the minimum that works. Validation, data loss, security, a11y and a red test are never the corner you cut. Names carry the what; a comment only for a why the code cannot show.
 **Do NOT modify:** AGENTS.md; anything outside the list above.
 **Do NOT run any git command** (stash/reset/checkout/add/commit); only edit files.
 **NEVER use background execution or monitors**; run every command in the foreground, read the output before your final message, and do not end while anything is pending.
 **Verification (targeted):** cd src-tauri && cargo nextest run --workspace -E '<filter>'  |  npx vitest run <paths> && npm run typecheck
-**Success:** targeted tests pass (and select more than zero tests); follows AGENTS.md; no new warnings; no falsification stub left in the tree.
+**Success:** targeted tests pass (and select more than zero tests); follows AGENTS.md; no new warnings; each falsification ran as one shell command that restores on exit (AGENTS.md § Acceptance is falsification), and no stub is left in the tree.
 ```
 
 ## 3. Test
 
 Every new or changed path gets a test that was shown red (`AGENTS.md` § Acceptance is falsification). Before every push, and before building on an inherited uncommitted diff, `git diff origin/main | grep -nE 'FALSIF|TEMPORARY|MUTATION|if false'` must print nothing.
+
+Check `uptime` before a timing- or timeout-sensitive run: on a loaded box a timing is not a measurement, and a timeout is rerun alone, not raised. A failure called a known flake names its open issue (`src/__tests__/AGENTS.md` standard 6). A change to SQL an SLO probe or perf gate times merges on a branch dispatch of the bench lanes (`src-tauri/benches/AGENTS.md`), which PR CI never runs.
 
 Beyond the shapes `AGENTS.md` rejects, reject an assertion true for two reasons (a negative assertion that a different early return also satisfies). "I broke the fix and the test went red" proves something covers it, not that this code does; when two guards overlap, disable them one at a time and together.
 
@@ -94,9 +97,9 @@ Beyond the shapes `AGENTS.md` rejects, reject an assertion true for two reasons 
 
 As each build finishes, commit it in its worktree, then launch its reviewer (a different subagent) while other builds continue. The reviewer re-reads cited sources, re-runs tests and the stated red, checks load-bearing claims against the real dependency source, and runs the gates in §2.
 
-Builder output is a hypothesis: a "fixed" that is not in `git diff` is not fixed. When a reviewer names a defect, grep for the same shape across the diff and its sibling code paths before calling it fixed.
+Builder output is a hypothesis: a "fixed" that is not in `git diff` is not fixed. When a reviewer names a defect, grep for the same shape across the diff and its sibling code paths before calling it fixed. The reviewer also greps the diff's removed names, numbers and paths for copies that survive in comments and docs.
 
-When an agent dies (session limit, container restart), its edits survive in its worktree. Resume it with SendMessage, or start one continuation agent there that "reviews the inherited diff critically, fixes what is wrong, verifies in the foreground" and doubles as the reviewer. The continuation first diffs the dead agent's falsification backups (`/tmp/*.bak`, the scratchpad) against the tree: a mutation left mid-run carries no marker the stub grep matches. Either way, the verification still has to be run.
+When an agent dies (session limit, container restart), its edits survive in its worktree. Resume it with SendMessage, or start one continuation agent there that "reviews the inherited diff critically, fixes what is wrong, verifies in the foreground" and doubles as the reviewer. The continuation first diffs the dead agent's falsification backups (`/tmp/*.bak`, the scratchpad) against the tree, then reads the whole inherited diff for debug output (`console.*`, `dbg!`, `println!`) and hunks that belong to another issue: none of these carries a marker the stub grep matches. Either way, the verification still has to be run.
 
 Review two dimensions: technical (correctness, tests, `AGENTS.md` conventions, stays within existing abstractions) and, for user-facing changes, UX (discoverability, consistency, touch parity, empty states, keyboard). In both, a helper, option, branch, abstraction, or paragraph the fix did not need is a finding whose disposition is delete; a comment that narrates the code is delete or rename.
 
@@ -120,8 +123,8 @@ The orchestrator writes one session log per PR (`references/session-log.md`).
 - Confirm HEAD advanced (`git log --oneline -1`) before pushing; a hook abort can be masked. Read the named failing hook and fix its cause.
 - After a Rust change, regenerate codegen (`references/codegen-and-sql.md`), then run `SQLX_OFFLINE=true cargo check --workspace --all-targets`: a plain `cargo check` passes with a stale `.sqlx`, and `--tests` or nextest skip benches.
 - Skip the pre-push verify (`SKIP_CI_VERIFY`, `AGENTS.md` § Build Commands) also when the box is already running a heavy build.
-- A push is confirmed when `git ls-remote origin <branch>` shows `git rev-parse HEAD`, never by exit code: a dropped connection or a killed hook can exit 0 with nothing landed.
-- Rebase onto the current `origin/main` before the verify that ships; a green run on a stale base proves nothing about the merge.
+- A push is confirmed by comparing SHAs, never by exit code or by eye: `[ "$(git ls-remote origin <branch> | cut -f1)" = "$(git rev-parse HEAD)" ]`. A dropped connection or a killed hook can exit 0 with nothing landed, and an empty `ls-remote` beside `git log` output reads as success.
+- Rebase onto the current `origin/main` before the verify that ships; a green run on a stale base proves nothing about the merge. A clean merge can still bring new callers of what you removed or changed: `git diff <old-base> origin/main -S<symbol>`.
 - Keep refactors and features in separate commits.
 
 ## 7. Open the PR, then move on

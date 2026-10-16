@@ -10,7 +10,7 @@ After a parallel `git stash` / `reset` / `checkout` sweeps up another agent's ed
 
 ### Stacked PRs merge bottom-up and get no CI
 
-A PR opened against another PR's branch merges into that branch, not `main`; if the base PR already merged, the child's content never reaches `main`. Merge oldest first and check each landed (`git log origin/main -- <path>`). `ci.yml` runs only on PRs based on `main`, so a stacked PR's green rollup is the review bot alone. Recovery: rebase the open branch onto `origin/main`, force-push, and repoint with `gh api /repos/<owner>/<repo>/pulls/<N> -X PATCH -f base=main` (`gh pr edit --base` silently no-ops here; so does `gh pr edit --body`, use the same PATCH with `-f body=…`).
+A PR opened against another PR's branch merges into that branch, not `main`; if the base PR already merged, the child's content never reaches `main`. Merge oldest first and check each landed (`git log origin/main -- <path>`). `ci.yml` runs only on PRs based on `main`, so a stacked PR's green rollup is the review bot alone. Recovery: rebase the open branch onto `origin/main`, force-push, and repoint with `gh api /repos/<owner>/<repo>/pulls/<N> -X PATCH -f base=main` (`gh pr edit` no-ops here or fails on a Projects (classic) GraphQL error; change the body with the same PATCH, `-f body=…` or `--input` a JSON file).
 
 ### Scratch files read back after a long wait
 
@@ -23,6 +23,12 @@ Worktrees share one `.git`, so `origin/main` can advance under you. Resetting on
 ### A commit on a Dependabot branch survives only if you make it survive
 
 Dependabot force-pushes its branch on rebase or supersession, sometimes under a new PR number, and a human commit on it vanishes. A fix that stands alone (a test assertion, an `overrides` entry) goes in its own PR off `main`. One that cannot (a relock without the bump is meaningless) goes on the Dependabot branch: comment on the PR with what broke and what you did, verify the push by SHA, and merge with `gh pr merge <n> --squash --subject "<human commit subject>"` so the diagnosis is the headline.
+
+Never take a Dependabot `Cargo.lock` verbatim: it is a snapshot of an older `main` and reverts any bump landed since (an advisory fix). Apply its lock hunks three-way onto `main`; a local `cargo update -p X --precise V` can re-point unrelated edges, so read the lock diff either way.
+
+### A staged change carried across branches
+
+After a failed commit, never `git switch` with changes still staged: they ride into the other branch. Finish or unstage first.
 
 ## Branches and `gh` in a cloud session
 
@@ -52,7 +58,13 @@ GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` an
 - Bumping a ratchet baseline (`dynamic-sql-baseline.txt`, `table-ownership-baseline.txt`) is a last resort. "The safe construct can't express this" is usually an arity problem: N fixed-arity `query_scalar!` call sites beat one dynamic call. If you do bump, say what you tried.
 - Broken rustdoc intra-doc links red the push (`cargo-doc-links` hook). Links in a `mod x;` declaration resolve in the parent's scope.
 
+## Baseline reds in a worktree
+
+A worktree's `node_modules` is a symlink to the main checkout's (`scripts/seed-worktree.sh`), which lags after a lockfile change: run `npm ci` in the main checkout. Before chasing a typecheck or Playwright red outside your diff, reproduce it on a clean `origin/main` worktree.
+
 ## Guards keyed on paths
+
+Removing the last file of a kind (the last `.py`) trips a fail-closed "found zero" wiring check and leaves dead extension lists: grep `scripts/` and `prek.toml` for the extension first.
 
 Splitting a file breaks path-keyed guards even for a verbatim move. Rebase onto `origin/main` first so the guards run locally, then:
 
@@ -64,3 +76,4 @@ Splitting a file breaks path-keyed guards even for a verbatim move. Rebase onto 
 
 - Never pipe a build, test run, or push through `tail` or `head`, and never read a piped exit code: `$?` is the last stage's, and a truncated log hides the failure. Redirect to a file and read the summary line.
 - `pgrep -f` / `pkill -f` match their own shell's command line. Find a process by port or PID.
+- Run a changed `.mjs` guard and its self-test on Node 22 as well as 24: 22 is the `engines` floor, and `node:sqlite` warns there only.

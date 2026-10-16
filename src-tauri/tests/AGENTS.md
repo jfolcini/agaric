@@ -9,7 +9,7 @@
 | Unit | `#[cfg(test)] mod tests` in the module, or a sibling `tests.rs` | Single-module logic |
 | Integration | `src-tauri/src/integration_tests.rs`, `src-tauri/tests/command_integration/` | Cross-module pipelines; every `*_inner` command's API contract (happy path, error variants, edge cases, op-log verification) |
 | Conformance | `src-tauri/tests/command_integration/conformance.rs`, `conformance_query.rs` | Backend-authored fixtures asserted by both the Rust backend and the TS mock |
-| Sync | `src-tauri/agaric-sync/src/` (inline `mod tests`), `src-tauri/agaric-sync/src/sync_daemon/tests.rs`, `src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer_tests.rs` | mDNS wire format, transport, discovery lifecycle, peer flows, snapshot transfer |
+| Sync | `src-tauri/agaric-sync/src/` (inline `mod tests`), `src-tauri/agaric-sync/src/sync_daemon/tests.rs`, `src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer_tests.rs` | mDNS wire format, transport, discovery lifecycle, peer flows, snapshot transfer. A pairing or handshake test runs both dial directions: which side dials first is an mDNS race |
 | Bench | `src-tauri/benches/*.rs` (`harness = false`) | Criterion microbenchmarks; weekly CI lane only, see `src-tauri/benches/AGENTS.md` |
 
 ### The three integration-test binaries
@@ -38,6 +38,8 @@ Selectors that silently run nothing or the wrong set:
 - `cargo test` filters are substrings: `integration_tests` also selects `command_integration_tests`.
 - A test file not declared with `mod` in its `main.rs` (or parent module) is never compiled, so its filter matches zero tests.
 - Read the reported test count, not the exit code. When the only failures are the tests you just wrote, suspect a stale binary from an OOM-killed build: compare the count against the source, then `cargo clean -p <crate>` and rerun before touching code.
+
+nextest kills a test at 2x30 s unless `src-tauri/.config/nextest.toml` overrides it. A test slow by construction (scale seeding, replaying every fixture) gets an override there with its reason; a terminated first try that passes on retry is already at the edge under load. A seed helper that runs once per seeded row uses a keyed statement: `WHERE ?1 IS NULL OR page_id = ?1` cannot use the primary key, so seeding goes quadratic.
 
 ## Process-global state
 
@@ -106,10 +108,12 @@ assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob));   // typed
 
 - The fixture INSERTs into a derived table (`block_tag_refs`, a cache) instead of seeding the inputs through the production write path, so it reaches a state production never produces.
 - An FK `ON DELETE CASCADE` removes the rows the code under test was supposed to remove.
-- The test runs an inline copy of the SQL instead of calling the production function.
+- The test runs an inline copy of the SQL instead of calling the production function. An `EXPLAIN QUERY PLAN` test included: it explains the production string or nothing.
 - The assertion holds for two reasons (an absence check on a message nothing emits; a reused block that already had the asserted state). Seed a fresh block for each pin.
 - A scale or perf test sized too small for the regression to show. Inject the regression and confirm it reds.
 - Two tasks meant to overlap, ordered by a sleep. Use a readiness handshake (`tokio::sync::oneshot`).
+
+Tests and fresh vaults have no `sqlite_stat1` (only `maintenance.rs`'s periodic `PRAGMA optimize` writes it), so the planner may drive a join from any indexable term, such as `space_id` through `idx_blocks_space_type`. Put a unary `+` on a column term that must stay a filter (`+src.space_id`), and pin the plan on a database with no stats.
 
 `#[should_panic]` on a `debug_assert!` needs `#[cfg(debug_assertions)]`, or it fails under `just test-be-release`.
 
@@ -153,11 +157,10 @@ npx oxfmt --write conformance/fixtures/   # from the repo root
 - The update run rewrites every fixture in serde's layout. The `oxfmt` pass puts untouched ones back byte-for-byte; `git checkout -- conformance/fixtures/` would also revert the fixture you meant to change. Never parse and redump fixture JSON with Python: it expands arrays and escapes non-ASCII.
 - A payload-replayed op pins the resulting state, not the command's return value. When the return value matters, use `"via": "command"`.
 - Seed so the wrong answer differs from insertion order; otherwise an unsorted result passes an ordering pin.
+- The markdown renders are backend-only by decision (#5071): `QUERY_STEPS_BACKEND_ONLY` in `conformance-coverage.test.ts`, each step pinned against a backend-authored `<fixture>.<step>.txt` sibling in `conformance/fixtures/`.
+- Both runners seed through raw SQL (`conformance.rs`, `src/lib/tauri-mock/__tests__/conformance-replay.ts`), skipping the repairs a production op runs. A change that removes a repair or adds a derived column updates both seeders.
+- `conformance_fuzz` is `#[ignore]`d and runs only in the weekly `bench-perf-gates` lane. After changing what a command requires or the mock refuses, run it: `cargo nextest run --workspace --run-ignored only -E 'test(conformance_fuzz)'`.
 
 ## Mutants
 
 An equivalent (unkillable) mutant is recorded in its tracking issue's `mutation-accepted` block (`scripts/file-mutation-survivors.mjs`), not chased with tests.
-
-## Benchmarks
-
-See [`../benches/AGENTS.md`](../benches/AGENTS.md). `cargo check --bench` proves nothing about a bench, and no PR gate runs them.

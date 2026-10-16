@@ -40,7 +40,7 @@ A few specifics for that environment:
 ### Cloud container: disk, memory, tools
 
 - **Disk.** Every worktree builds its own large `target/`; check `df -h` before a full run, and reclaim with `rm -rf src-tauri/target/debug/incremental` or by deleting finished worktrees' `target/`. The dev profile's `split-debuginfo = "unpacked"` (`src-tauri/Cargo.toml`) leaves debug info in per-object `*.o` / `*.dwo` files under `src-tauri/target/debug/deps`, and stale ones pile up across builds until they fill most of the disk allowance; between cargo runs, `find src-tauri/target/debug/deps -maxdepth 1 -type f \( -name '*.o' -o -name '*.dwo' \) -mmin +30 -delete` reclaims them safely (binaries read them only for debug symbols). `CARGO_PROFILE_DEV_DEBUG=0` (test builds inherit it) shrinks the tree; set it for the whole session, because toggling it rebuilds everything. "linking with `cc` failed" mid-build usually means ENOSPC, not a broken toolchain.
-- **Never share `CARGO_TARGET_DIR` between worktrees.** Workspace crates get the same artifact names in every checkout, so one tree can take another's artifacts as fresh and test the wrong source.
+- **Never share a target dir between worktrees**, through `CARGO_TARGET_DIR` or a symlinked `target`, not even one build at a time. Workspace crates get the same artifact names in every checkout, so one tree takes another's artifacts as fresh and builds or tests the wrong source. Recovery: `cargo clean -p` every workspace member in the shared dir, and re-run every gate that went through it.
 - **Memory.** One cargo process at a time ([AGENTS.md § Pre-commit & CI](../AGENTS.md#pre-commit--ci)). A killed `just gen-sqlx` can leave `.sqlx/` entries deleted: `git checkout -- src-tauri/.sqlx src-tauri/agaric-store/.sqlx src-tauri/agaric-engine/.sqlx src-tauri/agaric-sync/.sqlx`, then re-run it.
 - **cargo-nextest when binstall is blocked.** binstall's source-build fallback needs a newer rustc than the pin (see [Hook toolchain](#hook-toolchain)); use the prebuilt tarball: `curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C "${CARGO_HOME:-$HOME/.cargo}/bin"`.
 
@@ -85,11 +85,21 @@ Xcode Command Line Tools (`xcode-select --install`). The rest installs via `brew
 ### Android
 
 - Android SDK (cmdline-tools, platform-tools, build-tools).
-- Android NDK r27 (any 27.x patch; CI pins a specific build but local can float).
+- Android NDK r27 (any 27.x patch; CI pins `27.2.12479018`).
 - JDK 17.
 - Rust targets: `rustup target add aarch64-linux-android x86_64-linux-android` (32-bit ABIs are intentionally not supported).
 
 Set `ANDROID_HOME` / `ANDROID_NDK_HOME` per Tauri's [Android setup](https://v2.tauri.app/start/prerequisites/#android).
+
+`sdkmanager` is now a deprecated wrapper around the `android` CLI, whose first run downloads it to `~/.android/bin` and hangs silently meanwhile. Package names take slashes, and licenses need no separate step:
+
+```bash
+android sdk install platform-tools platforms/android-36 build-tools/36.0.0 ndk/27.2.12479018 \
+  emulator system-images/android-36/google_apis/x86_64
+avdmanager create avd -n spike_test -k "system-images;android-36;google_apis;x86_64"
+```
+
+`android emulator create` can neither name the AVD nor pick its image, so the `spike_test` AVD that [AGENTS.md § Android](../AGENTS.md#android) launches comes from `avdmanager`.
 
 ### Developer tools (prek hook host-binaries)
 
@@ -171,7 +181,7 @@ cargo bench --bench interactive_slo              # warm latency mean budgets at 
 
 - **Frontend** tests use Vitest + happy-dom (default; some files opt into jsdom) + `@testing-library/react`. Every component test must include an `axe(container)` audit (enforced by the `axe-presence` prek hook).
 - **Backend** tests use `cargo-nextest` with insta snapshots. Materializer tests use the `test_pool()` + `TempDir` fixture; multi-thread runtime is `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`. Snapshot updates: `cargo insta review`.
-- **E2E** specs cover smoke flows, editor lifecycle, keyboard navigation, sync round-trip, and view dispatches. Specs live in `e2e/`.
+- **E2E** specs cover smoke flows, editor lifecycle, keyboard navigation, sync round-trip, and view dispatches. Specs live in `e2e/`. The real-backend lane (`e2e-tauri/`) also needs WebKitGTK's driver, Xvfb, D-Bus and a window manager; its recipe is in [`e2e-tauri/AGENTS.md`](../e2e-tauri/AGENTS.md#running).
 - **Bench gates**: the product target is ≤200 ms p95 for interactive commands at 100K blocks; `interactive_slo` supports it by enforcing an accumulated mean against the per-command budgets defined in that bench, not by measuring per-call p95. It runs warm in the scheduled `bench-slo` lane. The sharded `bench-smoke` lane **smoke-runs every non-SLO bench once** (`--test`) so a drifted seed/fixture fails CI instead of rotting silently (#978 — validates fixtures, not perf); `interactive_slo` is deliberately excluded because cold `--test` timings can trip its budgets falsely. Run either lane by dispatching `scheduled-deep-checks.yml` rather than building the release bench graph locally; see `src-tauri/benches/AGENTS.md`.
 
 ### Mutation testing (nightly)
@@ -267,7 +277,7 @@ The guard also checks the second half of the requirement on APKs: a library the 
 
 ## Releasing
 
-One command, from a clean `main`:
+One command, from a clean `main`. First burn down, in an ordinary PR, every kill-date marker at or below the new version (`git grep -n 'REMOVE[ ]AFTER'`): the `remove-after-markers` hook fails the bump commit itself.
 
 ```bash
 scripts/release.sh <new-version>          # e.g. scripts/release.sh 0.2.1
