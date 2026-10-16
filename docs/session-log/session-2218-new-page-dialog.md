@@ -58,4 +58,7 @@ exists".
 
 **Suites:** full vitest, typecheck and lint in review; Playwright on
 `new-page-dialog`, `pages-view`, `keyboard-shortcuts` and `mobile-overflow`
-after the fixes. The `e2e-tauri` specs and helpers changed but were not run.
+after the fixes. The `e2e-tauri` specs and helpers changed but were not run
+locally; CI's real-backend lane caught one spec,
+`pages-most-linked.e2e.ts`, still waiting for the field in the Pages view,
+and it now opens the dialog.

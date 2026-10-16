@@ -7,9 +7,9 @@
 // counts the links on every read, so only this lane shows the stored count the
 // sort reads lifting a page linked from two others to the top.
 //
-// Every page is made through the Pages view's "New page" field. RIVAL is made
-// first and TARGET after it, so with no counts the id tie-break would put RIVAL
-// above TARGET; TARGET links RIVAL once, and two later pages link TARGET.
+// Every page is made through the New page dialog. RIVAL is made first and
+// TARGET after it, so with no counts the id tie-break would put RIVAL above
+// TARGET; TARGET links RIVAL once, and two later pages link TARGET.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
@@ -20,6 +20,7 @@ import {
   NAV_TIMEOUT,
   chooseSelectOption,
   navigateTo,
+  openNewPageDialog,
   runScopedMarker,
   typeInputVerified,
   typeMarkerVerified,
@@ -31,9 +32,9 @@ const RIVAL = runScopedMarker('wdio-rival')
 const TARGET = runScopedMarker('wdio-target')
 const SOURCES = [runScopedMarker('wdio-source-one'), runScopedMarker('wdio-source-two')]
 
-/** Make a page from the Pages view; it opens with its first block in the editor. */
+/** Make a page in the New page dialog; it opens with its first block in the editor. */
 async function createPage(title: string): Promise<void> {
-  await navigateTo('Pages')
+  await openNewPageDialog()
   await typeInputVerified('#new-page-name', title)
   await browser.keys(['Enter'])
   await browser.waitUntil(async () => (await $('[aria-label="Page title"]').getText()) === title, {
