@@ -29,12 +29,19 @@ import {
   openNewPage,
   reopenPageByTitle,
   runScopedMarker,
-  typeInputVerified,
   typeMarkerVerified,
   waitForAppReady,
   waitForToast,
 } from './helpers'
-import { type SyncPeer, readPairingQr, startSyncPeer } from './sync-peer'
+import {
+  type SyncPeer,
+  openPairing,
+  openSyncSettings,
+  peerRow,
+  readPairingQr,
+  setPeerAddress,
+  startSyncPeer,
+} from './sync-peer'
 
 const APP_EDIT = runScopedMarker('wdio-sync-app-edit')
 const PEER_EDIT = runScopedMarker('wdio-sync-remote-edit')
@@ -45,24 +52,6 @@ const PEER_VALUE = runScopedMarker('wdio-sync-remote-prop')
 const APP_TAIL = runScopedMarker('wdio-sync-app-tail')
 const PEER_HEAD = runScopedMarker('wdio-sync-remote-head')
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
-
-/** Settings › Sync & devices. */
-async function openSyncSettings(): Promise<void> {
-  await navigateTo('Settings')
-  const tab = $('#settings-tab-sync')
-  await tab.waitForClickable({ timeout: NAV_TIMEOUT })
-  await tab.click()
-  await $('[data-testid="settings-panel-sync"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
-}
-
-/** Open the pairing dialog from the sync settings; resolves to the passphrase it shows. */
-async function openPairing(): Promise<string> {
-  const pairButton = $('button*=Pair new device')
-  await pairButton.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await pairButton.click()
-  await $('[data-testid="pairing-qr-code"] svg path').waitForExist({ timeout: ACTION_TIMEOUT })
-  return $('.pairing-passphrase').getText()
-}
 
 /** Close the open pairing dialog through its "Cancel pairing?" guard. */
 async function cancelPairing(): Promise<void> {
@@ -75,11 +64,6 @@ async function cancelPairing(): Promise<void> {
     reverse: true,
     timeout: ACTION_TIMEOUT,
   })
-}
-
-/** The device list's row for a peer that sent no name, so shows its id. */
-function peerRow(deviceId: string) {
-  return $(`//div[contains(@class, "device-peer-item")][contains(., "${deviceId.slice(0, 12)}")]`)
 }
 
 /** Press the open device list's "Sync now" for `deviceId`. */
@@ -252,15 +236,7 @@ describe('Agaric real-backend two-device sync (#5365)', () => {
 
     // Peer → app: the peer writes on the same page, then the app dials it.
     const peerBlockId = await peer.createBlock(copy.parentId, PEER_EDIT)
-    await openSyncSettings()
-    const editAddress = peerRow(remote.deviceId).$('button[aria-label^="Edit address for"]')
-    await editAddress.waitForClickable({ timeout: NAV_TIMEOUT })
-    await editAddress.click()
-    await typeInputVerified('input[aria-label="Address (host:port)"]', remote.address)
-    const save = $('[role="dialog"]').$('button=Save')
-    await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await save.click()
-    await waitForToast('Address updated')
+    await setPeerAddress(remote.deviceId, remote.address)
 
     // The pairing and the address are the backend's, read back after a round trip.
     await navigateTo('Journal')

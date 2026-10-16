@@ -278,8 +278,8 @@ jobs:
         run: npm run tauri -- build --debug --no-bundle
 
       - name: Build the sync peer
-        # The second device `e2e-tauri/sync-two-device.e2e.ts` pairs the app
-        # with (#5365): a headless vault on the app's own sync daemon. Its own
+        # The second device the sync specs pair the app with (#5365): a
+        # headless vault on the app's own sync daemon. Its own
         # step because `tauri build` builds only the app crate; it recompiles
         # the tauri crates once more, without the CLI's `custom-protocol`.
         working-directory: src-tauri
