@@ -209,7 +209,9 @@ export function SettingsView(): React.ReactElement {
           <SelectContent className="max-h-(--radix-select-content-available-height)">
             {TAB_GROUPS.map((group) => (
               <SelectGroup key={group.id}>
-                <SelectLabel>{t(group.labelKey)}</SelectLabel>
+                <SelectLabel className="text-sm font-semibold text-foreground">
+                  {t(group.labelKey)}
+                </SelectLabel>
                 {group.tabs.map((tab) => (
                   <SelectItem key={tab} value={tab}>
                     {t(TAB_LABEL_KEYS[tab])}
@@ -243,7 +245,7 @@ export function SettingsView(): React.ReactElement {
               <span
                 id={`settings-group-${group.id}`}
                 role="presentation"
-                className="px-3 pb-1 text-xs font-medium text-muted-foreground"
+                className="px-3 pb-1 text-sm font-semibold text-foreground"
               >
                 {t(group.labelKey)}
               </span>
