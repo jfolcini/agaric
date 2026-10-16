@@ -30,9 +30,10 @@ use super::*;
 ///
 /// The REMOTE / single-op path advances the cursor so
 /// `materialized_through_seq` tracks applied state. The LOCAL command path
-/// deliberately does NOT (#1257): it leaves the cursor put so boot replay
-/// re-applies every LOCAL op idempotently — the safety net while local
-/// engine-apply hardens.
+/// deliberately does NOT (#1257): the snapshot pass moves the cursor past
+/// local ops once the engine state holding them is persisted
+/// (`loro::snapshot::save_engines_and_advance_cursor`, #5418), and boot
+/// replay re-applies the ones committed after it.
 ///
 /// Returns the [`ApplyEffects`] from `apply_op_tx` UNCHANGED so the caller runs
 /// the post-commit cohort fan-out (restore/delete descendants + ancestors)

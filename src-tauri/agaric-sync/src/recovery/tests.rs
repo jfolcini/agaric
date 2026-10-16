@@ -3369,20 +3369,14 @@ type ProjectedRow = (String, String, String, i64, String, String, bool);
 /// children, then a delete of the last child; `total` ops in all. Both halves
 /// of a two-chunk replay are mixed, so the chunk transaction, the replay sink
 /// and the end-of-replay reproject all take part.
-async fn seed_oracle_workload(
-    pool: &SqlitePool,
-    device_id: &str,
-    page_id: &str,
-    child_ids: &[String],
-    total: usize,
-) {
+fn oracle_workload(page_id: &str, child_ids: &[String], total: usize) -> Vec<OpPayload> {
     use agaric_store::op::{DeleteBlockPayload, MoveBlockPayload};
 
     let creates = child_ids.len();
-    for (k, id) in child_ids.iter().enumerate() {
-        append_local_op(
-            pool,
-            device_id,
+    let mut ops: Vec<OpPayload> = child_ids
+        .iter()
+        .enumerate()
+        .map(|(k, id)| {
             OpPayload::CreateBlock(CreateBlockPayload {
                 block_id: BlockId::from_trusted(id),
                 block_type: "content".into(),
@@ -3390,46 +3384,53 @@ async fn seed_oracle_workload(
                 position: None,
                 index: Some(i64::try_from(k).unwrap()),
                 content: format!("c{k}"),
-            }),
-        )
-        .await
-        .unwrap();
-    }
-    append_local_op(
-        pool,
-        device_id,
-        OpPayload::MoveBlock(MoveBlockPayload {
-            block_id: BlockId::from_trusted(&child_ids[0]),
-            new_parent_id: Some(BlockId::from_trusted(page_id)),
-            new_position: i64::try_from(creates).unwrap(),
-            new_index: Some(i64::try_from(creates - 1).unwrap()),
-        }),
-    )
-    .await
-    .unwrap();
+            })
+        })
+        .collect();
+    ops.push(OpPayload::MoveBlock(MoveBlockPayload {
+        block_id: BlockId::from_trusted(&child_ids[0]),
+        new_parent_id: Some(BlockId::from_trusted(page_id)),
+        new_position: i64::try_from(creates).unwrap(),
+        new_index: Some(i64::try_from(creates - 1).unwrap()),
+    }));
     for e in 0..(total - creates - 2) {
         let id = &child_ids[e % creates];
-        append_local_op(
-            pool,
-            device_id,
-            OpPayload::EditBlock(EditBlockPayload {
-                block_id: BlockId::from_trusted(id),
-                to_text: format!("edit {e} of {id}"),
-                prev_edit: None,
-            }),
-        )
-        .await
-        .unwrap();
+        ops.push(OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::from_trusted(id),
+            to_text: format!("edit {e} of {id}"),
+            prev_edit: None,
+        }));
     }
-    append_local_op(
-        pool,
-        device_id,
-        OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: BlockId::from_trusted(&child_ids[creates - 1]),
-        }),
+    ops.push(OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::from_trusted(&child_ids[creates - 1]),
+    }));
+    ops
+}
+
+/// #5418 — append the oracle workload to the op log without applying it: the
+/// state a boot finds after a session whose ops no snapshot holds.
+async fn seed_oracle_workload(
+    pool: &SqlitePool,
+    device_id: &str,
+    page_id: &str,
+    child_ids: &[String],
+    total: usize,
+) {
+    for op in oracle_workload(page_id, child_ids, total) {
+        append_local_op(pool, device_id, op).await.unwrap();
+    }
+}
+
+/// Every `blocks` row, as the #5418 oracle compares them.
+async fn projected_rows(pool: &SqlitePool) -> Vec<ProjectedRow> {
+    sqlx::query_as::<_, ProjectedRow>(
+        "SELECT id, COALESCE(parent_id, ''), content, COALESCE(position, -1), \
+                COALESCE(page_id, ''), COALESCE(space_id, ''), deleted_at IS NOT NULL \
+         FROM blocks ORDER BY id",
     )
+    .fetch_all(pool)
     .await
-    .unwrap();
+    .unwrap()
 }
 
 /// #5418 — seed the oracle workload on a fresh vault, replay it chunked
@@ -3456,14 +3457,7 @@ async fn replay_oracle_run(
     };
     let elapsed = started.elapsed();
 
-    let rows = sqlx::query_as::<_, ProjectedRow>(
-        "SELECT id, COALESCE(parent_id, ''), content, COALESCE(position, -1), \
-                COALESCE(page_id, ''), COALESCE(space_id, ''), deleted_at IS NOT NULL \
-         FROM blocks ORDER BY id",
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap();
+    let rows = projected_rows(&pool).await;
     let cursor = read_cursor(&pool).await;
     mat.shutdown();
     (report, rows, cursor, elapsed)
@@ -3552,6 +3546,157 @@ async fn replay_timing_5418() {
             eprintln!("replay_timing_5418: ops={total} per_op={per_op} elapsed={elapsed:?}");
         }
     }
+}
+
+/// #5418 — apply `payload` the way a LOCAL command does: append it and apply
+/// it to SQL and the engine in one `BEGIN IMMEDIATE` transaction, leaving the
+/// apply cursor where it is, then hand its index fan-out to the background
+/// queue.
+async fn apply_like_a_command(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    device_id: &str,
+    payload: OpPayload,
+) {
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "test_local_apply_5418")
+        .await
+        .unwrap();
+    let record = agaric_store::op_log::append_local_op_in_tx(
+        &mut tx,
+        device_id,
+        payload,
+        agaric_store::db::now_ms(),
+    )
+    .await
+    .unwrap();
+    agaric_engine::apply::kernel::apply_op_projected(&mut tx, &record, mat.loro_state(), false)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    mat.dispatch_background_or_warn(&record);
+}
+
+/// One block as the #5418 crash test compares engines: what the engine reads
+/// back for it, and its tombstone.
+type EngineBlock = (
+    String,
+    Option<agaric_engine::loro::engine::BlockSnapshot>,
+    Option<String>,
+);
+
+fn engine_blocks(
+    mat: &Materializer,
+    device_id: &str,
+    space_id: &str,
+    ids: &[&str],
+) -> Vec<EngineBlock> {
+    let space = agaric_store::space::SpaceId::from_trusted(space_id);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, device_id)
+        .unwrap();
+    let engine = guard.engine_mut();
+    ids.iter()
+        .map(|id| {
+            (
+                (*id).to_string(),
+                engine.read_block(id).unwrap(),
+                engine.read_deleted_at(id).unwrap(),
+            )
+        })
+        .collect()
+}
+
+/// #5418 — a crash after a snapshot pass replays only the ops that pass did
+/// not persist, and still recovers the session's state.
+///
+/// The session applies ops the way commands do (SQL and engine in each op's
+/// own transaction, cursor untouched), runs one snapshot pass, applies more,
+/// and dies without the exit save. Boot rehydrates the engine from the pass's
+/// snapshot and replays from the cursor that pass left. The tail must come
+/// back whole — engine and SQL equal to the session's — while the ops the
+/// snapshot holds are not replayed again, bar the one its watermark withholds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_after_a_snapshot_pass_replays_only_the_tail_5418() {
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005418PG";
+    const TOTAL: usize = 30;
+    const SNAPSHOTTED: usize = 5;
+    let device_id = "dev-5418-crash";
+    let child_ids = oracle_child_ids(10);
+    let mut ids: Vec<&str> = child_ids.iter().map(String::as_str).collect();
+    ids.push(PAGE_ID);
+    let mut snapshotted = oracle_workload(PAGE_ID, &child_ids, TOTAL);
+    // Children 5..=9 are created after the pass, then moved among and edited,
+    // against siblings only the snapshot holds. The workload's final delete is
+    // left out: a delete replayed over SQL that already holds it resolves no
+    // space (`resolve_block_space` skips tombstones) and never reaches the
+    // engine, a replay gap the cursor does not change.
+    let mut tail = snapshotted.split_off(SNAPSHOTTED);
+    tail.pop();
+    let (pool, _dir) = test_pool().await;
+
+    let session = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
+    for op in snapshotted {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let saved =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    assert_eq!(saved, 1, "the pass persists the one space");
+    let tail_len = tail.len();
+    for op in tail {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let session_engine = engine_blocks(&session, device_id, SPACE, &ids);
+    let session_sql = projected_rows(&pool).await;
+    // The crash: no exit save, so the tail is in the op log and SQL only.
+    session.shutdown();
+    drop(session);
+
+    let boot = Materializer::new(pool.clone());
+    let registry = &boot.loro_state().registry;
+    let rehydrated =
+        agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id).await;
+    assert_eq!(
+        rehydrated, 1,
+        "the pass's snapshot is what boot starts from"
+    );
+    super::boot::reset_recovery_guard();
+    let report = recover_at_boot(&pool, device_id, &boot, registry)
+        .await
+        .unwrap();
+    boot.flush_background().await.unwrap();
+
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+    assert_eq!(
+        engine_blocks(&boot, device_id, SPACE, &ids),
+        session_engine,
+        "the engine must hold every op the session applied: the ones the snapshot \
+         lacks come back only through replay"
+    );
+    assert_eq!(
+        projected_rows(&pool).await,
+        session_sql,
+        "SQL must match the session's"
+    );
+    assert_eq!(
+        report.ops_replayed,
+        u64::try_from(tail_len + 1).unwrap(),
+        "boot replays what the pass did not persist plus the one op its watermark \
+         withholds, not the session"
+    );
+    assert_eq!(
+        read_cursor(&pool).await,
+        i64::try_from(TOTAL - 1).unwrap(),
+        "replay catches the cursor up to the head"
+    );
+    boot.shutdown();
 }
 
 /// #5418 — one bad op inside a chunk. The chunk's transaction rolls back and

@@ -94,9 +94,9 @@ pub enum SqlOnlyFallbackReason {
     ///
     /// * **#1257 reconciliation window** — an earlier op for the block
     ///   was projected SQL-only (e.g. created before its space resolved),
-    ///   so the engine never saw it; the LOCAL path does not advance the
-    ///   apply cursor, so boot-replay re-applies the full log and
-    ///   reconciles the engine.
+    ///   so the engine never saw it; boot replay re-applies the ops after
+    ///   the last snapshot pass (#5418) and can reconcile the engine for
+    ///   those.
     /// * **Cross-space move** — the target parent lives in a DIFFERENT
     ///   space's tree, which the block's own single-space engine cannot
     ///   reference; SQL is authoritative for the reparent and each

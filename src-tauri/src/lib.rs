@@ -1096,7 +1096,6 @@ fn build_materializer(
 ) -> (
     agaric_sync::foreground::LifecycleHooks,
     materializer::Materializer,
-    std::sync::Arc<agaric_engine::loro::shared::LoroState>,
 ) {
     use agaric_sync::foreground::LifecycleHooks;
     use materializer::Materializer;
@@ -1106,9 +1105,7 @@ fn build_materializer(
     // therefore exists before the materializer can apply its first op —
     // and before recovery replay (which receives the materializer) — by
     // construction, replacing the old hand-sequenced
-    // `shared::init()`-before-recovery comment. The same `Arc` is
-    // registered as Tauri managed state later in setup for the
-    // `RunEvent::Exit` snapshot save.
+    // `shared::init()`-before-recovery comment.
     let loro_state = std::sync::Arc::new(agaric_engine::loro::shared::LoroState::new());
 
     // Create materializer — bg cache rebuilds read from read pool, write to write pool (P-8)
@@ -1125,7 +1122,7 @@ fn build_materializer(
         pools.write.clone(),
         pools.read.clone(),
         lifecycle.clone(),
-        std::sync::Arc::clone(&loro_state),
+        loro_state,
         tauri::async_runtime::handle().inner().clone(),
     );
     // C-3c — register `app_data_dir` so the
@@ -1145,7 +1142,7 @@ fn build_materializer(
     // reclaimed by the time an undo arrives.
     materializer.set_app_data_dir(app_data_dir.to_path_buf());
 
-    (lifecycle, materializer, loro_state)
+    (lifecycle, materializer)
 }
 
 /// Boot-phase 5 — synchronous Loro init + rehydrate, crash recovery, and
@@ -1729,7 +1726,7 @@ fn tombstone_purge_job(
     }
 }
 
-/// Issue #157 sub-item I — fire save_all_engines every
+/// Issue #157 sub-item I — fire a snapshot pass every
 /// 60 s while backgrounded AND when the registry's
 /// dirty-engines proxy counter is non-zero.
 fn loro_snapshot_if_dirty_job(
@@ -1742,7 +1739,7 @@ fn loro_snapshot_if_dirty_job(
     // #2249: the maintenance predicate + job read engine state through
     // clones of the materializer's Arc (no process global).
     let loro_state_for_pred = Arc::clone(materializer.loro_state());
-    let loro_state_for_snapshot_job = Arc::clone(materializer.loro_state());
+    let materializer_for_snapshot_job = materializer.clone();
     maintenance::MaintenanceJob {
         name: "loro_snapshot_if_dirty",
         interval: std::time::Duration::from_secs(60),
@@ -1758,8 +1755,8 @@ fn loro_snapshot_if_dirty_job(
         }),
         run: Box::new(move || {
             let pool = loro_snapshot_write_pool.clone();
-            let state = Arc::clone(&loro_state_for_snapshot_job);
-            Box::pin(async move { maintenance::loro_snapshot_if_dirty(&pool, &state).await })
+            let materializer = materializer_for_snapshot_job.clone();
+            Box::pin(async move { maintenance::loro_snapshot_if_dirty(&pool, &materializer).await })
         }),
     }
 }
@@ -1958,7 +1955,7 @@ fn spawn_background_tasks(
         pools.write.clone(),
         snapshot_shutdown,
         agaric_engine::loro::snapshot::SNAPSHOT_INTERVAL_SECS,
-        Arc::clone(materializer.loro_state()),
+        materializer.clone(),
         // `agaric-engine` stays tauri-free (#2621, wave E1): the app injects the
         // Tauri async runtime as the executor here.
         |fut| {
@@ -2830,11 +2827,7 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // C-2b: build the materializer BEFORE recovery so the boot-time
     // op-log replay can drive ApplyOp tasks through the foreground queue.
-    let (lifecycle, materializer, loro_state) = build_materializer(&pools, &app_data_dir);
-    // #2249: expose engine state to the Tauri state graph — the
-    // `RunEvent::Exit` handler resolves it via `try_state` for the
-    // shutdown snapshot save.
-    app.manage(std::sync::Arc::clone(&loro_state));
+    let (lifecycle, materializer) = build_materializer(&pools, &app_data_dir);
 
     // Loro init + rehydrate, crash recovery, and per-space bootstrap
     // (bootstrap_spaces is boot-fatal).
@@ -3105,18 +3098,19 @@ pub fn run() {
         .run(|app_handle, event| {
             // Persist Loro snapshots on shutdown so the next boot
             // rehydrates with no replay gap — a clean exit leaves
-            // `loro_doc_state` exactly current with the apply cursor,
+            // `loro_doc_state` and the apply cursor at the op-log head,
             // which the periodic 5-minute task alone cannot guarantee.
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;
-                if let (Some(state), Some(pool)) = (
-                    app_handle
-                        .try_state::<std::sync::Arc<agaric_engine::loro::shared::LoroState>>()
-                        .map(|s| std::sync::Arc::clone(&s)),
+                if let (Some(materializer), Some(pool)) = (
+                    app_handle.try_state::<materializer::Materializer>(),
                     app_handle.try_state::<WritePool>(),
                 ) {
                     let saved = tauri::async_runtime::block_on(
-                        agaric_engine::loro::snapshot::save_all_engines(&pool.0, &state.registry),
+                        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(
+                            &pool.0,
+                            &materializer,
+                        ),
                     );
                     tracing::info!(saved, "loro: persisted snapshots on exit");
                 }

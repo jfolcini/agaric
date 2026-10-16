@@ -104,10 +104,10 @@ pub struct ReplayReport {
 /// `loro_doc_state.applied_through_seq` watermarks that #3309 exists to keep
 /// fresh. If compaction purges this device's op_log to zero surviving rows,
 /// `max_seq` is 0, so the clamp lands the cursor at 0; `snapshot_watermark`
-/// is `max(cursor - 1, 0)`, so any `save_all_engines` pass firing in that
-/// window writes `applied_through_seq = 0` over a previously-high watermark
-/// for every DIRTY space (the `INSERT OR REPLACE` in that pass is
-/// unconditional — unlike `advance_clean_space_watermarks`, which re-asserts
+/// is one below the op-log head, floored at 0, so any `save_all_engines`
+/// pass firing in that window writes `applied_through_seq = 0` over a
+/// previously-high watermark for every DIRTY space (the `INSERT OR REPLACE`
+/// in that pass is unconditional — unlike `advance_clean_space_watermarks`, which re-asserts
 /// `applied_through_seq <` precisely to avoid walking a watermark back). A
 /// later boot whose cursor has advanced again then rewinds to 0 and re-fires
 /// the #619 under-rebuild `error!`.
@@ -1466,7 +1466,7 @@ mod tests {
                 .apply_create_block("BLOCKACT", "content", "in active", None, 0)
                 .expect("create");
         }
-        let saved = save_all_engines(&pool, &registry).await;
+        let saved = save_all_engines(&pool, &registry).await.saved;
         assert_eq!(saved, 1, "only the dirty space is re-encoded (#2201)");
 
         let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
