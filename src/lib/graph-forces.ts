@@ -60,7 +60,9 @@ export const RESIZE_ALPHA = 0.3
 
 /**
  * Ticks a reduced-motion layout runs synchronously before it is shown once,
- * on both paths, so the user never watches it settle.
+ * on both paths, so the user never watches it settle. d3's default
+ * `alphaDecay` brings a full-strength start down to `alphaMin` in this many
+ * ticks, the same run an animated layout takes.
  */
 export const REDUCED_MOTION_TICK_LIMIT = 300
 

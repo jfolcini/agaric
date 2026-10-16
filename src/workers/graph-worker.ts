@@ -46,6 +46,8 @@ interface SimEdge extends SimulationLinkDatum<SimNode> {
 let simulation: Simulation<SimNode, SimEdge> | null = null
 let simNodes: SimNode[] = []
 let reducedMotion = false
+/** The held node has moved since the drag started. */
+let dragMoved = false
 
 /**
  * Timestamp (`performance.now()`, ms) of the last emitted `tick` post. #2273:
@@ -189,7 +191,7 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
         })
 
         reducedMotion = msg.reducedMotion
-        if (reducedMotion) settle(simulation.alphaDecay(1))
+        if (reducedMotion) settle(simulation)
 
         break
       }
@@ -261,14 +263,19 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
         const node = simNodes.find((n) => n.id === msg.nodeId)
         if (!node) break
 
+        // Under reduced motion the simulation wakes only once the node moves,
+        // so a click posts nothing and leaves the layout as it was.
         switch (msg.phase) {
           case 'start': {
-            simulation.alphaTarget(0.3).restart()
+            dragMoved = false
+            if (!reducedMotion) simulation.alphaTarget(0.3).restart()
             node.fx = msg.x
             node.fy = msg.y
             break
           }
           case 'drag': {
+            if (reducedMotion && !dragMoved) simulation.alphaTarget(0.3).restart()
+            dragMoved = true
             node.fx = msg.x
             node.fy = msg.y
             break
@@ -277,6 +284,8 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
             simulation.alphaTarget(0)
             node.fx = null
             node.fy = null
+            // Settle rather than stop: a stop would freeze the neighbours mid-pull.
+            if (reducedMotion && dragMoved) settle(simulation.alpha(RESIZE_ALPHA))
             break
           }
         }
