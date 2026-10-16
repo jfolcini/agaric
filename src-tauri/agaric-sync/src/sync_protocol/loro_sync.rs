@@ -1242,8 +1242,9 @@ async fn commit_projection(
 /// peers — each peer derives the identical set from the identical
 /// converged CRDT state. Runs AFTER the committed projection and is
 /// best-effort: a failure must NOT turn the committed projection into
-/// an `Err` (same policy as the tag rebuild below); the next import /
-/// boot replay re-derives the same fan-out.
+/// an `Err` (same policy as the tag rebuild below); a later import that
+/// touches the same blocks re-derives the fan-out, and the integrity check
+/// reports any block it leaves live in the engine.
 fn fan_out_swept_tombstones(
     registry: &LoroEngineRegistry,
     device_id: &str,
@@ -1267,7 +1268,7 @@ fn fan_out_swept_tombstones(
                 "engine tombstone fan-out failed AFTER the projection \
                  committed; the committed SQL state stands; the #1257 \
                  freshness gate may refuse outbound export for this space \
-                 until a later import / boot replay re-derives the fan-out"
+                 until a later import re-derives the fan-out"
             );
         }
     }

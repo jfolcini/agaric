@@ -307,14 +307,14 @@ async fn settle_reverse_move_target_group(
 /// Drive the SAME reverse move into the shared per-space engine so its
 /// fractional sibling order converges with the SQL settle
 /// ([`settle_reverse_move_target_group`]). The engines are session-persistent
-/// singletons reconciled only at boot replay; without this apply the engine
+/// singletons that boot replay does not re-sync (#5418); without this apply the engine
 /// keeps the PRE-undo order and the next forward move in either affected group
 /// reprojects that stale order over SQL — silently resurrecting the undone
 /// move. `slot` is the SQL-settled live-sibling slot, the same interpretation
 /// `apply_move_block_to` gives a forward move's `new_index`. Mirrors the
 /// forward path's engine-unavailable handling (`apply_move_block_via_loro`):
 /// an unresolved space or a block/parent missing from the engine falls back
-/// to the SQL-only result with a breadcrumb — boot replay reconciles.
+/// to the SQL-only result with a breadcrumb, which the integrity check reports.
 async fn converge_reverse_move_engine(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &agaric_engine::loro::shared::LoroState,
@@ -344,7 +344,7 @@ async fn converge_reverse_move_engine(
             tracing::warn!(
                 block_id = %move_block_id_str,
                 "reverse move: block or prior parent missing from the per-space \
-                 engine; SQL reversed without engine convergence (boot replay reconciles)",
+                 engine; SQL reversed without engine convergence",
             );
         }
         drop(guard);
@@ -352,7 +352,7 @@ async fn converge_reverse_move_engine(
         tracing::warn!(
             block_id = %move_block_id_str,
             "reverse move: space unresolved; SQL reversed without engine \
-             convergence (boot replay reconciles)",
+             convergence",
         );
     }
     Ok(())
@@ -395,7 +395,7 @@ fn reverse_op_timestamp(reverse_payload: &OpPayload) -> i64 {
 /// resolve returns `None`), AFTER a restore (once the block is live again), or
 /// while the block is live for edit/property/tag reverses. A `None` space warns
 /// and leaves the SQL write as the durable outcome — identical to the
-/// reverse-move fallback (boot replay reconciles).
+/// reverse-move fallback.
 ///
 /// `apply` runs the SYNCHRONOUS engine mutation(s) under the recording guard
 /// (the #2604 rollback checkpoint, armed by the caller via
@@ -412,7 +412,7 @@ fn drive_reverse_engine(
         tracing::warn!(
             op = op_label,
             "reverse {op_label}: space unresolved; SQL reversed without engine \
-             convergence (boot replay reconciles)",
+             convergence",
         );
         return Ok(());
     };

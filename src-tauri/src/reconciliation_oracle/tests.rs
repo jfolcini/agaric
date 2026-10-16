@@ -3758,6 +3758,212 @@ async fn tags_cache_dedup_folds_non_ascii_case_variants_3345() {
 }
 
 // ---------------------------------------------------------------------------
+// Artefact 14 — `block_tag_inherited` (#5628)
+// ---------------------------------------------------------------------------
+
+const TI_PAGE: &str = "01TIPAGE562800000000000000";
+const TI_A: &str = "01TIBLKAA56280000000000000";
+const TI_B: &str = "01TIBLKBB56280000000000000";
+const TI_C: &str = "01TIBLKCC56280000000000000";
+const TI_DEAD: &str = "01TIDEAD562800000000000000";
+const TI_UNDER: &str = "01TIUNDER56280000000000000";
+const TI_TAG: &str = "01TITAG5628000000000000000";
+const TI_TAG_DEAD: &str = "01TITAGDEAD562800000000000";
+
+/// Every rule in `tag_inheritance::rebuild_all`'s definition, each armed by a
+/// row that fails it:
+///
+/// ```text
+/// TI_PAGE [#TAG_DEAD]          a soft-deleted tag still propagates
+/// ├ TI_TAG                     a tag block inherits like any block
+/// ├ TI_TAG_DEAD (deleted)
+/// └ TI_A [#TAG]                no row for its own tag
+///   ├ TI_B [#TAG]              holds the tag AND inherits it from A
+///   │ └ TI_C                   nearest tagger wins: B, not A
+///   └ TI_DEAD (deleted) [#TAG] a tombstone gets no row and is no source
+///     └ TI_UNDER               the climb stops at the tombstone
+/// ```
+async fn ti_fixture() -> (sqlx::SqlitePool, TempDir) {
+    let dir = TempDir::new().expect("tempdir");
+    let pool = crate::db::init_pool(&dir.path().join("inherited.db"))
+        .await
+        .expect("init_pool");
+
+    insert_page_block(&pool, TI_PAGE, "Inherit", None).await;
+    btr_insert_tag(&pool, TI_TAG, TI_PAGE, None, None).await;
+    btr_insert_tag(&pool, TI_TAG_DEAD, TI_PAGE, None, Some(1)).await;
+    insert_content_block(&pool, TI_A, Some(TI_PAGE), Some(TI_PAGE)).await;
+    insert_content_block(&pool, TI_B, Some(TI_A), Some(TI_PAGE)).await;
+    insert_content_block(&pool, TI_C, Some(TI_B), Some(TI_PAGE)).await;
+    insert_content_block(&pool, TI_DEAD, Some(TI_A), Some(TI_PAGE)).await;
+    insert_content_block(&pool, TI_UNDER, Some(TI_DEAD), Some(TI_PAGE)).await;
+    soft_delete_block(&pool, TI_DEAD).await;
+
+    tc_tag_edge(&pool, TI_PAGE, TI_TAG_DEAD).await;
+    tc_tag_edge(&pool, TI_A, TI_TAG).await;
+    tc_tag_edge(&pool, TI_B, TI_TAG).await;
+    tc_tag_edge(&pool, TI_DEAD, TI_TAG).await;
+
+    (pool, dir)
+}
+
+/// Run a block_tag_inherited write the way a corrupting arm would leave it.
+async fn ti_exec(pool: &sqlx::SqlitePool, sql: &'static str, binds: &[&str]) {
+    // dynamic-sql: test-only fault injection.
+    let mut query = sqlx::query(sql);
+    for bind in binds {
+        query = query.bind(*bind);
+    }
+    query.execute(pool).await.expect("fault injection");
+}
+
+/// The `block_tag_inherited.*` divergences, as `(artefact, key, expected,
+/// actual)`, from the per-op gate or from the whole-vault sweep.
+async fn ti_divergences(
+    pool: &sqlx::SqlitePool,
+    whole_vault: bool,
+) -> Vec<(&'static str, String, String, String)> {
+    let divergences = if whole_vault {
+        reconcile_all(
+            pool,
+            &agaric_engine::loro::shared::LoroState::new(),
+            eq_today(),
+        )
+        .await
+        .expect("reconcile_all")
+    } else {
+        reconcile(pool, &dump_blocks(pool).await.expect("dump"))
+            .await
+            .expect("reconcile")
+    };
+    divergences
+        .into_iter()
+        .filter(|d| d.artefact.starts_with("block_tag_inherited"))
+        .map(|d| (d.artefact, d.key, d.expected, d.actual))
+        .collect()
+}
+
+/// **#5628 acceptance.** The fold agrees with production's arbiter on every
+/// armed rule; then one stale row, one missing row and one stale ancestor are
+/// each reported by name, membership through the per-op gate and provenance
+/// through the whole-vault sweep only.
+#[tokio::test]
+async fn block_tag_inherited_reconciles_and_reports_each_drift_5628() {
+    let (pool, _dir) = ti_fixture().await;
+
+    let blocks = dump_blocks(&pool).await.expect("dump");
+    let folded = rebuild_block_tag_inherited_from_base(&pool, &blocks)
+        .await
+        .expect("fold");
+    let row =
+        |block: &str, tag: &str, from: &str| ((block.to_owned(), tag.to_owned()), from.to_owned());
+    let want: BTreeMap<(String, String), String> = [
+        row(TI_A, TI_TAG_DEAD, TI_PAGE),
+        row(TI_B, TI_TAG, TI_A),
+        row(TI_B, TI_TAG_DEAD, TI_PAGE),
+        row(TI_C, TI_TAG, TI_B),
+        row(TI_C, TI_TAG_DEAD, TI_PAGE),
+        row(TI_TAG, TI_TAG_DEAD, TI_PAGE),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(folded, want, "the fold must apply every armed rule");
+
+    agaric_store::tag_inheritance::rebuild_all(&pool)
+        .await
+        .expect("production rebuild_all");
+    assert_eq!(
+        ti_divergences(&pool, true).await,
+        Vec::new(),
+        "production's arbiter and the fold agree on every armed rule"
+    );
+
+    // A missed cohort, a row a tombstone should have cleared, and the #2669
+    // shape: C still credited to the farther tagger A.
+    ti_exec(
+        &pool,
+        "DELETE FROM block_tag_inherited WHERE block_id = ? AND tag_id = ?",
+        &[TI_B, TI_TAG_DEAD],
+    )
+    .await;
+    ti_exec(
+        &pool,
+        "INSERT INTO block_tag_inherited (block_id, tag_id, inherited_from) VALUES (?, ?, ?)",
+        &[TI_UNDER, TI_TAG, TI_A],
+    )
+    .await;
+    ti_exec(
+        &pool,
+        "UPDATE block_tag_inherited SET inherited_from = ? WHERE block_id = ? AND tag_id = ?",
+        &[TI_A, TI_C, TI_TAG],
+    )
+    .await;
+
+    let missing = (
+        "block_tag_inherited.row",
+        format!("{TI_B} -> {TI_TAG_DEAD}"),
+    );
+    let extra = ("block_tag_inherited.row", format!("{TI_UNDER} -> {TI_TAG}"));
+    let keys = |found: &[(&'static str, String, String, String)]| {
+        found
+            .iter()
+            .map(|(artefact, key, _, _)| (*artefact, key.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        keys(&ti_divergences(&pool, false).await),
+        vec![missing.clone(), extra.clone()],
+        "the per-op gate reports membership, missing first, and never provenance"
+    );
+    let swept = ti_divergences(&pool, true).await;
+    assert_eq!(
+        keys(&swept),
+        vec![
+            missing,
+            extra,
+            (
+                "block_tag_inherited.inherited_from",
+                format!("{TI_C} -> {TI_TAG}")
+            ),
+        ],
+        "the sweep adds the stale ancestor after the gate's rows"
+    );
+    assert_eq!(
+        (swept[2].2.as_str(), swept[2].3.as_str()),
+        (TI_B, TI_A),
+        "the nearest tagger is expected; the farther one is held"
+    );
+
+    agaric_store::tag_inheritance::rebuild_all(&pool)
+        .await
+        .expect("production rebuild_all");
+    assert_eq!(
+        ti_divergences(&pool, true).await,
+        Vec::new(),
+        "production's rebuild clears every reported drift"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Artefact 15 — `blocks` against the Loro engine (#5628); the column and
+// membership arms are driven through the command path in
+// `commands::reconciliation`'s tests.
+// ---------------------------------------------------------------------------
+
+/// A doc that cannot be read fails the run rather than reading as an engine
+/// that holds nothing, which would report every block in its space missing.
+#[test]
+fn an_unreadable_engine_doc_fails_the_run_5628() {
+    let err = read_engine_space(b"not a loro snapshot")
+        .err()
+        .expect("garbage bytes are not a doc");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "the import error surfaces, got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Artefact 10 — `agenda_cache` (#3345)
 // ---------------------------------------------------------------------------
 
@@ -4409,9 +4615,13 @@ async fn eq_fixture() -> (sqlx::SqlitePool, TempDir) {
 async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
     let (pool, _dir) = eq_fixture().await;
 
-    let divergences = reconcile_all(&pool, eq_today())
-        .await
-        .expect("reconcile_all");
+    let divergences = reconcile_all(
+        &pool,
+        &agaric_engine::loro::shared::LoroState::new(),
+        eq_today(),
+    )
+    .await
+    .expect("reconcile_all");
 
     let got: Vec<(&str, &str)> = divergences
         .iter()
@@ -4630,7 +4840,9 @@ async fn reconcile_all_scale_sweep_4901() {
         .expect("counts rebuild");
     let counts_took = started.elapsed();
     let started = std::time::Instant::now();
-    let divergences = reconcile_all(&pool, today).await.expect("reconcile_all");
+    let divergences = reconcile_all(&pool, &agaric_engine::loro::shared::LoroState::new(), today)
+        .await
+        .expect("reconcile_all");
     let all_took = started.elapsed();
 
     let coverage = oracle_coverage(&pool).await.expect("coverage");

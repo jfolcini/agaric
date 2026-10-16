@@ -21,8 +21,8 @@ const TRUNCATION_MARKER = '\n\n…[truncated — full log available in the attac
 
 /** Cap the integrity section inside the `notes` field. It shares the prefill
  *  URL budget with `logs`, and unlike `logs` its worst case is not a tail the
- *  user can shrink: 21 artefacts (`reconciliation_oracle.rs`) x 10 sample keys
- *  (`SAMPLE_KEYS_PER_ARTEFACT`) is ~6.8 KB of ULIDs, and doubles again for the
+ *  user can shrink: every artefact (`reconciliation_oracle.rs`) x 10 sample
+ *  keys (`SAMPLE_KEYS_PER_ARTEFACT`) is kilobytes of ULIDs, more for the
  *  artefacts whose key is an arrow-joined pair — over budget on its own before
  *  URL-encoding inflates every backtick and em-dash. The uncapped section is
  *  still in the preview and the copied body, which have no URL ceiling. */

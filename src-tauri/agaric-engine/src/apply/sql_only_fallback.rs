@@ -16,8 +16,9 @@
 //!    resolved, but the block (or a MoveBlock's target parent) is absent
 //!    from that space's engine tree, so a single-space engine mutation
 //!    cannot represent the op (the #1257 reconciliation window, or a
-//!    cross-space move). SQL is authoritative and boot-replay reconciles
-//!    the engine.
+//!    cross-space move). SQL is authoritative; since #5418 boot replay
+//!    re-applies only the ops after the last snapshot pass, so the engine
+//!    keeps its old state and the integrity check reports the gap.
 //!
 //! Both are **soft fallbacks, not errors**: each records here and takes
 //! the SQL projection instead of propagating an `Err`. They are
@@ -42,7 +43,7 @@
 //! identical `node_for` membership probe. It is the same decision as
 //! `apply_delete_block_via_loro`'s, taken about the same block, one
 //! transaction later: the mirror cannot be represented on that engine, so
-//! SQL stands and boot-replay reconciles. Recording it anywhere else would
+//! SQL stands and the integrity check reports the gap. Recording it anywhere else would
 //! split one population across two counters; leaving it silent (as #4468's
 //! first cut did) would make it uncountable, and "absent from the engine"
 //! is also the shape of genuine drift.
@@ -101,8 +102,9 @@ pub enum SqlOnlyFallbackReason {
     ///   those.
     /// * **Cross-space move** — the target parent lives in a DIFFERENT
     ///   space's tree, which the block's own single-space engine cannot
-    ///   reference; SQL is authoritative for the reparent and each
-    ///   space's engine converges on replay.
+    ///   reference; SQL is authoritative for the reparent, and the source
+    ///   space's engine keeps the old placement (the integrity check reports
+    ///   it).
     ///
     /// The two bullets above enumerate CAUSES, not recorders. More than one
     /// site records this reason — the in-tx `apply_*_via_loro` handlers, and

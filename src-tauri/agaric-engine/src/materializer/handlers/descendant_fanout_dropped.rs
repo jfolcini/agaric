@@ -10,7 +10,8 @@
 //! payload, a `resolve_block_space` error, or a missing space (for the
 //! un-sweep fan-out, a `resolve_soft_deleted_block_space` that answered
 //! `None`) leaves SQL deleted/restored/re-derived while the engine stays
-//! divergent until the next full boot replay reconciles it.
+//! divergent: since #5418 boot replay re-applies only the ops after the last
+//! snapshot pass.
 //!
 //! That skip was previously invisible (only a log line). This module
 //! makes it *observable* without changing any control flow: a

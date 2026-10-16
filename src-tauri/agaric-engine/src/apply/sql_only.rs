@@ -164,7 +164,7 @@ pub async fn apply_delete_block_sql_only(
 /// projection cleared upward) so the caller can fan the restore out to the
 /// per-space Loro engine. On this SQL-only fallback path the engine arm did not
 /// run (space unresolved / engine uninit), so the engine state for those
-/// ancestors is reconciled lazily on the next op-log replay; the chain is still
+/// ancestors is not reconciled (boot replay no longer re-applies the op, #5418); the chain is still
 /// returned for symmetry and for callers that DO have an engine available.
 pub async fn apply_restore_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
@@ -294,7 +294,7 @@ pub async fn apply_move_block_sql_only(
     // primary case (`SpaceUnresolved` — the block never entered one). In the
     // `EngineMissingTarget` sub-case the block CAN be in an engine that now
     // disagrees (engine live / SQL deleted), which is the pre-existing #2250
-    // fallback degradation boot replay reconciles: it cannot RESURRECT the row,
+    // fallback degradation the integrity check reports: it cannot RESURRECT the row,
     // because `reproject_block_deleted_at_from_engine`'s `(Some(_), Some(_))`
     // resurrection-guard arm is exactly "SQL-deleted under a tombstoned
     // ancestor → no-op".

@@ -497,8 +497,8 @@ pub struct StatusInfo {
     /// SQL-only projection, and — since #4472 — the post-commit engine
     /// fan-outs (`dispatch_delete_descendants` / `dispatch_unswept_cohort`)
     /// that skip a cohort member absent from the target space's engine. Both
-    /// mean "this block is not represented in that space's engine; boot
-    /// replay reconciles", which is why they share a counter; the two are
+    /// mean "this block is not represented in that space's engine", which
+    /// is why they share a counter; the two are
     /// still separable at triage by the `op` field — the in-tx recorders
     /// carry the op's own name (`delete_block`, `move_block`, …), and each
     /// fan-out carries a name unique to its site (`delete_block_cohort` for

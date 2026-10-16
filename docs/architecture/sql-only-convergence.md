@@ -103,7 +103,8 @@ sibling group(s) into a dense 1-based order over the engine's fractional-index
 tree. The engine-less fallback has no tree, so it writes only a *provisional*
 rank (`index_to_provisional_position`, i.e. `index + 1`, capped). For an
 index-only insert or a cross-parent move into a populated sibling set the two
-legitimately differ until boot replay reconciles. This is pinned rather than
+legitimately differ, and since #5418 boot replay no longer re-applies the op
+to close the gap; the integrity check reports it. This is pinned rather than
 masked by `create_edit_convergence_tests.rs` and `move_convergence_tests.rs`.
 
 ## Instrumentation
@@ -141,7 +142,8 @@ Two caveats on reading that counter, both written up in full on
   puts it in X's delete cohort; the skip is then understated — that member
   really is a `descendant_fanout_dropped` case. Accepted: no state regresses
   (the fan-out only ever dispatches into the seed's space, so the mirror onto Y
-  never happened either way) and boot replay reconciles both spaces.
+  never happened either way), and the integrity check reports the member
+  live in Y's engine.
 - It counts *decisions*, not distinct blocks. A `DeleteBlock` whose seed is
   absent records once in-tx and once again from the fan-out, whose cohort
   includes the seed.

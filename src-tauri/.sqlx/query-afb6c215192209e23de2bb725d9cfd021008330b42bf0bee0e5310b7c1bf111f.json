@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id, tag_id, inherited_from FROM block_tag_inherited",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tag_inherited",
+            "name": "block_id"
+          }
+        }
+      },
+      {
+        "name": "tag_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tag_inherited",
+            "name": "tag_id"
+          }
+        }
+      },
+      {
+        "name": "inherited_from",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tag_inherited",
+            "name": "inherited_from"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "afb6c215192209e23de2bb725d9cfd021008330b42bf0bee0e5310b7c1bf111f"
+}
