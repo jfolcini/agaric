@@ -21,12 +21,16 @@ name: Scheduled deep checks
 #                    CI instead of rotting silently. Sharding keeps the combined
 #                    compile+smoke wall-clock under budget (the old single-runner
 #                    `bench-compile` job blew the 90 min cap mid-smoke — #2122).
-#   bench-slo      — #639: RUNS the interactive_slo SLO gate + the `#[ignore]`d
-#                    20k-row perf gates, which nothing else exercises. Split out
-#                    of the smoke shards so a smoke timeout can never skip the
-#                    SLO gate again. `workflow_dispatch` can flip
+#   bench-slo      — #639: RUNS the interactive_slo SLO gate, which nothing
+#                    else exercises. Split out of the smoke shards so a smoke
+#                    timeout can never skip the SLO gate again.
+#                    `workflow_dispatch` can flip
 #                    `slo_include_problem` to also measure the cache and
 #                    MostLinked counterfactual probes (#2508 / #2585).
+#   bench-perf-gates — the `#[ignore]`d 20k-row perf gates, split out of
+#                    `bench-slo` because the two compiles (bench profile, then
+#                    test profile) did not fit one runner's cap. Selected by the
+#                    same `bench-slo` lane name.
 #   mutants        — #649/#3393: cargo-mutants scoped to the invariant core
 #                    (op, op_log, reverse, loro/engine), SHARDED one job per
 #                    (package, shard) with the counts derived from measured
@@ -687,10 +691,10 @@ jobs:
           exit "$fail"
 
   # ---------------------------------------------------------------------------
-  # bench-slo (#639) — the interactive_slo SLO gate + the `#[ignore]`d 20k-row
-  # perf gates, split out of the smoke shards so a smoke timeout can never skip
-  # them (the old single-job layout ran the SLO gate AFTER the whole smoke walk,
-  # so the #2122 mid-smoke cancellation took the gate down with it). A
+  # bench-slo (#639) — the interactive_slo SLO gate, split out of the smoke
+  # shards so a smoke timeout can never skip it (the old single-job layout ran
+  # the SLO gate AFTER the whole smoke walk, so the #2122 mid-smoke
+  # cancellation took the gate down with it). A
   # `workflow_dispatch` can also flip `slo_include_problem` to measure the
   # cache/counterfactual probes (#2508 / #2585).
   # ---------------------------------------------------------------------------
@@ -698,7 +702,10 @@ jobs:
     needs: select-lanes
     if: needs.select-lanes.outputs.bench_slo == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Setup + cold bench-profile build + every probe took up to 41.4 min
+    # (run 38857201664, 2026-10-16; the cache was cold there, as on every
+    # branch dispatch). 45 left under 4 min of slack; 55 gives about a quarter.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -739,8 +746,8 @@ jobs:
           workspaces: src-tauri
           # Own bench-profile cache (separate key from the smoke shards so this
           # job's single writer never races them). Caches the agaric lib + deps
-          # + cargo registry + the interactive_slo bench + the nextest perf-gate
-          # test binaries, so week-over-week this job restores warm.
+          # + cargo registry + the interactive_slo bench, so week-over-week this
+          # job restores warm.
           shared-key: rust-bench-slo
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -755,7 +762,7 @@ jobs:
 
       - name: Prepare externalBin placeholder (FEAT-4f)
         # Tauri's build.rs validates externalBin paths on every cargo
-        # invocation, including `cargo bench` / nextest below.
+        # invocation, including `cargo bench` below.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Run interactive_slo SLO gate (#639)
@@ -891,6 +898,77 @@ jobs:
             src-tauri/target/criterion/**/benchmark.json
           if-no-files-found: ignore
           retention-days: 90
+
+  # ---------------------------------------------------------------------------
+  # bench-perf-gates (#639) — the `#[ignore]`d 20k-row perf gates, on their own
+  # runner. In one job with `bench-slo` the test-profile compile started after
+  # the bench-profile build and the probes, so a cap hit cancelled the gates
+  # without running them (run 38857201664). Gated by the `bench-slo` lane.
+  # ---------------------------------------------------------------------------
+  bench-perf-gates:
+    needs: select-lanes
+    if: needs.select-lanes.outputs.bench_slo == 'true'
+    runs-on: ubuntu-24.04
+    # In the shared job this leg took up to 9.2 min to finish (cold test-profile
+    # compile up to 7.2 min, plus retries of a failing gate) and was cancelled
+    # at 10.5 min still retrying, in runs dated 2026-10-15. Plus about 1.5 min
+    # of setup, 25 leaves room for a slower runner.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
+      - name: Install system dependencies
+        # #4163: see the same step in `bench-slo`.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libwebkit2gtk-4.1-dev
+            libgtk-3-dev
+            libssl-dev
+            librsvg2-dev
+            libsoup-3.0-dev
+            pkg-config
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: ./.github/actions/rust-toolchain
+        with:
+          toolchain: 1.95.0
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+          shared-key: rust-bench-perf-gates
+          # Never saved: no deep-check rust cache was restored by a later run
+          # (2026-10-16 audit: bench-slo 5/5 and full-suite-nextest 4/4
+          # misses), because the repo is over its 10 GB cache limit and each
+          # save evicts gate caches that are reused.
+          save-if: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # Tauri's build.rs validates externalBin paths on every cargo
+        # invocation, including nextest below.
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install cargo-nextest via prebuilt binary
         uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
@@ -3280,13 +3358,14 @@ jobs:
     needs:
       # `select-lanes` included so the comment above stays true, and for a
       # concrete failure: if it dies for an infra reason on the cron, all
-      # eleven lanes skip and this reporter — authoritative, since `lanes`
-      # defaults to `all` — would file eleven broken lanes without naming
+      # twelve lanes skip and this reporter — authoritative, since `lanes`
+      # defaults to `all` — would file twelve broken lanes without naming
       # the one job that actually failed.
       - select-lanes
       - clippy-clean
       - bench-smoke
       - bench-slo
+      - bench-perf-gates
       - mutants
       - mutants-merge
       - mutants-frontend
