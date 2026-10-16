@@ -3053,7 +3053,6 @@ const BRANCH_SHUTDOWN_DEADLINE: std::time::Duration = std::time::Duration::from_
 async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    // Use a short debounce window (100 ms) so the test doesn't wait 3 s.
     let scheduler = Arc::new(SyncScheduler::with_intervals(
         std::time::Duration::from_millis(100),
         std::time::Duration::from_secs(60),
@@ -4266,10 +4265,10 @@ async fn dormant_daemon_wakes_on_pair_notification() {
 /// The debounce was pure latency here and the user paid it twice over: the host
 /// dialog's `start_pairing_armed` sits waiting for the QUIC endpoint to publish
 /// where it bound, and the endpoint is not bound until this waiter has left the
-/// `select!`. A 3 s spinner before a QR appeared was that window.
+/// `select!`. A spinner before a QR appeared was that window.
 ///
 /// The bound is a 30 s debounce against a 5 s deadline rather than a race
-/// against the real 3 s one: a waiter that still debounced could not pass by
+/// against the real one: a waiter that still debounced could not pass by
 /// being lucky on a loaded runner, it would have to beat its own window by 25 s.
 /// `DORMANT_POLL_INTERVAL` (30 s) also sits above the deadline, so the periodic
 /// poll cannot be what satisfies this either.

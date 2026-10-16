@@ -601,11 +601,11 @@ const MAX_BACKOFF: Duration = Duration::from_secs(60);
 /// "noisier, never quieter" direction [`evict_for_new_peer`] documents, and
 /// exactly what this code did before #4231.
 const MAX_BACKOFF_PEERS: usize = 64;
-const DEFAULT_DEBOUNCE: Duration = Duration::from_secs(3);
+const DEFAULT_DEBOUNCE: Duration = Duration::from_millis(250);
 const DEFAULT_RESYNC: Duration = Duration::from_secs(60);
 
 impl SyncScheduler {
-    /// Create a new scheduler with default debounce (3 s) and resync (60 s) intervals.
+    /// Create a new scheduler with `DEFAULT_DEBOUNCE` and `DEFAULT_RESYNC`.
     pub fn new() -> Self {
         Self {
             peer_locks: std::sync::Mutex::new(HashMap::new()),
@@ -1904,6 +1904,45 @@ mod tests {
         wait.await;
 
         assert_eq!(start.elapsed(), second_change + window);
+    }
+
+    /// "Sync now" waits on the default window before any session starts, so
+    /// the round must open promptly; and since it calls `notify_change` once
+    /// per paired peer a few ms apart, that burst must still be one round.
+    #[tokio::test(start_paused = true)]
+    async fn sync_now_opens_one_prompt_round_per_burst() {
+        let prompt = Duration::from_millis(500);
+        let sched = Arc::new(SyncScheduler::new());
+        let rounds = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let waiter = {
+            let (sched, rounds) = (Arc::clone(&sched), Arc::clone(&rounds));
+            tokio::spawn(async move {
+                loop {
+                    let asked_at = tokio::time::Instant::now();
+                    sched.wait_for_debounced_change().await;
+                    rounds.lock().unwrap().push(asked_at.elapsed());
+                }
+            })
+        };
+        let rounds_so_far = || rounds.lock().unwrap().len();
+
+        sched.notify_change();
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert_eq!(rounds_so_far(), 1, "one change, one round");
+        let first = rounds.lock().unwrap()[0];
+        assert!(
+            first <= prompt,
+            "a single Sync opened its round after {first:?}"
+        );
+
+        for _ in 0..5 {
+            sched.notify_change();
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert_eq!(rounds_so_far(), 2, "a burst inside the window is one round");
+
+        waiter.abort();
     }
 
     /// Test helper: build a `PeerRef` with only the two fields

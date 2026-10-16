@@ -555,11 +555,10 @@ pub fn check_reset_required(
 /// `SELECT … FROM op_log` with no `WHERE` — one full materialisation of the
 /// whole log, payloads included, on every head exchange with an
 /// `op_log_replication`-capable peer — which is every modern peer, on every
-/// session: the `DEFAULT_RESYNC` idle tick (60 s) *and* `DEFAULT_DEBOUNCE`
-/// (3 s) after each local edit burst. All of it only to throw away, in a Rust
-/// loop, everything at or below the peer's frontier — which for a caught-up
-/// peer is all of it. The op set returned is unchanged; only the rows SQLite
-/// touches to produce it are.
+/// session: every `DEFAULT_RESYNC` idle tick *and* every "Sync now". All of
+/// it only to throw away, in a Rust loop, everything at or below the peer's
+/// frontier — which for a caught-up peer is all of it. The op set returned is
+/// unchanged; only the rows SQLite touches to produce it are.
 pub async fn collect_ops_for_peer(
     pool: &SqlitePool,
     peer_heads: &[DeviceHead],

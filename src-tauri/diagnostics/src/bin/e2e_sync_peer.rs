@@ -51,7 +51,7 @@ use agaric_sync::sync_scheduler::SyncScheduler;
 const WAIT: Duration = Duration::from_secs(60);
 const POLL: Duration = Duration::from_millis(250);
 /// The app's own debounce for a change notification.
-const DEBOUNCE: Duration = Duration::from_secs(3);
+const DEBOUNCE: Duration = Duration::from_millis(250);
 /// Longer than any run, so this vault pulls only when told to: a `sync` then
 /// cannot be answered by a periodic pull that began before the app's write.
 const NO_PERIODIC_PULL: Duration = Duration::from_secs(24 * 60 * 60);
