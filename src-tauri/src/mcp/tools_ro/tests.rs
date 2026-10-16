@@ -24,10 +24,14 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 /// space to scope under.
 async fn mk_space(pool: &SqlitePool, name: &str) -> String {
     let materializer = Materializer::new(pool.clone());
-    create_space_inner(pool, DEV, &materializer, name.into(), None)
+    let space = create_space_inner(pool, DEV, &materializer, name.into(), None)
         .await
         .expect("create_space must succeed")
-        .into_string()
+        .into_string();
+    // The caller's `settle` cannot drain this materializer, and the space
+    // page's FTS row landing mid-test shifts every bm25 rank under a cursor.
+    settle(&materializer).await;
+    space
 }
 
 fn test_ctx() -> ActorContext {
