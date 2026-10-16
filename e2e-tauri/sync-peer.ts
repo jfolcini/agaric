@@ -94,22 +94,28 @@ export async function readPairingQr(): Promise<PairingQr> {
 type Command =
   | ({ cmd: 'pair' } & PairingQr)
   | { cmd: 'sync' }
+  | { cmd: 'sync_refused' }
   | { cmd: 'get_block'; id: string }
   | { cmd: 'create_block'; parent_id: string; content: string }
+  | { cmd: 'edit_block'; id: string; content: string }
   | { cmd: 'set_property'; id: string; key: string; value: string }
   | { cmd: 'move_block'; id: string; parent_id: string; index: number }
   | { cmd: 'get_property'; id: string; key: string }
   | { cmd: 'wait_pulled' }
+  | { cmd: 'list_peers' }
 
 type Reply =
   | { reply: 'paired'; device_id: string; address: string }
   | { reply: 'synced' }
+  | { reply: 'refused'; message: string }
   | { reply: 'block'; id: string; parent_id: string | null; content: string }
   | { reply: 'created'; id: string }
+  | { reply: 'edited' }
   | { reply: 'property_set' }
   | { reply: 'moved' }
   | { reply: 'property'; value_text: string | null }
   | { reply: 'pulled' }
+  | { reply: 'peers'; peer_ids: string[] }
   | { reply: 'error'; message: string }
 
 /** A block as the peer's vault holds it. */
@@ -124,9 +130,13 @@ export interface SyncPeer {
   pair(qr: PairingQr): Promise<{ deviceId: string; address: string }>
   /** Pull from the app now; resolves once the pull has landed in the peer's vault. */
   sync(): Promise<void>
+  /** Pull from the app now; resolves to the app's words when it refuses the pull. */
+  syncRefused(): Promise<string>
   getBlock(id: string): Promise<PeerBlock>
   /** Write a content block under `parentId`; resolves to its id. */
   createBlock(parentId: string, content: string): Promise<string>
+  /** Replace the whole text of block `id` with `content`. */
+  editBlock(id: string, content: string): Promise<void>
   /** Set text property `key` on block `id`. */
   setProperty(id: string, key: string, value: string): Promise<void>
   /** Move block `id` under `parentId`, to 0-based sibling slot `index`. */
@@ -135,6 +145,8 @@ export interface SyncPeer {
   getProperty(id: string, key: string): Promise<string | null>
   /** Resolves once the app has pulled since the peer's last write. */
   waitPulled(): Promise<void>
+  /** The device ids the peer holds a pairing with. */
+  listPeers(): Promise<string[]>
   /** End the peer and delete its vault. */
   stop(): Promise<void>
 }
@@ -186,12 +198,16 @@ export async function startSyncPeer(): Promise<SyncPeer> {
     sync: async () => {
       await request({ cmd: 'sync' }, 'synced')
     },
+    syncRefused: async () => (await request({ cmd: 'sync_refused' }, 'refused')).message,
     getBlock: async (id) => {
       const block = await request({ cmd: 'get_block', id }, 'block')
       return { id: block.id, parentId: block.parent_id, content: block.content }
     },
     createBlock: async (parentId, content) =>
       (await request({ cmd: 'create_block', parent_id: parentId, content }, 'created')).id,
+    editBlock: async (id, content) => {
+      await request({ cmd: 'edit_block', id, content }, 'edited')
+    },
     setProperty: async (id, key, value) => {
       await request({ cmd: 'set_property', id, key, value }, 'property_set')
     },
@@ -203,6 +219,7 @@ export async function startSyncPeer(): Promise<SyncPeer> {
     waitPulled: async () => {
       await request({ cmd: 'wait_pulled' }, 'pulled')
     },
+    listPeers: async () => (await request({ cmd: 'list_peers' }, 'peers')).peer_ids,
     stop: async () => {
       // The end of stdin is the peer's shutdown.
       if (child.exitCode === null && child.signalCode === null) {

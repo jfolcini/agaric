@@ -56,8 +56,10 @@
 //     `[data-testid="pairing-qr-code"]` (its SVG is decoded in sync-peer.ts),
 //     `.pairing-passphrase`, the "Cancel pairing" button of the close guard's
 //     `[role="alertdialog"]`, `.device-peer-item`, "Edit address for …",
-//     "Address (host:port)", "Save", "Sync now with device …", and the toasts
-//     "Device paired successfully" and "Address updated". Its outline reads
+//     "Address (host:port)", "Save", "Sync now with device …", "Unpair device …"
+//     and the "Yes, unpair" button of its `[role="alertdialog"]`,
+//     `[data-testid="device-no-peers"]`, and the toasts "Device paired
+//     successfully" and "Address updated". Its outline reads
 //     `[data-testid="sortable-block"]` rows, their `li[aria-level]`, and the
 //     `[data-testid="property-chip"]` inside a row.
 //   - `[data-testid="suggestion-item"]`     an item of the open `[[` / `#`
