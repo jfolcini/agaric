@@ -27,10 +27,10 @@ name: Validate (prek-equivalent)
 #                        markdown link/citation checks, typos, lychee); runs
 #                        ONLY on a docs-only diff (exactly one of
 #                        lint/docs-lint runs per push/PR).
-#   - vitest          — the frontend suite, sharded 2 ways; each shard emits a
+#   - vitest          — the frontend suite, sharded 3 ways; each shard emits a
 #                        blob report. Gated on frontend changes. Node 24
 #                        (primary).
-#   - vitest-coverage — replays both blobs into one report, gates the #749
+#   - vitest-coverage — replays all shard blobs into one report, gates the #749
 #                        coverage thresholds on it, and runs the production
 #                        build + bundle-size gate. Paired with vitest.
 #   - playwright      — the e2e suite, sharded 3 ways; gated on frontend
@@ -1305,8 +1305,8 @@ jobs:
         run: prek run --all-files --hook-stage pre-push lychee
 
   # ---------------------------------------------------------------------------
-  # vitest — frontend unit + integration suite, sharded 2 ways (#4818). Each
-  # cell emits a blob report; `vitest-coverage` below replays both.
+  # vitest — frontend unit + integration suite, sharded 3 ways (#4818). Each
+  # cell emits a blob report; `vitest-coverage` below replays all of them.
   # Node-only; no Rust toolchain or apt deps needed.
   # ---------------------------------------------------------------------------
   vitest:
@@ -1321,7 +1321,7 @@ jobs:
     # #4818 — the one-job full suite outgrew its cap: observed on main
     # 2026-09-07 at 14m38s and 18m09s against a 20-min budget, and cancelled
     # AT the cap on two PRs the same day, producing no result at all. Sharded
-    # back to 2 cells, each running half the tests; the production build,
+    # back to cells that each run a share of the tests; the production build,
     # bundle gate and the coverage thresholds move to `vitest-coverage` below.
     #
     # This reverses PEND-86's collapse to one job, whose two stated reasons
@@ -1337,7 +1337,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1352,15 +1352,15 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Vitest (shard ${{ matrix.shard }}/2, blob report + raw coverage)
+      - name: Vitest (shard ${{ matrix.shard }}/3, blob report + raw coverage)
         # `--reporter=blob` records this shard's results and raw v8 coverage
-        # to `.vitest-reports/blob-${{ matrix.shard }}-2.json`, named
+        # to `.vitest-reports/blob-${{ matrix.shard }}-3.json`, named
         # EXPLICITLY rather than left to the reporter's default: vitest 5 moved
         # that default to `.vitest/blob`. That emptied this upload — loudly,
         # since `if-no-files-found: error` fails the step — and made the merge
         # below fail with `ENOENT scandir .vitest/blob`. The
-        # `vitest-coverage` job replays both with `--mergeReports`. The blob
-        # name carries the shard index, so the two never collide.
+        # `vitest-coverage` job replays all of them with `--mergeReports`. The
+        # blob name carries the shard index, so they never collide.
         #
         # #5058 — `--reporter=dot` alongside it: blob writes a file and prints
         # nothing, so THIS job's log names no failing test. The name is still
@@ -1368,18 +1368,16 @@ jobs:
         # after that job installs and downloads the artifacts.
         #
         # #749's coverage thresholds are DISABLED here and enforced on the
-        # merged report instead. A shard sees only half the suite — measured
-        # locally, one shard of an 8-file subset reported 1.25% line coverage
-        # where the merge of both reported 2.07% — so leaving the thresholds
-        # on would fail every shard on arithmetic, not on a coverage
-        # regression. They still gate; they gate once, downstream, on the
+        # merged report instead. A shard sees only a share of the suite, so
+        # leaving the thresholds on would fail every shard on arithmetic, not
+        # on a coverage regression. They still gate; they gate once, downstream, on the
         # whole picture.
         run: |
           npx vitest run \
-            --shard=${{ matrix.shard }}/2 \
+            --shard=${{ matrix.shard }}/3 \
             --reporter=blob \
             --reporter=dot \
-            --outputFile=.vitest-reports/blob-${{ matrix.shard }}-2.json \
+            --outputFile=.vitest-reports/blob-${{ matrix.shard }}-3.json \
             --coverage \
             --coverage.thresholds.lines=0 \
             --coverage.thresholds.functions=0 \
@@ -1406,7 +1404,7 @@ jobs:
           retention-days: 1
 
   # ---------------------------------------------------------------------------
-  # vitest-coverage — replays both shard blobs into one report, and is where
+  # vitest-coverage — replays all shard blobs into one report, and is where
   # the #749 coverage thresholds gate. It is in `validate-all`'s needs (as
   # `cargo-coverage` is): the threshold check moved OUT of `vitest` when that
   # job was sharded, so leaving this one ungated would retire the coverage
@@ -1494,7 +1492,7 @@ jobs:
         if: hashFiles('coverage-merged/coverage-summary.json') != ''
         run: |
           {
-            echo "## Coverage (vitest, 2 shards merged)"
+            echo "## Coverage (vitest, 3 shards merged)"
             echo
             echo "| Metric | % | Covered / Total |"
             echo "| --- | --- | --- |"
@@ -1613,36 +1611,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Free disk space on runner
-        # Run 26569299876 failed with `System.IO.IOException: No space left
-        # on device` (annotation on job 78272043133) during the cargo-llvm-cov
-        # instrumented compile. The instrumented build tree plus the rust-deps
-        # Swatinem cache restore are the heavy consumers; this job uses none
-        # of the preinstalled .NET / Haskell / Android / Swift toolchains, so
-        # deleting them frees the headroom needed before cargo runs. `df -h`
-        # is logged before+after so future tightening can size against real
-        # numbers instead of a guess.
-        #
-        # Backgrounded: the reclaim measured 1:37-1:48 per shard on the
-        # critical path (2026-09-02); the apt / rust-toolchain / rust-cache
-        # steps overlap it. "Wait for disk reclaim" sits before "Install
-        # Node.js" on purpose: `$AGENT_TOOLSDIRECTORY` is the last tree the
-        # `rm` walks and the one setup-node installs into.
-        run: |
-          set -euo pipefail
-          echo "Before:" && df -h /
-          (
-            sudo rm -rf /usr/share/dotnet \
-                        /usr/local/lib/android \
-                        /opt/ghc \
-                        /usr/local/share/boost \
-                        /usr/local/share/powershell \
-                        /usr/share/swift \
-                        "$AGENT_TOOLSDIRECTORY" || status=$?
-            echo "${status:-0}" > "$RUNNER_TEMP/free-disk.exit"
-          ) > "$RUNNER_TEMP/free-disk.log" 2>&1 &
-          echo $! > "$RUNNER_TEMP/free-disk.pid"
-
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
 
@@ -1698,18 +1666,6 @@ jobs:
           # scratch every PR. See the matching comment in the `lint` job.
           shared-key: rust-cov
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Wait for disk reclaim
-        # Must precede "Install Node.js": setup-node populates
-        # `$AGENT_TOOLSDIRECTORY`, which the backgrounded `rm` is still
-        # walking on a warm-cache run.
-        run: |
-          set -euo pipefail
-          pid=$(cat "$RUNNER_TEMP/free-disk.pid")
-          while kill -0 "$pid" 2>/dev/null; do sleep 2; done
-          cat "$RUNNER_TEMP/free-disk.log"
-          [ "$(cat "$RUNNER_TEMP/free-disk.exit")" = "0" ] || { echo "disk reclaim failed"; exit 1; }
-          echo "After:" && df -h /
 
       - name: Install Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -1938,10 +1894,9 @@ jobs:
     runs-on: ubuntu-24.04
     # MCP build + smoke is much lighter than the full nextest+llvm-cov
     # run on cargo-tests: one dev-profile compile of `src-tauri` shared by
-    # the `agaric-mcp` bin and the smoke test. 5.0-5.8 min measured before the
-    # doc-tests moved here, which took 2.9-3.1 min on cargo-tests (runs
-    # 38849989109 / 38860006295, 2026-10-16); the apt step is bounded by the
-    # apt-install action and the .deb cache (#1464). 20 min.
+    # the `agaric-mcp` bin and the smoke test, so it has headroom for the
+    # doc-tests too; the apt step is bounded by the apt-install action and the
+    # .deb cache (#1464).
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1995,10 +1950,9 @@ jobs:
         # per-example binaries outside the nextest harness. Without this step
         # a broken `/// ```` example on a pure helper would rot silently
         # (#2555). Here, not on a `cargo-tests` shard: there the plain build
-        # shared nothing with the llvm-cov tree and added 2.9-3.1 min to the
-        # critical-path shard (runs 38849989109 / 38860006295, 2026-10-16),
-        # while this job's dev tree already holds the deps and finishes in
-        # 5-6 min. Cheap while there are few doc-tests; the per-example binary
+        # shares nothing with the llvm-cov tree and lengthens the
+        # critical-path shard, while this job's dev tree already holds the
+        # deps. Cheap while there are few doc-tests; the per-example binary
         # is the real cost as adoption grows, which is why the convention is
         # pure helpers only.
         working-directory: src-tauri

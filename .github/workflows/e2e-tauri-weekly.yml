@@ -275,8 +275,7 @@ jobs:
         # build. The default also runs prepare-external-bins.mjs, a RELEASE
         # build of the agaric-mcp sidecar no spec runs (the MCP spec speaks
         # to the app's own socket) and no bundle ships (`--no-bundle`; no
-        # `externalBin` entry either): 12.3 of 17 min cold (run 38859986472),
-        # 4.2 of 5.4 min on a warm cache (run 38815251099), 2026-10-15/16.
+        # `externalBin` entry either), so skipping it only saves build time.
         run: >-
           npm run tauri -- build --debug --no-bundle
           --config '{"build":{"beforeBuildCommand":"npm run build"}}'
