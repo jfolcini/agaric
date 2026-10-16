@@ -115,6 +115,14 @@ describe('tokenize', () => {
     expect(t1.text).toBe('value')
   })
 
+  it('flags a word whose mid-word quote never closed, and only that word', () => {
+    const [open, plain] = tokenize('prop:key="unterminated value')
+    expect(open).toMatchObject({ unclosedQuote: true })
+    expect(plain).not.toHaveProperty('unclosedQuote')
+    const [closed] = tokenize('prop:key="ab cd"')
+    expect(closed).not.toHaveProperty('unclosedQuote')
+  })
+
   it('mid-word phrase boundary contract matches outer quoted phrase (#152)', () => {
     // The mid-word close uses the same boundary rule as the outer
     // quoted-phrase open: a `"` followed by non-whitespace is not a

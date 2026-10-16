@@ -20,6 +20,14 @@ describe('detectAutocompleteAnchor', () => {
     expect(detectAutocompleteAnchor('tag:#urgent ', 12)).toBeNull()
   })
 
+  it('starts the token after a no-break space, as the tokeniser does', () => {
+    expect(detectAutocompleteAnchor('a\u00A0tag:#u', 9)).toEqual({
+      active: 'tag',
+      query: 'u',
+      anchor: 7,
+    })
+  })
+
   it('returns null in pure free text', () => {
     expect(detectAutocompleteAnchor('hello world', 5)).toBeNull()
   })

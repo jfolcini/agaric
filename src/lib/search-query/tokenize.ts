@@ -17,7 +17,7 @@
 
 /** A raw lexical token. */
 export type RawToken =
-  | { kind: 'word'; text: string; span: [number, number] }
+  | { kind: 'word'; text: string; span: [number, number]; unclosedQuote?: true }
   | { kind: 'quoted'; text: string; span: [number, number] }
 
 /**
@@ -34,6 +34,11 @@ export type RawToken =
  *   single word for the classifier to parse (#152). If no matching
  *   close exists, the `"` is kept as a literal and the word ends at
  *   the next whitespace (e.g. `say"hello` still tokenises as one word).
+ *
+ * - A word whose mid-word `"` found no close is flagged `unclosedQuote`:
+ *   its extent depends on the text that follows it, because a later
+ *   boundary `"` would turn that quote into a phrase and swallow the text
+ *   in between.
  *
  * Spans are `[startCol, endCol)` over the original input in UTF-16
  * code units (compatible with `string.length`). The quote characters
@@ -102,11 +107,12 @@ export function tokenize(input: string): RawToken[] {
     assertAdvanced('tokenize/outer', prevOuter, i)
     prevOuter = i
     const ch = input[i]
-    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+    if (isWhitespace(ch)) {
       i++
       continue
     }
     const start = i
+    let unclosedQuote = false
     if (ch === '"') {
       // Find a *closing* `"` that sits at a token boundary
       // (followed by whitespace or end-of-input). A `"` glued to more
@@ -135,17 +141,23 @@ export function tokenize(input: string): RawToken[] {
       assertAdvanced('tokenize/word', prevInner, i)
       prevInner = i
       const c = input[i]
-      if (c === ' ' || c === '\t' || c === '\n' || c === '\r') break
+      if (isWhitespace(c)) break
       if (c === '"' && i > start) {
         const close = findCloseAtBoundary(input, i)
         if (close !== -1) {
           i = close + 1
           continue
         }
+        unclosedQuote = true
       }
       i++
     }
-    tokens.push({ kind: 'word', text: input.slice(start, i), span: [start, i] })
+    const text = input.slice(start, i)
+    tokens.push(
+      unclosedQuote
+        ? { kind: 'word', text, span: [start, i], unclosedQuote }
+        : { kind: 'word', text, span: [start, i] },
+    )
   }
   return tokens
 }
@@ -184,6 +196,15 @@ export function assertAdvanced(where: string, prev: number, cur: number): void {
 }
 
 /**
+ * JS `\s`, the set the free-text cleanup collapses and trims, so a
+ * no-break or ideographic space splits words exactly where the cleanup
+ * turns it into a plain space.
+ */
+export function isWhitespace(c: string | undefined): boolean {
+  return c !== undefined && /\s/.test(c)
+}
+
+/**
  * Given an opening `"` at index `open`, find the index of a matching
  * close `"` that sits at a token boundary (followed by whitespace or
  * end-of-input). Returns `-1` if no qualifying close exists.
@@ -192,13 +213,7 @@ function findCloseAtBoundary(input: string, open: number): number {
   let close = input.indexOf('"', open + 1)
   while (close !== -1) {
     const after = input[close + 1]
-    if (
-      after === undefined ||
-      after === ' ' ||
-      after === '\t' ||
-      after === '\n' ||
-      after === '\r'
-    ) {
+    if (after === undefined || isWhitespace(after)) {
       return close
     }
     close = input.indexOf('"', close + 1)
