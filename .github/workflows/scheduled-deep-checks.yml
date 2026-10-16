@@ -3018,8 +3018,7 @@ jobs:
 
       - name: Free disk space on runner
         # The clippy hook's check tree plus the four sqlx-prepare passes are
-        # heavy; drop the unused preinstalled toolchains first (same
-        # rationale as the cargo-tests job in _validate.yml).
+        # heavy; drop the unused preinstalled toolchains first.
         run: |
           set -euo pipefail
           echo "Before:" && df -h /
@@ -3277,8 +3276,7 @@ jobs:
 
       - name: Free disk space on runner
         # The full coverage-free nextest tree is heavy; drop the unused
-        # preinstalled toolchains first (same rationale as the cargo-tests job
-        # in _validate.yml).
+        # preinstalled toolchains first.
         run: |
           set -euo pipefail
           echo "Before:" && df -h /
