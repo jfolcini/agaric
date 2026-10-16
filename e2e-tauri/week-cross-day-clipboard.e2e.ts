@@ -121,17 +121,23 @@ describe('Agaric real-backend week-view clipboard across two days', () => {
     await weekly.click()
     await $('section[id^="journal-2"]').waitForExist({ timeout: NAV_TIMEOUT })
 
-    // The days on screen in document order, today's, and an empty one.
-    const { days, today, empty } = await browser.execute((marker: string) => {
+    // The week's days in document order, today's, and an empty one. Today is
+    // found by date, not by its marker: a day below the fold has not mounted
+    // its tree yet (DaySection), so its text holds no block.
+    const { days, today, empty } = await browser.execute(() => {
+      const d = new Date()
+      const todayId = `journal-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
       const sections = Array.from(document.querySelectorAll('section[id^="journal-2"]'))
       return {
         days: sections.map((s) => s.id),
-        today: sections.find((s) => (s.textContent ?? '').includes(marker))?.id ?? '',
+        today: sections.find((s) => s.id === todayId)?.id ?? '',
         empty: sections.find((s) => (s.textContent ?? '').includes('No blocks for'))?.id ?? '',
       }
-    }, TODAY)
+    })
     expect(today).not.toBe('')
     expect(empty).not.toBe('')
+    await $(`#${today}`).scrollIntoView()
+    await rowIn(today, TODAY).waitForDisplayed({ timeout: ACTION_TIMEOUT })
 
     // The empty day's "Add block" creates its page and seeds its first block.
     const otherDay = $(`#${empty}`)
