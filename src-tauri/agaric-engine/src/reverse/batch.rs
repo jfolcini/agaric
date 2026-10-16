@@ -129,14 +129,6 @@ const POSITION_BINDS_PER_OP: usize = 7;
 const PROPERTY_BINDS_PER_OP: usize = 8;
 const ATTACHMENT_BINDS_PER_OP: usize = 7;
 const OP_RECORD_BINDS_PER_OP: usize = 3;
-// #4259's live-row fetch is the one helper that is NOT a per-op UNION-ALL of
-// `LIMIT 1` subqueries: it is a single PRIMARY-KEY `IN (...)` over
-// `attachments`, so it binds exactly ONE parameter per op and maps rows back
-// by `id` rather than by a bound input index. Declared AFTER the five widths
-// above rather than between the bind-width block and the `MAX_SQL_PARAMS`
-// paragraph, so that paragraph introduces the consts it actually describes
-// (#4346).
-const LIVE_ATTACHMENT_BINDS_PER_OP: usize = 1;
 
 /// Op-types that a point-in-time restore treats as non-reversible
 /// UNCONDITIONALLY, regardless of whether a per-op inverse could be
@@ -858,9 +850,9 @@ async fn fetch_live_attachment_state_batch(
         att_ids.push(payload.attachment_id.as_str().to_string());
     }
 
-    // C5 (#344): chunked like every other batch helper, at this helper's own
-    // (narrower) per-op bind width.
-    let chunk_size = MAX_SQL_PARAMS / LIVE_ATTACHMENT_BINDS_PER_OP;
+    // C5 (#344): chunked like every other batch helper. A PRIMARY-KEY
+    // `IN (...)` binds one parameter per op, so a chunk is `MAX_SQL_PARAMS` ops.
+    let chunk_size = MAX_SQL_PARAMS;
     let mut by_id: std::collections::HashMap<String, (String, String)> =
         std::collections::HashMap::new();
     for chunk in att_ids.chunks(chunk_size) {
