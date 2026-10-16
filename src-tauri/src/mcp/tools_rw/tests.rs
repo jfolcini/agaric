@@ -3506,11 +3506,26 @@ async fn rw_reads_its_own_write_5379() {
     assert_eq!(read["content"], "written by RW");
 }
 
-/// A journal page `journal_for_date` creates on RW reaches open views, as it
-/// does on RO (#5379, #5314).
+/// The one read tool that writes: a day `journal_for_date` creates on RW is
+/// created on the writer pool (the reader pool refuses writes), as the agent,
+/// and reaches open views as it does on RO (#5379, #5314).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn journal_for_date_on_rw_notifies_open_views_5379() {
-    let (tools, _mat, _pool, space, emitter, _dir) = mk_tools_recording().await;
+async fn journal_for_date_on_rw_creates_the_day_as_the_agent_5379() {
+    let dir = TempDir::new().unwrap();
+    let pools = crate::db::init_pools(&dir.path().join("split.db"))
+        .await
+        .unwrap();
+    let mat = Materializer::with_read_pool(pools.write.clone(), pools.read.clone());
+    let emitter = Arc::new(RecordingViewChangeEmitter::new());
+    let tools = ReadWriteTools::new(
+        pools.write.clone(),
+        pools.read.clone(),
+        mat.clone(),
+        DEV.to_string(),
+    )
+    .with_view_emitter(emitter.clone());
+    let space = mk_space(&pools.write, "Journal").await;
+    let since = last_seq(&pools.write).await;
     let date = chrono::Local::now()
         .date_naive()
         .format("%Y-%m-%d")
@@ -3522,9 +3537,16 @@ async fn journal_for_date_on_rw_notifies_open_views_5379() {
             &test_ctx_agent(),
         )
         .await
-        .expect("journal_for_date on RW");
+        .expect("journal_for_date creates on the writer pool");
     let page_id = created["id"].as_str().expect("id present").to_string();
     assert_eq!(emitter.blocks_changed(), vec![vec![page_id]]);
+    let origins: Vec<String> =
+        sqlx::query_scalar("SELECT origin FROM op_log WHERE op_type = 'create_block' AND seq > ?")
+            .bind(since)
+            .fetch_all(&pools.write)
+            .await
+            .unwrap();
+    assert_eq!(origins, vec!["agent:test-agent"]);
 }
 
 // -------------------------------------------------------------------

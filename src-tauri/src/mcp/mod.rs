@@ -146,8 +146,8 @@ impl McpSurface {
                  Undo: a write that changed something returns `op_refs`; pass them to \
                  `undo` to revert it. `delete_block` is a soft delete that `restore_block` \
                  reverses.\n\
-                 In written content, `[[Name]]` and `#name` link the page or tag of that \
-                 name, creating it when none matches.\n",
+                 Names in written content: `[[Name]]` and `#name` link the page or tag of \
+                 that name, creating it when none matches.\n",
             ),
         }
     }

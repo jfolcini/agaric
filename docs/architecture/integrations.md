@@ -36,7 +36,9 @@ Splitting by R/W lets users disable writes while keeping reads on.
 
 1. Add its `TOOL_*` wire-name constant in `src-tauri/src/mcp/registry.rs`.
 2. In the matching `tools_ro.rs` / `tools_rw.rs`, add the tool-description factory and register it
-   in `list_tool_descriptions()` (the `list_tools()` enumeration).
+   in `list_tool_descriptions()` (the `list_tools()` enumeration), or, for a write tool, in
+   `write_tool_descriptions()` in `tools_rw.rs`, whose `list_tool_descriptions()` appends the read
+   tools.
 3. In that same tools file, add the `call_tool()` dispatch arm and handler implementation.
 4. Add a field-filtered `summarise_<name>` function and its `summarise()` match arm in
    `src-tauri/src/mcp/summarise.rs`.
