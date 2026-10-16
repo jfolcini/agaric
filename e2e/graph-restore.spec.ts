@@ -39,20 +39,25 @@ function maxDistance(a: Positions, b: Positions): number {
 }
 
 /**
- * Waits for the simulation to stop: no node moves at all between two reads a
- * second apart. A layout still creeping toward `alphaMin` moves every tick.
+ * Waits for the simulation to stop and the view with it: neither a node nor the
+ * zoom moves between two reads 250 ms apart. A layout still creeping toward
+ * `alphaMin` moves every tick, and the first settle's fit eases in after it.
  */
 async function settledPositions(page: Page): Promise<Positions> {
+  const g = page.locator('[data-testid="graph-svg"] > g').first()
   let last: Positions = {}
+  let lastTransform: string | null = null
   await expect
     .poll(
       async () => {
         const now = await nodePositions(page)
-        const still = maxDistance(last, now) === 0
+        const transform = await g.getAttribute('transform')
+        const still = maxDistance(last, now) === 0 && transform === lastTransform
         last = now
+        lastTransform = transform
         return still
       },
-      { intervals: [1000], timeout: 30_000 },
+      { intervals: [250], timeout: 30_000 },
     )
     .toBe(true)
   return last

@@ -59,6 +59,12 @@ export const GRAVITY_STRENGTH = 0.05
 export const RESIZE_ALPHA = 0.3
 
 /**
+ * Ticks a reduced-motion layout runs synchronously before it is shown once,
+ * on both paths, so the user never watches it settle.
+ */
+export const REDUCED_MOTION_TICK_LIMIT = 300
+
+/**
  * Alpha a fresh simulation starts at. Nodes that arrive with positions are a
  * kept layout coming back (#5434): one that had stopped, with nothing new in
  * it (`keptSettled`), starts at rest; otherwise it starts warm, so it appears

@@ -14,7 +14,13 @@ import {
   type SimulationNodeDatum,
 } from 'd3-force'
 
-import { applyGraphForces, applyResizeForces, RESIZE_ALPHA, startAlpha } from '@/lib/graph-forces'
+import {
+  applyGraphForces,
+  applyResizeForces,
+  REDUCED_MOTION_TICK_LIMIT,
+  RESIZE_ALPHA,
+  startAlpha,
+} from '@/lib/graph-forces'
 import type {
   WorkerErrorMessage,
   WorkerInboundMessage,
@@ -39,6 +45,7 @@ interface SimEdge extends SimulationLinkDatum<SimNode> {
 
 let simulation: Simulation<SimNode, SimEdge> | null = null
 let simNodes: SimNode[] = []
+let reducedMotion = false
 
 /**
  * Timestamp (`performance.now()`, ms) of the last emitted `tick` post. #2273:
@@ -121,6 +128,20 @@ function toSimNode(n: WorkerNode): SimNode {
   return node
 }
 
+/**
+ * Bring the layout to rest: animated, or under reduced motion at once, with
+ * only the result posted, as the main-thread path does.
+ */
+function settle(sim: Simulation<SimNode, SimEdge>): void {
+  if (!reducedMotion) {
+    sim.restart()
+    return
+  }
+  sim.stop()
+  sim.tick(REDUCED_MOTION_TICK_LIMIT)
+  postPositions('done')
+}
+
 // ── Message handler ──────────────────────────────────────────────────
 
 self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => {
@@ -167,6 +188,9 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
           postPositions('done')
         })
 
+        reducedMotion = msg.reducedMotion
+        if (reducedMotion) settle(simulation.alphaDecay(1))
+
         break
       }
 
@@ -205,7 +229,7 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
 
         // Nudge alpha so the existing layout re-settles around the new
         // topology instead of restarting cold (mirror `resize`).
-        simulation.alpha(0.3).restart()
+        settle(simulation.alpha(0.3))
         break
       }
 
@@ -219,7 +243,7 @@ self.addEventListener('message', (event: MessageEvent<WorkerInboundMessage>) => 
 
         const { width, height } = msg
         applyResizeForces(simulation, { width, height })
-        simulation.alpha(RESIZE_ALPHA).restart()
+        settle(simulation.alpha(RESIZE_ALPHA))
         break
       }
 
