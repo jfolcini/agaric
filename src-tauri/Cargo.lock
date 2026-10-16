@@ -80,6 +80,7 @@ dependencies = [
  "chrono",
  "criterion",
  "futures-util",
+ "gtk",
  "insta",
  "libc",
  "notify-rust",
