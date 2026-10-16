@@ -8,9 +8,11 @@
 //!
 //! Every step is the app's own code: `init_pools`, the daemon,
 //! `confirm_pairing_inner` with the fields of the QR the app showed (what a
-//! phone's camera hands the joiner), `create_block_inner`, `edit_block_inner`,
-//! `set_property_inner`, `move_block_inner`, `get_active_block_inner`,
-//! `get_property_inner` and `list_peer_refs_inner`. `sync` wakes the daemon as
+//! phone's camera hands the joiner), `create_block_inner`,
+//! `create_block_inner_with_space`, `edit_block_inner`, `set_property_inner`,
+//! `set_todo_state_inner`, `set_due_date_inner`, `add_tag_inner`,
+//! `move_block_inner`, `get_active_block_inner`, `get_property_inner` and
+//! `list_peer_refs_inner`. `sync` wakes the daemon as
 //! `start_sync` does; it never runs a session itself.
 //!
 //! A session is a pull by the device that dials (#610), so each direction has
@@ -29,13 +31,16 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{
-    confirm_pairing_inner, create_block_inner, edit_block_inner, get_active_block_inner,
-    get_property_inner, list_peer_refs_inner, move_block_inner, set_property_inner,
+    add_tag_inner, confirm_pairing_inner, create_block_inner, create_block_inner_with_space,
+    edit_block_inner, get_active_block_inner, get_property_inner, list_peer_refs_inner,
+    move_block_inner, set_due_date_inner, set_property_inner, set_todo_state_inner,
 };
 use agaric_lib::db::{DbPools, init_pools, now_ms};
 use agaric_lib::materializer::Materializer;
+use agaric_lib::spaces::SPACE_PERSONAL_ULID;
 use agaric_lib::ulid::verify_active;
 use agaric_store::peer_refs::{self, PeerRef};
+use agaric_store::space::{SpaceId, SpaceScope};
 use agaric_sync::foreground::LifecycleHooks;
 use agaric_sync::pairing::{PairingSession, ScannedPeerCandidate};
 use agaric_sync::sync_daemon::{SyncDaemon, SyncDaemonContext};
@@ -74,6 +79,12 @@ enum Command {
         parent_id: String,
         content: String,
     },
+    /// Write a `page` or `tag` block, which has no parent, in the Personal
+    /// space: the space a fresh vault opens on.
+    CreateInSpace {
+        block_type: String,
+        content: String,
+    },
     /// Replace the whole text of block `id` with `content`.
     EditBlock {
         id: String,
@@ -84,6 +95,21 @@ enum Command {
         id: String,
         key: String,
         value: String,
+    },
+    /// Set the task state (`TODO`, `DONE`, ...) of block `id`.
+    SetTodoState {
+        id: String,
+        state: String,
+    },
+    /// Set the due date (`YYYY-MM-DD`) of block `id`.
+    SetDueDate {
+        id: String,
+        date: String,
+    },
+    /// Tag block `id` with tag block `tag_id`.
+    AddTag {
+        id: String,
+        tag_id: String,
     },
     /// Move block `id` to sibling slot `index` (0-based) under `parent_id`.
     MoveBlock {
@@ -131,6 +157,7 @@ enum Reply {
     },
     Edited,
     PropertySet,
+    Tagged,
     Moved,
     /// `value_text` is null when the block holds no such property.
     Property {
@@ -243,8 +270,15 @@ impl Peer {
             Command::CreateBlock { parent_id, content } => {
                 self.create_block(parent_id, content).await
             }
+            Command::CreateInSpace {
+                block_type,
+                content,
+            } => self.create_in_space(block_type, content).await,
             Command::EditBlock { id, content } => self.edit_block(id, content).await,
             Command::SetProperty { id, key, value } => self.set_property(id, key, value).await,
+            Command::SetTodoState { id, state } => self.set_todo_state(id, state).await,
+            Command::SetDueDate { id, date } => self.set_due_date(id, date).await,
+            Command::AddTag { id, tag_id } => self.add_tag(id, tag_id).await,
             Command::MoveBlock {
                 id,
                 parent_id,
@@ -360,6 +394,30 @@ impl Peer {
         })
     }
 
+    async fn create_in_space(
+        &mut self,
+        block_type: String,
+        content: String,
+    ) -> Result<Reply, AppError> {
+        let personal = SpaceScope::Active(SpaceId::from_trusted(SPACE_PERSONAL_ULID));
+        let row = create_block_inner_with_space(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            block_type,
+            content,
+            None,
+            None,
+            &personal,
+            None,
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::Created {
+            id: row.id.into_string(),
+        })
+    }
+
     async fn edit_block(&mut self, id: String, content: String) -> Result<Reply, AppError> {
         edit_block_inner(
             &self.pools.write,
@@ -396,6 +454,47 @@ impl Peer {
         .await?;
         self.last_write_ms = now_ms();
         Ok(Reply::PropertySet)
+    }
+
+    async fn set_todo_state(&mut self, id: String, state: String) -> Result<Reply, AppError> {
+        let block = verify_active(&self.pools.read, &BlockId::from_string(id)?).await?;
+        set_todo_state_inner(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            block,
+            Some(state),
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::PropertySet)
+    }
+
+    async fn set_due_date(&mut self, id: String, date: String) -> Result<Reply, AppError> {
+        let block = verify_active(&self.pools.read, &BlockId::from_string(id)?).await?;
+        set_due_date_inner(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            block,
+            Some(date),
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::PropertySet)
+    }
+
+    async fn add_tag(&mut self, id: String, tag_id: String) -> Result<Reply, AppError> {
+        add_tag_inner(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            BlockId::from_string(id)?,
+            BlockId::from_string(tag_id)?,
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::Tagged)
     }
 
     async fn move_block(
@@ -601,6 +700,54 @@ mod tests {
                 index: 0,
             }),
             "sync-peer.ts sends a move as the block id, its new parent and a 0-based slot"
+        );
+    }
+
+    #[test]
+    fn create_in_space_takes_a_block_type_and_its_text() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"create_in_space","block_type":"tag","content":"marigold"}"#),
+            Ok(Command::CreateInSpace {
+                block_type: "tag".into(),
+                content: "marigold".into(),
+            }),
+            "sync-peer.ts sends a page or tag as its block type and its text"
+        );
+    }
+
+    #[test]
+    fn set_todo_state_takes_a_block_and_a_state() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"set_todo_state","id":"B1","state":"DONE"}"#),
+            Ok(Command::SetTodoState {
+                id: "B1".into(),
+                state: "DONE".into(),
+            }),
+            "sync-peer.ts sends a task state as the block id and the state"
+        );
+    }
+
+    #[test]
+    fn set_due_date_takes_a_block_and_a_date() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"set_due_date","id":"B1","date":"2026-10-15"}"#),
+            Ok(Command::SetDueDate {
+                id: "B1".into(),
+                date: "2026-10-15".into(),
+            }),
+            "sync-peer.ts sends a due date as the block id and the date"
+        );
+    }
+
+    #[test]
+    fn add_tag_takes_a_block_and_a_tag() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"add_tag","id":"B1","tag_id":"T1"}"#),
+            Ok(Command::AddTag {
+                id: "B1".into(),
+                tag_id: "T1".into(),
+            }),
+            "sync-peer.ts sends a tagging as the block id and the tag's id"
         );
     }
 

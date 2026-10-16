@@ -6,7 +6,8 @@
 // `mkdtemp` vault, and talks to it one JSON line at a time (the binary's
 // `Command` and `Reply` are the protocol). `readPairingQr` reads the app's
 // pairing QR the way that device's camera would: the QR is the one place the
-// app says where it listens, so a peer can pair without mDNS.
+// app says where it listens, so a peer can pair without mDNS. The app's side of
+// the pairing (Settings › Sync & devices) is here too, for the specs that pair.
 //
 // The e2e-tauri workflow builds the peer, and so does `wdio.conf.ts`'s local
 // `onPrepare`: `cd src-tauri && cargo build -p agaric-diagnostics --bin e2e_sync_peer`.
@@ -20,7 +21,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 
-import { ACTION_TIMEOUT } from './helpers'
+import { ACTION_TIMEOUT, NAV_TIMEOUT, navigateTo, typeInputVerified, waitForToast } from './helpers'
 
 /**
  * The part of the zxing build html5-qrcode ships (the app's own QR scanner)
@@ -91,14 +92,58 @@ export async function readPairingQr(): Promise<PairingQr> {
   return qr as PairingQr
 }
 
+/** Settings › Sync & devices. */
+export async function openSyncSettings(): Promise<void> {
+  await navigateTo('Settings')
+  const tab = $('#settings-tab-sync')
+  await tab.waitForClickable({ timeout: NAV_TIMEOUT })
+  await tab.click()
+  await $('[data-testid="settings-panel-sync"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+}
+
+/** Open the pairing dialog from the sync settings; resolves to the passphrase it shows. */
+export async function openPairing(): Promise<string> {
+  const pairButton = $('button*=Pair new device')
+  await pairButton.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await pairButton.click()
+  await $('[data-testid="pairing-qr-code"] svg path').waitForExist({ timeout: ACTION_TIMEOUT })
+  return $('.pairing-passphrase').getText()
+}
+
+/** The device list's row for a peer that sent no name, so shows its id. */
+export function peerRow(deviceId: string) {
+  return $(`//div[contains(@class, "device-peer-item")][contains(., "${deviceId.slice(0, 12)}")]`)
+}
+
+/**
+ * Type the peer's address into the device list, as a user without mDNS would.
+ * Paired by the peer's dial, the app holds no address to dial it back, and a
+ * session is a pull by the device that dials (#610).
+ */
+export async function setPeerAddress(deviceId: string, address: string): Promise<void> {
+  await openSyncSettings()
+  const editAddress = peerRow(deviceId).$('button[aria-label^="Edit address for"]')
+  await editAddress.waitForClickable({ timeout: NAV_TIMEOUT })
+  await editAddress.click()
+  await typeInputVerified('input[aria-label="Address (host:port)"]', address)
+  const save = $('[role="dialog"]').$('button=Save')
+  await save.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await save.click()
+  await waitForToast('Address updated')
+}
+
 type Command =
   | ({ cmd: 'pair' } & PairingQr)
   | { cmd: 'sync' }
   | { cmd: 'sync_refused' }
   | { cmd: 'get_block'; id: string }
   | { cmd: 'create_block'; parent_id: string; content: string }
+  | { cmd: 'create_in_space'; block_type: 'page' | 'tag'; content: string }
   | { cmd: 'edit_block'; id: string; content: string }
   | { cmd: 'set_property'; id: string; key: string; value: string }
+  | { cmd: 'set_todo_state'; id: string; state: string }
+  | { cmd: 'set_due_date'; id: string; date: string }
+  | { cmd: 'add_tag'; id: string; tag_id: string }
   | { cmd: 'move_block'; id: string; parent_id: string; index: number }
   | { cmd: 'get_property'; id: string; key: string }
   | { cmd: 'wait_pulled' }
@@ -112,6 +157,7 @@ type Reply =
   | { reply: 'created'; id: string }
   | { reply: 'edited' }
   | { reply: 'property_set' }
+  | { reply: 'tagged' }
   | { reply: 'moved' }
   | { reply: 'property'; value_text: string | null }
   | { reply: 'pulled' }
@@ -135,10 +181,18 @@ export interface SyncPeer {
   getBlock(id: string): Promise<PeerBlock>
   /** Write a content block under `parentId`; resolves to its id. */
   createBlock(parentId: string, content: string): Promise<string>
+  /** Write a page or tag in the Personal space, the one a fresh vault opens on; resolves to its id. */
+  createInSpace(blockType: 'page' | 'tag', content: string): Promise<string>
   /** Replace the whole text of block `id` with `content`. */
   editBlock(id: string, content: string): Promise<void>
   /** Set text property `key` on block `id`. */
   setProperty(id: string, key: string, value: string): Promise<void>
+  /** Set the task state (`TODO`, `DONE`, …) of block `id`. */
+  setTodoState(id: string, state: string): Promise<void>
+  /** Set the due date (`YYYY-MM-DD`) of block `id`. */
+  setDueDate(id: string, date: string): Promise<void>
+  /** Tag block `id` with tag block `tagId`. */
+  addTag(id: string, tagId: string): Promise<void>
   /** Move block `id` under `parentId`, to 0-based sibling slot `index`. */
   moveBlock(id: string, parentId: string, index: number): Promise<void>
   /** Text property `key` of block `id`; null when the block holds none. */
@@ -205,11 +259,22 @@ export async function startSyncPeer(): Promise<SyncPeer> {
     },
     createBlock: async (parentId, content) =>
       (await request({ cmd: 'create_block', parent_id: parentId, content }, 'created')).id,
+    createInSpace: async (blockType, content) =>
+      (await request({ cmd: 'create_in_space', block_type: blockType, content }, 'created')).id,
     editBlock: async (id, content) => {
       await request({ cmd: 'edit_block', id, content }, 'edited')
     },
     setProperty: async (id, key, value) => {
       await request({ cmd: 'set_property', id, key, value }, 'property_set')
+    },
+    setTodoState: async (id, state) => {
+      await request({ cmd: 'set_todo_state', id, state }, 'property_set')
+    },
+    setDueDate: async (id, date) => {
+      await request({ cmd: 'set_due_date', id, date }, 'property_set')
+    },
+    addTag: async (id, tagId) => {
+      await request({ cmd: 'add_tag', id, tag_id: tagId }, 'tagged')
     },
     moveBlock: async (id, parentId, index) => {
       await request({ cmd: 'move_block', id, parent_id: parentId, index }, 'moved')
