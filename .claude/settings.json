@@ -14,5 +14,14 @@
       }
     ]
   },
-  "enabledMcpjsonServers": ["code-review-graph"]
+  "enabledMcpjsonServers": ["code-review-graph"],
+  "extraKnownMarketplaces": {
+    "agaric": {
+      "source": { "source": "directory", "path": "./.claude/marketplace" }
+    }
+  },
+  "enabledPlugins": {
+    "tsc-lsp@agaric": true,
+    "typescript-lsp@claude-plugins-official": false
+  }
 }

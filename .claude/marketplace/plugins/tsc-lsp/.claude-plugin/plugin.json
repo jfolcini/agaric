@@ -1,0 +1,5 @@
+{
+  "name": "tsc-lsp",
+  "description": "TypeScript 7's native language server (tsc --lsp) from this repo's node_modules",
+  "version": "1.0.0"
+}
