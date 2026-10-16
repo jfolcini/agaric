@@ -17,7 +17,7 @@
  */
 
 import type { Locale } from 'date-fns'
-import { enUS } from 'date-fns/locale'
+import { enUS } from 'date-fns/locale/en-US'
 
 /** Every locale the app can render in. `en` is bundled; the rest are lazy. */
 export const SUPPORTED_LOCALES = ['en', 'es'] as const

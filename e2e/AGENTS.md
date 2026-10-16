@@ -70,7 +70,7 @@ test('edits a block', async ({ page }) => {
 
 ## Flakes
 
-- Reproduce before fixing ([standard 6](../src/__tests__/AGENTS.md#quality-standards)): `npx playwright test e2e/<file>.spec.ts --repeat-each=30 --workers=8 --retries=0` (local `retries: 2` hides it), under CPU load or CDP `Emulation.setCPUThrottlingRate`. The same assertion failing every time points at ordering, not a race.
+- Reproduce before fixing ([standard 6](../src/__tests__/AGENTS.md#quality-standards)): `npx playwright test e2e/<file>.spec.ts --repeat-each=30 --workers=8` under CPU load or CDP `Emulation.setCPUThrottlingRate`. The same assertion failing every time points at ordering, not a race.
 - Do not build caret state from mid-stream `Home` / `End` / `ArrowLeft`: ProseMirror reads a native caret move on the next `selectionchange`, which Chrome fires late or coalesces, so the next key or paste sees the old selection. Type the whole string, assert it (`toHaveText`), then place the caret with `selectEditorRange`, which dispatches `selectionchange` itself.
 - After a view change, App moves focus to the view's primary element one frame later. Assert the focus you need with `toBeFocused()` before a key chord, or the chord lands in that element.
 - A week-view day mounts its tree only once scrolled into view (`useEnteredViewport` in `DaySection.tsx`), and `BlockTree` renders rows outside the scroller as placeholder `li`s (`useViewportObserver`), so a click that scrolls can detach a locator resolved earlier. Scroll the day or row's `li` into view first, and check a date-keyed spec under `page.clock` on every weekday.

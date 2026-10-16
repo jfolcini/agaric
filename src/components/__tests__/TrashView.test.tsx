@@ -85,6 +85,32 @@ function stubInvoke(handlers: Readonly<TypedInvokeHandlers>) {
 }
 
 /**
+ * `list_trash` handler for the chunked-drain tests: page 1 is the one row the
+ * view renders, page 2 (reached only by the cursor walk inside
+ * `purgeAllDeletedInSpace` / `restoreAllDeletedInSpace`, never loaded by the
+ * view) brings the drain to `MAX_TRASH_BATCH_IDS + 1` ids, i.e. two chunks.
+ * Rendering that many rows is what made these tests cost seconds each (#3885).
+ */
+function listTrashWithUnloadedTail(args: Readonly<Record<string, unknown>>) {
+  if (args['cursor'] == null) {
+    return {
+      items: [makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })],
+      next_cursor: 'tail',
+      has_more: true,
+      total_count: null,
+    }
+  }
+  return {
+    items: Array.from({ length: MAX_TRASH_BATCH_IDS }, (_, i) =>
+      makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
+    ),
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
+  }
+}
+
+/**
  * Helper: mock invoke to return items on list_trash and empty [] on batch_resolve.
  * Returns the page so callers can reference it.
  */
@@ -1919,34 +1945,10 @@ describe('TrashView', () => {
   // `emptyTrashFailed` toast, which implies nothing happened at all.
   it('shows partial-progress toast (not the generic failure) when a later empty-trash chunk fails', async () => {
     const user = userEvent.setup()
-    // MAX_TRASH_BATCH_IDS + 1 ids -> two purge_blocks_by_ids chunks:
-    // MAX_TRASH_BATCH_IDS (succeeds), then 1 (fails). #3885 — sized off the
-    // exported constant rather than a hardcoded 1001 so this stays exactly
-    // "one over the batch cap" if the cap ever changes.
-    //
-    // That self-describing-ness cuts the other way too: this test's render
-    // cost auto-scales with the cap. Raise MAX_TRASH_BATCH_IDS (currently
-    // 1000) to, say, 10000 and this silently becomes a 10001-item render
-    // that blows even the 60s budget below — nothing here would fail loudly
-    // until it did. The same is true of the two sibling fixtures in
-    // "shows singular partial-progress toast when exactly 1 item was
-    // removed before the error" and "toast and screen-reader announcement
-    // agree on singular wording for a 1-item partial purge" below. DI
-    // (dropping the fixture size below the cap entirely) is
-    // the tracked fix for the underlying cost — see #3885.
-    const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
-      i === 0
-        ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
-        : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
-    )
+    // Two purge_blocks_by_ids chunks: MAX_TRASH_BATCH_IDS (succeeds), then 1 (fails).
     let purgeCalls = 0
     stubInvoke({
-      list_trash: () => ({
-        items: trashItems,
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      list_trash: listTrashWithUnloadedTail,
       batch_resolve: () => [],
       purge_blocks_by_ids: () => {
         purgeCalls += 1
@@ -1970,37 +1972,19 @@ describe('TrashView', () => {
     // NOT the generic "nothing happened" copy.
     expect(toast.error).not.toHaveBeenCalledWith('Failed to empty trash')
     expect(purgeCalls).toBe(2)
-    // 60s, not the 20s global. Deriving the fixture from MAX_TRASH_BATCH_IDS makes
-    // it self-describing but NOT smaller — the chunking loop closes over the
-    // module's own const, so no test can shrink N without DI (#3885). Still 1001
-    // rendered items, measured 7.4s-31.9s in isolation, and it tips over 20s under
-    // the pre-push gate's parallelism.
-  }, 60_000)
+  })
 
   // #3860 — `trash.emptyTrashPartial` had the same missing-plural defect as
   // `trash.allPurged`; pins the singular wording for a 1-item partial purge.
-  // Mirrors the multi-chunk shape of the test above (1001 ids -> two
+  // Mirrors the multi-chunk shape of the test above (two
   // `purge_blocks_by_ids` chunks) but has the FIRST (successful) chunk
   // report `affected_count: 1` so the partial-progress toast renders the
   // singular form.
   it('shows singular partial-progress toast when exactly 1 item was removed before the error', async () => {
     const user = userEvent.setup()
-    // Render cost auto-scales with MAX_TRASH_BATCH_IDS — see the note in
-    // "shows partial-progress toast (not the generic failure) when a later
-    // empty-trash chunk fails" above.
-    const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
-      i === 0
-        ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
-        : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
-    )
     let purgeCalls = 0
     stubInvoke({
-      list_trash: () => ({
-        items: trashItems,
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      list_trash: listTrashWithUnloadedTail,
       batch_resolve: () => [],
       purge_blocks_by_ids: () => {
         purgeCalls += 1
@@ -2022,10 +2006,7 @@ describe('TrashView', () => {
       )
     })
     expect(purgeCalls).toBe(2)
-    // 60s, not the 20s global — same structural 1001-block fixture as below. This
-    // test predates #3860 and was already flaking under full-suite parallelism;
-    // the timeout is the fix for the flake, not for anything #3860 changed. #3885.
-  }, 60_000)
+  })
 
   // #3860 — the issue's actual complaint: at N=1 the toast and the
   // screen-reader announcement must AGREE within the SAME user action, not
@@ -2038,22 +2019,9 @@ describe('TrashView', () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
-    // Render cost auto-scales with MAX_TRASH_BATCH_IDS — see the note in
-    // "shows partial-progress toast (not the generic failure) when a later
-    // empty-trash chunk fails" above.
-    const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
-      i === 0
-        ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
-        : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
-    )
     let purgeCalls = 0
     stubInvoke({
-      list_trash: () => ({
-        items: trashItems,
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      list_trash: listTrashWithUnloadedTail,
       batch_resolve: () => [],
       purge_blocks_by_ids: () => {
         purgeCalls += 1
@@ -2080,11 +2048,7 @@ describe('TrashView', () => {
     // Neither channel fell back to the "_other"-shaped plural wording.
     expect(toast.error).not.toHaveBeenCalledWith(expect.stringContaining('Removed 1 items'))
     expect(mockedAnnounce).not.toHaveBeenCalledWith(expect.stringContaining('1 items permanently'))
-    // 60s, not the 20s global: `MAX_TRASH_BATCH_IDS` is 1000 (exported, #3885),
-    // so provoking a SECOND purge chunk requires a genuine 1001-block fixture —
-    // the size is structural, not incidental. Measured 7.4s-31.9s in isolation,
-    // and it tips over 20s under full-suite parallelism. See #3885.
-  }, 60_000)
+  })
 
   it('opens confirmation dialog when Restore All header is clicked', async () => {
     const user = userEvent.setup()
@@ -2328,26 +2292,14 @@ describe('TrashView', () => {
   // And the toast has to say so too: "Failed to restore all items" over a
   // thousand rows that DID come back is the same understatement
   // `trash.emptyTrashPartial` exists to stop on the purge side.
-  // Fixture shape (and the 60s budget) mirror the partial-purge tests above:
-  // provoking a second chunk needs MAX_TRASH_BATCH_IDS + 1 real rows.
   it('invalidates the name caches and the graph when an early restore-all chunk committed before a later one failed', async () => {
     const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
     _resetGraphStructureEventsForTest()
-    const trashItems = Array.from({ length: MAX_TRASH_BATCH_IDS + 1 }, (_, i) =>
-      i === 0
-        ? makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 })
-        : makeBlock({ id: `F${i}`, content: `filler ${i}`, deleted_at: 1736899200000 }),
-    )
     let restoreCalls = 0
     stubInvoke({
-      list_trash: () => ({
-        items: trashItems,
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }),
+      list_trash: listTrashWithUnloadedTail,
       batch_resolve: (args) =>
         ((args['ids'] as string[] | undefined) ?? [])
           .filter((id) => id === 'B1')
@@ -2392,7 +2344,7 @@ describe('TrashView', () => {
     } finally {
       unsubscribe()
     }
-  }, 60_000)
+  })
 
   it('relabeled batch buttons say Restore Selected / Purge Selected', async () => {
     const user = userEvent.setup()

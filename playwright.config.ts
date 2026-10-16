@@ -4,24 +4,13 @@ export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
   forbidOnly: !!process.env['CI'],
-  // Retry locally too (not just in CI). The local pre-push umbrella
-  // (`scripts/verify-ci-equivalent.sh`) is the real gate before a push, and
-  // a handful of overlay-timing tests (Radix popover / TipTap suggestion
-  // mounts) can flake under load. Retries keep the gate from rejecting a
-  // green tree on a one-off scheduling hiccup.
-  //
-  // #1458: CI drops to ONE retry. The old `retries: 2` was a cascade
-  // *amplifier* — when the server stalled on a shard, every test failed
-  // navigation and was retried ×2, tripling the wasted wall-clock until the
-  // shard ran to the job cap. Moving e2e off the HMR dev server onto a static
-  // `vite preview` build (see `webServer` below) removes the stall source, so
-  // a single retry is enough to absorb a genuine one-off overlay flake without
-  // re-multiplying a bad run. Locally (no sharding, no job cap) keep 2.
-  retries: process.env['CI'] ? 1 : 2,
+  // No retries, in CI or locally: a retry turns a flake into a green run and
+  // hides it, so a flaky test must fail and get fixed.
+  retries: 0,
   // #1458: hard per-test ceiling. Healthy shards finish ~1/3 of the suite in
   // ~7.5 min, so any single test taking a full minute is already pathological;
-  // 60s fails such a test fast instead of letting it (and its retry) drift
-  // toward the job cap. Generous enough for the heaviest legitimate spec.
+  // 60s fails such a test fast instead of letting it drift toward the job
+  // cap. Generous enough for the heaviest legitimate spec.
   timeout: 60_000,
   // #1458: global ceiling BELOW the CI job cap (`_validate.yml` playwright
   // `timeout-minutes`). At the ceiling Playwright aborts itself and still runs
@@ -93,11 +82,10 @@ export default defineConfig({
     // preview` instead of `npm run dev` (vite dev + HMR). The dev server
     // compiled/transformed modules on demand and ran HMR; under the load of a
     // sharded CI run it stalled (transform-under-load or an outright crash),
-    // every test on that shard failed navigation, and `retries: 2` tripled the
-    // damage until the shard ran to the job cap — with the failing shard
-    // VARYING run-to-run (the signature of infra/dev-server flake, not a bad
-    // spec). A pre-built static bundle has no on-the-fly compilation, so there
-    // is nothing to stall.
+    // every test on that shard failed navigation until the shard ran to the
+    // job cap — with the failing shard VARYING run-to-run (the signature of
+    // infra/dev-server flake, not a bad spec). A pre-built static bundle has
+    // no on-the-fly compilation, so there is nothing to stall.
     //
     // `build:e2e` builds with `VITE_E2E=1`, which keeps the tauri IPC mock in
     // the bundle (main.tsx gates the mock on `import.meta.env.VITE_E2E`); the

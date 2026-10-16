@@ -12,7 +12,8 @@
  * three can ever diverge.
  */
 
-import { enUS, es } from 'date-fns/locale'
+import { enUS } from 'date-fns/locale/en-US'
+import { es } from 'date-fns/locale/es'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { getAppLocaleTag, getDateLocale } from '@/lib/date-locale'
