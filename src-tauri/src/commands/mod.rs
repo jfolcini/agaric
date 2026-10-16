@@ -10,9 +10,9 @@
 //! `apply_reverse_in_tx`'s dedicated reverse SQL — `apply_op_tx` has no
 //! reverse semantics) and derived-column fix-ups (`block_cleanup`, e.g.
 //! `rederive_page_and_space_ids` run in-tx after a move/restore apply). No
-//! command path advances the apply cursor: the cursor stays put on the
-//! local path so boot replay re-applies each op idempotently (the recovery
-//! safety net). Cursor-advancing apply is owned exclusively by the
+//! command path advances the apply cursor: the snapshot pass moves it past
+//! local ops once the engine snapshots hold them (#5418), and boot replay
+//! re-applies the ops after the last pass. Cursor-advancing apply is owned by the
 //! materializer (sync / boot replay via `dispatch_op`). After commit, the
 //! command enqueues background cache work (tags, pages, agenda,
 //! block_links) which the materializer fans out via `dispatch_background()`.

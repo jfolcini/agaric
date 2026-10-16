@@ -25,9 +25,12 @@
 //!   `(space_id, snapshot)` pair.  Used by the eager-load boot pass
 //!   that rehydrates the registry without any synchronous-async glue
 //!   in `LoroEngineRegistry::for_space` (see decision note below).
-//! - [`save_all_engines`] — walk the registry, call [`save_snapshot`]
-//!   per space.  Catches and logs per-space errors so one bad space
-//!   never blocks the others.  Used by the periodic scheduler.
+//! - [`save_all_engines`] — walk the registry, persist every dirty space.
+//!   Catches and logs per-space errors so one bad space never blocks the
+//!   others.
+//! - [`save_engines_and_advance_cursor`] — the periodic, background and exit
+//!   pass: [`save_all_engines`], then the apply cursor moves to what it
+//!   persisted, so boot replays only the ops after it (#5418).
 //!
 //! ## Boot rehydration design
 //!
@@ -81,77 +84,52 @@ fn now_ms() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-/// The apply-cursor seq a snapshot taken *now* is guaranteed to reflect
-/// (C2 watermark).
+/// The highest locally-authored `op_log.seq`, read before a pass collects any
+/// engine (#5418).
 ///
-/// `materializer_apply_cursor.materialized_through_seq` tracks
-/// ENGINE-APPLY progress, NOT SQL-materialization progress. It advances
-/// ONLY via `materializer::handlers::apply::advance_apply_cursor`,
-/// which is called solely inside `apply_op` / the `BatchApplyOps` arm —
-/// i.e. the foreground engine-apply path (boot replay, the test-only
-/// `dispatch_op` helper, remote apply). The live LOCAL command path
-/// (`CommandTx::commit_and_dispatch`) writes the SQL `blocks` row
-/// SYNCHRONOUSLY inside its own tx and then fires only background
-/// cache-rebuild tasks; it NEVER enqueues an `ApplyOp`, never touches the
-/// per-space `LoroEngine`, and therefore never advances this cursor. So
-/// during a live session `op_log.seq` climbs while the cursor stays pinned
-/// at the prior-boot replay watermark (see #1248). Advancing the cursor to
-/// reflect SQL materialization would require routing local ops through
-/// engine-apply — tracked separately in #1257.
-///
-/// What the cursor DOES bound is engine-apply: every op `<= cursor` has
-/// been engine-applied and reprojected. The per-space `LoroEngine`
-/// dispatch for an `ApplyOp` happens INSIDE `apply_op`'s tx (the engine
-/// observes the op before the commit; see `apply_op`), and the foreground
-/// apply queue is serial, so every op `<= cursor` is reflected in its
-/// engine. `cursor - 1` (clamped at 0) is a conservative lower bound on
-/// what every engine reflects; boot replay re-applies the idempotent tail
-/// above it. A read error degrades to `0` (a conservative full rebuild
-/// next boot) rather than risking a watermark that overshoots engine state.
-///
-/// # Two consequences of the `- 1`, both deliberate (#4018/#4020)
-///
-/// 1. A healthy vault's watermarks settle at exactly `cursor - 1`, so
-///    `recovery::replay::heal_orphaned_apply_cursor` sees `cursor > MIN(…)`
-///    and rewinds by one op on EVERY boot. The rewind is correct (one
-///    idempotent re-apply); what it must not do is announce itself as a stale
-///    snapshot, which is why that function special-cases a gap of exactly 1.
-/// 2. When the apply cursor is itself clamped to 0 — compaction having purged
-///    the local log to zero surviving rows, see
-///    `recovery::replay::read_apply_cursor` — this returns 0, and a
-///    [`save_all_engines`] pass firing in that window writes
-///    `applied_through_seq = 0` over a previously-high watermark for every
-///    DIRTY space, undoing for those rows what
-///    [`advance_clean_space_watermarks`] does for the clean ones. That is an
-///    under-claim, never a false one (`applied_through_seq` asserts only a
-///    lower bound); the full rationale for leaving it alone lives on
-///    `read_apply_cursor`.
-async fn snapshot_watermark(pool: &SqlitePool) -> i64 {
-    let cursor: i64 = sqlx::query_scalar!(
-        r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or(0);
-    (cursor - 1).max(0)
+/// Every apply path, local commands and undo included, mutates the op's
+/// per-space engine inside the transaction that commits the op, so every op
+/// this read can see is already in its engine, and an export taken after the
+/// read holds it. Two engine writes land after their op's commit, and boot replay
+/// restores neither: a delete or restore cohort's fan-out (replay recomputes
+/// the cohort from SQL rows that already carry the change, so it comes out
+/// empty) and an op parked in `materializer_retry_queue` (durable on its own,
+/// the cursor having already passed it). Replicated rows never reach an
+/// engine through the op log. A read error degrades to 0, which claims
+/// nothing.
+async fn op_log_head(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar!(r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log WHERE is_replicated = 0"#)
+        .fetch_one(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(0)
 }
 
-/// Persist the engine's current snapshot to `loro_doc_state`.
+/// The `applied_through_seq` a pass that read `head` stamps (C2 watermark):
+/// one below it.
 ///
-/// Replaces any existing row for `space_id` (`INSERT OR REPLACE`).
-/// `op_count` resets to 0 on every save — the column is reserved for
-/// a future "snapshot every N ops" cadence and is currently unused by
-/// the time-driven scheduler. `applied_through_seq` records the apply
-/// cursor the blob reflects (see `snapshot_watermark`) so boot can
-/// detect a stale snapshot.
-pub async fn save_snapshot(
+/// [`save_engines_and_advance_cursor`] then moves the apply cursor to `head`,
+/// so a healthy vault's watermarks sit at exactly `cursor - 1` and boot
+/// re-applies that one op, the shape
+/// `recovery::replay::heal_orphaned_apply_cursor` treats as routine (#4018).
+/// When compaction has purged the local log to zero rows the head is 0, and a
+/// pass writes 0 over a dirty space's higher watermark: an under-claim, never
+/// a false one (`recovery::replay::read_apply_cursor` explains leaving it).
+fn snapshot_watermark(head: i64) -> i64 {
+    (head - 1).max(0)
+}
+
+/// Write one `loro_doc_state` row, replacing any existing one for `space_id`.
+///
+/// `op_count` resets to 0 on every save — the column is reserved for a future
+/// "snapshot every N ops" cadence and is unused by the time-driven scheduler.
+async fn write_snapshot_row(
     pool: &SqlitePool,
     space_id: &SpaceId,
-    engine: &LoroEngine,
-) -> Result<(), AppError> {
-    let bytes = engine.export_snapshot()?;
-    let updated_at = now_ms();
-    let applied_through_seq = snapshot_watermark(pool).await;
+    bytes: Vec<u8>,
+    applied_through_seq: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT OR REPLACE INTO loro_doc_state \
          (space_id, snapshot, updated_at, op_count, applied_through_seq) \
@@ -159,10 +137,25 @@ pub async fn save_snapshot(
     )
     .bind(space_id.as_str())
     .bind(bytes)
-    .bind(updated_at)
+    .bind(now_ms())
     .bind(applied_through_seq)
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// Persist the engine's current snapshot to `loro_doc_state`.
+///
+/// `applied_through_seq` records the op-log seq the blob reflects (see
+/// `snapshot_watermark`) so boot can detect a stale snapshot.
+pub async fn save_snapshot(
+    pool: &SqlitePool,
+    space_id: &SpaceId,
+    engine: &LoroEngine,
+) -> Result<(), AppError> {
+    let applied_through_seq = snapshot_watermark(op_log_head(pool).await);
+    let bytes = engine.export_snapshot()?;
+    write_snapshot_row(pool, space_id, bytes, applied_through_seq).await?;
     Ok(())
 }
 
@@ -317,17 +310,27 @@ pub async fn reload_registry_from_db(
     Ok(rehydrate_registry(pool, registry, device_id).await)
 }
 
-/// Walk the registry and persist every engine's current snapshot.  Used
-/// by the periodic scheduler.  Per-space errors are logged + continued
-/// so one bad space never blocks the rest.
-///
-/// Returns the number of spaces successfully snapshotted.
+/// What one [`save_all_engines`] pass did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SavePass {
+    /// Spaces whose snapshot was written.
+    pub saved: usize,
+    /// The op-log head the pass read before collecting any engine, when every
+    /// dirty engine it collected was written: each op at or below it is then in
+    /// `loro_doc_state`. `None` when an export or a write failed, or the
+    /// registry was cleared mid-pass.
+    pub persisted_through: Option<i64>,
+}
+
+/// Walk the registry and persist every dirty engine's current snapshot.
+/// Per-space errors are logged + continued so one bad space never blocks the
+/// rest. Production passes go through [`save_engines_and_advance_cursor`].
 ///
 /// #3309 — the pass ALSO advances the `applied_through_seq` watermark of
 /// every space it did not re-encode (see `advance_clean_space_watermarks`
 /// below), so a quiescent space's row cannot pin the boot heal's
 /// `MIN(applied_through_seq)` rewind target forever.
-pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) -> usize {
+pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) -> SavePass {
     // Issue #153 / #2205 / #2201 — `snapshot_dirty_engines` collects the
     // per-space engine `Arc`s of ONLY the dirty spaces under the registry's
     // locks, then per space takes that engine's own lock for the O(1)
@@ -345,11 +348,10 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // sync-inbox replay on boot regardless).
     // #3309 — but its `applied_through_seq` watermark is NOT left frozen:
     // see `advance_clean_space_watermarks` at the end of this function.
-    // /C2: read the watermark BEFORE acquiring the engine lock,
-    // so it is a safe lower bound for every engine exported in this pass —
-    // the lock-time cursor can only be >= this value, and each engine
-    // reflects all ops <= (lock-time cursor - 1) >= this watermark.
-    let applied_through_seq = snapshot_watermark(pool).await;
+    // /C2: read the head BEFORE collecting any engine, so every op at or
+    // below it is in each export this pass takes (see `op_log_head`).
+    let head = op_log_head(pool).await;
+    let applied_through_seq = snapshot_watermark(head);
     // #607 review: capture the clear-generation BEFORE collecting doc
     // handles. A `registry.clear()` + `loro_doc_state` wipe (the #4699-deleted
     // RESET's shape) racing this pass would
@@ -364,7 +366,7 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // pass never observed, so it must not be advanced either.
     let installed = registry.space_ids();
 
-    let mut ok = 0usize;
+    let mut saved = 0usize;
     // #3309 — every space this pass TOUCHED (persisted or failed). Spaces
     // outside this set were clean at the dirty-set cut and are the ones
     // whose watermark the tail of this function is allowed to advance.
@@ -380,7 +382,10 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
                  Dirty flags are left set (no per-space clear below), so the \
                  post-reset engines re-persist on a later tick",
             );
-            return ok;
+            return SavePass {
+                saved,
+                persisted_through: None,
+            };
         }
         let bytes = match bytes_result {
             Ok(b) => b,
@@ -396,26 +401,14 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
                 continue;
             }
         };
-        let updated_at = now_ms();
-        let res = sqlx::query(
-            "INSERT OR REPLACE INTO loro_doc_state \
-             (space_id, snapshot, updated_at, op_count, applied_through_seq) \
-             VALUES (?, ?, ?, 0, ?)",
-        )
-        .bind(space_id.as_str())
-        .bind(bytes)
-        .bind(updated_at)
-        .bind(applied_through_seq)
-        .execute(pool)
-        .await;
-        match res {
-            Ok(_) => {
+        match write_snapshot_row(pool, &space_id, bytes, applied_through_seq).await {
+            Ok(()) => {
                 // #2201 — persist succeeded: clear THIS space's dirty flag,
                 // but only if it was not re-marked since we captured
                 // `mark_stamp` (a racing `for_space` overwrote it with a
                 // strictly greater stamp and must be re-persisted next tick).
                 registry.clear_dirty_if_unchanged(&space_id, mark_stamp);
-                ok += 1;
+                saved += 1;
             }
             Err(e) => {
                 // #2201 — INSERT failed: LEAVE the space dirty (skip the
@@ -452,7 +445,10 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     )
     .await;
 
-    ok
+    SavePass {
+        saved,
+        persisted_through: (saved == attempted.len()).then_some(head),
+    }
 }
 
 /// #3309 — advance `applied_through_seq` for every `loro_doc_state` row
@@ -485,18 +481,18 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
 /// * that space is absent from `attempted` — so it was clean at the
 ///   dirty-set cut, i.e. its persisted blob equals its in-memory engine.
 ///
-/// The engine in turn reflects every op `<= cursor - 1 =
-/// applied_through_seq` (see [`snapshot_watermark`] — the per-space engine
-/// dispatch happens inside the apply tx, before the cursor advance
-/// commits). This last premise holds for a rehydrated engine only AFTER
+/// The engine in turn reflects every op up to the pass's op-log head, of
+/// which `applied_through_seq` is one less (see [`op_log_head`] — the
+/// per-space engine apply happens inside the op's own transaction). This
+/// last premise holds for a rehydrated engine only AFTER
 /// `recovery::boot::recover_at_boot` has run: between rehydration and the
 /// heal+replay, an engine reflects only its own row's watermark while the
-/// cursor may be far ahead. Production ordering guarantees it —
+/// op log may be far ahead. Production ordering guarantees it —
 /// `lib.rs::run` calls `recover_and_bootstrap` BEFORE
 /// `spawn_background_tasks` starts the periodic pass, and the exit-time
 /// save runs later still — so no pass can observe that window. A future
 /// change that starts a snapshot pass before boot recovery would break
-/// this function's premise, not just its optimisation.
+/// this function's premise and the watermark every dirty row records.
 ///
 /// Spaces in `attempted` are excluded because a dirty space whose export
 /// or INSERT FAILED still holds unpersisted mutations at seqs at or below
@@ -630,6 +626,54 @@ async fn advance_clean_space_watermarks(
     advanced
 }
 
+/// One production snapshot pass (#5418): [`save_all_engines`], then the apply
+/// cursor moves up to the op-log head the pass persisted, so the next boot
+/// replays only the ops committed after it instead of the whole session.
+///
+/// Boot replay restores two things for an op: its engine state, which the
+/// pass has just made durable, and its per-block index fan-out (FTS, links,
+/// tag refs; #3298), which lives in the background queue's memory until it
+/// runs. So the queue is drained before the cursor stops covering those ops.
+/// A pass that left a dirty engine unwritten moves nothing: a space whose
+/// first write failed has no row for the boot heal's `MIN(applied_through_seq)`
+/// to see, and only the old cursor still replays its ops.
+///
+/// Passes run one at a time. An export collected earlier but written later
+/// would leave a row older than its engine while the space reads clean, and
+/// the next pass would advance that row's watermark past ops its blob lacks.
+/// No test pins this: the race needs two passes' collects and writes to
+/// interleave, which nothing outside the pass can schedule.
+pub async fn save_engines_and_advance_cursor(
+    pool: &SqlitePool,
+    materializer: &crate::materializer::Materializer,
+) -> usize {
+    static ONE_PASS_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _pass = ONE_PASS_AT_A_TIME.lock().await;
+    let pass = save_all_engines(pool, &materializer.loro_state().registry).await;
+    let Some(head) = pass.persisted_through else {
+        return pass.saved;
+    };
+    if let Err(e) = materializer.flush_background().await {
+        tracing::warn!(
+            error = %e,
+            "loro: background queue did not drain; apply cursor left in place (#5418)",
+        );
+        return pass.saved;
+    }
+    let advanced = match pool.acquire().await {
+        Ok(mut conn) => crate::apply::kernel::advance_apply_cursor(&mut conn, head).await,
+        Err(e) => Err(e.into()),
+    };
+    if let Err(e) = advanced {
+        tracing::warn!(
+            error = %e,
+            head,
+            "loro: apply cursor advance failed; the next boot replays from the old cursor (#5418)",
+        );
+    }
+    pass.saved
+}
+
 /// Default cadence for the periodic snapshot task (5 minutes).
 ///
 /// Restored after the parity flush task — which hosted the
@@ -642,9 +686,9 @@ pub const SNAPSHOT_INTERVAL_SECS: u64 = 300;
 
 /// Spawn the periodic Loro snapshot task.
 ///
-/// Every `interval_secs` it walks the process-global engine registry and
-/// persists each engine's snapshot into `loro_doc_state`, so the next
-/// boot rehydrates without replaying the full op-log. The task runs for
+/// Every `interval_secs` it runs [`save_engines_and_advance_cursor`] over the
+/// materializer's engine registry, so the next boot rehydrates without
+/// replaying the full op-log. The task runs for
 /// the app's lifetime and stops once `shutdown` flips. Per-space errors
 /// are caught + logged inside [`save_all_engines`], so a transient
 /// SQL/Loro failure never crashes the app.
@@ -655,7 +699,7 @@ pub fn spawn_periodic_snapshot(
     pool: SqlitePool,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     interval_secs: u64,
-    state: std::sync::Arc<crate::loro::shared::LoroState>,
+    materializer: crate::materializer::Materializer,
     spawn: impl FnOnce(std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>),
 ) {
     use std::sync::atomic::Ordering;
@@ -675,7 +719,7 @@ pub fn spawn_periodic_snapshot(
             if shutdown.load(Ordering::Relaxed) {
                 break;
             }
-            let saved = save_all_engines(&pool, &state.registry).await;
+            let saved = save_engines_and_advance_cursor(&pool, &materializer).await;
             if saved > 0 {
                 tracing::debug!(spaces = saved, "loro: periodic snapshot persisted");
             }
@@ -916,7 +960,7 @@ mod tests {
             .expect("reload");
         assert_eq!(n, 0, "empty loro_doc_state must rehydrate nothing");
         assert_eq!(registry.len(), 0);
-        let saved = save_all_engines(&pool, &registry).await;
+        let saved = save_all_engines(&pool, &registry).await.saved;
         assert_eq!(saved, 0, "exit-save over an empty registry writes nothing");
         let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_state")
             .fetch_one(&pool)
@@ -999,7 +1043,7 @@ mod tests {
                 .expect("create");
         }
 
-        let n = save_all_engines(&pool, &registry).await;
+        let n = save_all_engines(&pool, &registry).await.saved;
         assert_eq!(n, 2, "both spaces must snapshot");
 
         // The persisted bytes must reproduce the engine's state.
@@ -1032,7 +1076,7 @@ mod tests {
         }
 
         // First pass persists BOTH dirty spaces and clears both flags.
-        let n = save_all_engines(&pool, &registry).await;
+        let n = save_all_engines(&pool, &registry).await.saved;
         assert_eq!(n, 2, "first pass persists both dirty spaces");
         assert_eq!(registry.dirty_count(), 0, "both spaces clean after persist");
 
@@ -1059,7 +1103,7 @@ mod tests {
         assert_eq!(registry.dirty_count(), 1, "only A dirty after mutating A");
 
         // Second pass must re-encode ONLY A.
-        let n = save_all_engines(&pool, &registry).await;
+        let n = save_all_engines(&pool, &registry).await.saved;
         assert_eq!(n, 1, "second pass persists only the dirty space (A), not B");
         assert_eq!(registry.dirty_count(), 0, "A clean after its persist");
 
@@ -1088,7 +1132,7 @@ mod tests {
     }
 
     /// Seed a `loro_doc_state` row directly, as if it had been persisted by
-    /// an earlier session, and park the apply cursor at `cursor`.
+    /// an earlier session.
     async fn seed_row(pool: &SqlitePool, space_id: &str, applied_through_seq: i64) {
         sqlx::query(
             "INSERT OR REPLACE INTO loro_doc_state \
@@ -1102,15 +1146,18 @@ mod tests {
         .expect("seed loro_doc_state row");
     }
 
-    async fn set_apply_cursor(pool: &SqlitePool, cursor: i64) {
+    /// Put one locally-authored row at `seq` in the op log, so a pass reads
+    /// it as the op-log head (#5418).
+    async fn seed_op_log_head(pool: &SqlitePool, seq: i64) {
         sqlx::query(
-            "UPDATE materializer_apply_cursor \
-             SET materialized_through_seq = ?, updated_at = 1767225600000 WHERE id = 1",
+            "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+             VALUES ('device-1', ?, NULL, ?, 'create_block', '{}', 1767225600000)",
         )
-        .bind(cursor)
+        .bind(seq)
+        .bind(format!("hash-{seq}"))
         .execute(pool)
         .await
-        .expect("park apply cursor");
+        .expect("seed op_log head");
     }
 
     /// Install a CLEAN engine for `space_id`, as boot rehydration does for
@@ -1172,9 +1219,9 @@ mod tests {
                 .await
                 .expect("b updated_at before");
 
-        // A is the space the user actually works in; the cursor has run far
+        // A is the space the user actually works in; the op log has run far
         // ahead of B's frozen watermark.
-        set_apply_cursor(&pool, 500).await;
+        seed_op_log_head(&pool, 500).await;
         {
             let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
             g.engine_mut()
@@ -1182,13 +1229,13 @@ mod tests {
                 .expect("create");
         }
 
-        let n = save_all_engines(&pool, &registry).await;
+        let n = save_all_engines(&pool, &registry).await.saved;
         assert_eq!(n, 1, "only the dirty space A is re-encoded");
 
         assert_eq!(
             watermark_of(&pool, SPACE_A).await,
             499,
-            "the re-encoded space records the pass watermark (cursor - 1)"
+            "the re-encoded space records the pass watermark (head - 1)"
         );
         assert_eq!(
             watermark_of(&pool, SPACE_B).await,
@@ -1235,7 +1282,7 @@ mod tests {
 
         // B has a row but NO engine — the failed-rehydrate shape.
         seed_row(&pool, SPACE_B, 1).await;
-        set_apply_cursor(&pool, 500).await;
+        seed_op_log_head(&pool, 500).await;
         {
             let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
             g.engine_mut()
@@ -1243,7 +1290,7 @@ mod tests {
                 .expect("create");
         }
 
-        let n = save_all_engines(&pool, &registry).await;
+        let n = save_all_engines(&pool, &registry).await.saved;
         assert_eq!(n, 1, "only the dirty space A is re-encoded");
 
         assert_eq!(
@@ -1328,7 +1375,7 @@ mod tests {
         seed_row(&pool, SPACE_A, 1).await;
         seed_row(&pool, SPACE_B, 1).await;
         install_clean_engine(&registry, SPACE_B);
-        set_apply_cursor(&pool, 500).await;
+        seed_op_log_head(&pool, 500).await;
 
         {
             let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
@@ -1350,7 +1397,7 @@ mod tests {
         .await
         .expect("create poison trigger");
 
-        let n = save_all_engines(&pool, &registry).await;
+        let n = save_all_engines(&pool, &registry).await.saved;
         assert_eq!(n, 0, "A's persist failed, so no space is counted persisted");
         assert_eq!(
             registry.dirty_count(),
@@ -1395,7 +1442,7 @@ mod tests {
         seed_row(&pool, SPACE_B, 1).await;
         seed_row(&pool, SPACE_C, 1).await;
         install_clean_engine(&registry, SPACE_C);
-        set_apply_cursor(&pool, 500).await;
+        seed_op_log_head(&pool, 500).await;
 
         for (space, block) in [(&space_a, "BLOCK_A0"), (&space_b, "BLOCK_B0")] {
             let mut g = registry.for_space(space, "device-1").expect("for_space");
@@ -1421,7 +1468,7 @@ mod tests {
         .await
         .expect("create poison trigger");
 
-        let n = save_all_engines(&pool, &registry).await;
+        let n = save_all_engines(&pool, &registry).await.saved;
         assert_eq!(n, 1, "only B persisted; A's INSERT was aborted");
 
         assert_eq!(
@@ -1467,12 +1514,124 @@ mod tests {
             .await
             .expect("drop table");
 
-        let n = save_all_engines(&pool, &registry).await;
+        let n = save_all_engines(&pool, &registry).await.saved;
         assert_eq!(n, 0, "no space is counted persisted when the INSERT fails");
         assert_eq!(
             registry.dirty_count(),
             1,
             "a failed persist must LEAVE the space dirty for the next tick"
+        );
+    }
+
+    async fn apply_cursor(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(pool)
+        .await
+        .expect("apply cursor")
+    }
+
+    /// Mutate `space_id`'s engine in `materializer`'s registry, marking it
+    /// dirty, as an applied op does.
+    fn dirty_engine(materializer: &crate::materializer::Materializer, space_id: &str) {
+        let mut g = materializer
+            .loro_state()
+            .registry
+            .for_space(&SpaceId::from_trusted(space_id), "device-1")
+            .expect("for_space");
+        g.engine_mut()
+            .apply_create_block("BLOCK_5418", "content", "applied", None, 0)
+            .expect("create");
+    }
+
+    /// #5418 — a pass that wrote every dirty engine moves the apply cursor to
+    /// the op-log head it read, and stamps the row one below it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn snapshot_pass_advances_the_apply_cursor_to_the_op_log_head_5418() {
+        let (pool, _dir) = fresh_pool().await;
+        let materializer = crate::materializer::Materializer::new(pool.clone());
+        seed_op_log_head(&pool, 7).await;
+        dirty_engine(&materializer, SPACE_A);
+
+        let saved = save_engines_and_advance_cursor(&pool, &materializer).await;
+        materializer.shutdown();
+
+        assert_eq!(saved, 1, "the dirty space is written");
+        assert_eq!(
+            watermark_of(&pool, SPACE_A).await,
+            6,
+            "the row is stamped one below the head"
+        );
+        assert_eq!(
+            apply_cursor(&pool).await,
+            7,
+            "boot replay must start after the head the pass persisted"
+        );
+    }
+
+    /// #5418 — the cursor moves only once every dirty engine is written. A
+    /// space whose FIRST write fails has no row, so the boot heal's
+    /// `MIN(applied_through_seq)` cannot see it; only the unmoved cursor still
+    /// replays its ops. This is the crash before the snapshot commits.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn failed_snapshot_write_leaves_the_apply_cursor_5418() {
+        let (pool, _dir) = fresh_pool().await;
+        let materializer = crate::materializer::Materializer::new(pool.clone());
+        seed_op_log_head(&pool, 7).await;
+        dirty_engine(&materializer, SPACE_A);
+        sqlx::query(
+            "CREATE TRIGGER poison_loro_doc_state_insert \
+             BEFORE INSERT ON loro_doc_state \
+             BEGIN SELECT RAISE(ABORT, 'simulated persist failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("create poison trigger");
+
+        let saved = save_engines_and_advance_cursor(&pool, &materializer).await;
+        materializer.shutdown();
+
+        assert_eq!(saved, 0, "the write failed");
+        assert!(
+            load_snapshot(&pool, &SpaceId::from_trusted(SPACE_A))
+                .await
+                .expect("load")
+                .is_none(),
+            "the space has no row for the boot heal to see"
+        );
+        assert_eq!(
+            apply_cursor(&pool).await,
+            0,
+            "the cursor must not pass ops no persisted snapshot holds"
+        );
+    }
+
+    /// #5418 — the cursor moves only once the background queue has drained:
+    /// boot replay re-dispatches each replayed op's index fan-out (#3298), so a
+    /// cursor past an op whose fan-out is still in memory would lose it to a
+    /// crash. A queue that cannot drain (here: shut down) leaves the cursor,
+    /// though the rows are written.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn undrained_background_queue_leaves_the_apply_cursor_5418() {
+        let (pool, _dir) = fresh_pool().await;
+        let materializer = crate::materializer::Materializer::new(pool.clone());
+        seed_op_log_head(&pool, 7).await;
+        dirty_engine(&materializer, SPACE_A);
+        materializer.shutdown();
+
+        let saved = save_engines_and_advance_cursor(&pool, &materializer).await;
+
+        assert_eq!(saved, 1, "the rows do not wait for the queue");
+        assert_eq!(
+            watermark_of(&pool, SPACE_A).await,
+            6,
+            "the row is stamped one below the head"
+        );
+        assert_eq!(
+            apply_cursor(&pool).await,
+            0,
+            "the cursor must not pass ops whose index fan-out may still be in memory"
         );
     }
 
@@ -1568,14 +1727,14 @@ mod tests {
 
     /// Smoke test for the `#[cfg(test)]` `tokio::spawn` seam in
     /// [`spawn_periodic_snapshot`]. Drives the real spawned task end to
-    /// end: construct an `Arc<LoroState>`, register + mutate an engine in
-    /// it, hand that same `Arc` to the periodic task with a 1-second
-    /// cadence, then poll `loro_doc_state` until the engine's snapshot row
+    /// end: construct a materializer, register + mutate an engine in its
+    /// registry, hand that same materializer to the periodic task with a
+    /// 1-second cadence, then poll `loro_doc_state` until the engine's snapshot row
     /// appears. The task skips its first `interval.tick()` and reads the
-    /// `state` parameter it was constructed with (#2249: engine state is an
+    /// materializer it was constructed with (#2249: engine state is an
     /// explicitly threaded value, not a process global), so this exercises
-    /// the spawn, the tick loop, and the `save_all_engines` call the seam
-    /// exists to cover.
+    /// the spawn, the tick loop, and the snapshot pass the seam exists to
+    /// cover.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn spawn_periodic_snapshot_persists_engine_state() {
         use std::sync::Arc;
@@ -1586,11 +1745,12 @@ mod tests {
         let space = SpaceId::from_trusted(SPACE_PERIODIC);
 
         // Fresh per-test state, with an engine registered in it that the
-        // task will find through the `Arc` passed to it below. Mutate it so
-        // the exported snapshot is non-trivial.
-        let state = std::sync::Arc::new(crate::loro::shared::LoroState::new());
+        // task will find through the materializer passed to it below. Mutate
+        // it so the exported snapshot is non-trivial.
+        let materializer = crate::materializer::Materializer::new(pool.clone());
         {
-            let mut g = state
+            let mut g = materializer
+                .loro_state()
                 .registry
                 .for_space(&space, "device-periodic")
                 .expect("for_space");
@@ -1606,7 +1766,7 @@ mod tests {
             pool.clone(),
             shutdown.clone(),
             1,
-            Arc::clone(&state),
+            materializer.clone(),
             |fut| {
                 tokio::spawn(fut);
             },
@@ -1628,6 +1788,7 @@ mod tests {
         // Stop the task before asserting so a failure doesn't leave it
         // running against a half-torn-down pool.
         shutdown.store(true, Ordering::Relaxed);
+        materializer.shutdown();
 
         assert!(
             persisted,

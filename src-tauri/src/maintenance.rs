@@ -617,15 +617,15 @@ async fn purge_roots_one_at_a_time(
 /// the registry's `dirty_count` proxy indicates at least one engine
 /// has been touched since the last save. Predicate gating
 /// (`dirty_count > 0 && !is_foreground`) lives at the spawn site;
-/// the pass itself resets the dirty counter to 0 on success.
-/// #2249: engine state is threaded in by the spawn site (a clone of the
-/// materializer's `Arc<LoroState>`) — it exists by construction, so
-/// there is no "registry not yet initialised" skip arm anymore.
+/// the pass itself resets the dirty counter to 0 on success, and moves the
+/// apply cursor up to what it persisted (#5418).
 pub async fn loro_snapshot_if_dirty(
     write_pool: &SqlitePool,
-    state: &agaric_engine::loro::shared::LoroState,
+    materializer: &crate::materializer::Materializer,
 ) -> Result<(), AppError> {
-    let ok = agaric_engine::loro::snapshot::save_all_engines(write_pool, &state.registry).await;
+    let ok =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(write_pool, materializer)
+            .await;
     tracing::debug!(saved = ok, "loro_snapshot_if_dirty tick ran");
     Ok(())
 }
@@ -1711,16 +1711,18 @@ mod tests {
     }
 
     /// Issue #157 sub-item I — `loro_snapshot_if_dirty` is safe to
-    /// call when the loro shared state has not been initialised.
-    #[tokio::test]
+    /// call on a fresh, empty engine registry.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn loro_snapshot_if_dirty_smoke_test_no_shared_state_157_i() {
         let dir = tempfile::TempDir::new().unwrap();
         let pool = crate::db::init_pool(&dir.path().join("test.db"))
             .await
             .unwrap();
-        loro_snapshot_if_dirty(&pool, &agaric_engine::loro::shared::LoroState::new())
+        let materializer = crate::materializer::Materializer::new(pool.clone());
+        loro_snapshot_if_dirty(&pool, &materializer)
             .await
             .expect("loro_snapshot_if_dirty must succeed on a fresh, empty registry");
+        materializer.shutdown();
     }
 
     /// Issue #157 sub-item H — a never-fired atomic (`i32::MIN`) fires on
