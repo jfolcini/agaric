@@ -15,5 +15,7 @@ channel = "1.95.0"
 # implicitly (full-profile installs); a pinned exact version is typically a
 # fresh `--profile minimal` install (`.github/actions/rust-toolchain` in CI),
 # which ships NEITHER — rustup installs components listed here automatically
-# whenever this toolchain file is in effect.
-components = ["clippy", "rustfmt"]
+# whenever this toolchain file is in effect. rust-analyzer (the language
+# server editors and agents use) and rust-src (the std sources it reads) are in
+# neither profile either, so a pinned toolchain only has them if listed here.
+components = ["clippy", "rustfmt", "rust-analyzer", "rust-src"]
