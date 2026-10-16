@@ -5,7 +5,9 @@
  * simulation on the main thread (used as the no-Worker fallback and the
  * post-failure recovery path). Tests focus on observable effects: simulation
  * forces are configured, the handle's lifecycle methods stop the simulation
- * cleanly, and reduced-motion preference uses a fixed-tick path.
+ * cleanly, and reduced-motion preference uses a fixed-tick path. Whether that
+ * path's layout settles is checked against the real d3-force in
+ * `src/workers/__tests__/graph-worker-reduced-motion.test.ts`.
  */
 
 import { renderHook } from '@testing-library/react'
@@ -27,7 +29,6 @@ vi.mock('d3-force', () => {
       on: vi.fn().mockReturnThis(),
       stop: vi.fn(),
       alpha: vi.fn().mockReturnThis(),
-      alphaDecay: vi.fn().mockReturnThis(),
       alphaTarget: vi.fn().mockReturnThis(),
       tick: vi.fn(),
       restart: vi.fn(),
@@ -207,16 +208,6 @@ describe('useGraphMainThreadSim', () => {
     const handle = result.current(makeCtx())
     handle.cleanup()
     expect(lastSim?.stop).toHaveBeenCalledTimes(1)
-  })
-
-  it('reduced-motion path uses fixed ticks + alphaDecay = 1', () => {
-    const { result } = renderHook(() => useGraphMainThreadSim())
-    result.current(makeCtx(true))
-
-    expect(lastSim?.alphaDecay).toHaveBeenCalledWith(1)
-    expect(lastSim?.tick).toHaveBeenCalledWith(300)
-    // Tick listener is NOT registered in reduced-motion mode (animations off).
-    expect(lastSim?.on).not.toHaveBeenCalledWith('tick', expect.any(Function))
   })
 
   it('reports the settled nodes once the simulation ends, so the view can fit them (#5432)', () => {

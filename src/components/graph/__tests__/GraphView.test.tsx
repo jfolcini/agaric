@@ -124,7 +124,6 @@ vi.mock('d3-force', () => ({
     on: vi.fn().mockReturnThis(),
     stop: vi.fn(),
     alpha: vi.fn().mockReturnThis(),
-    alphaDecay: vi.fn().mockReturnThis(),
     tick: vi.fn(),
     restart: vi.fn(),
     nodes: vi.fn(() => []),

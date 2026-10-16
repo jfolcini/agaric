@@ -1222,23 +1222,36 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
 
 // ── Main-thread simulation ───────────────────────────────────────────
 
+/**
+ * With `settleMoved` (reduced motion) the simulation never runs while a node
+ * is held, since nothing draws its ticks; `settleMoved` runs once the last
+ * node is let go, and only if one moved, so a click leaves the layout as is.
+ */
 function createMainThreadDrag(
   sim: Simulation<GraphNode, GraphEdge>,
+  settleMoved?: () => void,
 ): ReturnType<typeof drag<SVGGElement, GraphNode>> {
+  let moved = false
   return drag<SVGGElement, GraphNode>()
     .on('start', (event, d) => {
-      if (!event.active) sim.alphaTarget(0.3).restart()
+      if (!event.active) {
+        moved = false
+        if (!settleMoved) sim.alphaTarget(0.3).restart()
+      }
       d.fx = d.x
       d.fy = d.y
     })
     .on('drag', (event, d) => {
+      moved = true
       d.fx = event.x
       d.fy = event.y
     })
     .on('end', (event, d) => {
-      if (!event.active) sim.alphaTarget(0)
       d.fx = null
       d.fy = null
+      if (event.active) return
+      if (!settleMoved) sim.alphaTarget(0)
+      else if (moved) settleMoved()
     })
 }
 
@@ -1267,7 +1280,6 @@ function applyMainThreadUpdate(sim: Simulation<GraphNode, GraphEdge>, next: Simu
 
 export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
   const sim = buildMainThreadSim(ctx)
-  ctx.node.call(createMainThreadDrag(sim))
 
   // Mutable `applyPositions` so the tick closure + `onUpdate` (#2194) read the
   // CURRENT patched selections after a filter toggle.
@@ -1276,10 +1288,18 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
   const current = { width: ctx.width, height: ctx.height }
 
   if (ctx.prefersReducedMotion) {
-    sim.alphaDecay(1)
-    sim.tick(REDUCED_MOTION_TICK_LIMIT)
-    live.applyPositions()
-    sim.stop()
+    const settleNow = (): void => {
+      sim.stop()
+      sim.tick(REDUCED_MOTION_TICK_LIMIT)
+      live.applyPositions()
+    }
+    // A moved node leaves its links stretched until the layout settles again.
+    const settleReleased = (): void => {
+      sim.alpha(RESIZE_ALPHA)
+      settleNow()
+    }
+    ctx.node.call(createMainThreadDrag(sim, settleReleased))
+    settleNow()
     ctx.onSettled(sim.nodes())
     return {
       cleanup: () => {
@@ -1291,24 +1311,19 @@ export function runMainThreadSimulation(ctx: SimulationCtx): SimulationHandle {
         current.height = height
         applyResizeForces(sim, { width, height })
         sim.alpha(RESIZE_ALPHA)
-        sim.tick(REDUCED_MOTION_TICK_LIMIT)
-        live.applyPositions()
-        sim.stop()
+        settleNow()
       },
       onUpdate: (next) => {
         live.applyPositions = next.applyPositions
-        next.node.call(createMainThreadDrag(sim))
-        // Reduced-motion: run the sim synchronously to a settled layout and
-        // apply once, matching the mount-time behaviour above.
-        sim.alphaDecay(1)
+        next.node.call(createMainThreadDrag(sim, settleReleased))
         applyMainThreadUpdate(sim, next)
-        sim.tick(REDUCED_MOTION_TICK_LIMIT)
-        live.applyPositions()
-        sim.stop()
+        settleNow()
       },
       settled: () => true,
     }
   }
+
+  ctx.node.call(createMainThreadDrag(sim))
 
   // Only a new topology or canvas size unsettles a layout; a click on a node
   // reheats the simulation through d3-drag, so a tick must not.
