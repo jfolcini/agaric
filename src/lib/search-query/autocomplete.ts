@@ -23,7 +23,7 @@
  */
 
 import { quoteValueIfNeeded } from '@/lib/search-query/serialize'
-import { tokenize } from '@/lib/search-query/tokenize'
+import { isWhitespace, tokenize } from '@/lib/search-query/tokenize'
 
 export type AutocompleteAnchor =
   | { active: 'tag'; query: string; anchor: number }
@@ -69,7 +69,7 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
   let start = c
   while (start > 0) {
     const ch = input[start - 1]
-    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') break
+    if (isWhitespace(ch)) break
     start--
   }
   const slice = input.slice(start, c)
@@ -267,8 +267,8 @@ function tokenEndForCaret(input: string, caret: number): number {
  * space is appended so the user can immediately type the next token.
  *
  * #718 / #3288 — a `path:` / `not-path:` / `tag:` replacement is quoted via the
- * serialiser's shared `quoteValueIfNeeded` (whitespace, or an already
- * `"`-surrounded value), so picking a spaced glob from the path-history
+ * serialiser's shared `quoteValueIfNeeded` (whitespace, a `"`-surrounded
+ * value, or a `"` that would stay unclosed), so picking a spaced glob from the path-history
  * popover yields a query that re-parses to one chip instead of
  * fragmenting at the space. Sharing the predicate keeps this door from
  * drifting against `tokenSource`.

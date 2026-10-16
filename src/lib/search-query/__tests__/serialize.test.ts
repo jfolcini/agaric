@@ -69,6 +69,22 @@ describe('serialize round-trip', () => {
     })
   }
 
+  // Filters and freeText must match (key-by-key); spans may move.
+  function roundTrips(s: string): boolean {
+    const once = parse(s)
+    const twice = parse(serialize(once))
+    if (once.freeText !== twice.freeText) return false
+    if (once.filters.length !== twice.filters.length) return false
+    for (let i = 0; i < once.filters.length; i++) {
+      const a = once.filters[i]
+      const b = twice.filters[i]
+      if (!a || !b) return false
+      if (a.kind !== b.kind) return false
+      if (tokenSource(a) !== tokenSource(b)) return false
+    }
+    return true
+  }
+
   it('idempotency: parse(serialize(parse(s))) === parse(s)', () => {
     fc.assert(
       fc.property(
@@ -76,24 +92,32 @@ describe('serialize round-trip', () => {
           fc.constantFrom('tag:#urgent', 'path:Journal/*', '#followup', 'hello world'),
           fc.string({ minLength: 0, maxLength: 30 }),
         ),
-        (s) => {
-          const once = parse(s)
-          const twice = parse(serialize(once))
-          // Filters and freeText must match (key-by-key).
-          if (once.freeText !== twice.freeText) return false
-          if (once.filters.length !== twice.filters.length) return false
-          for (let i = 0; i < once.filters.length; i++) {
-            const a = once.filters[i]
-            const b = twice.filters[i]
-            if (!a || !b) return false
-            if (a.kind !== b.kind) return false
-            if (tokenSource(a) !== tokenSource(b)) return false
-          }
-          return true
-        },
+        roundTrips,
       ),
       { numRuns: 200 },
     )
+  })
+
+  // Counterexamples the property found. A word whose `"` never closed used
+  // to become a chip, and serialise moved free text holding a `"` after it,
+  // closing the quote over everything in between.
+  it.each([
+    '" A:"#', // seed 2008733170
+    '"a" X:" q"z', // no ordering of chips and free text survives
+    '" #a"b',
+    'rock" prop:title="Hello',
+    // A value that is only safe bare, or only safe quoted.
+    'path:a" "',
+    'path:"""',
+    'path:"a"b"',
+    'prop:k=" "',
+    'prop:"=""',
+    '#" "',
+    // The tokeniser splits on the whitespace the free-text cleanup collapses.
+    'a\u00A0#a', // no-break space (macOS Option+Space)
+    'a\u3000#a', // ideographic space
+  ])('round-trips %j', (s) => {
+    expect(roundTrips(s)).toBe(true)
   })
 
   it('removeFilterAt drops the requested token', () => {
@@ -154,19 +178,26 @@ describe('serialize round-trip', () => {
     expect(twice.filters[0]).toMatchObject({ kind: 'pathInclude', value: '"a"' })
   })
 
-  it('quoteValueIfNeeded: a single `"` is too short to count as quote-surrounded', () => {
-    // length 1 both "starts with" and "ends with" `"`, but the >= 2 length
-    // guard must reject it — a bare `"` has no whitespace either, so it
-    // must round-trip bare, not become `""`.
-    expect(quoteValueIfNeeded('"')).toBe('"')
+  it('quoteValueIfNeeded: a value whose `"` would stay unclosed bare is quoted', () => {
+    expect(quoteValueIfNeeded('"')).toBe('"""')
+    expect(quoteValueIfNeeded('"ab')).toBe('""ab"')
+    expect(quoteValueIfNeeded('ab"')).toBe('"ab""')
+    expect(quoteValueIfNeeded('a"b')).toBe('"a"b"')
   })
 
-  it('quoteValueIfNeeded: starting with a quote is not enough on its own', () => {
-    expect(quoteValueIfNeeded('"ab')).toBe('"ab')
+  it('quoteValueIfNeeded: a value whose `"` closes at its end is left bare', () => {
+    expect(quoteValueIfNeeded('a"b"')).toBe('a"b"')
+    // Quoting this one would close at its first `" `.
+    expect(quoteValueIfNeeded('a" "')).toBe('a" "')
   })
 
-  it('quoteValueIfNeeded: ending with a quote is not enough on its own', () => {
-    expect(quoteValueIfNeeded('ab"')).toBe('ab"')
+  it('quoteValueIfNeeded: a value with trailing whitespace is quoted', () => {
+    expect(quoteValueIfNeeded('a ')).toBe('"a "')
+  })
+
+  it('quoteValueIfNeeded: a prefix holding a `"` decides whether the value closes it', () => {
+    expect(quoteValueIfNeeded('', 'prop:"=')).toBe('""')
+    expect(quoteValueIfNeeded('b"', 'prop:"=')).toBe('b"')
   })
 
   it('quoteValueIfNeeded: a plain whitespace-free value is left bare', () => {

@@ -24,6 +24,16 @@ describe('classify / parse', () => {
     expect(ast.filters[0]).toMatchObject({ kind: 'tag', value: 'urgent' })
   })
 
+  it('peels the quotes of a bare #"tag" alias like tag:#"tag"', () => {
+    expect(parse('#"my tag"').filters).toMatchObject([{ kind: 'tag', value: 'my tag' }])
+  })
+
+  it('keeps a word whose quote never closed as free text, not a chip', () => {
+    const ast = parse('prop:status="in progress tag:#a')
+    expect(ast.filters).toMatchObject([{ kind: 'tag', value: 'a' }])
+    expect(ast.freeText).toBe('prop:status="in progress')
+  })
+
   it('strips leading # inside tag: value', () => {
     const a = parse('tag:#x')
     const b = parse('tag:x')

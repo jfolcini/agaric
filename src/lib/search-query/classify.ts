@@ -61,18 +61,25 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
       quotedSpans.push(tok.span)
       continue
     }
+    // A word whose `"` never closed is free text, never a chip: serialise
+    // moves free text after the chips, where a boundary `"` would close
+    // the chip's quote and swallow everything in between.
+    if (tok.unclosedQuote) continue
     const matched = recognise(tok.text, tok.span)
     if (matched) {
       filters.push(matched)
       consumedSpans.push(tok.span)
       continue
     }
-    // Bare `#tag` alias.
+    // Bare `#tag` alias: the `tag:` recogniser, so `#"my tag"` peels its
+    // quotes exactly as `tag:#"my tag"` does and serialises back to it.
     if (tok.text.startsWith('#') && tok.text.length > 1) {
-      const value = tok.text.slice(1)
-      filters.push({ kind: 'tag', value, span: tok.span })
-      consumedSpans.push(tok.span)
-      continue
+      const tag = recognise(`tag:${tok.text}`, tok.span)
+      if (tag) {
+        filters.push(tag)
+        consumedSpans.push(tok.span)
+        continue
+      }
     }
     // Token shaped like `xxx:yyy` but unregistered → invalid chip.
     // `looksLikeUnknownPrefix` returns null for `key://…`
