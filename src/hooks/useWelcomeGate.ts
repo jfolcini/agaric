@@ -5,7 +5,7 @@
  * The flag is read ONCE per session (the `useState` lazy initializer) so a
  * user who has finished onboarding never mounts the modal — and therefore
  * never fetches its chunk — on boot (#754). What changed: the gate is now
- * *state*, and `resetOnboarding()` (Settings → General → "Show the welcome
+ * *state*, and `resetOnboarding()` (Settings → Help → "Show the welcome
  * tour again") flips it back on via the `SHOW_WELCOME_EVENT` window event.
  *
  * `remountKey` exists because `WelcomeModal` derives its `open` state from

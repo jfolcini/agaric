@@ -11,7 +11,7 @@ import { expect, getInvokeCalls, installIpcRecorder, openPage, test, waitForBoot
  *  3. Export preserves block structure — export page with multiple blocks, verify hierarchy
  *  4. Export includes tags and links — verify #[tag_id] and [[block_id]] tokens in export
  *  5. Round-trip fidelity — export a page, verify content matches original blocks
- *  6. Export all pages as ZIP (#2707) — trigger Settings → Data → "Export all",
+ *  6. Export all pages as ZIP (#2707) — trigger Settings → Data → "Export this space",
  *     capture the real browser download, and unzip it (via the same `jszip`
  *     package the app itself uses) to assert the namespace hierarchy round-trips.
  *  7. Import warning summary (#2707) — the mock's `import_markdown` handler always
@@ -122,7 +122,7 @@ test.describe('Export page as markdown', () => {
 // 1b. Export all pages as ZIP (#2707)
 // ===========================================================================
 //
-// `handleExportAll` (DataTab.tsx) calls `exportGraphAsZip` (src/lib/export-graph.ts),
+// `handleExportAll` (ExportSection.tsx) calls `exportGraphAsZip` (src/lib/export-graph.ts),
 // which is REAL, unmocked client-side code: it lists pages via the
 // `list_all_pages_in_space` IPC, exports each via `export_page_markdown`, zips
 // them with the real `jszip` package, and triggers a real browser download via
@@ -136,7 +136,7 @@ test.describe('Export all pages as ZIP', () => {
     await waitForBoot(page)
   })
 
-  test('Export all downloads a ZIP whose entries mirror the page set', async ({ page }) => {
+  test('Export this space downloads a ZIP whose entries mirror the page set', async ({ page }) => {
     await installIpcRecorder(page)
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByRole('tab', { name: 'Data' }).click()

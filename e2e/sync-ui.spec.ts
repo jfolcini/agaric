@@ -14,14 +14,11 @@ test.describe('Sync UI', () => {
       await expect(page.getByTestId('settings-panel-sync')).toBeVisible()
     })
 
-    test('shows sync status section', async ({ page }) => {
-      await expect(page.locator('[data-testid="sync-panel-title"]')).toBeVisible()
-      await expect(page.getByText('Sync status')).toBeVisible()
-    })
-
-    test('shows not configured when no peers', async ({ page }) => {
-      // With empty sync store, should show "not configured" or similar
-      await expect(page.locator('[data-testid="sync-panel-not-configured"]')).toBeVisible()
+    // With nothing paired the device list's empty state says so; the card
+    // would only repeat it above Pair new device.
+    test('is absent while no device is paired', async ({ page }) => {
+      await expect(page.getByTestId('device-no-peers')).toBeVisible()
+      await expect(page.getByTestId('sync-panel-title')).toHaveCount(0)
     })
   })
 

@@ -95,6 +95,19 @@ describe('PropertyDefinitionsList', () => {
     ).not.toBeInTheDocument()
   })
 
+  it('typing is_space keeps Create disabled and says the key exists', async () => {
+    const user = userEvent.setup()
+    stubDefs(pageOf([makePropDef('is_space', 'select', '["true"]'), makePropDef('status')]))
+
+    render(<PropertyDefinitionsList />)
+    await screen.findByText('Status')
+
+    await user.type(screen.getByLabelText(t('propertiesView.createKey')), 'is_space')
+
+    expect(screen.getByRole('button', { name: t('propertiesView.create') })).toBeDisabled()
+    expect(screen.getByText(t('propertiesView.duplicateKey'))).toBeInTheDocument()
+  })
+
   it('shows loading state initially', () => {
     stubInvoke({ list_property_defs: () => new Promise<never>(() => {}) })
 

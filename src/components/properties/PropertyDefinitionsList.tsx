@@ -89,7 +89,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       // (~19 built-ins plus user-authored entries), which fits well
       // under one page; we destructure `.items` and ignore the cursor.
       const { items: defs } = unwrap(await commands.listPropertyDefs(null, null))
-      setDefinitions(defs.filter((d) => d.key !== SPACE_MARKER_KEY))
+      setDefinitions(defs)
     } catch (error) {
       // Replace bespoke `String(error)` toast with the unified
       // helper — error detail goes to the structured log; the user sees
@@ -190,8 +190,10 @@ export function PropertyDefinitionsList(): React.ReactElement {
     [editOptionsValue, t],
   )
 
+  // Hidden from the list only: the duplicate-key check still sees it.
+  const visibleDefs = definitions.filter((d) => d.key !== SPACE_MARKER_KEY)
   // Unicode-aware fold.
-  const filteredDefs = definitions.filter((d) => matchesSearchFolded(d.key, searchFilter))
+  const filteredDefs = visibleDefs.filter((d) => matchesSearchFolded(d.key, searchFilter))
 
   return (
     <div className="space-y-6">
@@ -275,7 +277,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
 
       <ListViewState
         loading={loading}
-        items={definitions}
+        items={visibleDefs}
         skeleton={<LoadingSkeleton count={3} height="h-10" data-testid="properties-loading" />}
         error={loadError && t('property.loadFailed')}
         onRetry={loadDefinitions}

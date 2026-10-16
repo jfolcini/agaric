@@ -8,9 +8,10 @@
  * grand-total ops dispatched (foreground + background combined), and the
  * background-only dispatched count.
  *
- * SyncStatusCard — the overall sync state with its Retry button, at the top of
- * Settings › Sync & devices (#5629). It lives here because it shares the
- * metric-card helpers.
+ * SyncStatusCard — the overall sync state, at the top of Settings › Sync &
+ * devices once a device is paired (#5629). Status only: the device list below
+ * owns every sync action. It lives here because it shares the metric-card
+ * helpers.
  */
 
 import type { TFunction } from 'i18next'
@@ -20,18 +21,14 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { MetricCard } from '@/components/ui/metric-card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePollingQuery } from '@/hooks/usePollingQuery'
-import { useSyncWithTimeout } from '@/hooks/useSyncWithTimeout'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { StatusInfo } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
-import { startSync } from '@/lib/ipc-helpers'
-import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
 import { type SyncState, useSyncStore } from '@/stores/sync'
 
@@ -159,58 +156,6 @@ function SyncStateIcon({ state }: { state: SyncState }): React.ReactElement {
       )
     }
   }
-}
-
-/**
- * Recovery affordance for the sync-error state (#2059). Mirrors
- * DeviceManagement's `handleSyncNow`: each paired peer is re-synced behind
- * the shared timeout guard, with the store's sync-state flipped to `syncing`
- * for the run and back to `idle`/`error` on settle so the panel's own
- * indicator reflects the retry.
- *
- * Rendered only in the `error` state (returns `null` otherwise). Kept as its
- * own component so its loop / try-catch / conditional-render decision points
- * stay out of `StatusPanel`'s body (cyclomatic-complexity ceiling).
- */
-function SyncRetryButton({ state }: { state: SyncState }): React.ReactElement | null {
-  const { t } = useTranslation()
-  const syncPeers = useSyncStore((s) => s.peers)
-  const syncError = useSyncStore((s) => s.error)
-  const setSyncState = useSyncStore((s) => s.setState)
-  const { execute: executeSyncWithTimeout, loading: retrying } = useSyncWithTimeout()
-
-  const handleRetrySync = useCallback(async () => {
-    setSyncState('syncing')
-    let hadFailure = false
-    for (const peer of syncPeers) {
-      try {
-        await executeSyncWithTimeout(async () => {
-          await startSync(peer.peerId)
-        })
-      } catch (err) {
-        hadFailure = true
-        logger.error('StatusPanel', `Sync retry failed for ${peer.peerId}`, undefined, err)
-      }
-    }
-    setSyncState(hadFailure ? 'error' : 'idle', hadFailure ? syncError : null)
-  }, [executeSyncWithTimeout, setSyncState, syncPeers, syncError])
-
-  if (state !== 'error') return null
-
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="sync-panel-retry flex items-center gap-1"
-      onClick={handleRetrySync}
-      disabled={retrying}
-      aria-label={t('status.syncRetryLabel')}
-      data-testid="sync-panel-retry"
-    >
-      <RefreshCw className={cn(retrying && 'animate-spin')} />
-      {retrying ? t('status.syncRetryingButton') : t('status.syncRetryButton')}
-    </Button>
-  )
 }
 
 /**
@@ -369,7 +314,7 @@ export function StatusPanel(): React.ReactElement {
   )
 }
 
-export function SyncStatusCard(): React.ReactElement {
+export function SyncStatusCard(): React.ReactElement | null {
   const syncState = useSyncStore((s) => s.state)
   const syncError = useSyncStore((s) => s.error)
   const syncPeers = useSyncStore((s) => s.peers)
@@ -379,6 +324,9 @@ export function SyncStatusCard(): React.ReactElement {
 
   const { t } = useTranslation()
 
+  // With nothing paired the device list's empty state already says so.
+  if (syncPeers.length === 0) return null
+
   return (
     <Card>
       <CardHeader>
@@ -387,88 +335,70 @@ export function SyncStatusCard(): React.ReactElement {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        {syncPeers.length === 0 ? (
-          <p
-            className="sync-panel-not-configured text-sm text-muted-foreground"
-            data-testid="sync-panel-not-configured"
-          >
-            {t('status.notConfigured')}
-          </p>
-        ) : (
-          <div className="sync-panel-details space-y-3">
-            <div className="flex items-center gap-2">
-              <output
-                className={cn(
-                  'sync-state-dot h-2 w-2 rounded-full',
-                  syncStateDotClasses(syncState),
-                )}
-                aria-label={t('status.syncStateLabel', { state: syncStateLabel(syncState, t) })}
-              />
-              <SyncStateIcon state={syncState} />
-              <span className="sync-state-label text-sm font-medium">
-                {syncStateLabel(syncState, t)}
-              </span>
-            </div>
-
-            {syncError && (
-              <p className="sync-panel-error text-sm text-destructive" role="alert">
-                {syncError}
-              </p>
-            )}
-
-            {/* #2059 — the sync-error state previously offered no recovery
-                affordance, unlike DeviceManagement. Surface a "Sync now"
-                button that re-syncs every paired peer behind the shared
-                timeout guard. */}
-            <SyncRetryButton state={syncState} />
-
-            <dl className="grid grid-cols-2 gap-4">
-              <MetricCard
-                value={<span className="sync-peer-count">{syncPeers.length}</span>}
-                labelSlot={
-                  <MetricLabel
-                    label={t('status.peerLabel', { count: syncPeers.length })}
-                    tooltip={t('status.peerCountTooltip')}
-                  />
-                }
-              />
-
-              <MetricCard
-                value={
-                  <span className="sync-last-synced">
-                    {syncLastSynced ? formatRelativeTime(syncLastSynced, t) : '--'}
-                  </span>
-                }
-                labelSlot={
-                  <MetricLabel
-                    label={t('status.lastSyncedLabel')}
-                    tooltip={t('status.lastSyncedTooltip')}
-                  />
-                }
-              />
-
-              <MetricCard
-                value={<span className="sync-ops-received">{syncOpsReceived}</span>}
-                labelSlot={
-                  <MetricLabel
-                    label={t('status.opsReceivedLabel')}
-                    tooltip={t('status.opsReceivedTooltip')}
-                  />
-                }
-              />
-
-              <MetricCard
-                value={<span className="sync-ops-sent">{syncOpsSent}</span>}
-                labelSlot={
-                  <MetricLabel
-                    label={t('status.opsSentLabel')}
-                    tooltip={t('status.opsSentTooltip')}
-                  />
-                }
-              />
-            </dl>
+        <div className="sync-panel-details space-y-3">
+          <div className="flex items-center gap-2">
+            <output
+              className={cn('sync-state-dot h-2 w-2 rounded-full', syncStateDotClasses(syncState))}
+              aria-label={t('status.syncStateLabel', { state: syncStateLabel(syncState, t) })}
+            />
+            <SyncStateIcon state={syncState} />
+            <span className="sync-state-label text-sm font-medium">
+              {syncStateLabel(syncState, t)}
+            </span>
           </div>
-        )}
+
+          {syncError && (
+            <p className="sync-panel-error text-sm text-destructive" role="alert">
+              {syncError}
+            </p>
+          )}
+
+          <dl className="grid grid-cols-2 gap-4">
+            <MetricCard
+              value={<span className="sync-peer-count">{syncPeers.length}</span>}
+              labelSlot={
+                <MetricLabel
+                  label={t('status.peerLabel', { count: syncPeers.length })}
+                  tooltip={t('status.peerCountTooltip')}
+                />
+              }
+            />
+
+            <MetricCard
+              value={
+                <span className="sync-last-synced">
+                  {syncLastSynced ? formatRelativeTime(syncLastSynced, t) : '--'}
+                </span>
+              }
+              labelSlot={
+                <MetricLabel
+                  label={t('status.lastSyncedLabel')}
+                  tooltip={t('status.lastSyncedTooltip')}
+                />
+              }
+            />
+
+            <MetricCard
+              value={<span className="sync-ops-received">{syncOpsReceived}</span>}
+              labelSlot={
+                <MetricLabel
+                  label={t('status.opsReceivedLabel')}
+                  tooltip={t('status.opsReceivedTooltip')}
+                />
+              }
+            />
+
+            <MetricCard
+              value={<span className="sync-ops-sent">{syncOpsSent}</span>}
+              labelSlot={
+                <MetricLabel
+                  label={t('status.opsSentLabel')}
+                  tooltip={t('status.opsSentTooltip')}
+                />
+              }
+            />
+          </dl>
+        </div>
       </CardContent>
     </Card>
   )

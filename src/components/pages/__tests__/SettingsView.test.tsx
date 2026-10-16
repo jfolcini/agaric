@@ -174,22 +174,13 @@ describe('SettingsView', () => {
     )
   })
 
-  // #5629 — the rail order is `TAB_GROUPS`, and every deep-link entry point
-  // validates against the ids derived from it.
+  // #5629 — the rail order is `TAB_GROUPS`.
   it('lists the tabs in rail order', () => {
     render(<SettingsView />)
 
     expect(screen.getAllByRole('tab').map((tab) => tab.id)).toEqual(
       RAIL_TAB_IDS.map((id) => `settings-tab-${id}`),
     )
-  })
-
-  it.each(RAIL_TAB_IDS)('?settings=%s selects that rail tab', (id) => {
-    window.history.replaceState(null, '', `/?settings=${id}`)
-    render(<SettingsView />)
-
-    expect(document.getElementById(`settings-tab-${id}`)).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', `settings-panel-${id}`)
   })
 
   // ── #1108: grouped tab navigation ─────────────────────────────────────

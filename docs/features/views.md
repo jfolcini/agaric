@@ -112,7 +112,7 @@ Materializer metrics, in Settings › App health. Useful for diagnosing slowness
 - **Op counts**: total ops; ops dispatched.
 - Polls the backend periodically.
 
-The aggregated sync state (overall state, last successful sync, peer count) is the first card of Settings › Sync & devices, above the per-peer list.
+Once a device is paired, the aggregated sync state (overall state, last successful sync, peer count) is the first card of Settings › Sync & devices. It shows status only; to retry, use *Sync all* or a device's *Sync now* in the list below it.
 
 ## Settings
 
@@ -129,7 +129,7 @@ Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed 
 - **Integrations**
   - **Agent access** — read-only and read-write switches; each shows its socket path and connections only while it is on. The activity feed with SessionRevertControls is a separate card, shown whether or not access is on (see [agent-access.md](agent-access.md)).
 - **Data & sync**
-  - **Sync & devices** — the sync state with *Sync now* when it failed, then pair / unpair / rename peers, manual addresses, the internet fallback, and this device's ID (see [sync.md](sync.md)).
+  - **Sync & devices** — the sync state once a device is paired, then pair / unpair / rename peers, *Sync all* and per-device *Sync now* (the way to retry), manual addresses, the internet fallback, and this device's ID (see [sync.md](sync.md)).
   - **Data** — import / export (see [import-export.md](import-export.md)), and *Open edit history*, which opens the History view.
 - **Help**
   - **Help** — *Report a bug*, debug mode, show the welcome tour again, update check.

@@ -332,7 +332,7 @@ export function SettingsView(): React.ReactElement {
           )}
 
           {activeTab === 'status' && (
-            <div className="space-y-4">
+            <div className="space-y-6">
               <IntegrityCheckSection {...integrity} />
               <StatusPanel />
             </div>
