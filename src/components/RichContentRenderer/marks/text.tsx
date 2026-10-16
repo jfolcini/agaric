@@ -1,3 +1,4 @@
+import { ArrowUpRight } from 'lucide-react'
 import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
@@ -53,9 +54,7 @@ function renderExternalLink(
     >
       {label}
       <span className="sr-only"> {i18n.t('link.opensInNewTab')}</span>
-      <span className="inline-block ml-0.5 text-[0.7em] opacity-60" aria-hidden="true">
-        ↗
-      </span>
+      <ArrowUpRight className="inline-block ml-0.5 size-[0.8em] opacity-60" aria-hidden="true" />
     </span>
   )
 }
@@ -111,7 +110,7 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
   }
   // Text marks (code/strike/highlight/italic/bold/underline) wrap the
   // visible label only. The external-link element is applied LAST, around
-  // the already-marked label, so its trailing ↗ glyph and sr-only
+  // the already-marked label, so its trailing arrow icon and sr-only
   // "opens in new tab" affordance stay outside the marks (a struck-through
   // or `code`-styled link must not cross/monospace the icon). See #1737.
   let content: React.ReactNode = node.text

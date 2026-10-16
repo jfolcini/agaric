@@ -641,7 +641,6 @@ describe('AgendaResults', () => {
     for (const header of [doing, noState]) {
       expect(header?.tagName).toBe('H2')
       expect(header).toHaveAttribute('data-slot', 'section-group-header')
-      expect(header).toHaveClass('bg-muted/50')
     }
     // The per-group colour replaces the primitive's default muted text.
     expect(doing).toHaveClass('text-status-pending-foreground')

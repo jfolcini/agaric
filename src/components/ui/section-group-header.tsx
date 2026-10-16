@@ -1,6 +1,6 @@
 /**
- * SectionGroupHeader — pill-shaped sub-section header used inside
- * agenda-like grouped lists (DuePanel, DonePanel, AgendaResults…).
+ * SectionGroupHeader — sub-section label used inside agenda-like grouped
+ * lists (DuePanel, DonePanel, AgendaResults…).
  *
  * Rationale for adding alongside `SectionTitle` rather than extending it:
  *
@@ -8,12 +8,13 @@
  *    `text-xs font-semibold mb-1.5 flex items-center gap-1` and no
  *    background. It carries semantic heading weight (`color` prop maps
  *    to status tokens, label + numeric count layout).
- *  - The sites consolidated here use a chip-like
- *    `px-3 py-1 ... bg-muted/50 rounded` shape with the app-wide
- *    section-label typography (`text-xs font-medium text-muted-foreground`,
+ *  - The sites consolidated here use the app-wide section-label
+ *    typography (`text-xs font-medium text-muted-foreground`,
  *    sentence case, no letter-spacing). They are *visual* sub-section
  *    breakers, not document headings — different role, different
- *    spacing, different background.
+ *    spacing. No fill: the rows under a header are rounded and tint on
+ *    hover and on the keyboard cursor, and a filled rounded header sitting
+ *    directly on a tinted rounded row reads as two notched boxes.
  *  - Folding both into one primitive with a `density`/`variant` flag
  *    would create a CVA matrix where most variant combinations are
  *    illegal (e.g. chip background only makes sense at the larger
@@ -47,7 +48,7 @@ const SectionGroupHeader = ({
       ref={ref}
       data-slot="section-group-header"
       className={cn(
-        'px-3 py-1 text-xs font-medium text-muted-foreground bg-muted/50 rounded [@media(pointer:coarse)]:text-sm',
+        'px-3 pt-3 pb-1 text-xs font-medium text-muted-foreground [@media(pointer:coarse)]:text-sm',
         className,
       )}
       {...props}

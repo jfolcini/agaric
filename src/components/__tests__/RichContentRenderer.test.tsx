@@ -411,9 +411,9 @@ describe('RichContentRenderer', () => {
     expect(link?.textContent).toContain('click here')
   })
 
-  it('keeps the ↗ icon and sr-only affordance outside text marks on a marked link (#1737)', () => {
+  it('keeps the arrow icon and sr-only affordance outside text marks on a marked link (#1737)', () => {
     // A link that also carries strike + code marks: the marks must wrap the
-    // visible label only, not the trailing ↗ glyph or the sr-only "opens in new
+    // visible label only, not the trailing arrow icon or the sr-only "opens in new
     // tab" span — otherwise strike crosses the icon and code monospaces it.
     mockedParse.mockReturnValueOnce({
       type: 'doc',
@@ -450,7 +450,7 @@ describe('RichContentRenderer', () => {
     const srOnly = link?.querySelector('.sr-only')
     const icon = link?.querySelector('[aria-hidden="true"]')
     expect(srOnly?.textContent).toContain('opens in new tab')
-    expect(icon?.textContent).toContain('↗')
+    expect(icon?.tagName.toLowerCase()).toBe('svg')
     expect(struck?.contains(srOnly ?? null)).toBe(false)
     expect(struck?.contains(icon ?? null)).toBe(false)
     expect(code?.contains(srOnly ?? null)).toBe(false)
