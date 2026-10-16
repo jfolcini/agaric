@@ -23,13 +23,16 @@ The `--config` skips `prepare-external-bins.mjs`'s release build of the unused `
 
 `gh run view --log` prints nothing for this repo; read a failed job with `gh api /repos/jfolcini/agaric/actions/jobs/<job_id>/logs` and `gh run download <run_id>` for the `e2e-tauri-diagnostics` artifact (screenshots, app log, the visibility verdict).
 
+Show a spec red here, not on a scratch branch: apply the break, rebuild, and run that spec alone (`npm run test:e2e-tauri -- --spec e2e-tauri/<file>.e2e.ts`). A branch pushed only to show red costs a full CI run and leaves a remote branch behind.
+
 ## Rules
 
 - **One file, one vault.** WDIO forks a worker per spec file, and each worker boots the app on a fresh `AGARIC_DATA_DIR` (`mkdtemp`). A spec never sees another file's data; a second `it` in the same file does see the first one's.
 - **Order-independent.** Nothing may depend on which file ran first or on a leftover row: scope every typed name through `runScopedMarker` (it also collapses doubled characters, which WebKit drops).
 - **Persistence is a nav round-trip.** Create through the UI, leave the view through the sidebar (`navigateTo`), come back, and assert the re-queried DOM: `blockStaticByMarker`, `reopenPageByTitle`, `expectAbsent`. Never `browser.refresh()`: it can drop the IPC bridge (see `block-persist-reload.e2e.ts`).
-- **A UI rename breaks this lane silently.** `helpers.ts`'s header lists every label and selector the specs depend on; renaming one updates `helpers.ts` in the same PR, since no required check will catch it.
-- Waits are generous (`NAV_TIMEOUT` / `ACTION_TIMEOUT` = 60 s) because the runner is shared; never `browser.pause` to wait for state, `waitUntil` on the DOM instead. Typed text goes through `typeMarkerVerified` / `typeInputVerified`, which read back and retype dropped keystrokes.
+- **A UI rename, move or removal breaks this lane silently.** Changing a control's label, placeholder or testid, or removing the flow it sits in, means grepping `e2e-tauri/` for the old one in the same PR: `helpers.ts`'s header lists the shared selectors, but most specs also inline their own, and no required check catches it.
+- Waits are generous (`NAV_TIMEOUT` / `ACTION_TIMEOUT` = 60 s) because the runner is shared; never `browser.pause` to wait for state, `waitUntil` on the DOM instead. Typed text goes through `typeMarkerVerified` / `typeInputVerified` / `typeVerified`, which send it in `distinctKeyChunks` and read back and retype dropped keystrokes. Never type text with a repeated character through one raw `browser.keys` call: it holds every key down before releasing any, and WebKitGTK's driver can drop a key pressed again while held (`[[` arrived as `[`, and every space after the first was dropped).
+- **WebdriverIO's `*=` / `=` text match takes a single tag or attribute selector** (`[data-testid="block-static"]*=…`); with two (`[a][b]*=…`) it is rejected as an invalid selector. Select by the attributes and compare `getText()`.
 - **Never self-skip on an environment precondition** (focus, driver): fail, as `waitForAppReady` does, so the lane reds instead of passing vacuously.
 - **Click only to focus, and never an element whose layout is still settling** (an image resolving, a badge mounting): WebDriver clicks a centre computed before the shift (`focusForTyping`).
 - **After Enter, wait for `enterBlankSibling`.** The create is a round-trip, and until it answers the source block's emptied editor also reads blank.
