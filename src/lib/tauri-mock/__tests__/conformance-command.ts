@@ -12,7 +12,9 @@
  * one `<field>-><id>` token per element.
  *
  * Keep {@link RETURN_SHAPE} in lockstep with the Rust `RETURN_SHAPE`, exactly
- * as `WIRE` in `conformance-query.ts` mirrors `run_step`.
+ * as `WIRE` in `conformance-query.ts` mirrors `run_step`. The two importers are
+ * the exception: their fixture pins the backend alone (#5071), so they have a
+ * Rust entry and none here.
  */
 
 import { PROPERTY_DEF_ATTRS, idToken } from '@/lib/tauri-mock/__tests__/conformance-query'

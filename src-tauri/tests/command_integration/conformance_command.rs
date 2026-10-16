@@ -49,7 +49,9 @@ const HEADED_ID_KEY: &str = "<headed>";
 
 /// `(command, id key, attributes, list-valued fields)` — how each mutating
 /// command's response becomes tokens. MUST match `RETURN_SHAPE` in the TS
-/// twin, which reads the mock's response through the same keys.
+/// twin, which reads the mock's response through the same keys. The importers
+/// are the exception: their fixture pins the backend alone (#5071), so the TS
+/// twin has no entry for them.
 const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     (
         "delete_block",

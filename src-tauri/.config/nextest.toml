@@ -125,8 +125,11 @@ setup = "iroh-no-proxy-windows"
 #     window, and observed TMT at 60.010s in a full-workspace run BEFORE the
 #     case count was raised. It is `#[ignore]`d, so this only bites in the
 #     weekly `--run-ignored=only` sweep — which is the one place it runs.
+#   * `conformance_fixtures_match_backend` (#5071) — one test that replays every
+#     conformance fixture through the backend. Its TRY 1 was terminated at the
+#     default 60s window while other builds shared the box, and passed on TRY 2.
 [[profile.default.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/mock_matches_backend_on_generated_op_chains_4669/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/mock_matches_backend_on_generated_op_chains_4669/) | test(/conformance_fixtures_match_backend/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 # The weekly deep-checks lane (#4282). `scheduled-deep-checks.yml`'s `bench-slo`

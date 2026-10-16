@@ -66,7 +66,8 @@ const fixtures = loadFixtures()
 // Fixtures whose mock snapshot is a KNOWN, documented divergence from the
 // backend-authored expected. The backend is the source of truth; these are
 // fixtures where mirroring its behaviour in the mock is not a cheap/safe change
-// — file an issue instead. Each entry must have a `// DRIFT(#763): …` note.
+// — file an issue instead — or where a decision says the mock is not meant to
+// mirror it (#5071). Each entry must have a `// DRIFT(#763): …` note.
 const DRIFT_SKIP = new Set<string>([
   // #891 fixed the Rust runner to author `expected` from the production ENGINE
   // path (dense-reproject positions) instead of the SQL-only fallback (gapped
@@ -97,7 +98,8 @@ const DRIFT_SKIP = new Set<string>([
  * coverage" failure the `QUERY_STEPS_BACKEND_ONLY` guard in
  * `conformance-coverage.test.ts` exists to prevent. Every name here therefore
  * still asserts `mock == backend` on its snapshot; only its query steps are
- * unasserted. Each entry needs a `// DRIFT(#763): …` note naming the issue.
+ * unasserted. Each entry needs a `// DRIFT(#763): …` note naming the issue or
+ * the decision that keeps the mock out of it.
  *
  * ## Why the granularity is the FIXTURE and not the step
  *
