@@ -323,8 +323,7 @@ mod tests {
     use super::*;
 
     /// A row written through one caller's pool, before the next caller's pool
-    /// exists, is absent from it: no two callers share a database, and the
-    /// template is never a database a caller writes to.
+    /// exists, is absent from it: no two callers share a database.
     #[tokio::test]
     async fn init_pool_from_template_gives_each_caller_its_own_database() {
         const BLOCK: &str = "01HZ0000000000000000000001";
