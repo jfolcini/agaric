@@ -1,0 +1,14 @@
+{
+  "name": "agaric",
+  "description": "Claude Code plugins local to the Agaric repo",
+  "owner": {
+    "name": "Agaric"
+  },
+  "plugins": [
+    {
+      "name": "tsc-lsp",
+      "description": "TypeScript 7's native language server (tsc --lsp) from this repo's node_modules",
+      "source": "./plugins/tsc-lsp"
+    }
+  ]
+}
