@@ -93,6 +93,7 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 | `Ctrl+T` | Open in new tab (desktop) |
 | `Ctrl+W` | Close active tab (desktop) |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab (desktop) |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom the whole interface in / out / back to 100% (desktop; the level is kept per device and shown in Settings → Appearance → Zoom) |
 | `Ctrl+Alt+N` (`⌘⌥N` on macOS) | Open **Quick Capture**. A true global OS hotkey — fires even when the app is in the background. It is the first row of Settings → Keyboard, labelled system-wide |
 
 ## Journal

@@ -1,5 +1,6 @@
 /**
- * AppearanceTab — theme, font size, animation speed and tooltip delay selectors.
+ * AppearanceTab — theme, note text size, interface zoom, animation speed and
+ * tooltip delay selectors.
  *
  * Delegates each preference to its shared hook. The hooks are
  * localStorage-backed and re-read across windows via synthetic `storage`
@@ -23,6 +24,13 @@ import { type FontSize, useFontSize } from '@/hooks/useFontSize'
 import { type MotionPreference, useMotionPreference } from '@/hooks/useMotionPreference'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { type TooltipDelay, useTooltipDelay } from '@/hooks/useTooltipDelay'
+import { isMobilePlatform } from '@/lib/platform'
+import {
+  INTERFACE_ZOOM_LEVELS,
+  type InterfaceZoom,
+  PREFERENCES,
+  usePreference,
+} from '@/lib/preferences'
 
 /**
  * Theme select uses 'system' as the user-facing alias for the internal 'auto'
@@ -53,11 +61,13 @@ function selectToTheme(value: string): ThemePreference {
 }
 
 export function AppearanceTab(): React.ReactElement {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { theme, setTheme } = useTheme()
   const { motion, setMotion } = useMotionPreference()
   const { tooltipDelay, setTooltipDelay } = useTooltipDelay()
   const { fontSize, setFontSize } = useFontSize()
+  const [zoom, setZoom] = usePreference(PREFERENCES.interfaceZoom)
+  const percent = new Intl.NumberFormat(i18n.language, { style: 'percent' })
 
   const handleThemeChange = useCallback(
     (value: string) => {
@@ -71,6 +81,13 @@ export function AppearanceTab(): React.ReactElement {
       setFontSize(value as FontSize)
     },
     [setFontSize],
+  )
+
+  const handleZoomChange = useCallback(
+    (value: string) => {
+      setZoom(Number(value) as InterfaceZoom)
+    },
+    [setZoom],
   )
 
   const handleMotionChange = useCallback(
@@ -108,10 +125,18 @@ export function AppearanceTab(): React.ReactElement {
           </Select>
         </SettingRow>
 
-        {/* Font size selector */}
-        <SettingRow label={t('settings.fontSizeLabel')} controlId="font-size-select">
+        {/* Note text size: block content only (`useFontSize`). */}
+        <SettingRow
+          label={t('settings.fontSizeLabel')}
+          controlId="font-size-select"
+          description={t('settings.fontSizeHelp')}
+        >
           <Select value={fontSize} onValueChange={handleFontSizeChange}>
-            <SelectTrigger id="font-size-select" className={SELECT_TRIGGER_WIDTH}>
+            <SelectTrigger
+              id="font-size-select"
+              className={SELECT_TRIGGER_WIDTH}
+              aria-describedby={settingDescriptionId('font-size-select')}
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -121,6 +146,33 @@ export function AppearanceTab(): React.ReactElement {
             </SelectContent>
           </Select>
         </SettingRow>
+
+        {/* Interface zoom (#5646): the webview's page zoom, desktop only. A phone
+            follows the system font size instead. */}
+        {isMobilePlatform() ? null : (
+          <SettingRow
+            label={t('settings.zoomLabel')}
+            controlId="zoom-select"
+            description={t('settings.zoomHelp')}
+          >
+            <Select value={String(zoom)} onValueChange={handleZoomChange}>
+              <SelectTrigger
+                id="zoom-select"
+                className={SELECT_TRIGGER_WIDTH}
+                aria-describedby={settingDescriptionId('zoom-select')}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {INTERFACE_ZOOM_LEVELS.map((level) => (
+                  <SelectItem key={level} value={String(level)}>
+                    {percent.format(level)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingRow>
+        )}
 
         {/* Animation speed. A single knob over the design-system `--motion-scale`
             token (see `useMotionPreference`): System follows the OS reduced-motion

@@ -593,6 +593,28 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.global',
     description: 'keyboard.runLastCommand',
   },
+  // Interface zoom (#5646). `Ctrl + +` covers the numpad plus and Shift+=.
+  {
+    id: 'interfaceZoomIn',
+    keys: 'Ctrl + = / Ctrl + +',
+    category: 'keyboard.category.global',
+    description: 'keyboard.interfaceZoomIn',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  {
+    id: 'interfaceZoomOut',
+    keys: 'Ctrl + -',
+    category: 'keyboard.category.global',
+    description: 'keyboard.interfaceZoomOut',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  {
+    id: 'interfaceZoomReset',
+    keys: 'Ctrl + 0',
+    category: 'keyboard.category.global',
+    description: 'keyboard.interfaceZoomReset',
+    condition: 'keyboard.condition.desktopOnly',
+  },
 
   // Graph View: zoom controls previously hardcoded in GraphView.tsx
   {
