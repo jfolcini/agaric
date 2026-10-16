@@ -90,8 +90,8 @@ pub use sql_only_fallback::count as sql_only_fallback_count;
 // post-commit fan-out (`dispatch_*_descendants`) — mirroring `apply_op_tx` +
 // `apply_op`. The cohort + space MUST be captured before the SQL UPDATE (else a
 // post-delete `resolve_block_space` returns None → the engine misses the
-// cascade → the #1257 phantom). The apply cursor stays put (boot-replay /
-// `dispatch_op` concern only). The `apply_*_via_loro` CASCADE helpers are also
+// cascade → the #1257 phantom). These paths never move the apply cursor (the
+// snapshot pass and `dispatch_op` do). The `apply_*_via_loro` CASCADE helpers are also
 // raised to `pub(crate)` at their definitions (consumed crate-internally via
 // the `use loro_apply::*` glob below) so they sit on the same engine-apply
 // Surface established; the multi-root command path itself routes the

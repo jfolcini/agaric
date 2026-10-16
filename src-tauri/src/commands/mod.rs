@@ -874,9 +874,9 @@ async fn delete_property_core(
     // before any `.await`), then `project_delete_property_to_sql` runs the
     // IDENTICAL per-key SQL (reserved → column NULL; `space` → the `space_id`
     // page-group clear; non-reserved → `DELETE FROM block_properties`). We do NOT
-    // call `apply_op_tx` / `advance_apply_cursor`: the apply cursor stays put on
-    // the LOCAL path so boot replay re-applies idempotently (the safety net —
-    // #1257). If the block's space can't be resolved (#2250:
+    // call `apply_op_tx` / `advance_apply_cursor`: the snapshot pass, not the
+    // command, moves the apply cursor past LOCAL ops (#5418; see
+    // `apply_op_projected`). If the block's space can't be resolved (#2250:
     // `SpaceUnresolved`, the only remaining sql_only trigger), the helper FALLS
     // BACK to `apply_delete_property_sql_only`, which runs the SAME projection —
     // so the clear is never skipped and we never crash.

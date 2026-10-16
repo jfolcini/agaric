@@ -50,7 +50,7 @@ pub use agaric_engine::spaces::{
 // The inner-core helpers driven by the shim below now live in the engine.
 use agaric_engine::spaces::{
     ensure_accent_color_property, ensure_is_space_property, ensure_space_block,
-    is_bootstrap_complete, migrate_pages_to_personal_space_batched, pages_without_space,
+    is_bootstrap_complete, migrate_pages_to_personal_space, pages_without_space,
 };
 
 /// Bootstrap the two seeded spaces and migrate existing pages into Personal.
@@ -243,12 +243,7 @@ async fn backfill_space_less_in_tx(
 ) -> Result<(usize, usize), AppError> {
     let pages_to_migrate = pages_without_space(tx).await?;
     let pages = pages_to_migrate.len();
-    // Batched migrator (chunked INSERT OR REPLACE + cached
-    // property_definitions lookup) replacing the previous per-page
-    // `set_property_in_tx` loop. For a 5000-page first-boot vault this
-    // collapses ~20k SQL round-trips down to ~5k op_log appends + ~30
-    // chunked block_properties UPSERTs.
-    migrate_pages_to_personal_space_batched(tx, device_id, &pages_to_migrate, records).await?;
+    migrate_pages_to_personal_space(tx, state, device_id, &pages_to_migrate, records).await?;
     let tags = migrate_orphan_tags_to_space(tx, state, device_id, records).await?;
     Ok((pages, tags))
 }
@@ -756,5 +751,74 @@ mod tests {
         );
 
         mat.shutdown();
+    }
+
+    /// #5418: a snapshot pass moves the apply cursor past the backfill's
+    /// `SetProperty(space)` ops, so boot no longer replays them. A page the
+    /// backfill places in Personal must already be in Personal's engine, or it
+    /// never syncs and a reprojection from the engine loses it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pages_placed_by_the_backfill_are_in_the_engine_after_a_reboot() {
+        use agaric_engine::loro::snapshot::{rehydrate_registry, save_engines_and_advance_cursor};
+
+        let (pool, session, _tmp) = boot_pool().await;
+        bootstrap_spaces(&pool, DEV, &session).await.unwrap();
+        // A page made the normal way, so Personal has a snapshot row to boot from.
+        crate::commands::spaces::create_page_in_space_inner(
+            &pool,
+            DEV,
+            &session,
+            None,
+            "Normal".to_owned(),
+            SPACE_PERSONAL_ULID.to_owned(),
+        )
+        .await
+        .unwrap();
+        // Two pages, because boot replays the newest op (the pass's watermark
+        // withholds it): only the older page can show a miss.
+        let mut space_less = Vec::new();
+        for title in ["Legacy A", "Legacy B"] {
+            let id = agaric_core::ulid::BlockId::new().to_string();
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'page', ?, NULL, 1, ?)",
+            )
+            .bind(&id)
+            .bind(title)
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+            space_less.push(id);
+        }
+
+        bootstrap_spaces(&pool, DEV, &session).await.unwrap();
+        save_engines_and_advance_cursor(&pool, &session).await;
+        session.shutdown();
+        drop(session);
+
+        let boot = Materializer::new(pool.clone());
+        let registry = &boot.loro_state().registry;
+        rehydrate_registry(&pool, registry, DEV).await;
+        crate::recovery::reset_recovery_guard();
+        crate::recovery::recover_at_boot(&pool, DEV, &boot, registry)
+            .await
+            .unwrap();
+        let held: Vec<bool> = {
+            let personal = SpaceId::from_trusted(SPACE_PERSONAL_ULID);
+            let mut guard = registry.for_space(&personal, DEV).unwrap();
+            let engine = guard.engine_mut();
+            space_less
+                .iter()
+                .map(|id| engine.read_block(id).unwrap().is_some())
+                .collect()
+        };
+        boot.shutdown();
+
+        assert_eq!(
+            held,
+            [true, true],
+            "every page the backfill placed must be in Personal's engine"
+        );
     }
 }

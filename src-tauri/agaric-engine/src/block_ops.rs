@@ -471,8 +471,8 @@ pub async fn create_block_in_tx(
     // recompute) and are now REMOVED as redundant — #2349 proved LOCAL and
     // REMOTE create commit identical state (the `..._identical_rows_2250` pin
     // now compares page_id/space_id too). We pass `advance_cursor = false`: the
-    // apply cursor (`materialized_through_seq`) stays put on the LOCAL path so
-    // boot replay re-applies idempotently (#1248 / #1257). If the block's space
+    // snapshot pass, not the command, moves the apply cursor past LOCAL ops
+    // (#5418; see `apply_op_projected`). If the block's space
     // can't be resolved (#2250: `SpaceUnresolved` — e.g. a brand-new top-level
     // page before its `SetProperty(space)`), the helper internally FALLS BACK
     // to the SQL-only projection, so the row is never skipped and we never
@@ -958,10 +958,10 @@ pub async fn set_property_in_tx_with_declaration(
     // per-key SQL (reserved → `blocks` column UPDATE; `space` → the
     // `space_id` page-group fan-out; non-reserved → `INSERT OR REPLACE INTO
     // block_properties`). We do NOT call `apply_op_tx` / `advance_apply_cursor`:
-    // the apply cursor stays put on the LOCAL path so boot replay re-applies
-    // idempotently (the safety net while local engine-apply hardens — #1257). If
-    // the block's space can't be resolved (#2250: `SpaceUnresolved`,
-    // the only remaining sql_only trigger), the helper internally FALLS BACK
+    // the snapshot pass, not the command, moves the apply cursor past LOCAL ops
+    // (#5418; see `apply_op_projected`). If the block's space can't be resolved
+    // (#2250: `SpaceUnresolved`, the only remaining sql_only trigger), the
+    // helper internally FALLS BACK
     // to `apply_set_property_sql_only`, which runs the SAME projection — so the
     // row is never skipped and we never crash. The up-front `space`-registration
     // Validation above is preserved regardless.

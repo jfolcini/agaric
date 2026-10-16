@@ -108,7 +108,7 @@ Page membership lives in the native, indexed `blocks.space_id` column (migration
 
 - **Seeded spaces** — Personal and Work are seeded on first boot. Both use deterministic ULIDs (`SPACE_PERSONAL_ULID` / `SPACE_WORK_ULID` constants) so peer devices converge without a name match.
 - **Legacy migration** — pre-spaces pages are routed to Personal or Work by a time-gated boot migration (one-shot, idempotent).
-- **Bootstrap re-runs every boot** — `pages_without_space` backfill is defensive: any page lacking a `space_id` gets one via `UPDATE blocks SET space_id = ?` (`bootstrap.rs`, handles peer-synced or future-bypass cases).
+- **Bootstrap re-runs every boot** — `pages_without_space` backfill is defensive: any page lacking a `space_id` gets Personal through a `SetProperty(space)` op applied in the bootstrap transaction, which also hydrates the page into Personal's engine (`bootstrap.rs`, handles peer-synced or future-bypass cases).
 
 ### Scoping rules
 

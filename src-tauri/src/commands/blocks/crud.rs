@@ -522,9 +522,9 @@ pub(crate) async fn edit_block_in_tx(
     // PLUS the in-tx `reindex_block_links` + `inbound_link_count` recompute the
     // Edit arm of `apply_op_tx` runs (previously deferred to the background
     // `enqueue_edit_background` fan-out on the LOCAL path). We pass
-    // `advance_cursor = false`: the apply cursor stays put on the LOCAL path so
-    // boot replay re-applies idempotently (the safety net while local
-    // engine-apply hardens — #1257). If the block's space can't be resolved
+    // `advance_cursor = false`: the snapshot pass, not the command, moves the
+    // apply cursor past LOCAL ops (#5418; see `apply_op_projected`). If the
+    // block's space can't be resolved
     // (#2250: `SpaceUnresolved`), the helper internally FALLS BACK to
     // `apply_edit_block_sql_only`, so the row is never skipped and we never
     // crash. `apply_op_projected` borrows `&op_record` here, BEFORE the
@@ -843,9 +843,9 @@ pub(crate) async fn delete_block_in_tx(
     // AND every active descendant via `descendants_cte_active!()`), and the
     // `remove_subtree_inherited` tag sweep — all previously hand-rolled here.
     // `apply_op_projected` re-derives the `DeleteBlockPayload` from
-    // `op_record.payload`. We pass `advance_cursor = false`: the apply cursor
-    // stays put on the LOCAL path so boot replay re-applies idempotently (the
-    // #1257 safety net). If the block's space can't be resolved (#2250), the
+    // `op_record.payload`. We pass `advance_cursor = false`: the snapshot pass,
+    // not the command, moves the apply cursor past LOCAL ops (#5418; see
+    // `apply_op_projected`). If the block's space can't be resolved (#2250), the
     // helper internally FALLS BACK to `apply_delete_block_sql_only` (same
     // cascade + sweep), so the row is never skipped and we never crash.
     // `apply_op_projected` borrows `&op_record` here, BEFORE the `Arc::new`
@@ -1733,10 +1733,9 @@ pub async fn restore_block_inner(
     // #3834: keep the FULL restored chain, not just `topmost`. The engine
     // fan-out for it runs POST-COMMIT below (`dispatch_restore_ancestors`), in
     // this command — NOT, as this comment used to claim, in the materializer
-    // replay arm (`apply_op` → `dispatch_restore_ancestors`). That arm never
-    // runs for a locally authored op: the LOCAL command path deliberately does
-    // not advance the apply cursor (the #1257 boot-replay safety net), so this
-    // op is only ever replayed at boot — by which point the chain is already
+    // replay arm (`apply_op` → `dispatch_restore_ancestors`). That arm runs
+    // for a locally authored op only if boot replays it (the snapshot pass
+    // moves the cursor past LOCAL ops, #5418), and by then the chain is already
     // live in SQL and `project_restore_block_to_sql` walks up onto a LIVE
     // parent and returns an EMPTY chain, so the replay fans nothing out. The
     // ancestors would therefore stay live in SQL and still tombstoned in the
@@ -3098,12 +3097,11 @@ pub(crate) async fn delete_property_in_tx(
     // before any `.await`), then `project_delete_property_to_sql` runs the
     // IDENTICAL per-key SQL (reserved → column NULL; `space` → the
     // `space_id` page-group clear; non-reserved → `DELETE FROM block_properties`).
-    // We do NOT call `apply_op_tx` / `advance_apply_cursor`: the apply cursor
-    // stays put on the LOCAL path so boot replay re-applies idempotently (the
-    // safety net while local engine-apply hardens — #1257). If the block's
-    // space cannot be resolved the helper internally FALLS BACK to
-    // `apply_delete_property_sql_only`, which runs the SAME projection — so the
-    // clear is never skipped and we never crash.
+    // We do NOT call `apply_op_tx` / `advance_apply_cursor`: the snapshot pass,
+    // not the command, moves the apply cursor past LOCAL ops (#5418; see
+    // `apply_op_projected`). If the block's space cannot be resolved the helper
+    // internally FALLS BACK to `apply_delete_property_sql_only`, which runs the
+    // SAME projection — so the clear is never skipped and we never crash.
     // #2325/#2250: route through the collapsed single-entry-point projection
     // (`advance_cursor = false`, #1257). It re-derives the
     // `DeletePropertyPayload` from `op_record.payload` and runs the SAME

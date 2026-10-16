@@ -1061,21 +1061,19 @@ async fn create_block_with_none_position_appends_after_siblings() {
 // the materializer apply cursor.
 //
 // `materializer_apply_cursor.materialized_through_seq` tracks ENGINE-apply
-// progress, not SQL-materialization progress. It advances ONLY inside
-// `apply_op` / the `BatchApplyOps` arm (`advance_apply_cursor`), reached by
-// boot replay / the test-only `dispatch_op` helper / remote apply.
+// progress, not SQL-materialization progress. It advances inside `apply_op` /
+// the `BatchApplyOps` arm (`advance_apply_cursor`), reached by boot replay /
+// the test-only `dispatch_op` helper / remote apply, and in the snapshot pass
+// once the engine state holding the LOCAL ops is persisted (#5418).
 //
 // #1257 routed the LOCAL create path's ENGINE-apply + dense-position
 // projection INTO the CommandTx (`create_block_inner` →
 // `create_block_in_tx` → `apply_create_block_via_loro`), but DELIBERATELY
-// did NOT call `advance_apply_cursor`: advancing the cursor on the local
-// path before local engine-apply is bulletproof would make boot replay SKIP
-// these ops (`seq <= cursor`). So the cursor must STILL stay pinned. This
+// did NOT call `advance_apply_cursor`: a cursor past an op whose engine state
+// no snapshot holds yet would make boot replay SKIP it (`seq <= cursor`). This
 // test pins exactly that: after a local create-block command (and a full
 // background `settle()`), `op_log.seq` has advanced and the SQL `blocks` row
 // is materialized synchronously, but `materialized_through_seq` is UNCHANGED.
-// Boot replay re-applies the op idempotently (its `INSERT OR IGNORE`
-// projection + idempotent engine apply) — that's the intended safety net.
 //
 // (In `test_pool` no Loro engine is installed, so the local create here hits
 // the in-helper SQL-only fallback. Either arm leaves the cursor untouched —
