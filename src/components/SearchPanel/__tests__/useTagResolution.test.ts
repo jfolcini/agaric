@@ -277,6 +277,23 @@ describe('useTagResolution', () => {
     })
   })
 
+  // The stale answer lands after the name change is published but before React
+  // commits it, so the resolve effect's cleanup has not cancelled it yet.
+  it('re-resolves when the previous re-lookup answers before the name change commits', async () => {
+    const { result, answerPreRebuild } = await settleTypoAsUnknownThenHoldItsReLookup()
+    mockedListTags.mockResolvedValue([typoTag])
+
+    await act(async () => {
+      invalidateNameCaches()
+      answerPreRebuild([])
+      for (let tick = 0; tick < 5; tick++) await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(result.current).toEqual({ tagIds: ['TAG_TYPO'], pending: false, hasUnresolved: false })
+    })
+  })
+
   it('re-resolves when a name change lands after the previous re-lookup settled', async () => {
     const { result, answerPreRebuild } = await settleTypoAsUnknownThenHoldItsReLookup()
     await act(async () => {
