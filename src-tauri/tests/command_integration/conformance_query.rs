@@ -25,7 +25,9 @@
 //! by the same `CONFORMANCE_UPDATE=1` authoring flow that writes `expected`, and
 //! the TS twin (`src/lib/tauri-mock/__tests__/conformance-query.ts`) replays the
 //! SAME steps through the tauri-mock and asserts the SAME recorded values. One
-//! backend-authored expectation therefore binds both implementations.
+//! backend-authored expectation therefore binds both implementations, except
+//! for the markdown renders: the mock has no renderer, so those steps compare
+//! a sibling document on this side alone (`document_result`, #5071).
 //!
 //! A row may carry ATTRIBUTES (`B2#page_id=B1#deleted_at=DELETED`) when the
 //! ids alone cannot see the command's projection; the grammar and its two
