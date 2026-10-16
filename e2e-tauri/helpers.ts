@@ -75,9 +75,13 @@
 //     `[data-testid="search-results-count"]` reading "No results",
 //     `[data-testid="search-result-row-<id>"]`, `#journal-tab-daily` /
 //     `#journal-tab-weekly`, and a DaySection's "Open <date> in editor".
-//   - `[data-testid="suggestion-item"]`     an item of the open `[[` / `#`
-//     picker (SuggestionList.tsx); the create item's id is
-//     `suggestion-__create__`.
+//   - `[data-testid="suggestion-item"]`     an item of the open `[[` / `#` /
+//     `::` picker (SuggestionList.tsx), `aria-selected` on the one Enter
+//     picks; the create item's id is `suggestion-__create__`.
+//   - A property chip's accessible name, `<Key>: <value>`
+//     (`property.selectValue`, PropertyChip.tsx), the slash item
+//     "LOCATION Office — Office" (slash-commands.ts) and its toast "Set
+//     location to Office" (`blockTree.setLocationMessage`).
 // ---------------------------------------------------------------------------
 
 // Boot of a real WebKitWebView + first live-backend IPC round-trip is slower
@@ -382,13 +386,18 @@ export function distinctKeyChunks(text: string): string[] {
  *
  * `readBack` is what makes the typed text an asserted invariant rather than a
  * best-effort stream, and is the only thing that differs between a
- * contenteditable and an `<input>`.
+ * contenteditable and an `<input>`. `clear` undoes a mangled attempt before
+ * the retry; by default it empties the whole box.
  */
 export async function typeVerified(
   selector: string,
   text: string,
   readBack: (selector: string) => Promise<string>,
   what: string,
+  clear: (selector: string) => Promise<void> = async () => {
+    await browser.keys(['Control', 'a'])
+    await browser.keys(['Delete'])
+  },
 ): Promise<void> {
   const MAX_TYPE_ATTEMPTS = 3
   // A read-back unchanged this long has settled: the keys are all dispatched
@@ -426,10 +435,8 @@ export async function typeVerified(
     }
     if (lastSeen === text) return
     if (attempt < MAX_TYPE_ATTEMPTS) {
-      // Clear the mangled attempt: select-all + delete, then retype.
       await focusForTyping(editorSelector)
-      await browser.keys(['Control', 'a'])
-      await browser.keys(['Delete'])
+      await clear(editorSelector)
     }
   }
   throw new Error(

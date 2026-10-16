@@ -10,7 +10,7 @@
 // property was stored on the deleted row. The mock answers IPCs in
 // microtasks, so only this lane has the window the bug lived in.
 //
-// Two arms in one vault (a second `it` sees the first one's data). The
+// The arms share one vault (a later `it` sees the earlier ones' data). The
 // CONTROL presses Escape on a blank block an Enter created and asserts the
 // cleanup removed it: that is what proves the cleanup runs under this exact
 // sequence (`document.hasFocus()` true in the WebView, the delete landing
@@ -20,6 +20,13 @@
 // property chip carrying the value is listed and no block holds the line as
 // text.
 //
+// The third arm (#5365) builds the line through the `::` picker (#2675) and
+// blurs by clicking another block. The save is two writes, `set_property` and
+// then the edit that strips the line (`commitInlineProperties`); the arm
+// fails if either lands without the other. The picker offers only keys some
+// block already holds, so the arm first sets `location` through `/location`,
+// which writes the property without the save-time parser.
+//
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
@@ -27,13 +34,17 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  distinctKeyChunks,
   enterBlankSibling,
   expectAbsent,
   navigateTo,
   openJournalBlockEditor,
   runScopedMarker,
   typeMarkerVerified,
+  typeVerified,
   waitForAppReady,
+  waitForPickerToOffer,
+  waitForToast,
 } from './helpers'
 
 const CONTROL_MARKER = runScopedMarker('wdio-blank-escape')
@@ -46,7 +57,26 @@ const LINE = `wdiokey:: ${VALUE}`
 // is "stripped and stored".
 const VALUE_CHIP = `[data-testid="property-chip"]*=${VALUE}`
 
-describe('Agaric real-backend Escape on a property-only block (#5448)', () => {
+const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
+const PICKER_SEED = runScopedMarker('wdio-picker-seed')
+const PICKED_VALUE = runScopedMarker('wdio-picked')
+// What the picker leaves in the block once `location` is picked.
+const PICKED_KEY = 'location:: '
+
+/** The editor's text as typed, its trailing space kept. */
+function editorText(): Promise<string> {
+  return browser.execute((sel: string) => document.querySelector(sel)?.textContent ?? '', EDITOR)
+}
+
+/** The chip of block `id` named `<Key>: <value>`, the chip's accessible name. */
+function chipOf(id: string, name: string) {
+  return $(
+    `[data-testid="sortable-block"][data-block-id="${id}"] ` +
+      `[data-testid="property-chip"][aria-label="${name}"]`,
+  )
+}
+
+describe('Agaric real-backend key:: value lines (#5448, #2675)', () => {
   it('control: Escape on a blank block an Enter created cleans it up', async () => {
     await waitForAppReady()
     await navigateTo('Journal')
@@ -83,5 +113,66 @@ describe('Agaric real-backend Escape on a property-only block (#5448)', () => {
     await blockStaticByMarker(CONTROL_MARKER).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await $(VALUE_CHIP).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await expectAbsent(`[data-testid="block-static"]*=${VALUE}`, 'the line kept as text')
+  })
+
+  it('stores a key picked through :: as the property and strips the line (#5365)', async () => {
+    // The key the picker will offer, written by the slash command alone.
+    await openJournalBlockEditor()
+    for (const ch of '/location') await browser.keys([ch])
+    const office = $('[data-testid="suggestion-item"]*=LOCATION Office')
+    await office.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await office.click()
+    await waitForToast('Set location to Office')
+    await typeMarkerVerified(PICKER_SEED)
+    const id = await enterBlankSibling()
+
+    for (const chunk of distinctKeyChunks('::loc')) await browser.keys(Array.from(chunk))
+    await waitForPickerToOffer('location')
+    await $('[data-testid="suggestion-item"][aria-selected="true"]*=location').waitForDisplayed({
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: 'the :: picker never selected location',
+    })
+    await browser.keys(['Enter'])
+    await browser.waitUntil(async () => (await editorText()) === PICKED_KEY, {
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: `picking location never left ${JSON.stringify(PICKED_KEY)} in the block`,
+    })
+
+    // Read back and retype only the value: clearing the whole block would
+    // drop the picked key.
+    await typeVerified(
+      EDITOR,
+      PICKED_VALUE,
+      async () => {
+        const text = await editorText()
+        return text.startsWith(PICKED_KEY) ? text.slice(PICKED_KEY.length) : `(no key) ${text}`
+      },
+      'property value',
+      async () => {
+        const text = await editorText()
+        if (!text.startsWith(PICKED_KEY)) throw new Error(`the picked key is gone: ${text}`)
+        for (let i = PICKED_KEY.length; i < text.length; i++) await browser.keys(['Backspace'])
+      },
+    )
+
+    // Blur by clicking the block above, the save path a user takes most.
+    await blockStaticByMarker(PICKER_SEED).click()
+    await chipOf(id, `Location: ${PICKED_VALUE}`).waitForDisplayed({
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: 'the picked location was never stored on the block',
+    })
+
+    await navigateTo('Pages')
+    await navigateTo('Journal')
+
+    await blockStaticByMarker(PICKER_SEED).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await chipOf(id, `Location: ${PICKED_VALUE}`).waitForDisplayed({
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: 'the picked location did not survive the round-trip',
+    })
+    await expectAbsent(
+      `[data-testid="block-static"]*=${PICKED_VALUE}`,
+      'the picked key:: value line kept as text',
+    )
   })
 })
