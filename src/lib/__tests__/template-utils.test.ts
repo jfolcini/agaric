@@ -1,5 +1,5 @@
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
-import { es } from 'date-fns/locale'
+import { es } from 'date-fns/locale/es'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlockRow, withOps } from '@/__tests__/fixtures'

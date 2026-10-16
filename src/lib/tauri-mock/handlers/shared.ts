@@ -17,7 +17,7 @@
  */
 
 import { format as formatDateFns, getISOWeek } from 'date-fns'
-import { enUS } from 'date-fns/locale'
+import { enUS } from 'date-fns/locale/en-US'
 
 import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, PageSort, commands } from '@/lib/bindings'
