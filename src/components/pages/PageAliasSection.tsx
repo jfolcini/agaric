@@ -65,6 +65,8 @@ export function PageAliasSection({
             value={aliasInput}
             onChange={(e) => onAliasInputChange(e.target.value)}
             aria-label={t('pageHeader.newAliasInput')}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- it mounts only when the user asks to add an alias, and the kebab row or Edit button that asked is gone by then
+            autoFocus
           />
           <Button type="submit" variant="ghost" size="xs">
             {t('pageHeader.add')}

@@ -95,6 +95,14 @@ describe('PageAliasSection interaction', () => {
     expect(onStartEditing).toHaveBeenCalledOnce()
   })
 
+  it('focuses the new-alias input when the editor opens', () => {
+    const { rerender } = render(<PageAliasSection {...defaultProps} aliases={['my-alias']} />)
+
+    rerender(<PageAliasSection {...defaultProps} aliases={['my-alias']} editingAliases />)
+
+    expect(screen.getByLabelText('New alias input')).toHaveFocus()
+  })
+
   it('calls onStopEditing when Done button clicked', async () => {
     const onStopEditing = vi.fn()
     const user = userEvent.setup()
