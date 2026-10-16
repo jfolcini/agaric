@@ -365,6 +365,10 @@ notify-rust = "4"
 # not re-export: `enable_mock_camera_under_e2e_sandbox` in lib.rs needs its
 # settings traits. Same version Tauri and wry resolve, so nothing new is built.
 webkit2gtk = { version = "2.0.2", features = ["v2_4"] }
+# `appimage_integration::apply_host_decoration_layout_if_running` sets
+# `GtkSettings` and reads GSettings through `gtk::gio`. Same version Tauri and
+# wry resolve, so nothing new is built.
+gtk = "0.18"
 
 # Desktop-only Tauri plugins (#760).  Every registration is gated behind
 # `#[cfg(desktop)]` / `#[cfg(not(mobile))]` in lib.rs (Tauri's `desktop`

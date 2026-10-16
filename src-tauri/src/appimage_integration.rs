@@ -11,8 +11,13 @@
 //! Guarded by `$APPIMAGE`, which is set *only* inside a running AppImage — that
 //! single check excludes deb/rpm (already integrated by the package manager),
 //! `cargo tauri dev`, and every non-Linux build..
+//!
+//! The same guard gates [`apply_host_decoration_layout_if_running`], which gives
+//! GTK the host's title-bar button layout instead of the AppImage's bundled one.
+//! Only its dir selection is unit-tested; the GSettings read and the GTK write
+//! need the host's compiled schemas and a display.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 /// Self-integrate the running AppImage into the host's XDG desktop dirs.
@@ -171,6 +176,96 @@ fn refresh_caches(data_home: &Path) {
         .status();
 }
 
+const WM_PREFERENCES_SCHEMA: &str = "org.gnome.desktop.wm.preferences";
+const BUTTON_LAYOUT_KEY: &str = "button-layout";
+
+/// Give GTK the host's title-bar button layout.
+///
+/// The AppImage's GTK hook points GSettings at the AppImage's own schemas, whose
+/// `button-layout` default is upstream GNOME's `appmenu:close`. A distro default
+/// shipped as a schema override (Ubuntu's `:minimize,maximize,close`) is never
+/// seen, so the window draws only a close button. We read the key through the
+/// host's schema dirs instead; the dconf backend still supplies a value the user
+/// set explicitly.
+///
+/// No-op outside an AppImage. Call on the GTK main thread after GTK is
+/// initialised. The value is set once with application priority, so a layout
+/// changed while the app runs applies on the next launch. Best-effort: every
+/// failure is logged, never fatal.
+pub fn apply_host_decoration_layout_if_running() {
+    use gtk::prelude::GtkSettingsExt as _;
+
+    let (Some(appimage), Some(appdir)) = (std::env::var_os("APPIMAGE"), std::env::var_os("APPDIR"))
+    else {
+        return;
+    };
+    if appimage.is_empty() {
+        return;
+    }
+    let schema_dirs = host_schema_dirs(
+        std::env::var_os("XDG_DATA_DIRS").as_deref(),
+        Path::new(&appdir),
+    );
+    let Some(layout) = host_button_layout(&schema_dirs) else {
+        tracing::info!(
+            ?schema_dirs,
+            "AppImage: no host schema provides {WM_PREFERENCES_SCHEMA} {BUTTON_LAYOUT_KEY}; \
+             keeping GTK's title-bar layout"
+        );
+        return;
+    };
+    let Some(settings) = gtk::Settings::default() else {
+        tracing::warn!("AppImage: no default GtkSettings; keeping GTK's title-bar layout");
+        return;
+    };
+    let previous = settings.gtk_decoration_layout();
+    settings.set_gtk_decoration_layout(Some(&layout));
+    tracing::info!(%layout, ?previous, "AppImage: applied the host's title-bar button layout");
+}
+
+/// The host's GSettings schema dirs: `<dir>/glib-2.0/schemas` for every
+/// `XDG_DATA_DIRS` entry outside the AppImage mount, highest priority first.
+fn host_schema_dirs(xdg_data_dirs: Option<&OsStr>, appdir: &Path) -> Vec<PathBuf> {
+    let Some(data_dirs) = xdg_data_dirs else {
+        return Vec::new();
+    };
+    std::env::split_paths(data_dirs)
+        .filter(|dir| !dir.as_os_str().is_empty() && !dir.starts_with(appdir))
+        .map(|dir| dir.join("glib-2.0/schemas"))
+        .collect()
+}
+
+/// Read `button-layout` through a schema source chained from `schema_dirs`, so
+/// the first dir that defines the schema supplies its default, as GLib's own
+/// lookup does.
+fn host_button_layout(schema_dirs: &[PathBuf]) -> Option<String> {
+    use gtk::gio;
+    use gtk::prelude::SettingsExt as _;
+
+    let mut source = None;
+    for dir in schema_dirs.iter().rev() {
+        // Most data dirs hold no schemas at all; that is not a failure.
+        if !dir.join("gschemas.compiled").is_file() {
+            continue;
+        }
+        match gio::SettingsSchemaSource::from_directory(dir, source.as_ref(), true) {
+            Ok(chained) => source = Some(chained),
+            Err(e) => tracing::warn!(
+                dir = %dir.display(),
+                error = %e,
+                "AppImage: skipping an unreadable host schema cache"
+            ),
+        }
+    }
+    let schema = source?.lookup(WM_PREFERENCES_SCHEMA, true)?;
+    // `g_settings_get_string` aborts the process on a key the schema lacks.
+    if !schema.has_key(BUTTON_LAYOUT_KEY) {
+        return None;
+    }
+    let settings = gio::Settings::new_full(&schema, None::<&gio::SettingsBackend>, None);
+    Some(settings.string(BUTTON_LAYOUT_KEY).into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,5 +377,61 @@ mod tests {
             Some(data.path().to_path_buf()),
         );
         assert!(!data.path().join("applications/agaric.desktop").exists());
+    }
+
+    #[test]
+    fn host_schema_dirs_keeps_host_entries_in_order() {
+        let dirs = host_schema_dirs(
+            Some(OsStr::new("/usr/share/ubuntu:/usr/local/share/:/usr/share")),
+            Path::new("/tmp/.mount_AgaricX"),
+        );
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from("/usr/share/ubuntu/glib-2.0/schemas"),
+                PathBuf::from("/usr/local/share/glib-2.0/schemas"),
+                PathBuf::from("/usr/share/glib-2.0/schemas"),
+            ],
+            "every host data dir maps to its schema dir, priority order kept"
+        );
+    }
+
+    #[test]
+    fn host_schema_dirs_excludes_appdir_entries() {
+        let dirs = host_schema_dirs(
+            Some(OsStr::new(
+                "/tmp/.mount_AgaricX/usr/share:/usr/share:/tmp/.mount_AgaricX//usr/share:\
+                 /tmp/.mount_AgaricXY/usr/share",
+            )),
+            Path::new("/tmp/.mount_AgaricX"),
+        );
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from("/usr/share/glib-2.0/schemas"),
+                PathBuf::from("/tmp/.mount_AgaricXY/usr/share/glib-2.0/schemas"),
+            ],
+            "entries under APPDIR are dropped by path component, not by string prefix"
+        );
+    }
+
+    #[test]
+    fn host_schema_dirs_is_empty_for_unset_or_empty_input() {
+        let appdir = Path::new("/tmp/.mount_AgaricX");
+        assert_eq!(
+            host_schema_dirs(None, appdir),
+            Vec::<PathBuf>::new(),
+            "unset"
+        );
+        assert_eq!(
+            host_schema_dirs(Some(OsStr::new("")), appdir),
+            Vec::<PathBuf>::new(),
+            "empty"
+        );
+        assert_eq!(
+            host_schema_dirs(Some(OsStr::new("::")), appdir),
+            Vec::<PathBuf>::new(),
+            "only separators"
+        );
     }
 }

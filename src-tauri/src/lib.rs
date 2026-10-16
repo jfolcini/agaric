@@ -2814,6 +2814,8 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // so deb/rpm, `cargo tauri dev`, and non-Linux are all excluded.
     #[cfg(target_os = "linux")]
     appimage_integration::integrate_appimage_if_running();
+    #[cfg(target_os = "linux")]
+    appimage_integration::apply_host_decoration_layout_if_running();
 
     // Install the deep-link router as early as possible
     // so launch-time `agaric://…` URLs are routed once the rest of

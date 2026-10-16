@@ -78,6 +78,7 @@ dependencies = [
  "blake3",
  "chrono",
  "futures-util",
+ "gtk",
  "libc",
  "notify-rust",
  "rand 0.10.3",
