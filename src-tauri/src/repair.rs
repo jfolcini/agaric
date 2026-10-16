@@ -1,4 +1,4 @@
-//! Boot driver for [`agaric_engine::repair`] (#4728, #4715, #5074, #5387).
+//! Boot driver for [`agaric_engine::repair`] (#4728, #4715, #5074, #5387, #5670).
 //!
 //! Runs once per boot, after `bootstrap_spaces` and the empty-block sweep,
 //! and never fails boot. Each repair gets a `CommandTx` of its own with the
@@ -7,6 +7,9 @@
 //! logs, and leaves the others and the boot itself untouched; the next
 //! boot retries the same population. `bootstrap_spaces` is boot-fatal by
 //! design; sharing its transaction would have made a repair boot-fatal too.
+//!
+//! The one-shot #5670 engine hydration follows them, with the same
+//! contract: see `hydrate_engine_missing_blocks_once`.
 //!
 //! The one-shot #5074 agenda rewrite follows the repairs, whatever they
 //! found: `DESIRED_AGENDA_SQL` changed under rows already in `agenda_cache`
@@ -32,6 +35,7 @@ use agaric_core::error::AppError;
 use agaric_engine::apply::kernel::ApplyEffects;
 use agaric_engine::repair::RepairOp;
 use agaric_engine::repair::completed_at::repair_completed_at;
+use agaric_engine::repair::engine_missing_blocks::hydrate_engine_missing_blocks;
 use agaric_engine::repair::journal_duplicates::repair_journal_duplicates;
 use agaric_engine::repair::orphans::repair_orphans;
 use agaric_engine::repair::page_aliases::repair_page_aliases;
@@ -82,6 +86,15 @@ pub async fn repair_unreachable_content_at_boot(
                  (#4728 / #4715 / #5074)"
             );
         }
+    }
+
+    match hydrate_engine_missing_blocks_once(pool, device_id, materializer).await {
+        Ok(Some(missing)) => tracing::info!(missing, "engine hydration repair ran (#5670)"),
+        Ok(None) => {}
+        Err(e) => tracing::error!(
+            error = %e,
+            "engine hydration repair failed — boot continues; the next boot retries it (#5670)"
+        ),
     }
 
     // Whatever the repairs found — a vault whose repairs find nothing is
@@ -167,6 +180,59 @@ async fn run(
 
     tracing::info!(repair = repair.label(), %summary, "content repair complete");
     Ok(())
+}
+
+/// `app_settings` key retiring [`hydrate_engine_missing_blocks_once`].
+const ENGINE_MISSING_BLOCKS_MARKER: &str = "repair.engine_missing_live_blocks.v1";
+
+/// #5670 — hydrate the live blocks their space's engine lost, once. Returns
+/// how many were missing, or `None` when the marker says it already ran.
+///
+/// One-shot because it repairs what the pre-#5418 replays left; drift that
+/// arises later is for the integrity check (#5628) to report, not for a boot
+/// pass to hide. The hydration is in memory until a snapshot persists it and
+/// no op replays it, so the marker is written after the save: a crash in
+/// between leaves the repair to the next boot.
+async fn hydrate_engine_missing_blocks_once(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+) -> Result<Option<usize>, AppError> {
+    let done: Option<String> = sqlx::query_scalar!(
+        "SELECT value FROM app_settings WHERE key = ?",
+        ENGINE_MISSING_BLOCKS_MARKER,
+    )
+    .fetch_optional(pool)
+    .await?;
+    if done.is_some() {
+        return Ok(None);
+    }
+    let state = materializer.loro_state();
+    let mut tx = CommandTx::begin_immediate(pool, "repair_engine_missing_blocks").await?;
+    tx.arm_engine_rollback(state);
+    let missing = hydrate_engine_missing_blocks(&mut tx, state, device_id).await?;
+    tx.commit_and_dispatch(materializer).await?;
+    if missing > 0
+        && agaric_engine::loro::snapshot::save_all_engines(pool, &state.registry)
+            .await
+            .persisted_through
+            .is_none()
+    {
+        return Err(AppError::Snapshot(
+            "the hydrated engines were not persisted".to_owned(),
+        ));
+    }
+    let now = crate::db::now_ms();
+    let count = missing.to_string();
+    sqlx::query!(
+        "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        ENGINE_MISSING_BLOCKS_MARKER,
+        count,
+        now,
+    )
+    .execute(pool)
+    .await?;
+    Ok(Some(missing))
 }
 
 #[cfg(test)]
@@ -603,5 +669,296 @@ mod tests {
             vec![("2026-03-05".to_owned(), due, "column:due_date".to_owned())],
             "the failed pass left no marker, so the next boot rewrote the cache"
         );
+    }
+
+    /// A user space's page holding `parent`, which holds three children, all
+    /// made through the commands. Returns `(space, parent, children)`.
+    async fn vault_in_a_space(
+        pool: &SqlitePool,
+        mat: &Materializer,
+    ) -> (String, String, Vec<String>) {
+        use crate::commands::blocks::crud::create_block_inner;
+        use crate::commands::spaces::{create_page_in_space_inner, create_space_inner};
+        let space = create_space_inner(pool, DEV, mat, "Work".to_owned(), None)
+            .await
+            .unwrap()
+            .to_string();
+        let page =
+            create_page_in_space_inner(pool, DEV, mat, None, "Page".to_owned(), space.clone())
+                .await
+                .unwrap();
+        let child = |parent: agaric_core::ulid::BlockId, text: &'static str| async move {
+            create_block_inner(
+                pool,
+                DEV,
+                mat,
+                "content".to_owned(),
+                text.to_owned(),
+                Some(parent),
+                None,
+            )
+            .await
+            .unwrap()
+            .id
+        };
+        let parent = child(page, "parent").await;
+        let mut children = Vec::new();
+        for text in ["first", "middle", "last"] {
+            children.push(child(parent.clone(), text).await.to_string());
+        }
+        mat.flush_background().await.unwrap();
+        (space, parent.to_string(), children)
+    }
+
+    fn engine_of(mat: &Materializer, space: &str) -> agaric_engine::loro::registry::EngineGuard {
+        let space = agaric_store::space::SpaceId::from_trusted(space);
+        mat.loro_state().registry.for_space(&space, DEV).unwrap()
+    }
+
+    /// Drop `block` from its space's engine and nowhere else: a purge of the
+    /// parent the engine still had it under, as in #5670's vault.
+    fn lose_from_engine(mat: &Materializer, space: &str, block: &str) {
+        engine_of(mat, space)
+            .engine_mut()
+            .apply_purge_block(block)
+            .unwrap();
+    }
+
+    fn engine_children(mat: &Materializer, space: &str, parent: &str) -> Vec<String> {
+        engine_of(mat, space)
+            .engine_mut()
+            .children_ordered_block_ids(Some(parent))
+            .unwrap()
+    }
+
+    /// The live nodes carrying `block`'s id in its space's doc, read the way a
+    /// peer or the next boot imports it.
+    fn nodes_in_export(mat: &Materializer, space: &str, block: &str) -> usize {
+        let (_, bytes) = mat
+            .loro_state()
+            .registry
+            .snapshot_all_engines()
+            .into_iter()
+            .find(|(s, _)| s.as_str() == space)
+            .unwrap();
+        let mut engine = agaric_engine::loro::engine::LoroEngine::new();
+        engine.import(&bytes.unwrap()).unwrap();
+        engine
+            .live_blocks_preorder()
+            .iter()
+            .filter(|b| b.as_str() == block)
+            .count()
+    }
+
+    /// The integrity check's engine divergences, as `(artefact, key)`.
+    async fn engine_divergences(pool: &SqlitePool, mat: &Materializer) -> Vec<(String, String)> {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 17).unwrap();
+        crate::reconciliation_oracle::reconcile_all(pool, mat.loro_state(), today)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|d| d.artefact.starts_with("engine."))
+            .map(|d| (d.artefact.to_owned(), d.key))
+            .collect()
+    }
+
+    /// Every `blocks` row: id, parent, position, deleted.
+    async fn sql_blocks(pool: &SqlitePool) -> Vec<(String, Option<String>, Option<i64>, bool)> {
+        sqlx::query_as(
+            "SELECT id, parent_id, position, deleted_at IS NOT NULL FROM blocks ORDER BY id",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn marker(pool: &SqlitePool) -> Option<String> {
+        sqlx::query_scalar("SELECT value FROM app_settings WHERE key = ?")
+            .bind(ENGINE_MISSING_BLOCKS_MARKER)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+    }
+
+    /// #5670 — a live block its space's engine lost comes back under its SQL
+    /// parent at its SQL place, as the doc's one live node for that id, and
+    /// persisted before the marker is. SQL is left as it was, and the
+    /// integrity check then finds the engine and SQL agree.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_block_the_engine_lost_comes_back_under_its_parent_in_order_5670() {
+        let (pool, _tmp) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let (space, parent, children) = vault_in_a_space(&pool, &mat).await;
+        let lost = &children[1];
+        lose_from_engine(&mat, &space, lost);
+        assert_eq!(
+            engine_divergences(&pool, &mat).await,
+            vec![("engine.blocks.row".to_owned(), format!("{space} / {lost}"))],
+            "the fixture is #5670's vault: one live block its engine lacks"
+        );
+        let sql_before = sql_blocks(&pool).await;
+
+        let missing = hydrate_engine_missing_blocks_once(&pool, DEV, &mat)
+            .await
+            .unwrap();
+
+        assert_eq!(missing, Some(1), "one block was missing");
+        assert_eq!(
+            engine_children(&mat, &space, &parent),
+            children,
+            "back under its parent, between its siblings"
+        );
+        assert_eq!(
+            nodes_in_export(&mat, &space, lost),
+            1,
+            "one live node for the id, beside the purged one"
+        );
+        assert_eq!(sql_blocks(&pool).await, sql_before, "SQL is untouched");
+        assert_eq!(
+            engine_divergences(&pool, &mat).await,
+            Vec::<(String, String)>::new(),
+            "the engine and SQL agree"
+        );
+        let rebooted = agaric_engine::loro::registry::LoroEngineRegistry::new();
+        agaric_engine::loro::snapshot::rehydrate_registry(&pool, &rebooted, DEV).await;
+        let space_id = agaric_store::space::SpaceId::from_trusted(&space);
+        assert!(
+            rebooted
+                .for_space(&space_id, DEV)
+                .unwrap()
+                .engine_mut()
+                .contains_block(lost),
+            "the hydrated engine was persisted"
+        );
+        assert_eq!(marker(&pool).await.as_deref(), Some("1"));
+        mat.shutdown();
+    }
+
+    /// #5670 — the marker retires the repair: a block lost again after it ran
+    /// stays lost, for the integrity check to report.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_second_run_is_a_no_op_5670() {
+        let (pool, _tmp) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let (space, parent, children) = vault_in_a_space(&pool, &mat).await;
+        let lost = &children[1];
+        lose_from_engine(&mat, &space, lost);
+        assert_eq!(
+            hydrate_engine_missing_blocks_once(&pool, DEV, &mat)
+                .await
+                .unwrap(),
+            Some(1)
+        );
+
+        lose_from_engine(&mat, &space, lost);
+        let again = hydrate_engine_missing_blocks_once(&pool, DEV, &mat)
+            .await
+            .unwrap();
+
+        assert_eq!(again, None, "the marker says it ran");
+        assert!(
+            !engine_children(&mat, &space, &parent).contains(lost),
+            "the second run hydrated nothing"
+        );
+        mat.shutdown();
+    }
+
+    /// #5670 — on a vault whose engines hold every live block the repair
+    /// appends no op and writes no block, no snapshot and no engine change:
+    /// only its marker.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_vault_with_nothing_missing_writes_nothing_5670() {
+        let (pool, _tmp) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let (space, _, _) = vault_in_a_space(&pool, &mat).await;
+        let space_id = agaric_store::space::SpaceId::from_trusted(&space);
+        let snapshots = || async {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM loro_doc_state")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let before = (
+            op_log_rows(&pool).await,
+            sql_blocks(&pool).await,
+            snapshots().await,
+            mat.loro_state().registry.loro_vv(&space_id),
+        );
+
+        let missing = hydrate_engine_missing_blocks_once(&pool, DEV, &mat)
+            .await
+            .unwrap();
+
+        assert_eq!(missing, Some(0));
+        assert_eq!(
+            (
+                op_log_rows(&pool).await,
+                sql_blocks(&pool).await,
+                snapshots().await,
+                mat.loro_state().registry.loro_vv(&space_id),
+            ),
+            before,
+            "no op, no block row, no snapshot, no engine change"
+        );
+        assert_eq!(marker(&pool).await.as_deref(), Some("0"));
+        mat.shutdown();
+    }
+
+    /// #5670 — a failure inside the repair's transaction rolls the engine seed
+    /// back with the SQL, leaves no marker, and boot carries on; the next boot
+    /// repairs.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failed_hydration_rolls_back_and_does_not_fail_boot_5670() {
+        let (pool, _tmp) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let (space, parent, children) = vault_in_a_space(&pool, &mat).await;
+        let lost = &children[1];
+        lose_from_engine(&mat, &space, lost);
+        // A rank gap with the order kept, as a purge leaves: the seed's dense
+        // reprojection closes it, and the trigger fails that write.
+        sqlx::query("UPDATE blocks SET position = 9 WHERE id = ?")
+            .bind(&children[2])
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER fail_hydration BEFORE UPDATE OF position ON blocks \
+             BEGIN SELECT RAISE(ABORT, 'injected hydration failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        repair_unreachable_content_at_boot(&pool, &pool, DEV, &mat).await;
+
+        assert!(
+            !engine_children(&mat, &space, &parent).contains(lost),
+            "the engine seed rolled back with the transaction"
+        );
+        let position = |id: String| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>("SELECT position FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(position(children[2].clone()).await, 9, "SQL rolled back");
+        assert_eq!(
+            marker(&pool).await,
+            None,
+            "no marker, so the next boot retries"
+        );
+
+        sqlx::query("DROP TRIGGER fail_hydration")
+            .execute(&pool)
+            .await
+            .unwrap();
+        repair_unreachable_content_at_boot(&pool, &pool, DEV, &mat).await;
+        assert_eq!(engine_children(&mat, &space, &parent), children);
+        assert_eq!(marker(&pool).await.as_deref(), Some("1"));
+        mat.shutdown();
     }
 }

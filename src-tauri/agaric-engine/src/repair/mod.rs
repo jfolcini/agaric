@@ -1,5 +1,5 @@
 //! Boot-time repairs of damage a since-closed write-side defect left behind
-//! (#4728, #4715, #5074, #5387).
+//! (#4728, #4715, #5074, #5387, #5670).
 //!
 //! The populations it repairs:
 //!
@@ -19,6 +19,9 @@
 //! * [`page_aliases`](crate::repair::page_aliases) — `page_aliases` rows
 //!   written before aliases were ops (#5387), which no other device and no
 //!   engine reprojection can see. Each gets its `AddPageAlias`.
+//! * [`engine_missing_blocks`](crate::repair::engine_missing_blocks) — live
+//!   blocks their space's Loro engine lost to a purge after a pre-#5418 boot
+//!   replay (#5670). Each is hydrated back from its rows.
 //!
 //! # Every change is an op
 //!
@@ -29,6 +32,9 @@
 //! [`agaric_store::op_log::append_local_op_in_tx`] and applies them through
 //! [`crate::apply::kernel::apply_op_projected`] — the same entry point the
 //! interactive commands and sync replay use. Deletes are soft, never purges.
+//! [`engine_missing_blocks`](crate::repair::engine_missing_blocks) is the
+//! exception: its rows already have their ops, so it writes none and only puts
+//! their nodes back into the engine.
 //!
 //! # Housekeeping, not the user's edits
 //!
@@ -40,11 +46,13 @@
 //!
 //! # Idempotent by construction
 //!
-//! No repair needs a marker: a re-homed orphan has a `page_id`, a merged
+//! No op-emitting repair needs a marker: a re-homed orphan has a `page_id`, a merged
 //! duplicate is tombstoned and a task's `completed_at` matches its
 //! `todo_state`, so each selection query returns nothing the second time, and each is an
 //! indexed probe over a population that is small by construction. The app's `repair` module owns the transaction
-//! boundary and the never-boot-fatal contract.
+//! boundary and the never-boot-fatal contract, and the marker that runs
+//! [`engine_missing_blocks`](crate::repair::engine_missing_blocks) once (see
+//! its driver for why).
 
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
@@ -59,6 +67,7 @@ use crate::loro::shared::LoroState;
 use crate::spaces::SPACE_PERSONAL_ULID;
 
 pub mod completed_at;
+pub mod engine_missing_blocks;
 pub mod journal_duplicates;
 pub mod orphans;
 pub mod page_aliases;

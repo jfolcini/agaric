@@ -794,13 +794,16 @@ async fn read_seed_node(
     })
 }
 
-/// [`hydrate_page_subtree_into_engine`]'s synchronous engine seed. Returns
-/// the post-seed sibling order of every parent group actually touched.
+/// [`hydrate_page_subtree_into_engine`]'s synchronous engine seed, ranking
+/// siblings by `positions` (SQL, keyed by id) where they carry no legacy sort
+/// key. Returns the post-seed sibling order of every parent group actually
+/// touched.
 fn seed_nodes_into_engine(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     space_id: &agaric_store::space::SpaceId,
     nodes: &[SeedNode],
+    positions: &std::collections::HashMap<String, i64>,
 ) -> Result<Vec<Vec<String>>, AppError> {
     let mut guard = state
         .registry
@@ -811,12 +814,13 @@ fn seed_nodes_into_engine(
         if engine.read_block(&n.id)?.is_some() {
             continue;
         }
-        engine.apply_create_block(
+        engine.apply_seed_block(
             &n.id,
             &n.block_type,
             &n.content,
             n.parent_id.as_deref(),
             n.position,
+            positions,
         )?;
         for (key, value) in &n.properties {
             engine.apply_set_property_typed(&n.id, key, value)?;
@@ -877,16 +881,18 @@ fn seed_nodes_into_engine(
 /// is a pure no-op (no SQL writes, no fallback-count change).
 ///
 /// ## No sync duplicate-node hazard
-/// These blocks were never in ANY engine export before, so this is their first
-/// CRDT representation — the OPPOSITE of the `reload_registry_from_db` re-seed
-/// warning (which concerns blocks peers already hold).
+/// A seeded block either never entered an engine export (#2326, #4775) or left
+/// its doc's live tree through a purge (#5670), which a peer merges as a deleted
+/// node. Either way the seed is the id's one live node, unlike the
+/// `reload_registry_from_db` re-seed warning (which concerns blocks peers hold
+/// live).
 ///
 /// ## Engine rollback
 /// The seed goes through `for_space_recording`, so a caller that armed
 /// `CommandTx::arm_engine_rollback` (#2604) has it rewound if its tx aborts. An
 /// unarmed caller keeps the seeded nodes, which are idempotent and self-correct
 /// on retry.
-async fn hydrate_page_subtree_into_engine(
+pub(crate) async fn hydrate_page_subtree_into_engine(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
     device_id: &str,
@@ -932,13 +938,33 @@ async fn hydrate_page_subtree_into_engine(
     for row in rows {
         nodes.push(read_seed_node(conn, row).await?);
     }
+    // Every child of the group's parents, deleted rows and nested pages
+    // included: a seed ranks by these the siblings the engine created without
+    // a legacy sort key (#5670). NULL maps to `i64::MAX` as in `read_seed_node`.
+    let mut parents: Vec<&str> = nodes
+        .iter()
+        .filter_map(|n| n.parent_id.as_deref())
+        .collect();
+    parents.sort_unstable();
+    parents.dedup();
+    let parents = serde_json::to_string(&parents)?;
+    let positions: std::collections::HashMap<String, i64> = sqlx::query!(
+        r#"SELECT id AS "id!: String", position FROM blocks
+           WHERE parent_id IN (SELECT value FROM json_each(?))"#,
+        parents,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|r| (r.id, r.position.unwrap_or(i64::MAX)))
+    .collect();
 
     // 3. Seed into the (lazily-created) engine in ONE synchronous scope. The
     //    guard is `!Send`, so NO `.await` may run while it is alive. Skip nodes
     //    already present (idempotent), and record the post-seed sibling order of
     //    every parent group we actually touched for the dense reprojection.
     let touched_orders: Vec<Vec<String>> =
-        seed_nodes_into_engine(state, device_id, space_id, &nodes)?;
+        seed_nodes_into_engine(state, device_id, space_id, &nodes, &positions)?;
 
     // 4. Reproject each touched parent group so the engine's sibling order and
     //    the SQL dense positions agree (mirrors the create path). Empty on a

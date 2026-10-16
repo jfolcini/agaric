@@ -99,6 +99,18 @@ impl LoroEngine {
         block_id: &str,
         exclude: Option<TreeID>,
     ) -> usize {
+        self.ranked_slot(parent, position, block_id, exclude, |_| None)
+    }
+    /// [`Self::legacy_slot`], with `unstamped` ranking a sibling that carries
+    /// no `position` meta; `None` ranks it last.
+    pub(super) fn ranked_slot(
+        &self,
+        parent: TreeParentId,
+        position: i64,
+        block_id: &str,
+        exclude: Option<TreeID>,
+        unstamped: impl Fn(&str) -> Option<i64>,
+    ) -> usize {
         let tree = self.tree();
         let Some(children) = tree.children(parent) else {
             return 0;
@@ -112,11 +124,14 @@ impl LoroEngine {
                 continue;
             };
             // A sibling with no `position` meta is a new-scheme node; it has no
-            // legacy ordering and sorts last. (Does not occur during pure
-            // legacy replay — every node then carries a position — but keeps
-            // the comparison total if schemes are ever mixed.)
-            let sib_pos = read_i64(&meta, FIELD_POSITION).unwrap_or(i64::MAX);
+            // legacy ordering and sorts by `unstamped`, else last. (Does not
+            // occur during pure legacy replay — every node then carries a
+            // position — but keeps the comparison total if schemes are mixed.)
             let sib_id = read_string(&meta, FIELD_BLOCK_ID).unwrap_or_default();
+            let sib_pos = read_i64(&meta, FIELD_POSITION)
+                .ok()
+                .or_else(|| unstamped(&sib_id))
+                .unwrap_or(i64::MAX);
             if (sib_pos, sib_id.as_str()) < (position, block_id) {
                 slot += 1;
             }

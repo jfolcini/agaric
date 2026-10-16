@@ -96,6 +96,32 @@ impl LoroEngine {
         let tree_slot = self.live_tree_slot(parent, index, self.node_for(block_id));
         self.create_block_impl(block_id, block_type, content, parent_id, tree_slot, None)
     }
+    /// [`Self::apply_create_block`] for a block seeded from its SQL row. A
+    /// sibling created under the fractional index carries no legacy sort key,
+    /// which [`Self::apply_create_block`] ranks last; here it ranks by its
+    /// position in `sql_positions` (#5670).
+    pub fn apply_seed_block(
+        &mut self,
+        block_id: &str,
+        block_type: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        position: i64,
+        sql_positions: &HashMap<String, i64>,
+    ) -> Result<(), AppError> {
+        let parent = self.resolve_parent(block_id, parent_id);
+        let slot = self.ranked_slot(parent, position, block_id, self.node_for(block_id), |id| {
+            sql_positions.get(id).copied()
+        });
+        self.create_block_impl(
+            block_id,
+            block_type,
+            content,
+            parent_id,
+            slot,
+            Some(position),
+        )
+    }
     /// Shared create implementation. `slot` is the 0-based target index among
     /// the resolved parent's children (clamped to the valid range). When
     /// `legacy_position` is `Some`, the legacy `position` meta is stamped for
