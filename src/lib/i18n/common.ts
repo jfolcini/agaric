@@ -545,6 +545,9 @@ export const common: Record<string, string> = {
   // Segment embeds the toolbar; the all-pages segment embeds
   // The palette with its existing escalation footer routing
   // to the find-in-files view.
+  // Desktop header button that opens the Ctrl+K palette; the shortcut shows in its tooltip.
+  'headerSearch.label': 'Search',
+  'headerSearch.findInPage': 'Find in page',
   'searchSheet.openButton': 'Search',
   'searchSheet.title': 'Search',
   'searchSheet.dialogDescription':

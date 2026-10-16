@@ -2892,3 +2892,29 @@ describe('App — mobile sidebar trigger', () => {
     expect(screen.queryByTestId('mobile-sidebar-trigger')).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// One search trigger per chrome
+// ---------------------------------------------------------------------------
+//
+// Mobile chrome opens the search sheet, desktop opens the Ctrl+K palette.
+// Rendering both would put two "Search" buttons in the header.
+describe('App — header search trigger', () => {
+  it('shows only the palette button on desktop', async () => {
+    mockedUseIsMobile.mockReturnValue(false)
+
+    render(<App />)
+
+    expect(await screen.findByTestId('header-search-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('search-sheet-trigger')).toBeNull()
+  })
+
+  it('shows only the sheet trigger on mobile', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+
+    render(<App />)
+
+    expect(await screen.findByTestId('search-sheet-trigger')).toBeInTheDocument()
+    expect(screen.queryByTestId('header-search-button')).toBeNull()
+  })
+})
