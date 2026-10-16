@@ -3,7 +3,54 @@ use rustc_hash::FxHashSet;
 use std::mem;
 use std::sync::Arc;
 
+/// #5423: past this many distinct blocks in one drain, one full projected-agenda
+/// rebuild replaces their per-block refreshes. The same quarter-of-the-channel
+/// bound the inbound-sync per-block fan-outs use (`SYNC_FTS_PER_BLOCK_MAX`).
+const PROJECTED_AGENDA_PER_BLOCK_MAX: usize = super::BACKGROUND_CAPACITY / 4;
+
 pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
+    let (tasks, projected_agenda) = take_projected_agenda_refreshes(tasks);
+    let mut result = dedup_other_tasks(tasks);
+    result.extend(projected_agenda);
+    result
+}
+
+/// #5423: lift the projected-agenda work out of a drain that holds per-block
+/// refreshes, deduped: one refresh per block, or one full rebuild when the
+/// drain already holds one (it covers every block) or the refreshes pass
+/// [`PROJECTED_AGENDA_PER_BLOCK_MAX`] blocks. The caller runs it after the
+/// rest of the drain; running later only reads newer state. A drain with no
+/// per-block refresh comes back untouched.
+fn take_projected_agenda_refreshes(
+    tasks: Vec<MaterializeTask>,
+) -> (Vec<MaterializeTask>, Vec<MaterializeTask>) {
+    let is_refresh =
+        |t: &MaterializeTask| matches!(t, MaterializeTask::RebuildProjectedAgendaForBlock { .. });
+    if !tasks.iter().any(is_refresh) {
+        return (tasks, Vec::new());
+    }
+    let (projected, rest): (Vec<_>, Vec<_>) = tasks
+        .into_iter()
+        .partition(|t| is_refresh(t) || matches!(t, MaterializeTask::RebuildProjectedAgendaCache));
+    let mut seen: FxHashSet<Arc<str>> = FxHashSet::default();
+    let mut full = false;
+    let mut refreshes = Vec::new();
+    for task in projected {
+        if let MaterializeTask::RebuildProjectedAgendaForBlock { block_id } = &task {
+            if seen.insert(Arc::clone(block_id)) {
+                refreshes.push(task);
+            }
+        } else {
+            full = true;
+        }
+    }
+    if full || refreshes.len() > PROJECTED_AGENDA_PER_BLOCK_MAX {
+        refreshes = vec![MaterializeTask::RebuildProjectedAgendaCache];
+    }
+    (rest, refreshes)
+}
+
+fn dedup_other_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     // Swap to `FxHashSet`. `Discriminant` keys hash trivially under
     // FxHasher (no SipHash setup cost); the per-id sets below key on the
     // task id itself (`Arc<str>`) rather than a 64-bit fingerprint of it —
@@ -174,6 +221,7 @@ mod tests {
             |block_id| MaterializeTask::RemoveFtsBlock { block_id },
             |block_id| MaterializeTask::SetBlockPageId { block_id },
             |tag_id| MaterializeTask::RefreshTagUsageCount { tag_id },
+            |block_id| MaterializeTask::RebuildProjectedAgendaForBlock { block_id },
         ];
 
         for make in &cases {
@@ -194,6 +242,75 @@ mod tests {
                 "two tasks with different ids must both be kept"
             );
         }
+    }
+
+    fn projected_labels(tasks: &[MaterializeTask]) -> Vec<String> {
+        tasks
+            .iter()
+            .filter_map(|t| match t {
+                MaterializeTask::RebuildProjectedAgendaCache => Some("full".to_owned()),
+                MaterializeTask::RebuildProjectedAgendaForBlock { block_id } => {
+                    Some(block_id.to_string())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn for_block(id: &str) -> MaterializeTask {
+        MaterializeTask::RebuildProjectedAgendaForBlock {
+            block_id: Arc::from(id),
+        }
+    }
+
+    /// #5423: a full projected-agenda rebuild in the drain covers every block,
+    /// so the per-block refreshes around it are dropped and the one rebuild
+    /// runs last, after the tasks queued ahead of the refreshes.
+    #[test]
+    fn full_projected_rebuild_subsumes_per_block_refreshes_5423() {
+        let d = dedup_tasks(vec![
+            for_block("A"),
+            MaterializeTask::RebuildProjectedAgendaCache,
+            MaterializeTask::RebuildPageIds,
+            for_block("B"),
+        ]);
+        assert_eq!(
+            projected_labels(&d),
+            vec!["full"],
+            "one full rebuild, no per-block refresh"
+        );
+        assert!(
+            matches!(d.last(), Some(MaterializeTask::RebuildProjectedAgendaCache)),
+            "the full rebuild runs after RebuildPageIds; got {d:?}"
+        );
+    }
+
+    /// #5423: below the bound each block keeps its own refresh; past it the
+    /// drain runs one full rebuild instead.
+    #[test]
+    fn per_block_projected_refreshes_collapse_past_the_bound_5423() {
+        let ids: Vec<String> = (0..=PROJECTED_AGENDA_PER_BLOCK_MAX)
+            .map(|i| format!("B{i}"))
+            .collect();
+
+        let at_bound = dedup_tasks(
+            ids[..PROJECTED_AGENDA_PER_BLOCK_MAX]
+                .iter()
+                .map(|id| for_block(id))
+                .collect(),
+        );
+        assert_eq!(
+            projected_labels(&at_bound),
+            ids[..PROJECTED_AGENDA_PER_BLOCK_MAX].to_vec(),
+            "at the bound every block keeps its refresh"
+        );
+
+        let past_bound = dedup_tasks(ids.iter().map(|id| for_block(id)).collect());
+        assert_eq!(
+            projected_labels(&past_bound),
+            vec!["full"],
+            "one block past the bound collapses to a single full rebuild"
+        );
     }
 
     /// A mixed batch across several per-id kinds, each with both a

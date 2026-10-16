@@ -245,8 +245,10 @@ const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 7] = [
 ///   * `RebuildPagesCache` / `RebuildPagesCacheCounts` — no per-block task
 ///     variant; the count recompute is a page-level aggregate.
 ///   * `RebuildAgendaCache` / `RebuildProjectedAgendaCache` — no per-block
-///     scoped task exists (the #2657/#2658/#2659 work refined move/tag
-///     invalidation, it did NOT add a per-block agenda task).
+///     agenda task exists, and the per-block projected one
+///     (`RebuildProjectedAgendaForBlock`, #5423) is sound only for a property
+///     write: an import's changed set can carry a `template` flip or a move,
+///     which re-scope every block a page owns.
 ///   * `RebuildPageIds` — a moved subtree's DESCENDANTS need re-derivation;
 ///     the only scoped task (`SetBlockPageId`) is leaf-create-only and does
 ///     not walk descendants. This is how a moved subtree's descendants
@@ -1893,7 +1895,7 @@ fn push_property_op_invalidations(
                 tasks.push(MaterializeTask::RebuildAgendaCache);
             }
             if projected_relevant {
-                tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+                tasks.push(projected_agenda_task(record, key));
             }
             // #5275: `space` re-homes the block's whole page group
             // (`blocks.space_id`), and both roll-ups count only same-space
@@ -1922,6 +1924,24 @@ fn push_property_op_invalidations(
             tasks.push(MaterializeTask::RebuildAgendaCache);
             tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
         }
+    }
+}
+
+/// #5423: the projected-agenda task for a property write the projection reads.
+///
+/// Every key but `template` feeds only the written block's own projection (its
+/// date columns, `todo_state`, its own `repeat*` rows), so that block alone is
+/// re-projected. `template` is read off the owning PAGE and drops every block
+/// the page owns, so it keeps the full rebuild, as does a record without a
+/// `block_id`.
+fn projected_agenda_task(record: &OpRecord, key: &str) -> MaterializeTask {
+    match record.block_id.as_deref() {
+        Some(block_id) if !block_id.is_empty() && key != "template" => {
+            MaterializeTask::RebuildProjectedAgendaForBlock {
+                block_id: Arc::from(block_id),
+            }
+        }
+        _ => MaterializeTask::RebuildProjectedAgendaCache,
     }
 }
 
@@ -2143,6 +2163,9 @@ mod tests {
             MaterializeTask::CleanupOrphanedAttachments => "CleanupOrphanedAttachments".into(),
             MaterializeTask::RebuildTagInheritanceCache => "RebuildTagInheritanceCache".into(),
             MaterializeTask::RebuildProjectedAgendaCache => "RebuildProjectedAgendaCache".into(),
+            MaterializeTask::RebuildProjectedAgendaForBlock { block_id } => {
+                format!("RebuildProjectedAgendaForBlock({block_id})")
+            }
             MaterializeTask::RebuildPageIds => "RebuildPageIds".into(),
             MaterializeTask::SetBlockPageId { block_id } => {
                 format!("SetBlockPageId({block_id})")
@@ -2972,7 +2995,7 @@ mod tests {
         let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
-            vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+            vec!["RebuildAgendaCache", "RebuildProjectedAgendaForBlock(BLK1)"],
         );
     }
 
@@ -2986,7 +3009,7 @@ mod tests {
         let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
-            vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+            vec!["RebuildAgendaCache", "RebuildProjectedAgendaForBlock(BLK1)"],
         );
     }
 
@@ -3017,7 +3040,7 @@ mod tests {
             Some("BLK1"),
         );
         let tasks = invalidations_for_op(&r, None, None).unwrap();
-        assert_eq!(labels(&tasks), vec!["RebuildProjectedAgendaCache"]);
+        assert_eq!(labels(&tasks), vec!["RebuildProjectedAgendaForBlock(BLK1)"]);
     }
 
     /// #2037: a date-VALUED property of any key drives BOTH agenda caches.
@@ -3031,7 +3054,7 @@ mod tests {
         let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
-            vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+            vec!["RebuildAgendaCache", "RebuildProjectedAgendaForBlock(BLK1)"],
         );
     }
 
@@ -3075,7 +3098,7 @@ mod tests {
         let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
-            vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+            vec!["RebuildAgendaCache", "RebuildProjectedAgendaForBlock(BLK1)"],
             "clearing the reserved due_date column must refresh both agenda caches",
         );
     }
@@ -3091,7 +3114,7 @@ mod tests {
         let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
-            vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+            vec!["RebuildAgendaCache", "RebuildProjectedAgendaForBlock(BLK1)"],
         );
     }
 
@@ -3107,7 +3130,26 @@ mod tests {
             Some("BLK1"),
         );
         let tasks = invalidations_for_op(&r, None, None).unwrap();
-        assert_eq!(labels(&tasks), vec!["RebuildProjectedAgendaCache"]);
+        assert_eq!(labels(&tasks), vec!["RebuildProjectedAgendaForBlock(BLK1)"]);
+    }
+
+    /// #5423: `template` is read off the owning page and drops every block the
+    /// page owns, so setting or deleting it keeps the full projected rebuild.
+    #[test]
+    fn invalidations_for_op_template_keeps_full_projected_rebuild_5423() {
+        for op in ["set_property", "delete_property"] {
+            let r = make_record(
+                op,
+                r#"{"block_id":"BLK1","key":"template","value_bool":true}"#,
+                Some("BLK1"),
+            );
+            let tasks = invalidations_for_op(&r, None, None).unwrap();
+            assert_eq!(
+                labels(&tasks),
+                vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
+                "{op} of `template` must rebuild the whole projected cache",
+            );
+        }
     }
 
     /// #5275: a `space` set re-homes the page group, so the space-scoped

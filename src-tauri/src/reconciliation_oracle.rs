@@ -77,7 +77,7 @@
 //! | `block_tag_refs` (the INLINE tag index, #3345) | `blocks` — **`blocks.content`** | `reindex_block_tag_refs(_in_tx/_split/_split_in_tx)` / `rebuild_block_tag_refs_cache` (the vault-wide arm) — audited by [`reconcile_block_tag_refs`], NOT by [`reconcile`] |
 //! | `tags_cache.usage_count` (#3345) | `blocks`, `block_tags` **and** `block_tag_refs` (explicit + inline, so it rides on Artefact 12) | `rebuild_tags_cache(_split)` / `refresh_tag_usage_count` — audited by [`reconcile_tags_cache`], NOT by [`reconcile`] |
 //! | `agenda_cache` (the date roll-up, #3345) | `blocks`, `block_properties` **and** `block_tags` | `rebuild_agenda_cache(_split)` (the `RebuildAgendaCache` task) — audited by [`reconcile_agenda_cache`], NOT by [`reconcile`] |
-//! | `projected_agenda_cache` (the recurrence horizon, #3345) | `blocks` **and** `block_properties`, plus a `today` the caller supplies | `rebuild_projected_agenda_cache(_split)` (the `RebuildProjectedAgendaCache` task) — audited by [`reconcile_projected_agenda`], NOT by [`reconcile`] |
+//! | `projected_agenda_cache` (the recurrence horizon, #3345) | `blocks` **and** `block_properties`, plus a `today` the caller supplies | `rebuild_projected_agenda_cache(_split)` (the `RebuildProjectedAgendaCache` task), `refresh_projected_agenda_for_block` (`RebuildProjectedAgendaForBlock`) — audited by [`reconcile_projected_agenda`], NOT by [`reconcile`] |
 //! | `pages_cache.{title_sort_key,last_edited_ms,space_id}` (the Pages sort keys, #5371) | the cached `pages_cache.title`; `op_log` and `blocks.page_id` for a floor; the page's `blocks.space_id` | the page-row rebuild, its restore insert (`insert_missing_pages_cache_rows`) and the page-create INSERT (key, space) / `raise_pages_last_edited_ms` on every op-landing path (last edited) / `sync_pages_cache_space_ids` in a `space` op's projection (space) — audited by [`reconcile_pages_cache_sort_keys`], NOT by [`reconcile`] |
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
@@ -2055,8 +2055,9 @@ fn fold_projected_agenda_from_base(
 }
 
 const PROJECTED_AGENDA_OWNER: &str = "rebuild_projected_agenda_cache(_split) (the \
-     RebuildProjectedAgendaCache task) — and, one level up, the arms of \
-     materializer::dispatch::invalidations_for_op that enqueue it: a missing row is a repeating \
+     RebuildProjectedAgendaCache task) or refresh_projected_agenda_for_block (the \
+     RebuildProjectedAgendaForBlock task) — and, one level up, the arms of \
+     materializer::dispatch::invalidations_for_op that enqueue them: a missing row is a repeating \
      task that never appears on its future date, and an extra one is a task shown on a day its \
      rule does not name";
 

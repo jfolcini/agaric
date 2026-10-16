@@ -545,6 +545,75 @@ async fn rebuild_projected_agenda_cache_split_impl(
     Ok(written)
 }
 
+/// #5423 — re-project one block's `projected_agenda_cache` rows after a write
+/// that can only have changed that block's own projection: its date columns,
+/// `todo_state`, or its own `repeat*` properties.
+///
+/// Projects from the reference date the last full rebuild advertised, so the
+/// block's rows match the span `projected_agenda_horizon` promises for every
+/// other block. Returns `false` and writes nothing when that date is not
+/// `today` (no rebuild yet, a pre-0105 row, or a rebuild from an earlier day);
+/// the caller then runs the full rebuild, which moves the reference date.
+///
+/// One `BEGIN IMMEDIATE` transaction covers the horizon check, the read and the
+/// write, so a full rebuild cannot interleave. The read is the full rebuild's
+/// query narrowed to the block.
+#[tracing::instrument(skip(pool), err)]
+pub async fn refresh_projected_agenda_for_block(
+    pool: &SqlitePool,
+    block_id: &str,
+    today: chrono::NaiveDate,
+) -> Result<bool, AppError> {
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_projected_agenda_block").await?;
+
+    let rebuild_today =
+        sqlx::query_scalar!("SELECT rebuild_today FROM projected_agenda_horizon WHERE id = 0")
+            .fetch_optional(&mut *tx)
+            .await?
+            .flatten();
+    if rebuild_today != Some(today.format("%Y-%m-%d").to_string()) {
+        return Ok(false);
+    }
+
+    let rows: Vec<CacheRepeatingRow> = sqlx::query_as!(
+        CacheRepeatingRow,
+        r#"SELECT b.id AS "id: agaric_core::ulid::BlockId",
+                b.due_date, b.scheduled_date,
+                bp.value_text AS repeat_rule,
+                bp_until.value_date AS repeat_until,
+                bp_count.value_num AS repeat_count,
+                bp_seq.value_num AS repeat_seq
+         FROM blocks b
+         JOIN block_properties bp ON bp.block_id = b.id AND bp.key = 'repeat'
+         LEFT JOIN block_properties bp_until ON bp_until.block_id = b.id AND bp_until.key = 'repeat-until'
+         LEFT JOIN block_properties bp_count ON bp_count.block_id = b.id AND bp_count.key = 'repeat-count'
+         LEFT JOIN block_properties bp_seq ON bp_seq.block_id = b.id AND bp_seq.key = 'repeat-seq'
+         WHERE b.deleted_at IS NULL
+           AND (b.todo_state IS NULL OR b.todo_state != 'DONE')
+           AND bp.value_text IS NOT NULL
+           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)
+           AND NOT EXISTS (
+               SELECT 1 FROM block_properties tp
+               WHERE tp.block_id = b.page_id AND tp.key = 'template'
+           )
+           AND b.id = ?"#,
+        block_id,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+
+    sqlx::query!(
+        "DELETE FROM projected_agenda_cache WHERE block_id = ?",
+        block_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    project_and_write_chunked(&mut tx, today, &rows).await?;
+
+    tx.commit().await?;
+    Ok(true)
+}
+
 // ---------------------------------------------------------------------------
 // Local-timezone documentation pin
 // ---------------------------------------------------------------------------
@@ -944,6 +1013,54 @@ mod tests {
             count_cache_rows(&pool).await,
             BACKWARD_WINDOW_DAYS + i64::try_from(HORIZON_OCCURRENCES).unwrap(),
             "the forward horizon keeps its full HORIZON_OCCURRENCES rows"
+        );
+    }
+
+    /// #5423 — the per-block refresh patches only a cache rebuilt from `today`.
+    /// With no horizon row, or one from another day, it writes nothing and
+    /// returns `false`, so its caller runs the full rebuild instead.
+    #[tokio::test]
+    async fn block_refresh_declines_without_a_rebuild_from_today_5423() {
+        let (pool, _dir) = test_pool().await;
+        let today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+        insert_repeating_block(&pool, "BLKREF1", "2050-04-01", "daily", None).await;
+
+        assert!(
+            !refresh_projected_agenda_for_block(&pool, "BLKREF1", today)
+                .await
+                .unwrap(),
+            "no horizon row: there is no rebuild to patch"
+        );
+        assert_eq!(
+            count_cache_rows(&pool).await,
+            0,
+            "a declined refresh writes nothing"
+        );
+
+        rebuild_projected_agenda_cache_with_today(&pool, today - chrono::Duration::days(1))
+            .await
+            .unwrap();
+        let yesterdays_rows = count_cache_rows(&pool).await;
+        assert!(
+            !refresh_projected_agenda_for_block(&pool, "BLKREF1", today)
+                .await
+                .unwrap(),
+            "a rebuild from yesterday is not one to patch"
+        );
+        assert_eq!(
+            count_cache_rows(&pool).await,
+            yesterdays_rows,
+            "a declined refresh leaves yesterday's rows alone"
+        );
+
+        rebuild_projected_agenda_cache_with_today(&pool, today)
+            .await
+            .unwrap();
+        assert!(
+            refresh_projected_agenda_for_block(&pool, "BLKREF1", today)
+                .await
+                .unwrap(),
+            "a rebuild from today is patched in place"
         );
     }
 

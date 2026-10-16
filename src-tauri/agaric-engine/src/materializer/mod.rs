@@ -226,6 +226,14 @@ pub enum MaterializeTask {
     CleanupOrphanedAttachments,
     RebuildTagInheritanceCache,
     RebuildProjectedAgendaCache,
+    /// #5423: re-project one block's `projected_agenda_cache` rows after a
+    /// property write that can only change that block's own projection
+    /// (`cache::refresh_projected_agenda_for_block`). Falls back to
+    /// [`Self::RebuildProjectedAgendaCache`] when the cache has no rebuild
+    /// from today to patch.
+    RebuildProjectedAgendaForBlock {
+        block_id: Arc<str>,
+    },
     RebuildPageIds,
     /// Incremental `page_id` maintenance for a single newly created block.
     /// The new block has no descendants; its `page_id` is simply its parent's

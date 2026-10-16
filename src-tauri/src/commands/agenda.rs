@@ -202,8 +202,9 @@ async fn read_projected_agenda_horizon(
     // projector run today would place it at `today + 7`. Trusting a
     // stale-by-a-day cache to prove "this window is genuinely empty" would
     // therefore hide such a task on the day it is actually due. A rebuild is
-    // enqueued at boot, on every date/repeat/todo property mutation, and by
-    // the `projected_agenda_midnight` maintenance job, so this holds for the
+    // enqueued at boot and by the `projected_agenda_midnight` maintenance job,
+    // and a date/repeat/todo property mutation re-projects its block from
+    // today's rebuild or, lacking one, rebuilds (#5423), so this holds for the
     // ordinary read; when it does not, the empty-window read falls through to
     // the projector exactly as it did before this change. (That job fires on
     // the UTC day boundary while the rebuild anchors on the LOCAL date, so
@@ -562,8 +563,8 @@ pub async fn list_projected_agenda_inner_with_today(
     //
     // Freshness: a repeating block created since the last rebuild is not in
     // the cache, so it is not in this page. That is the same staleness every
-    // materializer-backed read carries (the mutation enqueues
-    // `RebuildProjectedAgendaCache` on the same drain), and the old shape did
+    // materializer-backed read carries (the mutation enqueues the block's
+    // `RebuildProjectedAgendaForBlock` on the same drain), and the old shape did
     // not actually avoid it — it surfaced such a block only when no OTHER
     // block projected into the window, which is inconsistent rather than
     // fresh.

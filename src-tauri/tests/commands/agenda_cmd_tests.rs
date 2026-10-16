@@ -3317,6 +3317,231 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     mat.shutdown();
 }
 
+type ProjectedRows = std::collections::BTreeSet<(String, String, String)>;
+
+async fn projected_agenda_rows(pool: &SqlitePool) -> ProjectedRows {
+    sqlx::query_as("SELECT block_id, projected_date, source FROM projected_agenda_cache")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .collect()
+}
+
+/// Settle `mat`, then assert the projected-agenda cache it maintained equals a
+/// full rebuild of the same database from the reference date the cache
+/// carries. Returns the rows.
+async fn assert_projected_cache_equals_full_rebuild(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    step: &str,
+) -> ProjectedRows {
+    settle(mat).await;
+    let maintained = projected_agenda_rows(pool).await;
+    let rebuild_today: Option<String> =
+        sqlx::query_scalar("SELECT rebuild_today FROM projected_agenda_horizon WHERE id = 0")
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+            .flatten();
+    let rebuild_today = rebuild_today
+        .unwrap_or_else(|| panic!("after {step}: the cache must carry a rebuild reference date"));
+    let rebuild_today = chrono::NaiveDate::parse_from_str(&rebuild_today, "%Y-%m-%d").unwrap();
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(pool, rebuild_today)
+        .await
+        .unwrap();
+    let full = projected_agenda_rows(pool).await;
+    assert_eq!(
+        maintained, full,
+        "after {step}: the maintained projected_agenda_cache must equal a full rebuild"
+    );
+    full
+}
+
+/// #5423 — a block-scoped property write re-projects only the written block,
+/// and the cache that leaves must equal a full rebuild after every write.
+/// Three repeating neighbours sit beside the target, so a refresh that reached
+/// past its block would show as missing or extra neighbour rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn block_scoped_property_writes_keep_projected_cache_equal_to_full_rebuild_5423() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let today = chrono::Local::now().date_naive();
+    let day = |offset: i64| {
+        (today + chrono::Duration::days(offset))
+            .format("%Y-%m-%d")
+            .to_string()
+    };
+
+    let mut neighbour_ago = 0;
+    for rule in ["daily", "weekly", "+3d"] {
+        let n = create_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            format!("neighbour {rule}"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+        set_due_date_inner(
+            &pool,
+            DEV,
+            &mat,
+            n.id.as_str().into(),
+            Some(day(-neighbour_ago)),
+        )
+        .await
+        .unwrap();
+        settle(&mat).await;
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            n.id.as_str().into(),
+            "repeat".into(),
+            Some(rule.into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        neighbour_ago += 10;
+    }
+
+    let t = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "target".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let target = t.id.as_str().to_owned();
+    let target_rows = |rows: &ProjectedRows| rows.iter().filter(|(b, _, _)| *b == target).count();
+    let set = |key: &'static str, text: Option<&str>, num: Option<f64>, date: Option<String>| {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            target.as_str().into(),
+            key.into(),
+            text.map(str::to_owned),
+            num,
+            date,
+            None,
+            None,
+            None,
+        )
+    };
+
+    set("repeat", Some("daily"), None, None).await.unwrap();
+    let rows = assert_projected_cache_equals_full_rebuild(&pool, &mat, "set repeat").await;
+    assert_eq!(
+        target_rows(&rows),
+        0,
+        "a rule with no date projects nothing"
+    );
+    let neighbours: std::collections::BTreeSet<&str> =
+        rows.iter().map(|(b, _, _)| b.as_str()).collect();
+    assert_eq!(neighbours.len(), 3, "every neighbour projects rows");
+
+    set_due_date_inner(&pool, DEV, &mat, target.as_str().into(), Some(day(-3)))
+        .await
+        .unwrap();
+    let rows = assert_projected_cache_equals_full_rebuild(&pool, &mat, "set due_date").await;
+    assert!(target_rows(&rows) > 0, "a dated rule projects the target");
+
+    set_scheduled_date_inner(&pool, DEV, &mat, target.as_str().into(), Some(day(2)))
+        .await
+        .unwrap();
+    assert_projected_cache_equals_full_rebuild(&pool, &mat, "set scheduled_date").await;
+
+    set("repeat-until", None, None, Some(day(40)))
+        .await
+        .unwrap();
+    assert_projected_cache_equals_full_rebuild(&pool, &mat, "set repeat-until").await;
+
+    set("repeat-count", None, Some(30.0), None).await.unwrap();
+    assert_projected_cache_equals_full_rebuild(&pool, &mat, "set repeat-count").await;
+
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.as_str().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    assert_projected_cache_equals_full_rebuild(&pool, &mat, "todo_state TODO").await;
+
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.as_str().into(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
+    let rows = assert_projected_cache_equals_full_rebuild(&pool, &mat, "todo_state DONE").await;
+    assert_eq!(target_rows(&rows), 0, "a DONE block projects nothing");
+
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.as_str().into(),
+        Some("TODO".into()),
+    )
+    .await
+    .unwrap();
+    let rows =
+        assert_projected_cache_equals_full_rebuild(&pool, &mat, "todo_state back to TODO").await;
+    assert!(
+        target_rows(&rows) > 0,
+        "reopening the block projects it again"
+    );
+
+    delete_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        target.as_str().into(),
+        "repeat-count".into(),
+    )
+    .await
+    .unwrap();
+    assert_projected_cache_equals_full_rebuild(&pool, &mat, "delete repeat-count").await;
+
+    set_due_date_inner(&pool, DEV, &mat, target.as_str().into(), None)
+        .await
+        .unwrap();
+    assert_projected_cache_equals_full_rebuild(&pool, &mat, "clear due_date").await;
+
+    delete_property_inner(&pool, DEV, &mat, target.as_str().into(), "repeat".into())
+        .await
+        .unwrap();
+    let rows = assert_projected_cache_equals_full_rebuild(&pool, &mat, "delete repeat").await;
+    assert_eq!(
+        target_rows(&rows),
+        0,
+        "without a rule the target projects nothing"
+    );
+
+    mat.shutdown();
+}
+
 /// #2601 — a query reaching PAST the bounded materialization horizon must
 /// return complete results by falling back to on-the-fly projection, not a
 /// truncated read of the count-capped cache.

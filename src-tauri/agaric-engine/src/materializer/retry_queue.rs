@@ -154,6 +154,8 @@ pub(crate) enum RetryKind {
     /// (not a global sentinel) so failures of different tags' refreshes
     /// dedup independently and reconstruct the right scoped task.
     RefreshTagUsageCount,
+    /// Mirror of [`MaterializeTask::RebuildProjectedAgendaForBlock`] (#5423).
+    RebuildProjectedAgendaForBlock,
     // --- Global ---
     /// Mirror of [`MaterializeTask::RebuildTagsCache`].
     RebuildTagsCache,
@@ -202,6 +204,7 @@ impl RetryKind {
             Self::ReindexBlockLinks => Cow::Borrowed("ReindexBlockLinks"),
             Self::ReindexBlockTagRefs => Cow::Borrowed("ReindexBlockTagRefs"),
             Self::RefreshTagUsageCount => Cow::Borrowed("RefreshTagUsageCount"),
+            Self::RebuildProjectedAgendaForBlock => Cow::Borrowed("RebuildProjectedAgendaForBlock"),
             Self::RebuildTagsCache => Cow::Borrowed("RebuildTagsCache"),
             Self::RebuildPagesCache => Cow::Borrowed("RebuildPagesCache"),
             Self::RebuildPagesCacheCounts => Cow::Borrowed("RebuildPagesCacheCounts"),
@@ -223,6 +226,7 @@ impl RetryKind {
             "ReindexBlockLinks" => return Some(Self::ReindexBlockLinks),
             "ReindexBlockTagRefs" => return Some(Self::ReindexBlockTagRefs),
             "RefreshTagUsageCount" => return Some(Self::RefreshTagUsageCount),
+            "RebuildProjectedAgendaForBlock" => return Some(Self::RebuildProjectedAgendaForBlock),
             "RebuildTagsCache" => return Some(Self::RebuildTagsCache),
             "RebuildPagesCache" => return Some(Self::RebuildPagesCache),
             "RebuildPagesCacheCounts" => return Some(Self::RebuildPagesCacheCounts),
@@ -295,6 +299,11 @@ impl RetryKind {
             Self::RefreshTagUsageCount => Some(MaterializeTask::RefreshTagUsageCount {
                 tag_id: Arc::from(block_id),
             }),
+            Self::RebuildProjectedAgendaForBlock => {
+                Some(MaterializeTask::RebuildProjectedAgendaForBlock {
+                    block_id: Arc::from(block_id),
+                })
+            }
             // Global rebuilds carry no block id; the row's sentinel is
             // discarded on reconstruction.
             Self::RebuildTagsCache => Some(MaterializeTask::RebuildTagsCache),
@@ -350,6 +359,9 @@ impl RetryKind {
             // `(block_id, task_kind)` dedups per-tag, not globally).
             MaterializeTask::RefreshTagUsageCount { tag_id } => {
                 Some((Self::RefreshTagUsageCount, tag_id.to_string()))
+            }
+            MaterializeTask::RebuildProjectedAgendaForBlock { block_id } => {
+                Some((Self::RebuildProjectedAgendaForBlock, block_id.to_string()))
             }
             MaterializeTask::RebuildTagsCache => {
                 Some((Self::RebuildTagsCache, GLOBAL_TASK_SENTINEL.to_string()))
@@ -5335,9 +5347,10 @@ mod tests {
     /// rebuilds PLUS `RebuildPagesCacheCounts` and `RebuildPageLinkCache`,
     /// which an earlier revision of this test silently omitted — a
     /// `from_task`/`from_str` regression on either would drop the row as
-    /// unknown and never retry the rebuild). It also covers the two
-    /// per-block kinds that share this persistence path but are NOT global
-    /// (`SetBlockPageId`, `RefreshTagUsageCount`), where the real block /
+    /// unknown and never retry the rebuild). It also covers the per-block
+    /// kinds that share this persistence path but are NOT global
+    /// (`SetBlockPageId`, `RefreshTagUsageCount`,
+    /// `RebuildProjectedAgendaForBlock`), where the real block /
     /// tag id must survive the round-trip rather than being replaced by
     /// the `__GLOBAL__` sentinel.
     ///
@@ -5349,7 +5362,7 @@ mod tests {
         // (task, expected task_kind string, expected persisted block_id).
         // For global kinds the persisted block_id is the sentinel; for the
         // per-block kinds it is the real id passed in the task.
-        let cases: [(MaterializeTask, &str, &str); 11] = [
+        let cases: [(MaterializeTask, &str, &str); 12] = [
             // --- global (is_global() == true) ---
             (
                 MaterializeTask::RebuildTagsCache,
@@ -5410,6 +5423,13 @@ mod tests {
                 },
                 "RefreshTagUsageCount",
                 "TAG_RTUC",
+            ),
+            (
+                MaterializeTask::RebuildProjectedAgendaForBlock {
+                    block_id: "BLK_RPAB".into(),
+                },
+                "RebuildProjectedAgendaForBlock",
+                "BLK_RPAB",
             ),
         ];
 
@@ -5475,6 +5495,9 @@ mod tests {
                 }
                 MaterializeTask::RefreshTagUsageCount { tag_id } => {
                     assert_eq!(tag_id.as_ref(), expected_block_id);
+                }
+                MaterializeTask::RebuildProjectedAgendaForBlock { block_id } => {
+                    assert_eq!(block_id.as_ref(), expected_block_id);
                 }
                 _ => {}
             }

@@ -193,7 +193,10 @@ pub use pages::{
 // re-export is gated behind `#[cfg(test)]`.
 #[cfg(test)]
 pub(crate) use pages::recompute_all_pages_cache_counts;
-pub use projected_agenda::{rebuild_projected_agenda_cache, rebuild_projected_agenda_cache_split};
+pub use projected_agenda::{
+    rebuild_projected_agenda_cache, rebuild_projected_agenda_cache_split,
+    refresh_projected_agenda_for_block,
+};
 // #2895 slice 1: physical subtree purge of the store-owned satellite /
 // derived-cache tables, extracted from the app's `block_cleanup` orchestrator.
 pub use purge::purge_block_satellite_caches;

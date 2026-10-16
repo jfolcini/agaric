@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM projected_agenda_cache WHERE block_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "821bb32fc8dba926bbebcc5759e287864d68bb642d75e80c48c3d0c471204cdc"
+}

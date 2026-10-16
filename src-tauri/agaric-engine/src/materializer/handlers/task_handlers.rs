@@ -695,7 +695,9 @@ async fn handle_background_task_inner(
         | MaterializeTask::RebuildPageLinkCache => {
             run_page_cache_rebuild(pool, read_pool, task).await
         }
-        MaterializeTask::RebuildAgendaCache | MaterializeTask::RebuildProjectedAgendaCache => {
+        MaterializeTask::RebuildAgendaCache
+        | MaterializeTask::RebuildProjectedAgendaCache
+        | MaterializeTask::RebuildProjectedAgendaForBlock { .. } => {
             run_agenda_cache_rebuild(pool, read_pool, task).await
         }
         MaterializeTask::UpdateFtsBlock { .. }
@@ -851,7 +853,8 @@ async fn run_page_cache_rebuild(
     }
 }
 
-/// The whole-vault rebuilds of the agenda caches.
+/// The rebuilds of the agenda caches: whole-vault, plus one block's projected
+/// rows.
 async fn run_agenda_cache_rebuild(
     pool: &SqlitePool,
     read_pool: Option<&SqlitePool>,
@@ -867,7 +870,20 @@ async fn run_agenda_cache_rebuild(
             )
             .await
         }
-        MaterializeTask::RebuildProjectedAgendaCache => {
+        MaterializeTask::RebuildProjectedAgendaCache
+        | MaterializeTask::RebuildProjectedAgendaForBlock { .. } => {
+            if let MaterializeTask::RebuildProjectedAgendaForBlock { block_id } = task
+                && cache::refresh_projected_agenda_for_block(
+                    pool,
+                    block_id,
+                    chrono::Local::now().date_naive(),
+                )
+                .await?
+            {
+                return Ok(());
+            }
+            // A block refresh with no rebuild from today to patch takes the
+            // full rebuild, which sets one.
             dispatch_split_or_single(
                 pool,
                 read_pool,
