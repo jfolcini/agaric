@@ -539,15 +539,14 @@ export const common: Record<string, string> = {
   'findInPage.skippedLongPassages_one': '{{count}} long passage skipped',
   'findInPage.skippedLongPassages_other': '{{count}} long passages skipped',
   'announce.findInPageOpened': 'Find in page opened',
+  // Desktop header button that opens the Ctrl+K palette; the shortcut shows in its tooltip.
+  'headerSearch.label': 'Search',
   // Mobile unified search sheet. The single touch entry point
   // collapses Ctrl+F (in-page find) + Cmd+K (palette) + Ctrl+Shift+F
   // (find-in-files) into one sheet with two segments. The in-page
   // Segment embeds the toolbar; the all-pages segment embeds
   // The palette with its existing escalation footer routing
   // to the find-in-files view.
-  // Desktop header button that opens the Ctrl+K palette; the shortcut shows in its tooltip.
-  'headerSearch.label': 'Search',
-  'headerSearch.findInPage': 'Find in page',
   'searchSheet.openButton': 'Search',
   'searchSheet.title': 'Search',
   'searchSheet.dialogDescription':

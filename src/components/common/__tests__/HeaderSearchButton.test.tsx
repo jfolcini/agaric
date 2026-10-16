@@ -67,29 +67,29 @@ describe('HeaderSearchButton', () => {
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
 
-  it('carries the paletteOpen binding in its name and tooltip', async () => {
+  it('names the action and carries both bindings in its tooltip', async () => {
     const user = userEvent.setup()
     render(<HeaderSearchButton />)
     const button = screen.getByRole('button')
 
-    expect(button).toHaveAccessibleName('Search (Ctrl + K)')
+    expect(button).toHaveAccessibleName('Search')
     expect(button).toHaveAttribute('aria-keyshortcuts', 'Control+K')
     await user.hover(button)
     const tooltip = await screen.findByRole('tooltip')
-    expect(tooltip).toHaveTextContent('Search')
-    expect(tooltip).toHaveTextContent('K')
-    expect(tooltip).toHaveTextContent('Find in page')
+    expect(tooltip).toHaveTextContent(/^Search\s*Ctrl\+K\s*Find in page\s*Ctrl\+F$/)
   })
 
-  it('follows a rebinding of paletteOpen', async () => {
+  it('follows rebindings of paletteOpen and findInPage', async () => {
     const user = userEvent.setup()
     setCustomShortcut('paletteOpen', 'Ctrl + Shift + P')
+    setCustomShortcut('findInPage', 'Alt + G')
     render(<HeaderSearchButton />)
     const button = screen.getByRole('button')
 
-    expect(button).toHaveAccessibleName('Search (Ctrl + Shift + P)')
     expect(button).toHaveAttribute('aria-keyshortcuts', 'Control+Shift+P')
     await user.hover(button)
-    expect(await screen.findByRole('tooltip')).toHaveTextContent('P')
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      /^Search\s*Ctrl\+Shift\+P\s*Find in page\s*Alt\+G$/,
+    )
   })
 })

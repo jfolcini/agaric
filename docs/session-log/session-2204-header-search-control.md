@@ -10,8 +10,9 @@ desktop. It opens the palette through `useCommandPaletteStore.open$`, the
 call the Ctrl+K handler makes, so there is no second path. As the maintainer
 asked, the shortcut lives in the tooltip ("Search Ctrl K", "Find in page
 Ctrl F"), built the way `JournalControls` builds its own: `getShortcutKeys`
-plus `KbdChord`. The accessible name carries the binding and follows a
-rebinding.
+plus `KbdChord`. Both lines follow a rebinding. The accessible name is the
+action alone and `aria-keyshortcuts` carries the chord, as in
+`JournalControls`, so macOS users are not read "Ctrl".
 
 The same `useShouldShowMobileChrome()` gate picks between this button and
 the mobile `SearchSheetTrigger`, so exactly one renders. Desktop chrome
@@ -20,6 +21,10 @@ The header stays one 48 px row at 1024 and 1440 on Journal, the busiest
 header, and on Pages.
 
 Each new test was shown red against a one-line break: the click handler,
-the palette call, the accessible name, and both triggers rendering. A
+the palette call, each tooltip binding, and both triggers rendering. A
 Playwright spec opens the control, types a page title, and lands on that
 page.
+
+Review also found that closing the palette leaves focus on `<body>`, from
+every trigger, including Ctrl+K. That predates this control and lives in the
+palette, so it is #5639 rather than part of this change.

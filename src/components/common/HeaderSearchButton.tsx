@@ -31,7 +31,7 @@ export function HeaderSearchButton(): React.ReactElement {
           variant="ghost"
           size="sm"
           className="shrink-0 text-muted-foreground max-lg:min-w-8 max-lg:px-0 [@media(pointer:coarse)]:min-w-11"
-          aria-label={paletteKeys ? `${label} (${paletteKeys})` : label}
+          aria-label={label}
           aria-keyshortcuts={toAriaKeyshortcuts(paletteKeys)}
           data-testid="header-search-button"
           onClick={() => useCommandPaletteStore.getState().open$()}
@@ -43,13 +43,14 @@ export function HeaderSearchButton(): React.ReactElement {
       <TooltipContent>
         <div className="flex flex-col gap-1">
           <span>
-            {label} {paletteKeys && <KbdChord keys={paletteKeys} className="ml-1" />}
-          </span>
-          {findKeys && (
-            <span>
-              {t('headerSearch.findInPage')} <KbdChord keys={findKeys} className="ml-1" />
+            {label} {/* aria-keyshortcuts already announces this chord. */}
+            <span aria-hidden="true">
+              <KbdChord keys={paletteKeys} className="ml-1" />
             </span>
-          )}
+          </span>
+          <span>
+            {t('findInPage.toolbarLabel')} <KbdChord keys={findKeys} className="ml-1" />
+          </span>
         </div>
       </TooltipContent>
     </Tooltip>

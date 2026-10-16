@@ -32,7 +32,8 @@ test.describe('header search button (desktop)', () => {
     await expect(page.getByTestId('header-label')).toHaveText('Pages')
 
     const button = page.getByTestId('header-search-button')
-    await expect(button).toHaveAccessibleName('Search (Ctrl + K)')
+    await expect(button).toHaveAccessibleName('Search')
+    await expect(button).toHaveAttribute('aria-keyshortcuts', 'Control+K')
     await button.hover()
     const tooltip = page.getByRole('tooltip')
     await expect(tooltip).toContainText('Search')
