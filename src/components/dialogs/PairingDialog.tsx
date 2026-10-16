@@ -1250,7 +1250,6 @@ export function PairingDialog({
                     onWordChange={handleWordChange}
                     onWordKeyDown={handleWordKeyDown}
                     onQrScan={handleQrScan}
-                    onQrError={(err) => setError(t('pairing.cameraError', { error: err }))}
                     onCancel={handleCancel}
                     onPair={handlePair}
                     pairLoading={pairLoading}

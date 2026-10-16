@@ -16,31 +16,19 @@
  *  - Accessibility audit
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { PairingEntryForm } from '@/components/peers/PairingEntryForm'
 
 // Mock QrScanner to avoid loading html5-qrcode in tests.
-// Also expose an `onCameraDenied` button so tests can drive the
-// camera-denied auto-fallback to manual entry.
 vi.mock('@/components/peers/QrScanner', () => ({
-  QrScanner: ({
-    onScan,
-    onCameraDenied,
-  }: {
-    onScan: (data: string) => void
-    onCameraDenied?: () => void
-  }) => (
+  QrScanner: ({ onScan }: { onScan: (data: string) => void }) => (
     <div data-testid="qr-scanner-mock">
       <button type="button" onClick={() => onScan('test scan data')}>
         Mock Scan
-      </button>
-      <button type="button" data-testid="mock-camera-denied" onClick={() => onCameraDenied?.()}>
-        Mock Camera Denied
       </button>
     </div>
   ),
@@ -57,7 +45,6 @@ const defaultProps = {
   onWordChange: vi.fn(),
   onWordKeyDown: vi.fn(),
   onQrScan: vi.fn(),
-  onQrError: vi.fn(),
   onCancel: vi.fn(),
   onPair: vi.fn(),
   pairLoading: false,
@@ -316,34 +303,5 @@ describe('PairingEntryForm', () => {
       expect(inputId).toBeTruthy()
       expect(labelFor).toBe(inputId)
     }
-  })
-
-  // When the QR scanner's camera permission is denied, the form
-  // auto-switches back to manual entry and surfaces a toast so the user is
-  // never stranded on a failing scanner UI.
-  it('switches to manual mode and shows toast when QR scanner reports camera denial', async () => {
-    const user = userEvent.setup()
-    const onEntryModeChange = vi.fn()
-
-    render(
-      <PairingEntryForm {...defaultProps} entryMode="scan" onEntryModeChange={onEntryModeChange} />,
-    )
-
-    // The mocked scanner is rendered (we're in scan mode).
-    // PairingEntryForm uses React.lazy for QrScanner so we await Suspense
-    // to resolve the dynamic import before driving the mock buttons.
-    const cameraDeniedBtn = await screen.findByTestId('mock-camera-denied')
-
-    // Fire the camera-denied signal from the scanner.
-    await user.click(cameraDeniedBtn)
-
-    // Parent is asked to switch back to manual entry…
-    expect(onEntryModeChange).toHaveBeenCalledWith('manual')
-    // …and a toast.info surfaces the fallback explanation.
-    await waitFor(() => {
-      expect(toast.info).toHaveBeenCalledWith(
-        'Camera access denied \u2014 switched to manual entry',
-      )
-    })
   })
 })
