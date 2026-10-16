@@ -25,6 +25,7 @@ import {
   setPageSourceLines,
   typeMarkerVerified,
   waitForAppReady,
+  enterBlankSibling,
 } from './helpers'
 
 const FIRST = runScopedMarker('wdio-merge-first')
@@ -34,15 +35,6 @@ const MINE = runScopedMarker('wdio-merge-mine')
 const ELSEWHERE = runScopedMarker('wdio-merge-elsewhere')
 
 const rowsWith = (marker: string) => $$(`[data-testid="sortable-block"]*=${marker}`).getElements()
-
-/** Enter moves the editor to a new, empty sibling. */
-async function nextBlock(): Promise<void> {
-  await browser.keys(['Enter'])
-  await $('[data-testid="block-editor"] p.is-editor-empty').waitForExist({
-    timeout: ACTION_TIMEOUT,
-    timeoutMsg: 'Enter did not open an empty block',
-  })
-}
 
 /** Leave the page editor and come back, so the rows are the backend's. */
 async function reopenTheNewPage(marker: string): Promise<void> {
@@ -72,9 +64,9 @@ describe('Agaric real-backend source-mode Merge (#5140 Phase 5)', () => {
     await waitForAppReady()
     await openNewPage()
     await typeMarkerVerified(FIRST)
-    await nextBlock()
+    await enterBlankSibling()
     await typeMarkerVerified(SECOND)
-    await nextBlock()
+    await enterBlankSibling()
     await typeMarkerVerified(THIRD)
     // The sidebar click blurs and commits the last block.
     await reopenTheNewPage(THIRD)

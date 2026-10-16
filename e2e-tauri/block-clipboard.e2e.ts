@@ -20,6 +20,7 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   ctrlClick,
+  enterBlankSibling,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -70,8 +71,8 @@ function rowShapes(): Promise<RowShape[]> {
 }
 
 /**
- * Wait until the editor sits in an EMPTY block at outline `level`: Enter has
- * moved it to the new sibling, and an indent or dedent has landed.
+ * Wait until the editor sits in an EMPTY block at outline `level`: an indent
+ * or dedent has landed on the blank block Enter opened.
  */
 async function waitForEmptyEditorAt(level: string, what: string): Promise<void> {
   await browser.waitUntil(
@@ -114,13 +115,11 @@ describe('Agaric real-backend block clipboard (#5140 Phase 3b)', () => {
     // PARENT, then CHILD indented under it, then a code block back at the
     // top level. Enter moves the editor to a new sibling below.
     await typeMarkerVerified(PARENT)
-    await browser.keys(['Enter'])
-    await waitForEmptyEditorAt('1', 'Enter did not open a sibling after the parent')
+    await enterBlankSibling()
     await browser.keys(['Control', 'Shift', 'ArrowRight'])
     await waitForEmptyEditorAt('2', 'the new block never indented under the parent')
     await typeMarkerVerified(CHILD)
-    await browser.keys(['Enter'])
-    await waitForEmptyEditorAt('2', 'Enter did not open a sibling after the child')
+    await enterBlankSibling()
     await browser.keys(['Control', 'Shift', 'ArrowLeft'])
     await waitForEmptyEditorAt('1', 'the new block never dedented to the top level')
     await browser.keys('/code'.split(''))
