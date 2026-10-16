@@ -17,15 +17,29 @@
 import 'katex/dist/katex.min.css'
 import katex from 'katex'
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { DiagramViewer } from '@/components/rendering/DiagramViewer'
+import { ScrollArea } from '@/components/ui/scroll-area'
 
 export interface KatexMathProps {
   /** Raw LaTeX source. */
   latex: string
   /** Display (block) mode vs inline mode. */
   display?: boolean
+  /**
+   * Display mode only: add the Expand button and full-screen viewer (#5638).
+   * Off where the equation already sits inside a button (the editor node view).
+   */
+  expandable?: boolean
 }
 
-export function KatexMath({ latex, display = false }: KatexMathProps): React.ReactElement {
+export function KatexMath({
+  latex,
+  display = false,
+  expandable = false,
+}: KatexMathProps): React.ReactElement {
+  const { t } = useTranslation()
   const html = useMemo(() => {
     try {
       return katex.renderToString(latex, {
@@ -33,8 +47,8 @@ export function KatexMath({ latex, display = false }: KatexMathProps): React.Rea
         // Never throw on invalid LaTeX — render the source in the error colour
         // so a typo shows an inline, readable error instead of crashing.
         throwOnError: false,
-        // Visible, non-fatal error styling for invalid input.
-        errorColor: '#cc0000',
+        // KaTeX writes this into an inline `style`, so a token reference follows the theme.
+        errorColor: 'var(--alert-error-foreground)',
       })
     } catch {
       // Defensive: KaTeX should not throw with throwOnError:false, but if it
@@ -52,14 +66,36 @@ export function KatexMath({ latex, display = false }: KatexMathProps): React.Rea
     )
   }
 
-  const Tag = display ? 'div' : 'span'
+  if (!display) {
+    return (
+      <span
+        data-testid="katex-inline"
+        className="katex-inline-wrapper"
+        // katex.renderToString from LaTeX source (no HTML passthrough); it is the
+        // library's own sanitized markup, mirroring MermaidDiagram's SVG injection.
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    )
+  }
+
+  // KaTeX keeps a display equation on one line (`white-space: nowrap`), so a
+  // wide one must scroll rather than be clipped by the column.
+  const equation = (
+    <ScrollArea orientation="horizontal" className="katex-display-wrapper">
+      <div data-testid="katex-block" dangerouslySetInnerHTML={{ __html: html }} />
+    </ScrollArea>
+  )
+  if (!expandable) return equation
   return (
-    <Tag
-      data-testid={display ? 'katex-block' : 'katex-inline'}
-      className={display ? 'katex-display-wrapper' : 'katex-inline-wrapper'}
-      // katex.renderToString from LaTeX source (no HTML passthrough); it is the
-      // library's own sanitized markup, mirroring MermaidDiagram's SVG injection.
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <div className="group/diagram relative">
+      {equation}
+      <DiagramViewer
+        title={t('math.label')}
+        source={latex}
+        copyLabel={t('diagramViewer.copyLatex')}
+      >
+        <div className="px-4 text-3xl" dangerouslySetInnerHTML={{ __html: html }} />
+      </DiagramViewer>
+    </div>
   )
 }

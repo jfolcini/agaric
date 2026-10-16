@@ -14,37 +14,15 @@
  * Optionally calls `onOpenExternal` to open the current image in an external app.
  */
 
-import { ChevronLeft, ChevronRight, ExternalLink, Maximize2, Minus, Plus } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ZoomControls } from '@/components/rendering/ZoomControls'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { IconButton } from '@/components/ui/icon-button'
-import { getShortcutKeys } from '@/lib/keyboard-config'
+import { useZoomPan } from '@/hooks/useZoomPan'
 import { shouldReduceMotion } from '@/lib/preferences'
 import { cn } from '@/lib/utils'
-
-/**
- * #1104 — append the current keyboard binding (if any) to a label so the
- * icon-only zoom buttons surface their hotkey via the accessible name. Mirrors
- * GraphView's `withShortcut`; returns the bare label when no binding
- * is configured to avoid a stray "()". The lightbox shares the graph's `+/-/0`
- * bindings, so it reuses the `graphZoom*` shortcut ids.
- */
-function withShortcut(label: string, shortcutId: string): string {
-  const keys = getShortcutKeys(shortcutId)
-  return keys ? `${label} (${keys})` : label
-}
-
-/** Zoom bounds and step for lightbox zoom/pan (#294 item 7). */
-const ZOOM_MIN = 1
-const ZOOM_MAX = 4
-const ZOOM_STEP = 0.25
-/** Pixels panned per arrow-key press while zoomed in. */
-const PAN_KEY_STEP = 60
-
-const clamp = (value: number, min: number, max: number): number =>
-  Math.min(max, Math.max(min, value))
 
 export interface LightboxImage {
   src: string
@@ -94,192 +72,29 @@ export function ImageLightbox({
     if (safeIndex < count - 1) onIndexChange(safeIndex + 1)
   }, [safeIndex, count, onIndexChange])
 
-  // Zoom/pan state (#294 item 7). `zoom` is a scale factor (1 = fit); `pan` is
-  // the translation in CSS px applied before the scale. Both reset whenever the
-  // displayed image or open state changes.
-  const imgRef = useRef<HTMLImageElement>(null)
-  // Mirrors `imgRef.current` in state so effects can depend on the actual DOM
-  // node identity (#2760). Radix's `Portal` mounts in two passes — it renders
-  // `null` until a `useLayoutEffect` flips an internal "mounted" flag, then
-  // re-renders with the real children — so a plain `useEffect` keyed on
-  // unrelated props (e.g. `current.src`) can fire on the first (portal-less)
-  // commit, see `imgRef.current` as `null`, and never re-run once the image
-  // actually mounts. Setting state from the ref callback guarantees the
-  // wheel-listener effect below re-runs exactly when the node changes.
-  const [imgNode, setImgNode] = useState<HTMLImageElement | null>(null)
-  const setImgNodeRef = useCallback((node: HTMLImageElement | null) => {
-    imgRef.current = node
-    setImgNode(node)
-  }, [])
-  const [zoom, setZoom] = useState(1)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
-  const [dragging, setDragging] = useState(false)
   // Broken-source guard: when the <img> fails to load (deleted/moved
   // attachment, revoked blob URL, unreachable fsPath) we swap in a labelled
   // in-dialog fallback instead of leaving the user on a broken-image glyph over
   // a black overlay. Reset whenever the displayed image / open state changes.
   const [imgError, setImgError] = useState(false)
-  // Pointer-drag anchor: pointer + pan position captured at pointerdown.
-  const dragOrigin = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
-  const zoomed = zoom > ZOOM_MIN
-
-  // Clamp a pan offset so the (scaled) image can't be dragged entirely off the
-  // viewport — at most half the overflow in each axis. Reads the rendered image
-  // size, which is unaffected by the CSS transform.
-  const clampPan = useCallback((p: { x: number; y: number }, z: number) => {
-    const img = imgRef.current
-    if (!img || z <= ZOOM_MIN) return { x: 0, y: 0 }
-    const maxX = (img.clientWidth * (z - 1)) / 2
-    const maxY = (img.clientHeight * (z - 1)) / 2
-    return { x: clamp(p.x, -maxX, maxX), y: clamp(p.y, -maxY, maxY) }
-  }, [])
-
-  const zoomBy = useCallback((delta: number) => {
-    setZoom((z) => clamp(Number((z + delta).toFixed(2)), ZOOM_MIN, ZOOM_MAX))
-  }, [])
-
-  const resetZoom = useCallback(() => {
-    setZoom(ZOOM_MIN)
-    setPan({ x: 0, y: 0 })
-  }, [])
-
-  const panBy = useCallback(
-    (dx: number, dy: number) => {
-      setPan((p) => clampPan({ x: p.x + dx, y: p.y + dy }, zoom))
-    },
-    [clampPan, zoom],
-  )
-
-  // Re-clamp pan whenever the zoom changes (e.g. zooming back out recenters).
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- re-clamps pan against the rendered image's measured clientWidth/clientHeight after a zoom change; the bound comes from the DOM, not from props; see #4407
-    setPan((p) => clampPan(p, zoom))
-  }, [zoom, clampPan])
-
-  // Reset zoom/pan (and the broken-image fallback) when the displayed image or
-  // open state changes.
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- resets zoom/pan when the displayed image or dialog open-state changes; both are user-driven afterwards via wheel, drag and keyboard, so neither derives; see #4407
-    resetZoom()
+    // oxlint-disable-next-line react/set-state-in-effect -- a new image or a fresh open gets a fresh load attempt; see #4407
     setImgError(false)
-  }, [safeIndex, open, resetZoom])
+  }, [safeIndex, open])
 
-  // Keyboard: +/-/0 zoom always; arrows pan when zoomed, else navigate the set.
-  // Escape is handled by Radix Dialog. Listener attaches whenever open.
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (e: KeyboardEvent): void => {
-      switch (e.key) {
-        case '+':
-        case '=': {
-          e.preventDefault()
-          zoomBy(ZOOM_STEP)
-          break
-        }
-        case '-':
-        case '_': {
-          e.preventDefault()
-          zoomBy(-ZOOM_STEP)
-          break
-        }
-        case '0': {
-          e.preventDefault()
-          resetZoom()
-          break
-        }
-        case 'ArrowLeft': {
-          if (zoomed) {
-            e.preventDefault()
-            panBy(PAN_KEY_STEP, 0)
-          } else if (hasMultiple) {
-            e.preventDefault()
-            goPrev()
-          }
-          break
-        }
-        case 'ArrowRight': {
-          if (zoomed) {
-            e.preventDefault()
-            panBy(-PAN_KEY_STEP, 0)
-          } else if (hasMultiple) {
-            e.preventDefault()
-            goNext()
-          }
-          break
-        }
-        case 'ArrowUp': {
-          if (zoomed) {
-            e.preventDefault()
-            panBy(0, PAN_KEY_STEP)
-          }
-          break
-        }
-        case 'ArrowDown': {
-          if (zoomed) {
-            e.preventDefault()
-            panBy(0, -PAN_KEY_STEP)
-          }
-          break
-        }
-        default: {
-          break
-        }
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, hasMultiple, zoomed, goPrev, goNext, zoomBy, resetZoom, panBy])
-
-  // Wheel-to-zoom — chrome-free and centred on the current view (#294 item 7).
-  // Bound via a native `addEventListener` with `{ passive: false }` rather than
-  // JSX `onWheel` (#2760): React's root wheel listener is passive, so
-  // `preventDefault()` inside a synthetic handler is a no-op and Chromium logs
-  // a console error on every wheel tick. Mirrors GraphView's non-passive wheel
-  // binding (see `setupZoomBehavior` in graph-sim-helpers.ts). Depends on
-  // `imgNode` (not e.g. `current.src`) so it re-attaches exactly when the
-  // `<img>` DOM node itself changes — see the `imgNode` comment above.
-  useEffect(() => {
-    if (!imgNode) return
-    const onWheel = (e: WheelEvent): void => {
-      e.preventDefault()
-      zoomBy(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP)
-    }
-    imgNode.addEventListener('wheel', onWheel, { passive: false })
-    return () => imgNode.removeEventListener('wheel', onWheel)
-  }, [imgNode, zoomBy])
-
-  // Pointer drag-to-pan, active only while zoomed in.
-  const handlePointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      if (!zoomed) return
-      e.preventDefault()
-      e.currentTarget.setPointerCapture(e.pointerId)
-      dragOrigin.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y }
-      setDragging(true)
+  // Zoom/pan (#294 item 7): zoom 1 is the fitted image. Arrows navigate the set
+  // while not zoomed in, and pan it once zoomed.
+  const onUnzoomedArrow = useCallback(
+    (key: 'ArrowLeft' | 'ArrowRight') => {
+      if (!hasMultiple) return false
+      if (key === 'ArrowLeft') goPrev()
+      else goNext()
+      return true
     },
-    [zoomed, pan.x, pan.y],
+    [hasMultiple, goPrev, goNext],
   )
-
-  const handlePointerMove = useCallback(
-    (e: React.PointerEvent) => {
-      const origin = dragOrigin.current
-      if (!origin) return
-      setPan(
-        clampPan(
-          { x: origin.panX + (e.clientX - origin.x), y: origin.panY + (e.clientY - origin.y) },
-          zoom,
-        ),
-      )
-    },
-    [clampPan, zoom],
-  )
-
-  const handlePointerUp = useCallback((e: React.PointerEvent) => {
-    if (!dragOrigin.current) return
-    dragOrigin.current = null
-    setDragging(false)
-    e.currentTarget.releasePointerCapture?.(e.pointerId)
-  }, [])
+  const zoomPan = useZoomPan({ active: open, resetKey: safeIndex, onUnzoomedArrow })
+  const { zoom, zoomed, dragging, setNode, surfaceProps } = zoomPan
 
   if (!current) return null
 
@@ -338,7 +153,7 @@ export function ImageLightbox({
         ) : (
           <img
             key={current.src}
-            ref={setImgNodeRef}
+            ref={setNode}
             src={current.src}
             alt={current.alt}
             className={cn(
@@ -346,13 +161,7 @@ export function ImageLightbox({
               !reducedMotion && !dragging && 'transition-transform',
               zoomed && (dragging ? 'cursor-grabbing' : 'cursor-grab'),
             )}
-            style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-            }}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
+            {...surfaceProps}
             onError={() => setImgError(true)}
             draggable={false}
             data-testid="lightbox-image"
@@ -378,61 +187,14 @@ export function ImageLightbox({
           </p>
         )}
 
-        {/*
-         * #1104 — persistent on-screen zoom cluster (bottom-left, mirroring
-         * GraphView's bottom-right stack at GraphView.tsx:335-359). Surfaces the
-         * otherwise wheel/keyboard-only zoom and advertises the +/-/0 shortcuts
-         * via `withShortcut` in each button's accessible name. Wired to the same
-         * `zoomBy`/`resetZoom` handlers the wheel/keyboard paths use, so all
-         * input paths stay in sync. Disabled at the bounds: ZoomIn at ZOOM_MAX,
-         * ZoomOut + Reset when not zoomed in (ZOOM_MIN). Hidden when the image
-         * failed to load — the controls would act on a missing image.
-         */}
+        {/* #1104 — on-screen zoom cluster, hidden when there is no image to act on. */}
         {!imgError && (
-          <div
+          <ZoomControls
+            zoomPan={zoomPan}
+            resetLabel={t('lightbox.zoomReset')}
+            testIdPrefix="lightbox"
             className="absolute bottom-4 left-4 flex flex-col gap-1"
-            data-testid="lightbox-zoom-controls"
-          >
-            <IconButton
-              variant="outline"
-              disabled={zoom >= ZOOM_MAX}
-              onClick={(e) => {
-                e.stopPropagation()
-                zoomBy(ZOOM_STEP)
-              }}
-              tooltip={t('lightbox.zoomIn')}
-              ariaLabel={withShortcut(t('lightbox.zoomIn'), 'graphZoomIn')}
-              data-testid="lightbox-zoom-in"
-            >
-              <Plus className="h-4 w-4" />
-            </IconButton>
-            <IconButton
-              variant="outline"
-              disabled={!zoomed}
-              onClick={(e) => {
-                e.stopPropagation()
-                zoomBy(-ZOOM_STEP)
-              }}
-              tooltip={t('lightbox.zoomOut')}
-              ariaLabel={withShortcut(t('lightbox.zoomOut'), 'graphZoomOut')}
-              data-testid="lightbox-zoom-out"
-            >
-              <Minus className="h-4 w-4" />
-            </IconButton>
-            <IconButton
-              variant="outline"
-              disabled={!zoomed}
-              onClick={(e) => {
-                e.stopPropagation()
-                resetZoom()
-              }}
-              tooltip={t('lightbox.zoomReset')}
-              ariaLabel={withShortcut(t('lightbox.zoomReset'), 'graphZoomReset')}
-              data-testid="lightbox-zoom-reset"
-            >
-              <Maximize2 className="h-4 w-4" />
-            </IconButton>
-          </div>
+          />
         )}
 
         {!imgError && hasMultiple && (

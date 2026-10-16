@@ -7,26 +7,25 @@
  */
 
 import mermaid from 'mermaid'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DiagramViewer } from '@/components/rendering/DiagramViewer'
+import { mermaidThemeVariables, readDiagramColors } from '@/components/rendering/mermaid-theme'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { useTheme } from '@/hooks/useTheme'
+import { logger } from '@/lib/logger'
 
 /**
- * (Re)configure mermaid for the current app theme. Called inside the render
- * effect (not at module load) so theme switches take effect on the next
- * diagram render instead of staying frozen to whatever the theme was when the
- * module first loaded (#758 item 1).
- *
- * The `isDark` argument comes from the app's canonical theme source
- * (`useTheme`, backed by the module-level preference store) rather than a
- * one-off `document.documentElement` read, so the render effect can list it as
- * a dependency and re-run on a light/dark toggle even when the diagram source
- * text is unchanged (#2259).
+ * (Re)configure mermaid for the current app theme before each render, so a
+ * theme switch re-renders with the new colours (#758 item 1, #2259). The
+ * colours come from the design tokens (#5638); when they cannot be resolved
+ * the stock light or dark theme is the fallback.
  */
 function initializeMermaid(isDark: boolean): void {
+  const colors = readDiagramColors()
+  if (!colors) logger.warn('MermaidDiagram', 'theme tokens unresolved, using the stock theme')
   mermaid.initialize({
     startOnLoad: false,
     // SECURITY: pin the sanitizing render mode explicitly. `'strict'` is mermaid's
@@ -41,8 +40,57 @@ function initializeMermaid(isDark: boolean): void {
     // remount gets a fresh renderId). This component renders its own inline
     // error state, so mermaid's error diagram must be suppressed entirely.
     suppressErrorRendering: true,
-    theme: isDark ? 'dark' : 'default',
+    ...(colors
+      ? {
+          theme: 'base',
+          themeVariables: mermaidThemeVariables(
+            colors,
+            isDark,
+            getComputedStyle(document.body).fontFamily,
+          ),
+        }
+      : { theme: isDark ? 'dark' : 'default' }),
   })
+}
+
+/** Smallest on-screen label size, in CSS px, an inline diagram may shrink to. */
+const LEGIBLE_LABEL_PX = 11
+
+/**
+ * Mermaid sizes its SVG `width: 100%; max-width: <natural width>`, so it only
+ * ever shrinks to fit the column. Stop the shrink where the smallest label
+ * would drop below the floor; past that the ScrollArea scrolls instead.
+ */
+function keepLabelsLegible(svg: SVGSVGElement): void {
+  const naturalWidth = svg.viewBox.baseVal?.width
+  if (!naturalWidth) return
+  const smallest = Math.min(
+    ...[...svg.querySelectorAll('text, foreignObject *')]
+      .filter((el) => el.textContent?.trim())
+      .map((el) => Number.parseFloat(getComputedStyle(el).fontSize))
+      .filter((px) => px > 0),
+  )
+  if (!Number.isFinite(smallest)) return
+  svg.style.minWidth = `${naturalWidth * Math.min(1, LEGIBLE_LABEL_PX / smallest)}px`
+}
+
+/**
+ * The diagram for the viewer and for Download SVG: at its natural size, with
+ * its ids renamed so they do not collide with the inline copy's, serialized as
+ * XML so the file stands alone.
+ */
+function viewerSvg(markup: string, renderId: string): string {
+  const template = document.createElement('template')
+  template.innerHTML = markup.replaceAll(renderId, `${renderId}-viewer`)
+  const svgEl = template.content.querySelector('svg')
+  if (!svgEl) return markup
+  const [, , width, height] = (svgEl.getAttribute('viewBox') ?? '').split(/[\s,]+/)
+  if (width && height) {
+    svgEl.setAttribute('width', width)
+    svgEl.setAttribute('height', height)
+  }
+  svgEl.style.removeProperty('max-width')
+  return new XMLSerializer().serializeToString(svgEl)
 }
 
 export interface MermaidDiagramProps {
@@ -51,17 +99,30 @@ export interface MermaidDiagramProps {
 
 export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElement {
   const { t } = useTranslation()
-  // Subscribe to the app's canonical theme source so a light/dark toggle
-  // re-runs the render effect below (#2259). `useTheme` also keeps the
-  // documentElement theme classes in sync, so `isDark` is the single source
-  // of truth for the mermaid theme.
-  const { isDark } = useTheme()
+  // Subscribe to the app's canonical theme source so any theme change re-runs
+  // the render effect below (#2259, #5638). `useTheme`'s own effect applies the
+  // documentElement theme classes first, so the tokens read at render time are
+  // the new theme's. `isDark` also distinguishes the two sides of 'auto'.
+  const { theme, isDark } = useTheme()
   const [svg, setSvg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const uniqueId = useId()
   const renderId = `mermaid-${uniqueId.replace(/:/g, '-')}`
   const cancelledRef = useRef(false)
+  const scrollRootRef = useRef<HTMLDivElement>(null)
+  const diagramRef = useRef<HTMLDivElement>(null)
+  const expandedSvg = useMemo(() => (svg ? viewerSvg(svg, renderId) : ''), [svg, renderId])
+  // A diagram taller than the inline cap shows its top part under a fade.
+  const [clipped, setClipped] = useState(false)
+
+  useLayoutEffect(() => {
+    const diagram = diagramRef.current
+    const svgEl = diagram?.querySelector('svg')
+    if (!diagram || !svgEl) return
+    keepLabelsLegible(svgEl)
+    setClipped(diagram.offsetHeight > (scrollRootRef.current?.clientHeight ?? Infinity))
+  }, [svg])
 
   useEffect(() => {
     cancelledRef.current = false
@@ -70,10 +131,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
     setSvg(null)
     setError(null)
 
-    // Re-apply the theme before each render. Mermaid bakes the theme in at
-    // render time; because `isDark` is an effect dependency, a light/dark
-    // toggle now re-runs this effect and re-renders the diagram with the new
-    // theme even when the source `code` is unchanged (#2259).
+    // Mermaid bakes the theme in at render time, so re-apply it before each render.
     initializeMermaid(isDark)
 
     mermaid
@@ -94,7 +152,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
     return () => {
       cancelledRef.current = true
     }
-  }, [code, renderId, isDark])
+  }, [code, renderId, theme, isDark])
 
   if (loading) {
     return (
@@ -130,15 +188,43 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
   }
 
   return (
-    <ScrollArea orientation="horizontal" className="rounded-md bg-muted">
-      <div
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- container for a rendered SVG injected via dangerouslySetInnerHTML, not a real <img> source; role="img"+aria-label exposes it as a single graphic
-        role="img"
-        aria-label={t('mermaid.label')}
-        className="p-3"
-        data-testid="mermaid-diagram"
-        dangerouslySetInnerHTML={{ __html: svg ?? '' }}
-      />
-    </ScrollArea>
+    <div className="group/diagram relative">
+      <ScrollArea
+        ref={scrollRootRef}
+        orientation="horizontal"
+        className="max-h-[70vh] rounded-md border border-border bg-background"
+      >
+        <div
+          ref={diagramRef}
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- container for a rendered SVG injected via dangerouslySetInnerHTML, not a real <img> source; role="img"+aria-label exposes it as a single graphic
+          role="img"
+          aria-label={t('mermaid.label')}
+          className="p-3"
+          data-testid="mermaid-diagram"
+          dangerouslySetInnerHTML={{ __html: svg ?? '' }}
+        />
+      </ScrollArea>
+      {clipped && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-px bottom-px h-16 rounded-b-md bg-linear-to-t from-background"
+          data-testid="mermaid-fade"
+        />
+      )}
+      <DiagramViewer
+        title={t('mermaid.label')}
+        source={code}
+        copyLabel={t('diagramViewer.copySource')}
+        svg={expandedSvg}
+      >
+        <div
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- container for a rendered SVG injected via dangerouslySetInnerHTML; role="img"+aria-label exposes it as a single graphic
+          role="img"
+          aria-label={t('mermaid.label')}
+          className="p-4"
+          dangerouslySetInnerHTML={{ __html: expandedSvg }}
+        />
+      </DiagramViewer>
+    </div>
   )
 }
