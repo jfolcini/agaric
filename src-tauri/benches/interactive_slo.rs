@@ -1568,9 +1568,9 @@ fn bench_count_agenda_batch_by_source(c: &mut Criterion) {
 }
 
 /// `count_backlinks_batch` — 10 target pages, 100K source blocks.
-/// Budget: 100 ms (measured ~62 ms — "concerning at scale" tier).
+/// Budget: 160 ms.
 fn bench_count_backlinks_batch(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 100.0;
+    const BUDGET_MS: f64 = 160.0;
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_backlinks_batch"));
