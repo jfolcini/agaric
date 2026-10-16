@@ -16,6 +16,7 @@ import {
   applyGraphForces,
   applyResizeForces,
   nodeRadius,
+  REDUCED_MOTION_TICK_LIMIT,
   RESIZE_ALPHA,
   startAlpha,
 } from '@/lib/graph-forces'
@@ -49,7 +50,6 @@ const FIT_PADDING = 64
 /** A fitted graph is never zoomed past this, so a handful of nodes is not blown up. */
 const FIT_MAX_SCALE = 2
 export const ZOOM_STEP = 1.3
-const REDUCED_MOTION_TICK_LIMIT = 300
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -968,6 +968,7 @@ function postWorkerStart(worker: Worker, ctx: SimulationCtx): void {
     width: ctx.width,
     height: ctx.height,
     keptSettled: ctx.keptSettled,
+    reducedMotion: ctx.prefersReducedMotion,
   })
 }
 
@@ -1069,7 +1070,6 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
   const worker = instantiateWorker((err) => reportFailure('construction', err))
   if (!worker) return { cleanup: noop, onResize: noop, onUpdate: noop, settled: () => false }
 
-  let tickCount = 0
   // Only a new topology or canvas size unsettles a layout. A click on a node is
   // a drag without motion: it reheats the worker, and its ticks can land before
   // the click navigates away, so a tick must not unsettle a layout that ended.
@@ -1139,13 +1139,7 @@ export function runWorkerSimulation(args: WorkerRunArgs): SimulationHandle {
     if (failed) return
     const msg = evt.data
     if (msg.type === 'tick') {
-      tickCount++
-      if (ctx.prefersReducedMotion && tickCount >= REDUCED_MOTION_TICK_LIMIT) {
-        worker.postMessage({ type: 'stop' })
-        settle(msg.positions, msg.count)
-      } else {
-        scheduleFlush(msg.positions, msg.count)
-      }
+      scheduleFlush(msg.positions, msg.count)
     } else if (msg.type === 'done') {
       settle(msg.positions, msg.count)
     } else if (msg.type === 'error') {

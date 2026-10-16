@@ -296,34 +296,15 @@ describe('runWorkerSimulation — rAF tick coalescing (#747 item 2)', () => {
     ])
   })
 
-  it('under reduced motion, settles on the tick that stops the worker (#5432)', () => {
-    const { ctx, applyPositions } = makeCtx()
-    const handle = runWorkerSimulation({
-      ...ctx,
-      prefersReducedMotion: true,
-      onWorkerFailed: () => {},
-    })
-    const worker = lastWorker as unknown as FakeWorker
-
-    for (let i = 1; i < 300; i++) worker.emit(packed('tick', [{ x: i, y: i }]))
-    expect(ctx.onSettled).not.toHaveBeenCalled()
-    expect(worker.posted.some((m) => m.type === 'stop')).toBe(false)
-
-    worker.emit(
-      packed('tick', [
-        { x: 50, y: 60 },
-        { x: 70, y: 80 },
-      ]),
-    )
-
-    expect(worker.posted.filter((m) => m.type === 'stop')).toHaveLength(1)
-    expect(applyPositions).toHaveBeenCalledTimes(1)
-    expect(ctx.onSettled).toHaveBeenCalledTimes(1)
-    expect(ctx.simNodes.map((n) => [n.x, n.y])).toEqual([
-      [50, 60],
-      [70, 80],
-    ])
-    expect(handle.settled()).toBe(true)
+  it('tells the worker whether to lay the graph out at once', () => {
+    for (const prefersReducedMotion of [true, false]) {
+      const { ctx } = makeCtx()
+      runWorkerSimulation({ ...ctx, prefersReducedMotion, onWorkerFailed: () => {} })
+      const worker = lastWorker as unknown as FakeWorker
+      expect(worker.posted.find((m) => m.type === 'start')).toMatchObject({
+        reducedMotion: prefersReducedMotion,
+      })
+    }
   })
 
   it('posts each node with the degree the main-thread forces read, on start and update (#5432)', () => {

@@ -15,12 +15,15 @@ export interface WorkerEdgeInput {
 /**
  * Start a fresh simulation. Nodes that carry a position are a kept layout
  * coming back (#5434); `keptSettled` says it had stopped moving with nothing new
- * in it (`startAlpha`).
+ * in it (`startAlpha`). Under `reducedMotion` this and every later `update` or
+ * `resize` is laid out at once and posted as one `done`, as the main-thread
+ * path does.
  */
 export interface WorkerStartMessage {
   type: 'start'
   nodes: WorkerNode[]
   keptSettled: boolean
+  reducedMotion: boolean
   edges: WorkerEdgeInput[]
   width: number
   height: number

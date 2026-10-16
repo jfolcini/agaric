@@ -254,6 +254,14 @@ test.describe('Graph view', () => {
   }
 
   /**
+   * A test about zooming, not layout: under reduced motion the layout is shown
+   * already at rest, so the test does not sit through its animated settle.
+   */
+  function settleAtOnce(page: Page): Promise<void> {
+    return page.emulateMedia({ reducedMotion: 'reduce' })
+  }
+
+  /**
    * The layout's first settle fits it to the view (#5432). Waits for that
    * transform and for it to hold still, so a test zooms from where it landed.
    */
@@ -268,7 +276,7 @@ test.describe('Graph view', () => {
           last = now
           return still
         },
-        { intervals: [500], timeout: 30_000 },
+        { intervals: [100], timeout: 30_000 },
       )
       .toBe(true)
     return last ?? ''
@@ -364,6 +372,7 @@ test.describe('Graph view', () => {
   }
 
   test('the zoom in/out/fit buttons change the graph transform scale', async ({ page }) => {
+    await settleAtOnce(page)
     await navigateToView(page, 'Graph')
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
     await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
@@ -373,8 +382,8 @@ test.describe('Graph view', () => {
     const fittedScale = parseScale(fitted) ?? Number.NaN
 
     await page.getByRole('button', { name: /^Zoom in/ }).click()
-    // ZOOM_STEP is 1.3 (`src/lib/graph-sim-helpers.ts`); the button
-    // transition takes 200ms, so poll until it settles.
+    // ZOOM_STEP is 1.3 (`src/lib/graph-sim-helpers.ts`); poll until the
+    // transform lands.
     await expect
       .poll(async () => parseScale(await g.getAttribute('transform')))
       .toBeCloseTo(fittedScale * 1.3, 3)
@@ -394,6 +403,7 @@ test.describe('Graph view', () => {
   })
 
   test('wheel-zoom over the canvas changes the graph transform scale', async ({ page }) => {
+    await settleAtOnce(page)
     await navigateToView(page, 'Graph')
     const svg = page.locator('[data-testid="graph-svg"]')
     await expect(svg).toBeVisible()
@@ -414,6 +424,7 @@ test.describe('Graph view', () => {
   })
 
   test('dragging empty canvas pans the graph transform', async ({ page }) => {
+    await settleAtOnce(page)
     await navigateToView(page, 'Graph')
     const svg = page.locator('[data-testid="graph-svg"]')
     await expect(svg).toBeVisible()
@@ -452,6 +463,7 @@ test.describe('Graph view', () => {
   // tab carries the one accent.
   // ---------------------------------------------------------------------
   test('edges stay a 1 px hairline on screen as the view zooms in (#5428)', async ({ page }) => {
+    await settleAtOnce(page)
     await navigateToView(page, 'Graph')
     const edges = page.locator('[data-testid="graph-view"] svg line')
     await expect(edges.first()).toBeVisible()
@@ -592,6 +604,7 @@ test.describe('Graph view', () => {
   })
 
   test('a label is the same height on screen at three zoom levels (#5430)', async ({ page }) => {
+    await settleAtOnce(page)
     // The selected node is always labelled, so its label shows at every zoom.
     const { nodeGroup, dot } = await gettingStartedNode(page)
     const g = page.locator('[data-testid="graph-svg"] > g').first()
