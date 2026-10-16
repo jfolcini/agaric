@@ -298,6 +298,22 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
     // #5371 — answers `()`; `page_opens` is outside the snapshot, so a
     // `last-opened` query step observes it.
     ("record_page_open", HEADED_ID_KEY, &[], &[]),
+    // #5071 — the two imports, whose blocks the snapshot pins. `warnings` stay
+    // off: they are prose that may carry `#`. The TS twin has no entry, because
+    // the fixture driving them is backend-only on the mock (`DRIFT_SKIP`): the
+    // grammar has one implementation, in Rust.
+    (
+        "import_markdown",
+        "page_id",
+        &["page_title", "blocks_created", "properties_set"],
+        &["collapsed"],
+    ),
+    (
+        "import_bibliography",
+        HEADED_ID_KEY,
+        &["pages_created", "entries_skipped", "properties_set"],
+        &[],
+    ),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -897,6 +913,33 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        // #5071 — the document is the caller's own text, spelled inline; only
+        // the target space is a label. The markdown import's vault-file bytes
+        // are left out, so it ingests no attachment.
+        "import_markdown" => to_json(
+            import_markdown_inner(
+                pool,
+                DEV,
+                mat,
+                app_data_dir,
+                req_str("content"),
+                opt_str("filename"),
+                arg_label_id("spaceId").expect("spaceId"),
+                None,
+            )
+            .await,
+        ),
+        "import_bibliography" => to_json(
+            import_bibliography_inner(
+                pool,
+                DEV,
+                mat,
+                req_str("content"),
+                opt_str("format"),
+                arg_label_id("spaceId").expect("spaceId"),
+            )
+            .await,
+        ),
         other => panic!("conformance op '{other}' is not wired in the command leg"),
     }
 }
@@ -1242,7 +1285,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 48;
+    const MUTATING_ARM_COUNT: usize = 50;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

@@ -833,6 +833,47 @@ fn arg_req<T: serde::de::DeserializeOwned>(args: &StepArgs<'_>, key: &str) -> T 
         .unwrap_or_else(|e| panic!("{}: query arg '{key}': {e}", args.at()))
 }
 
+/// #5071 — a rendered markdown document as one row: the name of the sibling
+/// file beside the fixture that holds it, and the blake3 of its bytes. The row
+/// grammar cannot carry the document itself: `#` is its attribute separator,
+/// and every export opens `# Title`. `CONFORMANCE_UPDATE=1` writes the file;
+/// otherwise the render must equal it, so a change shows both documents rather
+/// than only a new hash. No TS twin reads the file: the grammar has one
+/// implementation, in Rust, and the mock only approximates it.
+fn document_result(args: &StepArgs<'_>, document: &str) -> RawResult {
+    let file = format!("{}.{}.txt", args.fixture, args.step);
+    let path = super::conformance::fixtures_dir().join(&file);
+    if super::conformance::update_mode() {
+        std::fs::write(&path, document)
+            .unwrap_or_else(|e| panic!("{}: write {}: {e}", args.at(), path.display()));
+    } else {
+        let recorded = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "{}: read {}: {e}; author it with CONFORMANCE_UPDATE=1",
+                args.at(),
+                path.display()
+            )
+        });
+        assert_eq!(
+            document,
+            recorded,
+            "{}: the render differs from {} (backend is source of truth; re-author with \
+             CONFORMANCE_UPDATE=1 if the change is intended)",
+            args.at(),
+            path.display()
+        );
+    }
+    RawResult {
+        rows: vec![format!(
+            "{file}#blake3={}",
+            blake3::hash(document.as_bytes()).to_hex()
+        )],
+        has_more: None,
+        total_count: None,
+        next_cursor: None,
+    }
+}
+
 /// Run ONE read command against the real backend and project its response.
 ///
 /// Adding a command here is the whole cost of putting it under the differential:
@@ -1602,7 +1643,7 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
         // removal and each id's line are pinned together. `source` stays off
         // it: it is `get_page_source`'s render, which the mock approximates
         // (only the backend writes an anchor after a code block on its own
-        // line), and the step's read of it is that waiver's.
+        // line), and which the `get_page_source` arm below pins as a document.
         "get_page_buffer" => {
             let page_id: PageId = arg_req(args, "pageId");
             let buffer = get_page_buffer_inner(pool, page_id.as_str()).await?;
@@ -1631,6 +1672,30 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
                 next_cursor: None,
             }
         }
+        // ── Rendered documents (#5071) ──
+        //
+        // The three renders of the markdown grammar, each compared out of band
+        // against the sibling file `document_result` names.
+        "export_page_markdown" => {
+            let page_id: PageId = arg_req(args, "pageId");
+            document_result(
+                args,
+                &export_page_markdown_inner(pool, page_id.as_str()).await?,
+            )
+        }
+        "get_page_source" => {
+            let page_id: PageId = arg_req(args, "pageId");
+            document_result(args, &get_page_source_inner(pool, page_id.as_str()).await?)
+        }
+        "get_blocks_source" => document_result(
+            args,
+            &get_blocks_source_inner(
+                pool,
+                arg_req(args, "blockIds"),
+                arg_req(args, "withChildren"),
+            )
+            .await?,
+        ),
         "get_page_aliases" => {
             let page_id: PageId = arg_req(args, "pageId");
             // `ORDER BY alias` under the column's NOCASE collation: the
@@ -2764,7 +2829,12 @@ pub(super) mod reader_delegation_tests {
     // one COUNT over the same `fts_blocks` scan `list_unlinked_references`
     // runs (`count_unlinked_references` in
     // `agaric-store/src/backlink/grouped.rs`). Writer set unchanged.
-    const SWEPT_ARM_COUNT: usize = 56;
+    // #5071 wired `export_page_markdown`, `get_page_source` and
+    // `get_blocks_source`: each is `load_page_export_data` in a plain
+    // `pool.begin()` tx, SELECTs only (the clipboard one first SELECTs the
+    // page id), then a pure render (`commands/pages/markdown.rs`). Writer set
+    // unchanged.
+    const SWEPT_ARM_COUNT: usize = 59;
 
     /// #3833 item 8 — the WRITE sweep, recorded where its conclusion is cited.
     ///
