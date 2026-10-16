@@ -2439,8 +2439,9 @@ const WRITE_PATH_PAGE_ID: &str = "01SWRTPATHPG00000000000001";
 /// Children of [`WRITE_PATH_PAGE_ID`]: the 2K-block page #5423 names.
 const WRITE_PATH_PAGE_CHILDREN: usize = 2_000;
 
-/// Repeating tasks in the `set_property` probe's vault, so the projected-agenda
-/// rebuild each `todo_state` write enqueues has rows to rewrite (#5423 item 5).
+/// Repeating tasks in the `set_property` probe's vault, so a `todo_state` write
+/// that rebuilt the whole projected agenda instead of refreshing its own block
+/// would show in the settled time (#5423 item 5).
 const WRITE_PATH_REPEATING_BLOCKS: usize = 200;
 
 /// #5423 — the write-path probes' vault: the [`FIXTURE_SIZE`] background blocks,
@@ -2672,10 +2673,10 @@ fn bench_edit_block(c: &mut Criterion) {
 
 /// `set_property` — a `todo_state` write on one child of the 2K-block page
 /// (#5423): the todo cycle, which the command routes through
-/// `set_todo_state_inner` (#5394). The vault carries
-/// [`WRITE_PATH_REPEATING_BLOCKS`] repeating tasks, so the projected-agenda
-/// rebuild each write enqueues has rows to rewrite. Budget: the first
-/// `bench-slo` mean × 2.
+/// `set_todo_state_inner` (#5394). Each write refreshes only its own block's
+/// projected-agenda rows; the vault's [`WRITE_PATH_REPEATING_BLOCKS`] repeating
+/// tasks are the rows a whole-vault rebuild would rewrite instead. Budget: the
+/// first `bench-slo` mean × 2.
 fn bench_set_property(c: &mut Criterion) {
     const BUDGET_MS: f64 = 5.0;
     let rt = Runtime::new().unwrap();
@@ -2694,8 +2695,8 @@ fn bench_set_property(c: &mut Criterion) {
     assert!(
         projected
             >= (WRITE_PATH_REPEATING_BLOCKS * agaric_store::cache::HORIZON_OCCURRENCES) as i64,
-        "set_property @ 100K: every repeating task must project its forward horizon, or the \
-         rebuild a todo_state write enqueues has nothing to rewrite (#5423)"
+        "set_property @ 100K: every repeating task must project its forward horizon, or a \
+         whole-vault rebuild would have nothing to rewrite and the probe could not show it (#5423)"
     );
     let target = children[WRITE_PATH_PAGE_CHILDREN / 2].clone();
     let fallbacks = agaric_lib::materializer::sql_only_fallback_count();

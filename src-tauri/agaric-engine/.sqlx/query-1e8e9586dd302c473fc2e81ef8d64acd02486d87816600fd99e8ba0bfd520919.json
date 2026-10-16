@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT rebuild_today FROM projected_agenda_horizon WHERE id = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "rebuild_today",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "projected_agenda_horizon",
+            "name": "rebuild_today"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "1e8e9586dd302c473fc2e81ef8d64acd02486d87816600fd99e8ba0bfd520919"
+}
