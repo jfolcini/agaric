@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Views
 
-Agaric has a fixed set of views, plus a **Page Editor** view that's reached by navigation. The sidebar lists the daily ones — Journal, Pages, Search, Tags — with Settings in its footer. A row of buttons in the Pages header opens Tags, Graph, Query, Templates and Trash; History opens from Settings › Edit history, and Status lives in the Settings › App health tab. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
+Agaric has a fixed set of views, plus a **Page Editor** view that's reached by navigation. The sidebar lists the daily ones — Journal, Pages, Search, Tags — with Settings in its footer. A row of buttons in the Pages header opens Tags, Graph, Query, Templates and Trash; History opens from the *Open edit history* row in Settings › Data, and Status lives in the Settings › App health tab. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
 
 The **Journal** view (default landing) and the **Agenda** mode inside it have their own file: [journal-and-agenda.md](journal-and-agenda.md).
 
@@ -68,7 +68,7 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 
 ## History
 
-Global operation log — every edit Agaric has applied, in reverse chronological order. Opened from Settings › Edit history › *Open edit history*.
+Global operation log — every edit Agaric has applied, in reverse chronological order. Opened from Settings › Data › *Open edit history*.
 
 - **Op type icons** distinguish creates, edits, deletes, restores, properties, tags.
 - **Filter bar**: filter by op type. There is no user-vs-agent or date-range filter; ops that arrived from another device are marked, but agent-authored ops are not distinguished from your own.
@@ -106,36 +106,36 @@ A force-directed graph of pages and the links between them.
 
 ## Status
 
-Materializer + sync metrics, in Settings › App health. Useful for diagnosing slowness.
+Materializer metrics, in Settings › App health. Useful for diagnosing slowness.
 
 - **Materializer queue depth**: how far behind the read-side projection is (foreground and background queues).
 - **Op counts**: total ops; ops dispatched.
-- **Sync state**: the overall state, last successful sync, and peer count — aggregated, not per peer. For per-peer status and errors, go to Settings → Sync & devices.
 - Polls the backend periodically.
+
+The aggregated sync state (overall state, last successful sync, peer count) is the first card of Settings › Sync & devices, above the per-peer list.
 
 ## Settings
 
 Tabbed configuration view. On desktop the tabs sit in a vertical rail, bucketed into four groups; on a phone a grouped picker at the top replaces the rail. Each tab is named once, by the rail: panels carry no title of their own. Settings are rows, with the label and description on the left and the control on the right (stacked on a phone).
 
 - **Workspace**
-  - **General** — deadline warning days, Quick Capture hotkey and launch-at-login (desktop), debug mode, show the welcome tour again.
-  - **Spaces** — the space this device opens in (*Open on launch*: last used or one space), and create, rename, recolour or delete spaces (see [spaces.md](spaces.md)). The SpaceSwitcher's *Manage spaces…* opens it.
-  - **Appearance** — language, theme (the palette's *Toggle theme* cycles auto / dark / light), font size, animations, tooltip delay, week start, journal date format. Font size scales note text and its row controls (checkboxes, gutter icons, chip and inline icons), not the app chrome: the sidebar, headers, toolbars and settings stay fixed.
+  - **General** — language, week start, journal date format, launch-at-login (desktop).
+  - **Appearance** — theme (the palette's *Toggle theme* cycles auto / dark / light), font size, animations, tooltip delay. Font size scales note text and its row controls (checkboxes, gutter icons, chip and inline icons), not the app chrome: the sidebar, headers, toolbars and settings stay fixed.
   - **Editor** — the `:` emoji picker, *Tab indents blocks*, external images, link previews on hover.
-  - **Keyboard** — full shortcut customisation (see [keyboard.md](keyboard.md)).
-  - **Properties** — list of property definitions; rename, change type, edit select options.
+  - **Keyboard** — the system-wide Quick Capture hotkey (desktop), then full shortcut customisation (see [keyboard.md](keyboard.md)).
+  - **Tasks & reminders** (id `notifications`) — the deadline warning days for the Agenda's Upcoming list, due-task reminders, the reminder time, the OS permission and a test notification.
+  - **Spaces** — the space this device opens in (*Open on launch*: last used or one space), and create, rename, recolour or delete spaces (see [spaces.md](spaces.md)). The SpaceSwitcher's *Manage spaces…* opens it.
+  - **Properties** — list of property definitions; rename, change type, edit select options. The internal `is_space` definition is not listed.
 - **Integrations**
-  - **Notifications** — due-task reminders, the reminder time, the OS permission and a test notification.
   - **Agent access** — read-only and read-write switches; each shows its socket path and connections only while it is on. The activity feed with SessionRevertControls is a separate card, shown whether or not access is on (see [agent-access.md](agent-access.md)).
 - **Data & sync**
-  - **Data** — import / export (see [import-export.md](import-export.md)).
-  - **Edit history** — *Open edit history* opens the History view.
-  - **Sync & devices** — pair / unpair / rename peers; manual addresses (see [sync.md](sync.md)).
+  - **Sync & devices** — the sync state with *Sync now* when it failed, then pair / unpair / rename peers, manual addresses, the internet fallback, and this device's ID (see [sync.md](sync.md)).
+  - **Data** — import / export (see [import-export.md](import-export.md)), and *Open edit history*, which opens the History view.
 - **Help**
-  - **Help** — *Report a bug*, update check.
-  - **App health** — materializer and sync metrics (see Status above), and the integrity check: *Run check* rebuilds every derived table from your notes and lists the rows that disagree. A bug report filed from Help afterwards carries the result, until you leave Settings. The tab's id is still `status`.
+  - **Help** — *Report a bug*, debug mode, show the welcome tour again, update check.
+  - **App health** — the integrity check: *Run check* rebuilds every derived table from your notes and lists the rows that disagree. A bug report filed from Help afterwards carries the result, until you leave Settings. Materializer metrics follow it (see Status above). The tab's id is still `status`.
 
-Tabs are deep-linkable via `?settings=<tab>` (parsed inside the Settings view itself, no router involved) and via `agaric://settings/<tab>`. The last-used tab persists in `localStorage`.
+Tabs are deep-linkable via `?settings=<tab>` (parsed inside the Settings view itself, no router involved) and via `agaric://settings/<tab>`. The retired `history` id opens Data. The last-used tab persists in `localStorage`.
 
 ## Page Editor
 

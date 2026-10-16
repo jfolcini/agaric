@@ -1,6 +1,6 @@
 /**
  * DebugModeRow — `t('settings.debugMode.label')` toggle inside the
- * General settings tab (#1987).
+ * Help settings tab, under Report a bug (#1987).
  *
  * Flips the app-wide `PREFERENCES.debugMode` flag. When on, error toasts
  * and inline banners append the raw error `kind`/code via

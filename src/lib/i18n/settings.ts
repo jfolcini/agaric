@@ -52,8 +52,8 @@ export const settings: Record<string, string> = {
     'Hovering or focusing an external link fetches its title and icon, which tells that site you have the link. When off, cached previews still show, and a link you paste or insert is still fetched once.',
   'settings.tabSync': 'Sync & devices',
   'settings.tabData': 'Data',
-  // #5361 — the tab is a way into the History view, which stays a full page.
-  'settings.tabHistory': 'Edit history',
+  // #5361 — a way into the History view, which stays a full page; a row in
+  // Data since #5629.
   'settings.history.label': 'Browse and revert changes',
   'settings.history.description': 'See past changes to your notes and undo the ones you want.',
   'settings.history.openButton': 'Open edit history',
@@ -95,7 +95,7 @@ export const settings: Record<string, string> = {
   'settings.tooltipDelayFast': 'Fast',
   'settings.tooltipDelayDefault': 'Default',
   'settings.tabKeyboard': 'Keyboard',
-  'settings.quickCapture.label': 'Quick capture shortcut',
+  'settings.quickCapture.label': 'Quick capture (system-wide)',
   'settings.quickCapture.description':
     "Press this key combination from anywhere to drop a line into today's journal.",
   'settings.quickCapture.editButton': 'Edit shortcut',
@@ -108,7 +108,7 @@ export const settings: Record<string, string> = {
   'quickCapture.successToast': "Captured to today's journal",
   'quickCapture.failureToast': "Couldn't save quick capture",
   'settings.tabHelp': 'Help',
-  'settings.tabNotifications': 'Notifications',
+  'settings.tabNotifications': 'Tasks & reminders',
   'notifications.description':
     'Get a native OS notification on the day a task is due, and send yourself a test to confirm they reach you.',
   'notifications.enableLabel': 'Remind me about due tasks',

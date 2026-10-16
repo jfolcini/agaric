@@ -226,6 +226,26 @@ describe('DeviceManagement', () => {
     expect(screen.queryByText('Device Management')).not.toBeInTheDocument()
   })
 
+  // #5629 — the main action first and the device ID last.
+  it('orders Pair new device, the paired devices, the internet fallback, then the device ID', async () => {
+    mockInvokeByCommand({
+      get_device_id: () => mockDeviceId,
+      list_peer_refs: () => mockPeers,
+    })
+
+    render(<DeviceManagement />)
+
+    const pair = await screen.findByRole('button', { name: /Pair new device/i })
+    const list = await screen.findByText('Paired devices (2)')
+    const relay = screen.getByRole('switch', { name: 'Local network, with an internet fallback' })
+    const deviceId = screen.getByTestId('local-device-id-label')
+    const follows = (earlier: Node, later: Node) =>
+      earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING
+    expect(follows(pair, list)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(follows(list, relay)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(follows(relay, deviceId)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
   it('shows list of paired peers', async () => {
     mockInvokeByCommand({
       get_device_id: () => mockDeviceId,

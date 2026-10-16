@@ -1,5 +1,8 @@
 /**
- * HelpTab — Help / Report-a-bug + Updates panel (+ updater wire-up).
+ * HelpTab — Report a bug, Debug mode, the welcome tour, and Updates.
+ *
+ * Debug mode sits under Report a bug because its own copy says to turn it on
+ * when reporting a problem.
  *
  * The bug-report dialog is mounted at App level (lazy) and listens for
  * `BUG_REPORT_EVENT`. This panel just exposes the trigger button and
@@ -24,6 +27,8 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DebugModeRow } from '@/components/settings/DebugModeRow'
+import { ShowWelcomeTourRow } from '@/components/settings/ShowWelcomeTourRow'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { SettingRow } from '@/components/ui/setting-row'
@@ -102,6 +107,8 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
               {t('help.reportBugButton')}
             </Button>
           </SettingRow>
+          <DebugModeRow />
+          <ShowWelcomeTourRow />
           <div className="space-y-1">
             <SettingRow label={t('help.updateTitle')} description={t('help.updateDescription')}>
               {mobile ? null : (

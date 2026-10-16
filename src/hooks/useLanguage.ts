@@ -5,7 +5,7 @@
  * `useFontSize`, `useMotionPreference`): `usePreference` owns persistence
  * and cross-window sync, and an effect applies the resolved value. Mounted
  * once in the app shell so the effect runs app-wide, and again by the
- * Appearance tab for its Select — both instances see the same stored value,
+ * General tab for its Select — both instances see the same stored value,
  * so a change made in one window switches the language in every window.
  *
  * The effect is guarded on the locale it last REQUESTED, so the common case

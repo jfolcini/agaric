@@ -11,6 +11,7 @@
  *  - High-water marks displayed under queue depth cards
  *  - Health color classes applied based on queue depth (green/default/amber)
  *  - Tooltip triggers present for all metric labels; content appears on hover
+ *  - SyncStatusCard: sync state, Retry, and sync metrics, outside StatusPanel
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -24,7 +25,7 @@ import {
   mockInvokeCommands,
   type TypedInvokeHandlers,
 } from '@/__tests__/helpers/invoke'
-import { StatusPanel } from '@/components/agenda/StatusPanel'
+import { StatusPanel, SyncStatusCard } from '@/components/agenda/StatusPanel'
 
 // Mock DeviceManagement to prevent its own IPC calls from interfering
 vi.mock('@/components/peers/DeviceManagement', () => ({
@@ -167,6 +168,14 @@ describe('StatusPanel', () => {
 
   // #5269 — the panel is the body of Settings › App health, whose `<h1>` belongs
   // to SettingsView; a second one would announce two page headings.
+  it('leaves sync status to SyncStatusCard (#5629)', async () => {
+    stubInvoke({ get_status: () => mockStatus })
+    render(<StatusPanel />)
+    await screen.findByText('Materializer status')
+
+    expect(screen.queryByTestId('sync-panel-title')).not.toBeInTheDocument()
+  })
+
   it('renders no page heading of its own', async () => {
     stubInvoke({ get_status: () => mockStatus })
 
@@ -655,9 +664,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
       mockSyncStoreState.lastSyncedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString()
 
-      render(<StatusPanel />)
-
-      await screen.findByText('Foreground queue')
+      render(<SyncStatusCard />)
 
       // formatRelativeTime (i18n) resolves sidebar.minutesAgo -> "5m ago"
       const lastSyncedEl = document.querySelector('.sync-last-synced')
@@ -669,21 +676,19 @@ describe('StatusPanel', () => {
       mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
       mockSyncStoreState.lastSyncedAt = null
 
-      render(<StatusPanel />)
-
-      await screen.findByText('Foreground queue')
+      render(<SyncStatusCard />)
 
       const lastSyncedEl = document.querySelector('.sync-last-synced')
       expect(lastSyncedEl?.textContent).toBe('--')
     })
   })
 
-  describe('sync section', () => {
+  // #5629 — the sync card left App health for the top of Sync & devices.
+  describe('SyncStatusCard', () => {
     it('shows "Not configured" when sync has no peers', async () => {
       // Default mock has peers: [] — should show "Not configured"
       stubInvoke({ get_status: () => mockStatus })
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      render(<SyncStatusCard />)
       expect(screen.getByText('Not configured')).toBeInTheDocument()
     })
 
@@ -691,8 +696,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'idle'
       stubInvoke({ get_status: () => mockStatus })
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      render(<SyncStatusCard />)
       expect(screen.getByText('Idle')).toBeInTheDocument()
     })
 
@@ -704,8 +708,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'idle'
       stubInvoke({ get_status: () => mockStatus })
-      const { container } = render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      const { container } = render(<SyncStatusCard />)
 
       expect(screen.queryByTestId('sync-panel-not-configured')).not.toBeInTheDocument()
       expect(container.querySelector('.sync-panel-details')).toBeInTheDocument()
@@ -720,8 +723,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.state = 'error'
       mockSyncStoreState.error = 'Connection lost'
       stubInvoke({ get_status: () => mockStatus })
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      render(<SyncStatusCard />)
       expect(screen.getByText('Connection lost')).toBeInTheDocument()
       // The sync error must be a live region so screen readers announce it.
       const alert = screen.getByRole('alert')
@@ -737,8 +739,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.state = 'error'
         mockSyncStoreState.error = 'Connection lost'
         stubInvoke({ get_status: () => mockStatus })
-        render(<StatusPanel />)
-        await screen.findByText('Materializer status')
+        render(<SyncStatusCard />)
 
         const retry = screen.getByTestId('sync-panel-retry')
         expect(retry).toBeInTheDocument()
@@ -750,8 +751,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.peers = [{ peerId: 'P1' }]
         mockSyncStoreState.state = 'idle'
         stubInvoke({ get_status: () => mockStatus })
-        render(<StatusPanel />)
-        await screen.findByText('Materializer status')
+        render(<SyncStatusCard />)
         expect(screen.queryByTestId('sync-panel-retry')).not.toBeInTheDocument()
       })
 
@@ -764,8 +764,7 @@ describe('StatusPanel', () => {
         // catch-all this replaced handed `start_sync` a `StatusInfo`; it
         // returns `SyncSessionInfo` (#4668).
         stubInvoke({ get_status: () => mockStatus, start_sync: () => mockSyncSession })
-        render(<StatusPanel />)
-        await screen.findByText('Materializer status')
+        render(<SyncStatusCard />)
 
         await user.click(screen.getByTestId('sync-panel-retry'))
 
@@ -792,8 +791,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.state = 'error'
         mockSyncStoreState.error = 'Connection lost'
         stubInvoke({ get_status: () => mockStatus })
-        const { container } = render(<StatusPanel />)
-        await screen.findByText('Materializer status')
+        const { container } = render(<SyncStatusCard />)
         await screen.findByTestId('sync-panel-retry')
 
         const results = await axe(container)
@@ -807,8 +805,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.opsReceived = 99
       mockSyncStoreState.opsSent = 17
       stubInvoke({ get_status: () => mockStatus })
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      render(<SyncStatusCard />)
       expect(screen.getByText('Peers')).toBeInTheDocument()
       const peerCount = document.querySelector('.sync-peer-count')
       expect(peerCount?.textContent).toBe('2')
@@ -822,8 +819,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.peers = [{ peer_id: 'P1' }]
       mockSyncStoreState.state = 'syncing'
       stubInvoke({ get_status: () => mockStatus })
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      render(<SyncStatusCard />)
       expect(screen.getByText('Syncing...')).toBeInTheDocument()
     })
 
@@ -839,7 +835,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.peers = [{ peer_id: 'P1' }]
         mockSyncStoreState.state = 'idle'
         stubInvoke({ get_status: () => mockStatus })
-        render(<StatusPanel />)
+        render(<SyncStatusCard />)
         await screen.findByText('Idle')
         expect(screen.getByTestId('sync-state-icon-idle')).toBeInTheDocument()
       })
@@ -849,7 +845,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.state = 'error'
         mockSyncStoreState.error = 'boom'
         stubInvoke({ get_status: () => mockStatus })
-        render(<StatusPanel />)
+        render(<SyncStatusCard />)
         await screen.findByText('Error')
         expect(screen.getByTestId('sync-state-icon-error')).toBeInTheDocument()
       })
@@ -858,7 +854,7 @@ describe('StatusPanel', () => {
         mockSyncStoreState.peers = [{ peer_id: 'P1' }]
         mockSyncStoreState.state = 'syncing'
         stubInvoke({ get_status: () => mockStatus })
-        render(<StatusPanel />)
+        render(<SyncStatusCard />)
         await screen.findByText('Syncing...')
         const icon = screen.getByTestId('sync-state-icon-syncing')
         expect(icon).toBeInTheDocument()
@@ -871,8 +867,7 @@ describe('StatusPanel', () => {
       mockSyncStoreState.state = 'idle'
       stubInvoke({ get_status: () => mockStatus })
       const user = userEvent.setup()
-      render(<StatusPanel />)
-      await screen.findByText('Materializer status')
+      render(<SyncStatusCard />)
       // Hover over "Ops received" metric label
       const label = screen.getByText('Ops received')
       await user.hover(label)

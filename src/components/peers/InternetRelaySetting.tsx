@@ -8,7 +8,7 @@
  * still have a path. The daemon reads the row once at start, so the copy says
  * the change takes effect at the next launch.
  *
- * Rendered by `DeviceManagement`, above the paired-devices list.
+ * Rendered by `DeviceManagement`, below the paired-devices list.
  */
 
 import type React from 'react'

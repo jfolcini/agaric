@@ -1,6 +1,6 @@
 /**
  * ExportSection — the Export card of the Data settings tab, extracted from
- * `DataTab.tsx`. Two independent actions: the single active-space "Export All"
+ * `DataTab.tsx`. Two independent actions: the single active-space "Export this space"
  * (`exportGraphAsZip`) and the whole-vault "Export All Spaces"
  * (`exportAllSpacesAsZip`, #2964), each with its own loading flag so they
  * run/report independently.
@@ -27,7 +27,7 @@ export function ExportSection(): React.ReactElement {
   const [exporting, setExporting] = useState(false)
   // #2964 — separate loading flag for the whole-vault "Export all spaces"
   // action so it can run/report independently of the single active-space
-  // "Export All" button above (each disables only itself, mirroring how
+  // "Export this space" button above (each disables only itself, mirroring how
   // the two actions are otherwise fully independent).
   const [exportingAllSpaces, setExportingAllSpaces] = useState(false)
 

@@ -11,11 +11,13 @@
  *  - Reset all with confirmation dialog
  *  - Conflict warning displayed
  *  - Empty binding rejected
+ *  - The system-wide quick-capture row leads the tab and persists its chord (#5629)
  *  - axe a11y audit
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -35,6 +37,15 @@ vi.mock('@/lib/keyboard-config', () => ({
   resetShortcut: (...args: unknown[]) => mockResetShortcut(...args),
   resetAllShortcuts: (...args: unknown[]) => mockResetAllShortcuts(...args),
   findConflicts: (...args: unknown[]) => mockFindConflicts(...args),
+}))
+
+// The quick-capture row probes a new chord through the global-shortcut plugin.
+const mockShortcutRegister = vi.fn()
+const mockShortcutUnregister = vi.fn()
+vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
+  register: mockShortcutRegister,
+  unregister: mockShortcutUnregister,
+  isRegistered: vi.fn(),
 }))
 
 const MOCK_SHORTCUTS: (ShortcutBinding & { isCustom: boolean })[] = [
@@ -85,6 +96,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockGetCurrentShortcuts.mockReturnValue(MOCK_SHORTCUTS)
   mockFindConflicts.mockReturnValue([])
+  mockShortcutRegister.mockResolvedValue(undefined)
+  mockShortcutUnregister.mockResolvedValue(undefined)
+  localStorage.removeItem('agaric:quickCaptureShortcut')
 })
 
 describe('KeyboardTab', () => {
@@ -586,5 +600,80 @@ describe('KeyboardTab', () => {
     } finally {
       if (original) Object.defineProperty(navigator, 'platform', original)
     }
+  })
+})
+
+// #5629 — the system-wide quick-capture chord moved here from General.
+describe('KeyboardTab — quick capture shortcut', () => {
+  it('is the first row, before the first shortcut category', () => {
+    render(<KeyboardTab />)
+
+    const row = screen.getByTestId('quick-capture-settings-row')
+    const firstCategory = screen.getByText(t('keyboard.category.navigation'))
+    expect(row.compareDocumentPosition(firstCategory) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    expect(row).toHaveTextContent(t('settings.quickCapture.label'))
+  })
+
+  it('shows the default chord, or the persisted one', () => {
+    const { unmount } = render(<KeyboardTab />)
+    // Default chord on Linux happy-dom (isMac() is false).
+    expect(screen.getByTestId('quick-capture-shortcut-binding')).toHaveTextContent('Ctrl+Alt+N')
+    unmount()
+
+    localStorage.setItem('agaric:quickCaptureShortcut', 'Ctrl+Shift+J')
+    render(<KeyboardTab />)
+    expect(screen.getByTestId('quick-capture-shortcut-binding')).toHaveTextContent('Ctrl+Shift+J')
+  })
+
+  it('Save persists the new chord, and a remount reads it back', async () => {
+    const user = userEvent.setup()
+    const { unmount } = render(<KeyboardTab />)
+
+    await user.click(screen.getByTestId('quick-capture-shortcut-edit'))
+    const input = screen.getByTestId('quick-capture-shortcut-input')
+    await user.clear(input)
+    await user.type(input, 'Ctrl+Shift+J')
+    await user.click(screen.getByTestId('quick-capture-shortcut-save'))
+
+    await waitFor(() => {
+      expect(localStorage.getItem('agaric:quickCaptureShortcut')).toBe('Ctrl+Shift+J')
+    })
+    unmount()
+    render(<KeyboardTab />)
+    expect(screen.getByTestId('quick-capture-shortcut-binding')).toHaveTextContent('Ctrl+Shift+J')
+  })
+
+  it('Cancel keeps the previous chord and stores nothing', async () => {
+    const user = userEvent.setup()
+    render(<KeyboardTab />)
+
+    await user.click(screen.getByTestId('quick-capture-shortcut-edit'))
+    const input = screen.getByTestId('quick-capture-shortcut-input')
+    await user.clear(input)
+    await user.type(input, 'Ctrl+Shift+J')
+    await user.click(screen.getByTestId('quick-capture-shortcut-cancel'))
+
+    expect(mockShortcutRegister).not.toHaveBeenCalled()
+    expect(localStorage.getItem('agaric:quickCaptureShortcut')).toBeNull()
+    expect(screen.getByTestId('quick-capture-shortcut-binding')).toHaveTextContent('Ctrl+Alt+N')
+  })
+
+  it('a chord the OS refuses toasts and is not stored', async () => {
+    mockShortcutRegister.mockRejectedValueOnce(new Error('shortcut conflict'))
+    const user = userEvent.setup()
+    render(<KeyboardTab />)
+
+    await user.click(screen.getByTestId('quick-capture-shortcut-edit'))
+    const input = screen.getByTestId('quick-capture-shortcut-input')
+    await user.clear(input)
+    await user.type(input, 'Ctrl+Shift+J')
+    await user.click(screen.getByTestId('quick-capture-shortcut-save'))
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(t('settings.quickCapture.saveFailed'))
+    })
+    expect(localStorage.getItem('agaric:quickCaptureShortcut')).toBeNull()
   })
 })

@@ -1,5 +1,5 @@
 /**
- * Tests for DebugModeRow (#1987) — the General-tab toggle that flips the
+ * Tests for DebugModeRow (#1987) — the Help-tab toggle that flips the
  * app-wide `PREFERENCES.debugMode` flag. Off by default; flipping it
  * persists the flag (and, by extension, every error surface reads it).
  */

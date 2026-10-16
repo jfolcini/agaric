@@ -14,35 +14,30 @@ test.describe('Settings panel', () => {
     await expect(page.getByRole('tablist')).toBeVisible()
   })
 
-  // #2687 — SettingsView defines 13 tabs (TAB_IDS in SettingsView.tsx),
-  // grouped into four rail sections (Workspace / Integrations / Data & Sync
-  // / Help). This test used to check only 6 under a misleading "All 6 tabs"
-  // title, silently never opening Editor, Notifications, Agent access, or
-  // Help. Listed here in the same order as TAB_GROUPS so the loop below
-  // walks the rail top-to-bottom.
-  test('All 13 tabs are visible and clickable', async ({ page }) => {
+  // #2687 / #5629 — every tab in `TAB_GROUPS` order, so the rail reads
+  // top-to-bottom exactly as listed here.
+  test('the rail lists all 12 tabs in order, and each is clickable', async ({ page }) => {
     const tabNames = [
       // Workspace
       'General',
-      'Spaces',
       'Appearance',
       'Editor',
       'Keyboard',
+      'Tasks & reminders',
+      'Spaces',
       'Properties',
       // Integrations
-      'Notifications',
       'Agent access',
-      // Data & Sync
-      'Data',
-      'Edit history',
+      // Data & sync
       'Sync & devices',
+      'Data',
       // Help
       'Help',
       'App health',
     ]
+    await expect(page.getByRole('tab')).toHaveText(tabNames)
     for (const name of tabNames) {
-      const tab = page.getByRole('tab', { name })
-      await expect(tab).toBeVisible()
+      const tab = page.getByRole('tab', { name, exact: true })
       await tab.click()
       await expect(tab).toHaveAttribute('aria-selected', 'true')
     }
@@ -120,12 +115,14 @@ test.describe('Settings panel', () => {
     await expect(emojiToggle).toHaveAttribute('aria-checked', 'false')
   })
 
-  // #2687 — Notifications tab was never opened by any spec.
-  test('Notifications tab renders the enable toggle and gates the test-send button', async ({
+  // #2687 — Notifications tab was never opened by any spec. #5629 — it is
+  // Tasks & reminders now, and holds the deadline warning too.
+  test('Tasks & reminders tab renders the enable toggle and gates the test-send button', async ({
     page,
   }) => {
-    await page.getByRole('tab', { name: 'Notifications' }).click()
+    await page.getByRole('tab', { name: 'Tasks & reminders' }).click()
     await expect(page.locator('[data-testid="settings-panel-notifications"]')).toBeVisible()
+    await expect(page.getByRole('spinbutton', { name: 'Deadline warning' })).toBeVisible()
 
     const enabledSwitch = page.locator('[data-testid="notifications-enabled-switch"]')
     const sendTestButton = page.locator('[data-testid="notifications-send-test-button"]')
@@ -148,7 +145,7 @@ test.describe('Settings panel', () => {
     await expect(reminderTime).toBeEnabled()
 
     await page.getByRole('tab', { name: 'General' }).click()
-    await page.getByRole('tab', { name: 'Notifications' }).click()
+    await page.getByRole('tab', { name: 'Tasks & reminders' }).click()
     await expect(enabledSwitch).toHaveAttribute('aria-checked', 'true')
     await expect(reminderTime).toHaveValue('09:00')
   })
@@ -174,13 +171,14 @@ test.describe('Settings panel', () => {
   })
 
   // #5360 — the result of a Run in App health rides along with a bug report
-  // filed from Help.
+  // filed from Help. #5629 — sync status moved out to Sync & devices.
   test('App health runs the integrity check and a bug report from Help carries it', async ({
     page,
   }) => {
     await page.getByRole('tab', { name: 'App health' }).click()
     const panel = page.locator('[data-testid="settings-panel-status"]')
-    await expect(panel.getByTestId('sync-panel-title')).toBeVisible()
+    await expect(panel.getByText('Materializer status')).toBeVisible()
+    await expect(panel.getByTestId('sync-panel-title')).toHaveCount(0)
 
     await panel.getByRole('button', { name: 'Run check' }).click()
     await expect(panel.getByText('Everything matches')).toBeVisible()
@@ -218,8 +216,8 @@ test.describe('Settings panel', () => {
   test('?settings=<tab> deep link is written to the URL and restored on reload', async ({
     page,
   }) => {
-    await page.getByRole('tab', { name: 'Notifications' }).click()
-    await expect(page.getByRole('tab', { name: 'Notifications' })).toHaveAttribute(
+    await page.getByRole('tab', { name: 'Tasks & reminders' }).click()
+    await expect(page.getByRole('tab', { name: 'Tasks & reminders' })).toHaveAttribute(
       'aria-selected',
       'true',
     )
@@ -232,11 +230,25 @@ test.describe('Settings panel', () => {
     // param (which outranks the separately-persisted active-tab
     // preference) to re-select Notifications without the user re-clicking.
     await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
-    await expect(page.getByRole('tab', { name: 'Notifications' })).toHaveAttribute(
+    await expect(page.getByRole('tab', { name: 'Tasks & reminders' })).toHaveAttribute(
       'aria-selected',
       'true',
     )
     await expect(page.locator('[data-testid="settings-panel-notifications"]')).toBeVisible()
+  })
+
+  // #5629 — the Edit history tab became a row in Data; its old links land
+  // there instead of on a blank panel.
+  test('an old ?settings=history link lands on Data, whose row opens History', async ({ page }) => {
+    await page.goto('/?settings=history')
+
+    await expect(page.getByRole('tab', { name: 'Data', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(page.url()).toContain('settings=data')
+    await page.getByRole('button', { name: 'Open edit history', exact: true }).click()
+    await expect(page.getByTestId('header-label')).toHaveText('History')
   })
 
   test('Navigate away and back restores the last selected tab', async ({ page }) => {

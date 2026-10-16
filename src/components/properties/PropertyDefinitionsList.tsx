@@ -42,6 +42,9 @@ import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'url'] as const
 
+/** Every space block carries this key, so deleting its definition always fails. */
+const SPACE_MARKER_KEY = 'is_space'
+
 export function PropertyDefinitionsList(): React.ReactElement {
   const { t } = useTranslation()
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
@@ -86,7 +89,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       // (~19 built-ins plus user-authored entries), which fits well
       // under one page; we destructure `.items` and ignore the cursor.
       const { items: defs } = unwrap(await commands.listPropertyDefs(null, null))
-      setDefinitions(defs)
+      setDefinitions(defs.filter((d) => d.key !== SPACE_MARKER_KEY))
     } catch (error) {
       // Replace bespoke `String(error)` toast with the unified
       // helper — error detail goes to the structured log; the user sees

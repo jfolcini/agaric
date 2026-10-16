@@ -19,11 +19,11 @@ import type { Page } from '@playwright/test'
 
 import { expect, navigateToView, test, waitForBoot } from './helpers'
 
-/** Open Settings → Appearance from the shell. */
-async function openAppearance(page: Page): Promise<void> {
+/** Open Settings → General, where the language control lives, from the shell. */
+async function openGeneral(page: Page): Promise<void> {
   await navigateToView(page, 'Settings')
-  await page.getByRole('tab', { name: 'Appearance' }).click()
-  await expect(page.locator('[data-testid="settings-panel-appearance"]')).toBeVisible()
+  await page.getByRole('tab', { name: 'General' }).click()
+  await expect(page.locator('[data-testid="settings-panel-general"]')).toBeVisible()
 }
 
 test.describe('Language preference', () => {
@@ -32,7 +32,7 @@ test.describe('Language preference', () => {
   })
 
   test('switching to Español survives a navigation round trip', async ({ page }) => {
-    await openAppearance(page)
+    await openGeneral(page)
 
     // Ships English, with `<html lang>` following i18next rather than the
     // build-time literal `index.html` used to hardcode.
@@ -52,19 +52,19 @@ test.describe('Language preference', () => {
     // so it must still be Spanish on return — and the catalog must not have
     // to be re-fetched for it to render.
     await navigateToView(page, 'Journal')
-    await expect(page.locator('[data-testid="settings-panel-appearance"]')).not.toBeVisible()
-    await openAppearance(page)
+    await expect(page.locator('[data-testid="settings-panel-general"]')).not.toBeVisible()
+    await openGeneral(page)
 
     await expect(page.getByRole('combobox', { name: 'Idioma' })).toBeVisible()
     await expect(page.locator('html')).toHaveAttribute('lang', 'es')
 
     // A key this PR does not translate still renders English. That is the
     // partial-catalog fallback working, not a missing translation bug.
-    await expect(page.getByRole('combobox', { name: 'Theme' })).toBeVisible()
+    await expect(page.getByRole('combobox', { name: 'Week starts on' })).toBeVisible()
   })
 
   test('switching back to English restores the English labels', async ({ page }) => {
-    await openAppearance(page)
+    await openGeneral(page)
     await page.getByRole('combobox', { name: 'Language' }).click()
     await page.getByRole('option', { name: 'Español', exact: true }).click()
     await expect(page.getByRole('combobox', { name: 'Idioma' })).toBeVisible()

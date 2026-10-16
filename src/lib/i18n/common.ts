@@ -446,7 +446,7 @@ export const common: Record<string, string> = {
   'data.importBlockProgressLabel': 'Block import progress',
   'data.exportTitle': 'Export all pages',
   'data.exportDesc': 'Download all pages as a ZIP of Markdown files.',
-  'data.exportButton': 'Export all',
+  'data.exportButton': 'Export this space',
   'data.exportCurrentSpaceLabel': 'Current space',
   'data.exportAllSpacesLabel': 'All spaces',
   'data.exporting': 'Exporting...',

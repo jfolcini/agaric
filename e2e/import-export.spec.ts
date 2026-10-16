@@ -144,7 +144,7 @@ test.describe('Export all pages as ZIP', () => {
 
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      page.getByRole('button', { name: 'Export all', exact: true }).click(),
+      page.getByRole('button', { name: 'Export this space', exact: true }).click(),
     ])
 
     // Filename: `agaric-export-<space>-<date>.zip` (DataTab.tsx handleExportAll).
