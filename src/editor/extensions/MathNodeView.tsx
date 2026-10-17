@@ -23,6 +23,8 @@ import { type NodeViewProps, NodeViewWrapper } from '@tiptap/react'
 import { lazy, Suspense, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { cn } from '@/lib/utils'
+
 // Lazy-load KatexMath so KaTeX (+ its CSS) loads only when a math node renders.
 const KatexMath = lazy(() =>
   import('@/components/rendering/KatexMath').then((m) => ({ default: m.KatexMath })),
@@ -146,7 +148,9 @@ function MathNodeViewBody({ props, display }: MathNodeViewBodyProps): React.Reac
       ) : (
         <button
           type="button"
-          className="math-rendered cursor-pointer"
+          // A button sizes to its content, so a display equation's own scroller
+          // never overflows and the column clips it; fill the column instead (#5693).
+          className={cn('math-rendered cursor-pointer', display && 'block w-full')}
           data-testid="math-rendered"
           aria-label={t('math.editSource')}
           // preventDefault on mousedown so clicking the math does not blur the
