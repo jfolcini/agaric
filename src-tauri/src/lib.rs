@@ -565,28 +565,28 @@ fn disable_webkit_dmabuf_if_unset() {
 }
 
 // Linux: WebKitGTK denies a `permission-request` the app leaves unanswered, so
-// the pairing QR scanner's `getUserMedia` failed with `NotAllowedError`
-// (#5386). Granting the camera without a prompt is safe because the webview
-// loads only the app's own origin (AGENTS.md "Threat Model"); every other
-// request stays on WebKitGTK's default.
+// the pairing QR scanner's camera (#5386) and a voice note's microphone (#5717)
+// failed with `NotAllowedError`. Granting both without a prompt is safe because
+// the webview loads only the app's own origin (AGENTS.md "Threat Model"); every
+// other request stays on WebKitGTK's default.
 #[cfg(target_os = "linux")]
-fn allow_camera_permission(
-    _webview: tauri::Webview<tauri::Wry>,
+fn allow_capture_permission(
     kind: tauri::webview::PermissionKind,
 ) -> tauri::webview::PermissionResponse {
     use tauri::webview::{PermissionKind, PermissionResponse};
-    if kind == PermissionKind::Camera {
+    if matches!(kind, PermissionKind::Camera | PermissionKind::Microphone) {
         PermissionResponse::Allow
     } else {
         PermissionResponse::Default
     }
 }
 
-// The e2e-tauri runner has no camera, so under the e2e sandbox WebKitGTK's mock
-// capture devices stand in and `camera-permission.e2e.ts` can pin
-// `allow_camera_permission` against the real webview.
+// The e2e-tauri runner has no camera or microphone, so under the e2e sandbox
+// WebKitGTK's mock capture devices stand in for the capture specs. Those specs
+// never reach `allow_capture_permission`: under WebDriver, WebKit grants
+// `getUserMedia` itself and emits no `permission-request`.
 #[cfg(target_os = "linux")]
-fn enable_mock_camera_under_e2e_sandbox(app: &tauri::App) {
+fn enable_mock_capture_devices_under_e2e_sandbox(app: &tauri::App) {
     use tauri::Manager;
     use webkit2gtk::{SettingsExt as _, WebViewExt as _};
     if !app_paths::sandboxed() {
@@ -2722,7 +2722,8 @@ fn build_tauri_builder() -> tauri::Builder<tauri::Wry> {
     }
     #[cfg(target_os = "linux")]
     {
-        tauri_builder = tauri_builder.on_permission_request(allow_camera_permission);
+        tauri_builder =
+            tauri_builder.on_permission_request(|_webview, kind| allow_capture_permission(kind));
     }
     tauri_builder
 }
@@ -2975,7 +2976,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     #[cfg(target_os = "linux")]
-    enable_mock_camera_under_e2e_sandbox(app);
+    enable_mock_capture_devices_under_e2e_sandbox(app);
 
     Ok(())
 }
@@ -4453,5 +4454,35 @@ mod projected_agenda_midnight_job_tests {
             "the first tick must enqueue no rebuild: only the flush barrier runs"
         );
         mat.shutdown();
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod capture_permission_tests {
+    use super::allow_capture_permission;
+    use tauri::webview::{PermissionKind, PermissionResponse};
+
+    /// The only check of the grant: under WebDriver, WebKit answers
+    /// `getUserMedia` itself, so no e2e-tauri spec reaches this handler.
+    #[test]
+    fn grants_the_camera_and_microphone_and_defers_every_other_request() {
+        for kind in [PermissionKind::Camera, PermissionKind::Microphone] {
+            assert_eq!(
+                allow_capture_permission(kind),
+                PermissionResponse::Allow,
+                "{kind:?}"
+            );
+        }
+        for kind in [
+            PermissionKind::DisplayCapture,
+            PermissionKind::Geolocation,
+            PermissionKind::Notifications,
+        ] {
+            assert_eq!(
+                allow_capture_permission(kind),
+                PermissionResponse::Default,
+                "{kind:?}"
+            );
+        }
     }
 }
