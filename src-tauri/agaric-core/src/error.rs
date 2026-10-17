@@ -93,6 +93,17 @@ pub enum ValidationCode {
     /// Trash (`set_page_aliases`, its undo; #5387). Coded so the alias editor
     /// can name the clash instead of the generic save failure.
     DuplicatePageAlias,
+    /// An MCP agent name that is blank after trimming, holds a control
+    /// character, or is longer than `MAX_AGENT_NAME_LEN` (`create_mcp_agent`,
+    /// #5667).
+    InvalidAgentName,
+    /// An MCP agent name another agent holds in any letter case
+    /// (`create_mcp_agent`, #5667). Coded so the create dialog can name the
+    /// clash beside the name field.
+    DuplicateAgentName,
+    /// An MCP agent's space list that is empty or names a space that is not
+    /// live (`create_mcp_agent`, #5667).
+    InvalidAgentSpaces,
 }
 
 /// Helper struct matching the `{ kind, message, code? }` JSON shape that
@@ -786,7 +797,7 @@ mod tests {
         // The exact strings the old `"<Code>: …"` message prefixes spelled —
         // and the strings the TS `ValidationCode` union in bindings.ts (and
         // its runtime mirror in validation-codes.ts) discriminates on.
-        let cases: [(ValidationCode, &str); 9] = [
+        let cases: [(ValidationCode, &str); 12] = [
             (ValidationCode::InvalidGlob, "InvalidGlob"),
             (ValidationCode::InvalidRegex, "InvalidRegex"),
             (ValidationCode::InvalidDateFilter, "InvalidDateFilter"),
@@ -796,6 +807,9 @@ mod tests {
             (ValidationCode::InvalidRepeatRule, "InvalidRepeatRule"),
             (ValidationCode::DuplicatePageTitle, "DuplicatePageTitle"),
             (ValidationCode::DuplicatePageAlias, "DuplicatePageAlias"),
+            (ValidationCode::InvalidAgentName, "InvalidAgentName"),
+            (ValidationCode::DuplicateAgentName, "DuplicateAgentName"),
+            (ValidationCode::InvalidAgentSpaces, "InvalidAgentSpaces"),
         ];
         for (code, expected) in cases {
             assert_eq!(
@@ -835,6 +849,9 @@ mod tests {
                 ValidationCode::InvalidRepeatRule => "InvalidRepeatRule",
                 ValidationCode::DuplicatePageTitle => "DuplicatePageTitle",
                 ValidationCode::DuplicatePageAlias => "DuplicatePageAlias",
+                ValidationCode::InvalidAgentName => "InvalidAgentName",
+                ValidationCode::DuplicateAgentName => "DuplicateAgentName",
+                ValidationCode::InvalidAgentSpaces => "InvalidAgentSpaces",
             }
         }
         for code in [
@@ -847,6 +864,9 @@ mod tests {
             ValidationCode::InvalidRepeatRule,
             ValidationCode::DuplicatePageTitle,
             ValidationCode::DuplicatePageAlias,
+            ValidationCode::InvalidAgentName,
+            ValidationCode::DuplicateAgentName,
+            ValidationCode::InvalidAgentSpaces,
         ] {
             assert_eq!(
                 serde_json::to_value(code).expect("code serializes"),

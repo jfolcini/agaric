@@ -23,6 +23,7 @@
 //! Model for the rationale.
 
 pub mod activity;
+pub mod agents;
 pub mod dispatch;
 pub mod handler_utils;
 pub mod registry;

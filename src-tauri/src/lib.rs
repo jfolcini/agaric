@@ -302,6 +302,10 @@ macro_rules! agaric_commands {
             $crate::commands::mcp::get_mcp_rw_status,
             $crate::commands::mcp::mcp_rw_set_enabled,
             $crate::commands::mcp::mcp_rw_disconnect_all,
+            // #5667 — the device-local agents Settings → Agent access manages
+            $crate::commands::mcp_agents::list_mcp_agents,
+            $crate::commands::mcp_agents::create_mcp_agent,
+            $crate::commands::mcp_agents::revoke_mcp_agent,
             // Spaces (Phase 1 + Phase 2 + Phase 6)
             $crate::commands::spaces::list_spaces,
             $crate::commands::spaces::create_page_in_space,

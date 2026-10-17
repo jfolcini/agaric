@@ -52,6 +52,7 @@ pub mod journal;
 pub mod link_metadata;
 pub mod logging;
 pub mod mcp;
+pub mod mcp_agents;
 pub mod notifier;
 pub mod observability;
 pub mod pages;

@@ -26,6 +26,7 @@ vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
+import type { McpAgent } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
 import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
@@ -3729,6 +3730,58 @@ describe('mcp_rw_set_enabled', () => {
 describe('mcp_rw_disconnect_all', () => {
   it('returns null', () => {
     expect(invoke('mcp_rw_disconnect_all', {})).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MCP agents (#5667)
+// ---------------------------------------------------------------------------
+
+describe('MCP agents', () => {
+  const names = () => (invoke('list_mcp_agents') as McpAgent[]).map((agent) => agent.name)
+
+  it('creates an agent the list re-reads, and revokes it', () => {
+    const planner = invoke('create_mcp_agent', {
+      name: ' Planner ',
+      mode: 'read_write',
+      spaceIds: ['space_personal'],
+    }) as McpAgent
+    invoke('create_mcp_agent', { name: 'agenda', mode: 'read_only', spaceIds: null })
+
+    expect(planner).toMatchObject({
+      name: 'Planner',
+      mode: 'read_write',
+      space_ids: ['SPACE_PERSONAL'],
+      last_used_ms: null,
+    })
+    expect(planner.token).toMatch(/^agt_[0-9a-f]{32}$/)
+    expect(names(), 'by name in any letter case').toEqual(['agenda', 'Planner'])
+
+    invoke('revoke_mcp_agent', { id: planner.id })
+    expect(names()).toEqual(['agenda'])
+    expect(() => invoke('revoke_mcp_agent', { id: planner.id })).toThrow(
+      expect.objectContaining({ kind: 'not_found' }),
+    )
+  })
+
+  it('refuses what the backend refuses, with its codes', () => {
+    invoke('create_mcp_agent', { name: 'Planner', mode: 'read_only', spaceIds: null })
+    const refused: [string, string[] | null, string][] = [
+      ['   ', null, 'InvalidAgentName'],
+      ['Plan\u0007ner', null, 'InvalidAgentName'],
+      ['x'.repeat(129), null, 'InvalidAgentName'],
+      ['PLANNER', null, 'DuplicateAgentName'],
+      ['Other', [], 'InvalidAgentSpaces'],
+      ['Other', ['SPACE_PERSONAL', 'NOPE'], 'InvalidAgentSpaces'],
+    ]
+    for (const [name, spaceIds, code] of refused) {
+      expect(() => invoke('create_mcp_agent', { name, mode: 'read_only', spaceIds }), name).toThrow(
+        expect.objectContaining({ kind: 'validation', code }),
+      )
+    }
+    // The cap counts chars, not UTF-16 code units.
+    invoke('create_mcp_agent', { name: '\u{1D11E}'.repeat(128), mode: 'read_only', spaceIds: null })
+    expect(names()).toHaveLength(2)
   })
 })
 

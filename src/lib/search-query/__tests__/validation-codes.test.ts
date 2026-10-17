@@ -105,6 +105,9 @@ describe('ValidationCode (#1061/#2251 shared contract)', () => {
       InvalidRepeatRule: 'InvalidRepeatRule',
       DuplicatePageTitle: 'DuplicatePageTitle',
       DuplicatePageAlias: 'DuplicatePageAlias',
+      InvalidAgentName: 'InvalidAgentName',
+      DuplicateAgentName: 'DuplicateAgentName',
+      InvalidAgentSpaces: 'InvalidAgentSpaces',
     })
   })
 

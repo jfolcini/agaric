@@ -7255,3 +7255,82 @@ async fn pages_cache_0124_space_id_backfills_from_the_page_5371() {
         assert_eq!(ids, [page], "space {space} lists its upgraded page");
     }
 }
+
+/// #5667 — `mcp_agents` is STRICT and round-trips an agent; a name another
+/// agent holds in a different letter case, a mode outside the two, and a
+/// space list that is not a JSON array are refused.
+#[tokio::test]
+async fn mcp_agents_0125_round_trips_an_agent_5667() {
+    let (pool, _dir) = test_pool().await;
+    let strict: i64 =
+        sqlx::query_scalar("SELECT strict FROM pragma_table_list WHERE name = 'mcp_agents'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(strict, 1, "mcp_agents is STRICT");
+
+    let insert = "INSERT INTO mcp_agents (id, name, mode, space_ids, token, created_at_ms) \
+                  VALUES (?, ?, ?, ?, ?, 7)";
+    sqlx::query(insert)
+        .bind("01J0000000000000000AGENT01")
+        .bind("Planner")
+        .bind("read_write")
+        .bind(r#"["01J0000000000000000SPACE1"]"#)
+        .bind("agt_one")
+        .execute(&pool)
+        .await
+        .expect("insert an agent");
+    let row: (String, String, Option<String>, String, i64, Option<i64>) = sqlx::query_as(
+        "SELECT name, mode, space_ids, token, created_at_ms, last_used_ms FROM mcp_agents",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        (
+            "Planner".to_owned(),
+            "read_write".to_owned(),
+            Some(r#"["01J0000000000000000SPACE1"]"#.to_owned()),
+            "agt_one".to_owned(),
+            7,
+            None,
+        ),
+        "the agent reads back as written"
+    );
+
+    for (id, name, mode, spaces, token, what) in [
+        (
+            "A2",
+            "planner",
+            "read_only",
+            None,
+            "agt_two",
+            "a case-variant name",
+        ),
+        ("A3", "Reader", "admin", None, "agt_three", "mode 'admin'"),
+        (
+            "A4",
+            "Reader",
+            "read_only",
+            Some(r#""x""#),
+            "agt_four",
+            "a non-array space list",
+        ),
+    ] {
+        sqlx::query(insert)
+            .bind(id)
+            .bind(name)
+            .bind(mode)
+            .bind(spaces)
+            .bind(token)
+            .execute(&pool)
+            .await
+            .expect_err(what);
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_agents")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "only the first agent was stored");
+}

@@ -9,14 +9,26 @@
  * store.
  */
 
+import type { McpAgent, McpAgentMode, ValidationCode } from '@/lib/bindings'
+import { compareNocase, compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
 import {
   type TypedHandlers,
+  appErrorRejection,
   notFoundRejection,
   returnNull,
   returnUndefined,
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
-import { appSettings, fakeId, mcpEnabled, pairingPeerReveal, peerRefs } from '@/lib/tauri-mock/seed'
+import {
+  appSettings,
+  blocks,
+  fakeId,
+  mcpAgents,
+  mcpEnabled,
+  pairingPeerReveal,
+  peerRefs,
+  properties,
+} from '@/lib/tauri-mock/seed'
 
 /** #4549 — the `app_settings` key `get_sync_relay_settings_inner` reads; `'1'` = on. */
 const INTERNET_RELAY_KEY = 'sync.internet_relay'
@@ -68,6 +80,39 @@ function bySyncedAtDesc(a: Record<string, unknown>, b: Record<string, unknown>):
 // (`clear_unpaired_flags_on_pairing_act`, agaric-sync/src/pairing.rs).
 function clearUnpairedFlagsOnPairingAct(): void {
   for (const row of peerRefs.values()) row['unpaired_by_peer_at_ms'] = null
+}
+
+/** `mcp::agents::MAX_AGENT_NAME_LEN`: the longest agent name, in chars. */
+const MAX_AGENT_NAME_LEN = 128
+
+function agentRejection(code: ValidationCode, message: string): Error {
+  return appErrorRejection({ kind: 'validation', code, message })
+}
+
+/**
+ * `valid_agent_name` (`commands/mcp_agents.rs`): Rust's `trim` strips
+ * `White_Space`, `is_control` is category `Cc`, and the cap counts chars.
+ */
+function validAgentName(raw: string): string {
+  const name = raw.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '')
+  const reason =
+    name === ''
+      ? 'an agent needs a name'
+      : /\p{Cc}/u.test(name)
+        ? 'an agent name cannot hold a control character'
+        : Array.from(name).length > MAX_AGENT_NAME_LEN
+          ? `an agent name is at most ${MAX_AGENT_NAME_LEN} characters`
+          : null
+  if (reason !== null) throw agentRejection('InvalidAgentName', reason)
+  return name
+}
+
+/** A live space, as the `spaces` registry joined to a live block answers it. */
+function isLiveSpace(id: string): boolean {
+  return (
+    !blocks.get(id)?.['deleted_at'] &&
+    properties.get(id)?.get('is_space')?.['value_text'] === 'true'
+  )
 }
 
 // #3463 — the mock used to accept ANY passphrase (`confirm_pairing:
@@ -332,6 +377,52 @@ export const syncHandlers = {
 
   mcp_rw_disconnect_all: returnNull,
 
+  // #5667 — the device-local `mcp_agents` rows (`commands/mcp_agents.rs`).
+  // `ORDER BY name, id`, and the name column is NOCASE.
+  list_mcp_agents: () =>
+    Array.from(mcpAgents.values(), (agent) => ({ ...agent })).toSorted(
+      (a, b) => compareNocase(a.name, b.name) || compareUtf8Bytes(a.id, b.id),
+    ),
+
+  // Checks in the backend's order: the name, the spaces, then the clash the
+  // insert's `ON CONFLICT(name)` finds. `SpaceId` uppercases on the wire.
+  create_mcp_agent: (args) => {
+    const a = args as { name: string; mode: McpAgentMode; spaceIds: string[] | null }
+    const name = validAgentName(a.name)
+    const spaceIds = a.spaceIds?.map((id) => id.toUpperCase()) ?? null
+    if (spaceIds?.length === 0) {
+      throw agentRejection(
+        'InvalidAgentSpaces',
+        'an agent needs at least one space, or every space',
+      )
+    }
+    const dead = spaceIds?.find((id) => !isLiveSpace(id))
+    if (dead !== undefined) {
+      throw agentRejection('InvalidAgentSpaces', `space ${dead} does not exist`)
+    }
+    const folded = foldAsciiUppercase(name)
+    if ([...mcpAgents.values()].some((agent) => foldAsciiUppercase(agent.name) === folded)) {
+      throw agentRejection('DuplicateAgentName', `an agent named '${name}' already exists`)
+    }
+    const bytes = crypto.getRandomValues(new Uint8Array(16))
+    const agent: McpAgent = {
+      id: fakeId(),
+      name,
+      mode: a.mode,
+      space_ids: spaceIds,
+      token: `agt_${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`,
+      created_at_ms: Date.now(),
+      last_used_ms: null,
+    }
+    mcpAgents.set(agent.id, agent)
+    return { ...agent }
+  },
+
+  revoke_mcp_agent: (args) => {
+    const id = (args as { id: string }).id
+    if (!mcpAgents.delete(id)) throw notFoundRejection(`mcp agent ${id}`)
+  },
+
   // ---------------------------------------------------------------------------
   // Trash descendant counts
   //
@@ -376,4 +467,7 @@ export const syncHandlers = {
   | 'get_mcp_rw_status'
   | 'mcp_rw_set_enabled'
   | 'mcp_rw_disconnect_all'
+  | 'list_mcp_agents'
+  | 'create_mcp_agent'
+  | 'revoke_mcp_agent'
 >
