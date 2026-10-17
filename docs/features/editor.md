@@ -110,7 +110,7 @@ Settings › Editor › *Edit pages as* sets how pages open on this device: **Bl
 - **Changes from elsewhere** (another device, an agent) come in while the page is open, block by block: a new block appears in its place, a moved one moves, a deleted one goes. Text you were typing into a block deleted elsewhere is kept as a new block, and a notice says so. A write the backend refuses makes the save read the page again and try once more, never in a loop.
 - **It shows** text with its marks, headings, code blocks with their highlighting, math, Mermaid, images written in the text, and links, tags and block references as chips that open what they point to, with the `[[`, `#` and `((` pickers. Collapsed blocks show their children, and stay collapsed in block mode. The slash menu, `::` property lines, drag handles and the block menu are block mode's: in page mode `/` and `::` are plain text (#5743).
 - **A page it cannot show yet opens in blocks**, and *Page* in the switch says why in its tooltip: a block with a task state, a priority, a due or scheduled date, a property, an attachment, a query or an embed, or more blocks than `PAGE_MODE_BLOCK_CAP` (#5743). A page that gains one of these while open in page mode goes back to blocks, with a notice.
-- A `#name` left as text when the block is saved becomes a tag in block mode, not in page mode (#5743).
+- **A `#name` left as text becomes the tag** once the cursor leaves its block, or you leave page mode, as block mode makes it when you leave a block: the existing tag of that name in any case, else a new one. Undo takes it back with the typing. A `key:: value` line or a task marker typed in page mode stays text (#5743).
 
 ## File attachments
 

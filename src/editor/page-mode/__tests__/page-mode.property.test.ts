@@ -1,7 +1,8 @@
 /**
  * Page mode end to end against the mock backend (#5691): a random run of
  * typing, Enter, Backspace, Tab, Shift+Tab, a copy pasted, blocks cut and
- * pasted, paragraphs pasted from outside, and undo, each step perhaps followed
+ * pasted, paragraphs pasted from outside, a `#name` typed and the caret moved
+ * to another block (#5743), and undo, each step perhaps followed
  * by a peer's change (an edit, or a block created, moved or deleted) brought in
  * as a reload does, and perhaps by a save whose commands fail before a clean
  * one. After every clean save:
@@ -9,6 +10,8 @@
  * - the mock backend's page equals the document: ids, depth, order and text
  *   (an empty block new in the document may be missing: it is created once it
  *   holds something);
+ * - a block the caret left after a `#name` was typed in it holds that name as
+ *   a tag, written by the editor's tag commit (`commitPageTags`) after the save;
  * - an id that survives a step stays on the text it was on: a step that only
  *   types keeps every id, Enter adds one new id beside the block it splits, a
  *   join drops only the joined block's, Tab keeps the order and Shift+Tab the
@@ -27,11 +30,12 @@
  * refuses it as the backend does.
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import type { Editor } from '@tiptap/core'
 import { closeHistory } from '@tiptap/pm/history'
 import type { Fragment, Node as PMNode } from '@tiptap/pm/model'
 import fc from 'fast-check'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { computeContentDelta } from '@/editor/content-delta'
 import { parse, serialize } from '@/editor/markdown-serializer'
@@ -55,12 +59,15 @@ import {
   savePage,
   type TreeRow,
 } from '@/editor/page-mode/page-save'
+import { commitPageTags } from '@/editor/page-mode/page-tags'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import { blockIdOf } from '@/editor/token-ids'
 import type { BlockRow, OpRef } from '@/lib/bindings'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks as mockBlocks, seedBlocks } from '@/lib/tauri-mock/seed'
 import { buildFlatTree } from '@/lib/tree-utils'
+import { useSpaceStore } from '@/stores/space'
+import { tagsWrittenAsText } from '@/stores/unmount-flush'
 
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' } as const
 
@@ -219,6 +226,13 @@ const actionArb = fc.oneof(
     at,
     html: fc.boolean(),
   }),
+  fc.record({
+    kind: fc.constant('tag' as const),
+    block: fc.nat(),
+    // A new tag, and the seeded `work` in another case.
+    name: fc.constantFrom('newtag', 'Work'),
+    to: fc.nat(),
+  }),
   fc.record({ kind: fc.constant('undo' as const) }),
 )
 type Action = typeof actionArb extends fc.Arbitrary<infer T> ? T : never
@@ -264,6 +278,8 @@ interface Acted {
   offset: number
   /** The block a paste went into. */
   target?: string
+  /** The block a `#name` was typed into, which the caret then left. */
+  tagged?: string
 }
 
 /** Apply `action`; resolves the block it acted on, if any. */
@@ -289,6 +305,16 @@ function apply(ed: Editor, action: Action): Acted | null {
   const index = action.block % count
   const offset = 'at' in action ? action.at % (firstTextLength(ed, index) + 1) : 0
   caret(ed, index, offset)
+  if (action.kind === 'tag') {
+    const tagged = blockIdOf(ed.state.doc.child(index)) as string
+    caret(ed, index, firstTextLength(ed, index))
+    type(ed, ` #${action.name}`)
+    const others = Array.from({ length: count }, (_, i) => i).filter((i) => i !== index)
+    const to = others[action.to % Math.max(others.length, 1)]
+    if (to === undefined) return { index, offset }
+    caret(ed, to, 0)
+    return { index, offset, tagged }
+  }
   if (action.kind === 'pasteOutside') {
     if (action.html) ed.view.pasteHTML('<p>from</p><p>outside</p>')
     else ed.view.pasteText('from\noutside')
@@ -476,6 +502,25 @@ function expectPeersKept(ed: Editor, page: MockPage, marks: Map<string, PeerMark
 
 let editor: Editor | null = null
 
+/** The `#` rule's create: a tag in the mock backend. */
+function createTag(name: string): Promise<string> {
+  const tag = dispatch('create_block', {
+    blockType: 'tag',
+    content: name,
+    parentId: null,
+    index: null,
+    scope: SCOPE,
+    blockId: null,
+  }) as BlockRow
+  return Promise.resolve(tag.id)
+}
+
+beforeEach(() => {
+  // The tag commit's commands go to the same mock backend.
+  vi.mocked(invoke).mockImplementation(async (cmd, args) => dispatch(cmd, args))
+  useSpaceStore.setState({ currentSpaceId: SCOPE.space_id })
+})
+
 afterEach(() => {
   editor?.destroy()
   editor = null
@@ -490,7 +535,7 @@ describe('page mode against the mock backend', () => {
         async (rows, steps) => {
           editor?.destroy()
           const page = mockPage(rows)
-          const ed = openPage(rows)
+          const ed = openPage(rows, undefined, createTag)
           editor = ed
           const save = createSaveState(page.pageId, page.rows(), ed.state.doc)
           const seen = new Set(idsOf(ed.state.doc))
@@ -510,6 +555,8 @@ describe('page mode against the mock backend', () => {
             )
             expectIdsKept(action, acted, before, after, seen, emptyBefore, emptyAfter)
             for (const id of after) seen.add(id)
+            // A `#name` typing went on after became a tag as typed (`at-tag-picker.ts`): let it land.
+            await new Promise((resolve) => setTimeout(resolve, 0))
 
             if (peer !== null) {
               const textOnly = action.kind === 'type'
@@ -534,6 +581,15 @@ describe('page mode against the mock backend', () => {
             expect(result.error).toBeUndefined()
             // A block the save gave a new id: its old one was refused.
             for (const id of idsOf(ed.state.doc)) seen.add(id)
+
+            const tagged = acted?.tagged
+            if (tagged !== undefined && nodeById(ed.state.doc, tagged) !== null) {
+              // As the editor does once the caret left the block: commit, then bring the page in.
+              await commitPageTags(tagged, save, page.api)
+              applyRemote(ed.view, save, page.rows(), mintKept)
+              const content = page.live().find(([id]) => id === tagged)?.[2] ?? ''
+              expect(tagsWrittenAsText(content)).toEqual([])
+            }
 
             expectBackendHoldsDoc(ed, page.live())
             expectPeersKept(ed, page, marks)

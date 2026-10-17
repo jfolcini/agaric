@@ -36,7 +36,11 @@ export function idMinter(prefix = '01NEW'): () => string {
 
 const noPickerItems = () => Promise.resolve([])
 
-export function openPage(rows: readonly Row[], mintId: () => string = idMinter()): Editor {
+export function openPage(
+  rows: readonly Row[],
+  mintId: () => string = idMinter(),
+  onCreateTag: (name: string) => Promise<string> = () => Promise.resolve(''),
+): Editor {
   return new Editor({
     element: document.createElement('div'),
     extensions: pageModeExtensions({
@@ -46,7 +50,7 @@ export function openPage(rows: readonly Row[], mintId: () => string = idMinter()
       searchPages: noPickerItems,
       searchBlockRefs: noPickerItems,
       onCreatePage: () => Promise.resolve(''),
-      onCreateTag: () => Promise.resolve(''),
+      onCreateTag,
       onNavigate: () => {},
       onTagClick: () => {},
       placeholder: '',

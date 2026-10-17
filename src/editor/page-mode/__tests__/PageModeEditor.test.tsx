@@ -21,6 +21,7 @@ import { flushActiveDraft } from '@/lib/active-draft-flush'
 import type { BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
@@ -413,5 +414,143 @@ describe('PageModeEditor', () => {
     await waitFor(() => {
       expect(onBlocked).toHaveBeenCalledWith({ kind: 'tasks' })
     })
+  })
+})
+
+describe('PageModeEditor typed tags (#5743)', () => {
+  const TAG_REF = /#\[([0-9A-Z]{26})\]/
+  /** The mock's seeded `work` tag (`src/lib/tauri-mock/seed.ts`). */
+  const SEED_TAG_WORK = '000000000000000000000TAG01'
+
+  /** The space's tags: id by name. */
+  function tagIds(): Map<string, string> {
+    const rows = dispatch('list_all_tags_in_space', { scope: SCOPE }) as Array<{
+      tag_id: string
+      name: string
+    }>
+    return new Map(rows.map((row) => [row.name, row.tag_id]))
+  }
+
+  function caretTo(editor: Editor, index: number): void {
+    act(() => {
+      editor.commands.setTextSelection(at(editor, index, 0))
+    })
+  }
+
+  it('a #name typed and left for another block becomes the tag, its chip, and undoes', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeAt(editor, 0, 5, ' #newtag')
+    caretTo(editor, 1)
+
+    await waitFor(() => {
+      expect(backendText(ids[0] as string)).toMatch(/^first #\[[0-9A-Z]{26}\]$/)
+    })
+    const tagId = TAG_REF.exec(backendText(ids[0] as string) ?? '')?.[1]
+    expect(tagIds().get('newtag')).toBe(tagId)
+    await waitFor(() => {
+      expect(docTexts(editor)).toEqual([`first #[${tagId}]`, 'second'])
+    })
+    expect(
+      container.querySelector(`[data-page-block-id="${ids[0]}"] [data-testid="tag-ref-chip"]`),
+    ).not.toBeNull()
+
+    act(() => {
+      editor.commands.undo()
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(docTexts(editor)).toEqual(['first', 'second'])
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'first'],
+      [ids[1], 'second'],
+    ])
+  })
+
+  it('a name the caret is still after stays text through a save, until the caret leaves', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.view.focus()
+    })
+
+    typeAt(editor, 0, 5, ' #proj')
+    await act(async () => {
+      await flushActiveDraft()
+    })
+
+    expect(backendText(ids[0] as string)).toBe('first #proj')
+    expect(tagIds().has('proj')).toBe(false)
+    expect(docTexts(editor)).toEqual(['first #proj', 'second'])
+
+    caretTo(editor, 1)
+    await waitFor(() => {
+      expect(backendText(ids[0] as string)).toBe(`first #[${tagIds().get('proj')}]`)
+    })
+  })
+
+  it('a name an existing tag has, in any case, is that tag', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const before = tagIds().size
+
+    typeAt(editor, 0, 5, ' #Work')
+    caretTo(editor, 1)
+
+    await waitFor(() => {
+      expect(backendText(ids[0] as string)).toBe(`first #[${SEED_TAG_WORK}]`)
+    })
+    expect(tagIds().size).toBe(before)
+  })
+
+  it('leaving page mode, or the page, with the caret after a name makes it the tag', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle, unmount } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeAt(editor, 0, 5, ' #switched')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(backendText(ids[0] as string)).toBe(`first #[${tagIds().get('switched')}]`)
+
+    typeAt(editor, 1, 6, ' #left')
+    unmount()
+    await waitFor(() => {
+      expect(backendText(ids[1] as string)).toBe(`second #[${tagIds().get('left')}]`)
+    })
+  })
+
+  it('a tag that cannot be created leaves the name as text, and logs why', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const warn = vi.spyOn(logger, 'warn')
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'create_block' && (args as { blockType: string }).blockType === 'tag') {
+        throw new Error('disk full')
+      }
+      return dispatch(cmd, args)
+    })
+
+    typeAt(editor, 0, 5, ' #newtag')
+    caretTo(editor, 1)
+
+    await waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(
+        'unmount-flush',
+        'tag create failed, the tag stays text',
+        { name: 'newtag' },
+        expect.any(Error),
+      )
+    })
+    expect(backendText(ids[0] as string)).toBe('first #newtag')
+    expect(docTexts(editor)).toEqual(['first #newtag', 'second'])
+    expect(tagIds().has('newtag')).toBe(false)
   })
 })

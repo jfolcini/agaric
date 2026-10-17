@@ -658,6 +658,56 @@ test.describe('page mode behaves as block mode (#5691)', () => {
       .toBe(`one [[${target.pageId}]] #[${SEED_TAG_WORK}] ((${ids[1]}))`)
   })
 
+  test('a #name typed and left for the next block becomes the tag, and stays one', async ({
+    page,
+  }) => {
+    // axe reads colours, which a fade in progress makes wrong.
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const { pageId, ids } = await seedRows(page, 'Typed tags', [
+      [0, 'one'],
+      [0, 'two'],
+    ])
+    await openInPageMode(page, 'Typed tags', 2)
+    await caret(page, 0, 'end')
+
+    await page.keyboard.type(' #newtag')
+    await expect(activeSuggestionPopup(page)).toBeVisible()
+    await page.keyboard.press('Escape')
+    // Closing the picker redraws the text the caret is in; a native arrow pressed
+    // before that frame is taken back by ProseMirror's own selection.
+    await expect(activeSuggestionPopup(page)).toBeHidden()
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+    await page.keyboard.press('ArrowDown')
+
+    const chip = page.locator(
+      `${EDITOR} [data-page-block-id="${ids[0]}"] [data-testid="tag-ref-chip"]`,
+    )
+    await expect(chip).toHaveText('newtag')
+    const tags = await invoke<Array<{ tag_id: string; name: string }>>(
+      page,
+      'list_all_tags_in_space',
+      { scope: SCOPE },
+    )
+    const tagId = tags.find((tag) => tag.name === 'newtag')?.tag_id
+    expect((await backend(page, pageId))[0]?.text).toBe(`one #[${tagId}]`)
+
+    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    await page.keyboard.press('Escape')
+    await expect(page.locator(EDITOR)).not.toBeFocused()
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Typed tags')
+    await expect(page.locator('.page-editor [data-testid="tag-ref-chip"]')).toHaveText('newtag')
+    await page.addScriptTag({ path: axePath })
+    const violations = await page.evaluate(async () => {
+      const { axe } = window as unknown as {
+        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
+      }
+      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
+      return found.map((v) => v.id)
+    })
+    expect(violations).toEqual([])
+  })
+
   test('/ and :: are plain text: no menu or picker takes Enter, which splits the block', async ({
     page,
   }) => {
