@@ -698,8 +698,16 @@ pub async fn hydrate_space_block_into_own_engine(
     space_id: &agaric_store::space::SpaceId,
 ) -> Result<(), AppError> {
     let block_id = agaric_core::ulid::BlockId::from_trusted(space_id.as_str());
-    hydrate_page_subtree_into_engine(tx, state, device_id, &block_id, space_id, SeedRank::Stamp, None)
-        .await
+    hydrate_page_subtree_into_engine(
+        tx,
+        state,
+        device_id,
+        &block_id,
+        space_id,
+        SeedRank::Stamp,
+        None,
+    )
+    .await
 }
 
 /// One row of the owning-page subtree read by
