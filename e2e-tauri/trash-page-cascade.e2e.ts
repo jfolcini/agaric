@@ -19,19 +19,18 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  confirmDialog,
   enterBlankSibling,
   expectAbsent,
   navigateTo,
-  openNewPageDialog,
+  openNewPage,
   reopenPageByTitle,
   runScopedMarker,
-  typeInputVerified,
   typeMarkerVerified,
   waitForAppReady,
   waitForToast,
 } from './helpers'
 
-const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 // A live page to wait for before asserting a deleted one is absent from Pages.
 const KEPT = runScopedMarker('wdio-trash-kept')
 
@@ -43,18 +42,6 @@ function pageRow(title: string): string {
 /** The Trash row whose content is the page title `title`. */
 function trashRow(title: string): string {
   return `//*[@data-testid="trash-item"][.//*[contains(@class, "trash-item-text")][normalize-space(.)="${title}"]]`
-}
-
-/** Create page `title` in the New page dialog; it opens with its first block in the editor. */
-async function openTitledPage(title: string): Promise<void> {
-  await openNewPageDialog()
-  await typeInputVerified('#new-page-name', title)
-  await browser.keys(['Enter'])
-  await browser.waitUntil(async () => (await $('[aria-label="Page title"]').getText()) === title, {
-    timeout: NAV_TIMEOUT,
-    timeoutMsg: `the page ${title} never opened`,
-  })
-  await $(EDITOR).waitForDisplayed({ timeout: ACTION_TIMEOUT })
 }
 
 /** The page's rows in document order, as `<marker>@<aria-level>` for each of `markers` found. */
@@ -89,7 +76,7 @@ async function waitForChain(markers: string[], what: string): Promise<void> {
 
 /** Create page `title` holding `markers` as a chain, each block the child of the one before. */
 async function createChainPage(title: string, markers: string[]): Promise<void> {
-  await openTitledPage(title)
+  await openNewPage(title)
   for (const [i, marker] of markers.entries()) {
     if (i > 0) {
       await enterBlankSibling()
@@ -119,16 +106,6 @@ async function deleteFromPagesList(title: string): Promise<void> {
   await remove.click()
   await confirmDialog('Delete')
   await waitForToast('Page deleted')
-}
-
-/** Confirm the open `[role="alertdialog"]` with its `label` button and wait for it to close. */
-async function confirmDialog(label: string): Promise<void> {
-  const dialog = $('[role="alertdialog"]')
-  await dialog.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-  const confirm = dialog.$(`button=${label}`)
-  await confirm.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await confirm.click()
-  await dialog.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
 }
 
 /** Open Trash from the Pages header and wait until its list has loaded. */
@@ -167,7 +144,7 @@ async function restoreFromTrash(title: string): Promise<void> {
 describe('Agaric real-backend Trash: page cascade, restore, purge (#5737)', () => {
   before(async () => {
     await waitForAppReady()
-    await openTitledPage(KEPT)
+    await openNewPage(KEPT)
     await typeMarkerVerified(runScopedMarker('wdio-trash-kept-body'))
     await navigateTo('Pages')
   })
@@ -201,7 +178,7 @@ describe('Agaric real-backend Trash: page cascade, restore, purge (#5737)', () =
 
   it('purges a trashed page so Trash no longer lists it', async () => {
     const page = runScopedMarker('wdio-trash-purge-page')
-    await openTitledPage(page)
+    await openNewPage(page)
     await typeMarkerVerified(runScopedMarker('wdio-trash-purge-body'))
     await deleteFromPagesList(page)
 

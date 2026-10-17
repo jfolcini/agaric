@@ -574,19 +574,41 @@ export async function openNewPageDialog(): Promise<void> {
 }
 
 /**
- * Create an untitled page and open it: the New page dialog with a blank title,
- * then Enter. Unlike `navigateTo` there is no `aria-current` to wait on, so
- * readiness is the page editor's title textbox (`PageTitleEditor`, aria-label
- * `pageHeader.pageTitle`) plus the auto-created, auto-focused first block's
- * editor (`use-block-auto-create-first-block.ts`).
+ * Create a page and open it: the New page dialog, `title` if given (blank
+ * otherwise), then Enter. Unlike `navigateTo` there is no `aria-current` to
+ * wait on, so readiness is the page editor's title textbox (`PageTitleEditor`,
+ * aria-label `pageHeader.pageTitle`) plus the auto-created, auto-focused first
+ * block's editor (`use-block-auto-create-first-block.ts`). With a title it
+ * waits for that title, because a page from an earlier case may still be open.
  */
-export async function openNewPage(): Promise<void> {
+export async function openNewPage(title?: string): Promise<void> {
   await openNewPageDialog()
+  if (title !== undefined) await typeInputVerified('#new-page-name', title)
   await browser.keys(['Enter'])
-  await $('[aria-label="Page title"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+  if (title === undefined) {
+    await $('[aria-label="Page title"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+  } else {
+    await browser.waitUntil(
+      async () => (await $('[aria-label="Page title"]').getText()) === title,
+      {
+        timeout: NAV_TIMEOUT,
+        timeoutMsg: `the page ${title} never opened`,
+      },
+    )
+  }
   await $('[data-testid="block-editor"] [contenteditable="true"]').waitForDisplayed({
     timeout: ACTION_TIMEOUT,
   })
+}
+
+/** Confirm the open `[role="alertdialog"]` (ConfirmDialog) with its `label` button and wait for it to close. */
+export async function confirmDialog(label: string): Promise<void> {
+  const dialog = $('[role="alertdialog"]')
+  await dialog.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  const confirm = dialog.$(`button=${label}`)
+  await confirm.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await confirm.click()
+  await dialog.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
 }
 
 /**
