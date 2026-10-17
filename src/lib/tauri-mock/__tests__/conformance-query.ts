@@ -628,9 +628,14 @@ const WIRE: Readonly<Record<string, WireShape>> = {
     hasMoreKey: null,
     totalKey: null,
   },
+  // The task columns ride as attributes: the graph's filters read them.
   list_all_pages_in_space: {
     rows: { kind: 'bare-array' },
-    token: ID_TOKEN,
+    token: {
+      kind: 'id',
+      idKey: 'id',
+      attrKeys: ['todo_state', 'priority', 'due_date', 'scheduled_date'],
+    },
     hasMoreKey: null,
     totalKey: null,
   },

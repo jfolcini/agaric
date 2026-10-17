@@ -10,6 +10,7 @@
  */
 
 import { base64UrlToUtf8 } from '@/lib/base64url'
+import type { PageHeading } from '@/lib/bindings'
 import {
   INLINE_PROPERTY_RESERVED_KEYS,
   foldPropertyKey,
@@ -1022,7 +1023,7 @@ export const pagesHandlers = {
     return items
   },
 
-  // Every page in the active space as `{ id, content }`.  No pagination,
+  // Every page in the active space as a `PageHeading`.  No pagination,
   // no clamp — bounded by the space's intrinsic page count.  Backs
   // `exportGraphAsZip` and graph rendering.
   //
@@ -1035,7 +1036,7 @@ export const pagesHandlers = {
     const spaceId = readActiveSpaceScope('list_all_pages_in_space', a)
     const rawTagIds = a['tagIds'] as string[] | null | undefined
     const tagFilter = rawTagIds && rawTagIds.length > 0 ? new Set(rawTagIds) : null
-    const items: Array<{ id: string; content: string | null }> = []
+    const items: PageHeading[] = []
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page') continue
       if (b['deleted_at']) continue
@@ -1054,7 +1055,14 @@ export const pagesHandlers = {
         }
         if (!hit) continue
       }
-      items.push({ id: b['id'] as string, content: (b['content'] as string | null) ?? null })
+      items.push({
+        id: b['id'] as string,
+        content: (b['content'] as string | null) ?? null,
+        todo_state: (b['todo_state'] as string | null) ?? null,
+        priority: (b['priority'] as string | null) ?? null,
+        due_date: (b['due_date'] as string | null) ?? null,
+        scheduled_date: (b['scheduled_date'] as string | null) ?? null,
+      })
     }
     // `ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC`
     // (`src-tauri/src/commands/pages/listing.rs`) — NOCASE folds ASCII only and

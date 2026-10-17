@@ -280,7 +280,12 @@
       "error": null,
       "has_more": null,
       "name": "the_harness_space_no_longer_lists_the_moved_page",
-      "rows": ["B2", "B10", "B1", "B8"],
+      "rows": [
+        "B2#todo_state=null#priority=null#due_date=null#scheduled_date=null",
+        "B10#todo_state=null#priority=null#due_date=null#scheduled_date=null",
+        "B1#todo_state=null#priority=null#due_date=null#scheduled_date=null",
+        "B8#todo_state=null#priority=null#due_date=null#scheduled_date=null"
+      ],
       "total_count": null
     }
   ],
