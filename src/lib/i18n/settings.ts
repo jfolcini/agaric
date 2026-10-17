@@ -110,7 +110,7 @@ export const settings: Record<string, string> = {
   'quickCapture.saveButton': 'Capture',
   'quickCapture.successToast': "Captured to today's journal",
   'quickCapture.failureToast': "Couldn't save quick capture",
-  'settings.tabHelp': 'Help',
+  'settings.tabHelp': 'About',
   'settings.tabNotifications': 'Tasks & reminders',
   'notifications.description':
     'Get a native OS notification on the day a task is due, and send yourself a test to confirm they reach you.',
