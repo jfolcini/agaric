@@ -784,8 +784,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       withFlankingShortcuts(StrikeWithShortcut, ['~~']),
       withFlankingShortcuts(HighlightWithShortcut, ['==']),
       Underline,
-      // #5689 spike — reveals the Markdown markers of the caret's inline marks,
-      // behind the off-by-default `revealMarkdownSyntax` preference.
+      // #5689 — the caret's inline marks show their Markdown markers, behind the
+      // off-by-default `revealMarkdownSyntax` preference.
       MarkdownReveal,
       CalloutBlockquote,
       OrderedList,

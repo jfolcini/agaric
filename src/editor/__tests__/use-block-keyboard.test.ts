@@ -1,6 +1,7 @@
 import { renderHook } from '@testing-library/react'
 import { Editor } from '@tiptap/core'
 import Blockquote from '@tiptap/extension-blockquote'
+import Bold from '@tiptap/extension-bold'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
 import { BulletList } from '@tiptap/extension-list'
@@ -15,6 +16,7 @@ import { Selection } from '@tiptap/pm/state'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { MarkdownReveal } from '@/editor/extensions/markdown-reveal'
 import { setSelectionProbe } from '@/editor/pm-selection-probe'
 import {
   type BlockKeyboardCallbacks,
@@ -23,6 +25,7 @@ import {
   handleBlockKeyDown,
   useBlockKeyboard,
 } from '@/editor/use-block-keyboard'
+import { PREFERENCES, writePreference } from '@/lib/preferences'
 
 // #2939 — in production the editor-runtime chunk registers the ProseMirror
 // boundary probe on load (so `use-block-keyboard` stays TipTap-free on the
@@ -2031,6 +2034,144 @@ describe('structural atStart/atEnd — nested first/last nodes (blockquote / lis
       handleBlockKeyDown(makeEvent('Backspace'), editor, cbs)
       expect(cbs._calls['onMergeWithPrev']).toBe(1)
     } finally {
+      cleanup()
+    }
+  })
+})
+
+describe('#5689 — a revealed Markdown marker beside the caret keeps its keys in the block', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  /** `**bold** rest`, or `rest **bold**` with `boldLast`; the preference on unless `off`. */
+  function setup(opts: { boldLast?: boolean; off?: boolean } = {}) {
+    if (!opts.off) writePreference(PREFERENCES.revealMarkdownSyntax, true)
+    const element = document.createElement('div')
+    document.body.append(element)
+    const bold = { type: 'text', text: 'bold', marks: [{ type: 'bold' }] }
+    const rest = { type: 'text', text: opts.boldLast ? 'rest ' : ' rest' }
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text, Bold, MarkdownReveal],
+      content: {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: opts.boldLast ? [rest, bold] : [bold, rest] }],
+      },
+    })
+    const callbacks = makeCallbacks()
+    const cleanup = () => {
+      editor.destroy()
+      element.remove()
+    }
+    return { editor, callbacks, cleanup }
+  }
+
+  it('Backspace after the opening marker at the block start does not merge', () => {
+    const { editor, callbacks, cleanup } = setup()
+    try {
+      editor.commands.setTextSelection(1)
+      const event = makeEvent('Backspace')
+      handleBlockKeyDown(event, editor, callbacks)
+      expect(callbacks._calls['onMergeWithPrev']).toBeUndefined()
+      expect(event.preventDefault).not.toHaveBeenCalled()
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('Backspace before the opening marker at the block start merges', () => {
+    const { editor, callbacks, cleanup } = setup()
+    try {
+      editor.commands.setTextSelection(1)
+      // Typing plain at the start puts the caret outside the opening marker.
+      editor.commands.unsetBold()
+      handleBlockKeyDown(makeEvent('Backspace'), editor, callbacks)
+      expect(callbacks._calls['onMergeWithPrev']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('Backspace at the block start merges with the preference off', () => {
+    const { editor, callbacks, cleanup } = setup({ off: true })
+    try {
+      editor.commands.setTextSelection(1)
+      handleBlockKeyDown(makeEvent('Backspace'), editor, callbacks)
+      expect(callbacks._calls['onMergeWithPrev']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('ArrowLeft after the opening marker at the block start stays in the block', () => {
+    const { editor, callbacks, cleanup } = setup()
+    try {
+      editor.commands.setTextSelection(1)
+      handleBlockKeyDown(makeEvent('ArrowLeft'), editor, callbacks)
+      expect(callbacks._calls['onFocusPrev']).toBeUndefined()
+      editor.commands.unsetBold()
+      handleBlockKeyDown(makeEvent('ArrowLeft'), editor, callbacks)
+      expect(callbacks._calls['onFocusPrev']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('ArrowUp at the block start still leaves the block with a marker before the caret', () => {
+    const { editor, callbacks, cleanup } = setup()
+    try {
+      editor.commands.setTextSelection(1)
+      handleBlockKeyDown(makeEvent('ArrowUp'), editor, callbacks)
+      expect(callbacks._calls['onFocusPrev']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('ArrowRight before the closing marker at the block end stays in the block', () => {
+    const { editor, callbacks, cleanup } = setup({ boldLast: true })
+    try {
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+      handleBlockKeyDown(makeEvent('ArrowRight'), editor, callbacks)
+      expect(callbacks._calls['onFocusNext']).toBeUndefined()
+      // Typing plain at the end puts the caret outside the closing marker.
+      editor.commands.unsetBold()
+      handleBlockKeyDown(makeEvent('ArrowRight'), editor, callbacks)
+      expect(callbacks._calls['onFocusNext']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('ArrowDown at the block end still leaves the block with a marker after the caret', () => {
+    const { editor, callbacks, cleanup } = setup({ boldLast: true })
+    try {
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+      handleBlockKeyDown(makeEvent('ArrowDown'), editor, callbacks)
+      expect(callbacks._calls['onFocusNext']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('a deleteContentBackward input after the opening marker unbolds instead of merging', () => {
+    const { editor, callbacks, cleanup } = setup()
+    const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+    try {
+      editor.commands.setTextSelection(1)
+      editor.view.dom.dispatchEvent(
+        new InputEvent('beforeinput', {
+          inputType: 'deleteContentBackward',
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+      expect(callbacks._calls['onMergeWithPrev']).toBeUndefined()
+      expect(editor.state.doc.textContent).toBe('bold rest')
+      expect(editor.isActive('bold')).toBe(false)
+    } finally {
+      unmount()
       cleanup()
     }
   })
