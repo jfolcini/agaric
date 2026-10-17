@@ -216,9 +216,9 @@ describe('importMarkdown', () => {
       content: '# Title\n\nBody',
       filename: 'my-page.md',
       spaceId: 'SPACE_A',
-      // #1925 — the helper threads `vaultFiles` (null until the vault picker
-      // wires it in PR 2; the backend treats null as "no attachments").
-      vaultFiles: null,
+      // #1925 — no vault files and no vault notes: the backend treats a null
+      // `vault` as a plain pick.
+      vault: null,
       // #128 — the helper always passes a `Channel<ImportProgressUpdate>`
       // for progress streaming (mirroring `startSync`), even when no
       // `onProgress` callback is supplied.
@@ -247,7 +247,7 @@ describe('importMarkdown', () => {
       content: 'hello',
       filename: null,
       spaceId: 'SPACE_A',
-      vaultFiles: null,
+      vault: null,
       progress: expect.anything(),
     })
   })
@@ -282,10 +282,10 @@ describe('importMarkdown', () => {
     expect(onProgress).toHaveBeenCalledWith(event)
   })
 
-  it('forwards vaultFiles to the import_markdown command (#1925)', async () => {
-    // #1925 — PR 2 adds the optional 5th `vaultFiles` arg (referenced
-    // attachment bytes from the vault picker). When supplied it must flow
-    // through to the IPC `vaultFiles` arg unchanged.
+  it('forwards vaultFiles and vaultNotes as the vault of the import_markdown command (#1925, #5740)', async () => {
+    // #1925 — the optional 5th `vaultFiles` arg (referenced attachment bytes
+    // from the vault picker), #5740 the 6th `vaultNotes`. Either one alone
+    // still sends both fields, which the backend reads as lists.
     mockedInvoke.mockImplementation(
       mockInvokeCommands({
         import_markdown: () => ({
@@ -301,12 +301,20 @@ describe('importMarkdown', () => {
 
     const vaultFiles = [{ path: 'assets/a.png', bytes: [1, 2, 3] }]
     await importMarkdown('![](assets/a.png)', 'p.md', 'SPACE_A', undefined, vaultFiles)
+    await importMarkdown('[[n]]', 'V/p.md', 'SPACE_A', undefined, null, ['V/n.md'])
 
-    expect(mockedInvoke).toHaveBeenCalledWith('import_markdown', {
+    expect(mockedInvoke).toHaveBeenNthCalledWith(1, 'import_markdown', {
       content: '![](assets/a.png)',
       filename: 'p.md',
       spaceId: 'SPACE_A',
-      vaultFiles,
+      vault: { files: vaultFiles, notes: [] },
+      progress: expect.anything(),
+    })
+    expect(mockedInvoke).toHaveBeenNthCalledWith(2, 'import_markdown', {
+      content: '[[n]]',
+      filename: 'V/p.md',
+      spaceId: 'SPACE_A',
+      vault: { files: [], notes: ['V/n.md'] },
       progress: expect.anything(),
     })
   })

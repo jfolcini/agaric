@@ -13,11 +13,13 @@
  *  - Has no a11y violations (axe)
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { DataTab } from '@/components/settings/DataTab'
 import type { SpaceRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
@@ -114,6 +116,8 @@ beforeEach(() => {
     availableSpaces: [DEFAULT_TEST_SPACE],
     isReady: true,
   })
+  // A run that imported a page refills the resolve store (#5740).
+  stubInvoke(vi.mocked(invoke), { batch_resolve: () => [], list_all_tags_in_space: () => [] })
 })
 
 describe('DataTab', () => {
@@ -220,6 +224,8 @@ describe('DataTab', () => {
         // #1925 — a single-file (non-folder) import has no sibling assets, so
         // `vaultFiles` is null (documented limitation; only the folder picker
         // exposes siblings).
+        null,
+        // #5740 — nor notes for its links to name.
         null,
       )
     })
@@ -1234,6 +1240,8 @@ describe('DataTab', () => {
         DEFAULT_TEST_SPACE.id,
         expect.any(Function),
         // No attachment refs in the content ⇒ null vaultFiles payload.
+        null,
+        // No `[[Name]]` links ⇒ no vault notes.
         null,
       )
     })

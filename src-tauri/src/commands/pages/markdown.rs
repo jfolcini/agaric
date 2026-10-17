@@ -3743,6 +3743,7 @@ pub async fn import_markdown_inner(
         space_id,
         vault_files,
         None,
+        None,
     )
     .await
 }
@@ -3831,7 +3832,16 @@ pub async fn import_markdown_inner(
 // (JSON path) and `otel-logs/` (key=value path). Enforced by
 // `commands::observability::tests::span_fields_stay_on_the_pii_allowlist`.
 #[instrument(
-    skip(pool, device_id, materializer, content, progress, app_data_dir, vault_files),
+    skip(
+        pool,
+        device_id,
+        materializer,
+        content,
+        progress,
+        app_data_dir,
+        vault_files,
+        vault_notes
+    ),
     fields(blocks_total = tracing::field::Empty, space = %space_id),
     err
 )]
@@ -3847,6 +3857,8 @@ pub async fn import_markdown_with_progress(
     // #1925 — referenced sibling files' bytes. `None`/empty ⇒ no attachment
     // ingest (exact pre-#1925 behaviour).
     vault_files: Option<Vec<VaultFile>>,
+    // #5740 — the folder pick's `.md` paths a `[[Name]]` here may name.
+    vault_notes: Option<Vec<String>>,
     progress: Option<&dyn ImportProgressSink>,
 ) -> Result<ImportResult, AppError> {
     // #1934 — wall-clock measurement of the whole import so duration is
@@ -3860,8 +3872,12 @@ pub async fn import_markdown_with_progress(
     // `block_properties.value_ref` lookup downstream.
     let space_id = space_id.to_ascii_uppercase();
 
-    let (mut parse_output, page_title) =
-        parse_import_payload(&content, filename, vault_files.as_deref())?;
+    let (mut parse_output, page_title) = parse_import_payload(
+        &content,
+        filename,
+        vault_files.as_deref(),
+        vault_notes.as_deref(),
+    )?;
     let blocks_total = parse_output.blocks.len() as u64;
     announce_import_start(
         progress,
@@ -3968,6 +3984,7 @@ fn parse_import_payload(
     content: &str,
     filename: Option<String>,
     vault_files: Option<&[VaultFile]>,
+    vault_notes: Option<&[String]>,
 ) -> Result<(import::ParseOutput, String), AppError> {
     if let Some(files) = vault_files {
         // Sum as u64 to avoid any `usize as i64` wrap on a pathological length.
@@ -3989,7 +4006,63 @@ fn parse_import_payload(
             block.content = rewrite_relative_md_links(&block.content, dir);
         }
     }
+    let notes = vault_note_titles(vault_notes.unwrap_or_default());
+    if !notes.is_empty() {
+        for block in parse_output.blocks.iter_mut().filter(|b| !b.is_code) {
+            block.content = rewrite_vault_wikilinks(&block.content, &notes);
+        }
+    }
     Ok((parse_output, page_title))
+}
+
+/// The page title each of a folder pick's `.md` paths imports as, keyed by its
+/// file name folded as a link name is ([`LinkMatches`]): the note a bare
+/// `[[Name]]` names wherever it sits in the vault, as Obsidian reads it
+/// (#5740). Of two notes of one name the one nearer the vault root wins, then
+/// the one whose title sorts first, so every file of the pick reads a name
+/// alike whichever order the files import in.
+fn vault_note_titles(paths: &[String]) -> HashMap<String, String> {
+    let depth = |title: &str| title.matches('/').count();
+    let mut notes: HashMap<String, String> = HashMap::new();
+    for path in paths {
+        let title = folder_path_to_namespace_title(path);
+        let name = title.rsplit('/').next().unwrap_or_default();
+        let name = name.to_ascii_lowercase();
+        if name.is_empty() {
+            continue;
+        }
+        let kept = notes.get(&name);
+        if kept.is_none_or(|kept| (depth(&title), &title) < (depth(kept), kept)) {
+            notes.insert(name, title);
+        }
+    }
+    notes
+}
+
+/// `content` with the name of each `[[Name]]`, `[[Name|label]]` or
+/// `[[Name#anchor]]` link that names one of `notes` written as that note's
+/// title, so the link resolves to the page the note imports as, or creates
+/// the page the note's own import then fills (#5160 D12). The name is the text
+/// before the first `|` or `#`, which an Obsidian note name never holds. Tokens
+/// in code, tags, embeds and escaped links are untouched.
+fn rewrite_vault_wikilinks(content: &str, notes: &HashMap<String, String>) -> String {
+    if !content.contains("[[") {
+        return content.to_string();
+    }
+    let code_spans = import::inline_code_spans(content);
+    HUMAN_PAGE_LINK_RE
+        .replace_all(content, |caps: &regex::Captures<'_>| {
+            let m = caps.get(0).expect("group 0 always present");
+            let body = &caps[1];
+            let (name, rest) = body.split_at(body.find(['|', '#']).unwrap_or(body.len()));
+            match notes.get(&name.trim().to_ascii_lowercase()) {
+                Some(title) if page_link_is_token(content, m.start(), &code_spans) => {
+                    format!("[[{title}{rest}]]")
+                }
+                _ => m.as_str().to_string(),
+            }
+        })
+        .into_owned()
 }
 
 /// A markdown link `[text](dest)`: group 1 the text, group 2 the destination.
@@ -6780,6 +6853,18 @@ pub async fn paste_blocks(
     .map_err(sanitize_internal_error)
 }
 
+/// What a folder pick sends with one of its notes ([`import_markdown`]).
+#[derive(Debug, Deserialize, Type)]
+pub struct VaultImport {
+    /// The bytes of the sibling files the note references (#1925).
+    #[serde(default)]
+    pub files: Vec<VaultFile>,
+    /// The pick's `.md` paths, as `filename` gives them, a `[[Name]]` in the
+    /// note may name (#5740).
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
 /// Tauri command: import a Logseq-style markdown file as a page with
 /// block hierarchy. Delegates to [`import_markdown_with_progress`].
 ///
@@ -6800,10 +6885,8 @@ pub async fn import_markdown(
     content: String,
     filename: Option<String>,
     space_id: SpaceId,
-    // #1925 — referenced vault files' bytes. `None`/omitted ⇒ no attachment
-    // ingest (the pre-#1925 behaviour). PR 2 wires the frontend picker to
-    // pre-scan + supply only the referenced siblings.
-    vault_files: Option<Vec<VaultFile>>,
+    // `None`/omitted ⇒ no attachment ingest and no note names (a plain pick).
+    vault: Option<VaultImport>,
     progress: tauri::ipc::Channel<ImportProgressUpdate>,
     ctx: State<'_, WriteCtx>,
 ) -> Result<ImportResult, AppError> {
@@ -6815,6 +6898,8 @@ pub async fn import_markdown(
     // #3334 — the `app_paths` seam: imported vault files' bytes must land in
     // the same directory this process opened `notes.db` in.
     let app_data_dir = crate::app_paths::resolve_app_data_dir(&app).map_err(AppError::Io)?;
+    let (vault_files, vault_notes) =
+        vault.map_or((None, None), |vault| (Some(vault.files), Some(vault.notes)));
     import_markdown_with_progress(
         ctx.pool(),
         ctx.device_id(),
@@ -6824,6 +6909,7 @@ pub async fn import_markdown(
         filename,
         space_id.into_string(),
         vault_files,
+        vault_notes,
         Some(&crate::main_thread::UiChannel::new(app, progress)),
     )
     .await
@@ -7486,6 +7572,32 @@ mod tests {
             ),
             "[[v/Other|t]] ![i](pic.md) `[c](Code.md)` [w](https://x/a.md) [[v/A]] [[v/A]]",
             "the link text is the label unless empty or the title (#5160 D9)"
+        );
+    }
+
+    /// #5740 — a folder import writes a bare `[[Name]]` naming one of its notes
+    /// as that note's title; a name no note has, a title, and a token in code,
+    /// an embed, a tag or an escape stay as written.
+    #[test]
+    fn a_bare_wikilink_names_the_vault_note_of_that_name() {
+        let notes: Vec<String> = vec!["v/sub/Topic.md".into(), "v/Über.md".into()];
+        let (parsed, _) = parse_import_payload(
+            "- é[[topic]] [[ Topic |l]] [[Topic#h]] [[v/sub/Topic]] [[none]] [[Über]]\n\
+             - ![[Topic]] #[[Topic]] \\[[Topic]] `[[Topic]]`\n\
+             - ````\n  [[Topic]]\n  ````\n",
+            Some("v/home.md".into()),
+            None,
+            Some(&notes),
+        )
+        .unwrap();
+        let contents: Vec<&str> = parsed.blocks.iter().map(|b| b.content.as_str()).collect();
+        assert_eq!(
+            contents,
+            [
+                "é[[v/sub/Topic]] [[v/sub/Topic|l]] [[v/sub/Topic#h]] [[v/sub/Topic]] [[none]] [[v/Über]]",
+                "![[Topic]] #[[Topic]] \\[[Topic]] `[[Topic]]`",
+                "````\n[[Topic]]\n````",
+            ]
         );
     }
 

@@ -1623,6 +1623,8 @@ export const pagesHandlers = {
   //   - `((block-ref))` stripping and `[[Page#anchor]]` block targets.
   //   - Depth: every content block is emitted flat under the page.
   //   - Attachment handling (kept as literal text).
+  //   - A folder pick's note names (`vault.notes`, #5740): a bare `[[Name]]`
+  //     resolves as `Name`, never as the vault's note of that name.
   //
   // WARNING: mock-backed frontend tests give NO assurance about import-contract
   // fidelity. Validate import semantics against the Rust tests, not this mock.

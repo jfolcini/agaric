@@ -187,7 +187,8 @@ export function inferBibliographyFormat(filename: string): BibliographyFormat | 
  * - `bytes` is added to the cumulative byte counter regardless of whether the
  *   unit imports successfully (the user waited on it either way).
  * - `load()` yields the IPC payload lazily: `content`, the `path` passed as the
- *   `importMarkdown` filename (namespace mapping), and any sibling `vaultFiles`.
+ *   `importMarkdown` filename (namespace mapping), any sibling `vaultFiles`, and
+ *   the `vaultNotes` its `[[Name]]` links may name.
  *   For `.md` this reads the `File` (and collects vault siblings) on demand, so
  *   a cancel between files avoids reading later files; for note-based formats
  *   the content is already composed and `load` just returns it.
@@ -195,31 +196,71 @@ export function inferBibliographyFormat(filename: string): BibliographyFormat | 
 export interface ImportUnit {
   name: string
   bytes: number
-  load: () => Promise<{ content: string; path: string; vaultFiles: VaultFile[] | null }>
+  load: () => Promise<{
+    content: string
+    path: string
+    vaultFiles: VaultFile[] | null
+    vaultNotes: string[] | null
+  }>
+}
+
+/** `[[Name` — the name a wiki-link opens with, before any `#anchor` or `|label`. */
+const WIKILINK_NAME_RE = /\[\[([^\]|#\n]+)/g
+
+/**
+ * The paths of the notes in `notesByName` (keyed by lowercased file stem) that
+ * a `[[Name]]` in `content` may name, or `null` for none (#5740). The backend
+ * writes such a link with the note's title and picks between notes of one
+ * name, so every note of a matching name ships. A loose scan, like
+ * {@link scanAttachmentRefs}: a path the backend then finds no link for is
+ * harmless.
+ */
+function linkedNotePaths(content: string, notesByName: Map<string, string[]>): string[] | null {
+  const paths = new Set<string>()
+  for (const [, name = ''] of content.matchAll(WIKILINK_NAME_RE)) {
+    for (const path of notesByName.get(name.trim().toLowerCase()) ?? []) paths.add(path)
+  }
+  return paths.size > 0 ? [...paths] : null
 }
 
 /**
- * Markdown/folder/vault producer. Content is read lazily inside `load` (so a
- * cancel avoids reading not-yet-reached files), `path` is the folder-relative
- * path for the #1446 namespace mapping (basename fallback for a plain pick),
- * and vault siblings are collected only when a `vaultIndex` is present.
+ * The filename `importMarkdown` gets for `file`. #1446 Part B — a folder/vault
+ * pick carries `webkitRelativePath`, so the backend maps `a/b/API.md` →
+ * namespace `a/b/API`. A plain file pick has an empty `webkitRelativePath`, so
+ * fall back to the basename.
+ */
+function importPath(file: File): string {
+  return file.webkitRelativePath || file.name
+}
+
+/**
+ * Markdown/folder/vault producer: one unit per `.md` file, as the plain picker
+ * accepts, so a folder pick's other files are attachments only (#5740).
+ * Content is read lazily inside `load` (so a cancel avoids reading
+ * not-yet-reached files), `path` is the folder-relative path for the #1446
+ * namespace mapping (basename fallback for a plain pick), and vault siblings
+ * and the notes a file links are collected only when a `vaultIndex` is present.
  */
 export function mdFilesToUnits(files: File[], vaultIndex: VaultIndex | null): ImportUnit[] {
-  return files.map((file) => ({
+  const notes = files.filter((file) => file.name.toLowerCase().endsWith('.md'))
+  const notesByName = new Map<string, string[]>()
+  for (const file of notes) {
+    const name = file.name.slice(0, -'.md'.length).toLowerCase()
+    notesByName.set(name, [...(notesByName.get(name) ?? []), importPath(file)])
+  }
+  return notes.map((file) => ({
     name: file.name,
     // Count bytes from the file size (known without reading) so a load
     // failure still advances the byte counter, matching the pre-refactor loop.
     bytes: file.size,
     load: async () => {
       const content = await file.text()
-      // #1446 Part B — a folder/vault pick carries `webkitRelativePath`, so the
-      // backend maps `a/b/API.md` → namespace `a/b/API`. A plain file pick has
-      // an empty `webkitRelativePath`, so fall back to the basename.
-      const path = file.webkitRelativePath || file.name
+      const path = importPath(file)
       // #1925 — on a vault/folder import, ship matched sibling bytes; a
       // single-file import (no index) has no siblings.
       const vaultFiles = vaultIndex == null ? null : await collectVaultFiles(content, vaultIndex)
-      return { content, path, vaultFiles }
+      const vaultNotes = vaultIndex == null ? null : linkedNotePaths(content, notesByName)
+      return { content, path, vaultFiles, vaultNotes }
     },
   }))
 }
@@ -266,6 +307,7 @@ export function enexNotesToUnits(notes: EnexNote[]): ImportUnit[] {
           content,
           path: name,
           vaultFiles: attachmentsToVaultFiles(note.attachments),
+          vaultNotes: null,
         }),
     }
   })
@@ -299,6 +341,7 @@ export function jexNotesToUnits(notes: JexNote[]): ImportUnit[] {
           content,
           path: name,
           vaultFiles: attachmentsToVaultFiles(note.attachments),
+          vaultNotes: null,
         }),
     }
   })
