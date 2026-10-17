@@ -5898,8 +5898,9 @@ describe('BlockTree leaked-empty-block cleanup', () => {
   // e2e "typing {{ opens the visual builder and inserts a query on save"
   // (#215) failed exactly this way. Same shape for the other block-targeting
   // dialogs a slash command can open. `data-editor-portal` is what spares the
-  // date/template/context-menu overlays (their blur never fires); these four
-  // deliberately do NOT carry it, which is why they need the exemption.
+  // date/template/context-menu overlays and the emoji picker (their blur never
+  // fires); these three deliberately do NOT carry it, which is why they need
+  // the exemption.
 
   it('keeps the block the visual query builder was opened for, and saves into it', async () => {
     mockBareBackend({ edit_block: echoEditBlock })
@@ -5940,7 +5941,10 @@ describe('BlockTree leaked-empty-block cleanup', () => {
     )
   })
 
-  it('keeps the block the emoji picker was opened for', async () => {
+  it('does not exempt the block the emoji picker was opened for', async () => {
+    // The picker keeps the editor mounted, so the block keeps focus while it is
+    // open. Left blank once it closes (Escape, no pick), the next focus-leave
+    // is a genuine one, and a stale exemption would leak the blank block.
     pageStore.setState({
       blocks: [
         makeBlock({ id: 'A', content: 'before', position: 0 }),
@@ -5957,14 +5961,12 @@ describe('BlockTree leaked-empty-block cleanup', () => {
       capturedOnSlashCommand?.({ id: 'emoji', label: 'EMOJI' })
     })
     await act(async () => {
-      useBlockStore.setState({ focusedBlockId: null })
+      useBlockStore.setState({ focusedBlockId: 'A' })
     })
-    await act(async () => {})
 
-    // `insertEmojiIntoActiveEditor` targets the block's editor; a deleted
-    // block has none, and the picked emoji is silently dropped.
-    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', { blockId: 'TARGET' })
-    expect(pageStore.getState().blocksById.has('TARGET')).toBe(true)
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'TARGET' })
+    })
   })
 
   it('opens the voice-note recorder and keeps the block it will attach to', async () => {

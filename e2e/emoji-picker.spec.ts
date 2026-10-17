@@ -1,4 +1,18 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import type { Locator, Page } from '@playwright/test'
+
+import {
+  activeDialog,
+  expect,
+  focusBlock,
+  focusBlockById,
+  openPage,
+  reopenPage,
+  replaceEditorText,
+  saveBlock,
+  selectEditorRange,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E for the inline `:` emoji picker (#130 Phase 2).
@@ -9,9 +23,42 @@ import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
  *   - `:joy` opens the emoji picker; Enter inserts 😂 and removes `:joy`.
  *   - `::` still opens the PROPERTY picker (emoji stays dormant).
  *   - a bare `:` followed by a space opens nothing.
+ *
+ * Also the browse-grid picker that `/emoji` and the toolbar's Emoji button
+ * open: the pick lands at the caret, focus returns to the block, and the
+ * text survives a reopen. The picker must keep the editor mounted, which the
+ * mock shows as well as the real backend.
  */
 
 const JOY = '\u{1F602}'
+const ROCKET = '\u{1F680}'
+// SEED_IDS.BLOCK_GS_1 (src/lib/tauri-mock/seed.ts).
+const GS_1 = '0000000000000000000BLOCK01'
+
+/** Focus GS_1, make it read `Alpha Omega`, and park the caret after `Alpha `. */
+async function caretBetweenWords(page: Page): Promise<Locator> {
+  const editor = await focusBlockById(page, GS_1)
+  await replaceEditorText(page, 'Alpha Omega')
+  await selectEditorRange(page, 6, 6)
+  return editor
+}
+
+/** Pick 🚀 in the open browse-grid picker; it closes on select. */
+async function pickRocket(page: Page): Promise<void> {
+  const picker = activeDialog(page)
+  await picker.getByRole('searchbox', { name: 'Search emoji', exact: true }).fill('rocket')
+  await picker.getByRole('gridcell', { name: 'rocket', exact: true }).click()
+  await expect(picker).toHaveCount(0)
+}
+
+/** Leave the block, reopen the page, and read GS_1 back from the mock. */
+async function expectPersisted(page: Page, text: string): Promise<void> {
+  await saveBlock(page, 'Escape')
+  await reopenPage(page, 'Getting Started')
+  await expect(page.locator(`[data-testid="block-static"][data-block-id="${GS_1}"]`)).toHaveText(
+    text,
+  )
+}
 
 test.describe('Inline emoji picker — `:` trigger (#130)', () => {
   test.beforeEach(async ({ page }) => {
@@ -52,10 +99,21 @@ test.describe('Inline emoji picker — `:` trigger (#130)', () => {
     await expect(page.locator('[data-testid="suggestion-popup"]')).toHaveCount(0)
   })
 
-  test('the toolbar emoji button opens the browse-grid picker', async ({ page }) => {
+  test('`/emoji` inserts the picked emoji at the caret', async ({ page }) => {
+    const editor = await caretBetweenWords(page)
+    await page.keyboard.type('/emoji', { delay: 30 })
+    await page.getByRole('option', { name: /^EMOJI — Insert emoji from picker/ }).click()
+    await pickRocket(page)
+
+    await expect(editor).toHaveText(`Alpha ${ROCKET}Omega`)
+    await expect(editor).toBeFocused()
+    await expectPersisted(page, `Alpha ${ROCKET}Omega`)
+  })
+
+  test('the toolbar emoji button inserts the picked emoji at the caret', async ({ page }) => {
     // #281 — the mouse-first twin of the `:` typeahead. The button dispatches
     // OPEN_EMOJI_PICKER, which opens the same dialog `/emoji` does.
-    await focusBlock(page)
+    const editor = await caretBetweenWords(page)
     let emojiBtn = page.getByRole('button', { name: /emoji/i }).first()
     if (!(await emojiBtn.isVisible().catch(() => false))) {
       // It can sit in the overflow popover under width pressure.
@@ -63,7 +121,11 @@ test.describe('Inline emoji picker — `:` trigger (#130)', () => {
       emojiBtn = page.getByRole('button', { name: /emoji/i }).first()
     }
     await emojiBtn.click()
-    await expect(page.locator('[data-testid="emoji-picker"]')).toBeVisible()
+    await pickRocket(page)
+
+    await expect(editor).toHaveText(`Alpha ${ROCKET}Omega`)
+    await expect(editor).toBeFocused()
+    await expectPersisted(page, `Alpha ${ROCKET}Omega`)
   })
 
   test('`::` still opens the property picker, not emoji (coexistence)', async ({ page }) => {

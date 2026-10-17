@@ -10,6 +10,10 @@
  *
  * Closing on select is the default (most callers insert one emoji and dismiss)
  * but can be disabled via `closeOnSelect={false}` for a "keep picking" flow.
+ *
+ * Both shells carry `data-editor-portal`: opened from a block (`/emoji`, the
+ * toolbar button), the pick inserts at the roving editor's caret, so taking
+ * focus must not unmount that editor (`useEditorBlur`).
  */
 
 import { useCallback } from 'react'
@@ -61,7 +65,7 @@ export function EmojiPickerDialog({
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="bottom">
+        <SheetContent side="bottom" data-editor-portal="">
           <SheetHeader>
             <SheetTitle>{t('emojiPicker.title')}</SheetTitle>
             <SheetDescription className="sr-only">
@@ -78,7 +82,10 @@ export function EmojiPickerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Mouse: just wider than the 8-column grid. Touch keeps the room its
           44px category tabs and skin-tone buttons need. */}
-      <DialogContent className="sm:max-w-sm [@media(pointer:coarse)]:sm:max-w-md">
+      <DialogContent
+        className="sm:max-w-sm [@media(pointer:coarse)]:sm:max-w-md"
+        data-editor-portal=""
+      >
         <DialogHeader>
           <DialogTitle>{t('emojiPicker.title')}</DialogTitle>
           <DialogDescription className="sr-only">

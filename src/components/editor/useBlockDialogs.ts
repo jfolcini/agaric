@@ -15,28 +15,29 @@
  *
  * A slash command DELETES its trigger text before dispatching (see
  * `slash-command.ts`), and so does the `{{` query picker. So `/query`,
- * `/emoji`, `/assignee` and `/voice` on a block that held nothing else leave
- * that block EMPTY, and the modal they open then takes focus — which blurs the
- * editor, clears `focusedBlockId`, and hands the drop-on-blur cleanup a blank
- * block to delete. The dialog's write-back (the `{{query …}}` expression, the
- * picked emoji, the property value, the recording) then has no block left to
- * land in.
+ * `/assignee` and `/voice` on a block that held nothing else leave that block
+ * EMPTY, and the modal they open then takes focus — which blurs the editor,
+ * clears `focusedBlockId`, and hands the drop-on-blur cleanup a blank block to
+ * delete. The dialog's write-back (the `{{query …}}` expression, the property
+ * value, the recording) then has no block left to land in.
  *
  * The overlays that DON'T have this problem — the date picker, the template
- * picker, the block context menu, the formatting toolbar — are spared by
- * `data-editor-portal` (see `useEditorBlur`): their blur never fires at all,
- * so focus never leaves and the cleanup never runs. The dialogs here
- * deliberately do not carry that tag; they WANT the blur, because the editor
- * must flush and unmount while a full modal owns the screen. So they take the
- * other route: register the block in `preserveEmptyBlockIds` — the same
- * exemption set `handleEnterSave` uses for the blank line an Enter-at-line-
- * start deliberately leaves behind.
+ * picker, the block context menu, the formatting toolbar, the emoji picker —
+ * are spared by `data-editor-portal` (see `useEditorBlur`): their blur never
+ * fires at all, so focus never leaves and the cleanup never runs. The emoji
+ * picker needs that: its pick goes into the live editor at the caret, which an
+ * unmount would leave holding no block. The other dialogs here deliberately do
+ * not carry the tag; they write through the store and WANT the blur, because
+ * the editor must flush and unmount while a full modal owns the screen. So
+ * they take the other route: register the block in `preserveEmptyBlockIds` —
+ * the same exemption set `handleEnterSave` uses for the blank line an
+ * Enter-at-line-start deliberately leaves behind.
  *
  * Registration is SYNCHRONOUS in the open handler, before `startTransition`.
- * The `queryBuilderOpen` / `emojiPickerOpen` state is deliberately NOT the
- * signal: it is committed in a transition, while the blur that clears the
- * focus is urgent, so the cleanup effect can run in a commit where the "a
- * dialog is open" flag is still `false` — a guard reading it would fail open.
+ * The `queryBuilderOpen` state is deliberately NOT the signal: it is committed
+ * in a transition, while the blur that clears the focus is urgent, so the
+ * cleanup effect can run in a commit where the "a dialog is open" flag is
+ * still `false` — a guard reading it would fail open.
  */
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { startTransition, useCallback, useState } from 'react'
@@ -166,13 +167,10 @@ export function useBlockDialogs({
     startTransition(() => setQueryBuilderOpen(true))
   }
   // ── Emoji picker (#286) — /emoji opens the browse-grid dialog for the
-  // focused block. Mark the open as a non-urgent transition for the same
-  // reason as the query builder (avoid a flushSync-in-render warning from
-  // the editor blur flush when the dialog steals focus mid-commit). ──────────
+  // focused block, in a transition like the query builder. No
+  // `preserveEmptyBlock`: the dialog is an editor portal, so there is no
+  // focus-leave to skip (module docstring). ──────────────────────────────────
   const openEmojiPicker = () => {
-    // #4729 — `handleEmojiSelect` writes into this block's editor, which only
-    // exists while the block does.
-    preserveEmptyBlock(focusedBlockId)
     startTransition(() => setEmojiPickerOpen(true))
   }
   const openVoiceNoteRecorder = useCallback(
