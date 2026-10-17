@@ -26,6 +26,11 @@ _require-npm:
 setup:
     npm run setup
 
+# Set up the Android dev env (SDK, Rust targets, spike_test AVD); `--check` previews, `--init-project` regenerates gen/android.
+[group('bootstrap')]
+setup-android *ARGS:
+    bash scripts/setup-android.sh {{ARGS}}
+
 # Provision / refresh the local sqlx offline-check dev DB (needed before pushing Rust).
 [group('bootstrap')]
 setup-db:
