@@ -398,8 +398,14 @@ tauri-plugin-window-state = "2"
 tauri-plugin-autostart = "2"
 # Desktop auto-update (minisign-signed bundles; see release.yml +
 # tauri.conf.json).  Android updates flow through the Play Store /
-# sideloaded APK, not Tauri's updater path.
-tauri-plugin-updater = "2.10.0"
+# sideloaded APK, not Tauri's updater path.  The default `zip` feature
+# only unpacks the v1 `.msi.zip` / `.exe.zip` / `.AppImage.tar.gz`
+# payloads; release.yml ships the raw bundles, so it stays off and keeps
+# the `zip` crate out of the graph.
+tauri-plugin-updater = { version = "2.11.0", default-features = false, features = [
+    "rustls-tls",
+    "system-proxy",
+] }
 # Global hotkey for "quick capture" (drop a line into today's
 # journal from anywhere).  Android / iOS have no global-shortcut
 # concept (the `global-hotkey` crate doesn't compile there).
