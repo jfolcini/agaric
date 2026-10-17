@@ -85,6 +85,8 @@ Xcode Command Line Tools (`xcode-select --install`). The rest installs via `brew
 
 ### Android
 
+**One command:** `just setup-android` (or `bash scripts/setup-android.sh`) installs everything below that is missing and skips what is present. It reads the SDK package versions and Rust targets from the `android-build` job in `.github/workflows/ci.yml`, so it cannot drift from CI. It checks Java 17 and the SDK (it never downloads Google's command-line tools; with no SDK it tells you where to get them), installs the SDK packages and the `spike_test` AVD, adds the Rust targets, and prints the `ANDROID_HOME` / `ANDROID_NDK_HOME` / `NDK_HOME` lines for your shell profile (it does not edit the profile). `--check` reports what it would do and changes nothing. `--init-project` also regenerates `src-tauri/gen/android` (`cargo tauri android init`, then `scripts/patch-android-build.sh`); it is opt-in because it wipes untracked files under that directory. The manual steps follow.
+
 - Android SDK (cmdline-tools, platform-tools, build-tools).
 - Android NDK r27 (any 27.x patch; CI pins a specific build but local can float).
 - JDK 17.
