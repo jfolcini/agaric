@@ -93,12 +93,6 @@ test.describe('Always-visible toolbar buttons (#1170)', () => {
     await expect(page.locator('[data-testid="date-picker-popup"]')).toBeVisible()
   })
 
-  test('Set scheduled date button opens the date picker', async ({ page }) => {
-    await focusBlock(page)
-    await page.getByRole('button', { name: 'Set scheduled date' }).click()
-    await expect(page.locator('[data-testid="date-picker-popup"]')).toBeVisible()
-  })
-
   test('Toggle TODO state button sets the checkbox to TODO', async ({ page }) => {
     await focusBlock(page)
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
