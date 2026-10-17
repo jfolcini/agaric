@@ -141,7 +141,7 @@ fmt-all: _require-npm
 
 # Full local gate — CI's `validate` job mirror. Needs the prek host binaries (lychee, typos-cli, shellcheck, …).
 [group('verify')]
-check:
+check: _require-npm
     prek run --all-files
 
 # Pre-push CI-equivalent verifier (nextest + clippy + knip + lychee + related tests).
