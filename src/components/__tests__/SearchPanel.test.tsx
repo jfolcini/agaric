@@ -203,6 +203,14 @@ function textContent(text: string) {
   }
 }
 
+/** Block ids of the rendered result rows, sorted. */
+function resultIds(): string[] {
+  return screen
+    .queryAllByTestId(/^search-result-row-/)
+    .map((row) => row.getAttribute('data-testid')?.replace('search-result-row-', '') ?? '')
+    .toSorted()
+}
+
 describe('SearchPanel', () => {
   it('renders search input', () => {
     render(<SearchPanel />)
@@ -2400,7 +2408,7 @@ describe('SearchPanel', () => {
       expect(screen.getByRole('button', { name: t('search.clearFilters') })).toBeInTheDocument()
     })
 
-    it('clicking "Clear filters" clears the active filters (calls handleClearAllFilters)', async () => {
+    it('clicking "Clear filters" clears the active filters and re-runs the search (#5738)', async () => {
       const user = userEvent.setup()
       // #4668 — `list_all_tags_in_space` returns `TagCacheRow[]`: no `color`, and
       // `usage_count` / `updated_at` are not optional.
@@ -2408,6 +2416,11 @@ describe('SearchPanel', () => {
         list_all_tags_in_space: () => [
           { tag_id: 'TAG_WIP', name: 'wip', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
         ],
+        // The tag filter matches nothing; the free text alone finds one block.
+        search_blocks: (args) =>
+          (args['filter'] as { tagIds: string[] }).tagIds.length > 0
+            ? emptyPage
+            : searchPage([makeSearchResult({ id: 'B_FOO', content: 'foo block' })]),
       })
       render(<SearchPanel />)
 
@@ -2434,6 +2447,11 @@ describe('SearchPanel', () => {
       })
       expect(screen.queryByText('tag:#wip')).not.toBeInTheDocument()
       expect(screen.queryByTestId('search-no-results-clear-filters')).not.toBeInTheDocument()
+      // The search re-ran without the filter: the block the tag hid renders.
+      await waitFor(() => {
+        expect(resultIds()).toEqual(['B_FOO'])
+      })
+      expect(screen.queryByText(t('search.noResultsFound'))).not.toBeInTheDocument()
     })
 
     it('shows only the message (no button) when there are no active filters', async () => {
@@ -2473,6 +2491,139 @@ describe('SearchPanel', () => {
 
       const results = await axe(container as any)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // #5738 — a chip edit commits the query at once, like Enter; the results
+  // must change without the user pressing Enter.
+  describe('filter-chip edits re-run the search (#5738)', () => {
+    /** `path:Projects` keeps `B_PROJECTS`; without it `quokka` also finds `B_NOTES`. */
+    function stubPathScopedSearch() {
+      stubInvoke({
+        search_blocks: (args) => {
+          const { includePageGlobs } = args['filter'] as { includePageGlobs: string[] }
+          return searchPage(
+            includePageGlobs.includes('Projects')
+              ? [makeSearchResult({ id: 'B_PROJECTS', content: 'quokka projects' })]
+              : [
+                  makeSearchResult({ id: 'B_NOTES', content: 'quokka notes' }),
+                  makeSearchResult({ id: 'B_PROJECTS', content: 'quokka projects' }),
+                ],
+          )
+        },
+      })
+    }
+
+    const removeChipButton = (token: string) =>
+      screen.getByRole('button', { name: t('search.removeFilter', { token }) })
+
+    it('adding a page-path chip from Add filter scopes the results without Enter', async () => {
+      const user = userEvent.setup()
+      stubPathScopedSearch()
+      render(<SearchPanel />)
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder')) as HTMLInputElement
+      typeAndSubmit(input, 'quokka')
+      await waitFor(() => {
+        expect(resultIds()).toEqual(['B_NOTES', 'B_PROJECTS'])
+      })
+
+      await user.click(screen.getByRole('button', { name: t('search.addFilter') }))
+      await user.click(
+        await screen.findByRole('menuitem', {
+          name: (name) => name.startsWith(t('search.filterCategory.pathInclude')),
+        }),
+      )
+      await user.type(
+        screen.getByRole('textbox', { name: t('search.filterCategory.pathInclude') }),
+        'Projects',
+      )
+      await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
+
+      expect(input.value).toBe('path:Projects quokka')
+      await waitFor(() => {
+        expect(resultIds()).toEqual(['B_PROJECTS'])
+      })
+    })
+
+    it('removing a chip re-runs the search without its filter', async () => {
+      const user = userEvent.setup()
+      stubPathScopedSearch()
+      render(<SearchPanel />)
+      typeAndSubmit(
+        screen.getByPlaceholderText(t('search.searchPlaceholder')),
+        'path:Projects quokka',
+      )
+      await waitFor(() => {
+        expect(resultIds()).toEqual(['B_PROJECTS'])
+      })
+
+      await user.click(removeChipButton('path:Projects'))
+
+      await waitFor(() => {
+        expect(resultIds()).toEqual(['B_NOTES', 'B_PROJECTS'])
+      })
+    })
+
+    it('Clear all re-runs the search with the free text alone', async () => {
+      const user = userEvent.setup()
+      stubPathScopedSearch()
+      render(<SearchPanel />)
+      typeAndSubmit(
+        screen.getByPlaceholderText(t('search.searchPlaceholder')),
+        'path:Projects quokka',
+      )
+      await waitFor(() => {
+        expect(resultIds()).toEqual(['B_PROJECTS'])
+      })
+
+      await user.click(screen.getByRole('button', { name: t('search.clearAll') }))
+
+      await waitFor(() => {
+        expect(resultIds()).toEqual(['B_NOTES', 'B_PROJECTS'])
+      })
+    })
+
+    it('removing the only chip of a filter-only query clears the results and announces it', async () => {
+      const user = userEvent.setup()
+      stubPathScopedSearch()
+      render(<SearchPanel />)
+      typeAndSubmit(screen.getByPlaceholderText(t('search.searchPlaceholder')), 'path:Projects')
+      await waitFor(() => {
+        expect(resultIds()).toEqual(['B_PROJECTS'])
+      })
+
+      await user.click(removeChipButton('path:Projects'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('search-results-count')).toHaveTextContent(
+          t('search.statusCleared'),
+        )
+      })
+      expect(resultIds()).toEqual([])
+      expect(screen.queryByText(t('search.noResultsFound'))).not.toBeInTheDocument()
+    })
+
+    it('a chip removed while typed text is still debouncing is not undone by that debounce', async () => {
+      vi.useFakeTimers()
+      stubPathScopedSearch()
+      render(<SearchPanel />)
+
+      // Typing schedules the debounced search; the chip renders from the live query.
+      fireEvent.change(screen.getByPlaceholderText(t('search.searchPlaceholder')), {
+        target: { value: 'path:Projects quokka' },
+      })
+      fireEvent.click(removeChipButton('path:Projects'))
+      // Past the debounce window. A search a stale debounce starts renders only
+      // after this act commits it, so a second act lets that search settle too.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400)
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400)
+      })
+
+      expect(resultIds()).toEqual(['B_NOTES', 'B_PROJECTS'])
+      expect(screen.queryByTestId('search-typing-indicator')).not.toBeInTheDocument()
     })
   })
 
