@@ -134,7 +134,8 @@ jobs:
         uses: ./.github/actions/toolchain
         with:
           # patchelf + libappindicator3-dev back the AppImage bundling step
-          # (linuxdeploy rewrites RPATH on the bundled .so files) — matching
+          # (linuxdeploy rewrites RPATH on the bundled .so files), and the
+          # GStreamer plugins are what the AppImage bundles for capture — matching
           # release.yml's apt list so both workflows produce identical bundles.
           bundle-deps: 'true'
           rust-shared-key: rust-release
@@ -168,6 +169,10 @@ jobs:
 
       - name: Fix AppImage icon symlinks
         run: bash scripts/fix-appimage-icons.sh
+
+      - name: Verify the AppImage bundles the capture plugins
+        # #5718: without them the AppImage finds no camera or microphone.
+        run: bash scripts/check-appimage-media-plugins.sh src-tauri/target/release/bundle/appimage/Agaric.AppDir
 
       # ---------------------------------------------------------------------
       # FEAT-4f — verify the `agaric-mcp` sidecar binary is staged for, and

@@ -165,7 +165,7 @@ Same Rust backend + WebView shell as desktop (Tauri 2 mobile). Architectural del
 - **Foreground-only sync** — Android Doze + battery saver kill background network connections aggressively; a QUIC/UDP session is no more survivable than the WebSocket it replaces. The daemon defers all work via `LifecycleHooks` when backgrounded; sync resumes on foreground.
 - **ABI matrix**: ARM64 device + x86_64 emulator. 32-bit ABIs (armv7, i686) are intentionally not supported.
 - **DB path**: `/data/data/com.agaric.app/notes.db` (Android-managed app-private storage; no sdcard).
-- **QR scanner**: `html5-qrcode` over the webview's `getUserMedia`. On Android wry's `WebChromeClient` asks the OS for `CAMERA` at runtime and grants the webview's video capture; on Linux WebKitGTK denies a permission request nobody answers, so `allow_capture_permission` (`lib.rs`) grants the camera and microphone and leaves every other request to WebKitGTK's default, and a real camera also needs the host's GStreamer capture source ([BUILD.md](../BUILD.md#linux)). Manual 4-word passphrase fallback always works.
+- **QR scanner**: `html5-qrcode` over the webview's `getUserMedia`. On Android wry's `WebChromeClient` asks the OS for `CAMERA` at runtime and grants the webview's video capture; on Linux WebKitGTK denies a permission request nobody answers, so `allow_capture_permission` (`lib.rs`) grants the camera and microphone and leaves every other request to WebKitGTK's default, and a real camera needs WebKitGTK's GStreamer capture plugins, which the AppImage bundles ([BUILD.md](../BUILD.md#linux)). Manual 4-word passphrase fallback always works.
 
 ## Operator notes
 

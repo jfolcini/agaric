@@ -59,16 +59,17 @@ The script is best-effort and idempotent: tools already on PATH are skipped, and
 
 ### Linux
 
-Install what CI installs (the apt lists in `.github/workflows/ci.yml` and `release.yml` are authoritative — `libappindicator3-dev` and `patchelf` are needed only for AppImage bundling):
+Install what CI installs (the apt lists in `.github/workflows/ci.yml` and `release.yml` are authoritative — `libappindicator3-dev`, `patchelf` and the `gstreamer1.0-*` packages are needed only for AppImage bundling):
 
 ```bash
 sudo apt install -y \
   libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
   librsvg2-dev libssl-dev pkg-config \
-  libappindicator3-dev patchelf
+  libappindicator3-dev patchelf \
+  gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pipewire gstreamer1.0-gl
 ```
 
-Scanning a pairing QR code with a real camera also needs WebKitGTK's GStreamer capture source on the host (`gstreamer1.0-plugins-good`, or `gstreamer1.0-pipewire` on a PipeWire desktop); the bundles do not declare it.
+WebKitGTK captures the camera and microphone through GStreamer plugins. The AppImage carries its own: `bundle.linux.appimage.bundleMediaFramework` copies the build machine's plugin directory into it, so the build machine needs the `gstreamer1.0-*` packages above, and CI fails an AppImage without the capture plugins (`scripts/check-appimage-media-plugins.sh`, #5718). The `.deb` uses the host's plugins: its WebKitGTK dependency brings `gstreamer1.0-plugins-base` and `gstreamer1.0-plugins-good`, but WebKitGTK finds cameras through PipeWire, so the camera also needs `gstreamer1.0-pipewire`, which the `.deb` does not declare.
 
 Plus Node 24 (see `.nvmrc`) and the Rust toolchain pinned in [`rust-toolchain.toml`](../rust-toolchain.toml) — `rustup` picks the pin up automatically inside the repo; that same version is the MSRV recorded as `rust-version` in `src-tauri/Cargo.toml`.
 
