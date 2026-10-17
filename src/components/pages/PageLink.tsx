@@ -5,11 +5,13 @@
  * Uses `<span>` instead of `<button>` so it can be nested inside other
  * clickable containers (ResultCard buttons, list item buttons) without
  * violating HTML nesting rules. Calls `stopPropagation` so it works
- * inside parent click handlers.
+ * inside parent click handlers. A middle click or its context menu opens the
+ * page in a background tab (`NewTabTarget`).
  */
 
 import type React from 'react'
 
+import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import { cn } from '@/lib/utils'
 import { useTabsStore } from '@/stores/tabs'
@@ -51,22 +53,24 @@ export function PageLink({
   }
 
   return (
-    <span
-      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- intentionally a <span> (see file header) so it can nest inside clickable button containers without invalid HTML; SPA nav has no href so <a> would gain nothing
-      role="link"
-      tabIndex={0}
-      onClick={handleClick}
-      onKeyDown={handleKeyDown}
-      onMouseEnter={() => prefetchIntent.schedule(pageId)}
-      onMouseLeave={prefetchIntent.cancel}
-      onFocus={() => prefetchIntent.schedule(pageId)}
-      onBlur={prefetchIntent.cancel}
-      className={cn(
-        'cursor-pointer hover:underline focus-ring-visible focus-visible:rounded-sm',
-        className,
-      )}
-    >
-      {children ?? title}
-    </span>
+    <NewTabTarget pageId={pageId} title={title}>
+      <span
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- intentionally a <span> (see file header) so it can nest inside clickable button containers without invalid HTML; SPA nav has no href so <a> would gain nothing
+        role="link"
+        tabIndex={0}
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        onMouseEnter={() => prefetchIntent.schedule(pageId)}
+        onMouseLeave={prefetchIntent.cancel}
+        onFocus={() => prefetchIntent.schedule(pageId)}
+        onBlur={prefetchIntent.cancel}
+        className={cn(
+          'cursor-pointer hover:underline focus-ring-visible focus-visible:rounded-sm',
+          className,
+        )}
+      >
+        {children ?? title}
+      </span>
+    </NewTabTarget>
   )
 }

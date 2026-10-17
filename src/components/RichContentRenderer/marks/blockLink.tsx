@@ -67,6 +67,8 @@ export function renderBlockLink(
         linkId === ctx.anchorRefId && 'ref-chip-anchor',
       )}
       data-testid="block-link-chip"
+      // The editor's NodeView carries the same pair; `pageLinkIdAt` finds either.
+      {...(clickable ? { 'data-type': 'block-link', 'data-id': linkId } : {})}
       title={title}
       {...deletedProps}
       {...interactiveProps}

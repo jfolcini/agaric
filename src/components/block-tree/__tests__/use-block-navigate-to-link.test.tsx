@@ -270,6 +270,54 @@ describe('useBlockNavigateToLink', () => {
     expect(mount).toHaveBeenCalledWith(CONTENT_ID, 'block text')
   })
 
+  it.each([
+    ['a page target', 'PAGE_T', 'page', null, ['PAGE_T', 'Target Page']],
+    ['a block on this tree’s page', 'BLOCK_T', 'content', 'ROOT_PAGE', ['ROOT_PAGE', 'Root Page']],
+    ['a block on no page', 'TAG_T', 'tag', null, null],
+  ])(
+    'with openPage, hands it the page of %s and leaves the editor and the view alone',
+    async (_case, targetId, blockType, parentId, opened) => {
+      mockedGetBlock.mockImplementation(async (id: string) => {
+        if (id === targetId)
+          return makeBlock({
+            id,
+            block_type: blockType,
+            content: 'Target Page',
+            parent_id: parentId,
+          })
+        if (id === 'ROOT_PAGE')
+          return makeBlock({ id, block_type: 'page', content: 'Root Page', parent_id: null })
+        throw new Error(`unexpected id ${id}`)
+      })
+      const handleFlush = vi.fn(() => null)
+      const load = vi.fn().mockResolvedValue(undefined)
+      const setFocused = vi.fn()
+      const onNavigateToPage = vi.fn()
+      const openPage = vi.fn()
+      const { result } = renderHook(() =>
+        useHarness({
+          rovingEditor: null,
+          handleFlush,
+          load,
+          setFocused,
+          rootParentId: 'ROOT_PAGE',
+          onNavigateToPage,
+          t: (k) => k,
+        }),
+      )
+
+      await act(async () => {
+        await result.current.handleNavigate(targetId, openPage)
+      })
+
+      expect(openPage.mock.calls.map((call) => call.slice(0, 2))).toEqual(opened ? [opened] : [])
+      expect(onNavigateToPage).not.toHaveBeenCalled()
+      expect(handleFlush).not.toHaveBeenCalled()
+      expect(load).not.toHaveBeenCalled()
+      expect(setFocused).not.toHaveBeenCalled()
+    },
+  )
+
   it('skips load when the same-page target is already in the page store', async () => {
     const CONTENT_ID = '01TESTCONT0000000000LOADED'
     const ROOT_ID = '01TESTPAGE0000000000ROOTLD'

@@ -164,12 +164,12 @@ describe('QuickAccessBar', () => {
       expect(navigateSpy).toHaveBeenCalledWith('A', 'Alpha')
     })
 
-    it('ctrl+click opens in a new tab', () => {
+    it('ctrl+click opens in a background tab', () => {
       const navigateSpy = vi.fn()
-      const openInNewTabSpy = vi.fn()
+      const openInBackgroundTabSpy = vi.fn()
       useTabsStore.setState({
         navigateToPage: navigateSpy,
-        openInNewTab: openInNewTabSpy,
+        openInBackgroundTab: openInBackgroundTabSpy,
       })
 
       useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
@@ -179,17 +179,17 @@ describe('QuickAccessBar', () => {
       const chip = screen.getByRole('button', { name: 'Alpha' })
       fireEvent.click(chip, { ctrlKey: true })
 
-      expect(openInNewTabSpy).toHaveBeenCalledTimes(1)
-      expect(openInNewTabSpy).toHaveBeenCalledWith('A', 'Alpha')
+      expect(openInBackgroundTabSpy).toHaveBeenCalledTimes(1)
+      expect(openInBackgroundTabSpy).toHaveBeenCalledWith('A', 'Alpha')
       expect(navigateSpy).not.toHaveBeenCalled()
     })
 
-    it('cmd+click opens in a new tab (macOS)', () => {
+    it('cmd+click opens in a background tab (macOS)', () => {
       const navigateSpy = vi.fn()
-      const openInNewTabSpy = vi.fn()
+      const openInBackgroundTabSpy = vi.fn()
       useTabsStore.setState({
         navigateToPage: navigateSpy,
-        openInNewTab: openInNewTabSpy,
+        openInBackgroundTab: openInBackgroundTabSpy,
       })
 
       useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
@@ -199,17 +199,17 @@ describe('QuickAccessBar', () => {
       const chip = screen.getByRole('button', { name: 'Alpha' })
       fireEvent.click(chip, { metaKey: true })
 
-      expect(openInNewTabSpy).toHaveBeenCalledTimes(1)
-      expect(openInNewTabSpy).toHaveBeenCalledWith('A', 'Alpha')
+      expect(openInBackgroundTabSpy).toHaveBeenCalledTimes(1)
+      expect(openInBackgroundTabSpy).toHaveBeenCalledWith('A', 'Alpha')
       expect(navigateSpy).not.toHaveBeenCalled()
     })
 
-    it('middle-click opens in a new tab', () => {
+    it('middle-click opens in a background tab', () => {
       const navigateSpy = vi.fn()
-      const openInNewTabSpy = vi.fn()
+      const openInBackgroundTabSpy = vi.fn()
       useTabsStore.setState({
         navigateToPage: navigateSpy,
-        openInNewTab: openInNewTabSpy,
+        openInBackgroundTab: openInBackgroundTabSpy,
       })
 
       useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
@@ -219,8 +219,8 @@ describe('QuickAccessBar', () => {
       const chip = screen.getByRole('button', { name: 'Alpha' })
       fireEvent(chip, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))
 
-      expect(openInNewTabSpy).toHaveBeenCalledTimes(1)
-      expect(openInNewTabSpy).toHaveBeenCalledWith('A', 'Alpha')
+      expect(openInBackgroundTabSpy).toHaveBeenCalledTimes(1)
+      expect(openInBackgroundTabSpy).toHaveBeenCalledWith('A', 'Alpha')
       expect(navigateSpy).not.toHaveBeenCalled()
     })
 

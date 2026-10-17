@@ -431,7 +431,7 @@ function attachNodeRovingKeys(node: NodeSel, reveal: NodeActions['reveal']): voi
 
 /**
  * A click selects a node and a click on the selected node opens it; Space
- * selects and Enter opens. Ctrl/Cmd-click and middle-click open a new tab.
+ * selects and Enter opens. Ctrl/Cmd-click and middle-click open a background tab.
  * Whether a node is selected is read from the DOM, which `markNodes` keeps in
  * step with the selection between patches. A double-click is two clicks that
  * open the node, so it must not also reach d3-zoom's double-click zoom, which

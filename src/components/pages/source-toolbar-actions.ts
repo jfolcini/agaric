@@ -115,6 +115,8 @@ export const SOURCE_MENU_ROWS: ReadonlySet<BlockMenuActionId> = new Set<BlockMen
 
 /** The block menu's rows the buffer leaves out, each with why. */
 export const SOURCE_MENU_EXCLUDED: Readonly<Partial<Record<BlockMenuActionId, string>>> = {
+  openInNewTab:
+    'It opens the page link the menu was opened on; the buffer’s links are text and its menu opens from the toolbar.',
   openLink:
     'It opens the link the menu was opened on; the buffer’s links are text and its menu opens from the toolbar.',
   copyUrl: 'It copies the link the menu was opened on, which the buffer’s menu never is.',

@@ -107,6 +107,7 @@ beforeEach(() => {
 // the returned `props` re-expose those callbacks flat too, so assertions like
 // `expect(props.onDelete).toHaveBeenCalledWith(...)` keep working.
 const ACTION_KEYS = [
+  'onOpenLinkInNewTab',
   'onDelete',
   'onIndent',
   'onDedent',
@@ -993,6 +994,27 @@ describe('BlockContextMenu', () => {
     // second item is the Tasks group's TODO cycle.
     expect(props.onToggleTodo).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
+  })
+
+  // ── Open in new tab, on a [[link]] / ((ref)) chip ───────────────
+
+  it('"Open in new tab" opens the chip’s target and closes the menu', () => {
+    const onOpenLinkInNewTab = vi.fn()
+    const { props } = renderMenu({ pageLinkId: 'TARGET_01', onOpenLinkInNewTab })
+
+    fireEvent.click(screen.getByRole('menuitem', { name: t('tabs.openInNewTab') }))
+
+    expect(onOpenLinkInNewTab.mock.calls).toEqual([['TARGET_01']])
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it.each([
+    ['opened off a chip', { pageLinkId: undefined, onOpenLinkInNewTab: vi.fn() }],
+    ['no tab can open (mobile)', { pageLinkId: 'TARGET_01', onOpenLinkInNewTab: undefined }],
+  ])('has no "Open in new tab" when %s', (_case, overrides) => {
+    renderMenu(overrides)
+
+    expect(screen.queryByText(t('tabs.openInNewTab'))).not.toBeInTheDocument()
   })
 
   // ── Open link menu item (#924) ──────────────────────────────────

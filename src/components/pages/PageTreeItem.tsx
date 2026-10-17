@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 
 import { DuplicateTitleCue } from '@/components/common/DuplicateTitleCue'
 import { HighlightMatch } from '@/components/common/HighlightMatch'
+import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import type { PageTreeNode } from '@/lib/page-tree'
@@ -47,16 +48,18 @@ export function PageTreeItem({
         className="group flex w-full items-center gap-3 rounded-lg py-1 text-left text-sm transition-colors hover:bg-accent/50 active:bg-accent/70"
         style={{ paddingLeft: `${depth * 16 + 12}px` }}
       >
-        <button
-          type="button"
-          className="flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer rounded focus-ring-visible"
-          onClick={() => onNavigate(leafId, node.fullPath)}
-        >
-          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="truncate" title={node.fullPath}>
-            <HighlightMatch text={node.name} filterText={filterText} />
-          </span>
-        </button>
+        <NewTabTarget pageId={leafId} title={node.fullPath}>
+          <button
+            type="button"
+            className="flex flex-1 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer rounded focus-ring-visible"
+            onClick={() => onNavigate(leafId, node.fullPath)}
+          >
+            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate" title={node.fullPath}>
+              <HighlightMatch text={node.name} filterText={filterText} />
+            </span>
+          </button>
+        </NewTabTarget>
         {node.duplicateTitle && <DuplicateTitleCue pageId={leafId} />}
         {onDelete && (
           <Button
@@ -137,14 +140,16 @@ export function PageTreeItem({
         >
           <ChevronToggle isExpanded={isExpanded} />
         </button>
-        <button
-          type="button"
-          className="flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 active:bg-accent/70 rounded truncate focus-ring-visible"
-          onClick={() => onNavigate(hybridId, node.fullPath)}
-          title={node.fullPath}
-        >
-          <HighlightMatch text={node.name} filterText={filterText} />
-        </button>
+        <NewTabTarget pageId={hybridId} title={node.fullPath}>
+          <button
+            type="button"
+            className="flex-1 text-left px-1 py-1 text-sm hover:bg-accent/50 active:bg-accent/70 rounded truncate focus-ring-visible"
+            onClick={() => onNavigate(hybridId, node.fullPath)}
+            title={node.fullPath}
+          >
+            <HighlightMatch text={node.name} filterText={filterText} />
+          </button>
+        </NewTabTarget>
         {node.duplicateTitle && <DuplicateTitleCue pageId={hybridId} />}
         <button
           type="button"

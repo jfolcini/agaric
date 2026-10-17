@@ -1,6 +1,6 @@
 /**
  * Walking the graph (#5435): a click or Space selects a node, a second click or
- * Enter opens it, a modifier or middle click opens a new tab, and in local mode
+ * Enter opens it, a modifier or middle click opens a background tab, and in local mode
  * the selection re-centres the neighbourhood. Real d3 against the DOM; the
  * worker is a recorder whose `update` payload shows which nodes kept their
  * place.
@@ -74,7 +74,7 @@ const LINKS = [
 ]
 
 const navigateToPage = vi.fn()
-const openInNewTab = vi.fn()
+const openInBackgroundTab = vi.fn()
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -94,7 +94,7 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [{ pageId: 'hub', title: 'Hub' }], label: 'Hub' }],
     activeTabIndex: 0,
     navigateToPage,
-    openInNewTab,
+    openInBackgroundTab,
   })
   vi.mocked(invoke).mockImplementation((cmd: string) => {
     if (cmd === 'list_all_pages_in_space') return Promise.resolve(PAGES)
@@ -145,7 +145,7 @@ describe('GraphView — select, then open on purpose (#5435)', () => {
       ['a', 'Alpha'],
       ['b', 'Bravo'],
     ])
-    expect(openInNewTab).not.toHaveBeenCalled()
+    expect(openInBackgroundTab).not.toHaveBeenCalled()
   })
 
   it('Space selects the focused node', async () => {
@@ -157,14 +157,14 @@ describe('GraphView — select, then open on purpose (#5435)', () => {
     expect(navigateToPage).not.toHaveBeenCalled()
   })
 
-  it('Ctrl/Cmd-click and middle-click open a new tab', async () => {
+  it('Ctrl/Cmd-click and middle-click open a background tab', async () => {
     const container = await renderGraph()
 
     fireEvent.click(node(container, 'Alpha'), { ctrlKey: true })
     fireEvent.click(node(container, 'Bravo'), { metaKey: true })
     fireEvent(node(container, 'Charlie'), new MouseEvent('auxclick', { button: 1, bubbles: true }))
 
-    expect(openInNewTab.mock.calls).toEqual([
+    expect(openInBackgroundTab.mock.calls).toEqual([
       ['a', 'Alpha'],
       ['b', 'Bravo'],
       ['c', 'Charlie'],
@@ -180,7 +180,7 @@ describe('GraphView — select, then open on purpose (#5435)', () => {
     fireEvent.click(node(container, 'Alpha'), { ctrlKey: true })
 
     expect(navigateToPage.mock.calls).toEqual([['a', 'Alpha']])
-    expect(openInNewTab).not.toHaveBeenCalled()
+    expect(openInBackgroundTab).not.toHaveBeenCalled()
   })
 
   it('has no axe violations with the nodes as options and one selected', async () => {

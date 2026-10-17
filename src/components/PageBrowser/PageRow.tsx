@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 
 import { DuplicateTitleCue } from '@/components/common/DuplicateTitleCue'
 import { HighlightMatch } from '@/components/common/HighlightMatch'
+import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -344,56 +345,58 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
         >
           <Bookmark className="h-3.5 w-3.5" fill={starred ? 'currentColor' : 'none'} />
         </Button>
-        <button
-          type="button"
-          className="page-browser-item flex flex-1 min-w-0 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-ring-visible focus-visible:ring-inset"
-          onClick={() => onSelect(pageId, title)}
-          // #2850 — keyboard focus intent (mirrors the row's hover intent
-          // above); this button is the row's actual focusable element.
-          onFocus={() => prefetchIntent.schedule(pageId)}
-          onBlur={prefetchIntent.cancel}
-        >
-          <span className="flex items-center gap-3 min-w-0">
-            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className="page-browser-item-title truncate" title={title}>
-              <HighlightMatch text={title} filterText={trimmedFilter} />
-              {showAliasBadge && (
-                <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
-              )}
-              {duplicateTitle && <DuplicateTitleCue pageId={pageId} className="ml-2" />}
-            </span>
-          </span>
-          <span
-            data-page-metadata
-            className="ml-auto flex shrink-0 items-center gap-2 pl-2 text-xs text-muted-foreground"
+        <NewTabTarget pageId={pageId} title={title}>
+          <button
+            type="button"
+            className="page-browser-item flex flex-1 min-w-0 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-ring-visible focus-visible:ring-inset"
+            onClick={() => onSelect(pageId, title)}
+            // #2850 — keyboard focus intent (mirrors the row's hover intent
+            // above); this button is the row's actual focusable element.
+            onFocus={() => prefetchIntent.schedule(pageId)}
+            onBlur={prefetchIntent.cancel}
           >
-            {inboundLinkCount > 0 && (
-              <span data-metadata-inbound className="max-sm:hidden">
-                <span aria-hidden="true">{`${inboundLinkCount} ↗`}</span>
-                <span className="sr-only">
-                  {t('pageBrowser.metadata.inbound', { count: inboundLinkCount })}
-                </span>
-              </span>
-            )}
-            {childBlockCount > 0 && (
-              <span data-metadata-children className="max-sm:hidden">
-                <span aria-hidden="true">{`${childBlockCount} ⊟`}</span>
-                <span className="sr-only">
-                  {t('pageBrowser.metadata.children', { count: childBlockCount })}
-                </span>
-              </span>
-            )}
-            <span data-metadata-relative>
-              <span aria-hidden="true">{relativeLabel}</span>
-              <span className="sr-only">
-                {t('pageBrowser.metadata.lastModified', { relative: relativeLabel })}
+            <span className="flex items-center gap-3 min-w-0">
+              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="page-browser-item-title truncate" title={title}>
+                <HighlightMatch text={title} filterText={trimmedFilter} />
+                {showAliasBadge && (
+                  <span className="alias-badge text-xs text-muted-foreground">(alias)</span>
+                )}
+                {duplicateTitle && <DuplicateTitleCue pageId={pageId} className="ml-2" />}
               </span>
             </span>
-            {firstFlag && (
-              <PropertyFlagBadge token={firstFlag} label={t(FLAG_LABEL_KEY[firstFlag])} />
-            )}
-          </span>
-        </button>
+            <span
+              data-page-metadata
+              className="ml-auto flex shrink-0 items-center gap-2 pl-2 text-xs text-muted-foreground"
+            >
+              {inboundLinkCount > 0 && (
+                <span data-metadata-inbound className="max-sm:hidden">
+                  <span aria-hidden="true">{`${inboundLinkCount} ↗`}</span>
+                  <span className="sr-only">
+                    {t('pageBrowser.metadata.inbound', { count: inboundLinkCount })}
+                  </span>
+                </span>
+              )}
+              {childBlockCount > 0 && (
+                <span data-metadata-children className="max-sm:hidden">
+                  <span aria-hidden="true">{`${childBlockCount} ⊟`}</span>
+                  <span className="sr-only">
+                    {t('pageBrowser.metadata.children', { count: childBlockCount })}
+                  </span>
+                </span>
+              )}
+              <span data-metadata-relative>
+                <span aria-hidden="true">{relativeLabel}</span>
+                <span className="sr-only">
+                  {t('pageBrowser.metadata.lastModified', { relative: relativeLabel })}
+                </span>
+              </span>
+              {firstFlag && (
+                <PropertyFlagBadge token={firstFlag} label={t(FLAG_LABEL_KEY[firstFlag])} />
+              )}
+            </span>
+          </button>
+        </NewTabTarget>
       </div>
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner action buttons; CSS-grid cell would break as a <td> without a <table> */}
       <div role="gridcell" className="shrink-0">

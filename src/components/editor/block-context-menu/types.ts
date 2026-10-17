@@ -17,6 +17,7 @@ import type { BlockTypeToken } from '@/lib/block-type-convert'
  * out with a reason (#5160 D-c).
  */
 export const BLOCK_MENU_ACTION_IDS = [
+  'openInNewTab',
   'openLink',
   'copyUrl',
   'copyBlockRef',
@@ -62,7 +63,7 @@ export interface BlockContextMenuProps {
    * means "this affordance is not available here" and the corresponding menu
    * item is omitted (the long-standing conditional-group behaviour).
    *
-   * The action keys consumed by this menu are: `onDelete`, `onIndent`,
+   * The action keys consumed by this menu are: `onOpenLinkInNewTab`, `onDelete`, `onIndent`,
    * `onDedent`, `onToggleTodo`, `onTogglePriority`, `onToggleCollapse`,
    * `onMoveUp`, `onMoveDown`, `onMerge`, `onDuplicate`, `onShowHistory`,
    * `onShowProperties`, `onZoomIn`, `onTurnInto`, and `onBatchDelete`.
@@ -76,6 +77,8 @@ export interface BlockContextMenuProps {
   dueDate?: (string | null) | undefined
   /** URL of external link under cursor (for Copy URL action). */
   linkUrl?: string | undefined
+  /** Target id of the `[[link]]` / `((ref))` chip under the cursor ("Open in new tab"). */
+  pageLinkId?: string | undefined
   /**
    * #1445 — id used by the "Copy page reference" action (`[[ULID]]`). When the
    * menu's block IS a page this is the block's own id; otherwise it is the id

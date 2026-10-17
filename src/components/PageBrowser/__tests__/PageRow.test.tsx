@@ -7,11 +7,13 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { collectFlagTokens, formatRelativeShort, PageRow } from '@/components/PageBrowser/PageRow'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
+import { useNavigationStore } from '@/stores/navigation'
+import { useTabsStore } from '@/stores/tabs'
 
 type RequiredProps = React.ComponentProps<typeof PageRow>
 
@@ -160,6 +162,51 @@ describe('PageRow', () => {
     const titleButton = screen.getByText('Hi').closest('button[type="button"]') as HTMLButtonElement
     await user.click(titleButton)
     expect(onSelect).toHaveBeenCalledWith('p', 'Hi')
+  })
+
+  describe('opening the page in a background tab', () => {
+    beforeEach(() => {
+      useTabsStore.setState({
+        tabs: [{ id: '0', pageStack: [], label: '' }],
+        activeTabIndex: 0,
+        tabsBySpace: {},
+        activeTabIndexBySpace: {},
+      })
+      useNavigationStore.setState({ currentView: 'pages', selectedBlockId: null })
+    })
+
+    function openedTabs() {
+      return useTabsStore
+        .getState()
+        .tabs.slice(1)
+        .map((tab) => tab.pageStack)
+    }
+
+    it('a middle click on the title opens it behind the Pages view, not in place', async () => {
+      const onSelect = vi.fn()
+      const user = userEvent.setup()
+      render(<PageRow {...baseProps({ pageId: 'p', title: 'Hi', onSelect })} />)
+
+      await user.pointer({ keys: '[MouseMiddle]', target: screen.getByText('Hi') })
+
+      expect(openedTabs()).toEqual([[{ pageId: 'p', title: 'Hi' }]])
+      expect(useTabsStore.getState().activeTabIndex).toBe(0)
+      expect(useNavigationStore.getState().currentView).toBe('pages')
+      expect(onSelect).not.toHaveBeenCalled()
+    })
+
+    it('"Open in new tab" in the row title’s context menu does the same', async () => {
+      const onSelect = vi.fn()
+      const user = userEvent.setup()
+      render(<PageRow {...baseProps({ pageId: 'p', title: 'Hi', onSelect })} />)
+
+      await user.pointer({ keys: '[MouseRight]', target: screen.getByText('Hi') })
+      await user.click(await screen.findByRole('menuitem', { name: 'Open in new tab' }))
+
+      expect(openedTabs()).toEqual([[{ pageId: 'p', title: 'Hi' }]])
+      expect(useNavigationStore.getState().currentView).toBe('pages')
+      expect(onSelect).not.toHaveBeenCalled()
+    })
   })
 
   it('alias badge renders only when showAliasBadge=true', () => {

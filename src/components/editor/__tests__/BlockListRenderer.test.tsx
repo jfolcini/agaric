@@ -11,18 +11,24 @@
  *  - Axe a11y audit passes
  */
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { BlockActionsProvider } from '@/components/block-tree/use-block-actions'
 import { t } from '@/lib/i18n'
 
 // Mock SortableBlock
 vi.mock('@/components/editor/SortableBlock', () => ({
   SortableBlock: (props: { blockId: string }) => (
-    <div data-testid={`sortable-block-${props.blockId}`}>SortableBlock</div>
+    <div data-testid={`sortable-block-${props.blockId}`}>
+      SortableBlock
+      <span data-type="block-link" data-id={`LINK_${props.blockId}`}>
+        link
+      </span>
+    </div>
   ),
   INDENT_WIDTH: 24,
 }))
@@ -96,6 +102,48 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
     ...overrides,
   }
 }
+
+describe('BlockListRenderer — middle click on a link chip', () => {
+  const blocks = [makeBlock({ id: 'BLK001', content: '[[LINK_BLK001]]' })]
+
+  function renderWith(onOpenLinkInNewTab: ((id: string) => void) | undefined) {
+    render(
+      <BlockActionsProvider value={{ onOpenLinkInNewTab }}>
+        <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />
+      </BlockActionsProvider>,
+    )
+  }
+
+  it('opens the chip’s target in a new tab and cancels the browser’s middle-button actions', async () => {
+    const open = vi.fn()
+    const user = userEvent.setup()
+    renderWith(open)
+    const chip = screen.getByText('link')
+
+    expect(fireEvent.mouseDown(chip, { button: 1 })).toBe(false)
+    await user.pointer({ keys: '[MouseMiddle]', target: chip })
+
+    expect(open.mock.calls).toEqual([['LINK_BLK001']])
+  })
+
+  it('leaves a middle click off a chip to the browser', async () => {
+    const open = vi.fn()
+    const user = userEvent.setup()
+    renderWith(open)
+    const row = screen.getByTestId('sortable-block-BLK001')
+
+    expect(fireEvent.mouseDown(row, { button: 1 })).toBe(true)
+    await user.pointer({ keys: '[MouseMiddle]', target: row })
+
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('does nothing where no tab can open (mobile)', () => {
+    renderWith(undefined)
+
+    expect(fireEvent.mouseDown(screen.getByText('link'), { button: 1 })).toBe(true)
+  })
+})
 
 describe('BlockListRenderer', () => {
   it('renders SortableBlock for each visible item', () => {

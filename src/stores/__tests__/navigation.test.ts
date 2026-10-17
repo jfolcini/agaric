@@ -834,6 +834,46 @@ describe('useNavigationStore', () => {
     })
   })
 
+  describe('openInBackgroundTab', () => {
+    it('appends a tab behind the active one, leaving the active tab and its page shown', () => {
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      useNavigationStore.setState({ selectedBlockId: 'B1' })
+
+      useTabsStore.getState().openInBackgroundTab('P2', 'Page 2')
+
+      const tabs = useTabsStore.getState()
+      expect(tabs.tabs.map((tab) => [tab.label, tab.pageStack])).toEqual([
+        ['Page 1', [{ pageId: 'P1', title: 'Page 1' }]],
+        ['Page 2', [{ pageId: 'P2', title: 'Page 2' }]],
+      ])
+      expect(tabs.activeTabIndex).toBe(0)
+      expect(selectPageStack(tabs)).toEqual([{ pageId: 'P1', title: 'Page 1' }])
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+      expect(useNavigationStore.getState().selectedBlockId).toBe('B1')
+    })
+
+    it('leaves another view on screen', () => {
+      useNavigationStore.getState().setView('pages')
+
+      useTabsStore.getState().openInBackgroundTab('P1', 'Page 1')
+
+      expect(useNavigationStore.getState().currentView).toBe('pages')
+      expect(useTabsStore.getState().tabs).toHaveLength(2)
+      expect(useTabsStore.getState().activeTabIndex).toBe(0)
+    })
+
+    it('records its origin when it is entered from another view', () => {
+      useNavigationStore.getState().setView('journal')
+      useTabsStore.getState().openInBackgroundTab('P1', 'Page 1')
+
+      expect(useTabsStore.getState().tabs[1]?.enteredFrom).toBeUndefined()
+
+      useTabsStore.getState().switchTab(1)
+
+      expect(useTabsStore.getState().tabs[1]?.enteredFrom).toBe('journal')
+    })
+  })
+
   // ---------------------------------------------------------------------------
   // closeTab
   // ---------------------------------------------------------------------------

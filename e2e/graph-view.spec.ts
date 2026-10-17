@@ -101,13 +101,16 @@ test.describe('Graph view', () => {
     await expect(nodeGroup).toHaveAttribute('aria-selected', 'false')
   })
 
-  test('a Ctrl/Cmd-click on a node opens its page in a new tab', async ({ page }) => {
+  test('a Ctrl/Cmd-click on a node opens its page in a background tab', async ({ page }) => {
     const { dot } = await gettingStartedNode(page)
 
     await dot.click({ modifiers: ['ControlOrMeta'] })
 
-    await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
-    await expect(page.locator('[role="tab"][title="Getting Started"]')).toBeVisible()
+    const tab = page.locator('[role="tab"][title="Getting Started"]')
+    await expect(tab).toBeVisible()
+    await expect(tab).toHaveAttribute('aria-selected', 'false')
+    await expect(page.getByTestId('graph-svg')).toBeVisible()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveCount(0)
   })
 
   // #5433 — one action from a page lands on its local graph. The seed links

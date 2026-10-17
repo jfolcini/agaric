@@ -59,6 +59,7 @@ import {
   LONG_PRESS_MOVE_THRESHOLD,
 } from '@/components/block-tree/use-block-touch-long-press'
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
+import { NewTabTarget } from '@/components/common/NewTabTarget'
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -128,17 +129,19 @@ function SortableBookmark({ pageId, title, onOpen, onRemove }: SortableBookmarkP
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(isDragging && 'z-10 rounded-md bg-sidebar-accent')}
     >
-      <SidebarMenuButton
-        ref={setActivatorNodeRef}
-        tooltip={fullTitle}
-        title={fullTitle}
-        {...attributes}
-        {...listeners}
-        onClick={() => onOpen(pageId, title)}
-      >
-        <Bookmark />
-        <span className="truncate">{label}</span>
-      </SidebarMenuButton>
+      <NewTabTarget pageId={pageId} title={title}>
+        <SidebarMenuButton
+          ref={setActivatorNodeRef}
+          tooltip={fullTitle}
+          title={fullTitle}
+          {...attributes}
+          {...listeners}
+          onClick={() => onOpen(pageId, title)}
+        >
+          <Bookmark />
+          <span className="truncate">{label}</span>
+        </SidebarMenuButton>
+      </NewTabTarget>
       <SidebarMenuAction
         showOnHover
         aria-label={t('bookmarks.remove', { title: fullTitle })}

@@ -17,6 +17,7 @@ import { lazy, memo, Suspense, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DependencyIndicator } from '@/components/common/DependencyIndicator'
+import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { PageLink } from '@/components/pages/PageLink'
 import { DateChipEditor } from '@/components/properties/DateChipEditor'
 import { renderRichContent } from '@/components/RichContentRenderer'
@@ -456,7 +457,7 @@ function BlockListItemInner({
     [rowRef, liRef],
   )
 
-  return (
+  const row = (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- this li is the focusable, keyboard-navigable list row itself (roving tabindex + Enter/Space activation via onKeyDown); the activation handlers belong on the row, and it can't become a <button> because it is a list item that contains nested interactive controls (date chip, reschedule button)
     <li
       ref={setRowRef}
@@ -552,6 +553,13 @@ function BlockListItemInner({
         </Popover>
       )}
     </li>
+  )
+  return pageId && onClick ? (
+    <NewTabTarget pageId={pageId} title={pageTitle ?? ''}>
+      {row}
+    </NewTabTarget>
+  ) : (
+    row
   )
 }
 

@@ -56,6 +56,16 @@ function linkUrlAt(target: EventTarget | null): string | undefined {
     : undefined
 }
 
+/**
+ * The target id of the `[[link]]` or `((ref))` chip under `target`, static or
+ * in the editor; both renderers mark a navigable chip with these attributes.
+ */
+export function pageLinkIdAt(target: EventTarget | null): string | undefined {
+  if (!(target instanceof Element)) return undefined
+  const chip = target.closest('[data-type="block-link"][data-id], [data-type="block-ref"][data-id]')
+  return chip?.getAttribute('data-id') ?? undefined
+}
+
 interface TouchPress {
   x: number
   y: number
@@ -65,7 +75,7 @@ interface TouchPress {
 }
 
 export interface UseBlockTouchLongPressOptions {
-  openContextMenu: (x: number, y: number, linkUrl?: string) => void
+  openContextMenu: (x: number, y: number, linkUrl?: string, pageLinkId?: string) => void
   isDraggingRef: React.RefObject<boolean>
 }
 
@@ -150,7 +160,12 @@ export function useBlockTouchLongPress({
         // would move focus off the menu that opens here (and `click` would
         // focus the block under it). A plain tap keeps its click.
         e.preventDefault()
-        openContextMenu(current.x, current.y, linkUrlAt(current.target))
+        openContextMenu(
+          current.x,
+          current.y,
+          linkUrlAt(current.target),
+          pageLinkIdAt(current.target),
+        )
       }
     },
     [cancelPress, openContextMenu],
@@ -162,7 +177,7 @@ export function useBlockTouchLongPress({
       // the native menu through would be strictly worse than showing nothing.
       e.preventDefault()
       if (isDraggingRef.current || press.current) return
-      openContextMenu(e.clientX, e.clientY, linkUrlAt(e.target))
+      openContextMenu(e.clientX, e.clientY, linkUrlAt(e.target), pageLinkIdAt(e.target))
     },
     [openContextMenu, isDraggingRef],
   )

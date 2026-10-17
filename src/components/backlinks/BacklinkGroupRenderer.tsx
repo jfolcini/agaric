@@ -23,6 +23,7 @@ import { memo, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CollapsibleGroupList } from '@/components/common/CollapsibleGroupList'
+import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
@@ -65,6 +66,8 @@ export interface BacklinkGroupRendererProps {
 
 interface BacklinkRowProps {
   block: BlockRow
+  /** Title of `block.page_id`, the page a middle click opens in a background tab. */
+  pageTitle: string
   onBlockClick: (block: BlockRow) => void
   onBlockKeyDown: (e: React.KeyboardEvent, block: BlockRow) => void
   onTagClick: (id: string) => void
@@ -111,6 +114,7 @@ interface BacklinkRowProps {
  */
 function BacklinkRowInner({
   block,
+  pageTitle,
   onBlockClick,
   onBlockKeyDown,
   onTagClick,
@@ -172,7 +176,7 @@ function BacklinkRowInner({
     [block.content, resolveVersion, emptyLabel, anchorRefId],
   )
 
-  return (
+  const row = (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- keyboard-navigable reference row; click/keydown drive roving focus and block activation, the row is the interactive unit
     <li
       id={domId}
@@ -203,6 +207,13 @@ function BacklinkRowInner({
       )}
       <span className="linked-reference-item-text text-sm flex-1 truncate">{richContent}</span>
     </li>
+  )
+  return targetPageId ? (
+    <NewTabTarget pageId={targetPageId} title={pageTitle}>
+      {row}
+    </NewTabTarget>
+  ) : (
+    row
   )
 }
 
@@ -242,9 +253,10 @@ export function BacklinkGroupRenderer({
       // #3316 item 3 — window each expanded group's rows.
       virtualizeRows
       activeBlockId={focusedBlockId ?? null}
-      renderBlock={(block, _group, virtualRow) => (
+      renderBlock={(block, group, virtualRow) => (
         <BacklinkRow
           key={block.id}
+          pageTitle={group.page_title ?? t('references.untitled')}
           {...(virtualRow
             ? {
                 style: virtualRow.style,

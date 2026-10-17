@@ -323,6 +323,7 @@ export const common: Record<string, string> = {
   'tabs.closeTab': 'Close tab: {{label}}',
   'tabs.openInNewTabEmpty': 'No page to open in a new tab',
   'tabs.openInNewTab': 'Open in new tab',
+  'tabs.openedInBackground': 'Opened {{title}} in a new tab',
   'tabs.untitled': 'Untitled',
   'tabs.tabList': 'Editor tabs',
   'tabs.switchTabsHint': 'Switch tabs: {{title}}',

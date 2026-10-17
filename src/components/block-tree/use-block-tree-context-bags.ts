@@ -24,6 +24,7 @@ import type { BlockResolvers } from '@/components/block-tree/use-block-resolvers
 export interface UseBlockTreeContextBagsParams {
   // ── Actions ──────────────────────────────────────────────────────
   onNavigate: BlockActions['onNavigate']
+  onOpenLinkInNewTab?: BlockActions['onOpenLinkInNewTab']
   onDelete: BlockActions['onDelete']
   onIndent: BlockActions['onIndent']
   onDedent: BlockActions['onDedent']
@@ -61,6 +62,7 @@ export interface UseBlockTreeContextBagsReturn {
 
 export function useBlockTreeContextBags({
   onNavigate,
+  onOpenLinkInNewTab,
   onDelete,
   onIndent,
   onDedent,
@@ -85,6 +87,7 @@ export function useBlockTreeContextBags({
   const blockActions = useMemo<BlockActions>(
     () => ({
       onNavigate,
+      onOpenLinkInNewTab,
       onDelete,
       onIndent,
       onDedent,
@@ -104,6 +107,7 @@ export function useBlockTreeContextBags({
     }),
     [
       onNavigate,
+      onOpenLinkInNewTab,
       onDelete,
       onIndent,
       onDedent,
