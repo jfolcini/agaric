@@ -17,7 +17,7 @@ CREATE VIRTUAL TABLE fts_blocks USING fts5(
 );
 ```
 
-The `stripped` column carries the block content with markup boundaries removed (ULIDs, `[[…]]` link wrappers, `#[…]` tag wrappers, `(( … ))` block-ref wrappers) so a search for human-readable text matches what the user sees, not what's in the raw markdown. The `case_sensitive 0` flag is required for the trigram tokenizer to fold case; without it FTS5 falls back to exact-case matching on the trigram alphabet.
+The `stripped` column carries the block content with markup boundaries removed (ULIDs, `[[…]]` link wrappers, `#[…]` tag wrappers, `(( … ))` block-ref wrappers) so a search for human-readable text matches what the user sees, not what's in the raw markdown. Only block content is indexed: attachment bytes never reach `fts_blocks`, so the text inside an attached file is not searchable. That limit is deliberate for now (#5364). The `case_sensitive 0` flag is required for the trigram tokenizer to fold case; without it FTS5 falls back to exact-case matching on the trigram alphabet.
 
 Trigrams give substring matching for free — a query of `alp` matches `alpha`, `alphabet`, `cephalopod` — but they pay for it in index size (every overlapping three-character window of every block) and in worst-case match selectivity (short queries have many candidate trigrams). The pagination cap (the `MAX_SEARCH_RESULTS` `const` in `src-tauri/agaric-store/src/fts/search/constants.rs` — read the value from the code) and a 3-character floor keep that cost bounded. The floor is **two distinct measures**, not one shared rule:
 

@@ -4,7 +4,7 @@
 Agaric ships with three complementary search surfaces:
 
 - **In-page find (`Ctrl+F`)** — browser-style find-in-page toolbar that highlights matches in the current page (this surface; see [In-page find](#in-page-find) below).
-- **Find across pages (`Ctrl+Shift+F`)** — the full-text-search view that scans every block and page title in the current space.
+- **Find across pages (`Ctrl+Shift+F`)** — the full-text-search view that scans every block and page title in the current space. It does not look inside attachments: the text of an attached file (a Markdown note, a transcript, a PDF) is not indexed, so its words are not found. The block that holds the file is searched as usual.
 - **Palette (`Cmd/Ctrl+K`)** — quick navigation across pages and recent blocks (see [Quick palette](#quick-palette) below).
 
 For the across-pages surface: open the panel from the sidebar (or with `Ctrl+Shift+F`), type a query of three or more characters, and results stream in grouped by page. Matches inside snippets are highlighted; the page header doubles as a navigation target so you can jump straight to the parent. Structured filters can be typed directly into the input (`tag:#urgent path:Journal/*`) or added via the **Add filter** button above the chip row — see [Filter syntax](#filter-syntax) below.
