@@ -2126,8 +2126,9 @@ async fn fetch_retry_queue_summary(pool: &SqlitePool) -> Option<RetryQueueSummar
     // would put the full device id into a PUBLIC issue body one line under the
     // one #609 truncates, and would emit one entry per failed record — a shed
     // batch is hundreds, past the prefill URL limit `buildGitHubIssueUrl`
-    // documents. Truncating at the first `:` collapses them to `ApplyOp` and
-    // makes the enum-literal claim above true.
+    // documents. Truncating at the first `:` collapses them to `ApplyOp` (or
+    // `ReplayApplyOp`, a replayed op's spelling) and makes the enum-literal
+    // claim above true.
     let kinds = sqlx::query_scalar!(
         "SELECT DISTINCT \
                 CASE WHEN instr(task_kind, ':') > 0 \

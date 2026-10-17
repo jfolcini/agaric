@@ -29,10 +29,14 @@ pub async fn handle_foreground_task(
             Ok(())
         }
         // #2896 — a boot-replay op: apply in `ApplyMode::ReplaySuppressed` so
-        // its inline reprojection defers into the replay-owned sink (`dirty`).
-        // Identical to `ApplyOp` apart from the explicit mode.
+        // its inline reprojection defers into the replay-owned sink (`dirty`),
+        // or, retried from the retry queue with no sink, in
+        // `ApplyMode::ReplayRouted` (#5647). Identical to `ApplyOp` apart from
+        // the explicit mode.
         MaterializeTask::ReplayApplyOp(record, dirty) => {
-            let mode = ApplyMode::ReplaySuppressed(dirty.clone());
+            let mode = dirty
+                .clone()
+                .map_or(ApplyMode::ReplayRouted, ApplyMode::ReplaySuppressed);
             if let Err(e) = apply_op_with_mode(pool, record, mode, state).await {
                 tracing::warn!(
                     op_type = %record.op_type,
@@ -299,11 +303,10 @@ async fn dispatch_committed_cohorts(
     // the Restore/Delete descendant cohorts fan out, so the
     // engine's per-block-id mutation matches the SQL cascade.
     for (record, effects) in records.iter().zip(per_record_effects.iter()) {
-        dispatch_restore_descendants(pool, record, &effects.restored_cohort, state).await;
-        // #2017: symmetric UPWARD fan-out for the restored ancestor
-        // chain (see `apply_op` for the divergence rationale). Mirrors
-        // the descendant fan-out on the batch path too.
-        dispatch_restore_ancestors(pool, record, &effects.restored_ancestors, state).await;
+        // The restore cohort and, #2017, its symmetric UPWARD fan-out for
+        // the restored ancestor chain (see `apply_op` for the divergence
+        // rationale), on the batch path too.
+        super::apply::dispatch_restore_effects(pool, record, effects, state).await;
         dispatch_delete_descendants(
             record,
             &effects.deleted_cohort,

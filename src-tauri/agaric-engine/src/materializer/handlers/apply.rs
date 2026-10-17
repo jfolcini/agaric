@@ -63,7 +63,8 @@ pub async fn apply_op(
 /// foreground task (`MaterializeTask::ReplayApplyOp`, what a failed
 /// `ReplayApplyOps` chunk falls back to, #5418) routes through here so
 /// each replayed op defers its inline reprojection into the replay-owned
-/// [`ReplayDirtyParents`] sink; the [`apply_op`] wrapper passes
+/// [`ReplayDirtyParents`] sink, or, retried from the retry queue, applies in
+/// [`ApplyMode::ReplayRouted`] (#5647); the [`apply_op`] wrapper passes
 /// [`ApplyMode::Normal`]. The mode is stated per dispatch, so a concurrent
 /// non-replay applier can never inherit replay suppression.
 #[tracing::instrument(skip(pool, record, state, mode), fields(seq = record.seq), err)]
@@ -146,15 +147,15 @@ pub(super) async fn apply_op_with_mode(
     // PRE-UPDATE in `apply_op_tx` because `resolve_block_space`
     // filters `deleted_at IS NULL`; a post-commit lookup would return
     // `None` for every cohort row.
-    dispatch_restore_descendants(pool, record, &effects.restored_cohort, state).await;
-    // #2017: symmetric UPWARD fan-out. The SQL restore also un-deleted the
-    // contiguous soft-deleted ANCESTOR chain (the #1884 live-orphan fix) but
-    // the in-tx engine apply touched only the seed, so the ancestors are alive
-    // in SQL yet still tombstoned in the per-space CRDT. Without this fan-out
-    // the next `reproject_block_deleted_at` re-deletes them in SQL —
+    //
+    // #2017: and the symmetric UPWARD fan-out. The SQL restore also un-deleted
+    // the contiguous soft-deleted ANCESTOR chain (the #1884 live-orphan fix)
+    // but the in-tx engine apply touched only the seed, so the ancestors are
+    // alive in SQL yet still tombstoned in the per-space CRDT. Without this
+    // fan-out the next `reproject_block_deleted_at` re-deletes them in SQL —
     // self-perpetuating divergence. Reuses the same engine RestoreBlock helper
     // as the descendant fan-out.
-    dispatch_restore_ancestors(pool, record, &effects.restored_ancestors, state).await;
+    dispatch_restore_effects(pool, record, &effects, state).await;
     dispatch_delete_descendants(
         record,
         &effects.deleted_cohort,
@@ -238,7 +239,15 @@ pub async fn dispatch_restore_descendants(
     // #2226: thin wrapper over the shared restore fan-out; the downward cohort
     // and upward ancestor variants differ only in the op-id infix + log wording
     // carried by `FanoutKind`.
-    fan_out_restore(pool, root_record, cohort, FanoutKind::Descendants, state).await;
+    fan_out_restore(
+        pool,
+        root_record,
+        cohort,
+        FanoutKind::Descendants,
+        None,
+        state,
+    )
+    .await;
 }
 
 /// #2017: symmetric UPWARD companion to [`dispatch_restore_descendants`].
@@ -271,7 +280,45 @@ pub async fn dispatch_restore_ancestors(
     // #2226: thin wrapper over the shared restore fan-out (see
     // [`dispatch_restore_descendants`]); only the op-id infix (`#ancestor/`)
     // and log wording differ, both carried by `FanoutKind::Ancestors`.
-    fan_out_restore(pool, root_record, ancestors, FanoutKind::Ancestors, state).await;
+    fan_out_restore(
+        pool,
+        root_record,
+        ancestors,
+        FanoutKind::Ancestors,
+        None,
+        state,
+    )
+    .await;
+}
+
+/// Both restore fan-outs for one applied op, descendants then ancestors, into
+/// the space boot replay pinned for them (`ApplyEffects::restore_space_id`,
+/// #5647), or else the one the seed resolves to post-commit.
+pub(crate) async fn dispatch_restore_effects(
+    pool: &SqlitePool,
+    root_record: &OpRecord,
+    effects: &ApplyEffects,
+    state: &crate::loro::shared::LoroState,
+) {
+    let space_id = effects.restore_space_id.as_ref();
+    fan_out_restore(
+        pool,
+        root_record,
+        &effects.restored_cohort,
+        FanoutKind::Descendants,
+        space_id,
+        state,
+    )
+    .await;
+    fan_out_restore(
+        pool,
+        root_record,
+        &effects.restored_ancestors,
+        FanoutKind::Ancestors,
+        space_id,
+        state,
+    )
+    .await;
 }
 
 /// #4285 — re-derive the LINK edges of every block a restore un-deleted, not
@@ -476,7 +523,8 @@ impl FanoutKind {
 
 /// #2226: shared body for the two symmetric restore fan-outs. Drives
 /// `RestoreBlock` onto the per-space engine for every id in `ids`, reusing the
-/// root op's metadata; `kind` selects the op-id infix + log wording.
+/// root op's metadata; `kind` selects the op-id infix + log wording. The
+/// space is `space_id` when the caller pinned one, else the root's.
 ///
 /// The #2031 fanout-dropped metric is bumped (with the same warn/trace lines
 /// as before) on exactly the three skip paths: unparseable root payload,
@@ -487,6 +535,7 @@ async fn fan_out_restore(
     root_record: &OpRecord,
     ids: &[String],
     kind: FanoutKind,
+    space_id: Option<&agaric_store::space::SpaceId>,
     state: &crate::loro::shared::LoroState,
 ) {
     use agaric_core::ulid::BlockId;
@@ -520,7 +569,11 @@ async fn fan_out_restore(
     // per-space tree and is alive again post-commit, so `resolve_block_space`
     // succeeds). Keeps fanout O(N) on the engine call, not on SQL queries.
     let root_block = BlockId::from_trusted(root_payload.block_id.as_str());
-    let space_id = match agaric_store::space::resolve_block_space(pool, &root_block).await {
+    let resolved = match space_id {
+        Some(space_id) => Ok(Some(space_id.clone())),
+        None => agaric_store::space::resolve_block_space(pool, &root_block).await,
+    };
+    let space_id = match resolved {
         Ok(Some(s)) => s,
         Ok(None) => {
             // #2031: SQL restore committed but the root block has no resolvable

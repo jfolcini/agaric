@@ -117,6 +117,9 @@ pub async fn apply_create_block_via_loro(
     device_id: &str,
     p: &CreateBlockPayload,
     chunk: Option<&mut super::ChunkAccumulator>,
+    // The op is a replayed one (`ApplyMode::replay`), so SQL already holds the
+    // ops after it.
+    replay: bool,
     // #2896: the EXPLICIT boot-replay reprojection-deferral sink. `Some` only on
     // the boot-replay path (`ApplyMode::ReplaySuppressed`); `None` (every other
     // caller) reprojects inline. Replaces the retired ambient boot-replay
@@ -133,9 +136,7 @@ pub async fn apply_create_block_via_loro(
         Some(parent) => parent.clone(),
         None => p.block_id.clone(),
     };
-    let Some(space_id) =
-        resolve_op_space(&mut *conn, &resolution_anchor, replay_dirty.is_some()).await?
-    else {
+    let Some(space_id) = resolve_op_space(&mut *conn, &resolution_anchor, replay).await? else {
         super::sql_only_fallback::record(
             "create_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -216,9 +217,9 @@ pub async fn apply_create_block_via_loro(
             // deferred to a single end-of-replay reproject from the engine's
             // final state. The `replay_dirty` sink is passed EXPLICITLY by the
             // replay caller (via `ApplyMode::ReplaySuppressed`); record this
-            // create's parent group into it instead of reprojecting inline. Off
-            // replay (`replay_dirty == None`) this branch is byte-identical to
-            // before.
+            // create's parent group into it instead of reprojecting inline.
+            // Without a sink (`replay_dirty == None`, a retried replay op
+            // included) this branch is byte-identical to before.
             if let Some(dirty) = replay_dirty {
                 let parent_key = p.parent_id.as_ref().map(agaric_core::ulid::BlockId::as_str);
                 dirty.record(space_id.as_str(), parent_key);
@@ -306,15 +307,18 @@ pub async fn apply_edit_block_via_loro(
 /// post-apply state for the typed fields equals the payload's fields
 /// by construction, so this is correct — see the projection helper's
 /// docstring). An unresolvable space falls back to the SQL-only
-/// path.
+/// path. `replayed_at` is the op's `created_at` on boot replay, `None`
+/// elsewhere.
 pub async fn apply_set_property_via_loro(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &SetPropertyPayload,
-    replay: bool,
+    replayed_at: Option<i64>,
 ) -> Result<(), AppError> {
     use crate::loro::projection;
+
+    let replay = replayed_at.is_some();
 
     // #2326: `SetProperty(space)` is the moment a page (and its whole block
     // subtree) acquires a space. Those blocks were created during the no-space
@@ -339,12 +343,20 @@ pub async fn apply_set_property_via_loro(
         // assignment during the no-space window / an unregistered target #708)
         // and post-projection the NEW space. We need the OLD one to know whether
         // this is a genuine cross-space reassignment (below).
-        let old_space = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?;
+        // #5647: not on boot replay, where SQL already holds the ops after
+        // this one and so names a later space, or none for a page deleted
+        // later. The old docs are then the engines still holding the block.
+        let old_spaces = if replay {
+            state.registry.spaces_containing(p.block_id.as_str())
+        } else {
+            agaric_store::space::resolve_block_space(&mut *conn, &p.block_id)
+                .await?
+                .into_iter()
+                .collect()
+        };
 
         projection::project_set_property_to_sql(conn, p).await?;
-        if let Some(new_space) =
-            agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
-        {
+        if let Some(new_space) = resolve_op_space(&mut *conn, &p.block_id, replay).await? {
             // #2907: a GENUINE reassignment — the block was already a member of a
             // DIFFERENT registered space — must PRUNE its whole subtree from the
             // OLD space's per-space LoroDoc before hydrating into the new one.
@@ -361,7 +373,7 @@ pub async fn apply_set_property_via_loro(
             // same convergence contract as a normal PurgeBlock.
             //
             // Gate: only when the block resolved to a DIFFERENT registered space
-            // beforehand. A first-time assignment (`old_space == None`, the #2326
+            // beforehand. A first-time assignment (no old space, the #2326
             // no-space window) or a same-space no-op (`old == new`, incl. an
             // unregistered target #708 that the projection left unchanged) prunes
             // nothing — behaviour there is unchanged.
@@ -370,13 +382,13 @@ pub async fn apply_set_property_via_loro(
             // `apply_purge_block_via_loro` (which additionally runs the SQL
             // purge cascade): the SQL rows must SURVIVE — they now belong to
             // the new space — so only the OLD doc's CRDT membership is removed.
-            if let Some(old_space) = old_space.filter(|old| *old != new_space) {
+            for old_space in old_spaces.iter().filter(|old| **old != new_space) {
                 prune_subtree_from_space_doc(
                     conn,
                     state,
                     device_id,
                     p.block_id.as_str(),
-                    &old_space,
+                    old_space,
                 )
                 .await?;
             }
@@ -387,6 +399,7 @@ pub async fn apply_set_property_via_loro(
                 &p.block_id,
                 &new_space,
                 SeedRank::Stamp,
+                replayed_at,
             )
             .await?;
         }
@@ -685,11 +698,19 @@ pub async fn hydrate_space_block_into_own_engine(
     space_id: &agaric_store::space::SpaceId,
 ) -> Result<(), AppError> {
     let block_id = agaric_core::ulid::BlockId::from_trusted(space_id.as_str());
-    hydrate_page_subtree_into_engine(tx, state, device_id, &block_id, space_id, SeedRank::Stamp)
-        .await
+    hydrate_page_subtree_into_engine(
+        tx,
+        state,
+        device_id,
+        &block_id,
+        space_id,
+        SeedRank::Stamp,
+        None,
+    )
+    .await
 }
 
-/// One LIVE row of the owning-page subtree read by
+/// One row of the owning-page subtree read by
 /// [`hydrate_page_subtree_into_engine`].
 #[derive(sqlx::FromRow)]
 struct SubtreeRow {
@@ -889,7 +910,10 @@ fn seed_nodes_into_engine(
 /// (depth-ordered recursive descent from the page), so every parent is present
 /// in the engine before its children are seeded. The walk stops at a nested
 /// page (#5239): a page keeps its own space (#4480) and enters a doc only
-/// through its own `space` op.
+/// through its own `space` op. On boot replay SQL already holds the ops after
+/// the space op, so `admit_deleted_since` (the op's `created_at`) also admits
+/// the rows tombstoned since; a later delete's replay tombstones them again
+/// (#5647).
 ///
 /// ## Full seed (nodes + properties + tags + aliases)
 /// Seeding only tree nodes would zero the `EngineMissingTarget` counter but
@@ -931,12 +955,14 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
     page_id: &agaric_core::ulid::BlockId,
     space_id: &agaric_store::space::SpaceId,
     rank: SeedRank,
+    admit_deleted_since: Option<i64>,
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    // 1. Read the whole owning-page group: LIVE rows only, parent-before-child
-    //    (depth-ordered recursive descent from the page). The child ordering key
-    //    is `position` so siblings seed in tree order.
+    // 1. Read the whole owning-page group: LIVE rows, and those tombstoned at
+    //    or after `admit_deleted_since`, parent-before-child (depth-ordered
+    //    recursive descent from the page). The child ordering key is
+    //    `position` so siblings seed in tree order.
     //    #5239: the walk stops BEFORE a nested page — it keeps its own space
     //    (#4480) and joins a doc only through its own `space` op — so the row
     //    set is exactly the one `project_set_property_to_sql` stamps
@@ -947,12 +973,12 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
     //    replaces was (the site count is unchanged).
     let rows: Vec<SubtreeRow> = sqlx::query_as(
         "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ? \
+             SELECT id, 0 FROM blocks WHERE id = ?1 \
              UNION ALL \
              SELECT b.id, d.depth + 1 FROM blocks b \
              INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL AND d.depth < 100 \
-               AND b.block_type != 'page' \
+             WHERE d.depth < 100 AND b.block_type != 'page' \
+               AND (b.deleted_at IS NULL OR b.deleted_at >= ?2) \
          ) \
          SELECT b.id, b.block_type, b.content, b.parent_id, b.position, \
                 b.todo_state, b.priority, b.due_date, b.scheduled_date \
@@ -961,6 +987,7 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
           ORDER BY d.depth ASC, b.position ASC",
     )
     .bind(page_id.as_str())
+    .bind(admit_deleted_since)
     .fetch_all(&mut *conn)
     .await?;
 
@@ -1262,6 +1289,9 @@ pub async fn apply_move_block_via_loro(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &MoveBlockPayload,
+    // The op is a replayed one (`ApplyMode::replay`), so SQL already holds the
+    // ops after it.
+    replay: bool,
     // #2896: the EXPLICIT boot-replay reprojection-deferral sink. `Some` only on
     // the boot-replay path (`ApplyMode::ReplaySuppressed`); `None` (every other
     // caller) reprojects inline. Replaces the retired ambient boot-replay
@@ -1273,8 +1303,7 @@ pub async fn apply_move_block_via_loro(
 ) -> Result<Vec<String>, AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = resolve_op_space(&mut *conn, &p.block_id, replay_dirty.is_some()).await?
-    else {
+    let Some(space_id) = resolve_op_space(&mut *conn, &p.block_id, replay).await? else {
         super::sql_only_fallback::record(
             "move_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1300,8 +1329,9 @@ pub async fn apply_move_block_via_loro(
     // the inline path would have reprojected — the source (old-parent) group
     // always, and the target (new-parent) group only when reparenting
     // (`!new_siblings.is_empty()`, the exact condition guarding the second
-    // inline reproject). Off replay (`replay_dirty == None`) the reproject calls
-    // below are byte-identical to before.
+    // inline reproject). Without a sink (`replay_dirty == None`, a retried
+    // replay op included) the reproject calls below are byte-identical to
+    // before.
     if let Some(dirty) = replay_dirty {
         dirty.record(space_id.as_str(), old_parent.as_deref());
         if !new_siblings.is_empty() {
@@ -1327,7 +1357,7 @@ pub async fn apply_move_block_via_loro(
     // later delete's, and sweeping would stamp the subject with state it never
     // had here; that delete's own replay stamps it if it is still under it
     // (#5630).
-    let swept = if replay_dirty.is_some() {
+    let swept = if replay {
         None
     } else {
         sweep_move_under_tombstoned_ancestor(&mut *conn, p.block_id.as_str()).await?
@@ -1358,8 +1388,9 @@ pub async fn apply_move_block_via_loro(
 /// duplicate work that `dispatch_restore_descendants` already does
 /// post-commit. The split keeps the engine API simple (1 block in, 1
 /// mutation out) and keeps cohort semantics on the SQL side. If a
-/// crash drops the fanout, the next op-log replay rebuilds the engine
-/// from scratch.
+/// crash drops the fanout before a snapshot pass persists it, boot replay
+/// re-applies the restore and reads its cohort back from the engine
+/// (#5647).
 ///
 /// **Space resolution on a soft-deleted block.** `resolve_block_space`
 /// filters `deleted_at IS NULL` (AGENTS.md invariant #9 — tombstones
@@ -1484,14 +1515,15 @@ pub async fn topmost_live_ancestor(
 /// which collects seed + descendants and prunes the whole subtree from
 /// the LoroDoc — so this single seed call keeps the engine in parity with
 /// the SQL cascade. The SQL cascade is the source of truth users observe.
-/// The SQL-only fallback arm is taken only when the block's space is
-/// genuinely unresolvable (NULL `space_id`); it is not reachable for a
-/// normally-spaced purge since #2868.
+/// The SQL-only fallback arm is taken only when no engine can be named: a
+/// NULL `space_id`, or on boot replay (`replay`) an absent row and no engine
+/// holding the block.
 pub async fn apply_purge_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &PurgeBlockPayload,
+    replay: bool,
 ) -> Result<(), AppError> {
     // #2910: is the block being purged ITSELF a registered space? Capture this
     // BEFORE the cascade's final `DELETE FROM blocks` fires migration 0089's
@@ -1525,33 +1557,36 @@ pub async fn apply_purge_block_via_loro(
     // seed call clears the engine tombstone. A genuinely unresolvable space
     // (NULL `space_id`, pre-spaces data) still falls back to SQL-only.
     //
-    // Note a purged SPACE block always takes the fallback arm: a space block
-    // carries `is_space = "true"`, never `space = <self>`, so its own
-    // `blocks.space_id` is NULL and this resolve yields `None`. The engine
-    // guard below is therefore only ever taken for a NON-space purge, on the
-    // block's OWNING space (a DIFFERENT id than `p.block_id`) — so the eviction
-    // at the end never targets an engine we are mid-applying through.
-    match agaric_store::space::resolve_soft_deleted_block_space(&mut *conn, &p.block_id).await? {
-        None => {
-            super::sql_only_fallback::record(
-                "purge_block",
-                super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
-            );
-            purge_block_sql_cascade(conn, p).await?;
-        }
-        Some(space_id) => {
-            {
-                let mut guard =
-                    state
-                        .registry
-                        .for_space_recording(&space_id, device_id, &state.revert)?;
-                let engine = guard.engine_mut();
-                engine.apply_purge_block(p.block_id.as_str())?;
-                drop(guard);
-            }
-            purge_block_sql_cascade(conn, p).await?;
-        }
+    // #5647: on boot replay SQL may already hold this purge, so the row is
+    // gone and names no space; the engines that still hold the block do.
+    //
+    // Note a purged SPACE block takes the fallback arm off replay: a space
+    // block carries `is_space = "true"`, never `space = <self>`, so its own
+    // `blocks.space_id` is NULL and this resolve yields `None`. Off replay the
+    // engine guard below is therefore only ever taken for a NON-space purge,
+    // on the block's OWNING space (a DIFFERENT id than `p.block_id`) — so the
+    // eviction at the end never targets an engine we are mid-applying through.
+    // On replay the `spaces` row is gone too, so there is no eviction.
+    let spaces =
+        match agaric_store::space::resolve_soft_deleted_block_space(&mut *conn, &p.block_id).await?
+        {
+            Some(space_id) => vec![space_id],
+            None if replay => state.registry.spaces_containing(p.block_id.as_str()),
+            None => Vec::new(),
+        };
+    if spaces.is_empty() {
+        super::sql_only_fallback::record(
+            "purge_block",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
     }
+    for space_id in &spaces {
+        let mut guard = state
+            .registry
+            .for_space_recording(space_id, device_id, &state.revert)?;
+        guard.engine_mut().apply_purge_block(p.block_id.as_str())?;
+    }
+    purge_block_sql_cascade(conn, p).await?;
 
     // #2910: the cascade above deleted this space's `loro_doc_state` row (see
     // `purge_block_sql_cascade`) in the SAME purge transaction. Now evict the

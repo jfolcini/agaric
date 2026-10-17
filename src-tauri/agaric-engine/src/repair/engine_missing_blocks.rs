@@ -77,6 +77,7 @@ pub async fn hydrate_engine_missing_blocks(
             &BlockId::from_trusted(page_id),
             &SpaceId::from_trusted(space_id),
             SeedRank::Sql,
+            None,
         )
         .await?;
     }

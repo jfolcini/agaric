@@ -140,22 +140,27 @@ pub enum MaterializeTask {
     ApplyOp(Arc<OpRecord>),
     /// #2896 — a boot-replay op. Identical to [`ApplyOp`](Self::ApplyOp) in
     /// every respect (dedup, retry, metrics, cursor advance) EXCEPT that it
-    /// carries the replay-owned reprojection-deferral sink: the consumer applies
-    /// it in `ApplyMode::ReplaySuppressed`, so each replayed create/move records
-    /// its touched sibling group into this sink instead of reprojecting inline.
-    /// The replay driver drains the sink once, after the whole replay flushes,
-    /// to reproject each touched parent ONCE from the engine's final state.
+    /// applies as a replayed op: with the replay-owned reprojection-deferral
+    /// sink, in `ApplyMode::ReplaySuppressed`, so each replayed create/move
+    /// records its touched sibling group into this sink instead of reprojecting
+    /// inline. The replay driver drains the sink once, after the whole replay
+    /// flushes, to reproject each touched parent ONCE from the engine's final
+    /// state.
     ///
     /// This variant is what makes the suppression mode EXPLICIT (per-op) rather
     /// than an ambient global: a concurrent live op arrives as a plain `ApplyOp`
     /// and reprojects inline by construction, so it can never inherit replay
-    /// suppression. A failed replay op that exhausts retries persists as a plain
-    /// `ApplyOp` retry row (the sink is dropped) — a later re-apply outside the
-    /// replay window correctly reprojects inline, matching the prior behaviour.
+    /// suppression. A failed replay op that exhausts retries persists as a
+    /// `ReplayApplyOp` retry row (the sink is dropped), and the sweep brings it
+    /// back with no sink, in `ApplyMode::ReplayRouted`: replay routing, inline
+    /// reprojection (#5647).
     ///
     /// #5418: boot replay enqueues [`ReplayApplyOps`](Self::ReplayApplyOps)
     /// chunks; this per-op shape is what a failed chunk falls back to.
-    ReplayApplyOp(Arc<OpRecord>, crate::apply::kernel::ReplayDirtyParents),
+    ReplayApplyOp(
+        Arc<OpRecord>,
+        Option<crate::apply::kernel::ReplayDirtyParents>,
+    ),
     /// #5418 — a boot-replay chunk: [`BatchApplyOps`](Self::BatchApplyOps)
     /// applied in `ApplyMode::ReplaySuppressed` with the replay-owned sink, so
     /// one `BEGIN IMMEDIATE` transaction applies the whole chunk and advances

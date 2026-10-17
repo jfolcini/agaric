@@ -62,7 +62,8 @@ pub const GLOBAL_TASK_SENTINEL: &str = "__GLOBAL__";
 /// `ApplyOp` failure rows. Mirrors [`GLOBAL_TASK_SENTINEL`]:
 /// the composite key for an apply-op failure is
 /// `(device_id, seq)`, packed into the `task_kind` column as
-/// `"ApplyOp:<seq>:<device_id>"`. The sentinel cannot collide with a
+/// `"ApplyOp:<seq>:<device_id>"` (`"ReplayApplyOp:…"` for a replayed op,
+/// #5647). The sentinel cannot collide with a
 /// real ULID block id (ULIDs are 26-char Crockford base32 uppercase;
 /// the sentinel is lowercase + underscores).
 pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
@@ -137,7 +138,8 @@ pub const SEED_UNRESOLVED_LINK_LAST_ERROR: &str =
 ///   requiring a NULL column.
 /// - **Foreground apply-op** failures — keyed by the
 ///   composite `(device_id, seq)` packed into the `task_kind` column
-///   as `"ApplyOp:<seq>:<device_id>"`, with `block_id` set to
+///   as `"ApplyOp:<seq>:<device_id>"`, or `"ReplayApplyOp:<seq>:<device_id>"`
+///   for a boot-replay op, with `block_id` set to
 ///   [`APPLY_OP_TASK_SENTINEL`]. Reconstruction requires a fresh
 ///   `OpRecord` lookup against `op_log` (handled in [`sweep_once_counted`]).
 ///
@@ -187,6 +189,10 @@ pub(crate) enum RetryKind {
     ApplyOp {
         device_id: String,
         seq: i64,
+        /// #5647: a [`MaterializeTask::ReplayApplyOp`], re-enqueued as one so
+        /// it keeps replay routing. Persisted as the `ReplayApplyOp` spelling;
+        /// one `(device_id, seq)` keeps a single row across the two.
+        replay: bool,
     },
 }
 
@@ -196,8 +202,8 @@ impl RetryKind {
     ///
     /// For unit variants this is a static `&'static str`; for
     /// [`Self::ApplyOp`] this is the dynamic
-    /// `"ApplyOp:<seq>:<device_id>"` packing, returned as
-    /// [`Cow::Owned`].
+    /// `"ApplyOp:<seq>:<device_id>"` / `"ReplayApplyOp:<seq>:<device_id>"`
+    /// packing, returned as [`Cow::Owned`].
     pub(crate) fn task_kind_str(&self) -> Cow<'static, str> {
         match self {
             Self::UpdateFtsBlock => Cow::Borrowed("UpdateFtsBlock"),
@@ -215,7 +221,31 @@ impl RetryKind {
             Self::SetBlockPageId => Cow::Borrowed("SetBlockPageId"),
             Self::RebuildBlockTagRefsCache => Cow::Borrowed("RebuildBlockTagRefsCache"),
             Self::RebuildPageLinkCache => Cow::Borrowed("RebuildPageLinkCache"),
-            Self::ApplyOp { device_id, seq } => Cow::Owned(format!("ApplyOp:{seq}:{device_id}")),
+            Self::ApplyOp {
+                device_id,
+                seq,
+                replay,
+            } => {
+                let prefix = if *replay { "ReplayApplyOp" } else { "ApplyOp" };
+                Cow::Owned(format!("{prefix}:{seq}:{device_id}"))
+            }
+        }
+    }
+
+    /// The same op's row under the other apply-op spelling, which a failure
+    /// or a success must also retire (#5647). `None` for every other kind.
+    fn other_apply_op_spelling(&self) -> Option<Self> {
+        match self {
+            Self::ApplyOp {
+                device_id,
+                seq,
+                replay,
+            } => Some(Self::ApplyOp {
+                device_id: device_id.clone(),
+                seq: *seq,
+                replay: !replay,
+            }),
+            _ => None,
         }
     }
 
@@ -240,15 +270,21 @@ impl RetryKind {
             _ => {}
         }
         // Composite-key path: apply-op failures encoded as
-        // `"ApplyOp:<seq>:<device_id>"`. `splitn(3, ':')` keeps the
-        // device_id intact even if it contains further `:` chars.
+        // `"ApplyOp:<seq>:<device_id>"` or `"ReplayApplyOp:…"`. `splitn(3, ':')`
+        // keeps the device_id intact even if it contains further `:` chars.
         let mut parts = s.splitn(3, ':');
-        match (parts.next(), parts.next(), parts.next()) {
-            (Some("ApplyOp"), Some(seq_str), Some(device_id)) if !device_id.is_empty() => {
+        let replay = match parts.next() {
+            Some("ApplyOp") => false,
+            Some("ReplayApplyOp") => true,
+            _ => return None,
+        };
+        match (parts.next(), parts.next()) {
+            (Some(seq_str), Some(device_id)) if !device_id.is_empty() => {
                 let seq: i64 = seq_str.parse().ok()?;
                 Some(Self::ApplyOp {
                     device_id: device_id.to_string(),
                     seq,
+                    replay,
                 })
             }
             _ => None,
@@ -395,14 +431,23 @@ impl RetryKind {
             MaterializeTask::RebuildPageLinkCache => {
                 Some((Self::RebuildPageLinkCache, GLOBAL_TASK_SENTINEL.to_string()))
             }
-            // #2896: a `ReplayApplyOp` that exhausts retries persists as a plain
-            // `ApplyOp` retry row (the replay sink is dropped) — matching the
-            // prior behaviour where replay enqueued plain `ApplyOp`s. A later
-            // re-apply runs outside the replay window and reprojects inline.
-            MaterializeTask::ApplyOp(record) | MaterializeTask::ReplayApplyOp(record, _) => Some((
+            // #5647: a `ReplayApplyOp` that exhausts retries keeps its replay
+            // flag, so the sweep brings it back with replay routing (the
+            // sink is dropped: the re-apply runs after replay and reprojects
+            // inline).
+            MaterializeTask::ApplyOp(record) => Some((
                 Self::ApplyOp {
                     device_id: record.device_id.clone(),
                     seq: record.seq,
+                    replay: false,
+                },
+                APPLY_OP_TASK_SENTINEL.to_string(),
+            )),
+            MaterializeTask::ReplayApplyOp(record, _) => Some((
+                Self::ApplyOp {
+                    device_id: record.device_id.clone(),
+                    seq: record.seq,
+                    replay: true,
                 },
                 APPLY_OP_TASK_SENTINEL.to_string(),
             )),
@@ -576,6 +621,12 @@ pub async fn record_failure(
     // not move for it.
     if row.attempts == 1 {
         metrics.note_retry_row_inserted();
+    }
+    // #5647: one op keeps one row, so the sweep re-applies it once. After the
+    // insert: until it lands, the other spelling's row is the only record that
+    // the op never applied, and the apply cursor is past it.
+    if let Some(other) = kind.other_apply_op_spelling() {
+        clear_entry(pool, &block_id, other.task_kind_str().as_ref(), metrics).await?;
     }
 
     // #2509: classify this persistent-enqueue event so the field can answer
@@ -792,6 +843,10 @@ pub(crate) async fn clear_on_success(
     // never a lost task (see `metrics.rs`, `pending_retry_rows`).
     if !metrics.has_pending_retry_rows() {
         return Ok(());
+    }
+    // #5647: the op's row may be under either apply-op spelling.
+    if let Some(other) = kind.other_apply_op_spelling() {
+        clear_entry(pool, &block_id, other.task_kind_str().as_ref(), metrics).await?;
     }
     clear_entry(pool, &block_id, kind.task_kind_str().as_ref(), metrics).await
 }
@@ -1060,7 +1115,11 @@ async fn sweep_once_counted(
     let mut tally = SweepTally::default();
     for row in &due {
         let apply_op_kind = match RetryKind::from_str(&row.task_kind) {
-            Some(RetryKind::ApplyOp { device_id, seq }) => Some((device_id, seq)),
+            Some(RetryKind::ApplyOp {
+                device_id,
+                seq,
+                replay,
+            }) => Some((device_id, seq, replay)),
             _ => None,
         };
 
@@ -1068,14 +1127,13 @@ async fn sweep_once_counted(
             continue;
         }
 
-        if let Some((device_id, seq)) = apply_op_kind {
+        if let Some((device_id, seq, replay)) = apply_op_kind {
             sweep_apply_op_row(
                 read_pool,
                 write_pool,
                 materializer,
                 row,
-                &device_id,
-                seq,
+                (&device_id, seq, replay),
                 &mut tally,
             )
             .await?;
@@ -1299,7 +1357,8 @@ fn payload_string_field(payload: &str, field: &str) -> Option<String> {
 ///   3. #3294: gate on WRITE-SLOT supersession — if a later op wrote the same
 ///      logical slot ([`WriteSlot`]: property key, tag membership, tree
 ///      position), do NOT re-apply (out-of-order value regression).
-///   4. Wrap in `Arc` and submit via [`crate::materializer::Materializer::enqueue_foreground`].
+///   4. Wrap in `Arc` and submit via [`crate::materializer::Materializer::enqueue_foreground`],
+///      as a [`MaterializeTask::ReplayApplyOp`] when `replay` (#5647).
 ///
 /// A missing op_log row and a purge-/edit-superseded op are reported as
 /// [`ApplyOpSweepDisposition`] values (permanent — the caller retires the
@@ -1349,6 +1408,7 @@ async fn try_reenqueue_apply_op(
     materializer: &crate::materializer::Materializer,
     device_id: &str,
     seq: i64,
+    replay: bool,
 ) -> Result<ApplyOpSweepDisposition, AppError> {
     let record = sqlx::query_as!(
         agaric_store::op_log::OpRecord,
@@ -1412,9 +1472,14 @@ async fn try_reenqueue_apply_op(
         }
     }
 
-    materializer
-        .enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(record)))
-        .await?;
+    // #5647: a replayed op comes back as one, so it keeps replay routing.
+    let record = Arc::new(record);
+    let task = if replay {
+        MaterializeTask::ReplayApplyOp(record, None)
+    } else {
+        MaterializeTask::ApplyOp(record)
+    };
+    materializer.enqueue_foreground(task).await?;
     Ok(ApplyOpSweepDisposition::Enqueued)
 }
 
@@ -1688,16 +1753,29 @@ mod tests {
             created_at: 1_736_942_400_000,
             block_id: None,
         };
-        let task = MaterializeTask::ApplyOp(Arc::new(record));
-        let (kind, sentinel) = RetryKind::from_task(&task).expect("ApplyOp is retryable");
-        assert_eq!(sentinel, APPLY_OP_TASK_SENTINEL);
-        let kind_str = kind.task_kind_str();
-        assert_eq!(kind_str.as_ref(), "ApplyOp:42:dev-mat-A");
+        let record = Arc::new(record);
+        // #5647: a replayed op keeps its own spelling, so the sweep brings it
+        // back as one.
+        for (task, spelled) in [
+            (
+                MaterializeTask::ApplyOp(Arc::clone(&record)),
+                "ApplyOp:42:dev-mat-A",
+            ),
+            (
+                MaterializeTask::ReplayApplyOp(Arc::clone(&record), None),
+                "ReplayApplyOp:42:dev-mat-A",
+            ),
+        ] {
+            let (kind, sentinel) = RetryKind::from_task(&task).expect("ApplyOp is retryable");
+            assert_eq!(sentinel, APPLY_OP_TASK_SENTINEL);
+            let kind_str = kind.task_kind_str();
+            assert_eq!(kind_str.as_ref(), spelled);
 
-        let parsed = RetryKind::from_str(kind_str.as_ref()).unwrap();
-        assert_eq!(parsed, kind);
-        // ApplyOp cannot reconstruct a task without an op_log lookup.
-        assert!(parsed.to_task(sentinel.clone()).is_none());
+            let parsed = RetryKind::from_str(kind_str.as_ref()).unwrap();
+            assert_eq!(parsed, kind);
+            // ApplyOp cannot reconstruct a task without an op_log lookup.
+            assert!(parsed.to_task(sentinel.clone()).is_none());
+        }
     }
 
     /// Malformed apply-op `task_kind` strings (extra
@@ -1710,12 +1788,14 @@ mod tests {
         assert!(RetryKind::from_str("ApplyOp:42:").is_none());
         // Round-trip preserves device_ids that contain `:` because we
         // splitn(3, ':') so the third segment captures everything.
+        assert!(RetryKind::from_str("ReplayApplyOp:42:").is_none());
         let kind = RetryKind::from_str("ApplyOp:7:dev:A:B").unwrap();
         assert_eq!(
             kind,
             RetryKind::ApplyOp {
                 device_id: "dev:A:B".into(),
-                seq: 7
+                seq: 7,
+                replay: false,
             }
         );
     }
@@ -1741,6 +1821,100 @@ mod tests {
         .unwrap();
         assert_eq!(row.attempts, 1);
         assert_eq!(row.last_error.as_deref(), Some("boom"));
+    }
+
+    /// #5647 — one op keeps one row across the two apply-op spellings, so the
+    /// sweep re-applies it once.
+    #[tokio::test]
+    async fn record_failure_replaces_the_other_apply_op_spelling_5647() {
+        use agaric_store::op_log::OpRecord;
+        let (pool, _dir) = test_pool().await;
+        let metrics = test_metrics();
+        let record = Arc::new(OpRecord {
+            device_id: "dev-5647".into(),
+            seq: 7,
+            parent_seqs: None,
+            hash: "deadbeef".into(),
+            op_type: "edit_block".into(),
+            payload: "{}".into(),
+            created_at: 1_736_942_400_000,
+            block_id: None,
+        });
+        record_failure(
+            &pool,
+            &MaterializeTask::ApplyOp(Arc::clone(&record)),
+            "e1",
+            &metrics,
+        )
+        .await
+        .unwrap();
+        let replayed = MaterializeTask::ReplayApplyOp(record, None);
+        record_failure(&pool, &replayed, "e2", &metrics)
+            .await
+            .unwrap();
+
+        let kinds: Vec<String> =
+            sqlx::query_scalar("SELECT task_kind FROM materializer_retry_queue")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            kinds,
+            vec!["ReplayApplyOp:7:dev-5647".to_string()],
+            "the later failure's spelling replaces the earlier row"
+        );
+    }
+
+    /// #5647 — the row is the op's only record that it never applied (the
+    /// apply cursor is past it), so a refused write must leave the other
+    /// spelling's row standing.
+    #[tokio::test]
+    async fn record_failure_keeps_the_other_spelling_when_its_insert_fails_5647() {
+        use agaric_store::op_log::OpRecord;
+        let (pool, _dir) = test_pool().await;
+        let metrics = test_metrics();
+        let record = Arc::new(OpRecord {
+            device_id: "dev-5647-refused".into(),
+            seq: 7,
+            parent_seqs: None,
+            hash: "deadbeef".into(),
+            op_type: "edit_block".into(),
+            payload: "{}".into(),
+            created_at: 1_736_942_400_000,
+            block_id: None,
+        });
+        record_failure(
+            &pool,
+            &MaterializeTask::ApplyOp(Arc::clone(&record)),
+            "e1",
+            &metrics,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER refuse_replay_rows BEFORE INSERT ON materializer_retry_queue \
+             WHEN NEW.task_kind LIKE 'ReplayApplyOp:%' \
+             BEGIN SELECT RAISE(ABORT, 'injected #5647'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let replayed = MaterializeTask::ReplayApplyOp(record, None);
+        record_failure(&pool, &replayed, "e2", &metrics)
+            .await
+            .expect_err("the insert is refused");
+
+        let kinds: Vec<String> =
+            sqlx::query_scalar("SELECT task_kind FROM materializer_retry_queue")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            kinds,
+            vec!["ApplyOp:7:dev-5647-refused".to_string()],
+            "the op keeps its one row"
+        );
     }
 
     #[tokio::test]
@@ -6161,8 +6335,7 @@ async fn sweep_apply_op_row(
     write_pool: &SqlitePool,
     materializer: &crate::materializer::Materializer,
     row: &DueRow,
-    device_id: &str,
-    seq: i64,
+    (device_id, seq, replay): (&str, i64, bool),
     tally: &mut SweepTally,
 ) -> Result<(), AppError> {
     // ApplyOp rows are dispatched to the foreground
@@ -6171,7 +6344,7 @@ async fn sweep_apply_op_row(
     // them from the row alone — the `OpRecord` must be re-loaded
     // from `op_log` — and (b) `try_enqueue_background` would route
     // to the wrong consumer.
-    match try_reenqueue_apply_op(read_pool, materializer, device_id, seq).await {
+    match try_reenqueue_apply_op(read_pool, materializer, device_id, seq, replay).await {
         Ok(ApplyOpSweepDisposition::Enqueued) => {
             // Issue #378: lease (do NOT clear) on successful
             // enqueue. The row stays so a subsequent failure's
