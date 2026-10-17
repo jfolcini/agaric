@@ -90,6 +90,20 @@ describe('ActivityFeed', () => {
     expect(await axe(container)).toHaveNoViolations()
   })
 
+  it("names the agent on an agent's row and no one on the user's", async () => {
+    render(
+      <ActivityFeed
+        entries={[
+          { ...UNDOABLE, agentName: 'Planner' },
+          { ...UNDOABLE, actorKind: 'user', agentName: 'Ghost', opRef: { device_id: 'd', seq: 2 } },
+        ]}
+      />,
+    )
+    const [agentRow, userRow] = screen.getAllByTestId('mcp-activity-row')
+    expect(agentRow).toHaveTextContent('Planner')
+    expect(userRow).not.toHaveTextContent('Ghost')
+  })
+
   it('undoing an agent op fires revertOps and toasts success', async () => {
     const user = userEvent.setup()
     mockRevert.mockResolvedValue(ok([]))

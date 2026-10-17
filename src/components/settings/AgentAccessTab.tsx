@@ -17,7 +17,9 @@
  *      warning badge while enabled.
  *   6. RW socket path display + copy button.
  *   7. RW kill switch — disconnect every live RW agent connection.
- *   8. Recent activity feed (rolling 100-entry subscription to the
+ *   8. Agents (#5667): one token, mode and space list per client, in its
+ *      own card and always shown, since agents are set up before access is on.
+ *   9. Recent activity feed (rolling 100-entry subscription to the
  *      `mcp:activity` Tauri event), in its own card and always shown: its
  *      Undo buttons revert past agent writes, which still matters after
  *      access is turned off.
@@ -42,6 +44,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ActivityFeed } from '@/components/agent-access/ActivityFeed'
+import { AgentList } from '@/components/agent-access/AgentList'
 import type { McpRwStatus, McpStatus } from '@/components/agent-access/McpStatusSection'
 import { McpStatusSection } from '@/components/agent-access/McpStatusSection'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
@@ -334,6 +337,12 @@ export function AgentAccessTab(): React.ReactElement {
             onCopySocket={(path) => void copyToClipboard(path, 'agentAccess.rwSocketPathCopied')}
             onDisconnect={() => void handleDisconnectAllRw()}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent>
+          <AgentList socketPath={socketPath} />
         </CardContent>
       </Card>
 

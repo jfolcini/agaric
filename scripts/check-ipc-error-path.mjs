@@ -137,6 +137,8 @@ const NO_TEST_ALLOWLIST = Object.freeze({
     'Internal editor sub-components of AddFilterPopover, only ever mounted through it. The single IPC call (listAllPagesInSpace in LinkTargetEditor) and its picker are driven via AddFilterPopover.test.tsx (relational-facets suite, #1478). Pure extraction in #1648 — no new IPC surface, the parent suite is the integration point.',
   'src/components/backlink-filter/AddFilterRow.tsx':
     'Only mounted through BacklinkFilterBuilder. Its one IPC call (listTagsByPrefix on open, #5445) is rejected in BacklinkFilterBuilder.test.tsx, which asserts the references.loadTagsFailed toast.',
+  'src/components/agent-access/CreateAgentDialog.tsx':
+    'Only mounted through AgentList. Its one IPC call (createMcpAgent, #5667) is rejected in AgentList.test.tsx, which asserts the inline alert, the log and the toast.',
 })
 
 if (!fs.existsSync(COMPONENTS_DIR) || !fs.existsSync(TESTS_DIR)) {
