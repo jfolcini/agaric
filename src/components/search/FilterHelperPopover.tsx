@@ -258,6 +258,10 @@ export function FilterHelperPopover({
           className="h-7 gap-1 text-xs"
           data-testid="add-filter-button"
           aria-label={t('search.addFilter')}
+          // Keeps the search input focused: its blur closes the history
+          // dropdown above, which moves this button from under the pointer
+          // before the click.
+          onMouseDown={(e) => e.preventDefault()}
         >
           <Plus aria-hidden="true" />
           {t('search.addFilter')}

@@ -112,6 +112,10 @@ export function FilterChipRow({
             label={label}
             removeAriaLabel={t('search.removeFilter', { token: label })}
             onRemove={() => onRemove(index)}
+            // Keeps the search input focused: its blur closes the history
+            // dropdown above, which moves the pill from under the pointer
+            // before the click on its remove button.
+            onMouseDown={(e) => e.preventDefault()}
             // Thread aria-invalid to the Badge so its `aria-invalid:border-destructive`
             // variant goes live (was previously dead — only the hover title
             // carried any error signal).
@@ -145,6 +149,8 @@ export function FilterChipRow({
         <button
           type="button"
           onClick={onClearAll}
+          // Same reason as the pills' onMouseDown above.
+          onMouseDown={(e) => e.preventDefault()}
           className="text-xs text-muted-foreground hover:text-foreground underline ml-1 rounded-sm focus-ring-visible"
         >
           {t('search.clearAll')}

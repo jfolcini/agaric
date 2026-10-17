@@ -614,7 +614,9 @@ export function SearchPanel(): React.ReactElement {
         onInputFocus={() => setInputFocused(true)}
         // Phase 3.U5 — synchronous blur. The history dropdown's rows
         // preventDefault on mousedown, which keeps the input focused through
-        // the click; no defer needed.
+        // the click; no defer needed. So do the controls below the dropdown
+        // (filter chips, Add filter, Recent cards), which its closing would
+        // shift.
         onInputBlur={() => setInputFocused(false)}
         invalid={!!regexError}
         inlineError={regexError}
@@ -707,7 +709,14 @@ export function SearchPanel(): React.ReactElement {
             {recentPages.map((page) => (
               <li key={page.id}>
                 <NewTabTarget pageId={page.id} title={page.title}>
-                  <CardButton className="text-sm" onClick={() => handleRecentClick(page)}>
+                  <CardButton
+                    className="text-sm"
+                    onClick={() => handleRecentClick(page)}
+                    // Keeps the input focused: its blur closes the history
+                    // dropdown above, which moves this card from under the
+                    // pointer before the click.
+                    onMouseDown={(e) => e.preventDefault()}
+                  >
                     {page.title}
                   </CardButton>
                 </NewTabTarget>
