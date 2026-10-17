@@ -1,9 +1,14 @@
+import { devices } from '@playwright/test'
+
 import {
   createPageFromPagesView,
   deleteBlockViaContextMenu,
   expect,
   navigateToView,
+  openPageMobile,
+  replaceEditorText,
   test,
+  waitForBoot,
 } from './helpers'
 
 /**
@@ -230,5 +235,58 @@ test.describe('Editor lifecycle', () => {
     await expect(page.getByText('Session block')).not.toBeVisible()
     // But seed blocks should be back
     await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
+  })
+})
+
+const { defaultBrowserType: _, ...pixel7 } = devices['Pixel 7']
+
+test.describe('Editor lifecycle on touch', () => {
+  test.use(pixel7)
+
+  // A one-line edit, so the edited block is as short as the editor makes it:
+  // a press that blurs the editor must not resize it, or the rows below move
+  // under the finger and the release lands on another element.
+  async function editFirstBlockToOneLine(page: import('@playwright/test').Page) {
+    await waitForBoot(page)
+    await openPageMobile(page, 'Getting Started')
+    await page
+      .locator('[data-testid="block-static"]')
+      .first()
+      .tap({ position: { x: 4, y: 4 } })
+    const editor = page.getByRole('textbox', { name: 'Block editor' })
+    await expect(editor).toBeVisible()
+    await replaceEditorText(page, 'Short')
+    await expect(editor).toHaveText('Short')
+    return editor
+  }
+
+  test('a tap on the block below moves the editor there and saves', async ({ page }) => {
+    const editor = await editFirstBlockToOneLine(page)
+    const below = page.locator('[data-testid="block-static"]').first()
+    const belowId = await below.getAttribute('data-block-id')
+
+    // Its top edge, the part a resize of the edited block would move away.
+    await below.tap({ position: { x: 4, y: 4 } })
+
+    await expect(
+      page.locator(`[data-testid="block-editor"][data-block-id="${belowId}"]`),
+    ).toBeVisible()
+    await expect(page.locator('[data-testid="block-static"]').first()).toHaveText('Short')
+    await replaceEditorText(page, 'typed after moving')
+    await expect(editor).toHaveText('typed after moving')
+  })
+
+  test('a tap on a link chip in the block below follows the link', async ({ page }) => {
+    await editFirstBlockToOneLine(page)
+    const chip = page
+      .locator('[data-testid="block-static"] [data-testid="block-link-chip"]')
+      .first()
+    await expect(chip).toHaveText('Quick Notes')
+
+    // A chip press still blurs the editor, so its upper part is what a resize
+    // of the edited block would move from under the finger.
+    await chip.tap({ position: { x: 4, y: 2 } })
+
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
   })
 })
