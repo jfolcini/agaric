@@ -345,7 +345,7 @@ export function JournalControls(): React.ReactElement {
               aria-haspopup="dialog"
               onClick={() => setCalendarOpen((o) => !o)}
             >
-              <CalendarIcon className="h-4 w-4 max-sm:hidden" aria-hidden="true" />
+              <CalendarIcon className="max-sm:hidden" aria-hidden="true" />
               <span
                 className="truncate max-sm:hidden lg:min-w-[100px] text-center"
                 data-testid="date-display"

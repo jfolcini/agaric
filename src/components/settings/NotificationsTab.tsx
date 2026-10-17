@@ -181,7 +181,7 @@ export function NotificationsTab(): React.ReactElement {
                 aria-busy={requesting}
                 data-testid="notifications-request-permission-button"
               >
-                {requesting && <Spinner size="sm" />}
+                {requesting && <Spinner />}
                 {t('notifications.requestPermissionButton')}
               </Button>
               <Button
@@ -192,7 +192,7 @@ export function NotificationsTab(): React.ReactElement {
                 aria-busy={testing}
                 data-testid="notifications-send-test-button"
               >
-                {testing && <Spinner size="sm" />}
+                {testing && <Spinner />}
                 {t('notifications.sendTestButton')}
               </Button>
             </div>

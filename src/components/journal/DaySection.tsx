@@ -365,7 +365,7 @@ function DaySectionInner({
               aria-label={t('journal.openInEditorLabel', { date: entry.dateStr })}
               onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
             >
-              <ExternalLink className="h-3.5 w-3.5" />
+              <ExternalLink />
             </Button>
           )}
           {/*  Part A — star + delete affordance next to the
@@ -394,7 +394,7 @@ function DaySectionInner({
             aria-label={`Open ${entry.dateStr} in editor`}
             onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
           >
-            <ExternalLink className="h-3.5 w-3.5 mr-1" />
+            <ExternalLink className="mr-1" />
             {t('journal.openInEditor')}
           </Button>
           {/*  Part A — same affordance for daily mode (hideHeading). */}

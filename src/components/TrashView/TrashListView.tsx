@@ -162,7 +162,7 @@ export function TrashListView({
                   onClick={onClearFilter}
                   data-testid="trash-clear-filter-btn"
                 >
-                  <X className="h-3 w-3" />
+                  <X />
                   {t('trash.clearFilter')}
                 </Button>
                 <LoadMoreButton hasMore={hasMore} loading={loading} onLoadMore={onLoadMore} />

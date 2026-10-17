@@ -354,7 +354,7 @@ export function QueryResult({
             }}
             aria-label={t('queryBuilder.editButton')}
           >
-            <Pencil className="h-3 w-3" />
+            <Pencil />
           </Button>
         )}
       </div>

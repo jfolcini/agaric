@@ -350,7 +350,7 @@ export function TemplatesView(): React.ReactElement {
                       )}
                       onClick={() => setPendingRemoval({ id: tpl.id, name: tpl.content ?? '' })}
                     >
-                      <X className="h-3.5 w-3.5" />
+                      <X />
                     </Button>
                   </ListItem>
                 ))}

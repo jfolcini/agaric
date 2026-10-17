@@ -134,7 +134,7 @@ export function AddPropertyPopover({
       aria-label={t('pageProperty.addPropertyLabel')}
       disabled={disabled}
     >
-      <Plus className="h-3.5 w-3.5" />
+      <Plus />
       {t('pageProperty.addPropertyButton')}
     </Button>
   )

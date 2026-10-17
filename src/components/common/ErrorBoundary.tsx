@@ -73,7 +73,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             </p>
             <div className="flex flex-wrap gap-2 justify-center">
               <Button variant="outline" onClick={() => void relaunchApp()}>
-                <RefreshCw className="h-3.5 w-3.5" />
+                <RefreshCw />
                 {i18n.t('action.reload')}
               </Button>
               <Button
@@ -81,7 +81,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                 onClick={() => this.setState({ reportOpen: true })}
                 aria-label={i18n.t('bugReport.reportCrashTitle')}
               >
-                <Bug className="h-3.5 w-3.5" />
+                <Bug />
                 {i18n.t('bugReport.reportCrashTitle')}
               </Button>
             </div>

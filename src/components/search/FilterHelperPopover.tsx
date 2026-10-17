@@ -259,9 +259,9 @@ export function FilterHelperPopover({
           data-testid="add-filter-button"
           aria-label={t('search.addFilter')}
         >
-          <Plus className="h-3 w-3" aria-hidden="true" />
+          <Plus aria-hidden="true" />
           {t('search.addFilter')}
-          <ChevronDown className="h-3 w-3" aria-hidden="true" />
+          <ChevronDown aria-hidden="true" />
         </Button>
       </PopoverTrigger>
       <PopoverContent

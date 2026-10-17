@@ -186,7 +186,7 @@ function HistoryListItemInner({
                 }}
                 aria-label={t('history.restoreToHereLabel')}
               >
-                <RotateCcw className="h-3.5 w-3.5" />
+                <RotateCcw />
                 {/* Visible only on touch (pointer:coarse) so SRs that
                     already read aria-label aren't fed a duplicate. */}
                 <span

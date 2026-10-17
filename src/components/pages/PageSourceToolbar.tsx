@@ -42,7 +42,6 @@ import {
   createRefsAndBlocks,
   createStructureButtons,
   toolbarActiveClass,
-  toolbarIconClass,
   toolbarMenuRowClass,
   type ToolbarButtonConfig,
 } from '@/components/FormattingToolbar/toolbar-config'
@@ -382,7 +381,7 @@ function BlockMenuButton({ mode, disabled, open, onOpen }: BlockMenuButtonProps)
   if (mode === 'overflow') {
     return (
       <Button variant="ghost" size="sm" className={toolbarMenuRowClass} {...common}>
-        <GripVertical className="h-3.5 w-3.5 mr-2" />
+        <GripVertical className="mr-2" />
         <span>{t('contextMenu.blockActions')}</span>
       </Button>
     )
@@ -390,7 +389,7 @@ function BlockMenuButton({ mode, disabled, open, onOpen }: BlockMenuButtonProps)
   return (
     <Tip label={t('pageSource.blockMenuTip')}>
       <Button variant="ghost" size="icon-xs" {...common}>
-        <GripVertical className={toolbarIconClass} />
+        <GripVertical />
       </Button>
     </Tip>
   )
@@ -441,7 +440,7 @@ function SourceTurnIntoMenu({ editor, run, onClose }: SourceMenuProps & { onClos
             className={cn(toolbarMenuRowClass, active === type && toolbarActiveClass)}
             {...toolbarPressHandlers(() => pick(type))}
           >
-            <option.icon className="h-3.5 w-3.5 mr-2" />
+            <option.icon className="mr-2" />
             <span>{t(turnIntoTypeKey(option.blockType))}</span>
           </Button>
         )
@@ -454,7 +453,7 @@ function SourceTurnIntoMenu({ editor, run, onClose }: SourceMenuProps & { onClos
         className={toolbarMenuRowClass}
         {...toolbarPressHandlers(() => pick('divider'))}
       >
-        <Minus className="h-3.5 w-3.5 mr-2" />
+        <Minus className="mr-2" />
         <span>{t('toolbar.divider')}</span>
       </Button>
     </div>

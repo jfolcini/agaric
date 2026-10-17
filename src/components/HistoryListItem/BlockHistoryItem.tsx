@@ -291,7 +291,7 @@ export function BlockHistoryItem({
             // be safe but redundant.
             ref={restoreButtonRef}
           >
-            <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+            <RotateCcw className="mr-1.5" />
             {t('history.restoreThisVersion', {
               timestamp: formatRelativeTime(entry.created_at, t),
             })}

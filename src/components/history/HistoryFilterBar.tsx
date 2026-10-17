@@ -150,7 +150,7 @@ export function HistoryFilterBar({
           ariaLabel={t('history.clearFilter')}
           data-testid="history-filter-clear"
         >
-          <X className="h-3.5 w-3.5" />
+          <X />
         </IconButton>
       )}
     </div>

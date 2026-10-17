@@ -472,7 +472,7 @@ export function PageBrowserBatchToolbar({
         disabled={busy}
         data-testid="page-batch-trash-btn"
       >
-        <Trash2 className="h-3.5 w-3.5" />
+        <Trash2 />
         {t('pageBrowser.batch.trash')}
       </Button>
 
@@ -510,11 +510,7 @@ export function PageBrowserBatchToolbar({
         }
         data-testid={allStarred ? 'page-batch-remove-bookmark-btn' : 'page-batch-bookmark-btn'}
       >
-        {allStarred ? (
-          <BookmarkX className="h-3.5 w-3.5" />
-        ) : (
-          <Bookmark className="h-3.5 w-3.5" fill="none" />
-        )}
+        {allStarred ? <BookmarkX /> : <Bookmark fill="none" />}
         {allStarred ? t('pageBrowser.batch.removeBookmark') : t('pageBrowser.batch.bookmark')}
       </Button>
 
@@ -564,7 +560,7 @@ export function PageBrowserBatchToolbar({
           disabled={busy}
           data-testid="page-batch-add-tag-btn"
         >
-          <Tag className="h-3.5 w-3.5" />
+          <Tag />
           {t('pageBrowser.batch.addTag')}
         </Button>
       )}
@@ -698,7 +694,7 @@ export function PageBrowserBatchToolbar({
           disabled={busy}
           data-testid="page-batch-set-property-btn"
         >
-          <SlidersHorizontal className="h-3.5 w-3.5" />
+          <SlidersHorizontal />
           {t('pageBrowser.batch.setProperty')}
         </Button>
       )}

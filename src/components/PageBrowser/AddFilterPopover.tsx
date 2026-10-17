@@ -391,7 +391,7 @@ export function AddFilterPopover({
           aria-expanded={open}
           aria-label={t('pageBrowser.filter.addFilter')}
         >
-          <Plus className="h-3 w-3" aria-hidden="true" />
+          <Plus aria-hidden="true" />
           {t('pageBrowser.filter.addFilter')}
         </Button>
       </PopoverTrigger>

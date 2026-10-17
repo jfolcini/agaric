@@ -675,7 +675,7 @@ export function TagFilterPanel(): React.ReactElement {
           disabled={!prefix.trim()}
           aria-label={t('tagFilter.addPrefixLabel')}
         >
-          <Plus className="h-3 w-3" aria-hidden="true" />
+          <Plus aria-hidden="true" />
           {t('tagFilter.addPrefixButton')}
         </Button>
         <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -770,7 +770,7 @@ export function TagFilterPanel(): React.ReactElement {
                       onClick={() => handleAddTag(tag)}
                       tabIndex={-1}
                     >
-                      <Plus className="h-3 w-3" />
+                      <Plus />
                       {t('tagFilter.addButton')}
                     </Button>
                   </span>

@@ -315,7 +315,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
           the entry point into selection mode); visible on hover / focus /
           when checked, mirroring the star + delete affordances. */}
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner checkbox; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className="shrink-0">
+      <div role="gridcell" className="flex shrink-0 items-center">
         <Checkbox
           checked={multiSelected}
           onClick={(e) => {
@@ -343,7 +343,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
             onToggleStar(pageId)
           }}
         >
-          <Bookmark className="h-3.5 w-3.5" fill={starred ? 'currentColor' : 'none'} />
+          <Bookmark fill={starred ? 'currentColor' : 'none'} />
         </Button>
         <NewTabTarget pageId={pageId} title={title}>
           <button
@@ -399,7 +399,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
         </NewTabTarget>
       </div>
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner action buttons; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className="shrink-0">
+      <div role="gridcell" className="flex shrink-0 items-center">
         <Button
           variant="ghost"
           size="icon-xs"
@@ -411,7 +411,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
             onDeleteRequest({ id: pageId, name: title })
           }}
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 />
         </Button>
       </div>
     </div>

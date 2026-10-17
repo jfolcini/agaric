@@ -15,7 +15,6 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { type RenderMode, Tip } from '@/components/FormattingToolbar/shared'
-import { toolbarIconClass } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverAnchor } from '@/components/ui/popover'
@@ -158,7 +157,7 @@ export function ToolbarFrame({
                   setOverflowPopoverOpen((prev) => !prev)
                 }}
               >
-                <MoreHorizontal className={toolbarIconClass} />
+                <MoreHorizontal />
               </Button>
             </Tip>
           </PopoverAnchor>

@@ -50,7 +50,7 @@ export function HistorySelectionToolbar({
         onClick={onRevertClick}
         disabled={reverting || selectedCount === 0}
       >
-        <RotateCcw className="h-3.5 w-3.5" />
+        <RotateCcw />
         {reverting ? t('history.revertingButton') : t('history.revertSelectedButton')}
       </Button>
       <Button
@@ -59,7 +59,7 @@ export function HistorySelectionToolbar({
         onClick={onClearSelection}
         disabled={reverting || selectedCount === 0}
       >
-        <X className="h-3 w-3" />
+        <X />
         {t('history.clearSelectionButton')}
       </Button>
       <span className="text-xs text-muted-foreground ml-auto hidden sm:inline">

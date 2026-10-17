@@ -47,7 +47,7 @@ export function SearchSheetTrigger(): React.ReactElement {
         useSearchSheetStore.getState().open$(pinned ?? defaultModeForView(currentView))
       }}
     >
-      <Search className="h-5 w-5" aria-hidden />
+      <Search aria-hidden />
     </Button>
   )
 }

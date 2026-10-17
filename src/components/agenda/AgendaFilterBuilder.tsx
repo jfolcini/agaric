@@ -505,7 +505,7 @@ export function AgendaFilterBuilder({
             onClick={() => onFiltersChange([])}
             aria-label={t('agendaFilter.clearAllLabel')}
           >
-            <X className="mr-0.5 h-3 w-3" />
+            <X className="mr-0.5" />
             {t('agendaFilter.clearAll')}
           </Button>
         )}

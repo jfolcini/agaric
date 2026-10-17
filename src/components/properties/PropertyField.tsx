@@ -124,7 +124,7 @@ export function PropertyField({
                   aria-label={t('property.repeatHelpLabel')}
                   data-testid="repeat-help-trigger"
                 >
-                  <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                  <HelpCircle aria-hidden="true" />
                 </Button>
               </PopoverTrigger>
               <PopoverContent
