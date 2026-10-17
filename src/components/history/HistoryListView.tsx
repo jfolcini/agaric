@@ -93,8 +93,13 @@ export function HistoryListView({
   // Keep the keyboard-focused row in view (mirrors TrashListView). A jump
   // (End / PageDown) can land outside the mounted window, where a DOM lookup
   // finds nothing; `scrollToIndex` walks to the absolute index and mounts it.
+  // Only a move scrolls: Load more grows `entries` under a still cursor, and
+  // the list stays where the wheel left it.
+  const scrolledIndexRef = useRef(focusedIndex)
   const revealPendingRef = useRef(false)
   useEffect(() => {
+    if (focusedIndex === scrolledIndexRef.current) return
+    scrolledIndexRef.current = focusedIndex
     if (focusedIndex < 0 || focusedIndex >= entries.length) return
     virtualizer.scrollToIndex(focusedIndex, { align: 'auto' })
     revealPendingRef.current = true

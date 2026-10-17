@@ -217,6 +217,7 @@ export function HistoryView(): React.ReactElement {
   // ── Keyboard navigation (Arrow / vim / Home / End / PageUp/Down) ─
   const { focusedIndex, setFocusedIndex } = useHistoryKeyboardNav({
     itemCount: entries.length,
+    resetKey: queryKey,
     listRef,
     hasSelection: selectedIds.size > 0,
     onToggleSelection: toggleSelectedIndex,
@@ -225,13 +226,12 @@ export function HistoryView(): React.ReactElement {
     onClearSelection: clearSelection,
   })
 
-  // Reset selection + focus when the filter or the active space changes
+  // Reset the selection when the filter or the active space changes
   // (entries are replaced by the paginated query), so a stale selection from
-  // the previous scope doesn't leak into the new one.
+  // the previous scope doesn't leak into the new one. `resetKey` resets focus.
   useEffect(() => {
     clearSelection()
-    setFocusedIndex(0)
-  }, [opTypeFilter, currentSpaceId, setFocusedIndex, clearSelection])
+  }, [opTypeFilter, currentSpaceId, clearSelection])
 
   // Glue selection+focus row click together for HistoryListView.
   const handleRowClick = useCallback(

@@ -65,3 +65,26 @@ test('j / k / Home / End / PageUp / PageDown keep the cursor row in view', async
   await page.keyboard.press('PageUp')
   await expectCursorAt(0)
 })
+
+test('Load more leaves the list where the wheel scrolled it', async ({ page }) => {
+  await waitForBoot(page)
+  // Past one 50-entry page, so Load more has a second page to append.
+  await seedSearchBlocks(
+    page,
+    Array.from({ length: 60 }, (_, i) => ({ content: `History row ${i}` })),
+  )
+  await navigateToView(page, 'History')
+  const grid = page.getByRole('grid', { name: 'History entries' })
+  // A clicked row takes the cursor; Load more must neither move it nor scroll to it.
+  await grid.getByTestId('history-item-2').click()
+  await expect(grid.getByTestId('history-item-2')).toHaveClass(/\blist-cursor\b/)
+
+  await grid.hover()
+  for (let i = 0; i < 30; i++) await page.mouse.wheel(0, 400)
+  await expect.poll(() => grid.evaluate((el) => el.scrollTop)).toBeGreaterThan(1000)
+  const scrolled = await grid.evaluate((el) => el.scrollTop)
+
+  await page.getByRole('button', { name: 'Load more' }).click()
+  await expect(page.getByText(/Loaded \d+ more/)).toBeAttached()
+  expect(await grid.evaluate((el) => el.scrollTop)).toBe(scrolled)
+})

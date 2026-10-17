@@ -20,6 +20,8 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
 export interface UseHistoryKeyboardNavOptions {
   /** Number of items in the list. */
   itemCount: number
+  /** Identifies the logical list; a change resets the cursor, Load more only clamps it. */
+  resetKey?: unknown
   /** Container ref — takes focus on a navigation key. */
   listRef: React.RefObject<HTMLDivElement | null>
   /** Whether the user has at least one entry selected (gates Enter). */
@@ -41,6 +43,7 @@ export interface UseHistoryKeyboardNavReturn {
 
 export function useHistoryKeyboardNav({
   itemCount,
+  resetKey,
   listRef,
   hasSelection,
   onToggleSelection,
@@ -54,6 +57,7 @@ export function useHistoryKeyboardNav({
     handleKeyDown: navHandleKeyDown,
   } = useListKeyboardNavigation({
     itemCount,
+    resetKey,
     wrap: false,
     vim: true,
     homeEnd: true,
