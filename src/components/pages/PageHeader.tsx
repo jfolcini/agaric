@@ -53,7 +53,6 @@ import { useUndoStore } from '@/stores/undo'
 export interface PageHeaderProps {
   pageId: string
   title: string
-  onBack?: (() => void) | undefined
   /** Opens source mode; the kebab offers "Edit as Markdown" only with it. */
   onEditSource?: (() => void) | undefined
   /** The page-actions kebab, so focus can return to it. */
@@ -70,7 +69,6 @@ export interface PageHeaderProps {
 export function PageHeader({
   pageId,
   title,
-  onBack,
   onEditSource,
   kebabRef,
   editMode,
@@ -258,9 +256,9 @@ export function PageHeader({
   }, [copyPageMarkdownToClipboard, editMode, onEditModeChange])
 
   // The kebab "Delete page" item calls this. `usePageDeleteAction` opens
-  // its ConfirmDialog and, on confirm, runs the IPC + emits the success
-  // toast with an Undo action. We pass `onDeleted` so the header can
-  // still navigate back + announce to AT. The ConfirmDialog hands focus
+  // its ConfirmDialog and, on confirm, runs the IPC, drops the page from
+  // every tab and emits the success toast with an Undo action. We pass
+  // `onDeleted` so the header can still announce to AT. The ConfirmDialog hands focus
   // back on cancel to whatever held it when it opened, and the menu item is
   // gone by then, so the kebab takes focus first.
   const handleRequestDelete = () => {
@@ -269,7 +267,6 @@ export function PageHeader({
     requestDelete(pageId, title, {
       onDeleted: () => {
         announce(t('announce.pageDeleted'))
-        onBack?.()
       },
       onFailed: () => {
         announce(t('announce.pageDeleteFailed'))
@@ -367,23 +364,22 @@ export function PageHeader({
         // load blocks" error toast while leaving the stale, now-foreign
         // view on screen. Reloading this store is meaningless anyway:
         // the page no longer belongs to the space it is scoped to.
-        // Navigate away instead, mirroring `handleRequestDelete`'s
-        // `onDeleted` callback just above, which faces the identical
-        // "this page is no longer valid in the current view" situation.
+        // Close it in every tab instead, as a delete does: the page is no
+        // longer valid in the current view.
         // (Switching the app's active space to follow the page was
         // considered and rejected — `setCurrentSpace` drives
         // `createPerSpaceSlice`'s cross-store reconcile, which flushes
         // and restores the TARGET space's own last-active tab/view, not
         // necessarily this page, so "following" would not reliably land
         // back on the moved page anyway.)
-        onBack?.()
+        useTabsStore.getState().removePages([pageId])
       } catch (err) {
         logger.error('PageHeader', 'Failed to move page to space', { pageId, targetSpaceId }, err)
         notify.error(t('space.moveFailed'))
         announce(t('announce.pageMoveFailed'))
       }
     },
-    [availableSpaces, onBack, pageId, t],
+    [availableSpaces, pageId, t],
   )
 
   // Sync editableTitle when prop changes (e.g., navigating to a different page)

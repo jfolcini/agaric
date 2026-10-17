@@ -394,21 +394,20 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // expected staleness, not a load failure: show a soft notice instead
         // of the raw error toast, and self-heal the stale state the same way
         // the delete flow handles "this page is no longer valid in the
-        // current view" (`usePageDeleteAction` → `onBack`, and #2803's move
-        // handler): drop the page from the active space's recent-pages MRU
-        // (the click itself just re-recorded it via `recordVisit`) and, when
-        // this page sits on top of the active tab's stack, pop it via the
-        // existing `goBack()` — which also closes the tab / returns to the
-        // view the stack was opened from when it empties (#4287; `pages` when
-        // that origin is unknown), exactly like delete. There is
-        // deliberately NO eager purge sweep across the old space's tab stacks
-        // at move time: page deletion doesn't purge tabs/recent-pages either,
-        // so stale refs heal lazily here at the rejection point. The active
-        // space is NOT switched to follow the page (see #2785's note in
-        // PageHeader.handleMoveToSpace). #2810 — key the heal on the
-        // structured `PageNotInSpace` code rather than the generic
-        // `kind: 'validation'` (message-regexing was retired in #2251): a
-        // malformed id is `kind: 'ulid'` (`BlockId::from_string`), and any
+        // current view" (`usePageDeleteAction` and #2803's move handler →
+        // `removePages`): drop the page from the active space's recent-pages
+        // MRU (the click itself just re-recorded it via `recordVisit`) and,
+        // when this page sits on top of the active tab's stack, pop it via
+        // the existing `goBack()` — which also closes the tab / returns to
+        // the view the stack was opened from when it empties (#4287; `pages`
+        // when that origin is unknown). Delete and the page-header move purge
+        // only the active space's tabs, and never recent-pages; the Pages
+        // view's batch move purges neither, so stale refs heal lazily here at
+        // the rejection point. The active space is NOT switched to follow the
+        // page (see #2785's note in PageHeader.handleMoveToSpace). #2810 — key
+        // the heal on the structured `PageNotInSpace` code rather than the
+        // generic `kind: 'validation'` (message-regexing was retired in
+        // #2251): a malformed id is `kind: 'ulid'` (`BlockId::from_string`), and any
         // future uncoded/differently-coded validation on this command path
         // must NOT silently reroute into this heal. A well-formed id that
         // matches NO row (page hard-purged) surfaces the same

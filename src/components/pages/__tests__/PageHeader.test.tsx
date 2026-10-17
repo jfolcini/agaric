@@ -3,8 +3,7 @@
  *
  * Validates:
  *  - Renders page title
- *  - Renders back button when onBack provided
- *  - Does not render back button when onBack omitted
+ *  - Renders no back arrow of its own
  *  - Renders tag badges for applied tags
  *  - Title editing: blur, empty revert, Enter key
  *  - Tag management: add, remove, create, search, create option
@@ -274,10 +273,9 @@ describe('PageHeader rendering', () => {
     expect(titleEl).toHaveTextContent('My Test Page')
   })
 
-  // The app header's Back / Forward replaced the page's own back arrow;
-  // `onBack` now only leaves the page after a delete or a space move.
+  // The app header's Back / Forward replaced the page's own back arrow.
   it('renders no back arrow of its own', () => {
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={() => {}} />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     expect(screen.queryByRole('button', { name: /back/i })).not.toBeInTheDocument()
   })
@@ -767,9 +765,7 @@ describe('PageHeader edge cases', () => {
 
 describe('PageHeader accessibility', () => {
   it('has no a11y violations', async () => {
-    const { container } = renderPageHeader(
-      <PageHeader pageId="PAGE_1" title="Accessible Page" onBack={() => {}} />,
-    )
+    const { container } = renderPageHeader(<PageHeader pageId="PAGE_1" title="Accessible Page" />)
 
     await waitFor(async () => {
       const results = await axe(container)
@@ -1207,7 +1203,7 @@ describe('PageHeader breadcrumb', () => {
 
   it('a11y: no violations with breadcrumb', async () => {
     const { container } = renderPageHeader(
-      <PageHeader pageId="PAGE_1" title="work/project-alpha/tasks" onBack={() => {}} />,
+      <PageHeader pageId="PAGE_1" title="work/project-alpha/tasks" />,
     )
 
     await waitFor(
@@ -1668,9 +1664,9 @@ describe('PageHeader error paths', () => {
     })
   })
 
-  it('delete_block rejection shows error toast and does not navigate back', async () => {
+  it('delete_block rejection shows error toast and leaves the tabs alone', async () => {
     const user = userEvent.setup()
-    const onBack = vi.fn()
+    const tabsBefore = useTabsStore.getState().tabs
 
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_blocks') return emptyPage
@@ -1683,7 +1679,7 @@ describe('PageHeader error paths', () => {
       return null
     })
 
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" onBack={onBack} />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     // Open kebab, click "Delete page" to open confirmation dialog
     await user.click(screen.getByRole('button', { name: /page actions/i }))
@@ -1703,7 +1699,7 @@ describe('PageHeader error paths', () => {
         }),
       )
     })
-    expect(onBack).not.toHaveBeenCalled()
+    expect(useTabsStore.getState().tabs).toBe(tabsBefore)
   })
 
   it('get_page_aliases rejection on mount shows error toast', async () => {
@@ -2350,15 +2346,30 @@ describe('PageHeader Move to space (Phase 2)', () => {
   // scopes to the OLD (still-current) space. The backend membership
   // check rejects that stale scope, producing a spurious "Failed to
   // load blocks" error toast on top of the (correct) success toast,
-  // and leaving the stale view on screen. The fix navigates away
-  // (mirroring the delete-page flow) instead of reloading a store
+  // and leaving the stale view on screen. The fix closes the page in
+  // every tab (as the delete-page flow does) instead of reloading a store
   // scoped to a space the page no longer belongs to.
-  it('does not fire "Failed to load blocks" and navigates away via onBack after moving the current page (#2785)', async () => {
+  it('does not fire "Failed to load blocks" and closes the moved page in every tab (#2785)', async () => {
     const user = userEvent.setup()
-    const onBack = vi.fn()
     setupPage()
+    // Open in two tabs, under another page in the first: popping only the
+    // active tab would land on the other one, still showing the moved page.
+    useTabsStore.setState({
+      tabs: [
+        {
+          id: '0',
+          pageStack: [
+            { pageId: 'OTHER', title: 'Other' },
+            { pageId: 'PAGE_1', title: 'Test' },
+          ],
+          label: 'Test',
+        },
+        { id: '1', pageStack: [{ pageId: 'PAGE_1', title: 'Test' }], label: 'Test' },
+      ],
+      activeTabIndex: 1,
+    })
 
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" onBack={onBack} />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
     await user.click(await screen.findByText(/Move to space/i))
@@ -2368,10 +2379,13 @@ describe('PageHeader Move to space (Phase 2)', () => {
       expect(mockedToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/moved to Work/i))
     })
 
-    // Consistent end state: the caller's back-navigation fires exactly
-    // once and no "Failed to load blocks" (or any other) error toast
-    // ever fires for this flow.
-    expect(onBack).toHaveBeenCalledTimes(1)
+    // Consistent end state: the page is gone from every tab, the editor
+    // shows the page underneath, and no "Failed to load blocks" (or any
+    // other) error toast ever fires for this flow.
+    expect(useTabsStore.getState().tabs).toEqual([
+      { id: '0', pageStack: [{ pageId: 'OTHER', title: 'Other' }], label: 'Other' },
+    ])
+    expect(useNavigationStore.getState().currentView).toBe('page-editor')
     expect(mockedToastError).not.toHaveBeenCalled()
   })
 
@@ -2497,9 +2511,8 @@ describe('PageHeader screen reader announcements', () => {
 
   it('announces page deleted on successful delete confirmation', async () => {
     const user = userEvent.setup()
-    const onBack = vi.fn()
 
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" onBack={onBack} />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
     await user.click(await screen.findByText(/Delete page/i))
@@ -2525,7 +2538,7 @@ describe('PageHeader screen reader announcements', () => {
       return null
     })
 
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" onBack={vi.fn()} />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
 
     await user.click(screen.getByRole('button', { name: /page actions/i }))
     await user.click(await screen.findByText(/Delete page/i))
@@ -2597,7 +2610,7 @@ describe('PageHeader delete from the page-actions menu', () => {
   it('the menu item opens the confirm dialog (one dialog only)', async () => {
     const user = userEvent.setup()
 
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={vi.fn()} />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await choosePageAction(user, /^delete page$/i)
 
@@ -2609,7 +2622,7 @@ describe('PageHeader delete from the page-actions menu', () => {
   it('cancelling the confirm dialog returns focus to the page-actions kebab', async () => {
     const user = userEvent.setup()
 
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={vi.fn()} />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await choosePageAction(user, /^delete page$/i)
     await user.click(await screen.findByRole('button', { name: /^cancel$/i }))
@@ -2622,11 +2635,25 @@ describe('PageHeader delete from the page-actions menu', () => {
     })
   })
 
-  it('confirms delete, fires the success toast with an Undo action, and navigates back', async () => {
+  it('confirms delete, fires the success toast with an Undo action, and closes the page in every tab', async () => {
     const user = userEvent.setup()
-    const onBack = vi.fn()
+    // Open in two tabs, under another page in the first.
+    useTabsStore.setState({
+      tabs: [
+        {
+          id: '0',
+          pageStack: [
+            { pageId: 'OTHER', title: 'Other' },
+            { pageId: 'PAGE_1', title: 'My Page' },
+          ],
+          label: 'My Page',
+        },
+        { id: '1', pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }], label: 'My Page' },
+      ],
+      activeTabIndex: 1,
+    })
 
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={onBack} />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await choosePageAction(user, /^delete page$/i)
     const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
@@ -2647,14 +2674,16 @@ describe('PageHeader delete from the page-actions menu', () => {
       )
     })
 
-    expect(onBack).toHaveBeenCalledTimes(1)
+    expect(useTabsStore.getState().tabs).toEqual([
+      { id: '0', pageStack: [{ pageId: 'OTHER', title: 'Other' }], label: 'Other' },
+    ])
+    expect(useNavigationStore.getState().currentView).toBe('page-editor')
   })
 
   // #4287 — the reported bug, end to end: "when deleting a page you should be
-  // redirected to the previous route you were in". `ViewDispatcher` wires
-  // `onBack={goBack}`, so wire the REAL action here rather than a spy and
-  // assert the view the user actually lands on. Before the fix every one of
-  // these landed on `pages`, whatever route the page was opened from.
+  // redirected to the previous route you were in". Assert the view the user
+  // actually lands on. Before the fix every one of these landed on `pages`,
+  // whatever route the page was opened from.
   it.each(['journal', 'search', 'tags'] as const)(
     'deleting a page opened from %s returns to that view, not the pages list',
     async (origin) => {
@@ -2666,15 +2695,7 @@ describe('PageHeader delete from the page-actions menu', () => {
       useTabsStore.getState().navigateToPage('PAGE_1', 'My Page')
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
 
-      renderPageHeader(
-        <PageHeader
-          pageId="PAGE_1"
-          title="My Page"
-          onBack={() => {
-            useTabsStore.getState().goBack()
-          }}
-        />,
-      )
+      renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
       await choosePageAction(user, /^delete page$/i)
       await user.click(await screen.findByRole('button', { name: /^Delete page$/i }))
@@ -2688,7 +2709,7 @@ describe('PageHeader delete from the page-actions menu', () => {
   it('Undo toast action restores the just-deleted page via restore_blocks_by_ids', async () => {
     const user = userEvent.setup()
 
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={vi.fn()} />)
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await choosePageAction(user, /^delete page$/i)
     const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
@@ -2738,24 +2759,16 @@ describe('PageHeader tag chips against the real tauri-mock (#5287)', () => {
 
   it('deletes the page from the page-actions menu', async () => {
     const user = userEvent.setup()
-    const onBack = vi.fn()
-    render(
-      <TooltipProvider>
-        <PageBlockContext.Provider value={pageStore}>
-          <PageHeader pageId={PAGE} title="Projects" onBack={onBack} />
-        </PageBlockContext.Provider>
-      </TooltipProvider>,
-    )
+    render(headerFor(PAGE, 'Projects'))
 
     await choosePageAction(user, /^delete page$/i)
     await user.click(await screen.findByRole('button', { name: /^Delete page$/i }))
 
+    // Soft-deleted (in the trash), not purged, and gone from every active read.
     await waitFor(() => {
-      expect(onBack).toHaveBeenCalledOnce()
+      expect(blocks.get(PAGE)?.['deleted_at']).toBeTruthy()
     })
-    // Gone from every active read, and soft-deleted (in the trash), not purged.
     await expect(async () => dispatch('get_block', { blockId: PAGE })).rejects.toThrow(/not found/)
-    expect(blocks.get(PAGE)?.['deleted_at']).toBeTruthy()
   })
 
   it("shows a tag's new name after it is renamed on its own page", async () => {

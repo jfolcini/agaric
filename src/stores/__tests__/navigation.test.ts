@@ -478,8 +478,8 @@ describe('useNavigationStore', () => {
     // ── #4287: leaving the stack returns to the route it was opened from ──
     //
     // The user's report: "when deleting a page you should be redirected to the
-    // previous route you were in". Delete → `PageHeader.onDeleted` → `onBack`
-    // → this `goBack`, so the store-level pop IS the delete destination.
+    // previous route you were in". Delete leaves through `removePages`, which
+    // shares this exit (`exitViewForTab`); the `removePages` cases pin that.
     for (const origin of ['journal', 'search', 'tags', 'query'] as const) {
       it(`returns to ${origin} after opening a page from ${origin} and popping the stack`, () => {
         useNavigationStore.getState().setView(origin)
@@ -764,6 +764,133 @@ describe('useNavigationStore', () => {
       useTabsStore.getState().renamePage('P1', 'Same')
 
       expect(useTabsStore.getState().tabs).toBe(before)
+    })
+  })
+
+  describe('removePages', () => {
+    it('closes the page in every tab and leaves the editor for the active tab origin', () => {
+      useNavigationStore.setState({ currentView: 'page-editor', selectedBlockId: 'B1' })
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'X', title: 'X' }], label: 'X', enteredFrom: 'journal' },
+          { id: '1', pageStack: [{ pageId: 'X', title: 'X' }], label: 'X', enteredFrom: 'search' },
+        ],
+        activeTabIndex: 1,
+      })
+
+      useTabsStore.getState().removePages(['X'])
+
+      const state = useTabsStore.getState()
+      expect(state.tabs).toEqual([{ id: '1', pageStack: [], label: '' }])
+      expect(state.activeTabIndex).toBe(0)
+      expect(useNavigationStore.getState().currentView).toBe('search')
+      expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+    })
+
+    it('empties the only tab and falls back to the default exit view', () => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [{ id: '0', pageStack: [{ pageId: 'X', title: 'X' }], label: 'X' }],
+        activeTabIndex: 0,
+      })
+
+      useTabsStore.getState().removePages(['X'])
+
+      expect(useTabsStore.getState().tabs).toEqual([{ id: '0', pageStack: [], label: '' }])
+      expect(useNavigationStore.getState().currentView).toBe(DEFAULT_PAGE_EXIT_VIEW)
+    })
+
+    it('leaves a non-editor view in place when the last tab empties', () => {
+      useNavigationStore.setState({ currentView: 'tags' })
+      useTabsStore.setState({
+        tabs: [{ id: '0', pageStack: [{ pageId: 'X', title: 'X' }], label: 'X' }],
+        activeTabIndex: 0,
+      })
+
+      useTabsStore.getState().removePages(['X'])
+
+      expect(useTabsStore.getState().tabs).toEqual([{ id: '0', pageStack: [], label: '' }])
+      expect(useNavigationStore.getState().currentView).toBe('tags')
+    })
+
+    it('drops the page from under another page in a background tab', () => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'A', title: 'A' }], label: 'A' },
+          {
+            id: '1',
+            pageStack: [
+              { pageId: 'X', title: 'X' },
+              { pageId: 'B', title: 'B' },
+            ],
+            label: 'B',
+            enteredFrom: 'tags',
+          },
+        ],
+        activeTabIndex: 0,
+      })
+
+      useTabsStore.getState().removePages(['X'])
+
+      const state = useTabsStore.getState()
+      expect(state.tabs).toEqual([
+        { id: '0', pageStack: [{ pageId: 'A', title: 'A' }], label: 'A' },
+        { id: '1', pageStack: [{ pageId: 'B', title: 'B' }], label: 'B', enteredFrom: 'tags' },
+      ])
+      expect(state.activeTabIndex).toBe(0)
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+    })
+
+    it('keeps the active tab active when a tab before it closes', () => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'X', title: 'X' }], label: 'X' },
+          { id: '1', pageStack: [{ pageId: 'A', title: 'A' }], label: 'A' },
+          { id: '2', pageStack: [{ pageId: 'B', title: 'B' }], label: 'B' },
+        ],
+        activeTabIndex: 1,
+      })
+
+      useTabsStore.getState().removePages(['X'])
+
+      const state = useTabsStore.getState()
+      expect(state.tabs.map((tab) => tab.id)).toEqual(['1', '2'])
+      expect(state.activeTabIndex).toBe(0)
+    })
+
+    it('activates the tab that followed a closed active tab', () => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [{ pageId: 'A', title: 'A' }], label: 'A' },
+          { id: '1', pageStack: [{ pageId: 'X', title: 'X' }], label: 'X' },
+          { id: '2', pageStack: [{ pageId: 'B', title: 'B' }], label: 'B' },
+        ],
+        activeTabIndex: 1,
+      })
+
+      useTabsStore.getState().removePages(['X'])
+
+      const state = useTabsStore.getState()
+      expect(state.tabs.map((tab) => tab.id)).toEqual(['0', '2'])
+      expect(state.activeTabIndex).toBe(1)
+      expect(useNavigationStore.getState().currentView).toBe('page-editor')
+    })
+
+    it('changes nothing when no tab holds the page', () => {
+      useNavigationStore.setState({ currentView: 'page-editor', selectedBlockId: 'B1' })
+      useTabsStore.setState({
+        tabs: [{ id: '0', pageStack: [{ pageId: 'A', title: 'A' }], label: 'A' }],
+        activeTabIndex: 0,
+      })
+      const before = useTabsStore.getState().tabs
+
+      useTabsStore.getState().removePages(['X'])
+
+      expect(useTabsStore.getState().tabs).toBe(before)
+      expect(useNavigationStore.getState().selectedBlockId).toBe('B1')
     })
   })
 

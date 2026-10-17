@@ -59,6 +59,7 @@ import { requireActiveScope } from '@/lib/space-scope'
 import { announcePagesMovedOut } from '@/stores/page-move'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 export interface PageBrowserBatchToolbarProps {
   /** Ids of the currently-selected pages (≥1 — parent gates render). */
@@ -289,6 +290,7 @@ export function PageBrowserBatchToolbar({
       notifyPagesRemoved(ids, currentSpaceId, cascadedPageIds)
       // #5246 — and every chip to a trashed page renders deleted.
       useResolveStore.getState().markDeleted(currentSpaceId, [...ids, ...cascadedPageIds])
+      useTabsStore.getState().removePages([...ids, ...cascadedPageIds])
       onClearSelection()
       onMutated()
       notify.success(t('pageBrowser.batch.trashed', { count }), {

@@ -17,8 +17,10 @@ import {
 } from '@/lib/graph-structure-events'
 import type { NameChange } from '@/lib/name-change-bus'
 import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
+import { useNavigationStore } from '@/stores/navigation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -200,6 +202,45 @@ describe('usePageDeleteAction', () => {
     })
   })
 
+  it('closes the page and its cascaded nested pages in every tab', async () => {
+    stubInvoke({
+      delete_block: () =>
+        withOps({
+          block_id: 'PAGE_1',
+          deleted_at: 1767225600000,
+          descendants_affected: 1,
+          affected_page_ids: ['PAGE_1', 'NESTED_PAGE'],
+        }),
+    })
+    useNavigationStore.setState({ currentView: 'pages' })
+    useTabsStore.setState({
+      tabs: [
+        {
+          id: '0',
+          pageStack: [
+            { pageId: 'OTHER', title: 'Other' },
+            { pageId: 'NESTED_PAGE', title: 'Nested' },
+          ],
+          label: 'Nested',
+        },
+        { id: '1', pageStack: [{ pageId: 'PAGE_1', title: 'Parent' }], label: 'Parent' },
+      ],
+      activeTabIndex: 1,
+    })
+    const handle = renderHarness()
+    act(() => {
+      handle.api.requestDelete('PAGE_1', 'Parent')
+    })
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+
+    expect(useTabsStore.getState().tabs).toEqual([
+      { id: '0', pageStack: [{ pageId: 'OTHER', title: 'Other' }], label: 'Other' },
+    ])
+    expect(useTabsStore.getState().activeTabIndex).toBe(0)
+    expect(useNavigationStore.getState().currentView).toBe('pages')
+  })
+
   it('keeps the page deleted and skips onRestored when Undo restore fails', async () => {
     stubInvoke({
       delete_block: () =>
@@ -232,9 +273,13 @@ describe('usePageDeleteAction', () => {
     })
   })
 
-  it('does not change resolve status or call onDeleted when delete fails', async () => {
+  it('does not change resolve status, the tabs, or call onDeleted when delete fails', async () => {
     stubInvoke({ delete_block: () => Promise.reject(new Error('backend boom')) })
     useResolveStore.getState().set('PAGE_1', 'Original title', false)
+    const tabs = [
+      { id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'Original title' }], label: '' },
+    ]
+    useTabsStore.setState({ tabs, activeTabIndex: 0 })
     const onDeleted = vi.fn()
     const handle = renderHarness()
     act(() => {
@@ -249,6 +294,7 @@ describe('usePageDeleteAction', () => {
       )
     })
     expect(onDeleted).not.toHaveBeenCalled()
+    expect(useTabsStore.getState().tabs).toBe(tabs)
     expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
       title: 'Original title',
       deleted: false,

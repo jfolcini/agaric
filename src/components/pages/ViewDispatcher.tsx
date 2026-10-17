@@ -251,12 +251,6 @@ export function ViewDispatcher({
   onPageSelect,
   navigateToPage,
 }: ViewDispatcherProps): ReactElement {
-  // (tier-3): `goBack` is consumed only by the `page-editor`
-  // branch below — subscribing here instead of forwarding from App.tsx
-  // removes one `useTabsStore` selector from the App shell. The action
-  // reference is stable across renders, so the cost of subscribing at
-  // this level is zero re-renders.
-  const goBack = useTabsStore((s) => s.goBack)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   useEffect(() => scheduleIdle(preloadViews), [])
   switch (currentView) {
@@ -364,7 +358,6 @@ export function ViewDispatcher({
             <PageEditor
               pageId={activePage.pageId}
               title={activePage.title}
-              onBack={goBack}
               onNavigateToPage={onPageSelect}
             />
           </Suspense>
