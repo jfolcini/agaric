@@ -96,10 +96,11 @@ impl LoroEngine {
         let tree_slot = self.live_tree_slot(parent, index, self.node_for(block_id));
         self.create_block_impl(block_id, block_type, content, parent_id, tree_slot, None)
     }
-    /// [`Self::apply_create_block`] for a block seeded from its SQL row. A
-    /// sibling created under the fractional index carries no legacy sort key,
-    /// which [`Self::apply_create_block`] ranks last; here it ranks by its
-    /// position in `sql_positions` (#5670).
+    /// [`Self::apply_create_block`] for a block seeded from its SQL row.
+    /// Siblings rank by their position in `sql_positions`, ahead of the legacy
+    /// sort key [`Self::apply_create_block`] reads alone: a later move leaves
+    /// that key stale, and a sibling created under the fractional index has
+    /// none (#5670).
     pub fn apply_seed_block(
         &mut self,
         block_id: &str,

@@ -961,4 +961,35 @@ mod tests {
         assert_eq!(marker(&pool).await.as_deref(), Some("1"));
         mat.shutdown();
     }
+
+    /// #5670 — the marker retires the repair only once the engines are saved:
+    /// the hydration lives in memory until then, and a boot that loses it
+    /// without a marker repairs again.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_failed_save_leaves_no_marker_5670() {
+        let (pool, _tmp) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let (space, _, children) = vault_in_a_space(&pool, &mat).await;
+        lose_from_engine(&mat, &space, &children[1]);
+        sqlx::query(
+            "CREATE TRIGGER fail_save BEFORE INSERT ON loro_doc_state \
+             BEGIN SELECT RAISE(ABORT, 'injected save failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let outcome = hydrate_engine_missing_blocks_once(&pool, DEV, &mat).await;
+
+        assert!(
+            matches!(outcome, Err(AppError::Snapshot(_))),
+            "the failed save is the repair's error, got {outcome:?}"
+        );
+        assert_eq!(
+            marker(&pool).await,
+            None,
+            "the engines were not saved, so the repair is not retired"
+        );
+        mat.shutdown();
+    }
 }

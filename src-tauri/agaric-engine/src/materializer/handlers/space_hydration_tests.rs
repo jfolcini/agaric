@@ -849,7 +849,9 @@ async fn reassignment_re_roots_a_nested_page_in_the_old_doc_5239() {
         create_op(NEST_KC, "content", Some(NEST_K), "kc"),
     )
     .await;
-    stamp(&pool, NEST_K, NEST_K, 1).await;
+    // K's 0: P's hydration stops before K and renumbers C to 1, so only a rank
+    // below 1 keeps K ahead of C.
+    stamp(&pool, NEST_K, NEST_K, 0).await;
     stamp(&pool, NEST_C, NEST_P, 2).await;
     stamp(&pool, NEST_KC, NEST_K, 1).await;
     // Each page joins S1 through its own space op (#4480); K lands under P.
@@ -1002,5 +1004,93 @@ async fn hydration_seeds_the_pages_aliases_into_each_space_it_enters_5387() {
         doc_aliases(&state, &space2()),
         Some(vec!["plans".to_owned(), "Roadmap".to_owned()]),
         "S2's doc is seeded with every alias the page holds"
+    );
+}
+
+// --------------------------------------------------------------------------
+// 11. #5670 — the repair of a block an engine lost seeds it by the rank SQL
+//     shows. Hydration at space assignment stamps each block with the rank SQL
+//     gave it then, and a later move leaves that stamp stale.
+// --------------------------------------------------------------------------
+
+const RANKED: [&str; 5] = [
+    "01HZ00000000000000005670R1",
+    "01HZ00000000000000005670R2",
+    "01HZ00000000000000005670R3",
+    "01HZ00000000000000005670R4",
+    "01HZ00000000000000005670R5",
+];
+
+/// `parent`'s children as SQL shows them: by `(position, id)`.
+async fn sql_children(pool: &SqlitePool, parent: &str) -> Vec<String> {
+    sqlx::query_scalar("SELECT id FROM blocks WHERE parent_id = ? ORDER BY position, id")
+        .bind(parent)
+        .fetch_all(pool)
+        .await
+        .expect("sql children")
+}
+
+/// Five children are hydrated at assignment, so each carries its seed-time
+/// rank as a legacy sort key; a move then puts R5 first and leaves every key
+/// stale. The engine loses R3, and the repair must put it back after R2, where
+/// SQL shows it. Ranked by the stale keys it lands ahead of R2, and the
+/// position pass writes that to SQL.
+#[tokio::test]
+async fn a_lost_block_returns_to_its_sql_place_among_reordered_siblings_5670() {
+    use crate::repair::engine_missing_blocks::hydrate_engine_missing_blocks;
+
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    let state = crate::loro::shared::LoroState::new();
+    apply(&pool, &state, create_op(PAGE_ID, "page", None, "page")).await;
+    for (rank, id) in (1_i64..).zip(RANKED) {
+        apply(&pool, &state, create_op(id, "content", Some(PAGE_ID), id)).await;
+        stamp(&pool, id, PAGE_ID, rank).await;
+    }
+    apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE_ID))).await;
+    apply(
+        &pool,
+        &state,
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::from_trusted(RANKED[4]),
+            new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            new_position: 1,
+            new_index: Some(0),
+        }),
+    )
+    .await;
+    let shown = sql_children(&pool, PAGE_ID).await;
+    assert_eq!(
+        shown,
+        [RANKED[4], RANKED[0], RANKED[1], RANKED[2], RANKED[3]],
+        "precondition: the move put R5 first"
+    );
+    {
+        let mut guard = state.registry.for_space(&space(), DEVICE_ID).expect("s1");
+        guard
+            .engine_mut()
+            .apply_purge_block(RANKED[2])
+            .expect("the engine loses R3");
+    }
+
+    let mut tx = pool.begin().await.expect("begin");
+    let missing = hydrate_engine_missing_blocks(&mut tx, &state, DEVICE_ID)
+        .await
+        .expect("repair");
+    tx.commit().await.expect("commit");
+
+    assert_eq!(missing, 1, "R3 was the one missing block");
+    assert_eq!(
+        sql_children(&pool, PAGE_ID).await,
+        shown,
+        "SQL shows the order it showed before the repair"
+    );
+    let mut guard = state.registry.for_space(&space(), DEVICE_ID).expect("s1");
+    assert_eq!(
+        guard
+            .engine_mut()
+            .children_ordered_block_ids(Some(PAGE_ID))
+            .expect("children"),
+        shown,
+        "the engine holds that order"
     );
 }

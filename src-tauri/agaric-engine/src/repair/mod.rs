@@ -33,8 +33,9 @@
 //! [`crate::apply::kernel::apply_op_projected`] — the same entry point the
 //! interactive commands and sync replay use. Deletes are soft, never purges.
 //! [`engine_missing_blocks`](crate::repair::engine_missing_blocks) is the
-//! exception: its rows already have their ops, so it writes none and only puts
-//! their nodes back into the engine.
+//! exception: its rows already have their ops, so it writes none and puts their
+//! nodes back into the engine; SQL takes only the dense positions that seed
+//! reprojects.
 //!
 //! # Housekeeping, not the user's edits
 //!

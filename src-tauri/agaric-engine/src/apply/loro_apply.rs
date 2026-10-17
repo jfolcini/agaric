@@ -795,9 +795,8 @@ async fn read_seed_node(
 }
 
 /// [`hydrate_page_subtree_into_engine`]'s synchronous engine seed, ranking
-/// siblings by `positions` (SQL, keyed by id) where they carry no legacy sort
-/// key. Returns the post-seed sibling order of every parent group actually
-/// touched.
+/// siblings by `positions` (SQL, keyed by id). Returns the post-seed sibling
+/// order of every parent group actually touched.
 fn seed_nodes_into_engine(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
@@ -885,7 +884,8 @@ fn seed_nodes_into_engine(
 /// its doc's live tree through a purge (#5670), which a peer merges as a deleted
 /// node. Either way the seed is the id's one live node, unlike the
 /// `reload_registry_from_db` re-seed warning (which concerns blocks peers hold
-/// live).
+/// live), unless a peer moves the purged node before it merges the purge: that
+/// revives it beside the seed.
 ///
 /// ## Engine rollback
 /// The seed goes through `for_space_recording`, so a caller that armed
@@ -939,8 +939,8 @@ pub(crate) async fn hydrate_page_subtree_into_engine(
         nodes.push(read_seed_node(conn, row).await?);
     }
     // Every child of the group's parents, deleted rows and nested pages
-    // included: a seed ranks by these the siblings the engine created without
-    // a legacy sort key (#5670). NULL maps to `i64::MAX` as in `read_seed_node`.
+    // included: a seed ranks its siblings by these (#5670). NULL maps to
+    // `i64::MAX` as in `read_seed_node`.
     let mut parents: Vec<&str> = nodes
         .iter()
         .filter_map(|n| n.parent_id.as_deref())
