@@ -12,7 +12,7 @@
  *  - a11y compliance with axe
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Component, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -612,5 +612,51 @@ describe('BacklinkGroupRenderer', () => {
       // Only the changed row re-parses (one additional call).
       expect(mockFn.mock.calls.length).toBe(callsAfterFirstRender + 1)
     })
+  })
+})
+
+describe('BacklinkGroupRenderer expanded block children (#5679)', () => {
+  function renderWithChildren(handleBlockClick = vi.fn()) {
+    render(
+      <BacklinkGroupRenderer
+        groups={[makeGroup('P1', 'Page', [makeBlock({ id: 'B1', content: 'row text' })])]}
+        expandedGroups={{ P1: true }}
+        onToggleGroup={vi.fn()}
+        handleBlockClick={handleBlockClick}
+        handleBlockKeyDown={vi.fn()}
+        blockChildren={{
+          expanded: new Set(['B1']),
+          onToggle: vi.fn(),
+          render: () => <p>child text</p>,
+        }}
+        {...defaultResolvers}
+      />,
+    )
+    return handleBlockClick
+  }
+
+  it('does not open the block when a child is clicked, but does for the row text', async () => {
+    const user = userEvent.setup()
+    const handleBlockClick = renderWithChildren()
+
+    await user.click(screen.getByText('child text'))
+    expect(handleBlockClick).not.toHaveBeenCalled()
+
+    await user.click(screen.getByText('row text'))
+    expect(handleBlockClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not open the block when a click lands on the row after selecting child text', () => {
+    const handleBlockClick = renderWithChildren()
+
+    const range = document.createRange()
+    range.selectNodeContents(screen.getByText('child text'))
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    // A drag that ends outside the children container clicks the row itself.
+    fireEvent.click(screen.getByRole('listitem'))
+    window.getSelection()?.removeAllRanges()
+
+    expect(handleBlockClick).not.toHaveBeenCalled()
   })
 })
