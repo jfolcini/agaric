@@ -27,13 +27,13 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  confirmDialog,
   enterBlankSibling,
   expectAbsent,
   navigateTo,
-  openNewPageDialog,
+  openNewPage,
   reopenPageByTitle,
   runScopedMarker,
-  typeInputVerified,
   typeMarkerVerified,
   waitForAppReady,
   waitForToast,
@@ -44,19 +44,6 @@ const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 /** Selector of the committed block rows whose text contains `marker`. */
 function staticSelector(marker: string): string {
   return `[data-testid="block-static"]*=${marker}`
-}
-
-/** Create a page titled `title` through the New page dialog; its first block is focused. */
-async function openTitledPage(title: string): Promise<void> {
-  await openNewPageDialog()
-  await typeInputVerified('#new-page-name', title)
-  await browser.keys(['Enter'])
-  // A page from an earlier case may still be open; wait for this one's title.
-  await browser.waitUntil(async () => (await $('[aria-label="Page title"]').getText()) === title, {
-    timeout: NAV_TIMEOUT,
-    timeoutMsg: `the page ${title} never opened`,
-  })
-  await $(EDITOR).waitForDisplayed({ timeout: ACTION_TIMEOUT })
 }
 
 /** Leave the page editor; the sidebar click blurs, and so commits, the open block. */
@@ -110,16 +97,6 @@ async function editRow(marker: string) {
   return row
 }
 
-/** Confirm the open `[role="alertdialog"]` with its `label` button and wait for it to close. */
-async function confirmDialog(label: string): Promise<void> {
-  const dialog = $('[role="alertdialog"]')
-  await dialog.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-  const confirm = dialog.$(`button=${label}`)
-  await confirm.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await confirm.click()
-  await dialog.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
-}
-
 /** The marked block's task checkbox, resolved through its row wrapper. */
 async function taskMarker(marker: string) {
   const staticBlock = blockStaticByMarker(marker)
@@ -148,7 +125,7 @@ describe('Agaric real-backend history: redo, revert, restore (#4671)', () => {
     const page = runScopedMarker('wdio-redo-page')
     const marker = runScopedMarker('wdio-redo-task')
     await waitForAppReady()
-    await openTitledPage(page)
+    await openNewPage(page)
     await typeMarkerVerified(marker)
     // The round trip also puts seconds between the block's ops and the
     // checkbox's, so the 500 ms undo group holds the checkbox op alone.
@@ -180,7 +157,7 @@ describe('Agaric real-backend history: redo, revert, restore (#4671)', () => {
     const reverted = runScopedMarker('wdio-revert-second')
     const kept = runScopedMarker('wdio-revert-kept')
     await waitForAppReady()
-    await openTitledPage(page)
+    await openNewPage(page)
     await typeMarkerVerified(first)
     await commitByLeaving()
     await reopenQuiet(page, first, 'the first text did not come back on re-open')
@@ -230,7 +207,7 @@ describe('Agaric real-backend history: redo, revert, restore (#4671)', () => {
     const after = runScopedMarker('wdio-restore-third')
     const created = runScopedMarker('wdio-restore-new')
     await waitForAppReady()
-    await openTitledPage(page)
+    await openNewPage(page)
     await typeMarkerVerified(before)
     await commitByLeaving()
     await reopenQuiet(page, before, 'the first text did not come back on re-open')
