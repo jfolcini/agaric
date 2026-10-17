@@ -2265,10 +2265,14 @@
  *
  * Setting the SCALE to 0 already zeroes every design-token duration (they are
  * `base * var(--motion-scale)`). The blanket `*` reset + hard-kill list below
- * additionally neutralise motion that ISN'T token-driven: hardcoded
- * transitions, tw-animate-css enter/exit (`.animate-in` / `.animate-out`,
- * used by Radix dialogs, popovers, menus, toasts), and the
- * animation-shorthand spinners. */
+ * additionally neutralise motion that ISN'T token-driven: tw-animate-css
+ * enter/exit (`.animate-in` / `.animate-out`, used by Radix dialogs, popovers,
+ * menus, toasts), and the animation-shorthand spinners.
+ *
+ * The reset turns transitions off rather than shortening them: a duration on
+ * its own leaves `transition-property` at its initial `all`, so every element
+ * would gain a transition and report its old size for a frame, which made
+ * Mermaid lay diagrams out several times too large (#5692). */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-scale: 0;
@@ -2281,7 +2285,7 @@
   *::after {
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
-    transition-duration: 0.01ms;
+    transition: none;
     scroll-behavior: auto;
   }
 
@@ -2316,7 +2320,7 @@
 :root[data-motion='off'] *::after {
   animation-duration: 0.01ms;
   animation-iteration-count: 1;
-  transition-duration: 0.01ms;
+  transition: none;
   scroll-behavior: auto;
 }
 
