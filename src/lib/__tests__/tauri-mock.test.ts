@@ -368,8 +368,9 @@ describe('list_tags_by_prefix', () => {
     expect(result).toHaveLength(1)
     expect(result[0] as Record<string, unknown>).toHaveProperty('tag_id', SEED_IDS.TAG_WORK)
     expect(result[0] as Record<string, unknown>).toHaveProperty('name', 'work')
-    // `usage_count` is the number of live seed holders (`DESIRED_TAGS_SQL`).
-    expect(result[0] as Record<string, unknown>).toHaveProperty('usage_count', 3)
+    // `usage_count` is the number of live seed holders (`DESIRED_TAGS_SQL`):
+    // three attached, and BLOCK_GS_4 names it inline.
+    expect(result[0] as Record<string, unknown>).toHaveProperty('usage_count', 4)
     expect(result[0] as Record<string, unknown>).toHaveProperty('updated_at')
   })
 
@@ -1261,13 +1262,12 @@ describe('query_by_tags', () => {
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_WORK })
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_1, tagId: SEED_IDS.TAG_PERSONAL })
     invoke('add_tag', { blockId: SEED_IDS.BLOCK_GS_2, tagId: SEED_IDS.TAG_WORK })
-    // Only BLOCK_GS_1 has both tags
+    // BLOCK_GS_1 holds both attached; BLOCK_GS_4 names both inline.
     const result = invoke('query_by_tags', {
       tagIds: [SEED_IDS.TAG_WORK, SEED_IDS.TAG_PERSONAL],
       mode: 'and',
     }) as { items: Record<string, unknown>[] }
-    expect(result.items).toHaveLength(1)
-    expect(result.items[0]?.['id']).toBe(SEED_IDS.BLOCK_GS_1)
+    expect(result.items.map((b) => b['id'])).toEqual([SEED_IDS.BLOCK_GS_1, SEED_IDS.BLOCK_GS_4])
   })
 
   it('excludes deleted blocks', () => {

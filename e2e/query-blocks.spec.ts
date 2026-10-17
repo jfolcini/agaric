@@ -156,8 +156,8 @@ test.describe('Tag-based query blocks', () => {
     //   BLOCK_PROJ_1 ("Ship v2.0 release")
     //   BLOCK_PROJ_2 ("Fix login bug")
     //   BLOCK_MTG_1 ("Weekly standup notes")
-    // The result count should show "3 results"
-    await expect(queryResult).toContainText('3 result', { timeout: 5000 })
+    // and BLOCK_GS_4 names it inline (`#[TAG_WORK]`), which counts too.
+    await expect(queryResult).toContainText('4 result', { timeout: 5000 })
 
     // Verify specific result items are rendered
     await expect(
@@ -184,8 +184,9 @@ test.describe('Tag-based query blocks', () => {
 
     // Wait for loading to complete
 
-    // Seed data has 1 block tagged with TAG_PERSONAL: BLOCK_DAILY_3 ("Buy groceries")
-    await expect(queryResult).toContainText('1 result', { timeout: 5000 })
+    // Seed data has 1 block tagged with TAG_PERSONAL, BLOCK_DAILY_3 ("Buy groceries"),
+    // and BLOCK_GS_4 names it inline.
+    await expect(queryResult).toContainText('2 result', { timeout: 5000 })
     await expect(
       queryResult.locator('[data-testid="query-result-item"]', { hasText: 'Buy groceries' }),
     ).toBeVisible()
@@ -287,8 +288,8 @@ test.describe('Legacy query syntax', () => {
 
     // Wait for loading to complete
 
-    // Should find the 3 blocks tagged with "work"
-    await expect(queryResult).toContainText('3 result', { timeout: 5000 })
+    // The 3 blocks tagged with "work" and BLOCK_GS_4, which names it inline
+    await expect(queryResult).toContainText('4 result', { timeout: 5000 })
   })
 
   test('type:property key:context value:@remote query renders matching blocks', async ({
@@ -391,8 +392,8 @@ test.describe('Query result reactivity', () => {
     let queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
 
-    // Should show 3 results for tag:work
-    await expect(queryResult).toContainText('3 result', { timeout: 5000 })
+    // Should show 4 results for tag:work (one names it inline)
+    await expect(queryResult).toContainText('4 result', { timeout: 5000 })
 
     // Now click to re-enter edit mode and change to tag:personal
     await firstBlock.locator('[data-testid="block-static"]').click()
@@ -403,10 +404,10 @@ test.describe('Query result reactivity', () => {
     await page.keyboard.type('{{query tag:personal}}', { delay: 20 })
     await saveBlock(page)
 
-    // The query should now show 1 result for tag:personal
+    // The query should now show 2 results for tag:personal (one names it inline)
     queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
-    await expect(queryResult).toContainText('1 result', { timeout: 5000 })
+    await expect(queryResult).toContainText('2 result', { timeout: 5000 })
     await expect(
       queryResult.locator('[data-testid="query-result-item"]', { hasText: 'Buy groceries' }),
     ).toBeVisible()

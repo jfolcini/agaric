@@ -57,17 +57,21 @@ interface TagCacheRow {
  * a plain code-unit compare (`Zed` before `apple`). One row per live tag block
  * with content (`DESIRED_TAGS_SQL`); `usage_count` is the number of LIVE
  * holders. The name slot is `UNIQUE (space_id, name)` (migration 0121, #5237),
- * so the same name in two spaces is two rows. The backend also de-duplicates
- * the cache by normalized name within a space and folds `block_tag_refs` into
- * the count; the mock never populates refs, and no fixture seeds two tags of
- * one space that share a fold (`create_block` resolves to the existing one,
- * #5236), so neither is modelled here.
+ * so the same name in two spaces is two rows. A holder is a live block of the
+ * tag's space carrying it attached or inline (`refInclusiveTags`). The backend
+ * also de-duplicates the cache by normalized name within a space; no fixture
+ * seeds two tags of one space that share a fold (`create_block` resolves to the
+ * existing one, #5236), so that is not modelled here.
  */
 function tagCacheRows(): TagCacheRow[] {
   const usage = new Map<string, number>()
-  for (const [holder, tagIds] of blockTags) {
-    if (blocks.get(holder)?.['deleted_at']) continue
-    for (const tagId of tagIds) usage.set(tagId, (usage.get(tagId) ?? 0) + 1)
+  for (const holder of blocks.values()) {
+    if (holder['deleted_at']) continue
+    for (const tagId of refInclusiveTags(holder['id'] as string)) {
+      const tag = blocks.get(tagId)
+      if (tag && ownerSpaceOf(tag) !== ownerSpaceOf(holder)) continue
+      usage.set(tagId, (usage.get(tagId) ?? 0) + 1)
+    }
   }
   const rows: TagCacheRow[] = []
   for (const b of blocks.values()) {

@@ -22,6 +22,7 @@ import { PageHeader } from '@/components/pages/PageHeader'
 import { PageMetadataBar } from '@/components/pages/PageMetadataBar'
 import { PageSourceEditor } from '@/components/pages/PageSourceEditor'
 import { PagesTreeSection } from '@/components/pages/PagesTreeSection'
+import { TaggedItemsSection } from '@/components/pages/TaggedItemsSection'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
@@ -377,6 +378,12 @@ function PageEditorInner({
         onEditSource={isTagPage === false && !sourceMode ? handleEditSource : undefined}
         kebabRef={kebabRef}
       />
+
+      {isTagPage === true && (
+        <FeatureErrorBoundary name="TaggedItemsSection">
+          <TaggedItemsSection tagId={pageId} onNavigateToPage={onNavigateToPage} />
+        </FeatureErrorBoundary>
+      )}
 
       {sourceMode ? (
         <PageSourceEditor pageId={pageId} onClose={handleCloseSource} />

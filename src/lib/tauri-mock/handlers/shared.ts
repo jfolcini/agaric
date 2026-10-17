@@ -545,15 +545,29 @@ export function assertValidSetPropertyValue(key: string, valueText: string | nul
  * REFERENCES (`block_tag_refs`). This is the set legacy tag queries
  * (`query_by_tags`, `filtered_blocks_query`) and the rich `TagOrRef` primitive
  * match against; the attached-only `Tag` primitive uses `blockTags` directly.
+ *
+ * The references are derived from the block's live content, the way
+ * `reindex_block_tag_refs` derives `block_tag_refs` from `#[ULID]` tokens: a
+ * token counts when it names a tag block in the source block's space.
  */
 export function refInclusiveTags(blockId: string): Set<string> {
-  const attached = blockTags.get(blockId)
-  const refs = blockTagRefs.get(blockId)
-  if (!refs || refs.size === 0) return attached ?? new Set()
-  const union = new Set(attached ?? [])
-  for (const t of refs) union.add(t)
+  const union = new Set(blockTags.get(blockId) ?? [])
+  for (const t of blockTagRefs.get(blockId) ?? []) union.add(t)
+  const source = blocks.get(blockId)
+  const content = source?.['content']
+  if (source && typeof content === 'string') {
+    for (const [, tagId] of content.matchAll(TAG_REF_RE)) {
+      const tag = blocks.get(tagId as string)
+      if (tag?.['block_type'] === 'tag' && ownerSpaceOf(tag) === ownerSpaceOf(source)) {
+        union.add(tagId as string)
+      }
+    }
+  }
   return union
 }
+
+/** `TAG_REF_RE` — `#[ULID]` (`src-tauri/agaric-store/src/cache/mod.rs`). */
+const TAG_REF_RE = /#\[([0-9A-Z]{26})\]/g
 
 export type Handler = (args: unknown) => unknown
 
