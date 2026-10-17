@@ -19,7 +19,7 @@ use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_store::space::SpaceId;
 
-use crate::apply::loro_apply::hydrate_page_subtree_into_engine;
+use crate::apply::loro_apply::{SeedRank, hydrate_page_subtree_into_engine};
 use crate::loro::shared::LoroState;
 
 /// Hydrate every live block whose space's engine does not hold it, by
@@ -76,6 +76,7 @@ pub async fn hydrate_engine_missing_blocks(
             device_id,
             &BlockId::from_trusted(page_id),
             &SpaceId::from_trusted(space_id),
+            SeedRank::Sql,
         )
         .await?;
     }

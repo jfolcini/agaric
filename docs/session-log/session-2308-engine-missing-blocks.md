@@ -32,18 +32,24 @@ block in about 126 ms, left zero divergences, and a second run took 0.3 ms.
 **Review found one defect.** Siblings seeded at space assignment ranked by a
 legacy position stamp that later moves never refresh. So a restored block
 could land between siblings in a stale order, and the follow-up position
-pass would write that order to SQL. `ranked_slot` now ranks by SQL first and
-uses the stamp only for siblings SQL does not hold. A test reorders siblings
-before the loss and reds with the old precedence. Review also pinned the
-marker-after-save order with a test that reds when the marker is written
+pass would write that order to SQL. The repair's seed now ranks by SQL first
+and uses the stamp only for siblings SQL does not hold. A test reorders
+siblings before the loss and reds with the old precedence. Review also pinned
+the marker-after-save order with a test that reds when the marker is written
 first.
+
+**A second review found that fix too wide.** It ranked every hydration by
+SQL, and the seed at space assignment cannot rank that way: a page's seed
+renumbers its group without the nested pages it stops at, so a nested page
+seeded later tied the sibling renumbered into its rank and landed after it.
+The #5239 fixture had been edited to hide that. The fixture is back, and only
+the repair ranks by SQL (`SeedRank`); every other hydration seeds as on main.
+The restored test reds when the space-assignment seed ranks by SQL.
 
 **Accepted risk.** A peer that moved the purged node before merging the
 purge could revive a second live node. The maintainer's only peer last
 synced before this block existed.
 
-Gates: the targeted nextest (367), clippy, `SQLX_OFFLINE=true cargo check`,
-fmt, and the full workspace suite. Partition 2/2 passed 3,490 of 3,490;
-partition 1/2 passed 3,498, with one unrelated proptest
-(`reverse_proptest_b1`) timing out under a loaded box and passing alone in
-26 s. That test goes on the slow-test list.
+Gates after the second review: the targeted nextest (385), clippy,
+`SQLX_OFFLINE=true cargo check`, fmt, and the full workspace suite
+(partitions 3,499 and 3,491, all passed).

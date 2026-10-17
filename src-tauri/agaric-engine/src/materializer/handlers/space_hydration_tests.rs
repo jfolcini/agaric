@@ -849,9 +849,7 @@ async fn reassignment_re_roots_a_nested_page_in_the_old_doc_5239() {
         create_op(NEST_KC, "content", Some(NEST_K), "kc"),
     )
     .await;
-    // K's 0: P's hydration stops before K and renumbers C to 1, so only a rank
-    // below 1 keeps K ahead of C.
-    stamp(&pool, NEST_K, NEST_K, 0).await;
+    stamp(&pool, NEST_K, NEST_K, 1).await;
     stamp(&pool, NEST_C, NEST_P, 2).await;
     stamp(&pool, NEST_KC, NEST_K, 1).await;
     // Each page joins S1 through its own space op (#4480); K lands under P.
@@ -879,7 +877,11 @@ async fn reassignment_re_roots_a_nested_page_in_the_old_doc_5239() {
             Some(NEST_P),
             "precondition: K hangs under P"
         );
-        assert_eq!(k.position, 1, "precondition: K ranks first under P");
+        assert_eq!(
+            k.position, 1,
+            "K keeps first place under P: its seed ranks C by C's stamp, not by \
+             the SQL rank P's seed renumbered C to"
+        );
     }
     assert_eq!(
         inherited_rows(&pool, NEST_KC).await,
