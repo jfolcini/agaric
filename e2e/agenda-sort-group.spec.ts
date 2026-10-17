@@ -2,11 +2,13 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
 
 /**
  * The Agenda's Sort by and Group by choices survive leaving the Journal and
- * coming back (#5735). App keys the outlet on the view, so the round trip
- * remounts AgendaView and the choices are re-read from where they were kept.
+ * coming back (#5735). App renders one view at a time (ViewDispatcher), so the
+ * round trip remounts AgendaView and the choices are re-read from where they
+ * were kept.
  *
- * A grouped list orders rows by its group's own key chain (AgendaResults), so
- * the row order pins the grouping and the Sort by control pins the sort.
+ * A grouped list orders rows by its group's own key chain (AgendaResults) and
+ * ignores Sort by, so the row order pins the grouping and only the Sort by
+ * button's text pins the sort.
  * Default TODO + DOING list (seed.ts), grouped by state:
  *   DOING: Fix login bug (due today, P1), Review pull requests (due today, P2)
  *   TODO:  Submit report (yesterday), Buy groceries (today),

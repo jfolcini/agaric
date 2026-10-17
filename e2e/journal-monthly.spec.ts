@@ -8,10 +8,11 @@ import { expect, test, waitForBoot } from './helpers'
  * dotted Monthly day opens Daily on that date with its journal page and its
  * tasks (#5735).
  *
- * In `e2e/` because the mock models `count_agenda_batch_by_source` and the
- * journal-page date lookup, which are all the dots read. The clock is pinned, and the seeded days are in the month
- * after it: boot caches the current month's journal pages, so a page created
- * over IPC shows only in a month fetched after it was created.
+ * In `e2e/` because the mock models every read behind the dots and the Daily
+ * view. The seeded days are in the month after the pinned clock: the current
+ * month's journal pages are cached at boot (`calendar-page-dates-cache.ts`)
+ * until a TTL the pinned clock never reaches, and a page created over IPC,
+ * unlike one created in the journal, is not merged into that cache.
  */
 
 const NOW = new Date('2026-10-14T10:00:00')
