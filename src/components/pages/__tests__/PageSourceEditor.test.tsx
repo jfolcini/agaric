@@ -509,7 +509,7 @@ describe('PageSourceEditor saving', () => {
       const { onClose } = renderEditor()
       edit(await loadedEditor(), 'first', `first ((${GONE})) [[${MALFORMED}]] ((${GONE}))`)
 
-      await user.click(screen.getByRole('button', { name: t('action.save') }))
+      await user.click(saveButton())
 
       await waitFor(() => {
         expect(onClose).toHaveBeenCalledOnce()
@@ -548,7 +548,7 @@ describe('PageSourceEditor saving', () => {
       const { onClose } = renderEditor()
       edit(await loadedEditor(), 'first', `first ((${KNOWN}))`)
 
-      await user.click(screen.getByRole('button', { name: t('action.save') }))
+      await user.click(saveButton())
 
       await waitFor(() => {
         expect(onClose).toHaveBeenCalledOnce()
