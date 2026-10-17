@@ -36,6 +36,7 @@ export interface UseBlockTreeContextBagsParams {
   onToggleCollapse: BlockActions['onToggleCollapse']
   onShowHistory: BlockActions['onShowHistory']
   onShowProperties: BlockActions['onShowProperties']
+  onOpenDatePicker?: BlockActions['onOpenDatePicker']
   onZoomIn: BlockActions['onZoomIn']
   onSelect: BlockActions['onSelect']
   // #264 — optional so existing callers/tests that don't wire conversion
@@ -74,6 +75,7 @@ export function useBlockTreeContextBags({
   onToggleCollapse,
   onShowHistory,
   onShowProperties,
+  onOpenDatePicker,
   onZoomIn,
   onSelect,
   onTurnInto,
@@ -99,6 +101,7 @@ export function useBlockTreeContextBags({
       onToggleCollapse,
       onShowHistory,
       onShowProperties,
+      onOpenDatePicker,
       onZoomIn,
       onSelect,
       onTurnInto,
@@ -119,6 +122,7 @@ export function useBlockTreeContextBags({
       onToggleCollapse,
       onShowHistory,
       onShowProperties,
+      onOpenDatePicker,
       onZoomIn,
       onSelect,
       onTurnInto,

@@ -268,6 +268,60 @@ describe('useBlockDatePicker handleDatePick — schedule mode', () => {
   })
 })
 
+// A date chip keeps focus where it was, so the picker it opens must write the
+// chip's own block, not the focused one (#5736).
+describe('useBlockDatePicker opened from a date chip', () => {
+  beforeEach(() => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1' }), makeBlock({ id: 'BLOCK_2' })] })
+  })
+
+  it("writes the picked date to the chip's block, not the focused one", async () => {
+    const params = makeDefaultParams({ focusedBlockId: 'BLOCK_1' })
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    act(() => {
+      result.current.openDatePickerFor('BLOCK_2', 'due')
+    })
+    expect(result.current.datePickerOpen).toBe(true)
+    expect(result.current.datePickerMode).toBe('due')
+
+    await act(async () => {
+      await result.current.handleDatePick(new Date(2025, 0, 15))
+    })
+
+    const dueDates = pageStore.getState().blocks.map((b) => [b.id, b.due_date])
+    expect(dueDates).toEqual([
+      ['BLOCK_1', null],
+      ['BLOCK_2', '2025-01-15'],
+    ])
+  })
+
+  it("forgets the chip's block once the picker closes", async () => {
+    const params = makeDefaultParams({ focusedBlockId: 'BLOCK_1' })
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    act(() => {
+      result.current.openDatePickerFor('BLOCK_2', 'schedule')
+    })
+    act(() => {
+      result.current.setDatePickerOpen(false)
+    })
+    // The toolbar's "Set scheduled date" opens it next, for the focused block.
+    act(() => {
+      result.current.setDatePickerOpen(true)
+    })
+    await act(async () => {
+      await result.current.handleDatePick(new Date(2025, 2, 10))
+    })
+
+    const scheduled = pageStore.getState().blocks.map((b) => [b.id, b.scheduled_date])
+    expect(scheduled).toEqual([
+      ['BLOCK_1', '2025-03-10'],
+      ['BLOCK_2', null],
+    ])
+  })
+})
+
 describe('useBlockDatePicker handleDatePick — repeat-until mode', () => {
   it('sets repeat-until property', async () => {
     const params = makeDefaultParams()

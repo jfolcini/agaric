@@ -48,6 +48,8 @@ export interface BlockActions {
   onToggleCollapse?: ((blockId: string) => void) | undefined
   onShowHistory?: ((blockId: string) => void) | undefined
   onShowProperties?: ((blockId: string) => void) | undefined
+  /** Open the due or scheduled date picker for this block, from its date chip. */
+  onOpenDatePicker?: ((blockId: string, mode: 'due' | 'schedule') => void) | undefined
   onZoomIn?: ((blockId: string) => void) | undefined
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
   /** #264 — convert a block to another block type ("Turn into ▸"); `calloutType` picks a callout's variant. */

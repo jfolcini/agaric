@@ -319,27 +319,6 @@ import { PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
-// #2222: `dispatchBlockCommand` no longer broadcasts a legacy document
-// CustomEvent (the broadcast had zero production listeners; the focus-keyed
-// command bus is the only delivery path). These tests observe producer
-// dispatches as document events, so shim the bus back onto `document`: the
-// existing assertions keep pinning the producer contract — typed
-// BLOCK_EVENTS key mapped to the expected event name, plus the detail
-// payload — and fail if a producer stops dispatching or changes its detail.
-vi.mock('@/stores/block-command-bus', async () => {
-  const actual = await vi.importActual<typeof import('@/stores/block-command-bus')>(
-    '@/stores/block-command-bus',
-  )
-  const { BLOCK_EVENTS } =
-    await vi.importActual<typeof import('@/lib/block-event-names')>('@/lib/block-event-names')
-  return {
-    ...actual,
-    dispatchBlockCommand: (name: keyof typeof BLOCK_EVENTS, detail?: unknown) => {
-      document.dispatchEvent(new CustomEvent(BLOCK_EVENTS[name], { detail }))
-    },
-  }
-})
-
 // Create a minimal mock sortable return value
 function makeSortable() {
   return {
@@ -3568,51 +3547,36 @@ describe('SortableBlock due date chip click-to-edit', () => {
     mockUseSortable.mockReturnValue(makeSortable())
   })
 
-  it('clicking due date chip dispatches open-due-date-picker event', async () => {
-    const user = userEvent.setup()
-    const handler = vi.fn()
-    document.addEventListener('open-due-date-picker', handler)
+  // A chip keeps focus where it was, so it opens the picker for its own block
+  // through the row's action, not the focus-keyed command bus (#5736).
+  it.each([
+    ['due', '.due-date-chip', { dueDate: '2026-06-15' }],
+    ['schedule', '.scheduled-chip', { scheduledDate: '2026-06-10' }],
+  ] as const)(
+    'clicking the %s chip opens the picker for its own block',
+    async (mode, selector, dates) => {
+      const user = userEvent.setup()
+      const onOpenDatePicker = vi.fn()
 
-    const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        dueDate="2026-06-15"
-      />,
-    )
+      const { container } = render(
+        <TestBlockActionsOverride actions={{ onOpenDatePicker }}>
+          <SortableBlock
+            blockId="BLOCK_1"
+            content="hello"
+            isFocused={false}
+            rovingEditor={makeRovingEditor()}
+            {...dates}
+          />
+        </TestBlockActionsOverride>,
+      )
 
-    const chip = container.querySelector('.due-date-chip') as HTMLElement
-    expect(chip).toBeInTheDocument()
-    await user.click(chip)
+      const chip = container.querySelector(selector) as HTMLElement
+      expect(chip).toBeInTheDocument()
+      await user.click(chip)
 
-    expect(handler).toHaveBeenCalledOnce()
-    document.removeEventListener('open-due-date-picker', handler)
-  })
-
-  it('clicking scheduled date chip dispatches open-scheduled-date-picker event', async () => {
-    const user = userEvent.setup()
-    const handler = vi.fn()
-    document.addEventListener('open-scheduled-date-picker', handler)
-
-    const { container } = render(
-      <SortableBlock
-        blockId="BLOCK_1"
-        content="hello"
-        isFocused={false}
-        rovingEditor={makeRovingEditor()}
-        scheduledDate="2026-06-10"
-      />,
-    )
-
-    const chip = container.querySelector('.scheduled-chip') as HTMLElement
-    expect(chip).toBeInTheDocument()
-    await user.click(chip)
-
-    expect(handler).toHaveBeenCalledOnce()
-    document.removeEventListener('open-scheduled-date-picker', handler)
-  })
+      expect(onOpenDatePicker).toHaveBeenCalledExactlyOnceWith('BLOCK_1', mode)
+    },
+  )
 
   it('due date chip has cursor-pointer class', () => {
     const { container } = render(

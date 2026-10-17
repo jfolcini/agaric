@@ -248,6 +248,7 @@ interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
   onToggleCollapse?: ((blockId: string) => void) | undefined
   onToggleTodo?: ((blockId: string) => void) | undefined
+  onOpenDatePicker?: ((blockId: string, mode: 'due' | 'schedule') => void) | undefined
   onTogglePriority?: ((blockId: string) => void) | undefined
   onShowProperties?: ((blockId: string) => void) | undefined
   onNavigate?: ((id: string) => void) | undefined
@@ -289,6 +290,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
     onSelect,
     onToggleCollapse,
     onToggleTodo,
+    onOpenDatePicker,
     onTogglePriority,
     onShowProperties,
     onNavigate,
@@ -428,6 +430,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
           onTogglePriority={onTogglePriority}
           dueDate={dueDate}
           scheduledDate={scheduledDate}
+          onOpenDatePicker={onOpenDatePicker}
           properties={properties}
           filteredProperties={filteredProperties}
           maxInlineProperties={maxInlineProperties}
@@ -517,6 +520,7 @@ function SortableBlockInner({
     onDedent,
     onToggleCollapse,
     onToggleTodo,
+    onOpenDatePicker,
     onTogglePriority,
     onShowProperties,
     onSelect,
@@ -847,6 +851,7 @@ function SortableBlockInner({
         onSelect={onSelect}
         onToggleCollapse={onToggleCollapse}
         onToggleTodo={onToggleTodo}
+        onOpenDatePicker={onOpenDatePicker}
         onTogglePriority={onTogglePriority}
         onShowProperties={onShowProperties}
         onNavigate={onNavigate}

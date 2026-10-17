@@ -349,39 +349,6 @@ test.describe('Inline controls — gutter (#1170)', () => {
     await expect(badge).toHaveText('P2')
   })
 
-  // The due/scheduled date CHIPS dispatch `open-due-date-picker` /
-  // `open-scheduled-date-picker` on `document`, but the consumer in
-  // `useBlockTreeEventListeners` bails unless `storeOwnsBlock(pageStore,
-  // focusedBlockId)` — i.e. a block in that page store must be FOCUSED.
-  // Clicking the chip itself blurs the editor first (the chip is not a
-  // `data-editor-portal`), so `useEditorBlur` runs `setFocused(null)` BEFORE
-  // the chip's onClick dispatches the event, and the handler sees a null
-  // `focusedBlockId` and returns. Verified in-harness: focusing PROJ_1 then
-  // clicking the due chip yields ZERO `date-picker-popup`. The chip→picker
-  // path is therefore unreachable from a pure e2e click (it would require the
-  // focus to survive the chip click, which production does not arrange). The
-  // toolbar "Set due date" (group 1) and "Set scheduled date"
-  // (`date-chip-editing.spec.ts`) buttons cover the same picker via a
-  // portal-tagged trigger that does NOT blur. Skipped as a
-  // genuine harness/production gating, not a spec bug — follow-up #1170.
-  test.skip('due date chip click opens the date picker', async ({ page }) => {
-    await openPage(page, 'Projects')
-    const proj1 = page.locator('[data-testid="sortable-block"]').first()
-    const dueChip = proj1.locator('.due-date-chip')
-    await expect(dueChip).toBeVisible()
-    await dueChip.click()
-    await expect(page.locator('[data-testid="date-picker-popup"]')).toBeVisible()
-  })
-
-  test.skip('scheduled date chip click opens the date picker', async ({ page }) => {
-    await openPage(page, 'Projects')
-    const proj1 = page.locator('[data-testid="sortable-block"]').first()
-    const schedChip = proj1.locator('.scheduled-chip')
-    await expect(schedChip).toBeVisible()
-    await schedChip.click()
-    await expect(page.locator('[data-testid="date-picker-popup"]')).toBeVisible()
-  })
-
   test('property chip value click opens the property editor', async ({ page }) => {
     await openPage(page, 'Meetings')
     // MTG_1 ("Weekly standup notes") carries `context` / `project` properties.

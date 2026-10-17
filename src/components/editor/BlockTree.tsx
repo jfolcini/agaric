@@ -688,6 +688,7 @@ export function BlockTree({
     datePickerCursorPos,
     setDatePickerOpen,
     setDatePickerMode,
+    openDatePickerFor,
     handleDatePick,
   } = useBlockDatePicker({
     focusedBlockId,
@@ -1420,6 +1421,7 @@ export function BlockTree({
     onToggleCollapse: toggleCollapse,
     onShowHistory: handleShowHistory,
     onShowProperties: handleShowProperties,
+    onOpenDatePicker: openDatePickerFor,
     onZoomIn: handleZoomIn,
     onSelect: handleSelect,
     onTurnInto: handleTurnInto,
