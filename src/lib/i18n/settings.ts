@@ -44,7 +44,7 @@ export const settings: Record<string, string> = {
     'Tab and Shift+Tab indent and outdent blocks. Turn off to keep Tab for moving focus and indent with Ctrl/Cmd+Shift+Arrow instead. Press Escape to leave the editor.',
   'settings.editor.revealMarkdownLabel': 'Show Markdown syntax around the cursor',
   'settings.editor.revealMarkdownHelp':
-    'When the cursor is in bold, italic, code or strikethrough text, show its Markdown markers. Delete a marker to remove the formatting.',
+    'When the cursor is in formatted text, a heading or a link, show its Markdown syntax. Delete a marker to remove the formatting, lower a heading or unlink the text.',
   // #1492 — external-image load policy (privacy-first default: Click).
   'settings.editor.externalImageLabel': 'External images',
   'settings.editor.externalImageHelp':

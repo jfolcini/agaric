@@ -1055,13 +1055,13 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
-  // A later extension's plugins act first, so where `markdownReveal` sits
-  // decides whether its Backspace and arrow keys or the lists' come first (#5691).
-  it('places markdownReveal between the marks and the quote and lists', async () => {
+  // `markdownReveal` runs at priority 1001, so its Backspace and arrow keys act
+  // before the marks', the quote's and the lists' (#5689), which keep main's order (#5691).
+  it('runs markdownReveal ahead of the marks, the quote and the lists', async () => {
     const { result, unmount: unmountHook } = await setup()
     const order = [
-      'underline',
       'markdownReveal',
+      'underline',
       'blockquote',
       'orderedList',
       'bulletList',

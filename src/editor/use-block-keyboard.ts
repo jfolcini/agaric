@@ -473,8 +473,14 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // Suppressed inside code blocks/tables (#725): an "empty" code block or
   // table should be unwrapped/edited by ProseMirror's Backspace handling
   // (e.g. CodeBlock clears itself back to a paragraph), not deleted whole.
+  // An empty heading's revealed `#` run is deleted first (#5689).
   {
-    match: (e, ctx) => e.key === 'Backspace' && ctx.isEmpty && !ctx.inCodeBlock && !ctx.inTable,
+    match: (e, ctx) =>
+      e.key === 'Backspace' &&
+      ctx.isEmpty &&
+      !ctx.inCodeBlock &&
+      !ctx.inTable &&
+      !ctx.markerBeforeCaret,
     handle: (e, cb) => {
       e.preventDefault()
       if (cb.isLastBlock?.()) return
@@ -663,11 +669,12 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
       // deleteContentBackward: only the block-structural cases. Mid-text
       // backspace falls through (no preventDefault) so ProseMirror deletes the
       // character normally.
+      if (hasMarkerBeside(editor.state, 'before')) return
       if (editor.isEmpty) {
         event.preventDefault()
         if (isLastBlock?.()) return
         onDeleteBlock({ cursorPlacement: 'end' })
-      } else if (atStart && !hasMarkerBeside(editor.state, 'before')) {
+      } else if (atStart) {
         event.preventDefault()
         onMergeWithPrev()
       }
