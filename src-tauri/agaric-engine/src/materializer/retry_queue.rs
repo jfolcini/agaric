@@ -569,10 +569,6 @@ pub async fn record_failure(
     };
     let kind_string = kind.task_kind_str();
     let kind_str: &str = kind_string.as_ref();
-    // #5647: one op keeps one row, so the sweep re-applies it once.
-    if let Some(other) = kind.other_apply_op_spelling() {
-        clear_entry(pool, &block_id, other.task_kind_str().as_ref(), metrics).await?;
-    }
 
     // #109 Phase 2: next_attempt_at is epoch-ms. The backoff schedule is
     // computed SQL-side from the post-increment attempts count so the
@@ -625,6 +621,12 @@ pub async fn record_failure(
     // not move for it.
     if row.attempts == 1 {
         metrics.note_retry_row_inserted();
+    }
+    // #5647: one op keeps one row, so the sweep re-applies it once. After the
+    // insert: until it lands, the other spelling's row is the only record that
+    // the op never applied, and the apply cursor is past it.
+    if let Some(other) = kind.other_apply_op_spelling() {
+        clear_entry(pool, &block_id, other.task_kind_str().as_ref(), metrics).await?;
     }
 
     // #2509: classify this persistent-enqueue event so the field can answer
@@ -1860,6 +1862,58 @@ mod tests {
             kinds,
             vec!["ReplayApplyOp:7:dev-5647".to_string()],
             "the later failure's spelling replaces the earlier row"
+        );
+    }
+
+    /// #5647 — the row is the op's only record that it never applied (the
+    /// apply cursor is past it), so a refused write must leave the other
+    /// spelling's row standing.
+    #[tokio::test]
+    async fn record_failure_keeps_the_other_spelling_when_its_insert_fails_5647() {
+        use agaric_store::op_log::OpRecord;
+        let (pool, _dir) = test_pool().await;
+        let metrics = test_metrics();
+        let record = Arc::new(OpRecord {
+            device_id: "dev-5647-refused".into(),
+            seq: 7,
+            parent_seqs: None,
+            hash: "deadbeef".into(),
+            op_type: "edit_block".into(),
+            payload: "{}".into(),
+            created_at: 1_736_942_400_000,
+            block_id: None,
+        });
+        record_failure(
+            &pool,
+            &MaterializeTask::ApplyOp(Arc::clone(&record)),
+            "e1",
+            &metrics,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER refuse_replay_rows BEFORE INSERT ON materializer_retry_queue \
+             WHEN NEW.task_kind LIKE 'ReplayApplyOp:%' \
+             BEGIN SELECT RAISE(ABORT, 'injected #5647'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let replayed = MaterializeTask::ReplayApplyOp(record, None);
+        record_failure(&pool, &replayed, "e2", &metrics)
+            .await
+            .expect_err("the insert is refused");
+
+        let kinds: Vec<String> =
+            sqlx::query_scalar("SELECT task_kind FROM materializer_retry_queue")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            kinds,
+            vec!["ApplyOp:7:dev-5647-refused".to_string()],
+            "the op keeps its one row"
         );
     }
 
