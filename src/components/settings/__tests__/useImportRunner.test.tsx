@@ -6,10 +6,12 @@
  * outcome. IPC (`importMarkdown`) is mocked with `vi.mocked`.
  */
 
-import { act, renderHook } from '@testing-library/react'
+import { invoke } from '@tauri-apps/api/core'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { useImportRunner } from '@/components/settings/useImportRunner'
 import { useCalendarPageDatesEpoch } from '@/hooks/useCalendarPageDates'
 import {
@@ -21,6 +23,8 @@ import { hasPreference, PREFERENCES, readPreference } from '@/lib/preferences'
 import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
 import { queryClient } from '@/lib/query-client'
 import type { ImportUnit } from '@/lib/vault-import'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 const mockImportMarkdown = vi.fn()
 vi.mock('@/lib/ipc-helpers', async (importOriginal) => {
@@ -62,7 +66,7 @@ function unit(name: string): ImportUnit {
   return {
     name,
     bytes: name.length,
-    load: async () => ({ content: `c-${name}`, path: name, vaultFiles: null }),
+    load: async () => ({ content: `c-${name}`, path: name, vaultFiles: null, vaultNotes: null }),
   }
 }
 
@@ -75,6 +79,16 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockImportMarkdown.mockReset()
   _resetGraphStructureEventsForTest()
+  useSpaceStore.setState({ currentSpaceId: 'SPACE' })
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+  // A run that imported a page refills the resolve store: the space's tags and
+  // the imported pages.
+  stubInvoke(vi.mocked(invoke), {
+    list_all_tags_in_space: () => [
+      { tag_id: 'TAG_IMPORTED', name: 'imported-tag', usage_count: 1, updated_at: '2025-01-01' },
+    ],
+    batch_resolve: () => [],
+  })
 })
 
 afterEach(() => {
@@ -118,13 +132,14 @@ describe('useImportRunner', () => {
       navTitle: 'ok',
     })
 
-    // IPC shape: (content, path, spaceId, onProgress fn, vaultFiles).
+    // IPC shape: (content, path, spaceId, onProgress fn, vaultFiles, vaultNotes).
     expect(mockImportMarkdown).toHaveBeenNthCalledWith(
       1,
       'c-ok.md',
       'ok.md',
       'SPACE',
       expect.any(Function),
+      null,
       null,
     )
 
@@ -245,6 +260,36 @@ describe('useImportRunner', () => {
       vi.advanceTimersByTime(GRAPH_DEBOUNCE_MS + 1)
     })
     expect(getGraphStructureKey()).toBe(expectedMoves)
+  })
+
+  // #5740 — a `#tag` chip names its tag only through the resolve store
+  // (`use-block-resolve.ts`), so an imported tag read as a raw ULID until the
+  // store was refilled.
+  it('refills the resolve store after a run that imported a page, naming its tags', async () => {
+    mockImportMarkdown.mockResolvedValueOnce({
+      page_title: 'Tagged',
+      blocks_created: 1,
+      properties_set: 0,
+      page_id: 'PAGE',
+      collapsed: [],
+      warnings: [],
+    })
+
+    const { result } = renderHook(() => useImportRunner())
+    await act(async () => {
+      result.current.begin()
+      await result.current.run({
+        event: mkEvent(),
+        activeSpaceId: 'SPACE',
+        units: [unit('Tagged.md')],
+        notes: false,
+        loggerFailLabel: 'file import failed',
+      })
+    })
+
+    await waitFor(() => {
+      expect(useResolveStore.getState().resolveTitle('TAG_IMPORTED')).toBe('imported-tag')
+    })
   })
 
   it("folds the blocks a Logseq page folded in that page's collapse layout", async () => {

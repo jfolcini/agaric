@@ -29,6 +29,7 @@ import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { requireActiveScope } from '@/lib/space-scope'
 import { type ImportUnit, importErrorReason } from '@/lib/vault-import'
+import { useResolveStore } from '@/stores/resolve'
 import { useTabsStore } from '@/stores/tabs'
 
 /** A file/note that threw and produced no page, with its failure reason. */
@@ -216,6 +217,7 @@ export function useImportRunner(): UseImportRunner {
       // parse failures the caller recorded, then extended per import failure.
       const failedFiles: FailedFile[] = initialFailures ? [...initialFailures] : []
       let succeededFiles = 0
+      const importedPageIds = new Set<string>()
       let lastTitle = ''
       // #1927 — true once the user hits Cancel mid-loop.
       let cancelled = false
@@ -234,7 +236,7 @@ export function useImportRunner(): UseImportRunner {
         setCurrentFileBlocksDone(0)
         setCurrentFileBlocksTotal(0)
         try {
-          const { content, path, vaultFiles } = await unit.load()
+          const { content, path, vaultFiles, vaultNotes } = await unit.load()
           const result = await importMarkdown(
             content,
             path,
@@ -261,6 +263,7 @@ export function useImportRunner(): UseImportRunner {
               }
             },
             vaultFiles,
+            vaultNotes,
           )
           // Collapse is this device's layout, so the blocks a Logseq page
           // folded are folded here (#5160 D14).
@@ -271,6 +274,7 @@ export function useImportRunner(): UseImportRunner {
           totalProps += result.properties_set
           allWarnings.push(...result.warnings)
           succeededFiles += 1
+          importedPageIds.add(result.page_id)
           lastTitle = result.page_title
         } catch (err) {
           // #1935 — a whole-unit import failure is a real ERROR (not a
@@ -299,6 +303,9 @@ export function useImportRunner(): UseImportRunner {
         invalidateCalendarPageDates()
         invalidatePropertyCaches()
         recordGraphStructureChange()
+        // #5740 — and an imported `#tag` chip reads its name only from the
+        // resolve store, which a sync refills the same way.
+        void useResolveStore.getState().preload(activeSpaceId, true, importedPageIds)
       }
 
       // #1927 — the title to navigate to after a successful import. We resolve

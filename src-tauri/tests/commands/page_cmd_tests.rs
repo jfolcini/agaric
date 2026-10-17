@@ -7911,6 +7911,7 @@ async fn import_markdown_emits_started_progress_complete() {
         Some("Streamed.md".into()),
         TEST_SPACE_ID.into(),
         None,
+        None,
         Some(&sink),
     )
     .await
@@ -7984,6 +7985,7 @@ async fn import_markdown_progress_empty_file_started_then_complete() {
         Some("Empty.md".into()),
         TEST_SPACE_ID.into(),
         None,
+        None,
         Some(&sink),
     )
     .await
@@ -8042,6 +8044,7 @@ async fn import_markdown_progress_failure_emits_no_complete() {
         "- Block 1\n- Block 2".into(),
         Some("Fails.md".into()),
         TEST_SPACE_ID.into(),
+        None,
         None,
         Some(&sink),
     )
@@ -8466,6 +8469,7 @@ async fn import_markdown_commits_chunks_visible_to_separate_reader_662() {
         content,
         Some("LockRelease.md".into()),
         TEST_SPACE_ID.into(),
+        None,
         None,
         None,
     )
@@ -11682,6 +11686,80 @@ async fn import_reads_a_relative_md_link_as_a_page_link_on_a_folder_import() {
         Vec::<String>::new()
     );
     mat.shutdown();
+}
+
+/// #5740 — on a folder import a bare `[[Name]]` names the vault's note of that
+/// file name wherever it sits, as Obsidian reads it, in either file order: one
+/// `vault/sub/topic` holding its blocks, linked from `home`, and no `topic`
+/// page. Of two notes of one name the shallower wins, then the first by title.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_reads_a_bare_wikilink_as_the_vault_note_of_that_name() {
+    let notes: Vec<String> = [
+        "vault/home.md",
+        "vault/sub/topic.md",
+        "vault/a/b/topic.md",
+        "vault/y/twin.md",
+        "vault/x/twin.md",
+    ]
+    .map(String::from)
+    .to_vec();
+    let home = (
+        "vault/home.md",
+        "- see [[topic]] [[Twin|label]] `[[topic]]`",
+    );
+    let topic = ("vault/sub/topic.md", "- topic body");
+    for order in [[home, topic], [topic, home]] {
+        let (pool, dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        ensure_test_space(&pool).await;
+        mark_block_as_space(&pool, TEST_SPACE_ID).await;
+        for (path, md) in order {
+            import_markdown_with_progress(
+                &pool,
+                DEV,
+                &mat,
+                dir.path(),
+                md.into(),
+                Some(path.into()),
+                TEST_SPACE_ID.into(),
+                None,
+                Some(notes.clone()),
+                None,
+            )
+            .await
+            .unwrap();
+            settle(&mat).await;
+        }
+
+        let topic_pages = pages_titled(&pool, "vault/sub/topic").await;
+        assert_eq!(topic_pages.len(), 1, "order {order:?}: one topic note");
+        let children: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM blocks WHERE parent_id = ? AND deleted_at IS NULL",
+        )
+        .bind(&topic_pages[0])
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(children, ["topic body"], "order {order:?}");
+        let twin = pages_titled(&pool, "vault/x/twin").await;
+        assert_eq!(twin.len(), 1, "order {order:?}: the twin link made x/twin");
+        assert_eq!(
+            block_starting(&pool, "see").await,
+            format!(
+                "see [[{}]] [[{}|label]] `[[topic]]`",
+                topic_pages[0], twin[0]
+            ),
+            "order {order:?}: home links the vault's notes"
+        );
+        for stray in ["topic", "Twin", "vault/a/b/topic", "vault/y/twin"] {
+            assert_eq!(
+                pages_titled(&pool, stray).await,
+                Vec::<String>::new(),
+                "order {order:?}: no page {stray}"
+            );
+        }
+        mat.shutdown();
+    }
 }
 
 // ======================================================================

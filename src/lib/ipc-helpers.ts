@@ -281,6 +281,9 @@ export async function purgeAllDeletedInSpace(spaceId: string): Promise<BulkTrash
  * so a consumer that never sees `complete` should treat it as failed.
  * The channel is always created (mirroring `startSync`) even when no
  * callback is passed; events are simply discarded.
+ *
+ * `vaultNotes` (#5740) — on a folder pick, the `.md` paths a `[[Name]]` in
+ * this file may name, which the backend writes as those notes' titles.
  */
 export async function importMarkdown(
   content: string,
@@ -288,6 +291,7 @@ export async function importMarkdown(
   spaceId: string,
   onProgress?: (update: ImportProgressUpdate) => void,
   vaultFiles?: VaultFile[] | null,
+  vaultNotes?: string[] | null,
 ): Promise<ImportResult> {
   const channel = new Channel<ImportProgressUpdate>()
   // oxlint-disable-next-line unicorn/prefer-add-event-listener -- Tauri `Channel` is an IPC primitive, not a DOM EventTarget; it only exposes an `onmessage` setter (no `addEventListener`)
@@ -295,11 +299,13 @@ export async function importMarkdown(
   // #1925 — `vaultFiles` carries the referenced attachment bytes the backend
   // ingests and rewrites to `attachment:<id>`. Only the `webkitdirectory`
   // vault picker can supply siblings (see DataSettingsTab); a single-file
-  // import has no siblings and omits it. Defaults to `null` ⇒ exactly the
-  // pre-#1925 behaviour for every caller that does not pass it.
-  return unwrap(
-    await commands.importMarkdown(content, filename ?? null, spaceId, vaultFiles ?? null, channel),
-  )
+  // import has no siblings and omits it. Neither given ⇒ `vault` is `null`,
+  // exactly the pre-#1925 behaviour for every caller that does not pass them.
+  const vault =
+    vaultFiles == null && vaultNotes == null
+      ? null
+      : { files: vaultFiles ?? [], notes: vaultNotes ?? [] }
+  return unwrap(await commands.importMarkdown(content, filename ?? null, spaceId, vault, channel))
 }
 
 /** Start a sync session with a known peer. */

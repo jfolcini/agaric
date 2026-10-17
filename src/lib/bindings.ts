@@ -618,7 +618,15 @@ export const commands = {
 	 *  `Channel<ImportProgressUpdate>` (mirroring `start_sync`); sends are
 	 *  best-effort, so a dropped channel never aborts the import.
 	 */
-	importMarkdown: (content: string, filename: string | null, spaceId: SpaceId, vaultFiles: VaultFile[] | null, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, vaultFiles, progress })),
+	importMarkdown: (content: string, filename: string | null, spaceId: SpaceId, vault: {
+	/**  The bytes of the sibling files the note references (#1925). */
+	files?: VaultFile[],
+	/**
+	 *  The pick's `.md` paths, as `filename` gives them, a `[[Name]]` in the
+	 *  note may name (#5740).
+	 */
+	notes?: string[],
+} | null, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, vault, progress })),
 	/**
 	 *  Tauri command: import a BibTeX / CSL-JSON bibliography into `space_id`
 	 *  as reference pages. Delegates to [`import_bibliography_inner`].
@@ -4619,6 +4627,17 @@ export type VaultFile = {
 	path: string,
 	/**  Raw file bytes. */
 	bytes: number[],
+};
+
+/**  What a folder pick sends with one of its notes ([`import_markdown`]). */
+export type VaultImport = {
+	/**  The bytes of the sibling files the note references (#1925). */
+	files?: VaultFile[],
+	/**
+	 *  The pick's `.md` paths, as `filename` gives them, a `[[Name]]` in the
+	 *  note may name (#5740).
+	 */
+	notes?: string[],
 };
 
 /**

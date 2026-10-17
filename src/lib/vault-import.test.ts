@@ -241,6 +241,50 @@ describe('mdFilesToUnits', () => {
     const loaded = await unit?.load()
     expect(loaded?.vaultFiles).toBeNull()
   })
+
+  // #5740 — every non-Markdown file of a folder pick used to become a page
+  // holding its bytes as text; it is an attachment only.
+  it('makes a page of each Markdown file only, any case of `.md`, while an image still ships', async () => {
+    const note = folderFile(['- ![[pic.png]]'], 'note.md', 'Vault/note.md')
+    const pic = folderFile([new Uint8Array([7])], 'pic.png', 'Vault/pic.png', 'image/png')
+    const loud = folderFile(['- loud'], 'LOUD.MD', 'Vault/LOUD.MD')
+    const files = [note, pic, loud]
+
+    const units = mdFilesToUnits(files, indexVaultFiles(files))
+
+    expect(units.map((u) => u.name)).toEqual(['note.md', 'LOUD.MD'])
+    const loaded = await units[0]?.load()
+    expect(loaded?.vaultFiles).toEqual([{ path: 'pic.png', bytes: [7] }])
+  })
+
+  // #5740 — the backend writes a `[[Name]]` naming a note of the pick with
+  // that note's title, so each file ships the paths of the notes its links
+  // may name, every note of a shared name included.
+  it("ships the paths of the folder's notes a `[[Name]]` names, or null", async () => {
+    const home = folderFile(['- [[Topic]] [[twin#h|x]] [[none]]'], 'home.md', 'Vault/home.md')
+    const topic = folderFile(['- body'], 'topic.md', 'Vault/sub/topic.md')
+    const twin = folderFile(['- twin'], 'twin.md', 'Vault/twin.md')
+    const deepTwin = folderFile(['- deep twin'], 'twin.md', 'Vault/a/twin.md')
+    const files = [home, topic, twin, deepTwin]
+
+    const [homeUnit, topicUnit] = mdFilesToUnits(files, indexVaultFiles(files))
+
+    expect((await homeUnit?.load())?.vaultNotes).toEqual([
+      'Vault/sub/topic.md',
+      'Vault/twin.md',
+      'Vault/a/twin.md',
+    ])
+    expect((await topicUnit?.load())?.vaultNotes).toBeNull()
+  })
+
+  it('ships no note paths on a plain pick, whose links already name its titles', async () => {
+    const home = new File(['- [[topic]]'], 'home.md', { type: 'text/markdown' })
+    const topic = new File(['- body'], 'topic.md', { type: 'text/markdown' })
+
+    const [homeUnit] = mdFilesToUnits([home, topic], null)
+
+    expect((await homeUnit?.load())?.vaultNotes).toBeNull()
+  })
 })
 
 describe('enexNotesToUnits', () => {
