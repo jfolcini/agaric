@@ -1200,7 +1200,7 @@ async fn append_block_stamps_origin_agent_in_op_log() {
     .unwrap();
     assert_eq!(
         origin, "agent:test-agent",
-        "agent-invoked append_block must stamp op_log.origin='agent:<clientInfo.name>'",
+        "agent-invoked append_block must stamp op_log.origin='agent:<name>'",
     );
 }
 

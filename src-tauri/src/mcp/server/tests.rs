@@ -7,7 +7,16 @@
 //! loop and the `McpLifecycle::shutdown` helper.
 
 use super::*;
-use std::sync::Arc;
+
+/// A server no test connection presents a token to.
+#[cfg(unix)]
+fn placeholder_server() -> Arc<McpServer<PlaceholderRegistry, PlaceholderRegistry>> {
+    crate::mcp::test_support::server(
+        PlaceholderRegistry,
+        PlaceholderRegistry,
+        crate::mcp::test_support::unused_pool(),
+    )
+}
 
 // ──────────────────────────────────────────────────────────────────────
 // H-2 — `mcp_set_enabled(false)` actually closes the accept loop
@@ -56,7 +65,7 @@ async fn shutdown_closes_accept_loop_and_drops_listener() {
     let listener = UnixListener::bind(&path).unwrap();
 
     let lifecycle = McpLifecycle::new();
-    // Mirror what `spawn_*_task_with_registry` does in production
+    // Mirror what `spawn_mcp_task_with_server` does in production
     // — the spawn helper sets `task_running = true` before
     // entering `serve()`. Without this the wait helper below
     // would short-circuit immediately.
@@ -64,17 +73,10 @@ async fn shutdown_closes_accept_loop_and_drops_listener() {
         .task_running
         .store(true, std::sync::atomic::Ordering::Release);
 
-    let registry = Arc::new(PlaceholderRegistry);
+    let server = placeholder_server();
     let serve_lc = lifecycle.clone();
     let serve_task = tokio::spawn(async move {
-        let result = serve_unix(
-            listener,
-            registry,
-            None,
-            Some(serve_lc.clone()),
-            crate::mcp::McpSurface::ReadOnly,
-        )
-        .await;
+        let result = serve_unix(listener, server, Some(serve_lc.clone())).await;
         serve_lc
             .task_running
             .store(false, std::sync::atomic::Ordering::Release);
@@ -133,7 +135,7 @@ async fn re_enable_rebinds_listener_after_shutdown() {
     // fresh connection succeeds against the second listener. The
     // production re-enable flow is "set marker, spawn fresh task,
     // task resets the gate before bind"; here we drive the same
-    // sequence by hand because `spawn_*_task_with_registry` would
+    // sequence by hand because `spawn_mcp_task_with_server` would
     // pull in the full Tauri runtime.
     use super::super::McpLifecycle;
     use tokio::net::{UnixListener, UnixStream};
@@ -142,7 +144,7 @@ async fn re_enable_rebinds_listener_after_shutdown() {
     let path = dir.path().join("h2-rebind.sock");
 
     let lifecycle = McpLifecycle::new();
-    let registry = Arc::new(PlaceholderRegistry);
+    let server = placeholder_server();
 
     // ── First serve loop ──
     let listener_v1 = UnixListener::bind(&path).unwrap();
@@ -150,16 +152,9 @@ async fn re_enable_rebinds_listener_after_shutdown() {
         .task_running
         .store(true, std::sync::atomic::Ordering::Release);
     let serve_lc_1 = lifecycle.clone();
-    let registry_1 = registry.clone();
+    let server_1 = server.clone();
     let task_v1 = tokio::spawn(async move {
-        let result = serve_unix(
-            listener_v1,
-            registry_1,
-            None,
-            Some(serve_lc_1.clone()),
-            crate::mcp::McpSurface::ReadOnly,
-        )
-        .await;
+        let result = serve_unix(listener_v1, server_1, Some(serve_lc_1.clone())).await;
         serve_lc_1
             .task_running
             .store(false, std::sync::atomic::Ordering::Release);
@@ -194,7 +189,7 @@ async fn re_enable_rebinds_listener_after_shutdown() {
     lifecycle
         .enabled
         .store(true, std::sync::atomic::Ordering::Release);
-    // #2824 — mirror `spawn_*_task_with_registry`: reset the
+    // #2824 — mirror `spawn_mcp_task_with_server`: reset the
     // level-triggered shutdown gate too, else the first disable's stored
     // `true` would tear the second loop down immediately (or spin it).
     lifecycle.shutdown_signal.send_replace(false);
@@ -202,16 +197,9 @@ async fn re_enable_rebinds_listener_after_shutdown() {
         .task_running
         .store(true, std::sync::atomic::Ordering::Release);
     let serve_lc_2 = lifecycle.clone();
-    let registry_2 = registry.clone();
+    let server_2 = server.clone();
     let task_v2 = tokio::spawn(async move {
-        let result = serve_unix(
-            listener_v2,
-            registry_2,
-            None,
-            Some(serve_lc_2.clone()),
-            crate::mcp::McpSurface::ReadOnly,
-        )
-        .await;
+        let result = serve_unix(listener_v2, server_2, Some(serve_lc_2.clone())).await;
         serve_lc_2
             .task_running
             .store(false, std::sync::atomic::Ordering::Release);
@@ -252,17 +240,10 @@ async fn shutdown_during_active_connection_blocks_new_connects() {
     lifecycle
         .task_running
         .store(true, std::sync::atomic::Ordering::Release);
-    let registry = Arc::new(PlaceholderRegistry);
+    let server = placeholder_server();
     let serve_lc = lifecycle.clone();
     let serve_task = tokio::spawn(async move {
-        let result = serve_unix(
-            listener,
-            registry,
-            None,
-            Some(serve_lc.clone()),
-            crate::mcp::McpSurface::ReadOnly,
-        )
-        .await;
+        let result = serve_unix(listener, server, Some(serve_lc.clone())).await;
         serve_lc
             .task_running
             .store(false, std::sync::atomic::Ordering::Release);
@@ -270,8 +251,7 @@ async fn shutdown_during_active_connection_blocks_new_connects() {
     });
 
     // Open an in-flight connection — sit on it without sending so
-    // the handler is parked inside rmcp's framer reading the
-    // initialize line.
+    // the handler is parked reading the token preamble.
     let inflight = UnixStream::connect(&path)
         .await
         .expect("in-flight connect succeeds");
@@ -378,18 +358,10 @@ async fn accept_error_does_not_kill_serve_loop_636() {
 
     // 3. Start the serve loop under fd pressure.
     let lifecycle = McpLifecycle::new();
-    let registry = Arc::new(PlaceholderRegistry);
+    let server = placeholder_server();
     let serve_lc = lifecycle.clone();
-    let serve_task = tokio::spawn(async move {
-        serve_unix(
-            listener,
-            registry,
-            None,
-            Some(serve_lc),
-            crate::mcp::McpSurface::ReadOnly,
-        )
-        .await
-    });
+    let serve_task =
+        tokio::spawn(async move { serve_unix(listener, server, Some(serve_lc)).await });
 
     if exhausted {
         // Hold the pressure long enough for the loop to take the
@@ -534,7 +506,7 @@ async fn shutdown_signal_reset_clears_level_across_reenable_2824() {
         "shutdown must set the level-triggered watch flag to true",
     );
 
-    // Mirror `spawn_*_task_with_registry`'s re-enable reset.
+    // Mirror `spawn_mcp_task_with_server`'s re-enable reset.
     lc.shutdown_signal.send_replace(false);
 
     // A fresh waiter must now PARK again — proving a prior shutdown does

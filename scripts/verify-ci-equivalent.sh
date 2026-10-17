@@ -2513,7 +2513,7 @@ if [ "$HAS_MCP" = "1" ]; then
 
     smoke_log="$(mktemp -t pre-push-mcp-smoke.XXXXXX)"
     if ! ( cd src-tauri && cargo nextest run --features ci-smoke --profile ci \
-            -E 'test(stub_binary_roundtrips_initialize_over_uds)' ) > "$smoke_log" 2>&1; then
+            -E 'test(stub_binary_)' ) > "$smoke_log" 2>&1; then
         echo "  ✗ MCP UDS smoke test failed"
         tail -100 "$smoke_log" | sed 's/^/      /'
         rm -f "$smoke_log"

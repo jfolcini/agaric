@@ -260,9 +260,9 @@ jobs:
         #
         # `--config` narrows tauri.conf.json's beforeBuildCommand to the vite
         # build. The default also runs prepare-external-bins.mjs, a RELEASE
-        # build of the agaric-mcp sidecar no spec runs (the MCP spec speaks
-        # to the app's own socket) and no bundle ships (`--no-bundle`; no
-        # `externalBin` entry either), so skipping it only saves build time.
+        # build of the agaric-mcp sidecar no bundle ships (`--no-bundle`; no
+        # `externalBin` entry either); the spec that spawns the bridge uses
+        # the debug build below, so skipping it only saves build time.
         run: >-
           npm run tauri -- build --debug --no-bundle
           --config '{"build":{"beforeBuildCommand":"npm run build"}}'
@@ -274,6 +274,12 @@ jobs:
         # the tauri crates once more, without the CLI's `custom-protocol`.
         working-directory: src-tauri
         run: cargo build -p agaric-diagnostics --bin e2e_sync_peer
+
+      - name: Build the agaric-mcp bridge
+        # The bridge `mcp-agent-token.e2e.ts` spawns with an agent's token
+        # (#5667). The debug bin reuses the lib the sync peer step just built.
+        working-directory: src-tauri
+        run: cargo build -p agaric --bin agaric-mcp
 
       - name: Run WebdriverIO real-backend smoke (Xvfb)
         # The binary is already built above, so tell wdio.conf.ts to skip its

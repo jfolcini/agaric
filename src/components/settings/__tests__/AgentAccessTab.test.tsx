@@ -2,26 +2,18 @@
  * Tests for AgentAccessTab — Settings tab.
  *
  * Validates:
- *  - Renders the happy-path layout (RO toggle, socket path, copy
- *    buttons, activity empty state, kill switch, RW toggle, RW socket
- *    path, RW kill switch).
- *  - Each channel's socket path, config and kill switch render only while
- *    its toggle is on; the activity feed renders regardless.
- *  - RO toggle on/off roundtrips through `invoke('mcp_set_enabled', …)`.
- *  - RW toggle on/off roundtrips through `invoke('mcp_rw_set_enabled',
- *    …)`.
- *  - Copy buttons write the correct JSON/path to the clipboard.
- *  - Destructive warning badge appears only while the RW socket is
- *    enabled.
- *  - RO / RW kill switches fire their respective `*_disconnect_all`
- *    commands after confirming the dialog.
+ *  - Renders the happy-path layout (switch, socket path, connections,
+ *    agents card, activity empty state).
+ *  - The socket path and connections render only while the switch is on;
+ *    the agents card and the activity feed render regardless.
+ *  - The switch roundtrips through `invoke('mcp_set_enabled', …)`.
+ *  - The socket path copies to the clipboard.
+ *  - The kill switch fires `mcp_disconnect_all` after confirming the dialog.
  *  - Activity feed subscribes to `mcp:activity`, renders incoming
  *    entries newest-first, and caps the rendered rows at 100.
  *  - IPC rejection on every mocked invoke: component logs via
  *    `logger.warn` / `logger.error`, does not crash, and shows a toast
  *    error + degraded fallback.
- *  - Graceful fallback when only one of the RO / RW status loads
- *    succeeds.
  *  - `axe(container)` a11y audit returns zero violations.
  */
 
@@ -105,24 +97,15 @@ interface McpStatus {
   active_connections: number
 }
 
-type McpRwStatus = McpStatus
+const SOCKET = '/home/test/.local/share/com.agaric.app/mcp.sock'
 
-const RO_SOCKET = '/home/test/.local/share/com.agaric.app/mcp-ro.sock'
-const RW_SOCKET = '/home/test/.local/share/com.agaric.app/mcp-rw.sock'
+/** The switch's accessible name. */
+const TOGGLE = 'Let agents connect'
 
 function makeStatus(overrides: Partial<McpStatus> = {}): McpStatus {
   return {
     enabled: false,
-    socket_path: '/home/test/.local/share/com.agaric.app/mcp-ro.sock',
-    active_connections: 0,
-    ...overrides,
-  }
-}
-
-function makeRwStatus(overrides: Partial<McpRwStatus> = {}): McpRwStatus {
-  return {
-    enabled: false,
-    socket_path: '/home/test/.local/share/com.agaric.app/mcp-rw.sock',
+    socket_path: SOCKET,
     active_connections: 0,
     ...overrides,
   }
@@ -164,19 +147,15 @@ function makeActivityEntry(overrides: Partial<ActivityEntryFixture> = {}): Activ
 }
 
 /**
- * Default invoke mock: every RO + RW MCP command resolves to a sensible
- * default so re-fetches after toggles / disconnect succeed without
- * per-test re-mocking.
+ * Default invoke mock: every MCP command resolves to a sensible default so
+ * re-fetches after toggles / disconnect succeed without per-test re-mocking.
  */
-function setupInvoke(status: McpStatus = makeStatus(), rwStatus: McpRwStatus = makeRwStatus()) {
+function setupInvoke(status: McpStatus = makeStatus()) {
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_mcp_agents') return []
     if (cmd === 'get_mcp_status') return status
     if (cmd === 'mcp_set_enabled') return true
     if (cmd === 'mcp_disconnect_all') return null
-    if (cmd === 'get_mcp_rw_status') return rwStatus
-    if (cmd === 'mcp_rw_set_enabled') return true
-    if (cmd === 'mcp_rw_disconnect_all') return null
     return undefined
   })
 }
@@ -199,57 +178,34 @@ afterEach(() => {
 
 describe('AgentAccessTab — rendering', () => {
   it('renders every section once the status loads', async () => {
-    setupInvoke(
-      makeStatus({ enabled: true, active_connections: 0 }),
-      makeRwStatus({ enabled: true, active_connections: 0 }),
-    )
+    setupInvoke(makeStatus({ enabled: true, active_connections: 0 }))
 
     render(<AgentAccessTab />)
 
-    // Section headings
-    expect(await screen.findByText('Read-only access')).toBeInTheDocument()
+    expect(await screen.findByRole('switch', { name: TOGGLE })).toBeInTheDocument()
     // The tab rail already names the tab; the panel does not repeat it.
     expect(screen.queryByText('Agent access')).not.toBeInTheDocument()
     expect(screen.getByText('Socket path')).toBeInTheDocument()
-    expect(screen.getByText('Agent configuration')).toBeInTheDocument()
-    expect(screen.getByText('Recent activity')).toBeInTheDocument()
     expect(screen.getByText('Connections')).toBeInTheDocument()
-    expect(screen.getByText('Read-write access')).toBeInTheDocument()
-    expect(screen.getByText('Read-write socket path')).toBeInTheDocument()
-    expect(screen.getByText('Read-write connections')).toBeInTheDocument()
-
-    // RO socket path is displayed as-is
-    expect(screen.getByTestId('mcp-socket-path')).toHaveTextContent(
-      '/home/test/.local/share/com.agaric.app/mcp-ro.sock',
-    )
-    // RW socket path is a separate code block
-    expect(screen.getByTestId('mcp-rw-socket-path')).toHaveTextContent(
-      '/home/test/.local/share/com.agaric.app/mcp-rw.sock',
-    )
-
-    expect(screen.getByRole('button', { name: /Copy Claude Desktop config/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Copy Claude Code commands/i })).toBeInTheDocument()
-
-    // Retired placeholder — "Coming in v2" must no longer render.
-    expect(screen.queryByText('Coming in v2')).not.toBeInTheDocument()
-
-    // Kill switches read zero active
+    expect(screen.getByText('Agents')).toBeInTheDocument()
+    expect(screen.getByText('Recent activity')).toBeInTheDocument()
+    expect(screen.getByTestId('mcp-socket-path')).toHaveTextContent(SOCKET)
     expect(screen.getByText(/No active connections\./)).toBeInTheDocument()
-    expect(screen.getByText(/No active read-write connections\./)).toBeInTheDocument()
+    // The per-socket snippets went with the per-socket switches (#5667);
+    // each agent's row carries its own.
+    expect(screen.queryByRole('button', { name: /Copy Claude/ })).not.toBeInTheDocument()
   })
 
   // The page h1 is "Settings" and the panel has no title of its own, so these are h2.
   it('titles the label-less sections with h2 headings and nothing else', async () => {
-    setupInvoke(makeStatus({ enabled: true }), makeRwStatus({ enabled: true }))
+    setupInvoke(makeStatus({ enabled: true }))
 
     render(<AgentAccessTab />)
 
-    await screen.findByRole('heading', { name: 'Agent configuration' })
+    await screen.findByRole('heading', { name: 'Connections' })
     // The empty feed's message is a paragraph, not a heading.
     expect(screen.getAllByRole('heading').map((h) => [h.tagName, h.textContent])).toEqual([
-      ['H2', 'Agent configuration'],
       ['H2', 'Connections'],
-      ['H2', 'Read-write connections'],
       ['H2', 'Agents'],
       ['H2', 'Recent activity'],
     ])
@@ -262,12 +218,9 @@ describe('AgentAccessTab — rendering', () => {
   })
 
   it('has no axe violations', async () => {
-    setupInvoke(
-      makeStatus({ enabled: true, active_connections: 2 }),
-      makeRwStatus({ enabled: true, active_connections: 1 }),
-    )
+    setupInvoke(makeStatus({ enabled: true, active_connections: 2 }))
     const { container } = render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
     // axe cold-load can exceed 1 s under worker contention.
     await waitFor(
       async () => {
@@ -280,72 +233,57 @@ describe('AgentAccessTab — rendering', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Gated on the toggle
+// Gated on the switch
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessTab — content gated on the toggle', () => {
-  it('shows only the toggles and the activity feed while both channels are off', async () => {
-    setupInvoke(makeStatus({ enabled: false }), makeRwStatus({ enabled: false }))
+describe('AgentAccessTab — content gated on the switch', () => {
+  it('shows only the switch, the agents and the activity feed while off', async () => {
+    setupInvoke(makeStatus({ enabled: false }))
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     expect(screen.queryByTestId('mcp-socket-path')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('mcp-rw-socket-path')).not.toBeInTheDocument()
-    expect(screen.queryByText('Agent configuration')).not.toBeInTheDocument()
     expect(screen.queryByText('Connections')).not.toBeInTheDocument()
-    expect(screen.queryByText('Read-write connections')).not.toBeInTheDocument()
+    // Agents are set up before access is on.
+    expect(screen.getByRole('heading', { level: 2, name: 'Agents' })).toBeInTheDocument()
     // Past agent writes stay revertable after access is turned off.
     expect(screen.getByRole('heading', { level: 2, name: 'Recent activity' })).toBeInTheDocument()
   })
 
-  it('shows the socket path, config and connections only for a channel that is on', async () => {
-    setupInvoke(makeStatus({ enabled: true }), makeRwStatus({ enabled: false }))
-    render(<AgentAccessTab />)
-
-    expect(await screen.findByTestId('mcp-socket-path')).toBeInTheDocument()
-    expect(screen.getByText('Agent configuration')).toBeInTheDocument()
-    expect(screen.getByText('Connections')).toBeInTheDocument()
-    expect(screen.queryByTestId('mcp-rw-socket-path')).not.toBeInTheDocument()
-    expect(screen.queryByText('Read-write connections')).not.toBeInTheDocument()
-  })
-
-  it('reveals the RO section when its toggle is switched on', async () => {
+  it('reveals the socket path when the switch is turned on', async () => {
     const user = userEvent.setup()
-    let roEnabled = false
+    let enabled = false
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
       if (cmd === 'list_mcp_agents') return []
-      if (cmd === 'get_mcp_status') return makeStatus({ enabled: roEnabled })
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
+      if (cmd === 'get_mcp_status') return makeStatus({ enabled })
       if (cmd === 'mcp_set_enabled') {
-        roEnabled = (args as { enabled: boolean }).enabled
+        enabled = (args as { enabled: boolean }).enabled
         return null
       }
       return undefined
     })
     render(<AgentAccessTab />)
-    const toggle = await screen.findByRole('switch', { name: 'Read-only access' })
+    const toggle = await screen.findByRole('switch', { name: TOGGLE })
     expect(screen.queryByTestId('mcp-socket-path')).not.toBeInTheDocument()
 
     await user.click(toggle)
 
-    expect(await screen.findByTestId('mcp-socket-path')).toHaveTextContent(
-      '/home/test/.local/share/com.agaric.app/mcp-ro.sock',
-    )
-    expect(screen.getByRole('button', { name: /Copy Claude Desktop config/i })).toBeInTheDocument()
+    expect(await screen.findByTestId('mcp-socket-path')).toHaveTextContent(SOCKET)
+    expect(screen.getByText('Connections')).toBeInTheDocument()
   })
 })
 
 // ---------------------------------------------------------------------------
-// Toggle — RO access
+// The switch
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessTab — RO toggle', () => {
-  it('invokes mcp_set_enabled(true) when toggled on', async () => {
+describe('AgentAccessTab — switch', () => {
+  it('invokes mcp_set_enabled(true) when turned on', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus({ enabled: false }))
 
     render(<AgentAccessTab />)
-    const toggle = await screen.findByRole('switch', { name: 'Read-only access' })
+    const toggle = await screen.findByRole('switch', { name: TOGGLE })
     expect(toggle).toHaveAttribute('aria-checked', 'false')
 
     await user.click(toggle)
@@ -353,15 +291,15 @@ describe('AgentAccessTab — RO toggle', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('mcp_set_enabled', { enabled: true })
     })
-    expect(mockedToastSuccess).toHaveBeenCalledWith('Read-only agent access enabled')
+    expect(mockedToastSuccess).toHaveBeenCalledWith('Agent access enabled')
   })
 
-  it('invokes mcp_set_enabled(false) when toggled off', async () => {
+  it('invokes mcp_set_enabled(false) when turned off', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus({ enabled: true }))
 
     render(<AgentAccessTab />)
-    const toggle = await screen.findByRole('switch', { name: 'Read-only access' })
+    const toggle = await screen.findByRole('switch', { name: TOGGLE })
     expect(toggle).toHaveAttribute('aria-checked', 'true')
 
     await user.click(toggle)
@@ -369,22 +307,20 @@ describe('AgentAccessTab — RO toggle', () => {
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('mcp_set_enabled', { enabled: false })
     })
-    expect(mockedToastSuccess).toHaveBeenCalledWith('Read-only agent access disabled')
+    expect(mockedToastSuccess).toHaveBeenCalledWith('Agent access disabled')
   })
 
-  it('rolls back the toggle on IPC rejection and logs the error', async () => {
+  it('rolls back the switch on IPC rejection and logs the error', async () => {
     const user = userEvent.setup()
-    // First call: status load. Second call: mcp_set_enabled rejects.
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus({ enabled: false })
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus({ enabled: false })
       if (cmd === 'mcp_set_enabled') throw new Error('backend exploded')
       return undefined
     })
 
     render(<AgentAccessTab />)
-    const toggle = await screen.findByRole('switch', { name: 'Read-only access' })
+    const toggle = await screen.findByRole('switch', { name: TOGGLE })
     await user.click(toggle)
 
     // Optimistic update flipped it on; rollback flips it back off.
@@ -402,103 +338,10 @@ describe('AgentAccessTab — RO toggle', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Toggle — RW access
+// Copy the socket path
 // ---------------------------------------------------------------------------
 
-describe('AgentAccessTab — RW toggle', () => {
-  it('invokes mcp_rw_set_enabled(true) when toggled on', async () => {
-    const user = userEvent.setup()
-    setupInvoke(makeStatus(), makeRwStatus({ enabled: false }))
-
-    render(<AgentAccessTab />)
-    const toggle = await screen.findByRole('switch', { name: 'Read-write access' })
-    expect(toggle).toHaveAttribute('aria-checked', 'false')
-
-    await user.click(toggle)
-
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('mcp_rw_set_enabled', { enabled: true })
-    })
-    expect(mockedToastSuccess).toHaveBeenCalledWith('Read-write agent access enabled')
-    // Note: after the success path, `loadStatus()` re-fires and the
-    // switch re-syncs to whatever the backend reports. We don't assert
-    // aria-checked here since the mocked status is immutable across
-    // toggles — the invoke + toast assertions cover the user intent.
-  })
-
-  it('invokes mcp_rw_set_enabled(false) when toggled off', async () => {
-    const user = userEvent.setup()
-    setupInvoke(makeStatus(), makeRwStatus({ enabled: true }))
-
-    render(<AgentAccessTab />)
-    const toggle = await screen.findByRole('switch', { name: 'Read-write access' })
-    expect(toggle).toHaveAttribute('aria-checked', 'true')
-
-    await user.click(toggle)
-
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('mcp_rw_set_enabled', { enabled: false })
-    })
-    expect(mockedToastSuccess).toHaveBeenCalledWith('Read-write agent access disabled')
-  })
-
-  it('rolls back the RW toggle on IPC rejection and logs the error', async () => {
-    const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_mcp_agents') return []
-      if (cmd === 'get_mcp_status') return makeStatus({ enabled: false })
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus({ enabled: false })
-      if (cmd === 'mcp_rw_set_enabled') throw new Error('rw backend exploded')
-      return undefined
-    })
-
-    render(<AgentAccessTab />)
-    const toggle = await screen.findByRole('switch', { name: 'Read-write access' })
-    await user.click(toggle)
-
-    await waitFor(() => {
-      expect(toggle).toHaveAttribute('aria-checked', 'false')
-    })
-    expect(mockedLoggerError).toHaveBeenCalledWith(
-      'AgentAccessSettingsTab',
-      'failed to set MCP RW enabled',
-      { enabled: true },
-      expect.any(Error),
-    )
-    expect(mockedToastError).toHaveBeenCalledWith('Failed to toggle agent access')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Destructive warning badge (RW only)
-// ---------------------------------------------------------------------------
-
-describe('AgentAccessTab — RW warning badge', () => {
-  it('renders the destructive warning badge while RW is enabled', async () => {
-    setupInvoke(makeStatus(), makeRwStatus({ enabled: true }))
-    render(<AgentAccessTab />)
-    await screen.findByText('Read-write access')
-
-    const badge = await screen.findByTestId('mcp-rw-warning-badge')
-    expect(badge).toBeInTheDocument()
-    expect(badge).toHaveTextContent('Agents can create, edit, and delete blocks while this is on.')
-    expect(badge).toHaveAttribute('data-variant', 'destructive')
-  })
-
-  it('does not render the warning badge when RW is disabled', async () => {
-    setupInvoke(makeStatus(), makeRwStatus({ enabled: false }))
-    render(<AgentAccessTab />)
-    await screen.findByText('Read-write access')
-
-    expect(screen.queryByTestId('mcp-rw-warning-badge')).not.toBeInTheDocument()
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Copy-config buttons
-// ---------------------------------------------------------------------------
-
-describe('AgentAccessTab — copy buttons', () => {
+describe('AgentAccessTab — copy the socket path', () => {
   it('copies the socket path to the clipboard', async () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus({ enabled: true }))
@@ -508,73 +351,9 @@ describe('AgentAccessTab — copy buttons', () => {
     await user.click(copyBtn)
 
     await waitFor(() => {
-      expect(clipboardWriteText).toHaveBeenCalledWith(
-        '/home/test/.local/share/com.agaric.app/mcp-ro.sock',
-      )
+      expect(clipboardWriteText).toHaveBeenCalledWith(SOCKET)
     })
     expect(mockedToastSuccess).toHaveBeenCalledWith('Socket path copied')
-  })
-
-  it('copies the RW socket path to the clipboard', async () => {
-    const user = userEvent.setup()
-    setupInvoke(makeStatus(), makeRwStatus({ enabled: true }))
-
-    render(<AgentAccessTab />)
-    const copyBtn = await screen.findByRole('button', { name: 'Copy read-write socket path' })
-    await user.click(copyBtn)
-
-    await waitFor(() => {
-      expect(clipboardWriteText).toHaveBeenCalledWith(
-        '/home/test/.local/share/com.agaric.app/mcp-rw.sock',
-      )
-    })
-    expect(mockedToastSuccess).toHaveBeenCalledWith('Read-write socket path copied')
-  })
-
-  it('copies the Claude Desktop config as valid JSON', async () => {
-    const user = userEvent.setup()
-    setupInvoke(makeStatus({ enabled: true }))
-
-    render(<AgentAccessTab />)
-    const btn = await screen.findByRole('button', { name: /Copy Claude Desktop config/i })
-    await user.click(btn)
-
-    await waitFor(() => {
-      expect(clipboardWriteText).toHaveBeenCalledTimes(1)
-    })
-    const written = clipboardWriteText.mock.calls[0]?.[0] as string
-    const parsed = JSON.parse(written)
-    expect(parsed).toEqual({
-      mcpServers: {
-        'agaric-ro': {
-          command: 'agaric-mcp',
-          env: { AGARIC_MCP_SOCKET: RO_SOCKET },
-        },
-        'agaric-rw': {
-          command: 'agaric-mcp',
-          env: { AGARIC_MCP_SOCKET: RW_SOCKET },
-        },
-      },
-    })
-    expect(mockedToastSuccess).toHaveBeenCalledWith('Claude Desktop config copied')
-  })
-
-  it('copies one claude mcp add command per surface', async () => {
-    const user = userEvent.setup()
-    setupInvoke(makeStatus({ enabled: true }))
-
-    render(<AgentAccessTab />)
-    const btn = await screen.findByRole('button', { name: /Copy Claude Code commands/i })
-    await user.click(btn)
-
-    await waitFor(() => {
-      expect(clipboardWriteText).toHaveBeenCalledTimes(1)
-    })
-    expect(clipboardWriteText.mock.calls[0]?.[0]).toBe(
-      `claude mcp add -s user agaric-ro -- agaric-mcp --socket "${RO_SOCKET}"\n` +
-        `claude mcp add -s user agaric-rw -- agaric-mcp --socket "${RW_SOCKET}"`,
-    )
-    expect(mockedToastSuccess).toHaveBeenCalledWith('Claude Code commands copied')
   })
 
   it('logs and toasts on clipboard failure', async () => {
@@ -582,7 +361,7 @@ describe('AgentAccessTab — copy buttons', () => {
     setupInvoke(makeStatus({ enabled: true }))
 
     render(<AgentAccessTab />)
-    const btn = await screen.findByRole('button', { name: /Copy Claude Desktop config/i })
+    const btn = await screen.findByRole('button', { name: 'Copy socket path' })
     // Override the clipboard writeText just for this test to reject.
     clipboardWriteText.mockRejectedValueOnce(new Error('clipboard blocked'))
     await user.click(btn)
@@ -617,7 +396,7 @@ describe('AgentAccessTab — activity feed', () => {
   it('prepends incoming events to the rendered feed (newest first)', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent({
@@ -656,7 +435,7 @@ describe('AgentAccessTab — activity feed', () => {
   it('caps rendered rows at 100 (101st push drops the oldest)', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       for (let i = 0; i < 101; i++) {
@@ -685,7 +464,7 @@ describe('AgentAccessTab — activity feed', () => {
   it('shows error-result summaries in destructive color', async () => {
     setupInvoke(makeStatus())
     const { container } = render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent({
@@ -725,7 +504,7 @@ describe('AgentAccessTab — undo agent op', () => {
   it('renders the undo button on an agent-authored RW activity row', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -744,7 +523,7 @@ describe('AgentAccessTab — undo agent op', () => {
   it('hides the undo button on a user-authored activity row', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -764,7 +543,7 @@ describe('AgentAccessTab — undo agent op', () => {
   it('hides the undo button on a failed agent activity row', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -783,7 +562,7 @@ describe('AgentAccessTab — undo agent op', () => {
   it('hides the undo button when opRef is missing (e.g. RO tool)', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -804,7 +583,7 @@ describe('AgentAccessTab — undo agent op', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 1 } }))
@@ -832,13 +611,12 @@ describe('AgentAccessTab — undo agent op', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') return revertPromise
       return undefined
     })
 
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 42 } }))
@@ -877,7 +655,6 @@ describe('AgentAccessTab — undo agent op', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') {
         // Mirror the `AppError::Database` wire shape from
         // src-tauri/src/error.rs — `{ kind, message }` carried on an
@@ -888,7 +665,7 @@ describe('AgentAccessTab — undo agent op', () => {
     })
 
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 7 } }))
@@ -917,7 +694,6 @@ describe('AgentAccessTab — undo agent op', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') {
         // Matches the `AppError::NonReversible` serialization from
         // src-tauri/src/error.rs — `{ kind, message }` shape with
@@ -931,7 +707,7 @@ describe('AgentAccessTab — undo agent op', () => {
     })
 
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 9 } }))
@@ -956,7 +732,7 @@ describe('AgentAccessTab — undo agent op', () => {
   it('has no axe violations with a mixed agent/user/ok/err activity feed', async () => {
     setupInvoke(makeStatus())
     const { container } = render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       // 1. Agent + ok + opRef → undo button visible.
@@ -1045,7 +821,7 @@ describe('AgentAccessTab — revert session', () => {
   it('renders a session header on the first-seen entry when the session has ≥ 2 undoable ops', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -1095,7 +871,7 @@ describe('AgentAccessTab — revert session', () => {
   it('does NOT render a session header when the session has only 1 undoable op', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -1116,7 +892,7 @@ describe('AgentAccessTab — revert session', () => {
   it('does NOT render a session header on non-first-seen entries of the same session', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -1156,7 +932,7 @@ describe('AgentAccessTab — revert session', () => {
   it('renders separate session headers when two sessions are interleaved', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       // A1, B1, A2, B2 — both sessions end up with 2 undoable ops each.
@@ -1206,7 +982,7 @@ describe('AgentAccessTab — revert session', () => {
   it('ignores user-authored and failed entries when counting session ops', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       // 1 agent + ok + opRef (counts)
@@ -1250,7 +1026,7 @@ describe('AgentAccessTab — revert session', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -1294,7 +1070,7 @@ describe('AgentAccessTab — revert session', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     // Fire events in seq order 1, 2, 3 — feed is newest-first so
     // entries.map walks [seq=3, seq=2, seq=1], and undoableBySession
@@ -1355,7 +1131,7 @@ describe('AgentAccessTab — revert session', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -1399,7 +1175,6 @@ describe('AgentAccessTab — revert session', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') {
         throw Object.assign(new Error('Non-reversible: purge_block cannot be undone'), {
           kind: 'non_reversible',
@@ -1409,7 +1184,7 @@ describe('AgentAccessTab — revert session', () => {
     })
 
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -1454,7 +1229,7 @@ describe('AgentAccessTab — revert session', () => {
   it('has no axe violations on a session-grouped feed', async () => {
     setupInvoke(makeStatus())
     const { container } = render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       // Session A — 2 undoable ops (header shown).
@@ -1545,7 +1320,7 @@ describe('AgentAccessTab — revertedOpKeys tracking', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 1 } }))
@@ -1568,7 +1343,7 @@ describe('AgentAccessTab — revertedOpKeys tracking', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -1601,7 +1376,7 @@ describe('AgentAccessTab — revertedOpKeys tracking', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -1658,7 +1433,6 @@ describe('AgentAccessTab — revertedOpKeys tracking', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') {
         throw Object.assign(new Error('disk full'), { kind: 'database' })
       }
@@ -1666,7 +1440,7 @@ describe('AgentAccessTab — revertedOpKeys tracking', () => {
     })
 
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 17 } }))
@@ -1690,7 +1464,7 @@ describe('AgentAccessTab — revertedOpKeys tracking', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       for (let i = 1; i <= 5; i++) {
@@ -1731,7 +1505,7 @@ describe('AgentAccessTab — revertedOpKeys tracking', () => {
     const user = userEvent.setup()
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(
@@ -1792,7 +1566,7 @@ describe('AgentAccessTab — touch discoverability', () => {
   it('renders the buttonText span with the responsive class when the icon is visible', async () => {
     setupInvoke(makeStatus())
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 1 } }))
@@ -1818,13 +1592,12 @@ describe('AgentAccessTab — touch discoverability', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') return revertPromise
       return undefined
     })
 
     render(<AgentAccessTab />)
-    await screen.findByText('Read-only access')
+    await screen.findByRole('switch', { name: TOGGLE })
 
     act(() => {
       fireActivityEvent(makeActivityEntry({ opRef: { device_id: 'D', seq: 1 } }))
@@ -1857,7 +1630,7 @@ describe('AgentAccessTab — touch discoverability', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Kill switch — RO
+// Kill switch
 // ---------------------------------------------------------------------------
 
 describe('AgentAccessTab — kill switch', () => {
@@ -1903,7 +1676,6 @@ describe('AgentAccessTab — kill switch', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus({ enabled: true, active_connections: 1 })
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'mcp_disconnect_all') throw new Error('backend exploded')
       return undefined
     })
@@ -1929,83 +1701,6 @@ describe('AgentAccessTab — kill switch', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Kill switch — RW
-// ---------------------------------------------------------------------------
-
-describe('AgentAccessTab — RW kill switch', () => {
-  it('hides the RW disconnect button when no RW connections are active', async () => {
-    setupInvoke(makeStatus(), makeRwStatus({ enabled: true, active_connections: 0 }))
-    render(<AgentAccessTab />)
-
-    expect(await screen.findByText('No active read-write connections.')).toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: 'Disconnect all read-write' }),
-    ).not.toBeInTheDocument()
-  })
-
-  it('fires mcp_rw_disconnect_all after confirming the dialog and reloads status', async () => {
-    const user = userEvent.setup()
-    setupInvoke(makeStatus(), makeRwStatus({ enabled: true, active_connections: 2 }))
-
-    render(<AgentAccessTab />)
-    const btn = await screen.findByRole('button', { name: 'Disconnect all read-write' })
-    expect(btn).toHaveAttribute('data-variant', 'outline')
-
-    await user.click(btn)
-
-    const confirm = await screen.findByRole('alertdialog')
-    const actionBtn = await within(confirm).findByRole('button', {
-      name: 'Disconnect all read-write',
-    })
-    // Capture call count BEFORE the confirm — we expect status to be
-    // re-fetched after the disconnect succeeds.
-    const preCount = mockedInvoke.mock.calls.filter((c) => c[0] === 'get_mcp_rw_status').length
-    await user.click(actionBtn)
-
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('mcp_rw_disconnect_all')
-    })
-    expect(mockedToastSuccess).toHaveBeenCalledWith('Disconnected all active read-write sessions')
-    // `loadStatus` re-fetches after disconnect succeeds.
-    await waitFor(() => {
-      const postCount = mockedInvoke.mock.calls.filter((c) => c[0] === 'get_mcp_rw_status').length
-      expect(postCount).toBeGreaterThan(preCount)
-    })
-  })
-
-  it('logs and toasts when mcp_rw_disconnect_all rejects', async () => {
-    const user = userEvent.setup()
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_mcp_agents') return []
-      if (cmd === 'get_mcp_status') return makeStatus()
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus({ enabled: true, active_connections: 1 })
-      if (cmd === 'mcp_rw_disconnect_all') throw new Error('rw backend exploded')
-      return undefined
-    })
-
-    render(<AgentAccessTab />)
-    const btn = await screen.findByRole('button', { name: 'Disconnect all read-write' })
-    await user.click(btn)
-
-    const confirm = await screen.findByRole('alertdialog')
-    const actionBtn = await within(confirm).findByRole('button', {
-      name: 'Disconnect all read-write',
-    })
-    await user.click(actionBtn)
-
-    await waitFor(() => {
-      expect(mockedLoggerError).toHaveBeenCalledWith(
-        'AgentAccessSettingsTab',
-        'failed to disconnect all RW',
-        undefined,
-        expect.any(Error),
-      )
-    })
-    expect(mockedToastError).toHaveBeenCalledWith('Failed to disconnect read-write sessions')
-  })
-})
-
-// ---------------------------------------------------------------------------
 // Status load error
 // ---------------------------------------------------------------------------
 
@@ -2014,7 +1709,6 @@ describe('AgentAccessTab — status load error', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') throw new Error('backend down')
-      if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       return undefined
     })
 
@@ -2024,9 +1718,6 @@ describe('AgentAccessTab — status load error', () => {
     expect(await screen.findByText('Failed to load MCP status')).toBeInTheDocument()
     // The banner is an assertive live region so screen readers announce it.
     expect(screen.getByRole('alert')).toHaveTextContent('Failed to load MCP status')
-    // Component still renders the rest of the sections.
-    expect(screen.getByText('Read-only access')).toBeInTheDocument()
-    expect(screen.getByText('Read-write access')).toBeInTheDocument()
     // Logger captured the error.
     expect(mockedLoggerError).toHaveBeenCalledWith(
       'AgentAccessSettingsTab',
@@ -2034,44 +1725,12 @@ describe('AgentAccessTab — status load error', () => {
       undefined,
       expect.any(Error),
     )
-    // RO toggle is forced to the off position + disabled while status is null.
-    const toggle = screen.getByRole('switch', { name: 'Read-only access' })
+    // The switch is forced off and disabled while status is null.
+    const toggle = screen.getByRole('switch', { name: TOGGLE })
     expect(toggle).toBeDisabled()
     expect(toggle).toHaveAttribute('aria-checked', 'false')
-    // RW toggle still responds because its status loaded successfully.
-    const rwToggle = screen.getByRole('switch', { name: 'Read-write access' })
-    expect(rwToggle).not.toBeDisabled()
-  })
-
-  it('renders gracefully when only get_mcp_rw_status rejects', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_mcp_agents') return []
-      if (cmd === 'get_mcp_status') return makeStatus({ enabled: true })
-      if (cmd === 'get_mcp_rw_status') throw new Error('rw backend down')
-      return undefined
-    })
-
-    render(<AgentAccessTab />)
-
-    // RO side renders normally with no banner.
-    expect(await screen.findByText('Read-only access')).toBeInTheDocument()
-    expect(screen.queryByText('Failed to load MCP status')).not.toBeInTheDocument()
-    // RW side still renders its toggle; with no status it reads as off, so
-    // the socket path and kill switch stay hidden.
-    expect(screen.getByText('Read-write access')).toBeInTheDocument()
-    expect(screen.queryByTestId('mcp-rw-socket-path')).not.toBeInTheDocument()
-    // Logger captured the RW failure.
-    expect(mockedLoggerError).toHaveBeenCalledWith(
-      'AgentAccessSettingsTab',
-      'failed to load MCP RW status',
-      undefined,
-      expect.any(Error),
-    )
-    // RW toggle is disabled while its status is null.
-    const rwToggle = screen.getByRole('switch', { name: 'Read-write access' })
-    expect(rwToggle).toBeDisabled()
-    expect(rwToggle).toHaveAttribute('aria-checked', 'false')
-    // Destructive warning badge is hidden while RW status is null.
-    expect(screen.queryByTestId('mcp-rw-warning-badge')).not.toBeInTheDocument()
+    // The agents and the feed still render.
+    expect(screen.getByRole('heading', { level: 2, name: 'Agents' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 2, name: 'Recent activity' })).toBeInTheDocument()
   })
 })

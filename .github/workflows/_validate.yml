@@ -1738,7 +1738,7 @@ jobs:
 
       - name: MCP stub-binary smoke test (I-MCP-9)
         working-directory: src-tauri
-        run: cargo nextest run --features ci-smoke --profile ci -E 'test(stub_binary_roundtrips_initialize_over_uds)'
+        run: cargo nextest run --features ci-smoke --profile ci -E 'test(stub_binary_)'
 
       - name: Verify agaric-mcp smoke (--version)
         run: src-tauri/target/debug/agaric-mcp --version

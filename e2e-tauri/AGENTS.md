@@ -15,13 +15,13 @@ Locally you need Linux with `webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `openbox
 
 ```sh
 npm run tauri -- build --debug --no-bundle --config '{"build":{"beforeBuildCommand":"npm run build"}}'
-(cd src-tauri && cargo build -p agaric-diagnostics --bin e2e_sync_peer)
+(cd src-tauri && cargo build -p agaric-diagnostics --bin e2e_sync_peer && cargo build -p agaric --bin agaric-mcp)
 env -u WAYLAND_DISPLAY GDK_BACKEND=x11 WDIO_SKIP_TAURI_BUILD=1 xvfb-run -a dbus-run-session -- bash -c 'openbox & npm run test:e2e-tauri'
 ```
 
 On a Wayland desktop, `xvfb-run` sets only `DISPLAY`, so without the `env` prefix GTK opens the app on the desktop session instead of Xvfb, and the focus check fails.
 
-The `--config` skips `prepare-external-bins.mjs`'s release build of the unused `agaric-mcp` sidecar; `wdio.conf.ts`'s own build, when `WDIO_SKIP_TAURI_BUILD` is unset, does not pass it and pays that cost. A dev box without those runs nothing; `npm run typecheck:e2e-tauri` and `npx vitest run e2e-tauri` are the local checks.
+The `--config` skips `prepare-external-bins.mjs`'s release build of the `agaric-mcp` sidecar, which `--no-bundle` ships nowhere (the debug `agaric-mcp` built above is the bridge `mcp-agent-token.e2e.ts` spawns); `wdio.conf.ts`'s own build, when `WDIO_SKIP_TAURI_BUILD` is unset, does not pass it and pays that cost. A dev box without those runs nothing; `npm run typecheck:e2e-tauri` and `npx vitest run e2e-tauri` are the local checks.
 
 `gh run view --log` prints nothing for this repo; read a failed job with `gh api /repos/jfolcini/agaric/actions/jobs/<job_id>/logs` and `gh run download <run_id>` for the `e2e-tauri-diagnostics` artifact (screenshots, app log, the visibility verdict).
 

@@ -193,25 +193,19 @@ export const settings: Record<string, string> = {
   'bugReport.reportCrashTitle': 'Report this crash',
   'settings.tabAgentAccess': 'Agent access',
   'agentAccess.description':
-    'Let agents on this computer (Claude Desktop, Cursor, Continue, …) connect over local sockets. Read-only and read-write access are separate switches, both off by default.',
+    'Let agents on this computer (Claude Desktop, Cursor, Continue, …) connect over a local socket. Off by default.',
   'agentAccess.loadFailed': 'Failed to load MCP status',
-  'agentAccess.roToggleLabel': 'Read-only access',
-  'agentAccess.roToggleDescription':
-    'Let agents search and read your notes over a local socket. Reading a journal date within a year of today may create that page; you can undo it from the activity feed.',
-  'agentAccess.toggleOnSuccess': 'Read-only agent access enabled',
-  'agentAccess.toggleOffSuccess': 'Read-only agent access disabled',
+  'agentAccess.toggleLabel': 'Let agents connect',
+  'agentAccess.toggleDescription':
+    'Each agent connects with its own token, from the Agents list, and gets only the access and spaces you gave it. A client without one is refused.',
+  'agentAccess.toggleOnSuccess': 'Agent access enabled',
+  'agentAccess.toggleOffSuccess': 'Agent access disabled',
   'agentAccess.toggleFailed': 'Failed to toggle agent access',
   'agentAccess.socketPathLabel': 'Socket path',
   'agentAccess.socketPathCopied': 'Socket path copied',
   'agentAccess.copySocketPathLabel': 'Copy socket path',
   'agentAccess.copyFailed': 'Failed to copy to clipboard',
-  'agentAccess.configLabel': 'Agent configuration',
-  'agentAccess.configDescription':
-    'Copy the appropriate snippet into your agent\u2019s configuration file.',
-  'agentAccess.copyClaudeConfigButton': 'Copy Claude Desktop config',
   'agentAccess.claudeConfigCopied': 'Claude Desktop config copied',
-  'agentAccess.copyClaudeCodeCommandsButton': 'Copy Claude Code commands',
-  'agentAccess.claudeCodeCommandsCopied': 'Claude Code commands copied',
   'agentAccess.activityLabel': 'Recent activity',
   'agentAccess.activityEmpty':
     'No agent activity yet. When an agent connects, tool calls appear here.',
@@ -226,26 +220,6 @@ export const settings: Record<string, string> = {
   'agentAccess.confirmDisconnectDescription':
     'Every currently-connected agent will be dropped. They can reconnect immediately after.',
   'agentAccess.confirmDisconnectAction': 'Disconnect all',
-  'agentAccess.rwToggleLabel': 'Read-write access',
-  'agentAccess.rwToggleDescription':
-    'Let agents read, search, create, edit, tag, and delete blocks over a separate local socket. Every write is reversible from the activity feed.',
-  'agentAccess.rwToggleOnSuccess': 'Read-write agent access enabled',
-  'agentAccess.rwToggleOffSuccess': 'Read-write agent access disabled',
-  'agentAccess.rwSocketPathLabel': 'Read-write socket path',
-  'agentAccess.rwSocketPathCopied': 'Read-write socket path copied',
-  'agentAccess.copyRwSocketPathLabel': 'Copy read-write socket path',
-  'agentAccess.rwKillSwitchLabel': 'Read-write connections',
-  'agentAccess.rwKillSwitchDescriptionNone': 'No active read-write connections.',
-  'agentAccess.rwKillSwitchDescription_one': '1 active read-write connection.',
-  'agentAccess.rwKillSwitchDescription_other': '{{count}} active read-write connections.',
-  'agentAccess.rwKillSwitchButton': 'Disconnect all read-write',
-  'agentAccess.rwDisconnectSuccess': 'Disconnected all active read-write sessions',
-  'agentAccess.rwDisconnectFailed': 'Failed to disconnect read-write sessions',
-  'agentAccess.rwConfirmDisconnectTitle': 'Disconnect all read-write sessions?',
-  'agentAccess.rwConfirmDisconnectDescription':
-    'Every currently-connected read-write agent will be dropped. They can reconnect immediately after.',
-  'agentAccess.rwConfirmDisconnectAction': 'Disconnect all read-write',
-  'agentAccess.rwEnabledWarning': 'Agents can create, edit, and delete blocks while this is on.',
   'agentAccess.undoAgentOp.ariaLabel': 'Undo this agent action',
   'agentAccess.undoAgentOp.tooltip': 'Undo this agent action',
   'agentAccess.undoAgentOp.buttonText': 'Undo',
@@ -271,8 +245,6 @@ export const settings: Record<string, string> = {
   'agentAccess.agents.title': 'Agents',
   'agentAccess.agents.description':
     'Each agent has its own token, access and spaces. Give each client its own agent.',
-  'agentAccess.agents.pendingEnforcement':
-    'Agent configs take effect once Agaric enforces agent tokens, in an upcoming update.',
   'agentAccess.agents.loadFailed': 'Failed to load agents',
   'agentAccess.agents.add': 'Add agent',
   'agentAccess.agents.empty': 'No agents yet',

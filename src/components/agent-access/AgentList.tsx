@@ -115,9 +115,6 @@ export function AgentList({ socketPath }: AgentListProps): React.ReactElement {
             {t('agentAccess.agents.title')}
           </h2>
           <p className="text-xs text-muted-foreground">{t('agentAccess.agents.description')}</p>
-          <p className="text-xs text-muted-foreground">
-            {t('agentAccess.agents.pendingEnforcement')}
-          </p>
         </div>
         {agents !== null && agents.length > 0 && addButton}
       </div>

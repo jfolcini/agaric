@@ -2,36 +2,33 @@
 //!
 //! `rmcp` is a hard dependency (see `Cargo.toml`) and this adapter is the
 //! production `tools/list` / `tools/call` dispatcher: `super::server`
-//! constructs [`RmcpAdapter`] (parameterised on [`McpSurface`], #693)
-//! and serves both the read-only and read-write registries through it.
-//! The hand-rolled `mcp/server.rs` framing is retained only
-//! for the connection lifecycle plumbing it wraps (see "What this adapter
-//! does NOT do" below); it no longer dispatches tool calls.
+//! constructs one [`RmcpAdapter`] per connection, over the registry its
+//! agent's mode picks.
 //!
 //! ## What this adapter does NOT do
 //!
 //! - It does NOT replace the accept loop / lifecycle bookkeeping in
-//!   `mcp/mod.rs::serve` / `mcp/server.rs::serve_unix` /
-//!   `serve_pipe` / `run_connection`. Those are agaric-specific
-//!   (Unix-domain socket, Windows named pipe, disconnect
-//!   gate, grace period). `rmcp` only takes over the
-//!   per-connection JSON-RPC loop.
-//! - It does NOT replace the connection-level [`super::server::serve`]
-//!   plumbing — that wraps the rmcp `serve` loop. It DOES, however,
-//!   own per-connection JSON-RPC dispatch for every read-only tool:
-//!   `tools/list` reflects the full RO registry and `call_tool`
-//!   dispatches every RO tool through the adapter.
+//!   `mcp/server.rs` (`serve_unix` / `serve_pipe` / `run_connection`) or the
+//!   token handshake in `handle_connection`. Those are agaric-specific
+//!   (Unix-domain socket, Windows named pipe, disconnect gate, grace
+//!   period). `rmcp` only takes over the per-connection JSON-RPC loop.
 //! - It does NOT special-case RW tools. Read-write tools' richer
 //!   side-effects (op-log appends, activity-feed errors, materializer
-//!   trigger) live behind the [`ToolRegistry`] seam; the adapter only
-//!   differs per surface in what `get_info` advertises (#693).
+//!   trigger) live behind the [`ToolRegistry`] seam.
+//!
+//! ## Agents
+//!
+//! Every `tools/call` first re-reads the connection's agent
+//! ([`ConnectedAgent::authorize`]): a revoked agent and a space argument
+//! outside the agent's spaces are refused there, before the tool runs, and
+//! `list_spaces` answers only the agent's spaces. Writes are attributed to
+//! the agent's name; the client's `clientInfo` is not read.
 //!
 //! ## How to drive it
 //!
 //! Tests use [`tokio::io::duplex`] to pair the adapter with a real
-//! `rmcp` client over an in-memory async pipe — no Unix socket / DB
-//! / Tauri runtime required. See the test module at the bottom of
-//! this file.
+//! `rmcp` client over an in-memory async pipe — no Unix socket or Tauri
+//! runtime required. See the test module at the bottom of this file.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -48,87 +45,14 @@ use rmcp::{
 use serde_json::Value;
 use ulid::Ulid;
 
-use super::McpSurface;
 use super::activity::{
     ActivityContext, ActivityResult, ActorKind, ToolCompletionEvent, emit_tool_completion,
 };
-use super::agents::MAX_AGENT_NAME_LEN;
-use super::registry::ToolRegistry;
+use super::agents::{ConnectedAgent, McpAgent};
+use super::registry::{TOOL_LIST_SPACES, ToolRegistry};
 use super::server::ERROR_CLIP_CAP;
 use agaric_core::error::AppError;
 use agaric_store::task_locals::{ACTOR, Actor, ActorContext};
-
-/// Stable placeholder used when a self-reported MCP `clientInfo.name` is
-/// empty or becomes empty after control-char stripping. Mirrors the
-/// `"unknown"` fallback used when `peer_info()` is absent so the
-/// resulting `origin` is always a non-empty, well-formed `agent:<name>`.
-const AGENT_NAME_PLACEHOLDER: &str = "unknown";
-
-/// #1569 — normalise a self-reported MCP `clientInfo.name` at the trust
-/// boundary, before it is wrapped in [`Actor::Agent`] and durably stamped
-/// into `op_log.origin`.
-///
-/// Performed exactly once, here at the capture site, so the cleaned value
-/// flows through `Actor::Agent` → `Actor::origin_tag` → `op_log.origin`
-/// unchanged. The steps:
-///
-/// 1. Strip ASCII control characters (`\0`, `\t`, `\n`, `\r`, `\x1b`, …)
-///    and other Unicode control scalars (`char::is_control`) so no
-///    control bytes ever reach the append-only log.
-/// 2. Collapse / trim surrounding ASCII whitespace so a name that is all
-///    spaces (or padded) does not produce a blank-looking label.
-/// 3. Truncate to [`MAX_AGENT_NAME_LEN`] chars on a char boundary so a
-///    multi-KiB / multi-MiB name cannot bloat the durable row and a
-///    multi-byte scalar is never split mid-codepoint.
-/// 4. Fall back to [`AGENT_NAME_PLACEHOLDER`] when nothing printable
-///    remains, so the label is never empty.
-fn sanitize_agent_name(raw: &str) -> String {
-    let cleaned: String = raw
-        // Drop every control char (ASCII C0/C1 + Unicode controls).
-        .chars()
-        .filter(|c| !c.is_control())
-        // Bound length on a char boundary — `take` counts scalars, so a
-        // multi-byte char is kept whole or dropped, never split.
-        .take(MAX_AGENT_NAME_LEN)
-        .collect();
-    let trimmed = cleaned.trim();
-    if trimmed.is_empty() {
-        AGENT_NAME_PLACEHOLDER.to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-/// #1545 — derive the durable `op_log.origin` agent label for a connection.
-///
-/// A *named* client (any `sanitized` name other than the
-/// [`AGENT_NAME_PLACEHOLDER`]) is returned unchanged, so the common case
-/// keeps the plain `agent:<name>` origin with no behaviour change.
-///
-/// An *anonymous* connection — one whose `clientInfo.name` was absent, or
-/// empty / control-only after [`sanitize_agent_name`] — would otherwise
-/// collapse every distinct connection to the single literal `agent:unknown`
-/// origin, making the durable, append-only attribution column unable to
-/// tell two simultaneous anonymous agents apart for any origin-keyed
-/// undo / bulk-revert UX. To keep them distinguishable we fold the stable
-/// per-connection session ULID (`super::server::ConnectionState::session_id`,
-/// mirrored on this adapter as `self.session_id`) into the label, yielding
-/// `unknown:<session-ulid>` → `origin_tag()` → `agent:unknown:<session-ulid>`.
-///
-/// The session ULID is **reused**, never minted here, so the durable origin
-/// matches the `sessionId` already stamped on the connection's
-/// [`super::activity::ActivityEntry`]. The result still begins with the
-/// `agent:` prefix, so the activity-feed `LIKE 'agent:%'` filter and every
-/// other prefix-based consumer of `op_log.origin` keep working — origins are
-/// stored and consumed as opaque strings, so the extra `:<ulid>` suffix
-/// changes nothing for parsing.
-fn durable_agent_name(sanitized: &str, session_id: &str) -> String {
-    if sanitized == AGENT_NAME_PLACEHOLDER {
-        format!("{AGENT_NAME_PLACEHOLDER}:{session_id}")
-    } else {
-        sanitized.to_string()
-    }
-}
 
 /// #2954 — drop-safe activity-feed emission guard.
 ///
@@ -228,47 +152,38 @@ impl Drop for ToolCompletionGuard {
 }
 
 /// Production adapter that exposes a tool registry through `rmcp`'s
-/// [`ServerHandler`] trait.
+/// [`ServerHandler`] trait, for one connection's agent.
 ///
 /// `list_tools` forwards every entry the [`ToolRegistry`] returns and
 /// `call_tool` dispatches every tool through the registry. `R` is the
 /// existing [`ToolRegistry`] trait — the adapter does NOT need a parallel
 /// registration model.
-///
-/// #693 — the adapter is parameterised on [`McpSurface`] so `get_info`
-/// advertises the surface it actually fronts. (Previously named
-/// `RmcpReadOnlyAdapter` and hardcoded to introduce itself as the
-/// read-only server even on the RW socket.)
 pub struct RmcpAdapter<R: ToolRegistry> {
     registry: Arc<R>,
     /// Activity-emission seam. `None` in tests / stub binaries
     /// where no Tauri runtime is bound; `Some(_)` in production via
     /// `ActivityContext::from_app_handle`.
     activity_ctx: Option<ActivityContext>,
-    /// Which surface this adapter fronts — drives `get_info`'s
-    /// instructions (#693).
-    surface: McpSurface,
-    /// Stable per-connection ULID, mirroring
-    /// `super::server::ConnectionState::session_id`. Stamped onto every
-    /// emitted activity entry so the frontend feed can group entries
-    /// by MCP session.
+    /// The agent whose token the connection presented.
+    agent: ConnectedAgent,
+    /// Stable per-connection ULID, stamped onto every emitted activity entry
+    /// so the frontend feed can group entries by MCP session.
     session_id: String,
 }
 
 impl<R: ToolRegistry> RmcpAdapter<R> {
-    /// Build an adapter around an existing registry handle, an optional
-    /// Activity context, and the surface it fronts. Pass `None`
-    /// for activity_ctx in tests / stub binaries with no Tauri runtime
-    /// bound.
+    /// Build an adapter serving `agent` through `registry`, the registry its
+    /// mode picks. Pass `None` for `activity_ctx` in tests with no Tauri
+    /// runtime bound.
     pub fn new(
         registry: Arc<R>,
         activity_ctx: Option<ActivityContext>,
-        surface: McpSurface,
+        agent: ConnectedAgent,
     ) -> Self {
         Self {
             registry,
             activity_ctx,
-            surface,
+            agent,
             session_id: Ulid::generate().to_string(),
         }
     }
@@ -276,7 +191,7 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
     /// Run the tool inside the two task-local scopes, with #2954's drop-safe
     /// emission guard armed for the cancellable window.
     ///
-    /// Two scopes, following the same pattern as the hand-rolled server:
+    /// Two scopes:
     ///  - ACTOR so `current_actor()` reads the agent name in every downstream
     ///    `*_inner` handler.
     ///  - LAST_APPEND so any RW tool's `record_append` landings are harvested
@@ -300,9 +215,8 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
                 agaric_store::task_locals::LAST_APPEND
                     .scope(std::cell::RefCell::new(Vec::new()), async move {
                         // #2954 — the guard is armed for the duration of the
-                        // (cancellable) call. It is `None` on the read-only
-                        // surface, where there is no activity context to emit
-                        // into.
+                        // (cancellable) call. It is `None` when there is no
+                        // activity context to emit into.
                         let r = registry.call_tool(&name, args, &call_ctx).await;
                         // The commit (if any) is now durable and past its only
                         // cancellation window. Capture the op refs and disarm
@@ -362,64 +276,67 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
         }
     }
 
-    /// Core tool dispatch shared by the `ServerHandler::call_tool` trait
-    /// method (which only adds the rmcp request/context plumbing on top).
-    ///
-    /// Split out from `call_tool` for two reasons:
-    ///  1. `call_tool` needs an rmcp `RequestContext` to extract the agent
-    ///     name; that type is impractical to construct in a unit test. This
-    ///     helper takes the already-sanitised `agent_name` directly, so a
-    ///     test can drive the real dispatch — and CANCEL it mid-flight — to
-    ///     exercise the #2954 drop-safe emission path.
-    ///  2. It keeps the (subtle) task-local scoping + drop-guard wiring in one
-    ///     place.
-    ///
-    /// `agent_name` must already be sanitised (`sanitize_agent_name`) — the
-    /// trait method does that at the trust boundary before calling here.
-    async fn dispatch_tool_call(
+    /// Run tool `name` as `agent`, who may make this call. A `list_spaces`
+    /// result keeps only the agent's spaces.
+    async fn run_as(
         &self,
-        name: String,
+        agent: &McpAgent,
+        name: &str,
         args: Value,
-        agent_name: String,
-    ) -> Result<CallToolResult, ErrorData> {
-        // #1545 — the activity feed keeps the bare `agent_name` for display
-        // (it already carries the per-connection `session_id` separately),
-        // but the durable `op_log.origin` folds the session ULID into the
-        // label for anonymous connections so two simultaneous unnamed agents
-        // don't collapse to the same `agent:unknown` origin. Named clients
-        // are returned unchanged.
-        let origin_agent_name = durable_agent_name(&agent_name, &self.session_id);
-
+    ) -> (Result<Value, AppError>, Vec<agaric_store::op::OpRef>) {
         let actor_ctx = ActorContext {
             actor: Actor::Agent {
-                name: origin_agent_name,
+                name: agent.name.clone(),
             },
             request_id: Ulid::generate().to_string(),
         };
-        let args_for_summary = args.clone();
-
         // #2954 — the drop-safe emission guard, built here so the values it
-        // needs can move into the scoped future alongside `registry`/`args`
-        // while the `self`-borrowed fields stay available to the emission
-        // below. `None` on the read-only surface, which has no activity
-        // context to emit into.
+        // needs can move into the scoped future alongside `registry`/`args`.
         let guard = self.activity_ctx.clone().map(|ctx| ToolCompletionGuard {
             activity_ctx: ctx,
-            tool_name: name.clone(),
-            agent_name: agent_name.clone(),
+            tool_name: name.to_owned(),
+            agent_name: agent.name.clone(),
             session_id: self.session_id.clone(),
             armed: true,
         });
-
         let (result, op_refs) = Self::call_in_task_local_scopes(
             self.registry.clone(),
-            name.clone(),
+            name.to_owned(),
             args,
             actor_ctx,
             guard,
         )
         .await;
-        let result = result.map(|value| with_op_refs(value, &op_refs));
+        let result = result.map(|mut value| {
+            if name == TOOL_LIST_SPACES {
+                agent.retain_spaces(&mut value);
+            }
+            with_op_refs(value, &op_refs)
+        });
+        (result, op_refs)
+    }
+
+    /// Core tool dispatch behind the `ServerHandler::call_tool` trait method,
+    /// which only adds the rmcp request plumbing on top, so a test can drive
+    /// the real dispatch — and cancel it mid-flight — without an rmcp
+    /// `RequestContext`.
+    ///
+    /// The agent is re-read first: a revoked agent, or an argument naming a
+    /// space it may not use, is refused before the tool runs. A refusal
+    /// reaches the activity feed like any failed call.
+    pub(crate) async fn dispatch_tool_call(
+        &self,
+        name: String,
+        args: Value,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args_for_summary = args.clone();
+        let (agent_name, result, op_refs) = match self.agent.authorize(&args).await {
+            Ok(agent) => {
+                let (result, op_refs) = self.run_as(&agent, &name, args).await;
+                (agent.name, result, op_refs)
+            }
+            Err(err) => (self.agent.name.clone(), Err(err), Vec::new()),
+        };
 
         self.emit_completion(&name, agent_name, &args_for_summary, &result, op_refs);
 
@@ -437,16 +354,12 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
 impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
     fn get_info(&self) -> ServerConfig {
         // `ServerConfig` (= `InitializeResult`) is `#[non_exhaustive]` —
-        // construct it through the documented builder methods. The
-        // hand-rolled code pins to MCP "2025-06-18"; rmcp picks the
-        // latest spec version it knows. Either is acceptable per MCP
-        // — version negotiation is the client's responsibility.
-        //
-        // #693 — instructions come from the surface so the RW socket
-        // no longer advertises itself as the read-only server.
+        // construct it through the documented builder methods. rmcp picks
+        // the latest spec version it knows; version negotiation is the
+        // client's responsibility.
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("agaric", env!("CARGO_PKG_VERSION")))
-            .with_instructions(self.surface.instructions())
+            .with_instructions(self.agent.mode.instructions())
     }
 
     async fn list_tools(
@@ -488,32 +401,10 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        context: RequestContext<RoleServer>,
+        _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let name = request.name.to_string();
-
-        // Pull `clientInfo.name` out of rmcp's request context. This reads
-        // per-request metadata for 2026-07-28+ clients and falls back to the
-        // negotiated handshake state for legacy sessions.
-        // #1569 — the handshake `clientInfo.name` is fully controlled by
-        // the local MCP client and is stamped, verbatim, into the
-        // permanent append-only `op_log.origin` column on every RW tool
-        // call. Cap + control-strip it ONCE here at the trust boundary so
-        // the cleaned value flows through `Actor::Agent` → `origin_tag()`
-        // → durable state; downstream code never sees the raw string.
-        let agent_name = context.client_info().map_or_else(
-            || AGENT_NAME_PLACEHOLDER.to_string(),
-            |info| sanitize_agent_name(&info.name),
-        );
-
         let args = request.arguments.map_or(Value::Null, Value::Object);
-
-        // #2954 — the dispatch + activity emission (including the drop-safe
-        // `ToolCompletionGuard`) live in `dispatch_tool_call` so a test can
-        // drive and CANCEL them mid-commit without constructing an rmcp
-        // `RequestContext`. `agent_name` is already sanitised here at the
-        // trust boundary.
-        self.dispatch_tool_call(name, args, agent_name)
+        self.dispatch_tool_call(request.name.to_string(), args)
             .await
             .map(Into::into)
     }
@@ -568,7 +459,7 @@ pub(crate) const INTERNAL_ERROR_WIRE_MESSAGE: &str = "an internal error occurred
 /// `sanitize_internal_error`). The detail is preserved on a
 /// `tracing::error!` line for the daily log; the wire sees a generic
 /// `-32603` message.
-fn app_error_to_rmcp(err: &AppError) -> ErrorData {
+pub(crate) fn app_error_to_rmcp(err: &AppError) -> ErrorData {
     use rmcp::model::ErrorCode;
     match err {
         AppError::NotFound(_) => {
@@ -610,7 +501,7 @@ fn app_error_to_rmcp(err: &AppError) -> ErrorData {
 mod tests {
     //! End-to-end test of the rmcp adapter. Drives a real `rmcp`
     //! client/server pair over an in-memory `tokio::io::duplex`
-    //! transport — no socket / DB / Tauri runtime needed.
+    //! transport — no socket or Tauri runtime; a temp vault holds the agent.
 
     use std::sync::{Arc, Mutex};
 
@@ -628,11 +519,9 @@ mod tests {
     };
     use serde_json::{Value, json};
 
-    /// Build a `ClientConfig` with a custom `clientInfo.name` so the
-    /// adapter's `RequestContext::client_info().name` is observable in
-    /// assertions. `ClientConfig` is `#[non_exhaustive]`, so we route
-    /// through `InitializeRequestParams::new` instead of a struct
-    /// literal — this is the public constructor.
+    /// A client whose `clientInfo.name` differs from every agent's name, so
+    /// a test can tell which one a write is attributed to. `ClientConfig` is
+    /// `#[non_exhaustive]`, so it goes through the public constructor.
     fn make_test_client_info() -> ClientConfig {
         ClientConfig::new(
             ClientCapabilities::default(),
@@ -644,9 +533,32 @@ mod tests {
     use crate::mcp::activity::{
         ActivityContext, ActivityRing, MCP_ACTIVITY_EVENT, RecordingEmitter,
     };
+    use crate::mcp::agents::{ConnectedAgent, McpAgentMode, insert_agent};
     use crate::mcp::registry::{ToolDescription, ToolRegistry};
+    use crate::mcp::test_support;
     use agaric_core::error::AppError;
     use agaric_store::task_locals::{Actor, current_actor};
+
+    /// The agent named in the round-trip tests: not the client's name.
+    const AGENT_NAME: &str = "Planner";
+
+    /// An agent named `name` in a fresh vault, as its connection sees it.
+    async fn agent(
+        name: &str,
+        mode: McpAgentMode,
+    ) -> (ConnectedAgent, sqlx::SqlitePool, tempfile::TempDir) {
+        let (pool, agent, dir) = test_support::vault_with_agent(name, mode, None).await;
+        (test_support::connected(&pool, &agent).await, pool, dir)
+    }
+
+    /// A read-write agent named `name` in `pool`, as its connection sees it.
+    async fn agent_in(pool: &sqlx::SqlitePool, name: &str) -> ConnectedAgent {
+        let agent = insert_agent(pool, name, McpAgentMode::ReadWrite, None)
+            .await
+            .unwrap()
+            .expect("the name is free");
+        test_support::connected(pool, &agent).await
+    }
 
     /// Minimal in-memory registry. Records the actor observed inside
     /// `call_tool` so the test can assert that the rmcp adapter's
@@ -707,6 +619,7 @@ mod tests {
     /// connection future while the write is already durable.
     struct MockHangingRwRegistry {
         op_ref: agaric_store::op::OpRef,
+        recorded: Arc<tokio::sync::Notify>,
     }
 
     impl ToolRegistry for MockHangingRwRegistry {
@@ -727,6 +640,7 @@ mod tests {
             // The op-log append `append_local_op_in_tx` performs inside the
             // (now-committed) transaction, recorded BEFORE the durable commit.
             agaric_store::task_locals::record_append(self.op_ref.clone());
+            self.recorded.notify_one();
             // Suspend forever, standing in for the window after the write is
             // durable but before this future resolves and the normal emission
             // runs. The test drops the future here.
@@ -745,9 +659,9 @@ mod tests {
     /// expiry (`timeout(GRACE, fut)` → `Err(_elapsed)`), so a write that
     /// committed just before the drop was durably applied yet never emitted.
     ///
-    /// This test drives the real dispatch path and drops it with the SAME
-    /// `tokio::time::timeout` mechanism as `server.rs`, after the op ref was
-    /// recorded but before the (never-reached) normal emission. The drop-safe
+    /// This test drives the real dispatch path and drops it once the op ref
+    /// is recorded, before the (never-reached) normal emission, as `server.rs`
+    /// does when the grace period runs out. The drop-safe
     /// `ToolCompletionGuard` must emit the entry from its `Drop`.
     ///
     /// NON-VACUOUS: without the guard the dropped future emits nothing, so the
@@ -758,29 +672,25 @@ mod tests {
             device_id: "dev-cancel".to_string(),
             seq: 42,
         };
+        let recorded = Arc::new(tokio::sync::Notify::new());
         let registry = Arc::new(MockHangingRwRegistry {
             op_ref: op_ref.clone(),
+            recorded: recorded.clone(),
         });
 
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring.clone(), emitter.clone());
-        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), McpSurface::ReadWrite);
+        let (agent, _pool, _dir) = agent("cancel-test-agent", McpAgentMode::ReadWrite).await;
+        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), agent);
 
-        // Drive the real dispatch, then drop it mid-flight exactly as
-        // `server.rs`'s grace-period drop does. The mock hangs forever, so the
-        // timeout always elapses and the future is dropped after the op ref was
-        // recorded but before the normal emission point.
-        let fut = adapter.dispatch_tool_call(
-            "append_block".to_string(),
-            json!({}),
-            "cancel-test-agent".to_string(),
-        );
-        let outcome = tokio::time::timeout(std::time::Duration::from_millis(200), fut).await;
-        assert!(
-            outcome.is_err(),
-            "the hung tool must force the grace-period drop (mirrors server.rs)",
-        );
+        // Drive the real dispatch and drop it once the op ref is recorded:
+        // the mock then hangs forever, so the normal emission never runs.
+        let fut = adapter.dispatch_tool_call("append_block".to_string(), json!({}));
+        tokio::select! {
+            _ = fut => panic!("the hung tool never returns"),
+            () = recorded.notified() => {}
+        }
 
         // The committed mutation must still be in the feed — via the guard.
         let entries: Vec<_> = ring.lock().unwrap().entries().iter().cloned().collect();
@@ -815,8 +725,8 @@ mod tests {
     /// Smoke-level sanity that the adapter compiles and produces the
     /// right `ServerConfig` capabilities — pinned so a future rmcp bump
     /// that subtly changes `ServerCapabilities::builder` is caught.
-    #[test]
-    fn rmcp_adapter_advertises_tools_capability() {
+    #[tokio::test]
+    async fn rmcp_adapter_advertises_tools_capability() {
         let registry = Arc::new(MockRoRegistry {
             observed_actor: Arc::new(Mutex::new(None)),
             call_count: Arc::new(Mutex::new(0)),
@@ -825,7 +735,8 @@ mod tests {
             Arc::new(std::sync::Mutex::new(ActivityRing::new())),
             Arc::new(RecordingEmitter::new()),
         );
-        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), McpSurface::ReadOnly);
+        let (agent, _pool, _dir) = agent(AGENT_NAME, McpAgentMode::ReadOnly).await;
+        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), agent);
         let info = adapter.get_info();
         assert!(
             info.capabilities.tools.is_some(),
@@ -848,7 +759,7 @@ mod tests {
     /// reachable that way.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rmcp_2026_tools_list_advertises_required_cache_hints() {
-        let adapter = mk_mock_adapter(McpSurface::ReadOnly);
+        let (adapter, _dir) = mk_mock_adapter(McpAgentMode::ReadOnly).await;
         let (server_io, client_io) = tokio::io::duplex(4096);
         let server_task = tokio::spawn(async move {
             let server = adapter.serve(server_io).await.expect("server handshake");
@@ -891,7 +802,7 @@ mod tests {
     /// `resultType` stripping rather than calling the strip helper directly.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rmcp_legacy_tools_list_omits_2026_only_fields() {
-        let adapter = mk_mock_adapter(McpSurface::ReadOnly);
+        let (adapter, _dir) = mk_mock_adapter(McpAgentMode::ReadOnly).await;
         let (server_io, client_io) = tokio::io::duplex(4096);
         let server_task = tokio::spawn(async move {
             let server = adapter.serve(server_io).await.expect("server handshake");
@@ -921,21 +832,21 @@ mod tests {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), server_task).await;
     }
 
-    /// A 2026 discover-lifecycle request carries client identity in request
-    /// metadata and has no initialize-time peer info on the server. This
-    /// distinguishes `RequestContext::client_info()` from the retired direct
-    /// `peer_info()` lookup: the latter observes no name and records
-    /// `agent:unknown` here. The complete result discriminator also pins the
-    /// 2026 half of rmcp's negotiated `tools/call` wire behavior.
+    /// A 2026 discover-lifecycle request carries the client's identity in
+    /// request metadata; the call is still attributed to the agent, whose
+    /// token the connection presented (#5667). The complete result
+    /// discriminator also pins the 2026 half of rmcp's negotiated
+    /// `tools/call` wire behavior.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn rmcp_2026_discover_request_attributes_actor_and_keeps_result_type() {
+    async fn rmcp_2026_discover_request_is_attributed_to_the_agent_5667() {
         let observed = Arc::new(Mutex::new(None));
         let count = Arc::new(Mutex::new(0));
         let registry = Arc::new(MockRoRegistry {
             observed_actor: observed.clone(),
             call_count: count.clone(),
         });
-        let adapter = RmcpAdapter::new(registry, None, McpSurface::ReadOnly);
+        let (agent, _pool, _dir) = agent(AGENT_NAME, McpAgentMode::ReadOnly).await;
+        let adapter = RmcpAdapter::new(registry, None, agent);
 
         let (server_io, client_io) = tokio::io::duplex(4096);
         let server_task = tokio::spawn(async move {
@@ -969,8 +880,8 @@ mod tests {
             .expect("actor was captured during the discover request");
         match actor {
             Actor::Agent { name } => assert_eq!(
-                name, "spike-test-agent",
-                "request metadata clientInfo.name must reach ACTOR.scope",
+                name, AGENT_NAME,
+                "the agent's name reaches ACTOR.scope, not request metadata's clientInfo",
             ),
             Actor::User | Actor::Housekeeping => {
                 panic!("expected Actor::Agent for the discover request")
@@ -986,12 +897,11 @@ mod tests {
     /// 1. Spawn the adapter as a real rmcp service over an in-memory
     ///    duplex stream.
     /// 2. Connect a real rmcp client over the other end with a
-    ///    custom `clientInfo.name` so the adapter's
-    ///    `RequestContext::client_info().name` is observable.
+    ///    `clientInfo.name` other than the agent's.
     /// 3. `client.call_tool("search", { query: "spike" })` round-trip.
     /// 4. Assert:
     ///    (a) the registry's `call_tool` ran (call_count == 1),
-    ///    (b) the registry observed `Actor::Agent { name: "spike-test-agent" }`
+    ///    (b) the registry observed `Actor::Agent { name: AGENT_NAME }`
     ///        — confirms `ACTOR.scope(...)` threading through rmcp,
     ///    (c) the activity feed received exactly one entry with the
     ///        right tool name + agent name + Ok variant,
@@ -1012,7 +922,8 @@ mod tests {
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring.clone(), emitter.clone());
 
-        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), McpSurface::ReadOnly);
+        let (agent, _pool, _dir) = agent(AGENT_NAME, McpAgentMode::ReadOnly).await;
+        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), agent);
 
         // 4 KiB duplex pipe — large enough for handshake + one tool
         // call without back-pressure stalls.
@@ -1026,8 +937,7 @@ mod tests {
             let _ = server.waiting().await;
         });
 
-        // Client side — identify with a stable name so the adapter
-        // picks it up via `context.client_info().name`.
+        // Client side — a client name the adapter must not use.
         let client_info = make_test_client_info();
         let client = client_info
             .serve(client_io)
@@ -1081,8 +991,8 @@ mod tests {
         match actor {
             Actor::Agent { name } => {
                 assert_eq!(
-                    name, "spike-test-agent",
-                    "ACTOR.scope must thread the rmcp clientInfo.name into the registry layer",
+                    name, AGENT_NAME,
+                    "ACTOR.scope must thread the agent's name into the registry layer",
                 );
             }
             Actor::User | Actor::Housekeeping => {
@@ -1096,7 +1006,7 @@ mod tests {
         assert_eq!(entries.len(), 1, "one activity entry per tool call");
         let entry = &entries[0];
         assert_eq!(entry.tool_name, SEARCH_TOOL_NAME);
-        assert_eq!(entry.agent_name.as_deref(), Some("spike-test-agent"));
+        assert_eq!(entry.agent_name.as_deref(), Some(AGENT_NAME));
         assert!(matches!(
             entry.result,
             crate::mcp::activity::ActivityResult::Ok
@@ -1134,7 +1044,8 @@ mod tests {
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring.clone(), emitter.clone());
-        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), McpSurface::ReadOnly);
+        let (agent, _pool, _dir) = agent(AGENT_NAME, McpAgentMode::ReadOnly).await;
+        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), agent);
 
         let (server_io, client_io) = tokio::io::duplex(4096);
         let server_task = tokio::spawn(async move {
@@ -1214,10 +1125,11 @@ mod tests {
         let materializer = Materializer::new(pool.clone());
         let registry = Arc::new(ReadOnlyTools::new(
             pool.clone(),
-            pool,
+            pool.clone(),
             materializer,
             "test-mcp-dev".to_string(),
         ));
+        let agent = agent_in(&pool, AGENT_NAME).await;
 
         // Direct registry view — what we expect rmcp's tools/list
         // round-trip to surface, modulo the spec's camelCase rename.
@@ -1231,7 +1143,7 @@ mod tests {
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let emitter = Arc::new(RecordingEmitter::new());
         let activity_ctx = ActivityContext::new(ring, emitter);
-        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), McpSurface::ReadOnly);
+        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), agent);
 
         let (server_io, client_io) = tokio::io::duplex(64 * 1024);
         let server_task = tokio::spawn(async move {
@@ -1463,54 +1375,22 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------
-    // #693 — per-surface get_info advertisement
-    // -----------------------------------------------------------------
-
-    fn mk_mock_adapter(surface: McpSurface) -> RmcpAdapter<MockRoRegistry> {
+    async fn mk_mock_adapter(
+        mode: McpAgentMode,
+    ) -> (RmcpAdapter<MockRoRegistry>, tempfile::TempDir) {
         let registry = Arc::new(MockRoRegistry {
             observed_actor: Arc::new(Mutex::new(None)),
             call_count: Arc::new(Mutex::new(0)),
         });
-        RmcpAdapter::new(registry, None, surface)
+        let (agent, _pool, dir) = agent(AGENT_NAME, mode).await;
+        (RmcpAdapter::new(registry, None, agent), dir)
     }
 
-    /// #693 — the RO adapter keeps the historical read-only
-    /// advertisement, and the RW adapter must NOT claim to be the
-    /// read-only server (agents weight `initialize` instructions
-    /// heavily; a read-only claim suppresses legitimate write-tool
-    /// use). Nothing asserted what the RW socket advertised before
-    /// this test.
-    #[test]
-    fn rmcp_get_info_instructions_match_surface() {
-        let ro_info = mk_mock_adapter(McpSurface::ReadOnly).get_info();
-        let ro_instructions = ro_info.instructions.as_deref().unwrap_or_default();
-        assert!(
-            ro_instructions.contains("read-only"),
-            "RO surface must advertise read-only; got {ro_instructions:?}",
-        );
-
-        let rw_info = mk_mock_adapter(McpSurface::ReadWrite).get_info();
-        let rw_instructions = rw_info.instructions.as_deref().unwrap_or_default();
-        assert!(
-            rw_instructions.contains("read-write"),
-            "RW surface must advertise read-write; got {rw_instructions:?}",
-        );
-        assert!(
-            !rw_instructions.contains("read-only"),
-            "RW surface must NOT claim to be the read-only server (#693); got {rw_instructions:?}",
-        );
-        // Both surfaces keep the same serverInfo implementation name.
-        assert_eq!(ro_info.server_info.name, "agaric");
-        assert_eq!(rw_info.server_info.name, "agaric");
-    }
-
-    /// #693 wire-level twin: drive a real rmcp handshake against an
-    /// RW-surface adapter and assert the `initialize` result the
-    /// client observes carries the read-write instructions.
+    /// #693: a read-write agent's `initialize` carries the read-write
+    /// instructions over the wire.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn rmcp_rw_surface_advertises_read_write_over_the_wire() {
-        let adapter = mk_mock_adapter(McpSurface::ReadWrite);
+    async fn a_read_write_agent_is_told_read_write_over_the_wire() {
+        let (adapter, _dir) = mk_mock_adapter(McpAgentMode::ReadWrite).await;
         let (server_io, client_io) = tokio::io::duplex(4096);
         let server_task = tokio::spawn(async move {
             let server = adapter.serve(server_io).await.expect("server handshake");
@@ -1528,158 +1408,6 @@ mod tests {
         );
         let _ = client.cancel().await;
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), server_task).await;
-    }
-
-    // -----------------------------------------------------------------------
-    // #1569 — agent-name sanitisation at the op_log.origin trust boundary
-    // -----------------------------------------------------------------------
-
-    /// A multi-MiB self-reported `clientInfo.name` must be truncated to the
-    /// cap before it can become an `Actor::Agent` label / `op_log.origin`
-    /// string — a misbehaving client can otherwise persist an arbitrarily
-    /// large blob into the permanent append-only log on every RW call.
-    #[test]
-    fn sanitize_agent_name_caps_oversized_input() {
-        let huge = "a".repeat(4 * 1024 * 1024); // 4 MiB
-        let cleaned = sanitize_agent_name(&huge);
-        assert_eq!(
-            cleaned.chars().count(),
-            MAX_AGENT_NAME_LEN,
-            "oversized name must be truncated to exactly MAX_AGENT_NAME_LEN chars",
-        );
-        // And the resulting durable origin tag is correspondingly bounded.
-        let origin = Actor::Agent { name: cleaned }.origin_tag();
-        assert_eq!(
-            origin.chars().count(),
-            // "agent:" prefix (6 chars) + the capped name.
-            "agent:".chars().count() + MAX_AGENT_NAME_LEN,
-            "op_log.origin must be bounded by the agent-name cap",
-        );
-    }
-
-    /// Truncation must land on a char boundary — a multi-byte scalar is
-    /// kept whole or dropped, never split into invalid UTF-8.
-    #[test]
-    fn sanitize_agent_name_truncates_on_char_boundary() {
-        // Each '€' is 3 bytes; far more than the cap so truncation kicks in.
-        let multibyte = "€".repeat(MAX_AGENT_NAME_LEN + 50);
-        let cleaned = sanitize_agent_name(&multibyte);
-        assert_eq!(
-            cleaned.chars().count(),
-            MAX_AGENT_NAME_LEN,
-            "multibyte name truncated to MAX_AGENT_NAME_LEN scalars",
-        );
-        // Round-trips as valid UTF-8 (would panic on a byte split).
-        assert!(cleaned.chars().all(|c| c == '€'));
-    }
-
-    /// ASCII control characters (and other Unicode controls) must be
-    /// stripped so no control bytes ever reach the append-only log.
-    #[test]
-    fn sanitize_agent_name_strips_control_chars() {
-        let dirty = "cla\0ude\t-de\nsk\x1btop\r";
-        let cleaned = sanitize_agent_name(dirty);
-        assert_eq!(
-            cleaned, "claude-desktop",
-            "all control chars (\\0 \\t \\n \\x1b \\r) must be stripped",
-        );
-        assert!(
-            !cleaned.chars().any(char::is_control),
-            "no control char may survive sanitisation",
-        );
-    }
-
-    /// A normal, well-formed name must pass through unchanged.
-    #[test]
-    fn sanitize_agent_name_passes_normal_name_unchanged() {
-        let name = "claude-desktop";
-        assert_eq!(sanitize_agent_name(name), name);
-        assert_eq!(sanitize_agent_name("Cursor 0.42"), "Cursor 0.42");
-    }
-
-    /// An empty or whitespace-only name (incl. one that is empty *after*
-    /// control stripping) must yield the stable placeholder, never an
-    /// empty `agent:` label.
-    #[test]
-    fn sanitize_agent_name_empty_yields_placeholder() {
-        assert_eq!(sanitize_agent_name(""), AGENT_NAME_PLACEHOLDER);
-        assert_eq!(sanitize_agent_name("   "), AGENT_NAME_PLACEHOLDER);
-        // All-control input collapses to empty → placeholder, not "".
-        assert_eq!(sanitize_agent_name("\0\t\n\x1b"), AGENT_NAME_PLACEHOLDER);
-        // The durable origin is therefore well-formed, never "agent:".
-        let origin = Actor::Agent {
-            name: sanitize_agent_name(""),
-        }
-        .origin_tag();
-        assert_eq!(origin, format!("agent:{AGENT_NAME_PLACEHOLDER}"));
-        assert_ne!(origin, "agent:");
-    }
-
-    /// #1545 — a *named* client's durable origin is unchanged: the session
-    /// ULID is never folded in, so the common case keeps `agent:<name>`.
-    #[test]
-    fn durable_agent_name_named_client_is_unchanged() {
-        let session = Ulid::generate().to_string();
-        assert_eq!(
-            durable_agent_name("claude-desktop", &session),
-            "claude-desktop"
-        );
-        // Even a name that merely *contains* the placeholder substring keeps
-        // its full value — only the exact placeholder is treated as anonymous.
-        assert_eq!(
-            durable_agent_name("unknown-agent", &session),
-            "unknown-agent"
-        );
-        // And the resulting origin is the plain `agent:<name>` form.
-        let origin = Actor::Agent {
-            name: durable_agent_name("claude-desktop", &session),
-        }
-        .origin_tag();
-        assert_eq!(origin, "agent:claude-desktop");
-    }
-
-    /// #1545 — two anonymous connections (no / empty `clientInfo.name`, each
-    /// with its own per-connection session ULID) must produce DISTINCT durable
-    /// `op_log.origin` values, so the append-only attribution column can tell
-    /// them apart. Both are still `agent:unknown:<ulid>` (prefix preserved),
-    /// but differ in the folded session ULID.
-    #[test]
-    fn durable_agent_name_anonymous_connections_get_distinct_origins() {
-        // Each connection mints exactly one session ULID (reused, not
-        // re-minted by `durable_agent_name`).
-        let session_a = Ulid::generate().to_string();
-        let session_b = Ulid::generate().to_string();
-        assert_ne!(
-            session_a, session_b,
-            "distinct connections → distinct ULIDs"
-        );
-
-        // The anonymous fallback is `AGENT_NAME_PLACEHOLDER` regardless of
-        // whether `peer_info()` was absent or the name sanitized to empty.
-        let anon = AGENT_NAME_PLACEHOLDER;
-        let origin_a = Actor::Agent {
-            name: durable_agent_name(anon, &session_a),
-        }
-        .origin_tag();
-        let origin_b = Actor::Agent {
-            name: durable_agent_name(anon, &session_b),
-        }
-        .origin_tag();
-
-        // Both keep the `agent:` prefix (so `LIKE 'agent:%'` still matches)
-        // and the `unknown` discriminant, but the session ULID makes them
-        // distinguishable in the durable column.
-        assert_eq!(origin_a, format!("agent:{anon}:{session_a}"));
-        assert_eq!(origin_b, format!("agent:{anon}:{session_b}"));
-        assert!(origin_a.starts_with("agent:"));
-        assert!(origin_b.starts_with("agent:"));
-        assert_ne!(
-            origin_a, origin_b,
-            "two anonymous connections must NOT collapse to the same origin"
-        );
-        // Neither collapses to the old, indistinguishable `agent:unknown`.
-        assert_ne!(origin_a, format!("agent:{anon}"));
-        assert_ne!(origin_b, format!("agent:{anon}"));
     }
 
     /// The JSON result of a call that must succeed.
@@ -1738,10 +1466,9 @@ mod tests {
         );
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let activity_ctx = ActivityContext::new(ring.clone(), Arc::new(RecordingEmitter::new()));
-        let adapter = RmcpAdapter::new(Arc::new(tools), Some(activity_ctx), McpSurface::ReadWrite);
-        let call = |name: &str, args: Value| {
-            adapter.dispatch_tool_call(name.to_string(), args, "undo-agent".to_string())
-        };
+        let agent = agent_in(&pool, "undo-agent").await;
+        let adapter = RmcpAdapter::new(Arc::new(tools), Some(activity_ctx), agent);
+        let call = |name: &str, args: Value| adapter.dispatch_tool_call(name.to_string(), args);
 
         let appended = result_ok(
             call(
@@ -1875,10 +1602,9 @@ mod tests {
         );
         let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
         let activity_ctx = ActivityContext::new(ring.clone(), Arc::new(RecordingEmitter::new()));
-        let adapter = RmcpAdapter::new(Arc::new(tools), Some(activity_ctx), McpSurface::ReadWrite);
-        let call = |name: &str, args: Value| {
-            adapter.dispatch_tool_call(name.to_string(), args, "batch-agent".to_string())
-        };
+        let agent = agent_in(&pool, "batch-agent").await;
+        let adapter = RmcpAdapter::new(Arc::new(tools), Some(activity_ctx), agent);
+        let call = |name: &str, args: Value| adapter.dispatch_tool_call(name.to_string(), args);
 
         let done = result_ok(
             call(

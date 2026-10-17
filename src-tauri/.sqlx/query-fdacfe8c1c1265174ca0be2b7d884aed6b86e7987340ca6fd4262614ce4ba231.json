@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!: String\", name AS \"name!: String\", mode AS \"mode!: String\",\n                  space_ids, token AS \"token!: String\",\n                  created_at_ms AS \"created_at_ms!: i64\", last_used_ms\n             FROM mcp_agents\n            WHERE token = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mcp_agents",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mcp_agents",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "mode!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mcp_agents",
+            "name": "mode"
+          }
+        }
+      },
+      {
+        "name": "space_ids",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mcp_agents",
+            "name": "space_ids"
+          }
+        }
+      },
+      {
+        "name": "token!: String",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mcp_agents",
+            "name": "token"
+          }
+        }
+      },
+      {
+        "name": "created_at_ms!: i64",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mcp_agents",
+            "name": "created_at_ms"
+          }
+        }
+      },
+      {
+        "name": "last_used_ms",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mcp_agents",
+            "name": "last_used_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "fdacfe8c1c1265174ca0be2b7d884aed6b86e7987340ca6fd4262614ce4ba231"
+}

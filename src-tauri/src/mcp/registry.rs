@@ -156,9 +156,8 @@ pub trait ToolRegistry: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Value, AppError>> + Send;
 }
 
-/// No-op registry used by /4b until lands `ReadOnlyTools`.
-/// Advertises zero tools and rejects every `tools/call`. Retained for the
-/// `spawn_mcp_ro_task` default path and for `handle_connection` tests.
+/// No-op registry: advertises zero tools and rejects every `tools/call`.
+/// For the `handle_connection` tests.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct PlaceholderRegistry;
 

@@ -3,18 +3,16 @@ import { clearConsoleErrors, expect, getInvokeCalls, installIpcRecorder, test } 
 /**
  * E2E — Settings → Agent access (MCP) tab. (#2686)
  *
- * Before this spec, the AgentAccessTab surface (toggle, socket path, kill
- * switch, activity feed, session-revert controls) had zero e2e coverage —
- * only component-level unit tests (AgentAccessTab.test.tsx, ActivityFeed.test.tsx).
- *
- * Live `mcp:activity` delivery, non-empty feed content, and
+ * The switch, the socket path, the kill switch and the activity feed's
+ * empty state; the agents card is `mcp-agents.spec.ts`. Live
+ * `mcp:activity` delivery, non-empty feed content, and
  * `SessionRevertControls` are covered end-to-end in
  * `mcp-activity-events.spec.ts`.
  *
- * The mock keeps each channel's on/off flag in memory, so `get_mcp_status` /
- * `get_mcp_rw_status` report the last toggle and the gated sections stay
- * revealed after `loadStatus()` refetches. It never reports a connection, so
- * the "Disconnect all" buttons never render here.
+ * The mock keeps the switch's state in memory, so `get_mcp_status` reports
+ * the last toggle and the gated section stays revealed after `loadStatus()`
+ * refetches. It never reports a connection, so "Disconnect all" never
+ * renders here.
  */
 
 test.describe('Agent access settings tab', () => {
@@ -26,68 +24,40 @@ test.describe('Agent access settings tab', () => {
     await expect(page.locator('[data-testid="settings-panel-agent"]')).toBeVisible()
   })
 
-  test('each toggle reveals its socket path, config and connections', async ({ page }) => {
-    const roToggle = page.getByRole('switch', { name: 'Read-only access' })
-    const rwToggle = page.getByRole('switch', { name: 'Read-write access' })
-    const roSocket = page.locator('[data-testid="mcp-socket-path"]')
-    const rwSocket = page.locator('[data-testid="mcp-rw-socket-path"]')
-    const claudeConfig = page.getByRole('button', { name: 'Copy Claude Desktop config' })
-    await expect(roToggle).toHaveAttribute('aria-checked', 'false')
-    await expect(rwToggle).toHaveAttribute('aria-checked', 'false')
+  test('the switch reveals the socket path and connections', async ({ page }) => {
+    const toggle = page.getByRole('switch', { name: 'Let agents connect' })
+    const socket = page.locator('[data-testid="mcp-socket-path"]')
+    await expect(toggle).toHaveAttribute('aria-checked', 'false')
 
-    // Off: only the toggles (and the activity feed) render.
-    await expect(roSocket).toHaveCount(0)
-    await expect(rwSocket).toHaveCount(0)
-    await expect(claudeConfig).toHaveCount(0)
+    // Off: only the switch (and the agents and activity cards) render.
+    await expect(socket).toHaveCount(0)
+    await expect(page.getByText('No active connections.')).toHaveCount(0)
 
-    await roToggle.click()
-    await expect(roSocket).toHaveText('/mock/agaric-mcp-ro.sock')
-    await expect(claudeConfig).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Copy Claude Code commands' })).toBeVisible()
+    await toggle.click()
+    await expect(socket).toHaveText('/mock/agaric/mcp.sock')
     await expect(page.getByText('No active connections.')).toBeVisible()
-    await expect(rwSocket).toHaveCount(0)
 
-    await rwToggle.click()
-    await expect(rwSocket).toHaveText('/mock/agaric-mcp-rw.sock')
-    await expect(page.getByText('No active read-write connections.')).toBeVisible()
-
-    // The mock reports 0 active connections, so neither kill switch renders.
-    await expect(page.getByRole('button', { name: /^Disconnect all/ })).toHaveCount(0)
+    // The mock reports 0 active connections, so the kill switch does not render.
+    await expect(page.getByRole('button', { name: 'Disconnect all' })).toHaveCount(0)
   })
 
-  test('RO toggle fires mcp_set_enabled and shows a success toast', async ({ page }) => {
+  test('the switch fires mcp_set_enabled and shows a success toast', async ({ page }) => {
     await installIpcRecorder(page)
-    const roToggle = page.getByRole('switch', { name: 'Read-only access' })
+    const toggle = page.getByRole('switch', { name: 'Let agents connect' })
 
-    await roToggle.click()
+    await toggle.click()
 
     // The IPC call fires with the requested next-state.
     await expect.poll(() => getInvokeCalls(page, 'mcp_set_enabled')).toEqual([{ enabled: true }])
 
     // Success toast confirms the round trip completed.
-    await expect(page.getByText('Read-only agent access enabled')).toBeVisible()
+    await expect(page.getByText('Agent access enabled')).toBeVisible()
 
     // The post-toggle `loadStatus()` refetch reads the mock's new state.
-    await expect(roToggle).toHaveAttribute('aria-checked', 'true')
+    await expect(toggle).toHaveAttribute('aria-checked', 'true')
   })
 
-  test('RW toggle fires mcp_rw_set_enabled independently of the RO toggle', async ({ page }) => {
-    await installIpcRecorder(page)
-    const roToggle = page.getByRole('switch', { name: 'Read-only access' })
-    const rwToggle = page.getByRole('switch', { name: 'Read-write access' })
-
-    await rwToggle.click()
-
-    await expect.poll(() => getInvokeCalls(page, 'mcp_rw_set_enabled')).toEqual([{ enabled: true }])
-    // The RO channel's command must not have fired.
-    expect(await getInvokeCalls(page, 'mcp_set_enabled')).toEqual([])
-
-    await expect(page.getByText('Read-write agent access enabled')).toBeVisible()
-    // RO toggle is untouched by the RW round trip.
-    await expect(roToggle).toHaveAttribute('aria-checked', 'false')
-  })
-
-  test('a failed RO toggle reverts the optimistic state and shows an error toast', async ({
+  test('a failed toggle reverts the optimistic state and shows an error toast', async ({
     page,
   }) => {
     await page.evaluate(() => {
@@ -96,12 +66,12 @@ test.describe('Agent access settings tab', () => {
       ).__injectMockError?.('mcp_set_enabled', 'backend exploded')
     })
 
-    const roToggle = page.getByRole('switch', { name: 'Read-only access' })
-    await roToggle.click()
+    const toggle = page.getByRole('switch', { name: 'Let agents connect' })
+    await toggle.click()
 
     await expect(page.getByText('Failed to toggle agent access')).toBeVisible()
     // `revert()` restores the pre-click snapshot (no refetch on the error branch).
-    await expect(roToggle).toHaveAttribute('aria-checked', 'false')
+    await expect(toggle).toHaveAttribute('aria-checked', 'false')
 
     // This test deliberately drives the IPC-rejection path, which logs via
     // `logger.error` (console.error) per AGENTS.md's error-path convention
@@ -116,7 +86,7 @@ test.describe('Agent access settings tab', () => {
 
     // The populated-feed container, the per-entry Undo button, and the
     // session-revert header never render — there is no data to trigger
-    // them (see file-header note / #2683). The feed shows with both toggles
+    // them (see file-header note / #2683). The feed shows with the switch
     // off: its Undo reverts past agent writes after access is turned off.
     await expect(page.locator('[data-testid="mcp-activity-feed"]')).toHaveCount(0)
     await expect(page.locator('[data-testid="mcp-activity-row"]')).toHaveCount(0)

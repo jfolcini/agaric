@@ -1,7 +1,7 @@
 // Test and bench bodies are exempt from the 70-code-line ceiling (AGENTS.md item 6).
 #![allow(clippy::too_many_lines)]
 //! Themed bench binary: core commands / cache / cold-start / resource /
-//! move-reorder / hash / page-load domain.
+//! move-reorder / hash / page-load / MCP-dispatch domain.
 //!
 //! Consolidated from formerly-separate `[[bench]]` binaries to cut Rust
 //! build/link time (#2879). Each former bench file is included verbatim as a
@@ -17,6 +17,8 @@ mod cold_start_bench;
 mod commands_bench;
 #[path = "groups/hash_bench.rs"]
 mod hash_bench;
+#[path = "groups/mcp_dispatch_bench.rs"]
+mod mcp_dispatch_bench;
 #[path = "groups/move_reorder_bench.rs"]
 mod move_reorder_bench;
 #[path = "groups/page_load_bench.rs"]
@@ -40,4 +42,5 @@ criterion_main!(
     move_reorder_bench::benches,
     hash_bench::benches,
     page_load_bench::page_load_benches,
+    mcp_dispatch_bench::mcp_dispatch_benches,
 );

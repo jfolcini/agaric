@@ -982,7 +982,10 @@ export async function openEditHistory(): Promise<void> {
   await $('[role="grid"][aria-label="History entries"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
-/** Newline-delimited JSON-RPC over an MCP socket, requests pipelined. */
+/**
+ * Newline-delimited JSON-RPC over an MCP socket, requests pipelined, as the
+ * agent whose token it connects with.
+ */
 export class McpClient {
   private nextId = 1
   private buffer = ''
@@ -1004,18 +1007,21 @@ export class McpClient {
     })
   }
 
-  static async connect(socketPath: string): Promise<McpClient> {
+  /** Writes `AGARIC-TOKEN <token>` first, as `agaric-mcp` does, and throws if `initialize` is refused. */
+  static async connect(socketPath: string, token: string): Promise<McpClient> {
     const socket = createConnection(socketPath)
     await new Promise<void>((resolve, reject) => {
       socket.once('connect', resolve)
       socket.once('error', reject)
     })
+    socket.write(`AGARIC-TOKEN ${token}\n`)
     const client = new McpClient(socket)
-    await client.request('initialize', {
+    const init = await client.request('initialize', {
       protocolVersion: '2025-06-18',
       capabilities: {},
       clientInfo: { name: 'wdio', version: '1' },
     })
+    if (init['result'] === undefined) throw new Error(`initialize: ${JSON.stringify(init)}`)
     socket.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
     return client
   }

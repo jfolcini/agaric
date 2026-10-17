@@ -1017,6 +1017,14 @@ export const config: WebdriverIO.Config = {
     if (peer.status !== 0) {
       throw new Error(`sync peer build failed with exit code ${String(peer.status)}`)
     }
+    // The bridge an MCP client spawns (e2e-tauri/mcp-agent-token.e2e.ts).
+    const bridge = spawnSync('cargo', ['build', '-p', 'agaric', '--bin', 'agaric-mcp'], {
+      cwd: path.join(rootDir, 'src-tauri'),
+      stdio: 'inherit',
+    })
+    if (bridge.status !== 0) {
+      throw new Error(`agaric-mcp build failed with exit code ${String(bridge.status)}`)
+    }
   },
 
   beforeSession: () => {

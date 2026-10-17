@@ -813,10 +813,10 @@ export const commands = {
 	 *  Reader pool and engine exports; writes nothing.
 	 */
 	computeReconciliationReport: () => typedError<ReconciliationReport, AppError>(__TAURI_INVOKE("compute_reconciliation_report")),
-	/**  Tauri command: return the current MCP RO status for the Settings tab. */
+	/**  Tauri command: return the current MCP status for the Settings tab. */
 	getMcpStatus: () => typedError<McpStatus, AppError>(__TAURI_INVOKE("get_mcp_status")),
 	/**
-	 *  Tauri command: toggle the MCP RO enabled marker file and start / stop
+	 *  Tauri command: toggle the MCP enabled marker file and start / stop
 	 *  the serve task accordingly.
 	 * 
 	 *  The inner toggle + spawn sequence is serialised through the
@@ -856,26 +856,12 @@ export const commands = {
 	 *  (oldest first, capped at the ring's 100-entry capacity).
 	 * 
 	 *  #695 — read surface for the activity ring. The ring is the
-	 *  shared [`McpActivityRing`] managed state written by both the RO and
-	 *  RW serve tasks, so late subscribers (a Settings tab opened after
+	 *  shared [`McpActivityRing`] managed state the serve task writes, so late
+	 *  subscribers (a Settings tab opened after
 	 *  the calls happened) and diagnostics can inspect recent history
 	 *  without having been subscribed to the `mcp:activity` event stream.
 	 */
 	getMcpRecentActivity: () => typedError<ActivityEntry_Serialize[], AppError>(__TAURI_INVOKE("get_mcp_recent_activity")),
-	/**  Tauri command: return the current MCP RW status for the Settings tab. */
-	getMcpRwStatus: () => typedError<McpRwStatus, AppError>(__TAURI_INVOKE("get_mcp_rw_status")),
-	/**
-	 *  Tauri command: toggle the MCP RW enabled marker file and start / stop
-	 *  the RW serve task accordingly. Mirrors [`mcp_set_enabled`] but binds
-	 *  the **writer** pool into the `ReadWriteTools` registry.
-	 * 
-	 *  Serialised through [`McpRwToggleGate`] — see `mcp_set_enabled`
-	 *  for the rationale. RO and RW each hold their own gate so they do
-	 *  not block each other.
-	 */
-	mcpRwSetEnabled: (enabled: boolean) => typedError<boolean, AppError>(__TAURI_INVOKE("mcp_rw_set_enabled", { enabled })),
-	/**  Tauri command: disconnect every in-flight RW MCP connection. */
-	mcpRwDisconnectAll: () => typedError<null, AppError>(__TAURI_INVOKE("mcp_rw_disconnect_all")),
 	/**
 	 *  Tauri command: every MCP agent on this device. Delegates to
 	 *  [`list_mcp_agents_inner`].
@@ -2646,19 +2632,7 @@ export type McpAgent = {
 export type McpAgentMode = "read_only" | "read_write";
 
 /**
- *  Snapshot of the MCP **read-write** server state surfaced to the
- *  Settings tab. Identical fields to [`McpStatus`] but a distinct type so
- *  the Tauri command surface stays RO / RW symmetric and the frontend
- *  can present them as separate toggles.
- */
-export type McpRwStatus = {
-	enabled: boolean,
-	socket_path: string,
-	active_connections: number,
-};
-
-/**
- *  Snapshot of the MCP RO server state surfaced to the Settings tab.
+ *  Snapshot of the MCP server state surfaced to the Settings tab.
  * 
  *  `socket_path` is a display string on every platform (the Unix socket
  *  filesystem path on Linux / macOS, the named-pipe path on Windows).

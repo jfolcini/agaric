@@ -1,38 +1,18 @@
 /**
- * AgentAccessTab — Settings tab for the MCP (Model Context
- * Protocol) agent-access surface. (The `'AgentAccessSettingsTab'`
- * logger label below is the stable telemetry namespace shared with the
- * agent-access child components — kept fixed across this rename.)
+ * AgentAccessTab — Settings tab for the MCP (Model Context Protocol)
+ * agent-access surface. (The `'AgentAccessSettingsTab'` logger label below
+ * is the stable telemetry namespace shared with the agent-access child
+ * components.)
  *
  * Sections (top to bottom):
- *   1. Read-only access toggle (backed by the `mcp-ro-enabled` marker
- *      file; toggling fires `mcp_set_enabled`).
- *   2. RO socket path display + copy button.
- *   3. Copy buttons for the Claude Desktop JSON and the Claude Code
- *      `mcp add` commands (one server per surface, RO and RW).
- *   4. RO kill switch — disconnect every live RO agent connection
- *      (shown only while one is live; wrapped in an AlertDialog confirmation).
- *   5. Read-write access toggle (backed by the `mcp-rw-enabled` marker
- *      file; toggling fires `mcp_rw_set_enabled`). Displays a destructive
- *      warning badge while enabled.
- *   6. RW socket path display + copy button.
- *   7. RW kill switch — disconnect every live RW agent connection.
- *   8. Agents (#5667): one token, mode and space list per client, in its
- *      own card and always shown, since agents are set up before access is on.
- *   9. Recent activity feed (rolling 100-entry subscription to the
- *      `mcp:activity` Tauri event), in its own card and always shown: its
- *      Undo buttons revert past agent writes, which still matters after
- *      access is turned off.
- *
- * Items 2–4 and 6–7 render only while their toggle is on.
- *
- * The backend exposes the following Tauri commands consumed here:
- *   - `get_mcp_status` / `get_mcp_rw_status` → `{ enabled, socket_path,
- *     active_connections }`.
- *   - `mcp_set_enabled(enabled)` / `mcp_rw_set_enabled(enabled)` — toggle
- *     marker file + start/stop the serve task.
- *   - `mcp_disconnect_all` / `mcp_rw_disconnect_all` — wake every
- *     in-flight connection so its handler drops.
+ *   1. The switch for the one MCP socket (backed by the `mcp-enabled`
+ *      marker file; toggling fires `mcp_set_enabled`), and while it is on,
+ *      the socket path and the connections with Disconnect all.
+ *   2. Agents (#5667): each client's token, mode and spaces, with its config
+ *      snippets. Always shown, since agents are set up before access is on.
+ *   3. Recent activity feed (rolling 100-entry subscription to the
+ *      `mcp:activity` Tauri event), always shown: its Undo buttons revert
+ *      past agent writes, which still matters after access is turned off.
  *
  * Every IPC call has an error-path fallback per AGENTS.md §Testing
  * Conventions — the component logs via `logger.warn` / `logger.error`,
@@ -40,20 +20,18 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ActivityFeed } from '@/components/agent-access/ActivityFeed'
 import { AgentList } from '@/components/agent-access/AgentList'
-import type { McpRwStatus, McpStatus } from '@/components/agent-access/McpStatusSection'
 import { McpStatusSection } from '@/components/agent-access/McpStatusSection'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { useMcpActivityFeed } from '@/hooks/useMcpActivityFeed'
 import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
+import { commands, type McpStatus } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -61,58 +39,30 @@ import { notify } from '@/lib/notify'
 export function AgentAccessTab(): React.ReactElement {
   const { t } = useTranslation()
   const [status, setStatus] = useState<McpStatus | null>(null)
-  const [rwStatus, setRwStatus] = useState<McpRwStatus | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const { entries } = useMcpActivityFeed()
 
   const loadStatus = useCallback(async () => {
-    // Fetch RO and RW status in parallel. Use `allSettled` so a failure
-    // on one side does not prevent the other section from rendering —
-    // the RW backend could be absent (older Rust binary) while RO is
-    // healthy, or vice versa during a staged rollout.
-    const [roResult, rwResult] = await Promise.allSettled([
-      commands.getMcpStatus().then(unwrap),
-      commands.getMcpRwStatus().then(unwrap),
-    ])
-
-    if (roResult.status === 'fulfilled') {
-      setStatus(roResult.value)
+    try {
+      setStatus(unwrap(await commands.getMcpStatus()))
       setError(null)
-    } else {
-      logger.error(
-        'AgentAccessSettingsTab',
-        'failed to load MCP status',
-        undefined,
-        roResult.reason,
-      )
+    } catch (err) {
+      logger.error('AgentAccessSettingsTab', 'failed to load MCP status', undefined, err)
       setError(t('agentAccess.loadFailed'))
     }
-
-    if (rwResult.status === 'fulfilled') {
-      setRwStatus(rwResult.value)
-    } else {
-      logger.error(
-        'AgentAccessSettingsTab',
-        'failed to load MCP RW status',
-        undefined,
-        rwResult.reason,
-      )
-    }
-
     setLoading(false)
   }, [t])
 
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- kicks off the MCP RO/RW status IPC load; `loadStatus` awaits both commands and sets loading/error state from their results; see #4407
+    // oxlint-disable-next-line react/set-state-in-effect -- kicks off the MCP status IPC load; `loadStatus` awaits the command and sets loading/error state from its result; see #4407
     void loadStatus()
   }, [loadStatus])
 
-  // RO toggle. Optimistic flip; revert via the captured
-  // `previous` snapshot if the IPC rejects. On success we refetch so
-  // `active_connections` reflects the backend (disabling fires
-  // disconnect_all).
-  const { execute: executeToggleRo } = useIpcCommand<
+  // Optimistic flip; revert via the captured `previous` snapshot if the IPC
+  // rejects. On success we refetch so `active_connections` reflects the
+  // backend (disabling fires disconnect_all).
+  const { execute: executeToggle } = useIpcCommand<
     { enabled: boolean; previous: McpStatus | null },
     void
   >({
@@ -137,49 +87,13 @@ export function AgentAccessTab(): React.ReactElement {
     },
   })
 
-  const handleToggleRo = useCallback(
+  const handleToggle = useCallback(
     async (nextEnabled: boolean) => {
-      await executeToggleRo({ enabled: nextEnabled, previous: status })
+      await executeToggle({ enabled: nextEnabled, previous: status })
     },
-    [executeToggleRo, status],
+    [executeToggle, status],
   )
 
-  // RW toggle. Same shape as RO but flips the RW status.
-  const { execute: executeToggleRw } = useIpcCommand<
-    { enabled: boolean; previous: McpRwStatus | null },
-    void
-  >({
-    call: async ({ enabled }) => {
-      unwrap(await commands.mcpRwSetEnabled(enabled))
-    },
-    module: 'AgentAccessSettingsTab',
-    errorLogMessage: 'failed to set MCP RW enabled',
-    errorLogContext: ({ enabled }) => ({ enabled }),
-    optimistic: ({ enabled }) => {
-      setRwStatus((s) => (s === null ? s : { ...s, enabled }))
-    },
-    revert: ({ previous }) => {
-      setRwStatus(previous)
-    },
-    onSuccess: (_result, { enabled }) => {
-      notify.success(
-        enabled ? t('agentAccess.rwToggleOnSuccess') : t('agentAccess.rwToggleOffSuccess'),
-      )
-      void loadStatus()
-    },
-    onError: () => {
-      notify.error(t('agentAccess.toggleFailed'))
-    },
-  })
-
-  const handleToggleRw = useCallback(
-    async (nextEnabled: boolean) => {
-      await executeToggleRw({ enabled: nextEnabled, previous: rwStatus })
-    },
-    [executeToggleRw, rwStatus],
-  )
-
-  // RO kill switch — disconnect every active RO agent session.
   const { execute: executeDisconnectAll } = useIpcCommand<void, void>({
     call: async () => {
       unwrap(await commands.mcpDisconnectAll())
@@ -199,73 +113,11 @@ export function AgentAccessTab(): React.ReactElement {
     await executeDisconnectAll()
   }, [executeDisconnectAll])
 
-  // RW kill switch — disconnect every active RW agent session.
-  const { execute: executeDisconnectAllRw } = useIpcCommand<void, void>({
-    call: async () => {
-      unwrap(await commands.mcpRwDisconnectAll())
-    },
-    module: 'AgentAccessSettingsTab',
-    errorLogMessage: 'failed to disconnect all RW',
-    onSuccess: () => {
-      notify.success(t('agentAccess.rwDisconnectSuccess'))
-      void loadStatus()
-    },
-    onError: () => {
-      notify.error(t('agentAccess.rwDisconnectFailed'))
-    },
-  })
-
-  const handleDisconnectAllRw = useCallback(async () => {
-    await executeDisconnectAllRw()
-  }, [executeDisconnectAllRw])
-
-  const socketPath = status?.socket_path ?? ''
-  const rwSocketPath = rwStatus?.socket_path ?? ''
-
-  // One server per surface: the RO and RW sockets are separate, so a single
-  // entry can only ever reach one of them. The RW entry is omitted while the
-  // RW status is unavailable.
-  const claudeConfigJson = useMemo(
-    () =>
-      JSON.stringify(
-        {
-          mcpServers: {
-            'agaric-ro': {
-              command: 'agaric-mcp',
-              env: { AGARIC_MCP_SOCKET: socketPath },
-            },
-            ...(rwSocketPath !== '' && {
-              'agaric-rw': {
-                command: 'agaric-mcp',
-                env: { AGARIC_MCP_SOCKET: rwSocketPath },
-              },
-            }),
-          },
-        },
-        null,
-        2,
-      ),
-    [socketPath, rwSocketPath],
-  )
-
-  // The name comes before `--` so `claude mcp add` never mistakes it for an
-  // option value; the path is quoted because app-data dirs can contain spaces.
-  const claudeCodeCommands = useMemo(
-    () =>
-      [
-        `claude mcp add -s user agaric-ro -- agaric-mcp --socket "${socketPath}"`,
-        ...(rwSocketPath !== ''
-          ? [`claude mcp add -s user agaric-rw -- agaric-mcp --socket "${rwSocketPath}"`]
-          : []),
-      ].join('\n'),
-    [socketPath, rwSocketPath],
-  )
-
-  const copyToClipboard = useCallback(
-    async (text: string, successKey: string) => {
+  const copySocketPath = useCallback(
+    async (path: string) => {
       try {
-        await writeText(text)
-        notify.success(t(successKey))
+        await writeText(path)
+        notify.success(t('agentAccess.socketPathCopied'))
       } catch (err) {
         logger.warn('AgentAccessSettingsTab', 'clipboard write failed', undefined, err)
         notify.error(t('agentAccess.copyFailed'))
@@ -294,55 +146,18 @@ export function AgentAccessTab(): React.ReactElement {
             </p>
           )}
 
-          {/* Read-only access section (toggle + socket path + config + kill switch) */}
           <McpStatusSection
-            variant="ro"
             status={status}
-            onToggle={(next) => void handleToggleRo(next)}
-            onCopySocket={(path) => void copyToClipboard(path, 'agentAccess.socketPathCopied')}
+            onToggle={(next) => void handleToggle(next)}
+            onCopySocket={(path) => void copySocketPath(path)}
             onDisconnect={() => void handleDisconnectAll()}
-          >
-            {/* Copy-config buttons */}
-            <div className="space-y-2">
-              <h2 className="text-sm font-medium">{t('agentAccess.configLabel')}</h2>
-              <p className="text-xs text-muted-foreground">{t('agentAccess.configDescription')}</p>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    void copyToClipboard(claudeConfigJson, 'agentAccess.claudeConfigCopied')
-                  }
-                >
-                  {t('agentAccess.copyClaudeConfigButton')}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    void copyToClipboard(claudeCodeCommands, 'agentAccess.claudeCodeCommandsCopied')
-                  }
-                >
-                  {t('agentAccess.copyClaudeCodeCommandsButton')}
-                </Button>
-              </div>
-            </div>
-          </McpStatusSection>
-
-          {/* Read-write access section (toggle + socket path + kill switch) */}
-          <McpStatusSection
-            variant="rw"
-            status={rwStatus}
-            onToggle={(next) => void handleToggleRw(next)}
-            onCopySocket={(path) => void copyToClipboard(path, 'agentAccess.rwSocketPathCopied')}
-            onDisconnect={() => void handleDisconnectAllRw()}
           />
         </CardContent>
       </Card>
 
       <Card>
         <CardContent>
-          <AgentList socketPath={socketPath} />
+          <AgentList socketPath={status?.socket_path ?? ''} />
         </CardContent>
       </Card>
 

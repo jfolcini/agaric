@@ -294,16 +294,30 @@ for (const profile of PROFILES) {
       await expectNoHorizontalOverflow(page, dialog, `Pairing dialog · joiner @ ${profile.name}`)
     })
 
-    // With read-write access on, its one-line warning badge ran past the card.
-    test('Agent access with both channels on has no horizontal overflow', async ({ page }) => {
+    // A one-line warning badge once ran past the card; the socket path and an
+    // agent's row with its buttons are the widest content now.
+    test('Agent access with access on and an agent has no horizontal overflow', async ({
+      page,
+    }) => {
       await waitForBoot(page)
+      await page.evaluate(async () => {
+        const internals = (
+          window as unknown as {
+            __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+          }
+        ).__TAURI_INTERNALS__
+        await internals.invoke('create_mcp_agent', {
+          name: 'Claude Desktop on the laptop',
+          mode: 'read_write',
+          spaceIds: null,
+        })
+      })
       await navigateMobile(page, 'Settings')
       await openSettingsTab(page, 'Agent access')
       const panel = page.getByTestId('settings-panel-agent')
-      await panel.getByRole('switch', { name: 'Read-only access' }).click()
-      await panel.getByRole('switch', { name: 'Read-write access' }).click()
-      await expect(panel.getByTestId('mcp-rw-warning-badge')).toBeVisible()
-      await expect(panel.getByTestId('mcp-rw-socket-path')).toBeVisible()
+      await panel.getByRole('switch', { name: 'Let agents connect' }).click()
+      await expect(panel.getByTestId('mcp-socket-path')).toBeVisible()
+      await expect(panel.getByTestId('mcp-agent-row')).toContainText('Read and write')
       await expectNoHorizontalOverflow(page, panel, `Settings · Agent access @ ${profile.name}`)
     })
 

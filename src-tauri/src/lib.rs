@@ -298,10 +298,6 @@ macro_rules! agaric_commands {
             $crate::commands::mcp::mcp_disconnect_all,
             // MCP activity ring read surface (#695)
             $crate::commands::mcp::get_mcp_recent_activity,
-            // MCP RW (slice 2)
-            $crate::commands::mcp::get_mcp_rw_status,
-            $crate::commands::mcp::mcp_rw_set_enabled,
-            $crate::commands::mcp::mcp_rw_disconnect_all,
             // #5667 — the device-local agents Settings → Agent access manages
             $crate::commands::mcp_agents::list_mcp_agents,
             $crate::commands::mcp_agents::create_mcp_agent,
@@ -2308,122 +2304,61 @@ fn wire_sync_daemon(w: SyncDaemonWiring) {
     });
 }
 
-/// The per-server pool / materializer / device_id clones the MCP RO and RW
-/// servers need, gathered into a struct so [`wire_mcp_servers`] stays under
-/// the `too_many_arguments` ceiling.
-///
-/// Slice 2 — the RO surface binds the reader pool (plus the
-/// writer pool for `journal_for_date`'s sole write side-effect); the RW
-/// surface binds the writer pool, plus the reader pool for `list_spaces`.
-/// Every field is a cheap `Arc`-backed clone taken before the originals move
-/// into managed state.
+/// The pools, materializer and device_id clones the MCP server needs,
+/// gathered into a struct so [`wire_mcp_server`] stays under the
+/// `too_many_arguments` ceiling. Reads use the reader pool; writes, and
+/// `journal_for_date`'s create, use the writer pool. Every field is a cheap
+/// `Arc`-backed clone taken before the originals move into managed state.
 struct McpServerWiring {
-    ro_read_pool: sqlx::SqlitePool,
-    ro_write_pool: sqlx::SqlitePool,
-    ro_materializer: materializer::Materializer,
-    ro_device_id: String,
-    rw_write_pool: sqlx::SqlitePool,
-    rw_read_pool: sqlx::SqlitePool,
-    rw_materializer: materializer::Materializer,
-    rw_device_id: String,
+    read_pool: sqlx::SqlitePool,
+    write_pool: sqlx::SqlitePool,
+    materializer: materializer::Materializer,
+    device_id: String,
 }
 
-/// Boot-phase 14 — spawn the MCP read-only and read-write servers and register
-/// their managed lifecycle/gate/activity state.
+/// Boot-phase 14 — spawn the MCP server and register its managed
+/// lifecycle/gate/activity state.
 ///
-/// /4h: each server is opt-in via its marker file; absent the marker
-/// the spawn helper logs and returns immediately. The reader/writer pool +
-/// Materializer + device_id are passed in as cheap clones (slice 2).
-fn wire_mcp_servers<R: tauri::Runtime>(
+/// The server is opt-in via its marker file; absent the marker the spawn
+/// helper logs and returns immediately.
+fn wire_mcp_server<R: tauri::Runtime>(
     app: &tauri::App<R>,
     app_data_dir: &std::path::Path,
     w: McpServerWiring,
 ) {
     use tauri::Manager;
 
-    let McpServerWiring {
-        ro_read_pool: mcp_ro_read_pool,
-        ro_write_pool: mcp_ro_write_pool,
-        ro_materializer: mcp_ro_materializer,
-        ro_device_id: mcp_ro_device_id,
-        rw_write_pool: mcp_rw_write_pool,
-        rw_read_pool: mcp_rw_read_pool,
-        rw_materializer: mcp_rw_materializer,
-        rw_device_id: mcp_rw_device_id,
-    } = w;
-
-    // MCP read-only server. Opt-in via the `mcp-ro-enabled`
-    // Marker file in `app_data_dir` (wires the UI toggle).
-    // When the marker is absent, `spawn_mcp_ro_task` logs and returns
-    // immediately. When present, it binds the default socket and
-    // spawns the serve loop. A second Agaric instance detects the
-    // existing socket and logs a warning without crashing.
-    //
-    // The cloned `AppHandle` is used to build the activity
-    // emitter so completed tool calls surface on the `mcp:activity`
-    // Tauri event bus.
-    //
-    // The reader pool + materializer + device_id let the
-    // `ReadOnlyTools` registry dispatch the v1 nine-tool surface
-    // without allocating new resources. `journal_for_date` is the
-    // only tool that writes; it reuses the same materializer /
-    // device_id the frontend uses so the op-log origin stays
-    // consistent.
-    //
-    // `McpLifecycle` is shared managed state so the
-    // Settings UI commands (`get_mcp_status`, `mcp_disconnect_all`,
-    // `mcp_set_enabled`) can observe the connection counter and
-    // fire the disconnect signal.
+    // #5667 — access that was on under either pre-#5667 socket stays on.
+    if let Err(e) = mcp::adopt_legacy_markers(app_data_dir) {
+        tracing::error!(target: "mcp", error = %e, "could not adopt the legacy MCP markers");
+    }
+    // `McpLifecycle` is shared managed state so the Settings UI commands
+    // (`get_mcp_status`, `mcp_disconnect_all`, `mcp_set_enabled`) can observe
+    // the connection counter and fire the disconnect signal.
     let mcp_lifecycle = std::sync::Arc::new(mcp::McpLifecycle::new());
     app.manage(mcp_lifecycle.clone());
     // Gate that serialises rapid `mcp_set_enabled` toggles
     // so the marker write + spawn cannot interleave.
     app.manage(commands::McpToggleGate::new());
     // #695 — ONE shared activity ring, managed so the
-    // `get_mcp_recent_activity` command reads what the RO and
-    // RW serve tasks write. Allocated here (not inside
-    // `ActivityContext::from_app_handle`) so the history
-    // survives enable/disable cycles.
+    // `get_mcp_recent_activity` command reads what the serve task writes.
+    // Allocated here (not inside `ActivityContext::from_app_handle`) so the
+    // history survives enable/disable cycles.
     let mcp_activity_ring = mcp::activity::McpActivityRing::new();
     app.manage(mcp_activity_ring.clone());
-    let mcp_pool = mcp_ro_read_pool;
-    let mcp_write_pool = mcp_ro_write_pool;
-    let mcp_materializer = mcp_ro_materializer;
-    let mcp_device_id = mcp_ro_device_id;
-    mcp::spawn_mcp_ro_task(
+    // When the marker is absent, `spawn_mcp_task` logs and returns
+    // immediately. When present, it binds the default socket and spawns the
+    // serve loop. A second Agaric instance detects the existing socket and
+    // logs a warning without crashing.
+    mcp::spawn_mcp_task(
         app_data_dir,
         app.handle().clone(),
-        mcp_pool,
-        mcp_write_pool,
-        mcp_materializer,
-        mcp_device_id,
+        w.read_pool,
+        w.write_pool,
+        w.materializer,
+        w.device_id,
         mcp_activity_ring.0.clone(),
         Some((*mcp_lifecycle).clone()),
-    );
-
-    // Slice 2 — parallel MCP **read-write** server. Opt-in
-    // via the `mcp-rw-enabled` marker file (independent of RO).
-    // A second `McpLifecycle` is allocated so the RO and RW
-    // servers track their own connection counts and disconnect
-    // signals; the `McpRwLifecycle` newtype wrapper keeps Tauri's
-    // managed-state resolver from colliding on the shared type.
-    let mcp_rw_lifecycle_inner = std::sync::Arc::new(mcp::McpLifecycle::new());
-    let mcp_rw_lifecycle = mcp::McpRwLifecycle(mcp_rw_lifecycle_inner.clone());
-    app.manage(mcp_rw_lifecycle.clone());
-    // RW counterpart to McpToggleGate. RO and RW each hold
-    // their own gate so they do not block each other.
-    app.manage(commands::McpRwToggleGate::new());
-    mcp::spawn_mcp_rw_task(
-        app_data_dir,
-        app.handle().clone(),
-        mcp_rw_write_pool,
-        mcp_rw_read_pool,
-        mcp_rw_materializer,
-        mcp_rw_device_id,
-        // #695 — same shared ring as the RO surface so the
-        // command surfaces one merged feed.
-        mcp_activity_ring.0.clone(),
-        Some((*mcp_rw_lifecycle_inner).clone()),
     );
 }
 
@@ -2769,21 +2704,17 @@ fn build_sync_daemon_wiring(
 }
 
 /// [`boot`]'s `McpServerWiring`: the pools, materializer and device-id clones
-/// the MCP RO and RW servers need, taken before the originals move.
+/// the MCP server needs, taken before the originals move.
 fn build_mcp_server_wiring(
     pools: &db::DbPools,
     materializer: &materializer::Materializer,
     device_id: &str,
 ) -> McpServerWiring {
     McpServerWiring {
-        ro_read_pool: pools.read.clone(),
-        ro_write_pool: pools.write.clone(),
-        ro_materializer: materializer.clone(),
-        ro_device_id: device_id.to_owned(),
-        rw_write_pool: pools.write.clone(),
-        rw_read_pool: pools.read.clone(),
-        rw_materializer: materializer.clone(),
-        rw_device_id: device_id.to_owned(),
+        read_pool: pools.read.clone(),
+        write_pool: pools.write.clone(),
+        materializer: materializer.clone(),
+        device_id: device_id.to_owned(),
     }
 }
 
@@ -2940,7 +2871,7 @@ fn boot(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     wire_sync_daemon(daemon_wiring);
 
     // / 4h — MCP read-only + read-write servers.
-    wire_mcp_servers(app, &app_data_dir, mcp_wiring);
+    wire_mcp_server(app, &app_data_dir, mcp_wiring);
 
     Ok(())
 }
@@ -3532,6 +3463,39 @@ mod boot_path_tests {
             super::log_dir_for_app_data(dir.path()).is_dir(),
             "boot must create the log directory beneath the app-data dir it was handed, or \
              `agaric.log` and the bug-report bundle both resolve to a path that does not exist"
+        );
+    }
+
+    /// Access that was on under either pre-#5667 socket stays on: the boot
+    /// phase that starts the MCP server turns a legacy marker into
+    /// `mcp-enabled` (#5667).
+    #[test]
+    fn boot_turns_a_legacy_mcp_marker_into_mcp_enabled_5667() {
+        let runtime = tokio::runtime::Runtime::new().expect("a runtime for the pool");
+        let app = tauri::test::mock_app();
+        let dir = tempfile::tempdir().expect("throwaway app-data dir");
+        std::fs::write(dir.path().join("mcp-rw-enabled"), b"").expect("the legacy marker");
+        let wiring = runtime.block_on(async {
+            let pool = crate::db::init_pool(&dir.path().join("notes.db"))
+                .await
+                .expect("a migrated pool");
+            super::McpServerWiring {
+                materializer: crate::materializer::Materializer::new(pool.clone()),
+                read_pool: pool.clone(),
+                write_pool: pool,
+                device_id: "dev-5667".to_owned(),
+            }
+        });
+
+        super::wire_mcp_server(&app, dir.path(), wiring);
+
+        assert!(
+            crate::mcp::mcp_enabled(dir.path()),
+            "a client that had the read-write socket on must find access still on"
+        );
+        assert!(
+            !dir.path().join("mcp-rw-enabled").exists(),
+            "the legacy marker is replaced, not kept beside the new one"
         );
     }
 }

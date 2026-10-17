@@ -1,20 +1,11 @@
 /**
- * McpStatusSection — toggle + status indicator for one MCP channel
- * (read-only or read-write).
+ * McpStatusSection — the MCP socket's switch, and while it is on, its path
+ * and connections with a confirmed Disconnect all.
  *
- * Wraps the original RO / RW sections (toggle row, socket-path display
- * with copy button, and kill-switch row + confirm dialog) in a single
- * variant-aware component.  AgentAccessSettingsTab.tsx instantiates it
- * twice — once for RO (with copy-config slotted in via `children`
- * between the socket path and the kill switch) and once for RW (no
- * children — the RW section has no copy-config).
+ * Everything below the switch renders only while it is on: a socket path
+ * and a connection count describe a server that is not running when it is
+ * off. Which agent may do what is the agents card's business (#5667).
  *
- * Everything below the toggle renders only while the channel is on: a
- * socket path, a config snippet and a connection count describe a server
- * that is not running when it is off.
- *
- * The kill-switch confirm-dialog state lives inside this component
- * because each variant has its own destructive flow with its own copy.
  * Toggling and disconnect IPC calls are owned by the parent — this
  * component just calls back into `onToggle` / `onDisconnect` so the
  * parent's logger label (`'AgentAccessSettingsTab'`) stays the source
@@ -27,141 +18,71 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-
-/** Mirrors the Rust `McpStatus` struct exposed by `get_mcp_status`. */
-export interface McpStatus {
-  enabled: boolean
-  socket_path: string
-  active_connections: number
-}
-
-/**
- * Mirrors the Rust `McpRwStatus` struct exposed by `get_mcp_rw_status`.
- * Identical shape to `McpStatus`; aliased rather than re-declared so the
- * single source of truth lives on `McpStatus`. The distinct name is kept
- * so the RO / RW call sites stay symmetric and self-documenting.
- */
-export type McpRwStatus = McpStatus
+import type { McpStatus } from '@/lib/bindings'
 
 export interface McpStatusSectionProps {
-  variant: 'ro' | 'rw'
   status: McpStatus | null
   onToggle: (next: boolean) => void
   onCopySocket: (path: string) => void
   onDisconnect: () => void
-  children?: React.ReactNode
 }
 
 export function McpStatusSection({
-  variant,
   status,
   onToggle,
   onCopySocket,
   onDisconnect,
-  children,
 }: McpStatusSectionProps): React.ReactElement {
   const { t } = useTranslation()
   const [confirmOpen, setConfirmOpen] = useState<boolean>(false)
 
-  const isRw = variant === 'rw'
-  const effectiveStatus = status ?? {
-    enabled: false,
-    socket_path: '',
-    active_connections: 0,
-  }
-  const socketPath = effectiveStatus.socket_path
-
-  const toggleId = isRw ? 'mcp-rw-toggle' : 'mcp-ro-toggle'
-  const toggleLabelKey = isRw ? 'agentAccess.rwToggleLabel' : 'agentAccess.roToggleLabel'
-  const toggleDescriptionKey = isRw
-    ? 'agentAccess.rwToggleDescription'
-    : 'agentAccess.roToggleDescription'
-
-  const socketPathId = isRw ? 'mcp-rw-socket-path' : 'mcp-socket-path'
-  const socketPathLabelKey = isRw ? 'agentAccess.rwSocketPathLabel' : 'agentAccess.socketPathLabel'
-  const socketPathTestId = isRw ? 'mcp-rw-socket-path' : 'mcp-socket-path'
-  const copySocketLabelKey = isRw
-    ? 'agentAccess.copyRwSocketPathLabel'
-    : 'agentAccess.copySocketPathLabel'
-
-  const killSwitchLabelKey = isRw ? 'agentAccess.rwKillSwitchLabel' : 'agentAccess.killSwitchLabel'
-  const killSwitchDescriptionNoneKey = isRw
-    ? 'agentAccess.rwKillSwitchDescriptionNone'
-    : 'agentAccess.killSwitchDescriptionNone'
-  const killSwitchDescriptionKey = isRw
-    ? 'agentAccess.rwKillSwitchDescription'
-    : 'agentAccess.killSwitchDescription'
-  const killSwitchButtonKey = isRw
-    ? 'agentAccess.rwKillSwitchButton'
-    : 'agentAccess.killSwitchButton'
-
-  const confirmDisconnectTitleKey = isRw
-    ? 'agentAccess.rwConfirmDisconnectTitle'
-    : 'agentAccess.confirmDisconnectTitle'
-  const confirmDisconnectDescriptionKey = isRw
-    ? 'agentAccess.rwConfirmDisconnectDescription'
-    : 'agentAccess.confirmDisconnectDescription'
-  const confirmDisconnectActionKey = isRw
-    ? 'agentAccess.rwConfirmDisconnectAction'
-    : 'agentAccess.confirmDisconnectAction'
+  const enabled = status?.enabled ?? false
+  const socketPath = status?.socket_path ?? ''
+  const activeConnections = status?.active_connections ?? 0
 
   return (
     <>
-      {/* Toggle row */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Label htmlFor={toggleId} muted={false}>
-              {t(toggleLabelKey)}
-            </Label>
-            {isRw && effectiveStatus.enabled && (
-              <Badge
-                tone="destructive"
-                className="shrink whitespace-normal"
-                data-testid="mcp-rw-warning-badge"
-              >
-                {t('agentAccess.rwEnabledWarning')}
-              </Badge>
-            )}
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">{t(toggleDescriptionKey)}</p>
+          <Label htmlFor="mcp-toggle" muted={false}>
+            {t('agentAccess.toggleLabel')}
+          </Label>
+          <p className="text-xs text-muted-foreground mt-1">{t('agentAccess.toggleDescription')}</p>
         </div>
         <Switch
-          id={toggleId}
-          checked={effectiveStatus.enabled}
+          id="mcp-toggle"
+          checked={enabled}
           onCheckedChange={onToggle}
-          aria-label={t(toggleLabelKey)}
+          aria-label={t('agentAccess.toggleLabel')}
           disabled={status === null}
         />
       </div>
 
-      {effectiveStatus.enabled && (
+      {enabled && (
         <>
-          {/* Socket path */}
           <div className="space-y-2">
-            <Label htmlFor={socketPathId} muted={false}>
-              {t(socketPathLabelKey)}
+            <Label htmlFor="mcp-socket-path" muted={false}>
+              {t('agentAccess.socketPathLabel')}
             </Label>
             <div className="flex items-center gap-2">
               <code
-                id={socketPathId}
+                id="mcp-socket-path"
                 className="flex-1 rounded-md border bg-muted/30 px-3 py-2 text-xs font-mono break-all"
-                data-testid={socketPathTestId}
+                data-testid="mcp-socket-path"
               >
-                {socketPath || '\u00A0'}
+                {socketPath || ' '}
               </code>
               <IconButton
                 variant="ghost"
                 size="icon-sm"
                 className="shrink-0"
                 onClick={() => onCopySocket(socketPath)}
-                tooltip={t(copySocketLabelKey)}
-                ariaLabel={t(copySocketLabelKey)}
+                tooltip={t('agentAccess.copySocketPathLabel')}
+                ariaLabel={t('agentAccess.copySocketPathLabel')}
                 disabled={!socketPath}
               >
                 <Copy />
@@ -169,26 +90,21 @@ export function McpStatusSection({
             </div>
           </div>
 
-          {children}
-
-          {/* Kill switch */}
           <div className="space-y-2">
-            <h2 className="text-sm font-medium">{t(killSwitchLabelKey)}</h2>
+            <h2 className="text-sm font-medium">{t('agentAccess.killSwitchLabel')}</h2>
             <p className="text-xs text-muted-foreground">
-              {effectiveStatus.active_connections === 0
-                ? t(killSwitchDescriptionNoneKey)
-                : t(killSwitchDescriptionKey, {
-                    count: effectiveStatus.active_connections,
-                  })}
+              {activeConnections === 0
+                ? t('agentAccess.killSwitchDescriptionNone')
+                : t('agentAccess.killSwitchDescription', { count: activeConnections })}
             </p>
-            {effectiveStatus.active_connections > 0 && (
+            {activeConnections > 0 && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setConfirmOpen(true)}
-                aria-label={t(killSwitchButtonKey)}
+                aria-label={t('agentAccess.killSwitchButton')}
               >
-                {t(killSwitchButtonKey)}
+                {t('agentAccess.killSwitchButton')}
               </Button>
             )}
           </div>
@@ -200,9 +116,9 @@ export function McpStatusSection({
         onOpenChange={(open) => {
           if (!open) setConfirmOpen(false)
         }}
-        titleKey={confirmDisconnectTitleKey}
-        descriptionKey={confirmDisconnectDescriptionKey}
-        confirmKey={confirmDisconnectActionKey}
+        titleKey="agentAccess.confirmDisconnectTitle"
+        descriptionKey="agentAccess.confirmDisconnectDescription"
+        confirmKey="agentAccess.confirmDisconnectAction"
         variant="destructive"
         onConfirm={() => {
           setConfirmOpen(false)

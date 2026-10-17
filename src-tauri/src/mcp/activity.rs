@@ -438,10 +438,9 @@ pub struct ToolCompletionEvent<'a> {
     /// Always [`ActorKind::Agent`] today; the `User` arm is reserved
     /// for future non-MCP usage of the same emission seam.
     pub actor_kind: ActorKind,
-    /// Handshake `clientInfo.name`. `None` only when the dispatch path
-    /// did not capture an agent identity — currently never produced
-    /// by the production code, but kept optional so test harnesses can
-    /// emit anonymous entries.
+    /// The name of the agent whose token the connection presented. `None`
+    /// is never produced by the production code; it stays optional so test
+    /// harnesses can emit anonymous entries.
     pub agent_name: Option<String>,
     /// Success / failure outcome. The error-arm payload is already
     /// clipped to `ERROR_CLIP_CAP` chars by the dispatch layer.

@@ -80,7 +80,7 @@ async fn append_inside_agent_scope_stamps_origin_agent_prefix() {
     .unwrap();
     assert_eq!(
         origin, "agent:claude-desktop",
-        "agent-scope append must stamp origin='agent:<clientInfo.name>'",
+        "agent-scope append must stamp origin='agent:<name>'",
     );
 }
 
