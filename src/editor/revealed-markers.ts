@@ -26,8 +26,8 @@ function isEmphasis(name: string): name is EmphasisMark {
   return (EMPHASIS_MARKS as readonly string[]).includes(name)
 }
 
-/** A mark whose runs show their Markdown delimiters; a link only when it is not written as a bare URL. */
-export function isRevealed(name: string): name is RevealedMark {
+/** A mark whose runs show their Markdown delimiters, a link's unless `isBareLink`. */
+function isRevealed(name: string): name is RevealedMark {
   return isEmphasis(name) || name === 'link'
 }
 
@@ -129,23 +129,25 @@ function runCollector(state: EditorState) {
       runs.set(`${name}:${run.from}`, run)
     }
   }
-  return { visit, runs: () => [...runs.values()] }
+  const visitAt = ($pos: ResolvedPos): void => {
+    for (const { index, start } of childrenAt($pos)) visit($pos.parent, index, start)
+  }
+  return { visit, visitAt, runs: () => [...runs.values()] }
 }
 
 /** The runs with revealed syntax that `$pos` is inside of or touches. */
 export function revealedRunsAt(state: EditorState, $pos: ResolvedPos): MarkRun[] {
-  const { visit, runs } = runCollector(state)
-  for (const { index, start } of childrenAt($pos)) visit($pos.parent, index, start)
+  const { visitAt, runs } = runCollector(state)
+  visitAt($pos)
   return runs()
 }
 
 /** Every run with revealed syntax the selection is inside of or touches. */
 function runsAtSelection(state: EditorState): MarkRun[] {
-  const { visit, runs } = runCollector(state)
+  const { visit, visitAt, runs } = runCollector(state)
   const { selection, doc } = state
-  for (const $pos of [selection.$from, selection.$to]) {
-    for (const { index, start } of childrenAt($pos)) visit($pos.parent, index, start)
-  }
+  visitAt(selection.$from)
+  visitAt(selection.$to)
   // Only a range has children strictly inside it; a caret skips the walk, which
   // would cover the block's children up to the caret on every transaction.
   if (!selection.empty) {

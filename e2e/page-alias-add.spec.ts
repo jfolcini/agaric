@@ -52,8 +52,14 @@ test.describe('Page actions → Add alias', () => {
     await waitForBoot(page)
     await openPage(page, PAGE)
 
+    // Opening the page focuses the main content a frame later, and opening the
+    // menu focuses its first item a frame later: a focus placed before either
+    // is taken back, and the first would close the menu.
+    await expect(page.locator('#main-content')).toBeFocused()
     await pageActions(page).focus()
     await page.keyboard.press('Enter')
+    const menu = page.getByRole('menu', { name: 'Page actions', exact: true })
+    await expect(menu.getByRole('menuitem').first()).toBeFocused()
     const item = addAliasItem(page)
     await item.focus()
     await expect(item).toBeFocused()

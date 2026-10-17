@@ -179,6 +179,73 @@ async fn try_receive_snapshot_catchup_accepts_empty_offer() {
     materializer.shutdown();
 }
 
+/// #5712: an empty catch-up merges nothing, so the docs from the one that fell
+/// back onwards never landed, and a block the main loop's imports deferred may
+/// be a page moved into one of them. Sweeping would purge its drafts, links and
+/// tags before its new doc arrives; the catch-up leaves the block and its
+/// deferral, and its claim, for the next completed pull.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_empty_catchup_leaves_what_its_session_deferred_5712() {
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+
+    const DEFERRED: &str = "01HZ5712000000000000DEFER0";
+    let (init_pool, _init_dir) = test_pool().await;
+    let materializer = Materializer::new(init_pool.clone());
+    let init_registry = LoroEngineRegistry::new();
+    let claim = init_registry.begin_inbound_sync();
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'gone')")
+        .bind(DEFERRED)
+        .execute(&init_pool)
+        .await
+        .expect("seed the block the main loop's import took out");
+    sqlx::query("INSERT INTO sync_deferred_purges (block_id) VALUES (?)")
+        .bind(DEFERRED)
+        .execute(&init_pool)
+        .await
+        .expect("the main loop defers it");
+
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
+    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let nothing_to_offer = SyncMessage::SyncComplete {
+        last_hash: String::new(),
+    };
+    let (sent, recv_res) = tokio::join!(
+        send_sync_message(&mut server.send, &nothing_to_offer),
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &init_sink,
+            REMOTE_DEV,
+            None,
+            Some(EngineReloadCtx {
+                registry: &init_registry,
+                device_id: LOCAL_DEV,
+                inbound: Some(claim),
+            }),
+        ),
+    );
+    sent.expect("the responder ends the catch-up");
+    recv_res.expect("an empty catch-up is not a sync failure");
+
+    let left: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM blocks WHERE id = ?1), \
+                (SELECT COUNT(*) FROM sync_deferred_purges)",
+    )
+    .bind(DEFERRED)
+    .fetch_one(&init_pool)
+    .await
+    .expect("count what is left");
+    assert_eq!(
+        (left, init_registry.inbound_syncs_in_flight()),
+        ((1, 1), 0),
+        "the empty catch-up kept the block and its deferral, and its claim left"
+    );
+    materializer.shutdown();
+}
+
 // -----------------------------------------------------------------
 // Initiator side: peer surfaces Error instead of a catch-up
 // -----------------------------------------------------------------

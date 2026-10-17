@@ -211,9 +211,9 @@ pub struct EngineReloadCtx<'a> {
     /// This device's stable id, threaded into the rehydrate path.
     pub device_id: &'a str,
     /// #5712: the claim the session's main loop took on the registry's
-    /// in-flight inbound syncs when it imported before the reset, which this
-    /// catch-up's sweep ends. `None` when it imported nothing, and the
-    /// catch-up claims for itself.
+    /// in-flight inbound syncs when it imported before the reset, which a
+    /// merging catch-up's sweep ends (an empty one drops it). `None` when it
+    /// imported nothing, and the catch-up claims for itself.
     pub inbound: Option<InboundSync>,
 }
 
@@ -355,6 +355,10 @@ pub async fn try_receive_snapshot_catchup(
                 peer_id = %remote_device_id,
                 "snapshot catch-up: peer had nothing to catch us up with"
             );
+            // #5712: no sweep. Nothing was merged, so the docs from the one that
+            // fell back onwards never landed, and a block the main loop deferred
+            // may be a page moved into one of them. The session's claim leaves
+            // with `engine_reload`; the next completed pull sweeps.
             // #4960: an empty catch-up is still a completed pull from this
             // peer, so `synced_at` has to advance. `record_success` clears the
             // backoff while `peers_due_for_resync` reads `synced_at` alone, so

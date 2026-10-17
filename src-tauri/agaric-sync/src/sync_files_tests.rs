@@ -656,7 +656,6 @@ fn file_transfer_stats_defaults_to_zero() {
     assert_eq!(stats.bytes_sent, 0);
     assert_eq!(stats.bytes_received, 0);
     assert_eq!(stats.skipped_not_found, 0);
-    assert_eq!(stats.skipped_hash_mismatch, 0);
 }
 
 // ── MissingAttachment clone ──────────────────────────────────────────
@@ -848,7 +847,6 @@ async fn protocol_initiator_requests_and_receives_files() {
         sender_stats.bytes_sent,
         u64::try_from(file_data.len()).expect("invariant: test fixture file size fits in u64")
     );
-    // receiver never increments skipped_hash_mismatch/skipped_not_found; drop assertion
 }
 
 /// Per-copy-buffer file-transfer progress emission.
@@ -1087,7 +1085,6 @@ async fn protocol_empty_transfer_when_no_missing_files() {
     assert_eq!(receiver_stats.bytes_received, 0);
     assert_eq!(sender_stats.files_sent, 0);
     assert_eq!(sender_stats.bytes_sent, 0);
-    // receiver never increments skipped_hash_mismatch/skipped_not_found; drop assertion
 }
 
 /// Hash mismatch must NOT ACK and must surface an Err so the

@@ -22,8 +22,9 @@
  *
  * `tree` mirrors the backend's tree of the page as far as page mode knows it,
  * for the sibling index each create and move takes. It also holds blocks the
- * document does not show (a peer's new block, read by a reread); page mode
- * never deletes those, since only blocks it saved are its to delete.
+ * document does not show (a peer's new block, read by a reread). Page mode
+ * deletes only blocks it saved, but a delete takes the block's descendants
+ * with it, so one of those goes when page mode deletes its parent.
  */
 
 import type { Node as PMNode } from '@tiptap/pm/model'

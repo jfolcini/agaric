@@ -644,17 +644,21 @@ export async function reopenPageByTitle(title: string): Promise<void> {
  * therefore produces INVALID XPath the moment the expected text contains a
  * double quote (run 34065136247: `Attached "wdio-paste.png"` — the toast
  * template `blockTree.attachedFileMessage` quotes the filename — failed with
- * `invalid selector: The string did not match the expected pattern`).
+ * `invalid selector: The string did not match the expected pattern`). One
+ * `execute` reads every toast: a toast resolved by one command can be
+ * re-rendered away before the next reads its text, and that error ends the
+ * wait.
  */
 export async function waitForToast(text: string): Promise<void> {
   await browser.waitUntil(
-    async () => {
-      const toasts = await $$('[data-sonner-toast]').getElements()
-      for (const toast of toasts) {
-        if ((await toast.getText()).includes(text)) return true
-      }
-      return false
-    },
+    () =>
+      browser.execute(
+        (wanted: string) =>
+          [...document.querySelectorAll('[data-sonner-toast]')].some((toast) =>
+            (toast.textContent ?? '').includes(wanted),
+          ),
+        text,
+      ),
     {
       timeout: ACTION_TIMEOUT,
       timeoutMsg: `no toast containing ${JSON.stringify(text)} appeared`,

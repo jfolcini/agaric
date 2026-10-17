@@ -151,8 +151,10 @@
 //! A peer's attachment is the same shape from the other side (#5728): its row
 //! lands in the op-sync phase with the hash it was added with, and its
 //! `attachment_blobs` entry is written when the file phase lands the bytes or
-//! links ones already held. Until then `attachment_blobs.refcount` names its
-//! hash, and it keeps doing so for an attachment no reachable peer holds.
+//! links ones already held. Until then its bytes are pending, not lost, and
+//! [`reconcile_all`] leaves out a hash with no blob whose referrers' files are
+//! all absent; [`reconcile`] has no attachments directory to look in, so it
+//! still names that hash under `attachment_blobs.refcount`.
 //!
 //! So the oracle is a statement about the **settled** state. A caller that
 //! drives an op which production defers MUST also drive production's
@@ -162,6 +164,7 @@
 //! them still turns the oracle red; nothing is repaired by test-local code.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 use std::sync::LazyLock;
 
 use agaric_core::error::AppError;
@@ -3659,7 +3662,7 @@ pub async fn reconcile(
     pool: &SqlitePool,
     blocks: &[BaseBlock],
 ) -> Result<Vec<Divergence>, AppError> {
-    Ok(reconcile_keeping_inherited(pool, blocks).await?.0)
+    Ok(reconcile_keeping_inherited(pool, blocks, None).await?.0)
 }
 
 /// `block_tag_inherited` as the fold expects it, then as stored.
@@ -3670,19 +3673,28 @@ type InheritedMaps = (
 
 /// [`reconcile`], also handing back the `block_tag_inherited` maps it read so
 /// [`reconcile_all`]'s provenance diff does not read and fold them again.
+/// With `app_data_dir`, a hash with no blob whose referrers' files are all
+/// absent is left out: a peer's bytes that have not landed yet (#5728).
 async fn reconcile_keeping_inherited(
     pool: &SqlitePool,
     blocks: &[BaseBlock],
+    app_data_dir: Option<&Path>,
 ) -> Result<(Vec<Divergence>, InheritedMaps), AppError> {
     let mut out = Vec::new();
 
     // Artefact 2 first: it shares no key with anything below.
-    let expected_blobs = rebuild_attachment_blobs_from_base(pool).await?;
-    diff_attachment_blobs(
-        &expected_blobs,
-        &read_attachment_blobs(pool).await?,
-        &mut out,
-    );
+    let mut expected_blobs = rebuild_attachment_blobs_from_base(pool).await?;
+    let actual_blobs = read_attachment_blobs(pool).await?;
+    if let Some(dir) = app_data_dir {
+        expected_blobs.retain(|hash, blob| {
+            actual_blobs.contains_key(hash)
+                || blob
+                    .referenced_paths
+                    .iter()
+                    .any(|path| dir.join(path).exists())
+        });
+    }
+    diff_attachment_blobs(&expected_blobs, &actual_blobs, &mut out);
 
     // The `pages_cache` family, root cause first: ownership (Artefact 4), then
     // the space column keyed on the same `parent_id` walk (Artefact 9, so a
@@ -3734,7 +3746,8 @@ async fn reconcile_keeping_inherited(
 /// whole-vault, user-triggered run IS the triage lane, so it runs all of them
 /// and lets the report carry the artefact name; the reader decides.
 ///
-/// `engines` is the live engine registry [`reconcile_engine`] reads.
+/// `engines` is the live engine registry [`reconcile_engine`] reads, and
+/// `app_data_dir` the directory attachment `fs_path`s resolve against.
 ///
 /// `today` pins the projected-agenda rebuild. The caller records it in the
 /// report so a run that straddles local midnight is diagnosable rather than a
@@ -3757,11 +3770,12 @@ async fn reconcile_keeping_inherited(
 pub async fn reconcile_all(
     pool: &SqlitePool,
     engines: &agaric_engine::loro::shared::LoroState,
+    app_data_dir: Option<&Path>,
     today: chrono::NaiveDate,
 ) -> Result<Vec<Divergence>, AppError> {
     let blocks = dump_blocks(pool).await?;
     let (mut out, (expected_inherited, stored_inherited)) =
-        reconcile_keeping_inherited(pool, &blocks).await?;
+        reconcile_keeping_inherited(pool, &blocks, app_data_dir).await?;
     out.extend(reconcile_block_links(pool, &blocks).await?);
     out.extend(reconcile_block_links_unresolved(pool, &blocks).await?);
     out.extend(reconcile_block_tag_refs(pool, &blocks).await?);

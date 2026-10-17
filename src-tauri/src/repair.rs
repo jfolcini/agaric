@@ -821,7 +821,7 @@ mod tests {
     /// The integrity check's engine divergences, as `(artefact, key)`.
     async fn engine_divergences(pool: &SqlitePool, mat: &Materializer) -> Vec<(String, String)> {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 17).unwrap();
-        crate::reconciliation_oracle::reconcile_all(pool, mat.loro_state(), today)
+        crate::reconciliation_oracle::reconcile_all(pool, mat.loro_state(), None, today)
             .await
             .unwrap()
             .into_iter()

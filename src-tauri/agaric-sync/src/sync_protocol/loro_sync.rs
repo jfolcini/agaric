@@ -1152,8 +1152,8 @@ async fn project_pass_d(
 
 /// #5712: purge the blocks a pull's imports took out of a doc (Pass D) that no
 /// engine holds now that every space's doc has landed, for a caller that holds
-/// no [`InboundSync`] claim (boot, tests). It sweeps only when no session holds
-/// one; a session ends with [`sweep_deferred_purges_if_last`].
+/// no [`InboundSync`] claim (tests, benches). It sweeps only when no session
+/// holds one; a session ends with [`sweep_deferred_purges_if_last`].
 pub async fn sweep_deferred_purges(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -1178,15 +1178,24 @@ pub async fn sweep_deferred_purges(
 /// session that ended before it included; a failed session leaves without
 /// sweeping, and what it deferred waits for that sweep.
 ///
-/// It leaves holding the writer lock, which an import's Pass D needs to
-/// record anything. So when it was the last, the table holds only the ids of
-/// sessions that ended, and a session that starts now records nothing until
-/// this sweep has committed.
+/// It leaves before it reads the table, so the ids of every session that left
+/// before it are committed where that read sees them. A session that starts
+/// after it left may record ids before this sweep takes the writer lock, which
+/// an import's Pass D needs to record anything; so under the lock it sweeps
+/// only while nobody is in flight, and otherwise leaves the ids to that
+/// session's own end.
 pub async fn sweep_deferred_purges_if_last(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     session: Option<InboundSync>,
 ) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    let last = session.map_or_else(
+        || registry.inbound_syncs_in_flight() == 0,
+        InboundSync::leave,
+    );
+    if !last {
+        return Ok(Vec::new());
+    }
     // Most pulls defer nothing; they need not wait for the writer lock.
     let any: Option<i64> =
         sqlx::query_scalar!(r#"SELECT 1 AS "one!: i64" FROM sync_deferred_purges LIMIT 1"#)
@@ -1196,11 +1205,7 @@ pub async fn sweep_deferred_purges_if_last(
         return Ok(Vec::new());
     }
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "sweep_deferred_purges").await?;
-    let last = match session {
-        Some(session) => session.leave(),
-        None => registry.inbound_syncs_in_flight() == 0,
-    };
-    if !last {
+    if registry.inbound_syncs_in_flight() != 0 {
         return Ok(Vec::new());
     }
     let deferred: Vec<String> =
