@@ -82,7 +82,7 @@
 //! | `agenda_cache` (the date roll-up, #3345) | `blocks`, `block_properties` **and** `block_tags` | `rebuild_agenda_cache(_split)` (the `RebuildAgendaCache` task) — audited by [`reconcile_agenda_cache`], NOT by [`reconcile`] |
 //! | `projected_agenda_cache` (the recurrence horizon, #3345) | `blocks` **and** `block_properties`, plus a `today` the caller supplies | `rebuild_projected_agenda_cache(_split)` (the `RebuildProjectedAgendaCache` task) — audited by [`reconcile_projected_agenda`], NOT by [`reconcile`] |
 //! | `pages_cache.{title_sort_key,last_edited_ms,space_id}` (the Pages sort keys, #5371) | the cached `pages_cache.title`; `op_log` and `blocks.page_id` for a floor; the page's `blocks.space_id` | the page-row rebuild, its restore insert (`insert_missing_pages_cache_rows`) and the page-create INSERT (key, space) / `raise_pages_last_edited_ms` on every op-landing path (last edited) / `sync_pages_cache_space_ids` in a `space` op's projection (space) — audited by [`reconcile_pages_cache_sort_keys`], NOT by [`reconcile`] |
-//! | `block_tag_inherited` (tag inheritance, #5628) | `blocks` — `parent_id`, `deleted_at` — **and** `block_tags` | the in-transaction arms of `tag_inheritance::apply_op_tag_inheritance`, the purge cascades, `loro_sync`'s post-import refresh / `rebuild_all` (the `RebuildTagInheritanceCache` task) — row membership in [`reconcile`], `inherited_from` in [`reconcile_block_tag_inherited_provenance`] only |
+//! | `block_tag_inherited` (tag inheritance, #5628) | `blocks` — `parent_id`, `deleted_at` — **and** `block_tags` | the in-transaction arms of `tag_inheritance::apply_op_tag_inheritance`, the purge cascades, `loro_sync`'s post-import refresh / `rebuild_all` (the `RebuildTagInheritanceCache` task) — row membership in [`reconcile`], `inherited_from` in [`diff_block_tag_inherited_provenance`] only |
 //! | SQL `blocks` ITSELF against the Loro engine (#5628) | the live engine docs — not a SQL table | the per-op projections in `loro::projection` (`project_*_to_sql`) after every engine apply / the SQL-only fallbacks, which write SQL without the engine — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
@@ -1711,7 +1711,7 @@ const BLOCK_TAG_INHERITED_PROVENANCE_OWNER: &str = "propagate_tag_to_descendants
 ///
 /// Membership only: every in-transaction arm must leave exactly these rows,
 /// so this belongs in the per-op gate. Provenance does not — see
-/// [`reconcile_block_tag_inherited_provenance`].
+/// [`diff_block_tag_inherited_provenance`].
 fn diff_block_tag_inherited_rows(
     expected: &BTreeMap<(String, String), String>,
     stored: &BTreeMap<(String, String), String>,
@@ -1756,13 +1756,11 @@ fn diff_block_tag_inherited_rows(
 /// (#2669). Running that rebuild as a per-op settle would also repair every
 /// delete and restore a generated chain drives, which is what the gate exists
 /// to audit. A whole-vault run after the app has settled is the place for it.
-pub async fn reconcile_block_tag_inherited_provenance(
-    pool: &SqlitePool,
-    blocks: &[BaseBlock],
-) -> Result<Vec<Divergence>, AppError> {
-    let expected = rebuild_block_tag_inherited_from_base(pool, blocks).await?;
-    let stored = dump_block_tag_inherited(pool).await?;
-    Ok(expected
+fn diff_block_tag_inherited_provenance(
+    expected: &BTreeMap<(String, String), String>,
+    stored: &BTreeMap<(String, String), String>,
+) -> Vec<Divergence> {
+    expected
         .iter()
         .filter_map(|(key, want)| {
             let got = stored.get(key)?;
@@ -1774,7 +1772,7 @@ pub async fn reconcile_block_tag_inherited_provenance(
                 owner: BLOCK_TAG_INHERITED_PROVENANCE_OWNER,
             })
         })
-        .collect())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1813,19 +1811,6 @@ struct EngineView {
     spaces: BTreeSet<String>,
 }
 
-/// An engine property value as a promoted SQL column holds it. Transcribed
-/// from `PropertyValue::as_legacy_string`, which the SQL projection renders
-/// these four keys with and which is private to `agaric-engine`.
-fn engine_scalar(value: &agaric_engine::loro::engine::PropertyValue) -> Option<String> {
-    use agaric_engine::loro::engine::PropertyValue;
-    match value {
-        PropertyValue::Str(s) => Some(s.clone()),
-        PropertyValue::Num(n) => Some(n.to_string()),
-        PropertyValue::Bool(b) => Some(b.to_string()),
-        PropertyValue::Null => None,
-    }
-}
-
 /// Every node of one exported doc: the import-then-read that
 /// `db::recovery::reproject_space_from_engine` runs on a persisted snapshot,
 /// without its SQL writes.
@@ -1845,7 +1830,7 @@ fn read_engine_space(bytes: &[u8]) -> Result<Vec<(String, EngineBlock)>, AppErro
             properties
                 .iter()
                 .find(|(k, _)| k == key)
-                .and_then(|(_, value)| engine_scalar(value))
+                .and_then(|(_, value)| value.as_legacy_string())
         });
         out.push((
             block_id.to_owned(),
@@ -3481,10 +3466,26 @@ fn diff_fts_blocks(
 ///
 /// `blocks` is the caller's `dump_blocks`; every artefact here folds that one
 /// slice.
+#[cfg(test)]
 pub async fn reconcile(
     pool: &SqlitePool,
     blocks: &[BaseBlock],
 ) -> Result<Vec<Divergence>, AppError> {
+    Ok(reconcile_keeping_inherited(pool, blocks).await?.0)
+}
+
+/// `block_tag_inherited` as the fold expects it, then as stored.
+type InheritedMaps = (
+    BTreeMap<(String, String), String>,
+    BTreeMap<(String, String), String>,
+);
+
+/// [`reconcile`], also handing back the `block_tag_inherited` maps it read so
+/// [`reconcile_all`]'s provenance diff does not read and fold them again.
+async fn reconcile_keeping_inherited(
+    pool: &SqlitePool,
+    blocks: &[BaseBlock],
+) -> Result<(Vec<Divergence>, InheritedMaps), AppError> {
     let mut out = Vec::new();
 
     // Artefact 2 first: it shares no key with anything below.
@@ -3528,13 +3529,10 @@ pub async fn reconcile(
     // Artefact 14 (membership only), independent of `page_id` for the same
     // reason: it folds `parent_id`, `deleted_at` and `block_tags`.
     let expected_inherited = rebuild_block_tag_inherited_from_base(pool, blocks).await?;
-    diff_block_tag_inherited_rows(
-        &expected_inherited,
-        &dump_block_tag_inherited(pool).await?,
-        &mut out,
-    );
+    let stored_inherited = dump_block_tag_inherited(pool).await?;
+    diff_block_tag_inherited_rows(&expected_inherited, &stored_inherited, &mut out);
 
-    Ok(out)
+    Ok((out, (expected_inherited, stored_inherited)))
 }
 
 /// Every artefact this module audits, in one sweep — the release entry point
@@ -3574,7 +3572,8 @@ pub async fn reconcile_all(
     today: chrono::NaiveDate,
 ) -> Result<Vec<Divergence>, AppError> {
     let blocks = dump_blocks(pool).await?;
-    let mut out = reconcile(pool, &blocks).await?;
+    let (mut out, (expected_inherited, stored_inherited)) =
+        reconcile_keeping_inherited(pool, &blocks).await?;
     out.extend(reconcile_block_links(pool, &blocks).await?);
     out.extend(reconcile_block_links_unresolved(pool, &blocks).await?);
     out.extend(reconcile_block_tag_refs(pool, &blocks).await?);
@@ -3582,7 +3581,10 @@ pub async fn reconcile_all(
     out.extend(reconcile_agenda_cache(pool, &blocks).await?);
     out.extend(reconcile_projected_agenda(pool, &blocks, today).await?);
     out.extend(reconcile_pages_cache_sort_keys(pool, &blocks).await?);
-    out.extend(reconcile_block_tag_inherited_provenance(pool, &blocks).await?);
+    out.extend(diff_block_tag_inherited_provenance(
+        &expected_inherited,
+        &stored_inherited,
+    ));
     out.extend(reconcile_engine(engines, &blocks)?);
     Ok(out)
 }

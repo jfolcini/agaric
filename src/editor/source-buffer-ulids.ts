@@ -218,14 +218,16 @@ export const SourceBufferUlids = Extension.create({
             }
             return false
           },
-          // Typing inside a token is refused; typed over a selection that
-          // splits one, the text replaces only what the selection holds whole.
+          // Typed over a selection that splits a token, the text replaces only
+          // what the selection holds whole, and is refused when that is
+          // nothing, as at a caret or a selection inside one token.
           handleTextInput(view, from, to, text) {
             const tokens = docUlidTokens(view.state.doc)
             if (!tokens.some((t) => splits(t, from, to))) return false
-            if (from === to) return true
             const clamped = clampToTokens(view.state.doc, from, to)
-            view.dispatch(view.state.tr.insertText(text, clamped.from, clamped.to))
+            if (clamped.from < clamped.to) {
+              view.dispatch(view.state.tr.insertText(text, clamped.from, clamped.to))
+            }
             return true
           },
         },

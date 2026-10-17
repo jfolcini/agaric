@@ -63,10 +63,11 @@ cargo tauri build
 
 # Bundle-path probes per OS. Mirrors release.yml's upload globs so a
 # bundle-naming change here surfaces before the tag push. When the
-# Minisign signing key is set in env, also probe the updater payloads
-# (the `.tar.gz` / `.zip` archives the in-app auto-updater fetches) —
-# these are the artifacts the desktop auto-update flow relies on, so
-# a missing one silently breaks every user's update path.
+# Minisign signing key is set in env, also probe macOS's `.app.tar.gz`, the
+# one updater payload that is not the bundle itself: Linux and Windows
+# update from the raw `.AppImage` and NSIS `.exe` probed below, and with
+# `createUpdaterArtifacts` unset no `.AppImage.tar.gz` / `.msi.zip` /
+# `.exe.zip` is produced.
 SIGNED=0
 if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
     SIGNED=1
@@ -96,10 +97,6 @@ case "$OS" in
         FAIL=0
         probe '.AppImage' 'src-tauri/target/release/bundle/appimage/*.AppImage' || FAIL=$((FAIL + 1))
         probe '.deb' 'src-tauri/target/release/bundle/deb/*.deb' || FAIL=$((FAIL + 1))
-        if [ "$SIGNED" = "1" ]; then
-            probe '.AppImage.tar.gz (updater payload)' \
-                'src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz' || FAIL=$((FAIL + 1))
-        fi
         [ "$FAIL" -eq 0 ] || { echo "✗ $FAIL Linux artifact(s) missing"; exit 1; }
 
         # AppImage icon fix is part of release.yml's Linux path.
@@ -128,12 +125,6 @@ case "$OS" in
         FAIL=0
         probe '.msi' 'src-tauri/target/release/bundle/msi/*.msi' || FAIL=$((FAIL + 1))
         probe '.exe (NSIS)' 'src-tauri/target/release/bundle/nsis/*.exe' || FAIL=$((FAIL + 1))
-        if [ "$SIGNED" = "1" ]; then
-            probe '.msi.zip (updater payload)' \
-                'src-tauri/target/release/bundle/msi/*.msi.zip' || FAIL=$((FAIL + 1))
-            probe '.exe.zip (NSIS updater payload)' \
-                'src-tauri/target/release/bundle/nsis/*.exe.zip' || FAIL=$((FAIL + 1))
-        fi
         [ "$FAIL" -eq 0 ] || { echo "✗ $FAIL Windows artifact(s) missing"; exit 1; }
         ;;
     *)

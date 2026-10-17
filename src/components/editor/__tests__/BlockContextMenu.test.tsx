@@ -1686,6 +1686,20 @@ describe('BlockContextMenu', () => {
       expect(screen.getByRole('menuitem', { name: t('callout.info') })).toHaveFocus()
     })
 
+    it('collapsing Turn into collapses Callout, so reopening shows it closed', () => {
+      renderMenu({ onTurnInto: vi.fn() })
+      const turnInto = screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) })
+      fireEvent.click(turnInto)
+      fireEvent.click(calloutToggle())
+      expect(calloutToggle()).toHaveAttribute('aria-expanded', 'true')
+
+      fireEvent.click(turnInto)
+      fireEvent.click(turnInto)
+
+      expect(calloutToggle()).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByRole('group', { name: CALLOUT })).not.toBeInTheDocument()
+    })
+
     it('has no a11y violations with the variants open', async () => {
       renderMenu({ onTurnInto: vi.fn(), activeBlockType: 'callout' })
       fireEvent.click(screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) }))
