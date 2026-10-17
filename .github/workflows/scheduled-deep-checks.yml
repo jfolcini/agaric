@@ -864,7 +864,7 @@ jobs:
 
       - name: Upload SLO results (log + criterion estimates)
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: interactive-slo
           # The raw log (stable observed/budget lines) plus criterion's own
@@ -1547,7 +1547,7 @@ jobs:
 
       - name: Upload this shard's mutants report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # One artifact per shard — upload-artifact v7 rejects a duplicate
           # name. `mutants-merge` globs them back into the single
@@ -1770,7 +1770,7 @@ jobs:
 
       - name: Upload merged mutants report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # The name `file-mutation-survivors` downloads. It reads missed.txt
           # flat off the artifact root, so the path is the merged directory
@@ -1857,7 +1857,7 @@ jobs:
 
       - name: Upload mutation reports
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mutation-frontend-report
           path: reports/mutation/
@@ -2718,7 +2718,7 @@ jobs:
 
       - name: Upload fuzz artifacts (crashes / corpus)
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-artifacts
           path: |
@@ -2739,7 +2739,7 @@ jobs:
         # side instead, by the `--require-results` /
         # `--require-targets-manifest` flags the `file-fuzz-findings` job passes.
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-status
           path: fuzz-status/
@@ -2942,7 +2942,7 @@ jobs:
 
       - name: Upload type-aware report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: type-aware-report
           path: reports/type-aware/

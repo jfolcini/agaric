@@ -1193,7 +1193,7 @@ jobs:
         # (timeout) may have written nothing, and `if-no-files-found: error`
         # would then turn that into a second, more confusing red.
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vitest-blob-${{ matrix.shard }}
           path: .vitest-reports/
@@ -1323,7 +1323,7 @@ jobs:
         # Kept the `vitest-coverage-merged` name so any downstream Codecov /
         # badge tooling that referenced it keeps working after the merge
         # job was removed.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vitest-coverage-merged
           path: coverage-merged/
@@ -1365,7 +1365,7 @@ jobs:
 
       - name: Upload Playwright report (on failure)
         if: failure() && steps.playwright.outcome == 'failure'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # `${{ matrix.shard }}` keeps shard artifacts from colliding —
           # GitHub rejects duplicate artifact names within a workflow run.
@@ -1526,7 +1526,7 @@ jobs:
       - name: Upload shard coverage artifact
         # Partial lcov for this shard. Retained 7 days — the merged artifact
         # the `cargo-coverage` job publishes is the long-lived one.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-coverage-shard-${{ matrix.shard }}
           path: src-tauri/coverage-${{ matrix.shard }}.lcov
@@ -1671,7 +1671,7 @@ jobs:
         run: node scripts/coverage-ratchet.mjs --lcov coverage.lcov --key rust --gate
 
       - name: Upload merged rust coverage artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: hashFiles('coverage.lcov') != ''
         with:
           name: rust-coverage-lcov
