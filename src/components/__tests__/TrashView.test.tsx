@@ -460,6 +460,41 @@ describe('TrashView', () => {
     expect(screen.getByText('item 2')).toBeInTheDocument()
   })
 
+  it('Load More keeps the cursor on its row', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      items: [
+        makeBlock({ id: 'B1', content: 'item 1', deleted_at: 1736899200000 }),
+        makeBlock({ id: 'B2', content: 'item 2', deleted_at: 1736812800000 }),
+      ],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: null,
+    }
+    const page2 = {
+      items: [makeBlock({ id: 'B3', content: 'item 3', deleted_at: 1736726400000 })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    stubInvoke({
+      list_trash: (args) => (args['cursor'] == null ? page1 : page2),
+      batch_resolve: () => [],
+      trash_descendant_counts: () => ({}),
+    })
+
+    render(<TrashView />)
+    await screen.findByText('item 1')
+    const grid = screen.getByRole('grid')
+    await user.keyboard('{ArrowDown}')
+    expect(grid).toHaveAttribute('aria-activedescendant', 'trash-item-B2')
+
+    await user.click(screen.getByRole('button', { name: /Load more/i }))
+    await screen.findByText('item 3')
+
+    expect(grid).toHaveAttribute('aria-activedescendant', 'trash-item-B2')
+  })
+
   // #4965 — the shared LoadMoreButton replaced a hand-rolled <Button> that
   // only swapped its label, leaving a screen reader with no busy state.
   it('Load More button reports aria-busy while a page is in flight', async () => {
