@@ -3,8 +3,7 @@
  * and exposes a bounded, newest-first list of MCP activity entries.
  *
  * Extracted from AgentAccessSettingsTab.tsx so the activity-feed
- * subscription, the rolling 100-entry render buffer, and the periodic
- * tick that refreshes relative-time labels live in one place.
+ * subscription and the rolling 100-entry render buffer live in one place.
  *
  * The hook attaches the listener on mount of the consuming component
  * (AgentAccessSettingsTab), so the feed begins receiving events even
@@ -119,15 +118,6 @@ export function mergeActivityBackfill(
 
 export function useMcpActivityFeed(): UseMcpActivityFeedResult {
   const [entries, setEntries] = useState<ActivityEntry[]>([])
-  const [, setTick] = useState<number>(0)
-
-  // Re-render every 60 s so relative-time labels in the activity feed
-  // refresh ("2m ago" → "3m ago") without needing a separate interval
-  // per row.
-  useEffect(() => {
-    const id = window.setInterval(() => setTick((n) => n + 1), 60_000)
-    return () => window.clearInterval(id)
-  }, [])
 
   // Subscribe to `mcp:activity` events — each completed tool call from
   // the backend fires one event carrying a single `ActivityEntry` payload.

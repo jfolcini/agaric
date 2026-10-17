@@ -314,6 +314,33 @@ describe('AppSidebar', () => {
     })
   })
 
+  describe('with a fake clock', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('ages the last synced line as time passes', () => {
+      seedSyncStore({ lastSyncedAt: new Date().toISOString() })
+      renderSidebar()
+
+      const syncButton = screen.getByRole('button', { name: t('sidebar.sync') })
+      expect(syncButton).toHaveAccessibleDescription(
+        t('sidebar.lastSynced', { time: t('sidebar.justNow') }),
+      )
+
+      act(() => {
+        vi.advanceTimersByTime(5 * 60_000)
+      })
+      expect(syncButton).toHaveAccessibleDescription(
+        t('sidebar.lastSynced', { time: t('sidebar.minutesAgo', { count: 5 }) }),
+      )
+    })
+  })
+
   it('keeps an offline Sync focusable, so its tooltip can say why it does nothing', async () => {
     const user = userEvent.setup()
     const { props } = renderSidebar({ isOnline: false })

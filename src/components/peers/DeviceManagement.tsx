@@ -61,7 +61,6 @@ export function DeviceManagement(): React.ReactElement {
   const [syncingAll, setSyncingAll] = useState(false)
   const [renamingPeerId, setRenamingPeerId] = useState<string | null>(null)
   const [renamePeerId, setRenamePeerId] = useState<string | null>(null)
-  const [, setTick] = useState(0)
   const { execute: executeSyncWithTimeout } = useSyncWithTimeout()
   const mdnsStatus = useMdnsStatus()
 
@@ -87,11 +86,6 @@ export function DeviceManagement(): React.ReactElement {
     const id = setTimeout(() => setError(null), 10_000)
     return () => clearTimeout(id)
   }, [error])
-
-  useEffect(() => {
-    const id = setInterval(() => setTick((tick) => tick + 1), 60_000)
-    return () => clearInterval(id)
-  }, [])
 
   // Load device id + peer list in parallel via the shared
   // useIpcCommand hook. Inline error display via `setError` (no toast —

@@ -96,6 +96,10 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(future, mockT as never)).toBe('sidebar.justNow')
   })
 
+  it('measures from the `now` it is given, not the system clock', () => {
+    expect(formatRelativeTime(0, mockT as never, 5 * 60_000)).toBe('sidebar.minutesAgo:5')
+  })
+
   // #745: formatRelativeTime replaced the hardcoded-English formatTimestamp(_,
   // 'relative') / formatLastSynced helpers. Those consumers pass epoch-ms
   // numbers (synced_at / deleted_at are INTEGER columns, #109 Phase 2), so the

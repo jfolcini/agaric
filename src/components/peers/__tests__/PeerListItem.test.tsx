@@ -10,15 +10,16 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { PeerListItem } from '@/components/peers/PeerListItem'
 import type { PeerRef } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -208,6 +209,28 @@ describe('PeerListItem', () => {
 
     // t('device.lastSyncedAt', { time: '5m ago' }) === 'Last: 5m ago'
     expect(screen.getByText(/Last: 5m ago/)).toBeInTheDocument()
+  })
+
+  describe('with a fake clock', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('ages the last-synced time as time passes', () => {
+      render(<PeerListItem peer={makePeer({ synced_at: Date.now() })} {...defaultProps} />)
+      const lastSynced = screen.getByText(t('device.lastSyncedAt', { time: t('sidebar.justNow') }))
+
+      act(() => {
+        vi.advanceTimersByTime(5 * 60_000)
+      })
+      expect(lastSynced).toHaveTextContent(
+        t('device.lastSyncedAt', { time: t('sidebar.minutesAgo', { count: 5 }) }),
+      )
+    })
   })
 
   // #4297 — the other device unpaired, which sends nothing over the wire, so

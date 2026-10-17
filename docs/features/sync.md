@@ -28,8 +28,8 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 ## What the user sees
 
 - **Sidebar Sync icon** (footer), the one place the status dot is drawn:
-  - Grey: idle.
-  - Spinning + blue: syncing now.
+  - Green: idle.
+  - Spinning + amber: syncing now.
   - Red: last attempt failed (toast offers *Retry*).
   - Strikethrough WiFi: offline.
 - **"Last synced N ago"** in the Sync icon's tooltip, with the state.

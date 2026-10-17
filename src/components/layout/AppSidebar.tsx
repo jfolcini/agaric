@@ -40,6 +40,7 @@ import {
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar'
+import { useMinuteClock } from '@/hooks/useMinuteClock'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { type NavItem, SETTINGS_NAV_ITEM, SIDEBAR_NAV_ITEMS } from '@/lib/nav-items'
 import { cn } from '@/lib/utils'
@@ -123,8 +124,9 @@ function AppSidebarInner({
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const { isMobile, setOpenMobile } = useSidebar()
+  const now = useMinuteClock()
   const lastSyncedLabel = lastSyncedAt
-    ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t) })
+    ? t('sidebar.lastSynced', { time: formatRelativeTime(lastSyncedAt, t, now) })
     : t('sidebar.lastSyncedNever')
   const syncUnavailable = syncing || !isOnline
 

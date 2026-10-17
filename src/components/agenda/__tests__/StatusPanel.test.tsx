@@ -26,6 +26,7 @@ import {
   type TypedInvokeHandlers,
 } from '@/__tests__/helpers/invoke'
 import { StatusPanel, SyncStatusCard } from '@/components/agenda/StatusPanel'
+import { t } from '@/lib/i18n'
 
 // Mock DeviceManagement to prevent its own IPC calls from interfering
 vi.mock('@/components/peers/DeviceManagement', () => ({
@@ -664,6 +665,30 @@ describe('StatusPanel', () => {
 
       const lastSyncedEl = document.querySelector('.sync-last-synced')
       expect(lastSyncedEl?.textContent).toBe('--')
+    })
+
+    describe('with a fake clock', () => {
+      beforeEach(() => {
+        vi.useFakeTimers()
+      })
+
+      afterEach(() => {
+        vi.useRealTimers()
+      })
+
+      it('ages the relative time as time passes', () => {
+        mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
+        mockSyncStoreState.lastSyncedAt = new Date().toISOString()
+
+        render(<SyncStatusCard />)
+        const lastSyncedEl = document.querySelector('.sync-last-synced')
+        expect(lastSyncedEl?.textContent).toBe(t('sidebar.justNow'))
+
+        act(() => {
+          vi.advanceTimersByTime(5 * 60_000)
+        })
+        expect(lastSyncedEl?.textContent).toBe(t('sidebar.minutesAgo', { count: 5 }))
+      })
     })
   })
 

@@ -30,6 +30,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ActivityEntry } from '@/hooks/useMcpActivityFeed'
+import { useMinuteClock } from '@/hooks/useMinuteClock'
 import { reloadChangedPageStores } from '@/hooks/useSyncEvents'
 import { isNonReversible, unwrap } from '@/lib/app-error'
 import { commands, type OpRef } from '@/lib/bindings'
@@ -57,6 +58,7 @@ export interface ActivityFeedProps {
 
 export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement {
   const { t } = useTranslation()
+  const now = useMinuteClock()
   // Per-entry loading state for the Undo button on agent-authored RW
   // activity rows, keyed by `${device_id}:${seq}`.  Buttons disable +
   // swap to a spinner while their key is in the set.
@@ -312,7 +314,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                         className="text-xs text-muted-foreground shrink-0 tabular-nums"
                         dateTime={entry.timestamp}
                       >
-                        {formatRelativeTime(entry.timestamp, t)}
+                        {formatRelativeTime(entry.timestamp, t, now)}
                       </time>
                       {canUndo && entry.opRef != null && (
                         <Tooltip>
