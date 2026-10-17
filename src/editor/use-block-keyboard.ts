@@ -7,9 +7,11 @@
  */
 
 import type { Editor } from '@tiptap/core'
+import type { EditorState as ProseMirrorState } from '@tiptap/pm/state'
 import { useCallback, useEffect } from 'react'
 
 import { getSelectionProbe } from '@/editor/pm-selection-probe'
+import { markerBesideCaret } from '@/editor/revealed-markers'
 import { isTabIndentEnabled } from '@/lib/editor-preferences'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { isTabKey } from '@/lib/keyboard-config/keys'
@@ -179,6 +181,16 @@ function isAtDocStart(state: EditorState): boolean {
   return from <= 1
 }
 
+/** A real ProseMirror state, which a revealed Markdown marker needs, rather than a test double. */
+function isProseMirrorState(state: EditorState): state is EditorState & ProseMirrorState {
+  return typeof state.doc.resolve === 'function'
+}
+
+/** #5689 — a revealed Markdown marker sits right beside the caret on `side`. */
+function hasMarkerBeside(state: EditorState, side: 'before' | 'after'): boolean {
+  return isProseMirrorState(state) && markerBesideCaret(state, side) !== null
+}
+
 function isAtDocEnd(state: EditorState): boolean {
   const { to, empty } = state.selection
   if (!empty) return false
@@ -225,6 +237,10 @@ export function handleBlockKeyDown(
     // splitListItem so the block can gain items, rather than flushing and
     // creating a new sibling block.
     inList: editor.isActive?.('listItem') ?? false,
+    // #5689 — a revealed Markdown marker beside the caret takes Backspace and the
+    // arrow toward it (`markdown-reveal.ts`), so those keys stay in the block.
+    markerBeforeCaret: hasMarkerBeside(editor.state, 'before'),
+    markerAfterCaret: hasMarkerBeside(editor.state, 'after'),
   }
   for (const rule of KEY_RULES) {
     if (rule.match(event, ctx)) {
@@ -253,6 +269,9 @@ interface KeyContext {
   inTable: boolean
   /** Selection is inside a list item (#2276 — Enter defers to splitListItem). */
   inList: boolean
+  /** A revealed Markdown marker sits right before / after the caret (#5689). */
+  markerBeforeCaret: boolean
+  markerAfterCaret: boolean
 }
 
 interface KeyRule {
@@ -418,7 +437,7 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // jumping to the adjacent block.
   {
     match: (e, ctx) =>
-      (e.key === 'ArrowUp' || e.key === 'ArrowLeft') &&
+      (e.key === 'ArrowUp' || (e.key === 'ArrowLeft' && !ctx.markerBeforeCaret)) &&
       !e.shiftKey &&
       !e.ctrlKey &&
       !e.metaKey &&
@@ -437,7 +456,7 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // defer to native caret motion instead of jumping to the next block).
   {
     match: (e, ctx) =>
-      (e.key === 'ArrowDown' || e.key === 'ArrowRight') &&
+      (e.key === 'ArrowDown' || (e.key === 'ArrowRight' && !ctx.markerAfterCaret)) &&
       !e.shiftKey &&
       !e.ctrlKey &&
       !e.metaKey &&
@@ -467,7 +486,12 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
   // the previous block as raw text mangles its markdown.
   {
     match: (e, ctx) =>
-      e.key === 'Backspace' && ctx.atStart && !ctx.isEmpty && !ctx.inCodeBlock && !ctx.inTable,
+      e.key === 'Backspace' &&
+      ctx.atStart &&
+      !ctx.isEmpty &&
+      !ctx.inCodeBlock &&
+      !ctx.inTable &&
+      !ctx.markerBeforeCaret,
     handle: (e, cb) => {
       e.preventDefault()
       cb.onMergeWithPrev()
@@ -643,7 +667,7 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
         event.preventDefault()
         if (isLastBlock?.()) return
         onDeleteBlock({ cursorPlacement: 'end' })
-      } else if (atStart) {
+      } else if (atStart && !hasMarkerBeside(editor.state, 'before')) {
         event.preventDefault()
         onMergeWithPrev()
       }

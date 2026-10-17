@@ -60,6 +60,7 @@ import {
   type ListMarkerState,
 } from '@/editor/extensions/list-marker-decoration'
 import { ListStyleInputRule } from '@/editor/extensions/list-style-input-rule'
+import { MarkdownReveal } from '@/editor/extensions/markdown-reveal'
 import { MathBlock, MathInline } from '@/editor/extensions/math'
 import { MermaidCodeBlockView } from '@/editor/extensions/MermaidCodeBlockView'
 import { PropertyPicker, propertyPickerPluginKey } from '@/editor/extensions/property-picker'
@@ -783,6 +784,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       withFlankingShortcuts(StrikeWithShortcut, ['~~']),
       withFlankingShortcuts(HighlightWithShortcut, ['==']),
       Underline,
+      // #5689 — the caret's inline marks show their Markdown markers, behind the
+      // off-by-default `revealMarkdownSyntax` preference.
+      MarkdownReveal,
       CalloutBlockquote,
       OrderedList,
       // #1436 — bullet/unordered lists. Shares `ListItem` with OrderedList and

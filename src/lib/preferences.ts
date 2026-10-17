@@ -671,6 +671,20 @@ const TAB_INDENTS_BLOCKS_PREFERENCE: PreferenceDefinition<boolean> = {
 }
 
 /**
+ * `agaric-reveal-markdown-syntax` — show the Markdown markers of the inline
+ * mark the caret is in or touching (`src/editor/extensions/markdown-reveal.ts`,
+ * #5689). Default false: the block editor stays WYSIWYG unless asked.
+ */
+const REVEAL_MARKDOWN_SYNTAX_PREFERENCE: PreferenceDefinition<boolean> = {
+  key: 'agaric-reveal-markdown-syntax',
+  scope: 'device',
+  version: 1,
+  defaultValue: false,
+  parse: (raw) => raw === 'true',
+  serialize: jsonSerialize<boolean>,
+}
+
+/**
  * `link-preview-hover-fetch` — hovering or Tab-focusing an external link may
  * fetch that link's metadata from the host the note names (#3684,
  * `src/hooks/useLinkPreview.ts`). Default true. Off leaves the cache read in
@@ -1508,6 +1522,7 @@ export const PREFERENCES = {
   emojiPickerEnabled: EMOJI_PICKER_ENABLED_PREFERENCE,
   bookmarksCollapsed: BOOKMARKS_COLLAPSED_PREFERENCE,
   tabIndentsBlocks: TAB_INDENTS_BLOCKS_PREFERENCE,
+  revealMarkdownSyntax: REVEAL_MARKDOWN_SYNTAX_PREFERENCE,
   linkPreviewHoverFetch: LINK_PREVIEW_HOVER_FETCH_PREFERENCE,
   internetFacingBindAck: INTERNET_FACING_BIND_ACK_PREFERENCE,
   starredPages: STARRED_PAGES_PREFERENCE,

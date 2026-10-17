@@ -42,6 +42,7 @@ export function EditorTab(): React.ReactElement {
   // #1492 — external-image load policy + the managed per-host allowlist.
   const { policy, setPolicy } = useExternalImagePolicy()
   const [linkPreviewFetch, setLinkPreviewFetch] = usePreference(PREFERENCES.linkPreviewHoverFetch)
+  const [revealMarkdown, setRevealMarkdown] = usePreference(PREFERENCES.revealMarkdownSyntax)
   const { allowlist, removeHost } = useExternalImageAllowlist()
 
   const handlePolicyChange = useCallback(
@@ -78,6 +79,15 @@ export function EditorTab(): React.ReactElement {
           checked={tabIndents}
           onCheckedChange={setTabIndents}
           data-testid="tab-indent-toggle"
+        />
+
+        <ToggleRow
+          id="reveal-markdown-toggle"
+          label={t('settings.editor.revealMarkdownLabel')}
+          description={t('settings.editor.revealMarkdownHelp')}
+          checked={revealMarkdown}
+          onCheckedChange={setRevealMarkdown}
+          data-testid="reveal-markdown-toggle"
         />
 
         {/* #1492 — external-image load policy (Always / Ask each time / Never).

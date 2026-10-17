@@ -19,7 +19,8 @@
  * lands inside the interaction that called it and inflates INP.
  *
  * Knobs: `AGARIC_PERF_CPU=4` throttles the CPU (a mid-range laptop or phone),
- * `AGARIC_PERF_PAGES` / `AGARIC_PERF_BLOCKS` set the vault size, and
+ * `AGARIC_PERF_PAGES` / `AGARIC_PERF_BLOCKS` set the vault size,
+ * `AGARIC_PERF_REVEAL=1` turns on "Show Markdown syntax around the cursor", and
  * `AGARIC_PERF_TRACE=1` saves a Chrome trace per journey (open it in the
  * DevTools Performance panel or ui.perfetto.dev; tracing adds overhead, so
  * compare numbers only between runs with the same knobs). `perf-report.json`
@@ -31,6 +32,10 @@
  * Android WebView. Headless Chromium rasterizes in software, so a long frame
  * with no script in it is mostly paint and is not evidence of a real problem.
  * The run fails only when a journey cannot complete; it has no budgets.
+ *
+ * `perf: caret moves in a block of 1,000 bold runs (#5689)` is opt-in too: it times caret moves
+ * with "Show Markdown syntax around the cursor" on and off, and typing one character as the
+ * reference for what laying the block out again costs.
  *
  * `perf: boot JS executed share (#5441)` is opt-in too: it loads the app cold and prints how
  * many JS files and bytes load by the first block and by first block + 2 s, and what share of
@@ -47,12 +52,13 @@ import { writeFileSync } from 'node:fs'
 
 import type { Browser, CDPSession, Page } from '@playwright/test'
 
-import { expect, navigateToView, test } from './helpers'
+import { expect, focusBlock, navigateToView, openPage, test, waitForBoot } from './helpers'
 
 const CPU = Number(process.env['AGARIC_PERF_CPU'] ?? 1)
 const PAGES = Number(process.env['AGARIC_PERF_PAGES'] ?? 500)
 const BIG_BLOCKS = Number(process.env['AGARIC_PERF_BLOCKS'] ?? 500)
 const TRACE = process.env['AGARIC_PERF_TRACE'] === '1'
+const REVEAL = process.env['AGARIC_PERF_REVEAL'] === '1'
 const TAGS = 50
 const BIG_TITLE = 'Perf big page'
 
@@ -418,6 +424,9 @@ test('perf: core journeys on a seeded vault', async ({ page }) => {
   const blocks = page.locator('[data-testid="block-static"]')
   const rows: Row[] = []
   await page.addInitScript(installProbes)
+  if (REVEAL) {
+    await page.addInitScript(() => localStorage.setItem('agaric-reveal-markdown-syntax', 'true'))
+  }
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Performance.enable')
   await cdp.send('Profiler.enable')
@@ -491,8 +500,97 @@ test('perf: core journeys on a seeded vault', async ({ page }) => {
     'perf-report.json',
     JSON.stringify({ cpuThrottle: CPU, pages: PAGES, bigBlocks: BIG_BLOCKS, rows }, null, 2),
   )
-  console.log(`\nperf (CPU ×${CPU}, ${PAGES} pages, ${BIG_BLOCKS}-block page)`)
+  console.log(
+    `\nperf (CPU ×${CPU}, ${PAGES} pages, ${BIG_BLOCKS}-block page, Markdown reveal ${REVEAL ? 'on' : 'off'})`,
+  )
   console.table(rows)
+})
+
+/**
+ * #5689 — a caret move in one block of 1,000 bold runs with "Show Markdown
+ * syntax around the cursor" on and off, timed inside the page. A move into
+ * another run draws markers there, so the browser lays the block's lines out
+ * again, as typing a character does; a move inside a run changes nothing drawn.
+ * Each value is one round's median of 50; the table gives the median round
+ * and the spread across rounds, the noise band.
+ */
+test('perf: caret moves in a block of 1,000 bold runs (#5689)', async ({ page }) => {
+  test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
+  test.setTimeout(5 * 60_000)
+  const rounds = Number(process.env['AGARIC_PERF_ROUNDS'] ?? 7)
+  await waitForBoot(page)
+  await openPage(page, 'Getting Started')
+  const editor = await focusBlock(page, 2)
+  const cdp = await page.context().newCDPSession(page)
+  if (CPU > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU })
+
+  const samples = new Map<string, number[]>()
+  for (let round = 0; round < rounds; round++) {
+    for (const reveal of [true, false]) {
+      const medians = await editor.evaluate((el, on) => {
+        localStorage.setItem('agaric-reveal-markdown-syntax', String(on))
+        const ed = (
+          el as HTMLElement & {
+            editor: {
+              commands: {
+                setContent: (doc: unknown) => boolean
+                setTextSelection: (pos: number) => boolean
+                insertContent: (text: string) => boolean
+              }
+            }
+          }
+        ).editor
+        const content: unknown[] = []
+        let pos = 1
+        let insideRun = 0
+        for (let i = 0; i < 2000; i++) {
+          const text = `word${i} `
+          if (i === 1001) insideRun = pos + 2
+          content.push({ type: 'text', text, marks: i % 2 ? [{ type: 'bold' }] : [] })
+          pos += text.length
+        }
+        ed.commands.setContent({ type: 'doc', content: [{ type: 'paragraph', content }] })
+        const time = (act: () => void): number => {
+          const t0 = performance.now()
+          act()
+          return performance.now() - t0
+        }
+        const median = (xs: number[]): number => xs.toSorted((a, b) => a - b)[xs.length >> 1] ?? NaN
+        const intoAnotherRun = Array.from({ length: 50 }, (_, i) =>
+          time(() => ed.commands.setTextSelection(10 + i * 200)),
+        )
+        ed.commands.setTextSelection(insideRun)
+        const insideOneRun = Array.from({ length: 50 }, (_, i) =>
+          time(() => ed.commands.setTextSelection(insideRun + (i % 2))),
+        )
+        const typeOneCharacter = Array.from({ length: 50 }, () =>
+          time(() => ed.commands.insertContent('x')),
+        )
+        return {
+          'caret into another run': median(intoAnotherRun),
+          'caret inside one run': median(insideOneRun),
+          'type one character': median(typeOneCharacter),
+        }
+      }, reveal)
+      for (const [metric, ms] of Object.entries(medians)) {
+        const key = `${metric}, reveal ${reveal ? 'on' : 'off'}`
+        samples.set(key, [...(samples.get(key) ?? []), ms])
+      }
+    }
+  }
+
+  const ms = (x: number | undefined): number => Math.round((x ?? NaN) * 100) / 100
+  const table = [...samples].map(([metric, values]) => {
+    const sorted = values.toSorted((a, b) => a - b)
+    return {
+      metric,
+      medianMs: ms(sorted[sorted.length >> 1]),
+      minMs: ms(sorted[0]),
+      maxMs: ms(sorted.at(-1)),
+    }
+  })
+  console.log(`\ncaret moves in a block of 1,000 bold runs (CPU ×${CPU}, ${rounds} rounds)`)
+  console.table(table)
 })
 
 /** Milliseconds from the last click or key press in `act` until `selector` is in the DOM. */

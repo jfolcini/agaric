@@ -207,17 +207,20 @@ function escapeText(s: string, before: string, after: string): string {
 }
 
 /** Emphasis marks innermost first, the order their delimiters close in; they open in reverse. */
-const MARK_ORDER = ['highlight', 'strike', 'italic', 'bold', 'underline'] as const
+export const MARK_ORDER = ['highlight', 'strike', 'italic', 'bold', 'underline'] as const
 type EmphasisMark = (typeof MARK_ORDER)[number]
 
-const OPEN_DELIMITER: Record<EmphasisMark, string> = {
+export const OPEN_DELIMITER: Record<EmphasisMark, string> = {
   highlight: '==',
   strike: '~~',
   italic: '*',
   bold: '**',
   underline: '<u>',
 }
-const CLOSE_DELIMITER: Record<EmphasisMark, string> = { ...OPEN_DELIMITER, underline: '</u>' }
+export const CLOSE_DELIMITER: Record<EmphasisMark, string> = {
+  ...OPEN_DELIMITER,
+  underline: '</u>',
+}
 
 interface Delimiter {
   mark: EmphasisMark
@@ -421,6 +424,12 @@ function serializeInlineAtom(token: string, activeMarks: Set<string>): string {
  * space, which the parser would otherwise strip).
  */
 function serializeInlineCode(text: string): string {
+  const { open, close } = inlineCodeDelimiters(text)
+  return `${open}${text}${close}`
+}
+
+/** The opening and closing delimiters `serializeInlineCode` wraps `text` in. */
+export function inlineCodeDelimiters(text: string): { open: string; close: string } {
   const runs = text.match(/`+/g)
   const longest = runs ? Math.max(...runs.map((r) => r.length)) : 0
   const fence = '`'.repeat(longest + 1)
@@ -432,7 +441,7 @@ function serializeInlineCode(text: string): string {
     text.startsWith('`') ||
     text.endsWith('`') ||
     ((text.startsWith(' ') || text.endsWith(' ')) && text.trim() !== '')
-  return needsPad ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`
+  return needsPad ? { open: `${fence} `, close: ` ${fence}` } : { open: fence, close: fence }
 }
 
 /**

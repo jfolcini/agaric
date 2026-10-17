@@ -1311,6 +1311,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* #5689 — a revealed Markdown marker beside the caret's inline mark: a widget
+   decoration outside the document, faint so the formatted text still leads. */
+.ProseMirror .md-reveal-marker {
+  @apply text-muted-foreground select-none;
+}
+
 /* Inline code inside the editor — visible background so the user
    knows they're typing inside a code span, not plain text. */
 .ProseMirror code {
