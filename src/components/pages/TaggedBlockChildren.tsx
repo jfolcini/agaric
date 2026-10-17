@@ -11,9 +11,11 @@ import type React from 'react'
 import { useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { BlockResolversProvider } from '@/components/block-tree/use-block-resolvers'
 import { selectEmbeddedRows } from '@/components/editor/embed/embed-rows'
 import { EmbeddedBlockTree } from '@/components/editor/embed/EmbeddedBlockTree'
 import { Spinner } from '@/components/ui/spinner'
+import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import { EMBED_MOUNT_LIMIT } from '@/lib/embed-token'
 import {
   PageBlockStoreProvider,
@@ -48,13 +50,30 @@ function ChildRows({ blockId, pageId }: TaggedBlockChildrenProps): React.ReactEl
   }, [store])
 
   // One past the limit: the first row is the block itself, which is dropped.
-  const rows = useMemo(() => {
-    const subtree = selectEmbeddedRows(blocks, blockId, pageId, EMBED_MOUNT_LIMIT + 1).rows
-    const children = subtree.slice(1)
+  const { rows, hiddenCount } = useMemo(() => {
+    const selection = selectEmbeddedRows(blocks, blockId, pageId, EMBED_MOUNT_LIMIT + 1)
+    const children = selection.rows.slice(1)
     // Fresh copies, re-based on the block itself: shift them onto its children.
     for (const row of children) row.depth -= 1
-    return children
+    return { rows: children, hiddenCount: selection.hiddenCount }
   }, [blocks, blockId, pageId])
+
+  // Outside a BlockTree nothing publishes the resolvers, so a child's tag and
+  // page-link chips would show a truncated ULID.
+  const groups = useMemo(
+    () => [{ page_id: pageId, page_title: null, blocks: rows }],
+    [pageId, rows],
+  )
+  const { resolveBlockTitle, resolveBlockStatus, resolveTagName } = useBacklinkResolution(groups)
+  const resolvers = useMemo(
+    () => ({
+      resolveBlockTitle,
+      resolveBlockStatus,
+      resolveTagName,
+      resolveTagStatus: resolveBlockStatus,
+    }),
+    [resolveBlockTitle, resolveBlockStatus, resolveTagName],
+  )
 
   if (rows.length === 0) {
     return loading ? (
@@ -63,5 +82,14 @@ function ChildRows({ blockId, pageId }: TaggedBlockChildrenProps): React.ReactEl
       <p className="px-3 py-1 text-sm text-muted-foreground">{t('taggedItems.noChildren')}</p>
     )
   }
-  return <EmbeddedBlockTree rows={rows} baseAriaLevel={0} />
+  return (
+    <BlockResolversProvider value={resolvers}>
+      <EmbeddedBlockTree rows={rows} baseAriaLevel={0} />
+      {hiddenCount > 0 && (
+        <p className="px-3 py-1 text-xs text-muted-foreground">
+          {t('taggedItems.moreChildren', { count: hiddenCount })}
+        </p>
+      )}
+    </BlockResolversProvider>
+  )
 }

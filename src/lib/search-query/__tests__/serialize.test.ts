@@ -97,7 +97,14 @@ describe('serialize round-trip', () => {
     fc.assert(
       fc.property(
         fc.oneof(
-          fc.constantFrom('tag:#urgent', 'path:Journal/*', '#followup', 'hello world'),
+          fc.constantFrom(
+            'tag:#urgent',
+            'path:Journal/*',
+            '#followup',
+            'hello world',
+            // An under: chip turns every tag: and bare-#tag chip beside it invalid.
+            'under:#idea tag:#urgent #followup',
+          ),
           fc.string({ minLength: 0, maxLength: 30 }),
         ),
         roundTrips,

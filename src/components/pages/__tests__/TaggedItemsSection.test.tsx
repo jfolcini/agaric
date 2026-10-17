@@ -9,6 +9,7 @@ import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { TaggedItemsSection } from '@/components/pages/TaggedItemsSection'
 import type { AdvancedQueryResponse, BlockRow } from '@/lib/bindings'
+import { EMBED_MOUNT_LIMIT } from '@/lib/embed-token'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { queryClient } from '@/lib/query-client'
@@ -81,7 +82,7 @@ function response(rows: BlockRow[], nextCursor: string | null = null): AdvancedQ
 type Answer = (cursor: string | null) => AdvancedQueryResponse | Promise<never>
 
 /** `run_advanced_query` answering per block type. */
-function stub(byType: { page: Answer; content: Answer }): void {
+function stub(byType: { page: Answer; content: Answer }, outline: BlockRow[] = HOME_OUTLINE): void {
   mockedInvoke.mockImplementation(
     mockInvokeCommands({
       run_advanced_query: (args) => {
@@ -96,9 +97,10 @@ function stub(byType: { page: Answer; content: Answer }): void {
       batch_resolve: () => [
         { id: HOME, title: 'Home', block_type: 'page', deleted: false },
         { id: WORK, title: 'Work', block_type: 'page', deleted: false },
+        { id: TAG, title: 'idea', block_type: 'tag', deleted: false },
       ],
       load_page_subtree: (args) => {
-        const blocks = args['rootBlockId'] === HOME ? HOME_OUTLINE : []
+        const blocks = args['rootBlockId'] === HOME ? outline : []
         return { blocks, truncated: false, total: blocks.length }
       },
     }),
@@ -350,6 +352,46 @@ describe('TaggedItemsSection', () => {
 
     expect(await within(blocksPanel()).findByText('Buy bolts')).toBeInTheDocument()
     expect(onNavigateToPage).not.toHaveBeenCalled()
+  })
+
+  it('names the tags and page links inside a child row', async () => {
+    const user = userEvent.setup()
+    const outline = [
+      { ...PLUMBER, position: 1 },
+      { ...BOLTS, content: `Ask #[${TAG}] about [[${WORK}]]` },
+    ]
+    stub({ page: () => response([]), content: () => response([PLUMBER]) }, outline)
+
+    render(<TaggedItemsSection tagId={TAG} tagName="idea" />)
+    await within(blocksPanel()).findByText(/^Home/)
+    await user.click(within(blocksPanel()).getByRole('button', { name: 'Show child blocks' }))
+
+    const child = (await within(blocksPanel()).findByText(/^Ask/)).closest('li') as HTMLElement
+    await waitFor(() => {
+      expect(within(child).getByText('Work')).toBeInTheDocument()
+      expect(within(child).getByTestId('tag-ref-chip')).toHaveTextContent('idea')
+    })
+  })
+
+  it('says how many descendants the child list leaves out', async () => {
+    const user = userEvent.setup()
+    const many = Array.from({ length: EMBED_MOUNT_LIMIT + 4 }, (_, i) =>
+      makeBlockRow({
+        id: `CHILD${String(i).padStart(21, '0')}`,
+        content: `Child ${i}`,
+        parent_id: PLUMBER.id,
+        page_id: HOME,
+        position: i + 1,
+      }),
+    )
+    stub({ page: () => response([]), content: () => response([PLUMBER]) }, [PLUMBER, ...many])
+
+    render(<TaggedItemsSection tagId={TAG} tagName="idea" />)
+    await within(blocksPanel()).findByText(/^Home/)
+    await user.click(within(blocksPanel()).getByRole('button', { name: 'Show child blocks' }))
+
+    expect(await within(blocksPanel()).findByText(/^4 more blocks/)).toBeInTheDocument()
+    expect(within(blocksPanel()).getAllByText(/^Child \d+$/)).toHaveLength(EMBED_MOUNT_LIMIT)
   })
 
   it('says so when a tagged block has no children', async () => {

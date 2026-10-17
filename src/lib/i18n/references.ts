@@ -194,6 +194,8 @@ export const references: Record<string, string> = {
   'taggedItems.noBlocks': 'No blocks have this tag.',
   'taggedItems.loadFailed': 'Failed to load what this tag is on.',
   'taggedItems.noChildren': 'No child blocks.',
+  'taggedItems.moreChildren_one': '{{count}} more block \u2014 open the block to see it',
+  'taggedItems.moreChildren_other': '{{count}} more blocks \u2014 open the block to see them',
   'taggedItems.searchUnder': 'Search everything under #{{name}}',
   'backlink.searchTextRequired': 'Search text is required',
   'backlink.propertyKeyRequired': 'Property key is required',
