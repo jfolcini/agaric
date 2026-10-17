@@ -1,229 +1,201 @@
 /**
- * Tests for FilterSortControls component.
- *
- * Validates:
- *  - Renders sort dropdown and direction button
- *  - Shows property keys as sort options
- *  - Calls onSortTypeChange when sort option is selected
- *  - Calls onSortTypeChange with empty string when default option is selected
- *  - Calls onSortDirToggle when direction button is clicked
- *  - Disables direction button when sort is null
- *  - Enables direction button when sort is active
- *  - Shows correct direction label (ASC/DESC)
- *  - a11y compliance
+ * FilterSortControls — the References sort field picker and its direction
+ * toggle. The re-queried row order is pinned end to end in
+ * `src/components/backlinks/__tests__/LinkedReferences.sort.test.tsx`.
  */
 
-import { render, screen } from '@testing-library/react'
+import { invoke } from '@tauri-apps/api/core'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
 
+import { axe } from '@/__tests__/helpers/axe'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { FilterSortControls } from '@/components/filters/FilterSortControls'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import type { BacklinkSort, PropertyDefinition } from '@/lib/bindings'
+import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
+import { queryClient } from '@/lib/query-client'
 
-// Radix Select is mocked globally via the shared mock in src/test-setup.ts
-// (see src/__tests__/mocks/ui-select.tsx).
+const mockedInvoke = vi.mocked(invoke)
+
+function def(key: string, value_type: string): PropertyDefinition {
+  return { key, value_type, options: null, created_at: '2026-01-01T00:00:00Z' }
+}
+
+const DEFS: PropertyDefinition[] = [
+  def('estimate', 'number'),
+  def('deadline', 'date'),
+  def('effort', 'select'),
+  def('notes', 'text'),
+  def('homepage', 'url'),
+  def('owner', 'ref'),
+  def('reviewed', 'boolean'),
+  // Built-in: offered under its own label in the built-in group, never twice.
+  def('due_date', 'date'),
+  def('repeat-count', 'number'),
+  // Every bookkeeping key, as a sortable type, so the shared list alone hides it.
+  ...[...INTERNAL_PROPERTY_KEYS].map((key) => def(key, 'select')),
+]
+
+const BUILTIN_VALUES = ['created', 'due', 'scheduled', 'priority', 'completed']
+
+function stubDefs(defs: PropertyDefinition[] = DEFS) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({
+      list_property_defs: () => ({
+        items: defs,
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }),
+    }),
+  )
+}
+
+function renderControls(props: Partial<Parameters<typeof FilterSortControls>[0]> = {}) {
+  const onSortChange = vi.fn<(sort: BacklinkSort) => void>()
+  const utils = render(
+    <TooltipProvider>
+      <FilterSortControls sort={null} onSortChange={onSortChange} {...props} />
+    </TooltipProvider>,
+  )
+  return { ...utils, onSortChange }
+}
+
+const picker = () => screen.getByLabelText(t('backlink.sortByLabel'))
+const optionValues = () => [...picker().querySelectorAll('option')].map((o) => o.value)
+const directionButton = (dir: 'ascending' | 'descending') =>
+  screen.getByRole('button', {
+    name: t('backlink.sortDirectionLabel', { direction: t(`common.${dir}`) }),
+  })
 
 beforeEach(() => {
   vi.clearAllMocks()
+  queryClient.clear()
+  stubDefs()
 })
 
 describe('FilterSortControls', () => {
-  const defaultProps = {
-    sort: null,
-    propertyKeys: ['todo', 'priority', 'due'],
-    onSortTypeChange: vi.fn(),
-    onSortDirToggle: vi.fn(),
-  }
+  it('offers the built-in fields, then only the properties whose type has an order', async () => {
+    renderControls()
 
-  it('renders sort dropdown', () => {
-    render(<FilterSortControls {...defaultProps} />)
-
-    expect(screen.getByLabelText(t('backlink.sortByLabel'))).toBeInTheDocument()
+    await waitFor(() => expect(optionValues()).toContain('prop:estimate'))
+    expect(optionValues()).toEqual([
+      ...BUILTIN_VALUES,
+      'prop:estimate',
+      'prop:deadline',
+      'prop:effort',
+    ])
+    expect(within(picker()).getByText('estimate')).toBeInTheDocument()
   })
 
-  it('renders sort direction toggle button', () => {
-    render(<FilterSortControls {...defaultProps} />)
+  it('never offers a url, ref, boolean or text property', async () => {
+    renderControls()
 
-    expect(screen.getByRole('button', { name: /Toggle sort direction/i })).toBeInTheDocument()
+    await waitFor(() => expect(optionValues()).toContain('prop:estimate'))
+    for (const key of ['homepage', 'owner', 'reviewed', 'notes']) {
+      expect(optionValues()).not.toContain(`prop:${key}`)
+    }
   })
 
-  it('shows property keys as sort options', () => {
-    render(<FilterSortControls {...defaultProps} />)
+  it('hides every key on the shared bookkeeping list', async () => {
+    renderControls()
 
-    const select = screen.getByLabelText(t('backlink.sortByLabel'))
-    const options = select.querySelectorAll('option')
-
-    // __none__ + Created + 3 property keys = 5 options
-    expect(options).toHaveLength(5)
-    expect(options[0]).toHaveTextContent(t('backlink.defaultOrderOption'))
-    expect(options[1]).toHaveTextContent(t('backlink.createdOption'))
-    expect(options[2]).toHaveTextContent('todo')
-    expect(options[3]).toHaveTextContent('priority')
-    expect(options[4]).toHaveTextContent('due')
+    await waitFor(() => expect(optionValues()).toContain('prop:estimate'))
+    for (const key of INTERNAL_PROPERTY_KEYS) {
+      expect(optionValues()).not.toContain(`prop:${key}`)
+    }
   })
 
-  it('calls onSortTypeChange when Created is selected', async () => {
+  it('sorts a number property numerically and a date property by date', async () => {
     const user = userEvent.setup()
-    const onSortTypeChange = vi.fn()
+    const { onSortChange } = renderControls({ sort: { type: 'Created', dir: 'Desc' } })
+    await waitFor(() => expect(optionValues()).toContain('prop:estimate'))
 
-    render(<FilterSortControls {...defaultProps} onSortTypeChange={onSortTypeChange} />)
-
-    await user.selectOptions(screen.getByLabelText(t('backlink.sortByLabel')), 'Created')
-
-    expect(onSortTypeChange).toHaveBeenCalledWith('Created')
-  })
-
-  it('calls onSortTypeChange with property key when a property is selected', async () => {
-    const user = userEvent.setup()
-    const onSortTypeChange = vi.fn()
-
-    render(<FilterSortControls {...defaultProps} onSortTypeChange={onSortTypeChange} />)
-
-    await user.selectOptions(screen.getByLabelText(t('backlink.sortByLabel')), 'due')
-
-    expect(onSortTypeChange).toHaveBeenCalledWith('due')
-  })
-
-  it('calls onSortTypeChange with empty string when default option is selected', async () => {
-    const user = userEvent.setup()
-    const onSortTypeChange = vi.fn()
-
-    render(
-      <FilterSortControls
-        {...defaultProps}
-        sort={{ type: 'Created', dir: 'Desc' }}
-        onSortTypeChange={onSortTypeChange}
-      />,
-    )
-
-    await user.selectOptions(screen.getByLabelText(t('backlink.sortByLabel')), '__none__')
-
-    expect(onSortTypeChange).toHaveBeenCalledWith('')
-  })
-
-  it('disables direction button when sort is null', () => {
-    render(<FilterSortControls {...defaultProps} sort={null} />)
-
-    const btn = screen.getByRole('button', { name: /Toggle sort direction/i })
-    expect(btn).toBeDisabled()
-  })
-
-  it('enables direction button when sort is active', () => {
-    render(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Desc' }} />)
-
-    const btn = screen.getByRole('button', { name: /Toggle sort direction/i })
-    expect(btn).not.toBeDisabled()
-  })
-
-  it('calls onSortDirToggle when direction button is clicked', async () => {
-    const user = userEvent.setup()
-    const onSortDirToggle = vi.fn()
-
-    render(
-      <FilterSortControls
-        {...defaultProps}
-        sort={{ type: 'Created', dir: 'Desc' }}
-        onSortDirToggle={onSortDirToggle}
-      />,
-    )
-
-    await user.click(screen.getByRole('button', { name: /Toggle sort direction/i }))
-
-    expect(onSortDirToggle).toHaveBeenCalledTimes(1)
-  })
-
-  it('shows Desc label when sort direction is Desc', () => {
-    render(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Desc' }} />)
-
-    expect(screen.getByText(t('backlink.descSort'))).toBeInTheDocument()
-  })
-
-  it('shows Asc label when sort direction is Asc', () => {
-    render(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Asc' }} />)
-
-    expect(screen.getByText(t('backlink.ascSort'))).toBeInTheDocument()
-  })
-
-  // #2232 — the direction token in the toggle aria-label must be routed through
-  // i18n (t('common.ascending'/'descending')) rather than hardcoded English.
-  it('interpolates the translated direction token into the toggle aria-label', () => {
-    const { rerender } = render(
-      <FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Asc' }} />,
-    )
-    expect(
-      screen.getByRole('button', {
-        name: t('backlink.toggleSortLabel', { direction: t('common.ascending') }),
-      }),
-    ).toBeInTheDocument()
-
-    rerender(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Desc' }} />)
-    expect(
-      screen.getByRole('button', {
-        name: t('backlink.toggleSortLabel', { direction: t('common.descending') }),
-      }),
-    ).toBeInTheDocument()
-  })
-
-  it('reflects current sort value in the select when sort is Created', () => {
-    render(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Desc' }} />)
-
-    const select = screen.getByLabelText(t('backlink.sortByLabel'))
-    expect(select).toHaveValue('Created')
-  })
-
-  it('reflects current sort value in the select when sort is a property key', () => {
-    render(
-      <FilterSortControls
-        {...defaultProps}
-        sort={{ type: 'PropertyText', key: 'due', dir: 'Asc' }}
-      />,
-    )
-
-    const select = screen.getByLabelText(t('backlink.sortByLabel'))
-    expect(select).toHaveValue('due')
-  })
-
-  it('shows __none__ as selected when sort is null', () => {
-    render(<FilterSortControls {...defaultProps} sort={null} />)
-
-    const select = screen.getByLabelText(t('backlink.sortByLabel'))
-    expect(select).toHaveValue('__none__')
-  })
-
-  it('applies size="sm" to sort select trigger', () => {
-    render(<FilterSortControls {...defaultProps} />)
-
-    const select = screen.getByLabelText(t('backlink.sortByLabel'))
-    expect(select).toHaveAttribute('data-size', 'sm')
-  })
-
-  describe('a11y', () => {
-    it('has no a11y violations with no sort', async () => {
-      const { container } = render(<FilterSortControls {...defaultProps} />)
-
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
+    await user.selectOptions(picker(), 'prop:estimate')
+    expect(onSortChange).toHaveBeenLastCalledWith({
+      type: 'PropertyNum',
+      key: 'estimate',
+      dir: 'Desc',
     })
-
-    it('has no a11y violations with active sort', async () => {
-      const { container } = render(
-        <FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Desc' }} />,
-      )
-
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
+    await user.selectOptions(picker(), 'prop:deadline')
+    expect(onSortChange).toHaveBeenLastCalledWith({
+      type: 'PropertyDate',
+      key: 'deadline',
+      dir: 'Desc',
     })
   })
 
-  // The direction-toggle ships `min-h-[44px]` on coarse
-  // pointers, but `px-1` keeps its horizontal footprint well below the
-  // 44 px touch-target target. Bumping to `px-2` on coarse pointers
-  // widens the hit area without affecting the tight desktop layout.
-  it('direction-toggle bumps horizontal padding on coarse pointers', () => {
-    render(<FilterSortControls {...defaultProps} sort={{ type: 'Created', dir: 'Desc' }} />)
+  it('maps the built-in due date onto its column key, keeping the direction', async () => {
+    const user = userEvent.setup()
+    const { onSortChange } = renderControls({ sort: { type: 'Created', dir: 'Asc' } })
 
-    const btn = screen.getByRole('button', { name: /Toggle sort direction/i })
-    expect(btn.className).toContain('[@media(pointer:coarse)]:px-2')
+    await user.selectOptions(picker(), 'due')
+    expect(onSortChange).toHaveBeenCalledWith({ type: 'PropertyDate', key: 'due_date', dir: 'Asc' })
+  })
+
+  it('shows the default order as Created, ascending', () => {
+    renderControls()
+
+    expect(picker()).toHaveValue('created')
+    expect(directionButton('ascending')).toBeEnabled()
+  })
+
+  it('shows a property sort as its option', async () => {
+    renderControls({ sort: { type: 'PropertyNum', key: 'estimate', dir: 'Desc' } })
+
+    await waitFor(() => expect(picker()).toHaveValue('prop:estimate'))
+    expect(directionButton('descending')).toBeInTheDocument()
+  })
+
+  it('reverses the default order from the toggle', async () => {
+    const user = userEvent.setup()
+    const { onSortChange } = renderControls()
+
+    await user.click(directionButton('ascending'))
+    expect(onSortChange).toHaveBeenCalledWith({ type: 'Created', dir: 'Desc' })
+  })
+
+  it('reverses a property sort from the keyboard', async () => {
+    const user = userEvent.setup()
+    const { onSortChange } = renderControls({
+      sort: { type: 'PropertyDate', key: 'due_date', dir: 'Desc' },
+    })
+
+    directionButton('descending').focus()
+    await user.keyboard('{Enter}')
+    expect(onSortChange).toHaveBeenCalledWith({ type: 'PropertyDate', key: 'due_date', dir: 'Asc' })
+  })
+
+  it('keeps a 44 px touch target on the toggle', () => {
+    renderControls()
+
+    expect(directionButton('ascending').className).toContain('[@media(pointer:coarse)]:size-11')
+  })
+
+  it('loads no property definitions until asked', () => {
+    renderControls({ loadProperties: false })
+
+    expect(mockedInvoke).not.toHaveBeenCalled()
+    expect(optionValues()).toEqual(BUILTIN_VALUES)
+  })
+
+  it('falls back to the built-in fields when the definitions fail to load', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    mockedInvoke.mockRejectedValue(new Error('ipc down'))
+    renderControls()
+
+    await waitFor(() => expect(warn).toHaveBeenCalled())
+    expect(optionValues()).toEqual(BUILTIN_VALUES)
+  })
+
+  it('has no a11y violations', async () => {
+    const { container } = renderControls({ sort: { type: 'Created', dir: 'Desc' } })
+
+    await waitFor(() => expect(optionValues()).toContain('prop:estimate'))
+    expect(await axe(container)).toHaveNoViolations()
   })
 })

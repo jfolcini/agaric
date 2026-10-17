@@ -19,6 +19,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { queryClient } from '@/lib/query-client'
 
 const eventListeners = new Map<string, (event: unknown) => void>()
@@ -89,6 +90,11 @@ describe('property-keys-cache', () => {
     expect(second).toBe(first) // same array reference — cached
     expect(listPropertyKeysInvocationCount()).toBe(1)
     expect(queryClient.getQueryData(propertyKeysQueryKey('SPACE_A'))).toEqual(['project', 'effort'])
+  })
+
+  it('drops every key on the shared bookkeeping list, so no key picker offers one', async () => {
+    storedKeys = ['effort', ...INTERNAL_PROPERTY_KEYS, 'project']
+    expect(await fetchPropertyKeysOnce('SPACE_A')).toEqual(['effort', 'project'])
   })
 
   it('different spaceKeys cache independently and fire separate IPCs', async () => {

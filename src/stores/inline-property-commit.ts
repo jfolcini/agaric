@@ -83,7 +83,7 @@ export interface PageBlockStoreLike {
 const flushSeqByBlock = new Map<string, number>()
 
 /** Every property definition, page by page. */
-async function listAllPropertyDefs(): Promise<PropertyDefinition[]> {
+export async function listAllPropertyDefs(): Promise<PropertyDefinition[]> {
   const defs: PropertyDefinition[] = []
   let cursor: string | null = null
   do {

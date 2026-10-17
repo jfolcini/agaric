@@ -92,6 +92,8 @@ Both sections share a **BacklinkFilterBuilder** with these dimensions:
 
 The filter pills compose; clear with *"Clear all"*.
 
+**Sort** orders the references within each source page; the pages themselves stay alphabetical. The picker offers Created (the default, oldest first), Due date, Scheduled, Priority and Completed, then your own properties whose type has an order: number, date, and select (A to Z by option text). Text, URL, reference and checkbox properties are not offered, nor are the keys the app keeps for itself (`isSortablePropertyType` and `INTERNAL_PROPERTY_KEYS` in `src/lib/block-utils.ts`). The arrow button beside it reverses the direction; references with no value for the field stay last either way.
+
 The linked section also carries a separate **link kind** toggle — All / Page links (`[[…]]`) / Block refs (`((…))`). It is not one of the pills above: it scopes the whole panel, header count included, rather than filtering within it.
 
 ## Inline query blocks

@@ -68,6 +68,11 @@ vi.mock('@/lib/bindings', async () => {
     commands: {
       ...actual.commands,
       listPropertyKeys: mockListPropertyKeys,
+      // The sort's property group; no test here reads it.
+      listPropertyDefs: async () => ({
+        status: 'ok',
+        data: { items: [], next_cursor: null, has_more: false, total_count: null },
+      }),
       listTagsByPrefix: mockListTagsByPrefix,
       listUnlinkedReferences: (...args: unknown[]) =>
         mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),

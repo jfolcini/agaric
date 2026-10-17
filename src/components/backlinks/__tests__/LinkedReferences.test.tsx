@@ -2014,8 +2014,8 @@ describe('LinkedReferences', () => {
 
     renderLinkedReferences({ targetId: 'PAGE1' })
 
-    // `filtered/total` as forwarded to the filter builder.
-    expect(await screen.findByTestId('mock-filter-counts')).toHaveTextContent('4/40')
+    // `filtered/total` as forwarded to the filter builder, once the query lands.
+    await waitFor(() => expect(screen.getByTestId('mock-filter-counts')).toHaveTextContent('4/40'))
   })
 
   // #4551 — the link-kind segmented control. Driven through a handler that

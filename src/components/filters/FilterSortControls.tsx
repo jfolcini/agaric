@@ -1,84 +1,139 @@
 /**
- * FilterSortControls — sort field selector and order toggle for backlink queries.
+ * FilterSortControls — the References panels' sort: a field picker joined to
+ * an ascending/descending toggle.
  *
- * Renders a dropdown to pick the sort field and a button to toggle
- * ascending/descending order.
- * Extracted from BacklinkFilterBuilder.tsx for testability (#651-R4).
+ * Built-in fields come first, then the user's properties whose type has an
+ * order (`propertySortFields`). No sort means the backend's own order,
+ * `DEFAULT_BACKLINK_SORT`, which the controls show and the toggle reverses.
  */
 
-import { ArrowUpDown } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { ArrowDownWideNarrow, ArrowUpNarrowWide } from 'lucide-react'
 import type React from 'react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import type { BacklinkSort } from '@/lib/bindings'
-
-// ---------------------------------------------------------------------------
-// Props
-// ---------------------------------------------------------------------------
+import {
+  BUILTIN_SORT_FIELDS,
+  DEFAULT_BACKLINK_SORT,
+  propertySortFields,
+  sortFieldValue,
+} from '@/lib/backlink-sort'
+import type { BacklinkSort, PropertyDefinition } from '@/lib/bindings'
+import { logger } from '@/lib/logger'
+import { queryClient } from '@/lib/query-client'
+import { listAllPropertyDefs } from '@/stores/inline-property-commit'
 
 export interface FilterSortControlsProps {
   sort: BacklinkSort | null
-  propertyKeys: string[]
-  onSortTypeChange: (value: string) => void
-  onSortDirToggle: () => void
+  onSortChange: (sort: BacklinkSort) => void
+  /**
+   * Load the property definitions behind the "Your properties" group. A panel
+   * passes false until it is used, so opening a page costs no IPC.
+   */
+  loadProperties?: boolean
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+async function fetchPropertyDefs(): Promise<PropertyDefinition[]> {
+  try {
+    return await listAllPropertyDefs()
+  } catch (err) {
+    logger.warn('FilterSortControls', 'failed to load property definitions', undefined, err)
+    return []
+  }
+}
 
 export function FilterSortControls({
   sort,
-  propertyKeys,
-  onSortTypeChange,
-  onSortDirToggle,
+  onSortChange,
+  loadProperties = true,
 }: FilterSortControlsProps): React.ReactElement {
   const { t } = useTranslation()
+  const current = sort ?? DEFAULT_BACKLINK_SORT
+  // staleTime 0: a definition created since the last open shows up on the next.
+  const { data: defs } = useQuery(
+    {
+      queryKey: ['backlinkSortPropertyDefs'],
+      queryFn: fetchPropertyDefs,
+      enabled: loadProperties,
+      staleTime: 0,
+    },
+    queryClient,
+  )
+  const propertyFields = useMemo(() => propertySortFields(defs ?? []), [defs])
+  const hasPropertyFields = propertyFields.length > 0
+
+  const ascending = current.dir === 'Asc'
+  const directionLabel = t('backlink.sortDirectionLabel', {
+    direction: t(ascending ? 'common.ascending' : 'common.descending'),
+  })
+  const DirectionIcon = ascending ? ArrowUpNarrowWide : ArrowDownWideNarrow
+
+  const handleFieldChange = (value: string): void => {
+    const field = [...BUILTIN_SORT_FIELDS, ...propertyFields].find((f) => f.value === value)
+    if (field) onSortChange(field.toSort(current.dir))
+  }
 
   return (
-    <span className="ml-auto flex items-center gap-1">
-      <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-      <Select
-        value={sort ? (sort.type === 'Created' ? 'Created' : sort.key) : '__none__'}
-        onValueChange={(val) => onSortTypeChange(val === '__none__' ? '' : val)}
-      >
-        <SelectTrigger size="sm" aria-label={t('backlink.sortByLabel')} className="px-1.5">
+    <div
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a field picker and its direction toggle form one control; <fieldset> would nest inside the builder's own fieldset and add a legend
+      role="group"
+      aria-label={t('backlink.sortGroupLabel')}
+      className="ml-auto flex min-w-0 items-center"
+    >
+      <Select value={sortFieldValue(current)} onValueChange={handleFieldChange}>
+        <SelectTrigger
+          size="sm"
+          aria-label={t('backlink.sortByLabel')}
+          className="w-auto min-w-0 max-w-48 gap-1 rounded-r-none px-2"
+        >
+          <span className="shrink-0 text-muted-foreground">{t('backlink.sortPrefix')}</span>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="__none__">{t('backlink.defaultOrderOption')}</SelectItem>
-          <SelectItem value="Created">{t('backlink.createdOption')}</SelectItem>
-          {propertyKeys.map((k) => (
-            <SelectItem key={k} value={k}>
-              {k}
-            </SelectItem>
-          ))}
+          <SelectGroup>
+            <SelectLabel>{t('backlink.sortGroupBuiltin')}</SelectLabel>
+            {BUILTIN_SORT_FIELDS.map((field) => (
+              <SelectItem key={field.value} value={field.value}>
+                {t(field.labelKey)}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+          {hasPropertyFields && <SelectSeparator />}
+          {hasPropertyFields && (
+            <SelectGroup>
+              <SelectLabel>{t('backlink.sortGroupProperties')}</SelectLabel>
+              {propertyFields.map((field) => (
+                <SelectItem key={field.value} value={field.value}>
+                  {field.key}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          )}
         </SelectContent>
       </Select>
-      <Button
-        variant="ghost"
-        size="xs"
-        className="h-7 px-1 text-xs [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-2"
-        onClick={onSortDirToggle}
-        disabled={!sort}
-        aria-label={
-          sort
-            ? t('backlink.toggleSortLabel', {
-                direction: sort.dir === 'Asc' ? t('common.ascending') : t('common.descending'),
-              })
-            : t('backlink.toggleSortDefault')
-        }
+      <IconButton
+        variant="outline"
+        size="icon-xs"
+        className="-ml-px size-7 rounded-l-none text-muted-foreground hover:text-foreground"
+        ariaLabel={directionLabel}
+        tooltip={directionLabel}
+        onClick={() => onSortChange({ ...current, dir: ascending ? 'Desc' : 'Asc' })}
+        data-testid="backlink-sort-direction"
       >
-        {sort?.dir === 'Asc' ? t('backlink.ascSort') : t('backlink.descSort')}
-      </Button>
-    </span>
+        <DirectionIcon className="size-4" aria-hidden="true" />
+      </IconButton>
+    </div>
   )
 }

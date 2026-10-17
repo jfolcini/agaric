@@ -1394,6 +1394,54 @@ async fn sort_property_date() {
     assert_eq!(resp.items[2].id, "SRC_A", "2025-03-01 sorts third"); // 2025-03-01
 }
 
+/// A reserved key lives in its `blocks` column, not `block_properties`, so a
+/// property sort on it reads the column: both directions, the unset block last.
+#[tokio::test]
+async fn sort_ids_reserved_key_orders_by_blocks_column_both_directions() {
+    let (pool, _dir) = test_pool().await;
+    setup_backlinks(&pool).await;
+    for (id, due, priority) in [("SRC_A", "2025-03-01", "3"), ("SRC_B", "2025-01-01", "1")] {
+        sqlx::query("UPDATE blocks SET due_date = ?, priority = ? WHERE id = ?")
+            .bind(due)
+            .bind(priority)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let ids: FxHashSet<String> = ["SRC_A", "SRC_B", "SRC_C"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    let sorted = |sort: BacklinkSort| {
+        let pool = pool.clone();
+        let ids = ids.clone();
+        async move { super::sort::sort_ids(&pool, &ids, &sort).await.unwrap() }
+    };
+
+    let due = |dir| BacklinkSort::PropertyDate {
+        key: "due_date".into(),
+        dir,
+    };
+    assert_eq!(sorted(due(SortDir::Asc)).await, ["SRC_B", "SRC_A", "SRC_C"]);
+    assert_eq!(
+        sorted(due(SortDir::Desc)).await,
+        ["SRC_A", "SRC_B", "SRC_C"]
+    );
+    let priority = |dir| BacklinkSort::PropertyText {
+        key: "priority".into(),
+        dir,
+    };
+    assert_eq!(
+        sorted(priority(SortDir::Asc)).await,
+        ["SRC_B", "SRC_A", "SRC_C"]
+    );
+    assert_eq!(
+        sorted(priority(SortDir::Desc)).await,
+        ["SRC_A", "SRC_B", "SRC_C"]
+    );
+}
+
 // ======================================================================
 // Pagination
 // ======================================================================
