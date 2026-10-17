@@ -44,6 +44,7 @@ import { invalidateNameCaches, notifyPagesRemoved } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 /** Locked-in copy slots a caller can override per-invocation. */
 export interface PageDeleteConfirmCopy {
@@ -273,6 +274,8 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         // journal's own DaySection routes its delete through here too, so this
         // one call covers every surface that can remove a journal page.
         invalidateCalendarPageDates()
+        // A trashed page must leave every tab, not just the one it was deleted from.
+        useTabsStore.getState().removePages([canonicalSeedId, ...cascadedPageIds])
         notify.success(t('pageDeleteAction.deleted'), {
           action: {
             label: t('pageDeleteAction.undo'),

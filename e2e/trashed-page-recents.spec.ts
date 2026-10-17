@@ -4,8 +4,8 @@ import { activeAlertDialog, expect, navigateToView, openPage, test, waitForBoot 
  * E2E — following a recents entry to a page that was deleted from the Pages
  * view (#5243).
  *
- * Deletes leave recents and tab stacks alone and heal lazily when a stale
- * entry is followed. The load of a trashed page used to succeed with no
+ * Deletes leave recents alone and heal lazily when a stale entry is
+ * followed. The load of a trashed page used to succeed with no
  * blocks, so the editor opened it blank and seeded a first block under the
  * deleted page. It is now refused, and the heal drops the entry under a trash
  * notice and pops back to the page underneath.

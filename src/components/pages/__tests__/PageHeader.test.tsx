@@ -2622,11 +2622,35 @@ describe('PageHeader delete from the page-actions menu', () => {
     })
   })
 
-  it('confirms delete, fires the success toast with an Undo action, and navigates back', async () => {
+  it('confirms delete, fires the success toast with an Undo action, and closes the page in every tab', async () => {
     const user = userEvent.setup()
-    const onBack = vi.fn()
+    // Open in two tabs, under another page in the first. `ViewDispatcher` wires
+    // `onBack={goBack}`; a delete that still popped the active tab on top of
+    // closing the page everywhere would also pop OTHER and leave the editor.
+    useTabsStore.setState({
+      tabs: [
+        {
+          id: '0',
+          pageStack: [
+            { pageId: 'OTHER', title: 'Other' },
+            { pageId: 'PAGE_1', title: 'My Page' },
+          ],
+          label: 'My Page',
+        },
+        { id: '1', pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }], label: 'My Page' },
+      ],
+      activeTabIndex: 1,
+    })
 
-    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={onBack} />)
+    renderPageHeader(
+      <PageHeader
+        pageId="PAGE_1"
+        title="My Page"
+        onBack={() => {
+          useTabsStore.getState().goBack()
+        }}
+      />,
+    )
 
     await choosePageAction(user, /^delete page$/i)
     const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
@@ -2647,14 +2671,16 @@ describe('PageHeader delete from the page-actions menu', () => {
       )
     })
 
-    expect(onBack).toHaveBeenCalledTimes(1)
+    expect(useTabsStore.getState().tabs).toEqual([
+      { id: '0', pageStack: [{ pageId: 'OTHER', title: 'Other' }], label: 'Other' },
+    ])
+    expect(useNavigationStore.getState().currentView).toBe('page-editor')
   })
 
   // #4287 — the reported bug, end to end: "when deleting a page you should be
-  // redirected to the previous route you were in". `ViewDispatcher` wires
-  // `onBack={goBack}`, so wire the REAL action here rather than a spy and
-  // assert the view the user actually lands on. Before the fix every one of
-  // these landed on `pages`, whatever route the page was opened from.
+  // redirected to the previous route you were in". Assert the view the user
+  // actually lands on. Before the fix every one of these landed on `pages`,
+  // whatever route the page was opened from.
   it.each(['journal', 'search', 'tags'] as const)(
     'deleting a page opened from %s returns to that view, not the pages list',
     async (origin) => {
@@ -2666,15 +2692,7 @@ describe('PageHeader delete from the page-actions menu', () => {
       useTabsStore.getState().navigateToPage('PAGE_1', 'My Page')
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
 
-      renderPageHeader(
-        <PageHeader
-          pageId="PAGE_1"
-          title="My Page"
-          onBack={() => {
-            useTabsStore.getState().goBack()
-          }}
-        />,
-      )
+      renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
       await choosePageAction(user, /^delete page$/i)
       await user.click(await screen.findByRole('button', { name: /^Delete page$/i }))
@@ -2738,24 +2756,16 @@ describe('PageHeader tag chips against the real tauri-mock (#5287)', () => {
 
   it('deletes the page from the page-actions menu', async () => {
     const user = userEvent.setup()
-    const onBack = vi.fn()
-    render(
-      <TooltipProvider>
-        <PageBlockContext.Provider value={pageStore}>
-          <PageHeader pageId={PAGE} title="Projects" onBack={onBack} />
-        </PageBlockContext.Provider>
-      </TooltipProvider>,
-    )
+    render(headerFor(PAGE, 'Projects'))
 
     await choosePageAction(user, /^delete page$/i)
     await user.click(await screen.findByRole('button', { name: /^Delete page$/i }))
 
+    // Soft-deleted (in the trash), not purged, and gone from every active read.
     await waitFor(() => {
-      expect(onBack).toHaveBeenCalledOnce()
+      expect(blocks.get(PAGE)?.['deleted_at']).toBeTruthy()
     })
-    // Gone from every active read, and soft-deleted (in the trash), not purged.
     await expect(async () => dispatch('get_block', { blockId: PAGE })).rejects.toThrow(/not found/)
-    expect(blocks.get(PAGE)?.['deleted_at']).toBeTruthy()
   })
 
   it("shows a tag's new name after it is renamed on its own page", async () => {

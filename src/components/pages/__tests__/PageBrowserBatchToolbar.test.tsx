@@ -45,8 +45,10 @@ import { t } from '@/lib/i18n'
 import type { NameChange } from '@/lib/name-change-bus'
 import { NAME_CACHE_FANOUT_MAX_IDS, subscribeToNameChanges } from '@/lib/name-change-bus'
 import { getStarredPages } from '@/lib/starred-pages'
+import { useNavigationStore } from '@/stores/navigation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 // Partial-mock the generated bindings so the bulk set-property path can be
 // asserted directly (ids/key/value) without threading through `invoke`. All
@@ -186,6 +188,39 @@ describe('PageBrowserBatchToolbar', () => {
         action: expect.objectContaining({ label: t('action.undo') }),
       }),
     )
+  })
+
+  it('Trash closes the trashed pages and their cascaded nested pages in every tab', async () => {
+    const user = userEvent.setup()
+    stubInvoke({ delete_blocks_by_ids: () => trashReply(SELECTED, ['NESTED_PAGE']) })
+    useNavigationStore.setState({ currentView: 'pages' })
+    useTabsStore.setState({
+      tabs: [
+        { id: '0', pageStack: [{ pageId: 'P1', title: 'First' }], label: 'First' },
+        {
+          id: '1',
+          pageStack: [
+            { pageId: 'NESTED_PAGE', title: 'Nested' },
+            { pageId: 'KEPT', title: 'Kept' },
+          ],
+          label: 'Kept',
+        },
+      ],
+      activeTabIndex: 0,
+    })
+    renderToolbar()
+
+    await user.click(screen.getByTestId('page-batch-trash-btn'))
+    await user.click(
+      await screen.findByRole('button', { name: t('pageBrowser.batch.trashConfirmAction') }),
+    )
+
+    await waitFor(() => {
+      expect(useTabsStore.getState().tabs).toEqual([
+        { id: '1', pageStack: [{ pageId: 'KEPT', title: 'Kept' }], label: 'Kept' },
+      ])
+    })
+    expect(useNavigationStore.getState().currentView).toBe('pages')
   })
 
   // #3339 — the success toast's Undo must restore the SAME id list, via the

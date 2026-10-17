@@ -142,6 +142,12 @@ interface TabsStore {
    * which also updates the recents strip and the resolve cache.
    */
   renamePage: (pageId: string, title: string) => void
+  /**
+   * Drop every stack entry naming one of `pageIds` (just trashed) from every tab of the active
+   * space. A tab left empty closes; when none is left, the editor is left the way `goBack`
+   * leaves it on the last tab. No-op when no tab holds any of them.
+   */
+  removePages: (pageIds: readonly string[]) => void
   /** Open a page in a new tab and switch to it. */
   openInNewTab: (pageId: string, title: string) => void
   /** Open a page in a new tab behind the active one, leaving the view and active tab as they are. */
@@ -682,6 +688,39 @@ export const useTabsStore = create<TabsStore>()(
         })
         if (!changed) return
         set(spliceTabs(state, newTabs, activeTabIndex))
+      },
+
+      removePages: (pageIds: readonly string[]) => {
+        const removed = new Set(pageIds)
+        const state = get()
+        const { tabs, activeTabIndex } = readActiveSlice(state)
+        let changed = false
+        // The active tab's slot in `kept`: itself if it survives, else the tab that followed it.
+        let keptActiveIndex = 0
+        const kept: Tab[] = []
+        for (const [i, tab] of tabs.entries()) {
+          if (i === activeTabIndex) keptActiveIndex = kept.length
+          if (!tab.pageStack.some((entry) => removed.has(entry.pageId))) {
+            kept.push(tab)
+            continue
+          }
+          changed = true
+          const newStack = tab.pageStack.filter((entry) => !removed.has(entry.pageId))
+          if (newStack.length > 0) {
+            kept.push({ ...tab, pageStack: newStack, label: tabLabel(newStack) })
+          }
+        }
+        if (!changed) return
+        setNavigationSelectedBlockId(null)
+        if (kept.length > 0) {
+          set(spliceTabs(state, kept, clampIndex(keptActiveIndex, kept.length)))
+          return
+        }
+        const activeTab = tabs[activeTabIndex]
+        set(spliceTabs(state, [{ id: activeTab?.id ?? '0', pageStack: [], label: '' }], 0))
+        if (useNavigationStore.getState().currentView === 'page-editor') {
+          setNavigationView(exitViewForTab(activeTab))
+        }
       },
 
       openInNewTab: (pageId: string, title: string) => {
