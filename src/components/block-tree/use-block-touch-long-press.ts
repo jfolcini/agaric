@@ -35,10 +35,12 @@ export function exceedsThreshold(dx: number, dy: number): boolean {
  * neither starts there: `isInsideEditableText` gates both.
  *
  * Android fires a native `contextmenu` at its own long-press timeout (400 ms
- * by default, racing both timers). `handleContextMenu` always suppresses it
- * and opens nothing while a touch press on the row is pending or a drag is
+ * by default, racing both timers). `handleContextMenu` suppresses it and
+ * opens nothing while a touch press on the row is pending or a drag is
  * active: the release decides, or the menu would pop under the finger and
- * stay open through a drag.
+ * stay open through a drag. A `contextmenu` or `touchend` a nested element
+ * already prevented (`NewTabTarget` opened its own menu) ends the press
+ * instead, so one gesture opens one menu.
  */
 
 /** Whether a touch landed inside the mounted editor's contenteditable. */
@@ -155,6 +157,7 @@ export function useBlockTouchLongPress({
     (e: React.TouchEvent) => {
       const current = press.current
       cancelPress()
+      if (e.defaultPrevented) return
       if (current?.held && !current.moved) {
         // No compat mouse events after this release: Chromium's `mousedown`
         // would move focus off the menu that opens here (and `click` would
@@ -173,13 +176,17 @@ export function useBlockTouchLongPress({
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
+      if (e.defaultPrevented) {
+        cancelPress()
+        return
+      }
       // Always suppress the browser's own menu — even mid-drag, where letting
       // the native menu through would be strictly worse than showing nothing.
       e.preventDefault()
       if (isDraggingRef.current || press.current) return
       openContextMenu(e.clientX, e.clientY, linkUrlAt(e.target), pageLinkIdAt(e.target))
     },
-    [openContextMenu, isDraggingRef],
+    [cancelPress, openContextMenu, isDraggingRef],
   )
 
   useEffect(() => cancelPress, [cancelPress])

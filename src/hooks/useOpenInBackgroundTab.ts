@@ -39,19 +39,12 @@ export interface MiddleClickProps {
 }
 
 /**
- * Mouse props that hand a middle click on the element to `open`. A middle
- * click fires no `click`, so the element's own navigation never runs; the
- * browser's own middle-button actions, autoscroll on `mousedown` and the X11
- * primary-selection paste on `mouseup`, are cancelled.
- */
-export function middleClickProps(open: (() => void) | undefined): MiddleClickProps {
-  return open === undefined ? {} : delegatedMiddleClickProps(() => open)
-}
-
-/**
- * `middleClickProps` for a container whose descendants open pages: `openFor`
- * returns the opener for the event's target, or `undefined` when the target
- * opens nothing, which leaves that click to the browser.
+ * Mouse props that hand a middle click to the opener `openFor` returns for the
+ * event's target; `undefined` means the target opens nothing and leaves the
+ * click to the browser. A middle click fires no `click`, so the element's own
+ * navigation never runs; the browser's own middle-button actions, autoscroll
+ * on `mousedown` and the X11 primary-selection paste on `mouseup`, are
+ * cancelled.
  */
 export function delegatedMiddleClickProps(
   openFor: (e: React.MouseEvent) => (() => void) | undefined,

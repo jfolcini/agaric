@@ -1,8 +1,12 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import {
+  LONG_PRESS_DELAY,
+  useBlockTouchLongPress,
+} from '@/components/block-tree/use-block-touch-long-press'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
@@ -16,6 +20,27 @@ function renderTarget() {
         Target page
       </button>
     </NewTabTarget>,
+  )
+}
+
+const openBlockMenu = vi.fn()
+
+/** A block row wired like `SortableBlock`, holding a target (a query-table `PageLink`). */
+function BlockRow(): React.ReactElement {
+  const { handleTouchStart, handleTouchEnd, handleContextMenu } = useBlockTouchLongPress({
+    openContextMenu: openBlockMenu,
+    isDraggingRef: { current: false },
+  })
+  return (
+    <div
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onContextMenu={handleContextMenu}
+    >
+      <NewTabTarget pageId="TARGET" title="Target page">
+        <button type="button">Target page</button>
+      </NewTabTarget>
+    </div>
   )
 }
 
@@ -106,6 +131,83 @@ describe('NewTabTarget', () => {
 
     expect(await screen.findAllByRole('menu')).toHaveLength(1)
     expect(tabLabels()).toEqual(['Current', 'Inner'])
+  })
+
+  it('inside a block, a right click opens its menu and not the block menu too', async () => {
+    const user = userEvent.setup()
+    render(<BlockRow />)
+
+    await user.pointer({ keys: '[MouseRight]', target: screen.getByRole('button') })
+
+    expect(await screen.findAllByRole('menu')).toHaveLength(1)
+    expect(openBlockMenu).not.toHaveBeenCalled()
+  })
+
+  it('inside a block, an Android long-press opens its menu and not the block menu on release', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<BlockRow />)
+      const target = screen.getByRole('button')
+
+      fireEvent.touchStart(target, { touches: [{ clientX: 10, clientY: 20 }] })
+      act(() => {
+        vi.advanceTimersByTime(LONG_PRESS_DELAY)
+      })
+      // Android's own long-press `contextmenu`, while the finger is still down.
+      fireEvent.contextMenu(target)
+      fireEvent.touchEnd(target, { touches: [] })
+
+      expect(screen.getAllByRole('menu')).toHaveLength(1)
+      expect(openBlockMenu).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('inside a block, a long-press that opens its menu by timer opens no block menu on release', () => {
+    vi.useFakeTimers()
+    try {
+      render(<BlockRow />)
+      const target = screen.getByRole('button')
+
+      fireEvent.touchStart(target, { touches: [{ clientX: 10, clientY: 20 }] })
+      fireEvent.pointerDown(target, { pointerType: 'touch' })
+      // Past Radix's own long-press, with no native `contextmenu`.
+      act(() => {
+        vi.advanceTimersByTime(1000)
+      })
+      expect(screen.getAllByRole('menu')).toHaveLength(1)
+      fireEvent.touchEnd(target, { touches: [] })
+
+      expect(screen.getAllByRole('menu')).toHaveLength(1)
+      expect(openBlockMenu).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('inside a block, a hold released before its menu opens opens the block menu', () => {
+    vi.useFakeTimers()
+    try {
+      render(<BlockRow />)
+      const target = screen.getByRole('button')
+
+      fireEvent.touchStart(target, { touches: [{ clientX: 10, clientY: 20 }] })
+      fireEvent.pointerDown(target, { pointerType: 'touch' })
+      act(() => {
+        vi.advanceTimersByTime(LONG_PRESS_DELAY)
+      })
+      fireEvent.pointerUp(target, { pointerType: 'touch' })
+      fireEvent.touchEnd(target, { touches: [] })
+      act(() => {
+        vi.advanceTimersByTime(1000)
+      })
+
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+      expect(openBlockMenu).toHaveBeenCalledWith(10, 20, undefined, undefined)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('on mobile, which shows no tabs, renders the element alone', async () => {

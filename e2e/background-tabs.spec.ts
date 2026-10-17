@@ -1,6 +1,14 @@
-import type { Locator, Page } from '@playwright/test'
+import { devices, type Locator, type Page } from '@playwright/test'
 
-import { expect, openPage, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlock,
+  openPage,
+  saveBlock,
+  test,
+  touchLongPress,
+  waitForBoot,
+} from './helpers'
 
 /**
  * A middle click on something that opens a page, or "Open in new tab" in its
@@ -45,6 +53,24 @@ function inlineLink(page: Page): Locator {
   return page
     .getByTestId('block-tree')
     .locator('[data-testid="block-link-chip"]', { hasText: 'Quick Notes' })
+}
+
+/** "Getting Started" with a table-mode query block; returns its first page name. */
+async function queryTablePageName(page: Page): Promise<Locator> {
+  await openPage(page, 'Getting Started')
+  await focusBlock(page)
+  await page.keyboard.press('ControlOrMeta+a')
+  await page.keyboard.type('{{query tag:work table:true}}', { delay: 20 })
+  await saveBlock(page)
+  const pageName = page.locator('[data-testid="query-result"] table').getByRole('link').first()
+  await expect(pageName).toBeVisible()
+  return pageName
+}
+
+async function expectOnlyOpenInNewTabMenu(page: Page) {
+  await expect(page.getByRole('menuitem', { name: 'Open in new tab' })).toBeVisible()
+  // Counted by attribute: the open menu hides a second one from the accessibility tree.
+  await expect(page.locator('[role="menu"]')).toHaveCount(1)
 }
 
 test.describe('Background tabs', () => {
@@ -99,5 +125,30 @@ test.describe('Background tabs', () => {
     await expectStillOnPagesWithBackgroundTab(page)
     await expect(page.getByRole('menu')).toHaveCount(0)
     await expect(row).toBeFocused()
+  })
+
+  test('right click on a page name in a query table opens its menu and not the block menu', async ({
+    page,
+  }) => {
+    await (await queryTablePageName(page)).click({ button: 'right' })
+
+    await expectOnlyOpenInNewTabMenu(page)
+  })
+})
+
+test.describe('Background tabs on a touch tablet', () => {
+  const tablet = devices['iPad Pro 11 landscape']
+  test.use({ viewport: tablet.viewport, hasTouch: true, isMobile: tablet.isMobile })
+
+  test('a long-press on a page name in a query table opens its menu and not the block menu', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await queryTablePageName(page)
+
+    // Past the menu's own long-press: CDP touch fires no native `contextmenu`.
+    await touchLongPress(page, '[data-testid="query-result"] table [role="link"]', 900)
+
+    await expectOnlyOpenInNewTabMenu(page)
   })
 })

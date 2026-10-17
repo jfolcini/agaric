@@ -14,7 +14,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-import { middleClickProps, useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
+import { delegatedMiddleClickProps, useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 
 export interface NewTabTargetProps {
   pageId: string
@@ -28,9 +28,18 @@ export function NewTabTarget({ pageId, title, children }: NewTabTargetProps): Re
   const open = useOpenInBackgroundTab()
   if (open === undefined) return children
   const openPage = () => open(pageId, title)
+  // A long-press opened the menu, so the release is no tap, and an enclosing
+  // block must not open its own menu as well.
+  const claimRelease = (e: React.TouchEvent) => {
+    if (e.currentTarget.getAttribute('data-state') === 'open') e.preventDefault()
+  }
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild {...middleClickProps(openPage)}>
+      <ContextMenuTrigger
+        asChild
+        {...delegatedMiddleClickProps(() => openPage)}
+        onTouchEnd={claimRelease}
+      >
         {children}
       </ContextMenuTrigger>
       <ContextMenuContent>
