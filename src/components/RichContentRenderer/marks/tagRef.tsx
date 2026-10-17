@@ -2,6 +2,8 @@ import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import type { TagRefNode } from '@/editor/types'
+import { PREFERENCES, usePreference } from '@/lib/preferences'
+import { tagColorStyle } from '@/lib/tag-colors'
 import { cn } from '@/lib/utils'
 
 /**
@@ -32,6 +34,18 @@ function tagRefProps(tagId: string, onTagClick: (id: string) => void): Record<st
   }
 }
 
+/**
+ * The chip, in the colour the Tags view set for its tag. A component so it
+ * repaints when that colour changes, however its caller memoizes the tree.
+ */
+function TagRefChip({
+  tagId,
+  ...props
+}: { tagId: string } & React.ComponentProps<'span'>): React.ReactElement {
+  const [tagColors] = usePreference(PREFERENCES.tagColors)
+  return <span {...props} style={tagColorStyle(tagColors[tagId])} />
+}
+
 export function renderTagRef(
   node: TagRefNode,
   key: string,
@@ -52,8 +66,9 @@ export function renderTagRef(
     ? tagRefProps(tagId, ctx.onTagClick as (id: string) => void)
     : inertProps
   return (
-    <span
+    <TagRefChip
       key={key}
+      tagId={tagId}
       className={cn(
         'tag-ref-chip',
         status === 'deleted' && 'tag-ref-deleted',
@@ -64,6 +79,6 @@ export function renderTagRef(
       {...interactiveProps}
     >
       {name}
-    </span>
+    </TagRefChip>
   )
 }

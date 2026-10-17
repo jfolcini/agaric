@@ -44,7 +44,7 @@ import {
 import { notify } from '@/lib/notify'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { requireActiveScope } from '@/lib/space-scope'
-import { resolveTagBackground, TAG_COLOR_PRESETS, tagColorForeground } from '@/lib/tag-colors'
+import { resolveTagBackground, TAG_COLOR_PRESETS, tagColorStyle } from '@/lib/tag-colors'
 import { cn } from '@/lib/utils'
 import { renamePage } from '@/stores/page-rename'
 import { useResolveStore } from '@/stores/resolve'
@@ -357,23 +357,11 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                       <Badge
                         tone={color ? undefined : 'secondary'}
                         className={cn('truncate max-w-[150px]', color && 'border-transparent')}
-                        style={
-                          color
-                            ? {
-                                backgroundColor: resolveTagBackground(color),
-                                color: tagColorForeground(color),
-                              }
-                            : undefined
-                        }
+                        style={tagColorStyle(color)}
                         title={tag.name || 'Unnamed'}
                       >
                         {tag.name || 'Unnamed'}
-                        <span
-                          className={cn(
-                            'ml-1.5',
-                            color ? 'text-white/70' : 'text-muted-foreground',
-                          )}
-                        >
+                        <span className={cn('ml-1.5', !color && 'text-muted-foreground')}>
                           {tag.usage_count}
                         </span>
                       </Badge>
@@ -424,8 +412,7 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
                         </fieldset>
                         {/* #1099 — free-form custom-hex escape hatch for power
                           users. Presets re-theme via accent tokens; a custom
-                          hex bypasses the palette and renders verbatim with a
-                          WCAG-picked foreground (pickReadableForeground). */}
+                          hex bypasses the palette. */}
                         <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
                           <input
                             type="color"

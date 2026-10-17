@@ -1,65 +1,36 @@
 /**
- * Tag colors — localStorage-backed map of tag ID → CSS color string.
+ * Tag colors — localStorage-backed map of tag ID → accent token or custom hex.
  *
- * Stores a JSON object under the `tag-colors` localStorage key for fast
- * rendering. **Storage is device-local only** — no IPC, no `setProperty()`
- * call, no block-property write. Multi-device users will see different colors
- * for the same tag on different devices, and a fresh install starts with an
- * empty palette.
+ * Stores a JSON object under the `tag-colors` localStorage key, which every tag
+ * chip and badge renders from. `useTagColors` also writes the tag's `color`
+ * property best-effort, but nothing reads it back, so a colour stays on the
+ * device that set it.
  *
  * Pattern follows starred-pages.ts (also device-local).
- *
- * Future work (out of scope here): cross-device sync could be added by
- * mirroring the chosen color to a `tag_color` block property via the existing
- * properties extension point, with a one-time migration of existing
- * localStorage entries on first run. Do not reintroduce a "syncs via setProperty" claim in
- * this comment without also wiring the call — `tag-colors.test.ts` guards
- * against that drift.
  */
 
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { accentVar } from '@/lib/space-accent'
 
 /**
- * Preset color palette — re-keyed (#1099) onto the themed per-space
- * `--accent-*` token palette (`index.css`) instead of a parallel set of
- * flat sRGB hex values.
- *
- * Each preset's `value` is now an *accent token* (e.g. `'accent-rose'`),
- * resolved at render time through `accentVar()` → `var(--accent-rose, …)`.
- * Because the underlying tokens are defined in OKLCH with distinct light,
- * dark and `prefers-contrast: more` values, tag pills now auto-retheme and
- * participate in high-contrast mode — exactly like the SpaceAccentBadge /
- * status-bar chip that already consume these tokens.
- *
- * Foreground strategy (issue #1099 caveat): there are NO
- * `--accent-*-foreground` paired tokens, and `pickReadableForeground`
- * cannot read a computed `var()` hue from JS at runtime. We therefore pin a
- * fixed, legible foreground per accent (`fg`), chosen against the token's
- * OKLCH lightness across themes. Free-form custom hex values still flow
- * through `pickReadableForeground` (see `tagColorForeground`).
- *
- * `value` is the persisted token; this is what lands in localStorage for new
- * selections. Legacy hex values are migrated to their nearest token by
- * `migrateTagColors` (see `LEGACY_HEX_TO_TOKEN`).
+ * Preset color palette (#1099): each `value` is a themed `--accent-*` token
+ * (`index.css`), resolved at render time through `accentVar()`, so tag colours
+ * re-theme across light, dark and `prefers-contrast: more` like the
+ * SpaceAccentBadge does. `value` is what lands in localStorage; legacy hex
+ * values are migrated to their nearest token by `migrateTagColors`.
  */
 export const TAG_COLOR_PRESETS = [
-  { name: 'emerald', value: 'accent-emerald', fg: '#000' },
-  { name: 'blue', value: 'accent-blue', fg: '#fff' },
-  { name: 'violet', value: 'accent-violet', fg: '#fff' },
-  { name: 'amber', value: 'accent-amber', fg: '#000' },
-  { name: 'rose', value: 'accent-rose', fg: '#fff' },
-  { name: 'slate', value: 'accent-slate', fg: '#fff' },
-  { name: 'orange', value: 'accent-orange', fg: '#000' },
+  { name: 'emerald', value: 'accent-emerald' },
+  { name: 'blue', value: 'accent-blue' },
+  { name: 'violet', value: 'accent-violet' },
+  { name: 'amber', value: 'accent-amber' },
+  { name: 'rose', value: 'accent-rose' },
+  { name: 'slate', value: 'accent-slate' },
+  { name: 'orange', value: 'accent-orange' },
 ] as const
 
 /** Set of recognised accent tokens, for `isAccentToken` guards. */
 const ACCENT_TOKENS: ReadonlySet<string> = new Set(TAG_COLOR_PRESETS.map((p) => p.value))
-
-/** Fixed legible foreground per accent token (see `TAG_COLOR_PRESETS`). */
-const ACCENT_FOREGROUND: Record<string, '#000' | '#fff'> = Object.fromEntries(
-  TAG_COLOR_PRESETS.map((p) => [p.value, p.fg]),
-)
 
 /**
  * One-time migration map (#1099): the 8 legacy flat-sRGB presets that used
@@ -153,8 +124,7 @@ export function clearTagColor(tagId: string): void {
 }
 
 /**
- * Resolve a stored tag color value to a CSS `background-color` string for an
- * inline style (#1099).
+ * Resolve a stored tag color value to a CSS colour (#1099).
  *
  * - An accent token (e.g. `'accent-rose'`) → `var(--accent-rose, …)` via
  *   `accentVar`, so the pill auto-rethemes (light/dark/high-contrast).
@@ -164,84 +134,25 @@ export function resolveTagBackground(value: string): string {
   return isAccentToken(value) ? accentVar(value) : value
 }
 
-/**
- * Resolve the legible foreground color for a stored tag color value (#1099).
- *
- * - Accent token → its fixed paired foreground (`ACCENT_FOREGROUND`),
- *   chosen at design time against the token's OKLCH lightness. JS cannot
- *   read a computed `var()` hue at runtime, so this avoids guessing.
- * - Custom hex → `pickReadableForeground` (WCAG luminance), unchanged.
- */
-export function tagColorForeground(value: string): '#000' | '#fff' {
-  return ACCENT_FOREGROUND[value] ?? pickReadableForeground(value)
+/** Inline style of a coloured tag chip or badge (see `tagColorStyle`). */
+interface TagColorStyle {
+  '--tag-color': string
+  color: string
+  backgroundColor: string
 }
 
 /**
- * Pick a readable foreground (`'#000'` or `'#fff'`) for text rendered on
- * top of an arbitrary hex background, using the WCAG 2.x relative-luminance
- * formula. Returns whichever channel yields the higher contrast ratio
- * against the background — equivalent to picking the side of the
- * luminance midpoint (~0.179) that the background falls on.
- *
- * Note: because WCAG contrast is asymmetric (contrast vs black grows
- * linearly while contrast vs white grows hyperbolically), most saturated
- * mid-tone colors (e.g. Tailwind `*-500`) get HIGHER contrast against
- * BLACK than against white, even though convention often pairs them with
- * white text. This helper follows the math, not the convention — that is
- * the whole point of replacing the hard-coded `'#fff'`.
- *
- * Accepts `#rgb`, `#rrggbb`, and `#rrggbbaa` hex strings (alpha ignored).
- * For any input that cannot be parsed (empty, malformed, non-hex), falls
- * back to `'#000'` so badges never render invisible white-on-white text.
- *
- * Used by TagList to replace the previously hard-coded `color: '#fff'`
- * inline style, which failed WCAG contrast on light pastel tag fills.
+ * The inline style that paints a tag chip or badge in the tag's colour, or
+ * `undefined` for an uncoloured tag, which keeps its default look. The text is
+ * the colour pulled halfway to the theme's ink, on a light tint of the colour:
+ * the bare colour as text on a light page, or white on the colour, is too faint
+ * to read for most presets.
  */
-export function pickReadableForeground(hex: string): '#000' | '#fff' {
-  const rgb = parseHexToRgb(hex)
-  if (rgb === null) return '#000'
-
-  // WCAG relative luminance: per-channel sRGB linearization, then
-  // weighted sum. https://www.w3.org/TR/WCAG20/#relativeluminancedef
-  const toLinear = (c: number): number => {
-    const s = c / 255
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+export function tagColorStyle(value: string | undefined): TagColorStyle | undefined {
+  if (!value) return undefined
+  return {
+    '--tag-color': resolveTagBackground(value),
+    color: 'color-mix(in oklab, var(--tag-color) 50%, var(--foreground))',
+    backgroundColor: 'color-mix(in oklab, var(--tag-color) 15%, transparent)',
   }
-  const r = toLinear(rgb.r)
-  const g = toLinear(rgb.g)
-  const b = toLinear(rgb.b)
-  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-  // Contrast vs white = 1.05 / (L + 0.05); vs black = (L + 0.05) / 0.05.
-  // Pick whichever channel clears 4.5:1 first; when both clear (rare in the
-  // mid-luminance band) prefer black, which is generally more legible on
-  // saturated mid-tones than white. Equivalent to comparing against the
-  // luminance midpoint sqrt(1.05 * 0.05) - 0.05 ≈ 0.1791.
-  const contrastWithBlack = (luminance + 0.05) / 0.05
-  const contrastWithWhite = 1.05 / (luminance + 0.05)
-  return contrastWithBlack >= contrastWithWhite ? '#000' : '#fff'
-}
-
-/**
- * Parse a hex color string into 0-255 RGB channels. Returns `null` for
- * any input that isn't a valid 3-, 6-, or 8-digit hex color.
- */
-function parseHexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  if (typeof hex !== 'string') return null
-  const trimmed = hex.trim()
-  const match = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(trimmed)
-  if (match === null) return null
-  let body = match[1]
-  if (body === undefined) return null
-  if (body.length === 3) {
-    body = body
-      .split('')
-      .map((c) => c + c)
-      .join('')
-  }
-  const r = Number.parseInt(body.slice(0, 2), 16)
-  const g = Number.parseInt(body.slice(2, 4), 16)
-  const b = Number.parseInt(body.slice(4, 6), 16)
-  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return null
-  return { r, g, b }
 }

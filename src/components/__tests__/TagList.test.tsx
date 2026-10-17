@@ -994,10 +994,9 @@ describe('TagList', () => {
       })
     })
 
-    it('badge renders an accent-token bg via var(--accent-*) with its paired foreground (#1099)', async () => {
+    it('badge paints an accent-token tag through var(--accent-*) (#1099)', async () => {
       // #1099 — a token-coloured tag renders the themed CSS var, not a flat
-      // hex, so it re-themes across light/dark/high-contrast. The foreground
-      // is the token's fixed paired colour (blue → white).
+      // hex, so it re-themes across light/dark/high-contrast.
       localStorage.setItem('tag-colors', JSON.stringify({ T1: 'accent-blue' }))
       stubTags([makeTag('T1', 'blue-tag')])
 
@@ -1005,14 +1004,12 @@ describe('TagList', () => {
 
       const badge = await screen.findByText('blue-tag')
       const badgeEl = badge.closest('[data-slot="badge"]') as HTMLElement
-      expect(badgeEl.getAttribute('style')).toContain('var(--accent-blue')
-      expect(badgeEl).toHaveStyle({ color: '#fff' })
+      expect(badgeEl.style.getPropertyValue('--tag-color')).toBe(
+        'var(--accent-blue, var(--accent-current))',
+      )
     })
 
-    it('badge renders a custom hex verbatim with a WCAG foreground (escape hatch, #1099)', async () => {
-      // Free-form custom hex (not a legacy preset) bypasses the token palette
-      // and renders verbatim; foreground falls back to pickReadableForeground.
-      // Very dark navy → strictly higher contrast against white than black.
+    it('badge paints a custom hex verbatim (escape hatch, #1099)', async () => {
       localStorage.setItem('tag-colors', JSON.stringify({ T1: '#1e3a8a' }))
       stubTags([makeTag('T1', 'navy-tag')])
 
@@ -1020,8 +1017,7 @@ describe('TagList', () => {
 
       const badge = await screen.findByText('navy-tag')
       const badgeEl = badge.closest('[data-slot="badge"]') as HTMLElement
-      expect(badgeEl).toHaveStyle({ backgroundColor: '#1e3a8a' })
-      expect(badgeEl).toHaveStyle({ color: '#fff' })
+      expect(badgeEl.style.getPropertyValue('--tag-color')).toBe('#1e3a8a')
     })
 
     it('migrates a legacy hex tag to its themed accent token on render (#1099)', async () => {
