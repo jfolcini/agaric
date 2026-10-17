@@ -95,13 +95,19 @@ function expectNoConsoleErrors(page: Page): void {
 
 // An auto fixture, not module-level `beforeEach` / `afterEach`: a worker loads
 // this module once, so module-level hooks attach only to the first spec file
-// it runs and every later file in that worker goes ungated.
+// it runs and every later file in that worker goes ungated. A page the test
+// opens itself (`page.context().newPage()`) is gated too.
 export const test = baseTest.extend<{ consoleErrorGate: void }>({
   consoleErrorGate: [
-    async ({ page }, use) => {
+    async ({ page, context }, use) => {
+      const pages = [page]
       registerConsoleErrorWatcher(page)
+      context.on('page', (opened) => {
+        pages.push(opened)
+        registerConsoleErrorWatcher(opened)
+      })
       await use()
-      expectNoConsoleErrors(page)
+      for (const gated of pages) expectNoConsoleErrors(gated)
     },
     { auto: true },
   ],
