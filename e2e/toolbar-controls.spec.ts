@@ -360,8 +360,9 @@ test.describe('Inline controls — gutter (#1170)', () => {
   // clicking the due chip yields ZERO `date-picker-popup`. The chip→picker
   // path is therefore unreachable from a pure e2e click (it would require the
   // focus to survive the chip click, which production does not arrange). The
-  // toolbar "Set due date" / "Set scheduled date" buttons (group 1) cover the
-  // same picker via a portal-tagged trigger that does NOT blur. Skipped as a
+  // toolbar "Set due date" (group 1) and "Set scheduled date"
+  // (`date-chip-editing.spec.ts`) buttons cover the same picker via a
+  // portal-tagged trigger that does NOT blur. Skipped as a
   // genuine harness/production gating, not a spec bug — follow-up #1170.
   test.skip('due date chip click opens the date picker', async ({ page }) => {
     await openPage(page, 'Projects')

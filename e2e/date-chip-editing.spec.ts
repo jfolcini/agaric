@@ -21,9 +21,10 @@ import {
  *   - The toolbar's "Set scheduled date" opens `BlockDatePicker`; a calendar
  *     day becomes the block's scheduled date.
  *
- * Both persist through `set_due_date` / `set_scheduled_date`, so the spec
- * leaves the view and comes back before reading the chip. The mock shows a
- * failure of either path, so the spec lives in `e2e/`.
+ * Both persist through `set_due_date` / `set_scheduled_date`, so each test
+ * reads the chip, then leaves the view and comes back (the remount re-queries)
+ * and reads it again. The mock shows a failure of either path, so the spec
+ * lives in `e2e/`.
  *
  * The clock is pinned to Wednesday 2026-03-11 so every parsed date is fixed:
  * `+3d` is Mar 14, `next monday` Mar 16, `Apr 15` this year's Apr 15. The seed
