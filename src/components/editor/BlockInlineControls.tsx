@@ -180,6 +180,12 @@ export interface BlockMetadataRowProps {
   onToggleAttachments: () => void
   onEditProp: (prop: { key: string; value: string }) => void
   onEditKey: (keyInfo: { oldKey: string; value: string }) => void
+  /**
+   * Opens this block's property drawer from the `+N` pill. It takes the row's
+   * own id: the pill keeps focus where it was, so the focus-keyed command bus
+   * would open the drawer for whichever block is being edited, or for none.
+   */
+  onShowProperties?: ((blockId: string) => void) | undefined
 }
 
 export interface BlockCollapseControlProps {
@@ -397,15 +403,19 @@ function RepeatIndicator({ repeatValue }: { repeatValue: string }): React.ReactE
 
 /** The inline property chips + `+N` overflow pill. */
 function InlineProperties({
+  blockId,
   filteredProperties,
   inlinePropLimit,
   onEditProp,
   onEditKey,
+  onShowProperties,
 }: {
+  blockId: string
   filteredProperties: Array<{ key: string; value: string }>
   inlinePropLimit: number
   onEditProp: (prop: { key: string; value: string }) => void
   onEditKey: (keyInfo: { oldKey: string; value: string }) => void
+  onShowProperties?: ((blockId: string) => void) | undefined
 }): React.ReactElement {
   const { t } = useTranslation()
   return (
@@ -431,7 +441,7 @@ function InlineProperties({
               onMouseDown={(e) => e.preventDefault()}
               onClick={(e) => {
                 e.stopPropagation()
-                dispatchBlockCommand('OPEN_BLOCK_PROPERTIES')
+                onShowProperties?.(blockId)
               }}
             >
               +{filteredProperties.length - inlinePropLimit}
@@ -568,6 +578,7 @@ export const BlockMetadataRow = React.memo(
     onToggleAttachments,
     onEditProp,
     onEditKey,
+    onShowProperties,
   }: BlockMetadataRowProps): React.ReactElement | null => {
     // #217 C2 / A3 (#1021): cap how many property chips render inline before the
     // `+N` overflow pill, relieving chip density on narrow viewports. The parent
@@ -672,10 +683,12 @@ export const BlockMetadataRow = React.memo(
 
         {filteredProperties.length > 0 && (
           <InlineProperties
+            blockId={blockId}
             filteredProperties={filteredProperties}
             inlinePropLimit={inlinePropLimit}
             onEditProp={onEditProp}
             onEditKey={onEditKey}
+            onShowProperties={onShowProperties}
           />
         )}
 
