@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO mcp_agents (id, name, mode, space_ids, token, created_at_ms) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(name) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "c29a833665b7b58356ff858a9f41909a40052dc12231fdbdb7bbd2ec909f3cbb"
+}

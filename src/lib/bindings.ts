@@ -876,6 +876,21 @@ export const commands = {
 	mcpRwSetEnabled: (enabled: boolean) => typedError<boolean, AppError>(__TAURI_INVOKE("mcp_rw_set_enabled", { enabled })),
 	/**  Tauri command: disconnect every in-flight RW MCP connection. */
 	mcpRwDisconnectAll: () => typedError<null, AppError>(__TAURI_INVOKE("mcp_rw_disconnect_all")),
+	/**
+	 *  Tauri command: every MCP agent on this device. Delegates to
+	 *  [`list_mcp_agents_inner`].
+	 */
+	listMcpAgents: () => typedError<McpAgent[], AppError>(__TAURI_INVOKE("list_mcp_agents")),
+	/**
+	 *  Tauri command: create an MCP agent. Delegates to
+	 *  [`create_mcp_agent_inner`].
+	 */
+	createMcpAgent: (name: string, mode: McpAgentMode, spaceIds: SpaceId[] | null) => typedError<McpAgent, AppError>(__TAURI_INVOKE("create_mcp_agent", { name, mode, spaceIds })),
+	/**
+	 *  Tauri command: revoke an MCP agent. Delegates to
+	 *  [`revoke_mcp_agent_inner`].
+	 */
+	revokeMcpAgent: (id: string) => typedError<null, AppError>(__TAURI_INVOKE("revoke_mcp_agent", { id })),
 	/**  Tauri command: list every space. Delegates to [`list_spaces_inner`]. */
 	listSpaces: () => typedError<SpaceRow[], AppError>(__TAURI_INVOKE("list_spaces")),
 	/**
@@ -2612,6 +2627,23 @@ export type MatchOffset = {
 	/**  UTF-16 code-unit offset (matches JavaScript string indexing). */
 	end: number,
 };
+
+/**  One `mcp_agents` row. */
+export type McpAgent = {
+	id: string,
+	name: string,
+	mode: McpAgentMode,
+	/**  `None`: every space, including spaces created later. */
+	space_ids: string[] | null,
+	/**  `agt_` and 32 hex digits, passed to the bridge as `--token`. */
+	token: string,
+	created_at_ms: number,
+	/**  `None` until the agent's first tool call. */
+	last_used_ms: number | null,
+};
+
+/**  What an agent may do: read, or read and write. */
+export type McpAgentMode = "read_only" | "read_write";
 
 /**
  *  Snapshot of the MCP **read-write** server state surfaced to the
@@ -4572,7 +4604,24 @@ export type ValidationCode =
  *  Trash (`set_page_aliases`, its undo; #5387). Coded so the alias editor
  *  can name the clash instead of the generic save failure.
  */
-"DuplicatePageAlias";
+"DuplicatePageAlias" | 
+/**
+ *  An MCP agent name that is blank after trimming, holds a control
+ *  character, or is longer than `MAX_AGENT_NAME_LEN` (`create_mcp_agent`,
+ *  #5667).
+ */
+"InvalidAgentName" | 
+/**
+ *  An MCP agent name another agent holds in any letter case
+ *  (`create_mcp_agent`, #5667). Coded so the create dialog can name the
+ *  clash beside the name field.
+ */
+"DuplicateAgentName" | 
+/**
+ *  An MCP agent's space list that is empty or names a space that is not
+ *  live (`create_mcp_agent`, #5667).
+ */
+"InvalidAgentSpaces";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

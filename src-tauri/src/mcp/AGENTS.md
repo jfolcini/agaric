@@ -9,6 +9,7 @@ Tools call into the `_inner` commands and their `LAST_APPEND` op-ref chain: [`co
 - `registry.rs` — `ToolRegistry` trait. `dispatch.rs` — `scoped_dispatch` (`ACTOR.scope` wrapper). `handler_utils.rs` — `parse_args` / `to_tool_result`.
 - `tools_ro.rs` / `tools_rw.rs` — tool handlers; tests in `tools_ro/tests.rs`, `tools_rw/tests.rs`.
 - `activity.rs` — `emit_tool_completion`; `summarise.rs` — per-tool summaries; `view_notify.rs` — change events so open views reload after an RW write.
+- `agents.rs` — the device-local `mcp_agents` rows (#5667) and `MAX_AGENT_NAME_LEN`; Settings reaches them through `commands/mcp_agents.rs`.
 
 ## Production framing = `rmcp` adapter
 

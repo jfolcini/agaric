@@ -42,6 +42,12 @@ export const ValidationCode = {
   DuplicatePageTitle: 'DuplicatePageTitle',
   /** An alias another page already holds, at `set_page_aliases` or its undo (#5387). */
   DuplicatePageAlias: 'DuplicatePageAlias',
+  /** An MCP agent name that is blank, holds a control character, or is too long (#5667). */
+  InvalidAgentName: 'InvalidAgentName',
+  /** An MCP agent name another agent holds in any letter case (#5667). */
+  DuplicateAgentName: 'DuplicateAgentName',
+  /** An MCP agent space list that is empty or names a space that is not live (#5667). */
+  InvalidAgentSpaces: 'InvalidAgentSpaces',
 } as const satisfies { [K in GeneratedValidationCode]: K }
 
 /**

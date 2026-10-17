@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM mcp_agents WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "e461d76bb95f7d41acdb766614139d93c8b7c7eab2b1ed126a78e9c7c773cc7d"
+}

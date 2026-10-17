@@ -52,26 +52,11 @@ use super::McpSurface;
 use super::activity::{
     ActivityContext, ActivityResult, ActorKind, ToolCompletionEvent, emit_tool_completion,
 };
+use super::agents::MAX_AGENT_NAME_LEN;
 use super::registry::ToolRegistry;
 use super::server::ERROR_CLIP_CAP;
 use agaric_core::error::AppError;
 use agaric_store::task_locals::{ACTOR, Actor, ActorContext};
-
-/// #1569 — upper bound on the number of Unicode scalar values (chars)
-/// kept from a self-reported MCP `clientInfo.name` before it becomes an
-/// [`Actor::Agent`] label and is stamped, verbatim, into the permanent,
-/// append-only, hash-chained `op_log.origin` column (see
-/// `op_log::append_local_op_in_tx`).
-///
-/// The handshake name is fully attacker-controlled by a local MCP client
-/// and was previously taken with no length cap, charset normalisation, or
-/// control-char rejection, letting a misbehaving client persist an
-/// arbitrarily large / malformed string into durable state on every RW
-/// tool call. 128 chars is generous for a human-meaningful client label
-/// (e.g. `"claude-desktop"`, `"Cursor 0.42 (macOS)"`) while bounding the
-/// per-op `origin` contribution to a small, predictable size. Truncation
-/// is on a char boundary so a multi-byte scalar is never split.
-const MAX_AGENT_NAME_LEN: usize = 128;
 
 /// Stable placeholder used when a self-reported MCP `clientInfo.name` is
 /// empty or becomes empty after control-char stripping. Mirrors the

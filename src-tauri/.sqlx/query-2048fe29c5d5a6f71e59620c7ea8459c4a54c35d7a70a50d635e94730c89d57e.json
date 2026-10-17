@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT s.id AS \"id!: String\"\n             FROM spaces s\n             JOIN blocks b ON b.id = s.id AND b.deleted_at IS NULL\n            WHERE s.id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "spaces",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2048fe29c5d5a6f71e59620c7ea8459c4a54c35d7a70a50d635e94730c89d57e"
+}

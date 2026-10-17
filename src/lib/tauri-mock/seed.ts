@@ -7,6 +7,8 @@
  * plumbing layer.
  */
 
+import type { McpAgent } from '@/lib/bindings'
+
 let counter = 0
 
 /**
@@ -99,6 +101,10 @@ export const blockDrafts = new Map<string, MockDraftRow>()
 // Device-local `page_opens` rows: page id → `opened_ms` (#5371), written only
 // by `record_page_open`.
 export const pageOpens = new Map<string, number>()
+
+// Device-local `mcp_agents` rows (#5667): agent id → row, written only by
+// `create_mcp_agent` and `revoke_mcp_agent`.
+export const mcpAgents = new Map<string, McpAgent>()
 
 // Device-local `app_settings` rows: key → value, both TEXT as in the table.
 // `get_reminder_settings` / `set_reminder_settings` read and write the two
@@ -374,6 +380,7 @@ export function seedBlocks(): void {
   appSettings.clear()
   blockDrafts.clear()
   pageOpens.clear()
+  mcpAgents.clear()
   counter = 0
   opLog.length = 0
   opSeqCounter = 0
