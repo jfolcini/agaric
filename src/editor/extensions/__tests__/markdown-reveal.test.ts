@@ -2,9 +2,9 @@
  * #5689 — the Markdown syntax revealed around the caret, on a real TipTap
  * editor: inline marks' markers, a heading's `#` run and a link's `[` and
  * `](url)` follow the caret, deleting one unmarks its range, lowers its
- * heading or unlinks, crossing one changes only what typing carries, the URL
- * field sets the link's URL, nothing reaches the stored Markdown or the undo
- * history, and the preference gates it all.
+ * heading or unlinks, crossing one changes only what typing carries, nothing
+ * reaches the stored Markdown or the undo history, and the preference gates it
+ * all.
  */
 
 import { type AnyExtension, Editor } from '@tiptap/core'
@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BlockLink } from '@/editor/extensions/block-link'
 import { BlockRef } from '@/editor/extensions/block-ref'
 import { ExternalLink } from '@/editor/extensions/external-link'
+import { ListMarkerDecoration, setListMarkerMeta } from '@/editor/extensions/list-marker-decoration'
 import { MarkdownReveal } from '@/editor/extensions/markdown-reveal'
 import { TagRef } from '@/editor/extensions/tag-ref'
 import { TaskParagraph } from '@/editor/extensions/task-paragraph'
@@ -32,7 +33,6 @@ import type { DocNode } from '@/editor/types'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 
 const editors: Array<{ editor: Editor; host: HTMLElement }> = []
-const strays: HTMLElement[] = []
 
 beforeEach(() => {
   localStorage.clear()
@@ -43,12 +43,10 @@ afterEach(() => {
     editor.destroy()
     host.remove()
   }
-  for (const el of strays.splice(0)) el.remove()
   vi.useRealTimers()
 })
 
 function createEditor(source: string, more: AnyExtension[] = []): Editor {
-  // In the document: the URL field takes focus.
   const host = document.createElement('div')
   document.body.append(host)
   const editor = new Editor({
@@ -73,16 +71,9 @@ function createEditor(source: string, more: AnyExtension[] = []): Editor {
   return editor
 }
 
-/** What a node shows, a URL field read as its value. */
-function shown(node: Node): string {
-  if (node instanceof HTMLInputElement) return node.value
-  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? ''
-  return [...node.childNodes].map(shown).join('')
-}
-
 /** The revealed markers, in document order, as the user reads them. */
 function markers(ed: Editor): string[] {
-  return [...ed.view.dom.querySelectorAll('.md-reveal-marker')].map(shown)
+  return [...ed.view.dom.querySelectorAll('.md-reveal-marker')].map((el) => el.textContent ?? '')
 }
 
 function pressKey(ed: Editor, key: string, init: KeyboardEventInit = {}): boolean {
@@ -243,6 +234,23 @@ describe('MarkdownReveal with the preference on', () => {
     ed.view.dom.dispatchEvent(input)
     expect(input.defaultPrevented).toBe(false)
     expect(markdown(ed)).toBe(BOLD)
+    // The editor's own handling of the input still runs: Android Backspace depends on it.
+    expect(
+      ed.view.someProp('handleDOMEvents', (handlers) => handlers.beforeinput?.(ed.view, input)),
+    ).toBeFalsy()
+  })
+
+  it('a deleteContentForward input before a marker unbolds the range and cancels the input', () => {
+    const ed = createEditor(BOLD)
+    // `plain **bold|** end`: the closing marker is after the caret.
+    ed.commands.setTextSelection(11)
+    const input = new InputEvent('beforeinput', {
+      inputType: 'deleteContentForward',
+      cancelable: true,
+    })
+    ed.view.dom.dispatchEvent(input)
+    expect(input.defaultPrevented).toBe(true)
+    expect(markdown(ed)).toBe('plain bold end')
   })
 
   it('ArrowRight at the bold end steps past the closing marker, so typing there is plain', () => {
@@ -715,6 +723,8 @@ describe('MarkdownReveal for headings', () => {
     pressKey(ed, 'Delete')
     expect(markdown(ed)).toBe('Title')
     expect(markers(ed)).toEqual([])
+    // A paragraph has no # run to be left of.
+    expect(isOutsideHeadingMarker(ed.state.selection)).toBe(false)
   })
 
   it('ArrowRight left of the # run steps back to the text start', () => {
@@ -871,28 +881,9 @@ describe('MarkdownReveal for headings', () => {
     ed.view.posAtCoords = () => ({ pos: 2, inside: -1 })
     layOut(ed, 2, [[0, 10]])
     expect(clickAt(ed, 2, 20)).toBe(true)
-    expect(ed.view.dom.textContent).toBe('## **a** x')
-  })
-
-  it('a click on the ) of a link’s ](url) is the editor’s, the field’s own clicks the field’s', () => {
-    const ed = createEditor(LINK)
-    ed.commands.setTextSelection(7)
-    ed.view.posAtCoords = () => ({ pos: 10, inside: -1 })
-    layOut(ed, 10, [[0, 100]])
-    const close = [...ed.view.dom.querySelectorAll('.md-reveal-marker [aria-hidden="true"]')].at(-1)
-    close?.dispatchEvent(new MouseEvent('mousedown', { clientX: 99, bubbles: true }))
-    expect(ed.view.someProp('handleClick', (f) => f(ed.view, 10, new MouseEvent('click')))).toBe(
-      true,
-    )
-    type(ed, 'X')
-    expect(markdown(ed)).toBe('see [label](https://a.io)X end')
-    // A press inside the field never reaches the editor's click handling.
-    ed.commands.setTextSelection(7)
-    layOut(ed, 10, [[0, 100]])
-    urlField(ed).dispatchEvent(new MouseEvent('mousedown', { clientX: 99, bubbles: true }))
-    expect(
-      ed.view.someProp('handleClick', (f) => f(ed.view, 10, new MouseEvent('click'))),
-    ).toBeFalsy()
+    expect(isOutsideHeadingMarker(ed.state.selection)).toBe(false)
+    expect(markerBesideCaret(ed.state, 'before')?.text).toBe('**')
+    expect(markerBesideCaret(ed.state, 'after')).toBeNull()
   })
 
   it('a Ctrl+Click at a marker is left to the link it may open', () => {
@@ -921,52 +912,16 @@ describe('MarkdownReveal for headings', () => {
 // `see [label](https://a.io) end`: `label` is 5..10, ` end` 10..14.
 const LINK = 'see [label](https://a.io) end'
 
-/** The URL field drawn in the editor. */
-function urlField(ed: Editor): HTMLInputElement {
-  const input = ed.view.dom.querySelector<HTMLInputElement>('.md-reveal-url input')
-  if (!input) throw new Error('no URL field is drawn')
-  return input
-}
-
-function fieldKey(input: HTMLInputElement, key: string): KeyboardEvent {
-  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
-  input.dispatchEvent(event)
-  return event
-}
-
-/** A focusable control outside the editor. */
-function elsewhere(): HTMLButtonElement {
-  const button = document.createElement('button')
-  document.body.append(button)
-  strays.push(button)
-  return button
-}
-
-function typeUrl(input: HTMLInputElement, url: string): void {
-  input.value = url
-  input.dispatchEvent(new Event('input', { bubbles: true }))
-}
-
-/** Focus the URL field through the keyboard: ArrowRight at the end of the label. */
-function enterUrlField(ed: Editor): HTMLInputElement {
-  ed.commands.setTextSelection(10)
-  expect(pressKey(ed, 'ArrowRight')).toBe(true)
-  const input = urlField(ed)
-  expect(document.activeElement).toBe(input)
-  return input
-}
-
 describe('MarkdownReveal for external links', () => {
   beforeEach(() => {
     writePreference(PREFERENCES.revealMarkdownSyntax, true)
   })
 
-  it('shows [ and ](url) around the label while the caret is in it, the URL in a field', () => {
+  it('shows [ and ](url) around the label while the caret is in it', () => {
     const ed = createEditor(LINK)
     ed.commands.setTextSelection(7)
     expect(markers(ed)).toEqual(['[', '](https://a.io)'])
-    expect(shown(ed.view.dom)).toBe(LINK)
-    expect(urlField(ed).value).toBe('https://a.io')
+    expect(ed.view.dom.textContent).toBe(LINK)
     ed.commands.setTextSelection(12)
     expect(markers(ed)).toEqual([])
   })
@@ -1044,369 +999,57 @@ describe('MarkdownReveal for external links', () => {
     expect(drawn.map((el) => el.closest('a') !== null)).toEqual([false, true, true, false])
   })
 
-  it('crosses the closing bold marker before it reaches the URL field', () => {
+  it('crosses the closing bold marker, then ](url), one at a time', () => {
     const ed = createEditor('see [**b**](https://a.io) end')
     // `see [**b|**](url)`: inside both.
     ed.commands.setTextSelection(6)
     expect(pressKey(ed, 'ArrowRight')).toBe(true)
-    expect(document.activeElement).not.toBe(urlField(ed))
+    expect(markerBesideCaret(ed.state, 'after')?.text).toBe('](https://a.io)')
     expect(pressKey(ed, 'ArrowRight')).toBe(true)
-    expect(document.activeElement).toBe(urlField(ed))
+    expect(markerBesideCaret(ed.state, 'before')?.text).toBe('](https://a.io)')
+    expect(ed.state.selection.from).toBe(6)
+    type(ed, 'X')
+    expect(markdown(ed)).toBe('see [**b**](https://a.io)X end')
   })
 
-  it('ArrowRight at the end of the label moves into the URL field, at its start', () => {
+  it('ArrowRight at the end of the label steps past ](url), so typing there is not linked', () => {
     const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    expect(input.selectionStart).toBe(0)
-    expect(input.selectionEnd).toBe(0)
-  })
-
-  it('ArrowRight at the end of a label that ends the block moves into the URL field, typing no space', () => {
-    // The link's own ArrowRight would leave it there by typing a space (TipTap's `exitable`).
-    const ed = createEditor('see [label](https://a.io)')
     ed.commands.setTextSelection(10)
     expect(pressKey(ed, 'ArrowRight')).toBe(true)
-    expect(document.activeElement).toBe(urlField(ed))
-    expect(markdown(ed)).toBe('see [label](https://a.io)')
-  })
-
-  it('ArrowLeft past ](url) moves into the URL field, at its end', () => {
-    const ed = createEditor(LINK)
-    ed.commands.setTextSelection(11)
-    pressKey(ed, 'ArrowLeft')
-    expect(pressKey(ed, 'ArrowLeft')).toBe(true)
-    const input = urlField(ed)
-    expect(document.activeElement).toBe(input)
-    expect(input.selectionStart).toBe(input.value.length)
-  })
-
-  it('Enter in the URL field sets the URL on the whole link in one undo step, the caret past it', () => {
-    const ed = createEditor('see [a **b**](https://a.io) end')
-    type(ed, '')
-    // `see [a **b**|](url)`: past the closing bold marker, before the link's.
-    ed.commands.setTextSelection(8)
-    pressKey(ed, 'ArrowRight')
-    pressKey(ed, 'ArrowRight')
-    const input = urlField(ed)
-    expect(document.activeElement).toBe(input)
-    const depth = undoDepth(ed.state)
-    typeUrl(input, 'https://b.io/x')
-    expect(fieldKey(input, 'Enter').defaultPrevented).toBe(true)
-    expect(markdown(ed)).toBe('see [a **b**](https://b.io/x) end')
-    expect(undoDepth(ed.state)).toBe(depth + 1)
-    expect(ed.view.hasFocus()).toBe(true)
-    // Past the `](url)`: typing is neither linked nor bold.
-    type(ed, 'X')
-    expect(markdown(ed)).toBe('see [a **b**](https://b.io/x)X end')
-    ed.commands.undo()
-    ed.commands.undo()
-    expect(markdown(ed)).toBe('see [a **b**](https://a.io) end')
-  })
-
-  it('sets the URL of a link that ends where another begins, and only that link', () => {
-    // `[a](https://a.io)[b](https://b.io)`: `a` is 1..2, `b` 2..3.
-    const ed = createEditor('[a](https://a.io)[b](https://b.io)')
-    ed.commands.setTextSelection(2)
-    expect(pressKey(ed, 'ArrowRight')).toBe(true)
-    const input = urlField(ed)
-    expect(input.value).toBe('https://a.io')
-    typeUrl(input, 'https://c.io')
-    fieldKey(input, 'Enter')
-    expect(markdown(ed)).toBe('[a](https://c.io)[b](https://b.io)')
-  })
-
-  it('a URL typed without a scheme gets https://', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    typeUrl(input, 'b.io')
-    fieldKey(input, 'Enter')
-    expect(markdown(ed)).toBe('see [label](https://b.io) end')
-  })
-
-  it('Escape restores the URL and puts the caret back at the end of the label', () => {
-    const ed = createEditor(LINK)
-    const depth = undoDepth(ed.state)
-    const input = enterUrlField(ed)
-    typeUrl(input, 'https://b.io')
-    expect(fieldKey(input, 'Escape').defaultPrevented).toBe(true)
-    expect(markdown(ed)).toBe(LINK)
-    expect(undoDepth(ed.state)).toBe(depth)
-    expect(urlField(ed).value).toBe('https://a.io')
-    type(ed, 'X')
-    expect(markdown(ed)).toBe('see [labelX](https://a.io) end')
-  })
-
-  it('ArrowLeft at the start of the field sets the URL and puts the caret at the end of the label', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    typeUrl(input, 'https://b.io')
-    input.setSelectionRange(0, 0)
-    expect(fieldKey(input, 'ArrowLeft').defaultPrevented).toBe(true)
-    expect(markdown(ed)).toBe('see [label](https://b.io) end')
-    type(ed, 'X')
-    expect(markdown(ed)).toBe('see [labelX](https://b.io) end')
-  })
-
-  it('ArrowRight at the end of the field sets the URL and puts the caret past the link', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    typeUrl(input, 'https://b.io')
-    input.setSelectionRange(input.value.length, input.value.length)
-    expect(fieldKey(input, 'ArrowRight').defaultPrevented).toBe(true)
-    type(ed, 'X')
-    expect(markdown(ed)).toBe('see [label](https://b.io)X end')
-  })
-
-  it('arrows inside the field, with a modifier or a selection, stay in the field', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    input.setSelectionRange(3, 3)
-    expect(fieldKey(input, 'ArrowLeft').defaultPrevented).toBe(false)
-    expect(fieldKey(input, 'ArrowRight').defaultPrevented).toBe(false)
-    input.setSelectionRange(0, 3)
-    expect(fieldKey(input, 'ArrowLeft').defaultPrevented).toBe(false)
-    const end = input.value.length
-    input.setSelectionRange(3, end)
-    expect(fieldKey(input, 'ArrowRight').defaultPrevented).toBe(false)
-    input.setSelectionRange(end, end)
-    expect(fieldKey(input, 'x').defaultPrevented).toBe(false)
-    for (const [key, at] of [
-      ['ArrowLeft', 0],
-      ['ArrowRight', end],
-    ] as const) {
-      input.setSelectionRange(at, at)
-      const shifted = new KeyboardEvent('keydown', {
-        key,
-        shiftKey: true,
-        bubbles: true,
-        cancelable: true,
-      })
-      input.dispatchEvent(shifted)
-      expect(shifted.defaultPrevented).toBe(false)
-    }
-    expect(document.activeElement).toBe(input)
-  })
-
-  it('keeps the editor’s and the block’s keys out of the field: Backspace there edits the URL only', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    const blockKeys = vi.fn()
-    ed.view.dom.parentElement?.addEventListener('keydown', blockKeys, true)
-    input.setSelectionRange(0, 0)
-    const backspace = fieldKey(input, 'Backspace')
-    expect(blockKeys).not.toHaveBeenCalled()
-    expect(backspace.defaultPrevented).toBe(false)
-    expect(markdown(ed)).toBe(LINK)
-  })
-
-  it('a key while an IME composes in the field is left to the IME', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    typeUrl(input, 'https://b.io')
-    const composing = new KeyboardEvent('keydown', {
-      key: 'Enter',
-      isComposing: true,
-      bubbles: true,
-      cancelable: true,
-    })
-    input.dispatchEvent(composing)
-    expect(composing.defaultPrevented).toBe(false)
-    // Engines that do not set isComposing report keyCode 229.
-    const legacy = new KeyboardEvent('keydown', {
-      key: 'Enter',
-      keyCode: 229,
-      bubbles: true,
-      cancelable: true,
-    })
-    input.dispatchEvent(legacy)
-    expect(legacy.defaultPrevented).toBe(false)
-    expect(document.activeElement).toBe(input)
-    expect(markdown(ed)).toBe(LINK)
-  })
-
-  it('refuses an invalid URL in place, and drops it when focus moves elsewhere', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    typeUrl(input, 'javascript:alert(1)')
-    fieldKey(input, 'Enter')
-    expect(input.getAttribute('aria-invalid')).toBe('true')
-    expect(document.activeElement).toBe(input)
-    expect(markdown(ed)).toBe(LINK)
-    // Typing again clears the mark.
-    typeUrl(input, 'javascript:alert(2)')
-    expect(input.hasAttribute('aria-invalid')).toBe(false)
-
-    fieldKey(input, 'Enter')
-    expect(input.getAttribute('aria-invalid')).toBe('true')
-
-    elsewhere().focus()
-    expect(markdown(ed)).toBe(LINK)
-    expect(input.value).toBe('https://a.io')
-    expect(input.hasAttribute('aria-invalid')).toBe(false)
-  })
-
-  it('refuses an empty URL', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    typeUrl(input, '  ')
-    fieldKey(input, 'Enter')
-    expect(input.getAttribute('aria-invalid')).toBe('true')
-    expect(markdown(ed)).toBe(LINK)
-  })
-
-  it('sets a valid URL when focus moves elsewhere, before the block saves', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    typeUrl(input, 'https://c.io')
-    const button = elsewhere()
-    button.focus()
-    expect(markdown(ed)).toBe('see [label](https://c.io) end')
-    expect(document.activeElement).toBe(button)
-  })
-
-  it('a press elsewhere sets the URL and gives focus back to the editor first', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    typeUrl(input, 'https://c.io')
-    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
-    expect(markdown(ed)).toBe('see [label](https://c.io) end')
-    expect(ed.view.hasFocus()).toBe(true)
     expect(ed.state.selection.from).toBe(10)
-  })
-
-  it('a press in the field leaves it editing', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    typeUrl(input, 'https://c.io')
-    input.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
-    expect(document.activeElement).toBe(input)
-    expect(markdown(ed)).toBe(LINK)
-  })
-
-  it('leaves an unchanged URL as it is stored, scheme or not', () => {
-    const ed = createEditor('see [a.io](a.io) end')
-    ed.commands.setTextSelection(9)
-    expect(pressKey(ed, 'ArrowRight')).toBe(true)
-    fieldKey(urlField(ed), 'Enter')
-    expect(markdown(ed)).toBe('see [a.io](a.io) end')
-    ed.commands.setTextSelection(9)
-    pressKey(ed, 'ArrowRight')
-    elsewhere().focus()
-    expect(markdown(ed)).toBe('see [a.io](a.io) end')
-  })
-
-  it('past the link, typing keeps the emphasis that runs on beyond it', () => {
-    // `a` is bold and linked, ` b` bold: the bold runs on past the link's end at 2.
-    const ed = createEditor('**[a](https://a.io) b**')
-    ed.commands.setTextSelection(2)
-    expect(pressKey(ed, 'ArrowRight')).toBe(true)
-    fieldKey(urlField(ed), 'Enter')
-    type(ed, 'X')
-    expect(ed.state.doc.nodeAt(2)?.text).toBe('X b')
-    expect(ed.state.doc.nodeAt(2)?.marks.map((m) => m.type.name)).toEqual(['bold'])
-  })
-
-  it('ArrowLeft at the start of the field puts the caret inside the link, past its closing bold', () => {
-    const ed = createEditor('see [a **b**](https://a.io) end')
-    // `see [a **b**|](url)`: past the closing bold marker, before the link's.
-    ed.commands.setTextSelection(8)
-    pressKey(ed, 'ArrowRight')
-    pressKey(ed, 'ArrowRight')
-    const input = urlField(ed)
-    input.setSelectionRange(0, 0)
-    fieldKey(input, 'ArrowLeft')
-    type(ed, 'X')
-    expect(markdown(ed)).toBe('see [a **b**X](https://a.io) end')
-  })
-
-  it('Enter in a field reached with the caret inside the label puts the caret past the link', () => {
-    const ed = createEditor(LINK)
-    ed.commands.setTextSelection(7)
-    // A click in the field moves focus there and leaves the editor's caret where it was.
-    urlField(ed).focus()
-    fieldKey(urlField(ed), 'Enter')
-    expect(ed.state.selection.from).toBe(10)
+    expect(ed.view.dom.textContent).toBe(LINK)
     type(ed, 'X')
     expect(markdown(ed)).toBe('see [label](https://a.io)X end')
   })
 
-  it('a press elsewhere keeps the editor’s caret where it was', () => {
-    const ed = createEditor(LINK)
-    ed.commands.setTextSelection(7)
-    const input = urlField(ed)
-    input.focus()
-    typeUrl(input, 'https://c.io')
-    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
-    expect(markdown(ed)).toBe('see [label](https://c.io) end')
-    expect(ed.view.hasFocus()).toBe(true)
-    expect(ed.state.selection.from).toBe(7)
+  it('ArrowRight at the end of a label that ends the block steps past ](url), typing no space', () => {
+    // The link's own ArrowRight would leave it there by typing a space (TipTap's `exitable`).
+    const ed = createEditor('see [label](https://a.io)')
+    ed.commands.setTextSelection(10)
+    expect(pressKey(ed, 'ArrowRight')).toBe(true)
+    expect(markdown(ed)).toBe('see [label](https://a.io)')
+    type(ed, 'X')
+    expect(markdown(ed)).toBe('see [label](https://a.io)X')
   })
 
-  it('once focus has left the field, presses and keys elsewhere are their own', () => {
+  it('ArrowLeft past ](url) steps back inside the link', () => {
     const ed = createEditor(LINK)
-    enterUrlField(ed)
-    const button = elsewhere()
-    button.focus()
-    expect(document.activeElement).toBe(button)
-    button.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
-    expect(document.activeElement).toBe(button)
-    const heard = vi.fn()
-    button.addEventListener('keydown', heard)
-    button.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
-    expect(heard).toHaveBeenCalledTimes(1)
+    ed.commands.setTextSelection(11)
+    pressKey(ed, 'ArrowLeft')
+    expect(pressKey(ed, 'ArrowLeft')).toBe(true)
+    expect(ed.state.selection.from).toBe(10)
+    type(ed, 'X')
+    expect(markdown(ed)).toBe('see [labelX](https://a.io) end')
   })
 
-  it('a field redrawn away while focused leaves the app’s keys alone', () => {
-    const ed = createEditor(LINK)
-    enterUrlField(ed)
-    ed.view.dispatch(ed.state.tr.removeMark(5, 10, ed.schema.marks['link']))
-    const heard = vi.fn()
-    document.body.addEventListener('keydown', heard)
-    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
-    document.body.removeEventListener('keydown', heard)
-    expect(heard).toHaveBeenCalledTimes(1)
-  })
-
-  it('leaving the field unchanged adds no undo step', () => {
-    const ed = createEditor(LINK)
-    type(ed, '')
-    const depth = undoDepth(ed.state)
-    const input = enterUrlField(ed)
-    fieldKey(input, 'Enter')
-    expect(undoDepth(ed.state)).toBe(depth)
-    expect(markdown(ed)).toBe(LINK)
-  })
-
-  it('a field redrawn away from its link while focused leaves the document alone', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    typeUrl(input, 'https://b.io')
-    const thrown = vi.fn()
-    window.addEventListener('error', thrown)
-    ed.view.dispatch(ed.state.tr.removeMark(5, 10, ed.schema.marks['link']))
-    expect(input.isConnected).toBe(false)
-    // Some browsers tell a removed field it lost focus.
-    input.dispatchEvent(new FocusEvent('focusout'))
-    window.removeEventListener('error', thrown)
-    expect(thrown).not.toHaveBeenCalled()
-    expect(markdown(ed)).toBe('see label end')
-  })
-
-  it('labels the URL field and hides the brackets from screen readers and in-page find', () => {
-    const ed = createEditor(LINK)
-    ed.commands.setTextSelection(7)
-    const [open, close] = [...ed.view.dom.querySelectorAll('.md-reveal-marker')]
-    expect(open?.getAttribute('aria-hidden')).toBe('true')
-    expect(close?.hasAttribute('aria-hidden')).toBe(false)
-    expect(close?.hasAttribute('data-find-skip')).toBe(true)
-    expect([...(close?.querySelectorAll('[aria-hidden="true"]') ?? [])].map(shown)).toEqual([
-      '](',
-      ')',
-    ])
-    expect(urlField(ed).getAttribute('aria-label')).toBe('Link URL')
-    // A phone offers its URL keyboard, and no spelling marks fall on the URL.
-    expect(urlField(ed).type).toBe('url')
-    expect(urlField(ed).spellcheck).toBe(false)
+  it('past ](url), typing keeps the emphasis that runs on beyond the link', () => {
+    // `a` is bold and linked, ` b` bold: the bold runs on past the link's end at 2.
+    const ed = createEditor('**[a](https://a.io) b**')
+    ed.commands.setTextSelection(2)
+    expect(pressKey(ed, 'ArrowRight')).toBe(true)
+    type(ed, 'X')
+    expect(ed.state.doc.nodeAt(2)?.text).toBe('X b')
+    expect(ed.state.doc.nodeAt(2)?.marks.map((m) => m.type.name)).toEqual(['bold'])
   })
 
   it('keeps the link markers in place while an IME composes in the text', () => {
@@ -1421,17 +1064,44 @@ describe('MarkdownReveal for external links', () => {
     expect(markers(ed)).toEqual([])
   })
 
-  it('a composition in the URL field is the field’s, not the editor’s', () => {
-    const ed = createEditor(LINK)
-    const input = enterUrlField(ed)
-    input.dispatchEvent(new Event('compositionstart', { bubbles: true }))
-    expect(ed.view.composing).toBe(false)
-  })
-
   it('shows a heading’s # run and its link’s syntax together', () => {
     const ed = createEditor('## see [x](https://a.io)')
     ed.commands.setTextSelection(6)
     expect(markers(ed)).toEqual(['## ', '[', '](https://a.io)'])
+  })
+})
+
+describe('MarkdownReveal beside a list marker', () => {
+  beforeEach(() => {
+    writePreference(PREFERENCES.revealMarkdownSyntax, true)
+  })
+
+  /** Every revealed marker drawn, in document order, as the user reads them after the list marker. */
+  function followsListMarker(ed: Editor): boolean[] {
+    const listMarker = ed.view.dom.querySelector('.list-marker')
+    if (!listMarker) throw new Error('no list marker is drawn')
+    return [...ed.view.dom.querySelectorAll('.md-reveal-marker')].map(
+      (el) => (listMarker.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+    )
+  }
+
+  it('draws the syntax revealed at a block’s start after its list marker, whichever side of the caret', () => {
+    for (const [source, caret, drawn] of [
+      ['## Title', 3, 1],
+      ['**bold** rest', 3, 2],
+      ['[label](https://a.io) rest', 3, 2],
+    ] as const) {
+      const ed = createEditor(source, [ListMarkerDecoration])
+      ed.view.dispatch(setListMarkerMeta(ed.state.tr, { style: 'ordered', ordinal: 1 }))
+      ed.commands.setTextSelection(caret)
+      expect(followsListMarker(ed)).toEqual(Array(drawn).fill(true))
+    }
+    // Left of the # run, the run is drawn past the caret: still after the list marker.
+    const heading = createEditor(HEADING, [ListMarkerDecoration])
+    heading.view.dispatch(setListMarkerMeta(heading.state.tr, { style: 'ordered', ordinal: 1 }))
+    heading.commands.setTextSelection(1)
+    pressKey(heading, 'ArrowLeft')
+    expect(followsListMarker(heading)).toEqual([true])
   })
 })
 

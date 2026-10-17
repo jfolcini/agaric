@@ -66,9 +66,12 @@ export function buildDecorations(state: EditorState): DecorationSet {
       span.textContent = text
       return span
     },
-    // side: -1 keeps the widget before the caret at position 1; ignoreSelection
-    // + a content key (so PM recreates the DOM only when the glyph changes).
-    { side: -1, ignoreSelection: true, key: `list-marker:${text}` },
+    // A negative side keeps the widget before the caret at position 1, and this
+    // one is below every side MarkdownReveal draws there (from -100), so the
+    // marker leads the line and the Markdown revealed at its start follows it.
+    // ignoreSelection + a content key (so PM recreates the DOM only when the
+    // glyph changes).
+    { side: -1000, ignoreSelection: true, key: `list-marker:${text}` },
   )
   return DecorationSet.create(state.doc, [widget])
 }

@@ -7,8 +7,7 @@
  * for it:
  * - deleting a mark's marker by removing that mark from its range
  *   (`extendMarkRange` + `unsetMark`);
- * - deleting or adding to a heading's `#` run by `setNode` / `setParagraph`;
- * - a URL set in a link's field by `extendMarkRange` + `setLink`.
+ * - deleting or adding to a heading's `#` run by `setNode` / `setParagraph`.
  * Crossing a marker changes only the caret, which the other editor copies.
  * After every edit both save the same Markdown and hold the same undo history.
  */
@@ -31,33 +30,23 @@ import { ExternalLink } from '@/editor/extensions/external-link'
 import { MarkdownReveal } from '@/editor/extensions/markdown-reveal'
 import { TaskParagraph } from '@/editor/extensions/task-paragraph'
 import { serialize } from '@/editor/markdown-serializer'
-import {
-  isOutsideHeadingMarker,
-  type MarkMarker,
-  markerBesideCaret,
-  revealedMarkers,
-} from '@/editor/revealed-markers'
+import { isOutsideHeadingMarker, markerBesideCaret } from '@/editor/revealed-markers'
 import type { DocNode } from '@/editor/types'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
-import { normalizeUrl } from '@/lib/url-validation'
 
 const NUM_RUNS = Number(process.env['SWEEP_RUNS'] ?? 200)
 
 const HREFS = ['https://a.io', 'https://b.io'] as const
 
 const editors: Array<{ editor: Editor; host: HTMLElement }> = []
-let elsewhere: HTMLButtonElement
 
 beforeEach(() => {
   localStorage.clear()
   writePreference(PREFERENCES.revealMarkdownSyntax, true)
-  elsewhere = document.createElement('button')
-  document.body.append(elsewhere)
 })
 
 afterEach(() => {
   destroyEditors()
-  elsewhere.remove()
 })
 
 function destroyEditors(): void {
@@ -98,14 +87,11 @@ const arbSegment: fc.Arbitrary<Segment> = fc.oneof(
   },
 )
 
-type FieldExit = 'Enter' | 'Escape' | 'ArrowLeft' | 'ArrowRight' | 'blur'
-
 type Op =
   | { kind: 'move'; at: number }
   | { kind: 'select'; a: number; b: number }
   | { kind: 'type'; text: string }
   | { kind: 'key'; key: 'Backspace' | 'Delete' | 'ArrowLeft' | 'ArrowRight' }
-  | { kind: 'url'; field: number; value: string; exit: FieldExit }
 
 const arbOp: fc.Arbitrary<Op> = fc.oneof(
   { arbitrary: fc.record({ kind: fc.constant('move' as const), at: fc.nat() }), weight: 3 },
@@ -132,19 +118,9 @@ const arbOp: fc.Arbitrary<Op> = fc.oneof(
     }),
     weight: 4,
   },
-  {
-    arbitrary: fc.record({
-      kind: fc.constant('url' as const),
-      field: fc.nat(),
-      value: fc.constantFrom('https://c.io/x', 'd.io', 'javascript:x', HREFS[0]),
-      exit: fc.constantFrom<FieldExit>('Enter', 'Escape', 'ArrowLeft', 'ArrowRight', 'blur'),
-    }),
-    weight: 2,
-  },
 )
 
 function createEditor(level: number, segments: Segment[], reveal: boolean): Editor {
-  // In the document: the URL field takes focus.
   const host = document.createElement('div')
   document.body.append(host)
   const editor = new Editor({
@@ -259,46 +235,6 @@ function deleteMarker(revealing: Editor, plain: Editor, key: 'Backspace' | 'Dele
     .run()
 }
 
-function setUrlThroughField(
-  revealing: Editor,
-  plain: Editor,
-  op: Extract<Op, { kind: 'url' }>,
-): void {
-  const fields = [...revealing.view.dom.querySelectorAll<HTMLInputElement>('.md-reveal-url input')]
-  const input = fields[op.field % Math.max(1, fields.length)]
-  const root = input?.closest('.md-reveal-marker')
-  if (!input || !root) return
-  const pos = revealing.view.posAtDOM(root, 0)
-  const close = revealedMarkers(revealing.state).find(
-    (m): m is MarkMarker =>
-      m.kind === 'mark' && m.role === 'close' && m.pos === pos && m.run.mark.type.name === 'link',
-  )
-  if (!close) throw new Error('a URL field without its link')
-  const before = String(close.run.mark.attrs['href'])
-
-  input.focus()
-  input.value = op.value
-  input.dispatchEvent(new Event('input', { bubbles: true }))
-  if (op.exit === 'blur') {
-    elsewhere.focus()
-  } else {
-    const at = op.exit === 'ArrowLeft' ? 0 : input.value.length
-    input.setSelectionRange(at, at)
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: op.exit, bubbles: true }))
-  }
-
-  const href = op.exit === 'Escape' ? null : normalizeUrl(op.value)
-  if (href !== null && href !== before) {
-    plain
-      .chain()
-      .setTextSelection(close.run.from)
-      .extendMarkRange('link', { href: before })
-      .setLink({ href })
-      .run()
-  }
-  copyCaret(revealing, plain)
-}
-
 function apply(revealing: Editor, plain: Editor, op: Op): void {
   const both = [revealing, plain]
   if (op.kind === 'move') {
@@ -325,10 +261,6 @@ function apply(revealing: Editor, plain: Editor, op: Op): void {
     // `#` left of the heading's `#` run: one level up, to 6.
     if (marker.level < 6) setLevel(plain, marker.level + 1)
     copyCaret(revealing, plain)
-    return
-  }
-  if (op.kind === 'url') {
-    setUrlThroughField(revealing, plain, op)
     return
   }
   if (op.key === 'Backspace' || op.key === 'Delete') {

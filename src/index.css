@@ -1340,29 +1340,6 @@
   @apply text-muted-foreground select-none;
 }
 
-/* A link's URL in its revealed `](url)`: a field that reads as the marker's
-   text, sized to its value by an invisible copy in the same grid cell, and
-   never wider than the line, where it scrolls. */
-.ProseMirror .md-reveal-url {
-  @apply inline-grid max-w-full;
-}
-.ProseMirror .md-reveal-url::after,
-.ProseMirror .md-reveal-url > input {
-  grid-area: 1 / 1;
-  /* Room for the caret after the last character. */
-  @apply pe-0.5;
-}
-.ProseMirror .md-reveal-url::after {
-  content: attr(data-value);
-  @apply invisible min-w-0 overflow-hidden whitespace-pre;
-}
-.ProseMirror .md-reveal-url > input {
-  @apply w-full min-w-0 rounded-sm text-muted-foreground select-text focus-ring-visible;
-}
-.ProseMirror .md-reveal-url > input[aria-invalid='true'] {
-  @apply text-destructive underline decoration-wavy;
-}
-
 /* Inline code inside the editor — visible background so the user
    knows they're typing inside a code span, not plain text. */
 .ProseMirror code {

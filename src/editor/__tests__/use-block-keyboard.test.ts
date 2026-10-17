@@ -2312,7 +2312,7 @@ describe('#5689 — a revealed heading or link marker beside the caret keeps its
     }
   })
 
-  it('ArrowRight at the end of a link label ending the block stays in the block, for the URL field', () => {
+  it('ArrowRight at the end of a link label ending the block stays in the block, to cross its ](url)', () => {
     const { editor, callbacks, cleanup } = setup({
       type: 'paragraph',
       content: [

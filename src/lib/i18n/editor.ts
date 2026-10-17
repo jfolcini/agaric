@@ -226,8 +226,6 @@ export const editor: Record<string, string> = {
   // #5160 D9 — the one field of the popover opened on a [[page]] chip.
   'linkEdit.blockLinkLabelPlaceholder': 'Shown in place of the page title',
   'linkEdit.url': 'URL',
-  // #5689 — the URL field in a link's revealed `](url)`.
-  'editor.revealedLinkUrl': 'Link URL',
   'linkEdit.invalidUrl': 'javascript: and data: URLs are not allowed',
   'linkEdit.apply': 'Apply',
   'linkEdit.update': 'Update',

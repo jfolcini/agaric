@@ -2,20 +2,22 @@
  * #5689 — "Show Markdown syntax around the cursor": turned on in Settings ›
  * Editor, the block editor shows the markers of the mark, heading or link the
  * caret is in. A marker is deleted or crossed as one unit, a heading's `#` run
- * changes its level, a link's URL is edited in place, the stored block and
- * the clipboard never carry a marker, chips stay chips, and an IME
- * composition leaves the markers in place until it ends.
+ * changes its level, a link's URL is edited through the link popover, the
+ * stored block and the clipboard never carry a marker, chips stay chips, and
+ * an IME composition leaves the markers in place until it ends.
  */
 
 import { createRequire } from 'node:module'
 
-import type { Page } from '@playwright/test'
+import { devices, type Page } from '@playwright/test'
 
 import {
   expect,
+  expectNoHorizontalOverflow,
   focusBlock,
   navigateToView,
   openPage,
+  openPageMobile,
   openSettingsTab,
   reopenPage,
   replaceEditorText,
@@ -44,10 +46,10 @@ async function typeBlock(page: Page, text: string): Promise<void> {
   await page.keyboard.type(text)
 }
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page, isMobile }) => {
   await waitForBoot(page)
   await setReveal(page, true)
-  await openPage(page, 'Getting Started')
+  await (isMobile ? openPageMobile : openPage)(page, 'Getting Started')
 })
 
 test('the caret in bold text reveals its markers, and they never reach the clipboard or the stored block', async ({
@@ -241,38 +243,14 @@ async function moveCaret(page: Page, key: string, to: number): Promise<void> {
   await expect.poll(() => caret(page)).toBe(to)
 }
 
-/** The revealed markers as the user reads them, a link's URL field read as its value. */
+/** The revealed markers as the user reads them, spaces kept. */
 async function shownMarkers(page: Page): Promise<string[]> {
-  return page
-    .getByTestId('md-reveal-marker')
-    .evaluateAll((els) =>
-      els.map((el) =>
-        [...el.childNodes]
-          .map(
-            (n) => (n instanceof HTMLElement && n.querySelector('input')?.value) || n.textContent,
-          )
-          .join(''),
-      ),
-    )
+  return page.getByTestId('md-reveal-marker').evaluateAll((els) => els.map((el) => el.textContent))
 }
 
 /** Block 2 of Getting Started, the one `typeBlock` edits, once it is static again. */
 const stored = (page: Page) =>
   page.locator('[data-testid="block-static"][data-block-id="0000000000000000000BLOCK03"]')
-
-/** The editor's text as the user reads it, a link's URL field read as its value. */
-async function shownText(page: Page): Promise<string> {
-  return page.locator(EDITOR).evaluate((root) => {
-    const shown = (node: Node): string =>
-      node instanceof HTMLInputElement
-        ? node.value
-        : node.nodeType === Node.TEXT_NODE
-          ? (node.textContent ?? '')
-          : [...node.childNodes].map(shown).join('')
-    return shown(root)
-  })
-}
-const urlField = (page: Page) => page.getByRole('textbox', { name: 'Link URL' })
 
 test('each heading level shows its # run while the caret is in the heading, and is saved', async ({
   page,
@@ -383,126 +361,84 @@ test('deleting [ or ](url) unlinks the label, in one undo step', async ({ page }
   await expect(stored(page).getByTestId('external-link')).toHaveCount(0)
 })
 
-test('the URL field: the arrows walk into it, Enter sets the URL, Escape restores it, and the URL is saved', async ({
+test('the arrows cross ](url) as one unit, and Backspace past it unlinks the label', async ({
   page,
 }) => {
   await typeBlock(page, 'see [label](https://example.com) end')
   const editor = page.locator(EDITOR)
   await expect(editor.locator('a')).toHaveText('label')
 
-  // `see label|`, inside the link's end: ArrowRight enters the URL at its start.
+  // `see label|`, inside the link's end: ArrowRight crosses `](url)` without moving in the text.
   await setCaret(page, 10)
+  expect(await shownMarkers(page)).toEqual(['[', '](https://example.com)'])
   await page.keyboard.press('ArrowRight')
-  const field = urlField(page)
-  await expect(field).toBeFocused()
-  await expect(field).toHaveValue('https://example.com')
-  expect(await field.evaluate((el: HTMLInputElement) => el.selectionStart)).toBe(0)
-  // The field is as wide as its URL, which it shows whole.
-  expect(await field.evaluate((el: HTMLInputElement) => el.scrollWidth <= el.clientWidth)).toBe(
-    true,
-  )
+  expect(await caret(page)).toBe(10)
+  await page.keyboard.type('X')
+  await expect(editor.locator('a')).toHaveText('label')
+  await expect(editor).toHaveText('see labelX end')
 
-  // Escape leaves it unchanged, the caret back at the end of the label.
-  await page.keyboard.press('Control+a')
-  await page.keyboard.type('nothing.example')
-  await page.keyboard.press('Escape')
-  await expect(editor).toBeFocused()
-  await expect(editor.locator('a')).toHaveAttribute('href', 'https://example.com')
+  // Back onto the link's end, then across `](url)`: typing there is linked.
+  await moveCaret(page, 'ArrowLeft', 10)
+  await page.keyboard.press('ArrowLeft')
   await page.keyboard.type('Y')
   await expect(editor.locator('a')).toHaveText('labelY')
 
-  // From past the link, ArrowLeft enters the URL at its end.
-  await setCaret(page, 12)
-  await page.keyboard.press('ArrowLeft')
-  await page.keyboard.press('ArrowLeft')
-  await expect(field).toBeFocused()
-  await page.keyboard.press('Control+a')
-  await page.keyboard.type('example.org/new')
-  await page.keyboard.press('Enter')
-  await expect(editor).toBeFocused()
-  await expect(editor.locator('a')).toHaveAttribute('href', 'https://example.org/new')
-  // Past the `](url)`: typing is not linked.
-  await page.keyboard.type('X')
+  // Across `](url)` again, then Backspace takes it: the label is unlinked, in one undo step.
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Backspace')
+  await expect(editor.locator('a')).toHaveCount(0)
+  await expect(editor).toHaveText('see labelYX end')
+  await page.keyboard.press('Control+z')
   await expect(editor.locator('a')).toHaveText('labelY')
-  expect(await shownText(page)).toBe('see labelYX end')
+})
 
-  await page.keyboard.press('Control+z')
-  await page.keyboard.press('Control+z')
-  await expect(editor.locator('a')).toHaveAttribute('href', 'https://example.com')
-  await page.keyboard.press('Control+y')
+test('Ctrl+K in a revealed link edits its URL in the link popover, and the new ](url) shows', async ({
+  page,
+}) => {
+  await typeBlock(page, 'see [label](https://example.com) end')
+  const editor = page.locator(EDITOR)
+  await setCaret(page, 7)
+  expect(await shownMarkers(page)).toEqual(['[', '](https://example.com)'])
+
+  await page.keyboard.press('Control+k')
+  const popover = page.getByTestId('link-edit-popover')
+  const url = popover.getByPlaceholder('https://...')
+  await expect(url).toHaveValue('https://example.com')
+  await url.fill('example.org/new')
+  await url.press('Enter')
+  await expect(popover).toHaveCount(0)
   await expect(editor.locator('a')).toHaveAttribute('href', 'https://example.org/new')
+  expect(await shownMarkers(page)).toEqual(['[', '](https://example.org/new)'])
 
   await page.keyboard.press('Escape')
-  const link = stored(page).getByTestId('external-link')
-  await expect(link).toContainText('labelY')
-  await expect(link).toHaveAttribute('data-href', 'https://example.org/new')
-  await reopenPage(page, 'Getting Started')
   await expect(stored(page).getByTestId('external-link')).toHaveAttribute(
     'data-href',
     'https://example.org/new',
   )
 })
 
-test('an invalid URL is refused in the field, and a click elsewhere leaves the link as it was', async ({
-  page,
-}) => {
-  await typeBlock(page, 'see [label](https://example.com) end')
-  await setCaret(page, 10)
-  await page.keyboard.press('ArrowRight')
-  const field = urlField(page)
-  await page.keyboard.press('Control+a')
-  await page.keyboard.type('javascript:alert(1)')
-  await page.keyboard.press('Enter')
-  await expect(field).toBeFocused()
-  await expect(field).toHaveAttribute('aria-invalid', 'true')
+test.describe('on a phone', () => {
+  const phone = devices['Pixel 7']
+  test.use({
+    viewport: { width: 390, height: phone.viewport.height },
+    userAgent: phone.userAgent,
+    isMobile: phone.isMobile,
+    hasTouch: phone.hasTouch,
+    deviceScaleFactor: phone.deviceScaleFactor,
+  })
 
-  await page.locator(EDITOR).locator('a').click()
-  await expect(page.locator(EDITOR).locator('a')).toHaveAttribute('href', 'https://example.com')
-  await expect(field).toHaveValue('https://example.com')
-})
-
-test('a URL edited in the field and left by a click elsewhere is saved', async ({ page }) => {
-  await typeBlock(page, 'see [label](https://example.com) end')
-  await setCaret(page, 10)
-  await page.keyboard.press('ArrowRight')
-  await page.keyboard.press('Control+a')
-  await page.keyboard.type('https://example.net/')
-  // A click on another block leaves the editor: the URL is set before the block saves.
-  await page.locator('[data-testid="block-static"]').first().click()
-  await expect(stored(page).getByTestId('external-link')).toHaveAttribute(
-    'data-href',
-    'https://example.net/',
-  )
-})
-
-test('a long URL field stays within a phone-width line, scrolled to where the caret enters', async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 390, height: 800 })
-  await typeBlock(page, `see [label](https://example.com/${'long-path-segment/'.repeat(8)}) end`)
-  await setCaret(page, 7)
-  const field = urlField(page)
-  await expect(field).toBeVisible()
-  const scrolled = () => field.evaluate((el: HTMLInputElement) => el.scrollLeft)
-  // Into the field from the label, at its start; from past the link, at its end.
-  await setCaret(page, 10)
-  await page.keyboard.press('ArrowRight')
-  await expect(field).toBeFocused()
-  expect(await scrolled()).toBe(0)
-  await page.keyboard.press('Escape')
-  await setCaret(page, 11)
-  await page.keyboard.press('ArrowLeft')
-  await page.keyboard.press('ArrowLeft')
-  await expect(field).toBeFocused()
-  expect(await scrolled()).toBeGreaterThan(0)
-  const overflow = await page.evaluate(() => ({
-    page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-    editor: (() => {
-      const el = document.querySelector('[data-testid="block-editor"] [contenteditable="true"]')
-      return el ? el.scrollWidth - el.clientWidth : -1
-    })(),
-  }))
-  expect(overflow).toEqual({ page: 0, editor: 0 })
+  test('a long URL in ](url) wraps within the line', async ({ page }) => {
+    // No hyphen or space: nothing in it is a break opportunity.
+    const href = `https://example.com/${'longpathsegment'.repeat(10)}`
+    await typeBlock(page, `see [label](${href}) end`)
+    await setCaret(page, 7)
+    const close = page.getByTestId('md-reveal-marker').last()
+    await expect(close).toHaveText(`](${href})`)
+    const lines = await close.evaluate((el) => el.getClientRects().length)
+    expect(lines).toBeGreaterThan(1)
+    await expectNoHorizontalOverflow(page, page.locator(EDITOR), 'block editor')
+    await expectNoHorizontalOverflow(page)
+  })
 })
 
 test('a bare URL reveals nothing', async ({ page }) => {
@@ -543,7 +479,7 @@ test('chips stay chips: no syntax beside a tag, and the arrows step over it', as
   await expect(page.locator('[data-testid="block-static"]').nth(3)).toHaveText(before)
 })
 
-test('axe finds no violation with a heading’s # run, a link’s syntax and its URL field drawn', async ({
+test('axe finds no violation with a heading’s # run and a link’s syntax drawn', async ({
   page,
 }) => {
   await typeBlock(page, '## see [label](https://example.com) **bold**')
@@ -559,17 +495,6 @@ test('axe finds no violation with a heading’s # run, a link’s syntax and its
     }))
   })
   expect(violations).toEqual([])
-  await moveCaret(page, 'ArrowRight', 8)
-  await moveCaret(page, 'ArrowRight', 9)
-  await moveCaret(page, 'ArrowRight', 10)
-  await page.keyboard.press('ArrowRight')
-  await expect(urlField(page)).toBeFocused()
-  const focused = await page.evaluate(async () => {
-    // @ts-expect-error injected global
-    const results = await window.axe.run(document.querySelector('[data-testid="block-editor"]'))
-    return results.violations.map((v: { id: string }) => v.id)
-  })
-  expect(focused).toEqual([])
 })
 
 test('an IME composition past a link in a heading leaves its markers in place until it ends', async ({
@@ -591,5 +516,5 @@ test('an IME composition past a link in a heading leaves its markers in place un
   await cdp.send('Input.insertText', { text: 'か' })
   await expect(markers).toHaveText(['##'])
   await expect(page.locator(EDITOR).locator('a')).toHaveText('label')
-  expect(await shownText(page)).toBe('## see labelか rest')
+  await expect(page.locator(EDITOR)).toHaveText('## see labelか rest')
 })

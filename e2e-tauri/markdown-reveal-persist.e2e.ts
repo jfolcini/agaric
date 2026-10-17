@@ -6,8 +6,8 @@
 // ProseMirror reads WebKitGTK's contenteditable DOM back into the document as
 // the user types, so this WebView is where a marker could leak into what is
 // saved. Type with the markers drawn, change a heading's level through its `#`
-// run and a link's URL through its field, leave the view and come back: the
-// stored blocks hold the formatting, the level and the URL, and no marker.
+// run and draw a link's brackets and URL, leave the view and come back: the
+// stored blocks hold the formatting, the level and the link, and no marker.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -19,7 +19,6 @@ import {
   navigateTo,
   openJournalBlockEditor,
   runScopedMarker,
-  typeInputVerified,
   typeVerified,
   waitForAppReady,
 } from './helpers'
@@ -27,8 +26,7 @@ import {
 const MARKER = runScopedMarker('wdio-reveal')
 const HEADING = runScopedMarker('wdio-level')
 const LINKED = runScopedMarker('wdio-url')
-const URL_FIELD = 'input[aria-label="Link URL"]'
-const NEW_URL = 'https://example.org/new'
+const HREF = 'https://example.com'
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 const TYPED = `${MARKER} **bold** and *it* end`
 const SHOWN = `${MARKER} bold and it end`
@@ -96,10 +94,6 @@ async function caretInto(text: string, offset: number): Promise<void> {
   )
 }
 
-async function focusedLabel(): Promise<string | null> {
-  return browser.execute(() => document.activeElement?.getAttribute('aria-label') ?? null)
-}
-
 /** Put the caret inside the bold word, through the editor's own API. */
 async function caretIntoBold(): Promise<void> {
   await browser.execute((sel: string) => {
@@ -150,7 +144,7 @@ describe('Markdown syntax revealed around the cursor on the real backend (#5689)
     await expect(stored.$('em')).toHaveText('it')
   })
 
-  it('saves a heading level changed through its # run and a URL set in its field', async () => {
+  it('saves a heading level changed through its # run and a link whose syntax was drawn', async () => {
     await waitForAppReady()
     await turnRevealOn()
     await navigateTo('Journal')
@@ -168,28 +162,14 @@ describe('Markdown syntax revealed around the cursor on the real backend (#5689)
     })
     await browser.keys(['Escape'])
 
-    // A link, then ArrowRight at the end of its label into the URL field.
+    // A link, then the caret in its label, which draws its brackets and URL.
     await openJournalBlockEditor()
-    await typeVerified(
-      EDITOR,
-      `${LINKED} see [label](https://example.com) end`,
-      typedMarkdown,
-      'block editor',
+    await typeVerified(EDITOR, `${LINKED} see [label](${HREF}) end`, typedMarkdown, 'block editor')
+    await caretInto('label', 2)
+    await browser.waitUntil(
+      async () => (await $$('[data-testid="md-reveal-marker"]').getElements()).length === 2,
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the caret in a link label drew no brackets' },
     )
-    await caretInto('label', 5)
-    await browser.keys(['ArrowRight'])
-    await browser.waitUntil(async () => (await focusedLabel()) === 'Link URL', {
-      timeout: ACTION_TIMEOUT,
-      timeoutMsg: 'ArrowRight at the end of the label did not move into the URL field',
-    })
-    await browser.keys(['Control', 'a'])
-    await browser.keys(['Delete'])
-    await typeInputVerified(URL_FIELD, NEW_URL)
-    await browser.keys(['Enter'])
-    await browser.waitUntil(async () => (await $(EDITOR).$('a').getAttribute('href')) === NEW_URL, {
-      timeout: ACTION_TIMEOUT,
-      timeoutMsg: 'Enter in the URL field did not set the link’s URL',
-    })
     await browser.keys(['Escape'])
 
     await navigateTo('Pages')
@@ -199,6 +179,7 @@ describe('Markdown syntax revealed around the cursor on the real backend (#5689)
     await expect(heading.$('h3')).toHaveText(`${HEADING} heading`)
     const linked = blockStaticByMarker(LINKED)
     await linked.waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expect(linked.$('[data-testid="external-link"]')).toHaveAttribute('data-href', NEW_URL)
+    expect(await linked.getText()).not.toContain('](')
+    await expect(linked.$('[data-testid="external-link"]')).toHaveAttribute('data-href', HREF)
   })
 })
