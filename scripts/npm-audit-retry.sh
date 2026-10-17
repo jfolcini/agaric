@@ -6,11 +6,17 @@
 #
 # 3 attempts, 5s then 15s: modest picks around that one data point, not a
 # measured optimum.
+#
+# With no arguments it retries the advisory scan; with arguments it retries
+# that command instead (`npm audit signatures` in _validate.yml, which also
+# fetches from the registry and blocks).
 
 set -euo pipefail
 
 # One entry per RETRY, so the attempt budget is this many plus the first try.
 BACKOFF_SECONDS=(5 15)
+CMD=("$@")
+if [ "${#CMD[@]}" -eq 0 ]; then CMD=(npx better-npm-audit audit); fi
 TOTAL_ATTEMPTS=$((${#BACKOFF_SECONDS[@]} + 1))
 
 # Fail-closed: the loop exits early only on SUCCESS, so a real advisory fails
@@ -22,7 +28,7 @@ while true; do
   # Not captured: the output streams through, so a failure surfaces npm's own
   # text verbatim.
   rc=0
-  npx better-npm-audit audit || rc=$?
+  "${CMD[@]}" || rc=$?
   if [ "$rc" -eq 0 ]; then exit 0; fi
 
   if [ "$attempt" -ge "$TOTAL_ATTEMPTS" ]; then

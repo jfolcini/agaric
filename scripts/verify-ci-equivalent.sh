@@ -2069,6 +2069,11 @@ if ! node_deps_problem_out="$(node_deps_problem "$REPO_ROOT")"; then
     exit 1
 fi
 
+# ── Preflight: npm floor ───────────────────────────────────────────
+# Same reason as above: the Node phases run `npm run` / `npx`, which an older
+# npm starts without complaint. The shared check names the fix.
+bash "$REPO_ROOT/scripts/require-npm.sh" >/dev/null || exit 1
+
 # shellcheck disable=SC1091
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
@@ -2565,7 +2570,7 @@ npm_sig_log="$(mktemp -t pre-push-npm-sig.XXXXXX)"
 if npm audit signatures > "$npm_sig_log" 2>&1; then
     echo "  ✓ npm audit signatures (all verified)"
 else
-    echo "  ⚠ npm audit signatures had findings (warn-only); not every npm dep ships Sigstore provenance yet"
+    echo "  ⚠ npm audit signatures failed (warn-only here; CI blocks on it); see: npm audit signatures"
 fi
 rm -f "$npm_sig_log"
 

@@ -74,6 +74,10 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    # Cooldown (#816): same 7-day quarantine as npm and cargo below, so a
+    # freshly-compromised action release is not proposed on its publish day.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     commit-message:
       prefix: chore(actions)

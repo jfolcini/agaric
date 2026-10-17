@@ -7,6 +7,8 @@
 #   - minSdk: 24 -> 30          (Android 11, Sep 2020 — our platform baseline)
 #   - jvmTarget: "1.8" -> "17"  (Java 17 LTS, matches JAVA_HOME in CI)
 #   - compileOptions.sourceCompatibility / targetCompatibility = VERSION_17
+#   - distributionSha256Sum in the Gradle wrapper properties, so the wrapper
+#     refuses a Gradle distribution that differs from the one we vetted.
 #   - launcher icons: replace Tauri's generic placeholder with the agaric
 #     mushroom (regenerated from app-icon.json -> public/agaric.svg).
 #
@@ -65,6 +67,41 @@ fi
 rm -f "$FILE.bak"
 
 echo "patched $FILE — minSdk=30, jvmTarget=17, Java 17 compileOptions"
+
+# ── Gradle wrapper checksum ───────────────────────────────────────────
+# The wrapper downloads Gradle at build time; distributionSha256Sum makes it
+# verify what it downloaded. Unlike the sed patterns above this FAILS CLOSED:
+# a Gradle version bump from `tauri-cli` must come with its checksum here, from
+# the matching https://services.gradle.org/distributions/gradle-<ver>-bin.zip.sha256
+# (the Gradle project's official checksum for that exact distribution). The
+# version is the one the pinned `@tauri-apps/cli` template emits (its
+# `gradle-wrapper.properties`).
+WRAPPER="src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties"
+
+if [[ ! -f "$WRAPPER" ]]; then
+  echo "error: $WRAPPER not found — run 'cargo tauri android init' first" >&2
+  exit 1
+fi
+
+distribution_url="$(sed -n 's/^distributionUrl=//p' "$WRAPPER")"
+case "$distribution_url" in
+  'https\://services.gradle.org/distributions/gradle-9.6.1-bin.zip')
+    gradle_sha256="9c0f7faeeb306cb14e4279a3e084ca6b596894089a0638e68a07c945a32c9e14"
+    ;;
+  *)
+    echo "error: no pinned checksum for $WRAPPER distributionUrl '$distribution_url'." >&2
+    echo "  Add a case above with the value from <distributionUrl>.sha256 and re-run." >&2
+    exit 1
+    ;;
+esac
+
+sed -i.bak '/^distributionSha256Sum=/d' "$WRAPPER"
+rm -f "$WRAPPER.bak"
+# The properties file may lack a trailing newline.
+[[ -z "$(tail -c1 "$WRAPPER")" ]] || echo >> "$WRAPPER"
+echo "distributionSha256Sum=$gradle_sha256" >> "$WRAPPER"
+
+echo "patched $WRAPPER — distributionSha256Sum pinned"
 
 # ── Launcher icons ────────────────────────────────────────────────────
 # `cargo tauri android init` emits Tauri's generic placeholder launcher

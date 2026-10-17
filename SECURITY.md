@@ -139,6 +139,10 @@ These are the bytes that cross into Agaric from outside the trust boundary. Each
 - **File imports (Markdown, OPML, JSON exports).** Parsed by frontend importers; treated as user-supplied content, not adversarial.
 - **WebView content.** Constrained by the Tauri CSP (`default-src 'self'`, see `src-tauri/tauri.conf.json`) and the per-window capability allowlist ([`src-tauri/capabilities/default.json`](src-tauri/capabilities/default.json)).
 
+### Residual risk: a poisoned frontend dependency
+
+A malicious dependency that reaches a build runs inside the WebView with the app's full reach: every IPC command the capabilities grant, and so the vault. Once it runs, no in-app control reliably stops it from sending data out, so the defence is keeping it out: the lockfile with `npm ci`, blocked install scripts, the npm 12 floor, the 7-day cooldowns, and the blocking signature check. The CSP's `connect-src` is defence in depth, not a boundary.
+
 ### Accepted risks
 
 Each accepted finding lives in exactly one canonical file. Do not duplicate the lists here — update the source and the rationale travels with it.
@@ -156,7 +160,11 @@ Each item below names the file or tool that enforces it. If you change one, upda
 - **Lockfiles + `--locked` everywhere** — `package-lock.json` and `src-tauri/Cargo.lock` are committed. CI installs run with `--locked` (see `cargo install --locked` invocations in `.github/workflows/_validate.yml`, `ci.yml`, `release.yml`); `npm ci` is used in place of `npm install` in CI.
 - **SHA-pinned GitHub Actions** — every `uses:` reference in `.github/workflows/` is pinned to a 40-char commit SHA with a `# vX` comment. [`.github/dependabot.yml`](.github/dependabot.yml) bumps these weekly.
 - **`cargo audit` + `cargo deny check`** — one prek hook (`cargo-deny`, see `prek.toml`) and a CI step in `.github/workflows/_validate.yml`. `cargo-deny` covers RustSec advisories, license policy, banned crates (`openssl` family), and the source allowlist (crates.io only).
-- **`npm audit signatures`** — Sigstore provenance verification in `.github/workflows/_validate.yml`. Warn-only today; tightens as more of the npm ecosystem publishes attestations.
+- **`npm audit signatures`** — registry-signature and Sigstore provenance verification in `.github/workflows/_validate.yml`, blocking (retried through `scripts/npm-audit-retry.sh` against registry blips). It fails on an invalid signature or attestation; a package that publishes no attestation is reported, not failed.
+- **Release gate** — `release.yml` jobs that read the signing secrets (`build-and-release`, `android-build-and-release`) run in the `release` GitHub environment: they wait for the maintainer's approval, the environment only accepts deployments from release tags (`v*`, `[0-9]*`), and the signing secrets live in that environment, not at repo level. A tag ruleset on the same patterns limits tag creation, update and deletion to repo admins, and `verify-version` fails a tag whose commit is not an ancestor of `origin/main`. Approval is the maintainer's check that the release run is the one they started (run page → "Review deployments", or `gh api`; see the header of `scripts/release.sh`).
+- **Dependency cooldowns** — Dependabot waits 7 days after publish before proposing an update for every ecosystem (`cooldown` in [`.github/dependabot.yml`](.github/dependabot.yml)), and `.npmrc` sets `min-release-age=7` so a local `npm install` / `npm update` cannot resolve a version younger than 7 days either. `npm ci` installs the lockfile's exact versions and is unaffected.
+- **npm 12 floor** — `engines.npm` requires npm 12 (a deliberate floor, for its supply-chain controls) and `packageManager` pins the exact version every installer reads (`scripts/require-npm.sh`).
+- **Gradle wrapper checksum** — `scripts/patch-android-build.sh` sets `distributionSha256Sum` on the generated wrapper from Gradle's published checksum and fails if the Gradle version changes without a matching one.
 - **`better-npm-audit` against `.nsprc`** — `npm-audit` prek hook (`prek.toml`) fails on any advisory not listed in `.nsprc`. The 90-day `expiresOn` ensures waivers do not become permanent.
 - **`gitleaks` + `detect-private-key`** — `prek.toml` blocks committed secrets and stray PEM blocks.
 - **`unsafe_code = "deny"`** — crate-wide lint in `src-tauri/Cargo.toml`. New `unsafe { … }` blocks fail CI.
@@ -179,14 +187,14 @@ The following are explicitly outside this threat model. Reports that fit these c
 
 ## Updater signing-key rotation
 
-The `TAURI_SIGNING_PRIVATE_KEY` repo secret is the **root of trust for every auto-update**: it signs the updater payload that `release.yml` ships (via tauri-action), and the matching public key embedded in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) (`plugins.updater.pubkey`) is what the in-app updater (`src/hooks/useUpdateCheck.ts`) checks before applying a new bundle. If that private key leaks **and** the attacker can also induce the user's app to fetch a malicious payload (DNS spoofing, GitHub release-asset replacement via account compromise), the in-app signature check passes and the malicious update installs cleanly. The key is long-lived; rotation is the documented response.
+The `TAURI_SIGNING_PRIVATE_KEY` secret (a `release` environment secret) is the **root of trust for every auto-update**: it signs the updater payload that `release.yml` ships (via tauri-action), and the matching public key embedded in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) (`plugins.updater.pubkey`) is what the in-app updater (`src/hooks/useUpdateCheck.ts`) checks before applying a new bundle. If that private key leaks **and** the attacker can also induce the user's app to fetch a malicious payload (DNS spoofing, GitHub release-asset replacement via account compromise), the in-app signature check passes and the malicious update installs cleanly. The key is long-lived; rotation is the documented response.
 
 **Cadence.** Rotate at least annually. Rotate immediately on any suspected compromise (laptop loss, leaked CI logs, suspicious GitHub Actions activity). The annual rotation runs on a calendar reminder kept in the maintainer's personal calendar, not in the repo — there is no in-repo automation for it.
 
 **Procedure.**
 
 1. Generate a fresh keypair locally: `cargo tauri signer generate -w ~/.tauri/agaric-<YYYY-MM>.key`. Choose a strong password; the maintainer stores the password in the system keychain (Secret Service / Keychain / Credential Manager). Never commit the private key.
-2. Update the GitHub Actions repo secrets `TAURI_SIGNING_PRIVATE_KEY` (the new private key file's contents) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (its password) under repo Settings → Secrets and variables → Actions.
+2. Update the secrets `TAURI_SIGNING_PRIVATE_KEY` (the new private key file's contents) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (its password) in the `release` environment (repo Settings → Environments → release), not as repo-level secrets.
 3. Update the embedded **public** key in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) `plugins.updater.pubkey` (the `cargo tauri signer generate` output prints both halves; the public half is what goes here). Commit on `main`.
 4. Cut a release with `scripts/bump-version.sh` — the matrix runs against the new secrets, the new bundle is signed by the new key, and the new binary embeds the new public key.
 5. **Document the user-facing consequence in the release notes.** Existing installs hold the *old* public key, so when their auto-updater fetches the new bundle the signature check fails (different key, signature can't be verified) and the update is refused. Users on the old binary will need to **manually download and re-install** the new release from GitHub Releases. This is the cost of rotation; advertise it loudly in the release notes and the GitHub Security Advisory (below) so users don't read the refusal as a bug.

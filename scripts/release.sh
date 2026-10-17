@@ -22,15 +22,21 @@
 #   4. The pushed tag triggers .github/workflows/release.yml, which builds
 #      every platform, drafts the GitHub Release, and then PUBLISHES it.
 #
-# THE TAG PUSH IN STEP 3 IS THE POINT OF NO RETURN. release.yml's
-# `publish-release` job runs `gh release edit --draft=false --latest` as soon
-# as every terminal job succeeds. There is no approval gate and no environment
-# protection — nobody clicks Publish. Publishing also makes the updater's
-# latest.json live, so the build reaches installed clients on their next
-# update check.
+# THE TAG PUSH IN STEP 3 STARTS THE RELEASE. The jobs that read the signing
+# secrets (`build-and-release`, `android-build-and-release`) run in the
+# `release` GitHub environment, so each waits for you to approve it: open the
+# run page and use "Review deployments", or
+#   gh api -X POST repos/jfolcini/agaric/actions/runs/<run-id>/pending_deployments \
+#     -F 'environment_ids[]=<id>' -f state=approved -f comment=ok
+# (<id> comes from GET .../runs/<run-id>/pending_deployments). Rejecting there
+# stops the release before anything is signed. Once approved, nothing else
+# gates it: release.yml's `publish-release` job runs
+# `gh release edit --draft=false --latest` as soon as every terminal job
+# succeeds. Publishing also makes the updater's latest.json live, so the build
+# reaches installed clients on their next update check.
 #
-# To abort, you must cancel the workflow run before `publish-release` starts;
-# once it has run, the only remedy is a follow-up release.
+# To abort after approval, cancel the workflow run before `publish-release`
+# starts; once it has run, the only remedy is a follow-up release.
 #
 # Why the bump is local and there is no CI "release" button: pushing the bump
 # commit to `main` requires bypassing the branch ruleset. The in-workflow
@@ -155,6 +161,11 @@ if git ls-remote --exit-code --tags origin "refs/tags/$NEW_VERSION" >/dev/null 2
   exit 1
 fi
 
+# ── Preflight: npm meets package.json's engines.npm ─────────────────────────
+#
+# Before the 5-10 minute local release build, which runs `npm run build`.
+bash scripts/require-npm.sh >/dev/null || exit 1
+
 # ── Preflight: the release identity can produce a verifiable commit ─────────
 #
 # Asked here rather than at the commit so it costs the error message instead
@@ -218,7 +229,10 @@ scripts/bump-version.sh "$NEW_VERSION" --commit --tag --push
 echo
 echo "✓ Released $NEW_VERSION. The Release workflow is now building every platform:"
 echo "    https://github.com/jfolcini/agaric/actions/workflows/release.yml"
-echo "  It PUBLISHES automatically when every job succeeds — there is no"
-echo "  approval gate, and publishing makes the updater's latest.json live."
-echo "  To stop it, cancel the run before the publish-release job starts:"
+echo "  The signing jobs wait for you to approve the 'release' environment"
+echo "  (run page -> Review deployments, or gh api; see the header above)."
+echo "  After that it PUBLISHES automatically when every job succeeds, and"
+echo "  publishing makes the updater's latest.json live."
+echo "  To stop it, reject the deployment, or cancel the run before the"
+echo "  publish-release job starts:"
 echo "    https://github.com/jfolcini/agaric/releases"

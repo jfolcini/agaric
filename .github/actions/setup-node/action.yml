@@ -1,0 +1,35 @@
+name: Setup Node and npm
+description: >-
+  `actions/setup-node` plus the npm that `package.json` pins. No Node release
+  bundles npm 12 yet, so every job that resolves dependencies installs the
+  `packageManager` pin on top of Node's own npm. Assumes the repository is
+  already checked out. A job that only runs `node scripts/…` keeps plain
+  `actions/setup-node` with `package-manager-cache: false`.
+
+inputs:
+  node-version:
+    description: Passed to `actions/setup-node`.
+    required: false
+    default: '24'
+  cache:
+    description: Passed to `actions/setup-node`; empty leaves the cache input unset.
+    required: false
+    default: ''
+  package-manager-cache:
+    description: Passed to `actions/setup-node`; `false` opts out of its automatic npm cache.
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: ${{ inputs.cache }}
+        package-manager-cache: ${{ inputs.package-manager-cache }}
+
+    - name: Install the pinned npm (package.json packageManager)
+      shell: bash
+      run: bash scripts/require-npm.sh --install

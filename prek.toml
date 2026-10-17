@@ -1416,7 +1416,7 @@ verbose = true
 # directly from the pre-push git shim (not via Phase A, which is
 # pre-commit-stage only), so CI must invoke it explicitly with
 # `--hook-stage pre-push npm-audit` (see .github/workflows/_validate.yml);
-# `npm audit signatures` there is a different, warn-only provenance check.
+# `npm audit signatures` there is a different, provenance check.
 # That CI step is blocking, so the wrapper retries with backoff (#5089).
 # WHY: known-vulnerable npm dependencies — standard toolchain lane (#817, #1087)
 [[repos]]

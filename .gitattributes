@@ -26,3 +26,9 @@ src-tauri/fuzz/corpus/** -text
 # The parser corpus the fuzz seeds are copied from (#5160): its CRLF line
 # endings are inputs, as above.
 src-tauri/agaric-engine/tests/markdown-corpus/** -text
+
+# Shell scripts keep LF on every checkout. Git for Windows installs with
+# `core.autocrlf=true` by default (the runner image does not override it), and
+# Git Bash cannot run a CRLF script; the release's Windows leg runs
+# scripts/require-npm.sh through .github/actions/setup-node.
+*.sh text eol=lf
