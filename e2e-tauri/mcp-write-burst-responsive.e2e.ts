@@ -10,10 +10,10 @@
 // ---------------------------------------------------------------------------
 
 import { existsSync } from 'node:fs'
-import { type Socket, createConnection } from 'node:net'
 
 import {
   ACTION_TIMEOUT,
+  McpClient,
   NAV_TIMEOUT,
   blockStaticsByMarker,
   reopenPageByTitle,
@@ -40,69 +40,6 @@ async function invoke<T>(cmd: string, args?: unknown): Promise<T> {
     cmd,
     args,
   ) as Promise<T>
-}
-
-/** Newline-delimited JSON-RPC over the MCP RW socket, requests pipelined. */
-class McpClient {
-  private nextId = 1
-  private buffer = ''
-  private readonly pending = new Map<number, (message: Record<string, unknown>) => void>()
-  private readonly socket: Socket
-
-  private constructor(socket: Socket) {
-    this.socket = socket
-    socket.setEncoding('utf8')
-    socket.on('data', (chunk: string) => {
-      this.buffer += chunk
-      let newline = this.buffer.indexOf('\n')
-      while (newline !== -1) {
-        const message = JSON.parse(this.buffer.slice(0, newline)) as Record<string, unknown>
-        this.buffer = this.buffer.slice(newline + 1)
-        this.pending.get(message['id'] as number)?.(message)
-        newline = this.buffer.indexOf('\n')
-      }
-    })
-  }
-
-  static async connect(socketPath: string): Promise<McpClient> {
-    const socket = createConnection(socketPath)
-    await new Promise<void>((resolve, reject) => {
-      socket.once('connect', resolve)
-      socket.once('error', reject)
-    })
-    const client = new McpClient(socket)
-    await client.request('initialize', {
-      protocolVersion: '2025-06-18',
-      capabilities: {},
-      clientInfo: { name: 'wdio', version: '1' },
-    })
-    socket.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
-    return client
-  }
-
-  request(method: string, params: unknown): Promise<Record<string, unknown>> {
-    const id = this.nextId++
-    const reply = new Promise<Record<string, unknown>>((resolve) => this.pending.set(id, resolve))
-    this.socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
-    return reply
-  }
-
-  /** `tools/call` that rejects on a protocol or tool error, resolving the JSON result. */
-  async call(name: string, args: Record<string, unknown>): Promise<unknown> {
-    const reply = await this.request('tools/call', { name, arguments: args })
-    const result = reply['result'] as
-      | { isError?: boolean; content?: { type: string; text?: string }[] }
-      | undefined
-    const text = result?.content?.[0]?.text
-    if (result?.isError === true || text === undefined) {
-      throw new Error(`${name} failed: ${JSON.stringify(reply)}`)
-    }
-    return JSON.parse(text) as unknown
-  }
-
-  close(): void {
-    this.socket.destroy()
-  }
 }
 
 function withinTimeout<T>(promise: Promise<T>, what: string): Promise<T> {

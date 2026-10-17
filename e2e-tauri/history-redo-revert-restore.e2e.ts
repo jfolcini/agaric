@@ -31,6 +31,7 @@ import {
   enterBlankSibling,
   expectAbsent,
   navigateTo,
+  openEditHistory,
   openNewPage,
   reopenPageByTitle,
   runScopedMarker,
@@ -69,18 +70,6 @@ async function replaceBlockText(from: string, to: string): Promise<void> {
   await browser.keys(['Delete'])
   await typeMarkerVerified(to)
   await commitByLeaving()
-}
-
-/** Settings › Data › "Open edit history", ready once the entries grid shows. */
-async function openEditHistory(): Promise<void> {
-  await navigateTo('Settings')
-  const dataTab = $('#settings-tab-data')
-  await dataTab.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await dataTab.click()
-  const open = $('[data-testid="settings-panel-data"]').$('button*=Open edit history')
-  await open.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await open.click()
-  await $('[role="grid"][aria-label="History entries"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
 /** The History row of the `edit_block` op that set a block's text to `marker`. */

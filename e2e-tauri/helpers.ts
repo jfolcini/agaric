@@ -81,11 +81,16 @@
 //   - `[data-testid="suggestion-item"]`     an item of the open `[[` / `#` /
 //     `::` picker (SuggestionList.tsx), `aria-selected` on the one Enter
 //     picks; the create item's id is `suggestion-__create__`.
+//   - Settings › Data › "Open edit history" (`openEditHistory`):
+//     `#settings-tab-data`, `[data-testid="settings-panel-data"]`, and the
+//     History view's `[role="grid"][aria-label="History entries"]`.
 //   - A property chip's accessible name, `<Key>: <value>`
 //     (`property.selectValue`, PropertyChip.tsx), the slash item
 //     "LOCATION Office — Office" (slash-commands.ts) and its toast "Set
 //     location to Office" (`blockTree.setLocationMessage`).
 // ---------------------------------------------------------------------------
+
+import { type Socket, createConnection } from 'node:net'
 
 // Boot of a real WebKitWebView + first live-backend IPC round-trip is slower
 // than a headless-chrome mock, so keep every wait generous and never race.
@@ -959,4 +964,79 @@ export async function pageSourceClipboard(
  */
 export function pageSourceButton(name: string) {
   return $(PAGE_SOURCE).parentElement().parentElement().parentElement().$(`button*=${name}`)
+}
+
+/** Settings › Data › "Open edit history", ready once the entries grid shows. */
+export async function openEditHistory(): Promise<void> {
+  await navigateTo('Settings')
+  const dataTab = $('#settings-tab-data')
+  await dataTab.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await dataTab.click()
+  const open = $('[data-testid="settings-panel-data"]').$('button*=Open edit history')
+  await open.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await open.click()
+  await $('[role="grid"][aria-label="History entries"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+}
+
+/** Newline-delimited JSON-RPC over an MCP socket, requests pipelined. */
+export class McpClient {
+  private nextId = 1
+  private buffer = ''
+  private readonly pending = new Map<number, (message: Record<string, unknown>) => void>()
+  private readonly socket: Socket
+
+  private constructor(socket: Socket) {
+    this.socket = socket
+    socket.setEncoding('utf8')
+    socket.on('data', (chunk: string) => {
+      this.buffer += chunk
+      let newline = this.buffer.indexOf('\n')
+      while (newline !== -1) {
+        const message = JSON.parse(this.buffer.slice(0, newline)) as Record<string, unknown>
+        this.buffer = this.buffer.slice(newline + 1)
+        this.pending.get(message['id'] as number)?.(message)
+        newline = this.buffer.indexOf('\n')
+      }
+    })
+  }
+
+  static async connect(socketPath: string): Promise<McpClient> {
+    const socket = createConnection(socketPath)
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve)
+      socket.once('error', reject)
+    })
+    const client = new McpClient(socket)
+    await client.request('initialize', {
+      protocolVersion: '2025-06-18',
+      capabilities: {},
+      clientInfo: { name: 'wdio', version: '1' },
+    })
+    socket.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
+    return client
+  }
+
+  request(method: string, params: unknown): Promise<Record<string, unknown>> {
+    const id = this.nextId++
+    const reply = new Promise<Record<string, unknown>>((resolve) => this.pending.set(id, resolve))
+    this.socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+    return reply
+  }
+
+  /** `tools/call` that rejects on a protocol or tool error, resolving the JSON result. */
+  async call(name: string, args: Record<string, unknown>): Promise<unknown> {
+    const reply = await this.request('tools/call', { name, arguments: args })
+    const result = reply['result'] as
+      | { isError?: boolean; content?: { type: string; text?: string }[] }
+      | undefined
+    const text = result?.content?.[0]?.text
+    if (result?.isError === true || text === undefined) {
+      throw new Error(`${name} failed: ${JSON.stringify(reply)}`)
+    }
+    return JSON.parse(text) as unknown
+  }
+
+  close(): void {
+    this.socket.destroy()
+  }
 }
