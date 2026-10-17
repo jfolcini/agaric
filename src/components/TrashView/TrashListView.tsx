@@ -129,7 +129,12 @@ export function TrashListView({
   // .scrollIntoView()" — which indexes into the *windowed* DOM slice, not
   // the absolute list — can no longer find the target. `scrollToIndex`
   // walks the virtualizer to the absolute index and mounts the row.
+  // Only a move scrolls: Load more grows the list under a still cursor, and
+  // the list stays where the wheel left it.
+  const scrolledIndexRef = useRef(focusedIndex)
   useEffect(() => {
+    if (focusedIndex === scrolledIndexRef.current) return
+    scrolledIndexRef.current = focusedIndex
     if (focusedIndex < 0 || focusedIndex >= filteredBlocks.length) return
     virtualizer.scrollToIndex(focusedIndex, { align: 'auto' })
   }, [focusedIndex, filteredBlocks.length, virtualizer])

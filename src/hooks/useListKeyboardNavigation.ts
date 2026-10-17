@@ -34,8 +34,8 @@ export interface UseListKeyboardNavigationOptions {
    *
    * When omitted, the hook keeps its historical behaviour: any `itemCount`
    * change resets `focusedIndex` to 0. Callers that filter a single list in
-   * place (e.g. `CodeLanguageSelector`, `HistoryView`) rely on that and
-   * therefore do NOT pass a `resetKey`.
+   * place (e.g. `CodeLanguageSelector`) rely on that and therefore do NOT
+   * pass a `resetKey`.
    */
   resetKey?: unknown
   /** Use ArrowLeft/ArrowRight instead of ArrowUp/ArrowDown (default: false) */

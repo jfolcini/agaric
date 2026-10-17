@@ -2,8 +2,7 @@
  * Tests for useHistoryKeyboardNav — wraps useListKeyboardNavigation
  * with HistoryView-specific document-level shortcuts (Space toggles
  * focused row, Ctrl/Cmd+A selects all, Enter confirms revert when
- * selection is non-empty, Escape clears selection) plus a
- * scroll-into-view effect for the focused row inside `listRef`.
+ * selection is non-empty, Escape clears selection).
  */
 
 import { act, renderHook } from '@testing-library/react'

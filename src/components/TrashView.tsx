@@ -223,15 +223,12 @@ export function TrashView(): React.ReactElement {
     handleKeyDown: navHandleKeyDown,
   } = useListKeyboardNavigation({
     itemCount: filteredBlocks.length,
+    // A new space or filter resets the cursor; Load more only clamps it.
+    resetKey: `${currentSpaceId ?? ''}|${debouncedFilter}`,
     homeEnd: true,
     pageUpDown: true,
     listRef,
   })
-
-  // Reset focused index when filter changes
-  useEffect(() => {
-    setFocusedIndex(0)
-  }, [debouncedFilter, setFocusedIndex])
 
   // ── Original-location breadcrumbs + descendant counts (extracted) ──
   const getPageLabel = useTrashBreadcrumbs(blocks)

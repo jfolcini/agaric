@@ -476,6 +476,38 @@ describe('HistoryView', () => {
     expect(screen.getByText('entry 2')).toBeInTheDocument()
   })
 
+  it('Load More keeps the cursor on its row', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'entry 1' }),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'entry 2' }),
+      ],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: null,
+    }
+    const page2 = {
+      items: [makeHistoryEntry(3, 'edit_block', { to_text: 'entry 3' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    stubHistory({ list_page_history: (args) => (args['cursor'] == null ? page1 : page2) })
+
+    render(<HistoryView />)
+
+    await screen.findByText('entry 1')
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByTestId('history-item-1')).toHaveClass('list-cursor')
+
+    await user.click(screen.getByRole('button', { name: /Load more/i }))
+    await screen.findByText('entry 3')
+
+    expect(screen.getByTestId('history-item-1')).toHaveClass('list-cursor')
+    expect(screen.getByTestId('history-item-0')).not.toHaveClass('list-cursor')
+  })
+
   it('op type filter updates query', async () => {
     const user = userEvent.setup()
     stubHistory({ list_page_history: () => emptyPage })

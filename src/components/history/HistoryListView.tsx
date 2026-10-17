@@ -68,8 +68,7 @@ export function HistoryListView({
 
   // ── Virtualization (perf-review Tier 2 #6, 2026-05-14) ─────────────
   // The outer `listRef` (provided by the parent) doubles as the
-  // virtualizer's scroll element so the existing keyboard-nav focus
-  // scroll-into-view contract still works.
+  // virtualizer's scroll element.
   // HistoryListItem renders an op-summary row plus an optional inline
   // diff section that swells the row height when expanded. Estimated
   // collapsed height (~80px = p-4 + 2 lines) is a starting point;
@@ -91,7 +90,34 @@ export function HistoryListView({
     },
   })
 
+  // Keep the keyboard-focused row in view (mirrors TrashListView). A jump
+  // (End / PageDown) can land outside the mounted window, where a DOM lookup
+  // finds nothing; `scrollToIndex` walks to the absolute index and mounts it.
+  // Only a move scrolls: Load more grows `entries` under a still cursor, and
+  // the list stays where the wheel left it.
+  const scrolledIndexRef = useRef(focusedIndex)
+  const revealPendingRef = useRef(false)
+  useEffect(() => {
+    if (focusedIndex === scrolledIndexRef.current) return
+    scrolledIndexRef.current = focusedIndex
+    if (focusedIndex < 0 || focusedIndex >= entries.length) return
+    virtualizer.scrollToIndex(focusedIndex, { align: 'auto' })
+    revealPendingRef.current = true
+  }, [focusedIndex, entries.length, virtualizer])
+
   const virtualItems = virtualizer.getVirtualItems()
+
+  // `scrollToIndex` scrolls only the list, whose bottom can sit below the page
+  // fold (mirrors VirtualizedResultListbox). Once the row is mounted, scroll the
+  // page to it too; only after a move, so a row the wheel remounts stays put.
+  const cursorMounted = virtualItems.some((row) => row.index === focusedIndex)
+  useEffect(() => {
+    if (!cursorMounted || !revealPendingRef.current) return
+    revealPendingRef.current = false
+    listRef.current
+      ?.querySelector(`[data-index="${focusedIndex}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [cursorMounted, focusedIndex, listRef])
   const totalSize = virtualizer.getTotalSize()
 
   return (

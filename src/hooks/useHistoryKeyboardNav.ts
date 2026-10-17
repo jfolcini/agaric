@@ -6,8 +6,8 @@
  * and PageUp/PageDown, then layers HistoryView-specific shortcuts on
  * top: Space toggles the focused row, Ctrl/Cmd+A selects all, Enter
  * confirms revert (when there is a selection), and Escape clears the
- * selection. Also installs the scroll-into-view effect that keeps the
- * focused row visible inside `listRef`.
+ * selection. Scrolling the focused row into view is the list's job
+ * (`HistoryListView`), since only the virtualizer knows unmounted rows.
  *
  * Extracted from `HistoryView`.
  */
@@ -20,7 +20,9 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
 export interface UseHistoryKeyboardNavOptions {
   /** Number of items in the list. */
   itemCount: number
-  /** Container ref — scrolls the focused item into view and takes focus on a navigation key. */
+  /** Identifies the logical list; a change resets the cursor, Load more only clamps it. */
+  resetKey?: unknown
+  /** Container ref — takes focus on a navigation key. */
   listRef: React.RefObject<HTMLDivElement | null>
   /** Whether the user has at least one entry selected (gates Enter). */
   hasSelection: boolean
@@ -41,6 +43,7 @@ export interface UseHistoryKeyboardNavReturn {
 
 export function useHistoryKeyboardNav({
   itemCount,
+  resetKey,
   listRef,
   hasSelection,
   onToggleSelection,
@@ -54,6 +57,7 @@ export function useHistoryKeyboardNav({
     handleKeyDown: navHandleKeyDown,
   } = useListKeyboardNavigation({
     itemCount,
+    resetKey,
     wrap: false,
     vim: true,
     homeEnd: true,
@@ -119,16 +123,6 @@ export function useHistoryKeyboardNav({
     onConfirmRevert,
     onClearSelection,
   ])
-
-  // Scroll the focused row into view whenever it moves.
-  useEffect(() => {
-    if (focusedIndex < 0 || !listRef.current) return
-    const items = listRef.current.querySelectorAll('[data-history-item]')
-    const el = items[focusedIndex] as HTMLElement | undefined
-    if (el && typeof el.scrollIntoView === 'function') {
-      el.scrollIntoView({ block: 'nearest' })
-    }
-  }, [focusedIndex, listRef])
 
   return { focusedIndex, setFocusedIndex }
 }
