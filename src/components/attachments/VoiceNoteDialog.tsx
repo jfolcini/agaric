@@ -14,10 +14,7 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  canRecordVoiceNote,
-  supportedRecordingType,
-} from '@/components/attachments/voice-recording'
+import { supportedRecordingType } from '@/components/attachments/voice-recording'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -103,25 +100,8 @@ export function VoiceNoteDialog({ blockId, onClose }: VoiceNoteDialogProps): Rea
         if (!open) onClose()
       }}
     >
-      {canRecordVoiceNote() ? (
-        <VoiceNoteRecorder blockId={blockId} onClose={onClose} />
-      ) : (
-        <VoiceNoteUnavailable />
-      )}
+      <VoiceNoteRecorder blockId={blockId} onClose={onClose} />
     </Dialog>
-  )
-}
-
-/** Reached by a path other than `/voice`, which is not offered where recording is unsupported. */
-function VoiceNoteUnavailable(): React.ReactElement {
-  const { t } = useTranslation()
-  return (
-    <DialogContent data-testid="voice-note-dialog" className="sm:max-w-sm">
-      <DialogHeader>
-        <DialogTitle>{t('voiceNote.title')}</DialogTitle>
-        <DialogDescription>{t('voiceNote.unavailable')}</DialogDescription>
-      </DialogHeader>
-    </DialogContent>
   )
 }
 

@@ -152,7 +152,7 @@ test.describe('Settings panel', () => {
 
   // #2687 — About tab (Help group) was never opened by any spec (bug-report-dialog.spec.ts
   // dispatches the `agaric:report-bug` window event directly rather than
-  // clicking the Settings → Help "Report a Bug" button).
+  // clicking the Settings › Help › About "Report a Bug" button).
   test('About tab renders report-bug and update-check controls, and opens the bug-report dialog', async ({
     page,
   }) => {

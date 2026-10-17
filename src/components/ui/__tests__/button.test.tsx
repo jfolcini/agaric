@@ -149,7 +149,7 @@ describe('Button', () => {
     )
   })
 
-  // The compact sizes keep their own `size-3`; tailwind-merge must drop the base
+  // The `xs` size keeps its own `size-3`; tailwind-merge must drop the base
   // `size-4` for them.
   it('sizes icons at size-4, and size-3 on the xs text button', () => {
     const iconRule = '[:where(&)_svg]:size-'
