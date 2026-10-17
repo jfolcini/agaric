@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next'
 
 import { DiagramViewer } from '@/components/rendering/DiagramViewer'
 import { mermaidThemeVariables, readDiagramColors } from '@/components/rendering/mermaid-theme'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { useTheme } from '@/hooks/useTheme'
 import { logger } from '@/lib/logger'
@@ -193,6 +193,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
         ref={scrollRootRef}
         orientation="horizontal"
         className="max-h-[70vh] rounded-md border border-border bg-background"
+        viewportProps={SCROLL_ONLY_WHEN_WIDER}
       >
         <div
           ref={diagramRef}

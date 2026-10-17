@@ -117,4 +117,12 @@ const ScrollBar = ({
 
 ScrollBar.displayName = 'ScrollBar'
 
-export { ScrollArea, ScrollBar }
+/**
+ * `viewportProps` for a horizontal ScrollArea whose content usually fits, such
+ * as a diagram or an equation. Radix sets `overflow-x: scroll`, meant for its
+ * own hidden bar; with the native bars index.css turns back on, that keeps an
+ * empty scrollbar under content that fits. `auto` shows one only on overflow.
+ */
+const SCROLL_ONLY_WHEN_WIDER = { style: { overflowX: 'auto' } } as const
+
+export { SCROLL_ONLY_WHEN_WIDER, ScrollArea, ScrollBar }

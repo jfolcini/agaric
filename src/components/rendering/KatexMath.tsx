@@ -20,7 +20,7 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DiagramViewer } from '@/components/rendering/DiagramViewer'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
 
 export interface KatexMathProps {
   /** Raw LaTeX source. */
@@ -81,7 +81,11 @@ export function KatexMath({
   // KaTeX keeps a display equation on one line (`white-space: nowrap`), so a
   // wide one must scroll rather than be clipped by the column.
   const equation = (
-    <ScrollArea orientation="horizontal" className="katex-display-wrapper">
+    <ScrollArea
+      orientation="horizontal"
+      className="katex-display-wrapper"
+      viewportProps={SCROLL_ONLY_WHEN_WIDER}
+    >
       <div data-testid="katex-block" dangerouslySetInnerHTML={{ __html: html }} />
     </ScrollArea>
   )

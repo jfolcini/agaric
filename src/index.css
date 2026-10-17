@@ -2063,11 +2063,11 @@
  *
  * Fix, applied once for every ScrollArea: suppress Radix's overlay and
  * re-enable a *classic* (space-reserving) native scrollbar on the
- * viewport, styled to match the app. A classic bar only takes layout
- * space while the content actually overflows (Radix sets the viewport to
- * `overflow: scroll` only when it detects overflow), so menus/short lists
- * that fit keep full width while long lists shrink to fit the bar —
- * nothing ever sits under it. The thumb floats inboard via a transparent
+ * viewport, styled to match the app. Radix sets the viewport to
+ * `overflow: scroll` on every axis that has a scrollbar, overflowing or
+ * not, so the bar always takes its space and nothing ever sits under it;
+ * content that usually fits opts into `SCROLL_ONLY_WHEN_WIDER`
+ * (`ui/scroll-area.tsx`). The thumb floats inboard via a transparent
  * padding-box border instead of kissing the rows.
  *
  * `.search-result-listbox` is the one virtualized list still on a bare
