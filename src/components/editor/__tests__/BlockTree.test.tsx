@@ -1526,7 +1526,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(35)
+    expect(results).toHaveLength(34)
     expect(results?.map((r) => r.id)).toEqual([
       'todo',
       'doing',
@@ -1552,7 +1552,6 @@ describe('BlockTree slash command wiring', () => {
       'quote',
       'callout',
       'table',
-      'table-no-header',
       'numbered-list',
       'bullet-list',
       'divider',
@@ -1581,7 +1580,7 @@ describe('BlockTree slash command wiring', () => {
       const typed = await capturedSearchSlashCommands?.('voice')
 
       expect(empty?.map((r) => r.id)).not.toContain('voice')
-      expect(empty).toHaveLength(34)
+      expect(empty).toHaveLength(33)
       expect(typed?.map((r) => r.id)).not.toContain('voice')
     } finally {
       removePreference(PREFERENCES.recentCommandsSlash, 'SPACE_TEST')
@@ -1833,7 +1832,7 @@ describe('BlockTree slash command wiring', () => {
     })
 
     await act(async () => {
-      capturedOnSlashCommand?.({ id: 'table', label: 'TABLE — Insert table (e.g. /table 4x6)' })
+      capturedOnSlashCommand?.({ id: 'table', label: 'TABLE — Insert table (e.g. /table4x6)' })
     })
 
     expect(mockInsertTable).toHaveBeenCalledWith({ rows: 3, cols: 3, withHeaderRow: true })

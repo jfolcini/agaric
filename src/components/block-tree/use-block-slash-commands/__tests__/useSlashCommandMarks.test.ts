@@ -1,82 +1,57 @@
 /**
  * Mark slash commands (#211 P0-5): `/bold` `/italic` `/code` `/strike`
- * `/highlight`. With a selection each toggles the mark (reusing the shared
- * `createMarkToggles` action); with no selection each inserts the Markdown
- * delimiter pair and parks the caret between the delimiters.
+ * `/highlight`. The menu opens only at a collapsed caret, so each command
+ * toggles its mark as a stored mark there and the text typed next carries it.
+ * Driven through a real TipTap editor.
  */
 
 import { renderHook } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { Editor } from '@tiptap/core'
+import Bold from '@tiptap/extension-bold'
+import Code from '@tiptap/extension-code'
+import Document from '@tiptap/extension-document'
+import Highlight from '@tiptap/extension-highlight'
+import Italic from '@tiptap/extension-italic'
+import Paragraph from '@tiptap/extension-paragraph'
+import Strike from '@tiptap/extension-strike'
+import Text from '@tiptap/extension-text'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandMarks } from '@/components/block-tree/use-block-slash-commands/useSlashCommandMarks'
 
-/**
- * Minimal chainable editor stub. `chain()` returns a proxy that records every
- * method name it sees and returns itself, so we can assert which TipTap toggle
- * a handler invoked (e.g. `toggleBold`) and what `insertContent` received.
- *
- * `insertContent` advances the live selection by the inserted length, exactly
- * as ProseMirror does — so a handler that parks the caret relative to the
- * *post-insert* `selection.from` (the production code) is distinguishable from
- * one that used a stale/absolute position.
- */
-function makeMockEditor(selection: { from: number; to: number }) {
-  const chainCalls: string[] = []
-  const insertContentArgs: string[] = []
-  const setTextSelectionArgs: number[] = []
-  const state = { selection: { ...selection } }
-
-  const chainProxy: Record<string, unknown> = new Proxy(
-    {},
-    {
-      get(_target, prop) {
-        if (prop === 'run') return () => true
-        return (...args: unknown[]) => {
-          chainCalls.push(String(prop))
-          if (prop === 'insertContent') {
-            const content = args[0] as string
-            insertContentArgs.push(content)
-            // Mirror ProseMirror: the caret moves to *after* the inserted text.
-            state.selection.from += content.length
-            state.selection.to = state.selection.from
-          }
-          return chainProxy
-        }
-      },
-    },
-  )
-
-  const editor = {
-    state,
-    chain: () => chainProxy,
-    commands: {
-      setTextSelection: (pos: number) => {
-        setTextSelectionArgs.push(pos)
-        return true
-      },
-    },
-  }
-
-  return { editor, chainCalls, insertContentArgs, setTextSelectionArgs }
-}
-
-function ctxWithEditor(selection: { from: number; to: number }) {
-  const { ctx } = makeSyntheticCtx()
-  const mock = makeMockEditor(selection)
-  ctx.rovingEditor.editor = mock.editor as unknown as typeof ctx.rovingEditor.editor
-  return { ctx, ...mock }
-}
-
 const MARK_IDS = ['bold', 'italic', 'code-mark', 'strike', 'highlight'] as const
 
-// id → (TipTap toggle method, Markdown delimiter)
-const EXPECTED: Record<(typeof MARK_IDS)[number], { toggle: string; delimiter: string }> = {
-  bold: { toggle: 'toggleBold', delimiter: '**' },
-  italic: { toggle: 'toggleItalic', delimiter: '*' },
-  'code-mark': { toggle: 'toggleCode', delimiter: '`' },
-  strike: { toggle: 'toggleStrike', delimiter: '~~' },
-  highlight: { toggle: 'toggleHighlight', delimiter: '==' },
+// id → TipTap mark name
+const MARK_NAME: Record<(typeof MARK_IDS)[number], string> = {
+  bold: 'bold',
+  italic: 'italic',
+  'code-mark': 'code',
+  strike: 'strike',
+  highlight: 'highlight',
+}
+
+let editor: Editor | undefined
+
+afterEach(() => {
+  editor?.destroy()
+  editor = undefined
+})
+
+/** A real editor holding `hello ` with the caret collapsed at its end. */
+function ctxWithEditor() {
+  editor = new Editor({
+    element: document.createElement('div'),
+    extensions: [Document, Paragraph, Text, Bold, Italic, Code, Strike, Highlight],
+    content: {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello ' }] }],
+    },
+  })
+  editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+  const { ctx } = makeSyntheticCtx()
+  ctx.rovingEditor.editor = editor as unknown as typeof ctx.rovingEditor.editor
+  return { ctx, editor }
 }
 
 describe('useSlashCommandMarks — registration', () => {
@@ -99,42 +74,20 @@ describe('useSlashCommandMarks — registration', () => {
   })
 })
 
-describe('useSlashCommandMarks — with a selection: toggle the mark', () => {
-  it.each(MARK_IDS)('/%s toggles the mark when text is selected', async (id) => {
+describe('useSlashCommandMarks — collapsed caret: the next typed text carries the mark', () => {
+  it.each(MARK_IDS)('/%s marks the text typed after it, not the text before', async (id) => {
     const { result } = renderHook(() => useSlashCommandMarks())
-    const { ctx, chainCalls, insertContentArgs } = ctxWithEditor({ from: 3, to: 8 })
+    const { ctx, editor: ed } = ctxWithEditor()
 
     await result.current.exact[id]?.(ctx, { id, label: id })
 
-    expect(chainCalls).toContain(EXPECTED[id].toggle)
-    // No delimiter insertion on the selection path.
-    expect(insertContentArgs).toHaveLength(0)
-  })
-})
-
-describe('useSlashCommandMarks — no selection: insert delimiter pair, park caret', () => {
-  it.each(MARK_IDS)('/%s inserts the doubled delimiter and centres the caret', async (id) => {
-    const { result } = renderHook(() => useSlashCommandMarks())
-    // Empty selection at pos 5. After inserting the pair the caret sits after
-    // both delimiters (5 + 2·len); the handler rewinds by one delimiter to land
-    // *between* the pair → 5 + len.
-    const { ctx, insertContentArgs, setTextSelectionArgs } = ctxWithEditor({ from: 5, to: 5 })
-
-    await result.current.exact[id]?.(ctx, { id, label: id })
-
-    const { delimiter } = EXPECTED[id]
-    expect(insertContentArgs).toEqual([delimiter + delimiter])
-    expect(setTextSelectionArgs).toEqual([5 + delimiter.length])
-  })
-
-  it('does not toggle a mark when there is no selection', async () => {
-    const { result } = renderHook(() => useSlashCommandMarks())
-    const { ctx, chainCalls } = ctxWithEditor({ from: 2, to: 2 })
-
-    await result.current.exact['bold']?.(ctx, { id: 'bold', label: 'bold' })
-
-    expect(chainCalls).not.toContain('toggleBold')
-    expect(chainCalls).toContain('insertContent')
+    // Typing inserts at the caret with the stored marks, as ProseMirror's
+    // DOM-input path does.
+    ed.view.dispatch(ed.state.tr.insertText('world'))
+    expect(ed.getJSON().content?.[0]?.content).toEqual([
+      { type: 'text', text: 'hello ' },
+      { type: 'text', text: 'world', marks: [{ type: MARK_NAME[id] }] },
+    ])
   })
 })
 

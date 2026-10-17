@@ -122,16 +122,15 @@ async function handleDuplicate(ctx: SlashCommandContext): Promise<void> {
   await ctx.pageStore.getState().duplicateBlock(ctx.blockId)
 }
 
-function handleTable(ctx: SlashCommandContext, id: string, withHeaderRow = true): void {
+function handleTable(ctx: SlashCommandContext, id: string): void {
   let rows = 3
   let cols = 3
-  // Accept dimensions from either `table:N:M` or `table-no-header:N:M`.
-  const dimMatch = id.match(/^table(?:-no-header)?:(\d+):(\d+)$/)
+  const dimMatch = id.match(/^table:(\d+):(\d+)$/)
   if (dimMatch) {
     rows = Number.parseInt(dimMatch[1] as string, 10)
     cols = Number.parseInt(dimMatch[2] as string, 10)
   }
-  ctx.rovingEditor.editor?.chain().focus().insertTable({ rows, cols, withHeaderRow }).run()
+  ctx.rovingEditor.editor?.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run()
 }
 
 export function useSlashCommandStructural(): SlashHandlerTables {
@@ -190,8 +189,6 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         duplicate: (ctx) => handleDuplicate(ctx),
         divider: (ctx) => handleDivider(ctx),
         table: (ctx) => handleTable(ctx, 'table'),
-        // #215 — header-row opt-out.
-        'table-no-header': (ctx) => handleTable(ctx, 'table-no-header', false),
       },
       prefix: [
         // Order matters: dynamic-dimension `table:NxM` is matched before

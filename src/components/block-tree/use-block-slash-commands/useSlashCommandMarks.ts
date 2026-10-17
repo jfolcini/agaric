@@ -4,12 +4,13 @@
  * the inline marks that were previously reachable only via Markdown syntax or
  * the selection bubble menu.
  *
- * Behaviour per command:
- *   - With a non-empty selection → toggle the mark on the selection, reusing
- *     the canonical `createMarkToggles` action so the TipTap command stays a
- *     single source of truth (`src/components/FormattingToolbar/toolbar-config.ts`).
- *   - With no selection → insert the Markdown delimiter pair and park the
- *     caret between the delimiters, so the next keystrokes land inside.
+ * The menu only opens at a collapsed caret, so each command toggles its mark
+ * there as a stored mark and the next typed text carries it. The toggle is
+ * the canonical `createMarkToggles` action, so `/bold` and the bubble-menu
+ * Bold button stay wired to the same TipTap command
+ * (`src/components/FormattingToolbar/toolbar-config.ts`). The picker deletes
+ * the `/query` before the handler runs (`slash-command.ts`); a doc change
+ * after the toggle would clear the stored mark.
  *
  * `code-mark` is the inline-code *mark*; the code-*block* command lives in
  * `useSlashCommandStructural` under the `code` id.
@@ -23,53 +24,32 @@ import type {
 } from '@/components/block-tree/use-block-slash-commands/types'
 import { createMarkToggles } from '@/components/FormattingToolbar/toolbar-config'
 
-interface MarkSpec {
-  /** `activeKey` of the matching `createMarkToggles` entry (the TipTap toggle). */
-  activeKey: string
-  /** Markdown delimiter inserted (doubled) when there is no selection. */
-  delimiter: string
+// `PickerItem.id` → `activeKey` of the matching `createMarkToggles` entry.
+// `code-mark` → the `code` toggle; the id differs from the code-block
+// command's `code` id so the two coexist in the menu.
+const MARK_KEYS: Record<string, string> = {
+  bold: 'bold',
+  italic: 'italic',
+  'code-mark': 'code',
+  strike: 'strike',
+  highlight: 'highlight',
 }
 
-// Keyed by `PickerItem.id`. `code-mark` → the `code` toggle; the id differs
-// from the code-block command's `code` id so the two coexist in the menu.
-const MARK_SPECS: Record<string, MarkSpec> = {
-  bold: { activeKey: 'bold', delimiter: '**' },
-  italic: { activeKey: 'italic', delimiter: '*' },
-  'code-mark': { activeKey: 'code', delimiter: '`' },
-  strike: { activeKey: 'strike', delimiter: '~~' },
-  highlight: { activeKey: 'highlight', delimiter: '==' },
-}
-
-function handleMark(ctx: SlashCommandContext, spec: MarkSpec): void {
+function handleMark(ctx: SlashCommandContext, activeKey: string): void {
   const editor = ctx.rovingEditor.editor
   if (!editor) return
-
-  const { from, to } = editor.state.selection
-  if (from !== to) {
-    // Reuse the shared toggle so `/bold` and the bubble-menu Bold button stay
-    // wired to the same TipTap command.
-    const toggle = createMarkToggles(editor).find((b) => b.activeKey === spec.activeKey)
-    toggle?.action()
-    return
-  }
-
-  // No selection: insert the delimiter pair and park the caret between them.
-  const { delimiter } = spec
-  editor
-    .chain()
-    .focus()
-    .insertContent(delimiter + delimiter)
-    .run()
-  editor.commands.setTextSelection(editor.state.selection.from - delimiter.length)
+  createMarkToggles(editor)
+    .find((b) => b.activeKey === activeKey)
+    ?.action()
 }
 
 export function useSlashCommandMarks(): SlashHandlerTables {
   return useMemo<SlashHandlerTables>(
     () => ({
       exact: Object.fromEntries(
-        Object.entries(MARK_SPECS).map(([id, spec]) => [
+        Object.entries(MARK_KEYS).map(([id, activeKey]) => [
           id,
-          (ctx: SlashCommandContext) => handleMark(ctx, spec),
+          (ctx: SlashCommandContext) => handleMark(ctx, activeKey),
         ]),
       ),
       prefix: [],

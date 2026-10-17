@@ -187,10 +187,10 @@ Where OG and 2.0 differ materially, the Logseq column says so.
 | Code blocks | Fenced, syntax-highlighted | Fenced with lowlight (curated grammar set), language popover | Done |
 | Math / LaTeX | `$$…$$` native | `$…$` inline + `$$…$$` block, KaTeX lazy-loaded, raw-source node view, round-trips | Done |
 | **Mermaid diagrams** | **Plugin only** | ```` ```mermaid ```` fences render inline in both the editor and the read-only renderer, with a raw-source toggle; lazy-loaded | **Better** |
-| Tables | Markdown tables | Pipe tables + `/table`, `/table RxC` dimension syntax, `/table-no-header`, a grid picker, contextual table-ops popover | Better |
+| Tables | Markdown tables | Pipe tables + `/table`, `/tableRxC` dimension syntax, a grid picker, contextual table-ops popover | Better |
 | Callouts | Plugin/CSS convention | 5 built-in types (info/warning/tip/error/note), `> [!TYPE]` shape, slash commands | Better |
 | Lists | Outline bullets are the list | **Real ordered/bullet/task list nodes and markdown grammar, plus nested sub-lists** — the previous revision's "no lists" claim was wrong | Done |
-| Slash commands | ~20+ | **33 base entries + 51 expansions = 84**, plus a synthetic `table RxC`; recents band on empty query | Better |
+| Slash commands | ~20+ | Base commands plus sub-options that surface as you type (e.g. priority, heading, callout, turn-into) and a synthetic `tableRxC`; recents band on empty query | Better |
 | Inline pickers | `[[`, `((`, `/`, `#` | **Seven**: `[[`, `@`, `((`, `/`, `::`, `:` (emoji), `{{` (query, with ghost-text hint) | Better |
 | Formatting toolbar | None — keyboard only | Standing bar: **Format popover** (6 caret marks), **Turn-into popover** (9 block types), internal-link, block-ref, tag, insert-query, emoji, table grid, cycle-priority, date/due/scheduled, todo, properties, undo/redo/discard, width-aware overflow. Plus a selection bubble menu (6 marks + external link) | Better |
 | Property value autocomplete | Suggests previously-used values | **Only in the search DSL's `prop:key=value`.** Not in the `::` editor picker, and not in the filter popover used by Pages and the query builder | Partial |
@@ -413,7 +413,7 @@ Trimmed to claims that survived verification.
 | **Data integrity** | blake3 hash chain with SQL-enforced append-only, four-step boot recovery, engine-first reprojection, op-level undo with a batch-revert history UI | Timestamps. Both Logseq versions carry active data-loss reports; 2.0's README carries an official warning |
 | **Conflict resolution** | Loro CRDT — blocks, text, properties, tags and moves converge with no user-facing conflict | File-level conflicts (OG) or alpha RTC (2.0) |
 | **Spaces** | Per-space journal, tabs, recents, accent identity, hotkeys, write-time cross-space link enforcement, and page move/batch-move between spaces | One graph per instance |
-| **Editor breadth** | Native Mermaid, KaTeX, 5 callout types, table dimension syntax with a grid picker, 84 slash entries, 7 inline pickers, a two-popover toolbar | Mermaid is a plugin; there is no toolbar at all |
+| **Editor breadth** | Native Mermaid, KaTeX, 5 callout types, table dimension syntax with a grid picker, 7 inline pickers, a two-popover toolbar | Mermaid is a plugin; there is no toolbar at all |
 | **ID durability** | ULIDs — sortable, time-encoded; renames propagate everywhere; export externalizes them to readable titles and re-import re-internalizes them | UUID v4, and OG stores link text that breaks on rename |
 | **Cost and privacy** | Free, no account, no cloud, no telemetry | RTC is paid and invite-only; E2EE is still being built |
 | **Supply chain** | SLSA provenance, Scorecard, CodeQL, blocking dependency audits, a written threat model | Standard OSS CI |

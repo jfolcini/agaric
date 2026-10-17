@@ -170,9 +170,8 @@ export const SLASH_COMMANDS: PickerItem[] = [
     category: 'slashCommand.categories.references',
     icon: Tag,
   },
-  // #211 P0-5 — mark slash commands. Each applies the mark to the current
-  // selection, or (with no selection) inserts the delimiter pair and parks
-  // the caret between the delimiters. Wired in `useSlashCommandMarks`.
+  // #211 P0-5 — mark slash commands. Each toggles its mark at the caret, so
+  // the text typed next carries it. Wired in `useSlashCommandMarks`.
   // `id: 'code-mark'` is distinct from the `code` code-*block* command above;
   // both surface under a `/code` query and disambiguate by category.
   {
@@ -260,14 +259,7 @@ export const SLASH_COMMANDS: PickerItem[] = [
   },
   {
     id: 'table',
-    label: 'TABLE — Insert table (e.g. /table 4x6)',
-    category: 'slashCommand.categories.structure',
-    icon: Grid3x3,
-  },
-  {
-    // #215 — header-row opt-out: `withHeaderRow:true` is hardcoded for `/table`.
-    id: 'table-no-header',
-    label: 'TABLE (no header) — Insert table without a header row',
+    label: 'TABLE — Insert table (e.g. /table4x6)',
     category: 'slashCommand.categories.structure',
     icon: Grid3x3,
   },
@@ -717,7 +709,8 @@ export function searchSlashCommands(
     ? matchSorter(TURN_INTO_COMMANDS, q, { keys: ['label'] })
     : []
 
-  const tableMatch = q.match(/^table\s+(\d+)\s*x\s*(\d+)$/i)
+  // The size may follow `table` directly: the slash menu closes on a space.
+  const tableMatch = q.match(/^table\s*(\d+)\s*x\s*(\d+)$/i)
   let results = [
     ...baseResults,
     ...priorityResults,
