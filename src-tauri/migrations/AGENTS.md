@@ -49,6 +49,7 @@ Most cascade children of `blocks` re-materialize from the op log at boot. These 
 
 - `page_aliases`: a projection of the Loro engine's `page_aliases` root that only disaster recovery reprojects, not boot.
 - `block_drafts` and `page_opens`: device-local, never synced. The recipe below predates `page_opens` (0123) and `migrations-rebuild-cascade` does not check it, so a `blocks` rebuild snapshots and restores it the way it does `block_drafts`.
+- `sync_deferred_purges` (0126): device-local ids a sync import took out of a doc, held for the pull's sweep. The recipe below predates it and `migrations-rebuild-cascade` does not check it either, so a `blocks` rebuild snapshots and restores its rows the same way; otherwise the deferred purges are lost and their rows linger forever.
 - `spaces` and every non-NULL `blocks.space_id` (since 0089): the DROP cascades into `spaces`, and deleting a space `SET NULL`s its members.
 
 0085's header calls its pure `INSERT … SELECT` rebuild safe; it is not, so do not copy it. A rebuild of a table with inbound CASCADE FKs snapshots each authoritative child before the DROP and restores it after the RENAME. For `blocks`, copy this recipe in full (`CREATE TEMP TABLE … AS SELECT` carries no types, so STRICT does not apply):

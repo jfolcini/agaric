@@ -51,7 +51,7 @@ use sqlx::SqlitePool;
 
 use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 use agaric_core::error::AppError;
-use agaric_engine::loro::registry::LoroEngineRegistry;
+use agaric_engine::loro::registry::{InboundSync, LoroEngineRegistry};
 use agaric_store::space::SpaceId;
 use loro::{Counter, PeerID, VersionVector};
 
@@ -1150,18 +1150,42 @@ async fn project_pass_d(
     Ok(())
 }
 
-/// #5712: end a pull session by purging the blocks its imports took out of a
-/// doc ([`project_pass_d`]) that no engine holds now that every space's doc
-/// has landed. Every recorded row is cleared: an id an engine holds was
-/// claimed by its new doc's import, which owns its rows. Returns the purged
-/// ids, for the caller's cache fan-out.
+/// #5712: purge the blocks a pull's imports took out of a doc (Pass D) that no
+/// engine holds now that every space's doc has landed, for a caller that holds
+/// no [`InboundSync`] claim (boot, tests). It sweeps only when no session holds
+/// one; a session ends with [`sweep_deferred_purges_if_last`].
+pub async fn sweep_deferred_purges(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    sweep_deferred_purges_if_last(pool, registry, None).await
+}
+
+/// #5712: end a pull session, or a snapshot catch-up, by purging the blocks
+/// its imports took out of a doc (Pass D) that no engine holds now that every
+/// space's doc has landed. Every recorded row is cleared: an id an engine
+/// holds was claimed by its new doc's import, which owns its rows. Returns the
+/// purged ids, for the caller's cache fan-out.
 ///
 /// Only a completed pull calls this. A failed or interrupted one leaves its
 /// rows for the next, whose docs usually claim them; until then a real
 /// purge's rows stay visible, and nothing is deleted early.
-pub async fn sweep_deferred_purges(
+///
+/// Pulls from different peers run at the same time and share the table. One
+/// that ends while another still imports must not sweep, because the other's
+/// new doc may not have landed. So `session` leaves the registry's in-flight
+/// inbound syncs here, and only the last to leave sweeps, the ids of every
+/// session that ended before it included; a failed session leaves without
+/// sweeping, and what it deferred waits for that sweep.
+///
+/// It leaves holding the writer lock, which an import's Pass D needs to
+/// record anything. So when it was the last, the table holds only the ids of
+/// sessions that ended, and a session that starts now records nothing until
+/// this sweep has committed.
+pub async fn sweep_deferred_purges_if_last(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
+    session: Option<InboundSync>,
 ) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
     // Most pulls defer nothing; they need not wait for the writer lock.
     let any: Option<i64> =
@@ -1172,6 +1196,13 @@ pub async fn sweep_deferred_purges(
         return Ok(Vec::new());
     }
     let mut tx = agaric_store::db::begin_immediate_logged(pool, "sweep_deferred_purges").await?;
+    let last = match session {
+        Some(session) => session.leave(),
+        None => registry.inbound_syncs_in_flight() == 0,
+    };
+    if !last {
+        return Ok(Vec::new());
+    }
     let deferred: Vec<String> =
         sqlx::query_scalar!("SELECT block_id FROM sync_deferred_purges ORDER BY block_id")
             .fetch_all(&mut *tx)

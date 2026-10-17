@@ -4866,6 +4866,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
         Some(crate::sync_daemon::snapshot_transfer::EngineReloadCtx {
             registry: &init_state.registry,
             device_id: "FEAT6_INIT",
+            inbound: None,
         }),
     )
     .await
@@ -5059,6 +5060,7 @@ async fn empty_responder_reset_is_progress_and_stamps_synced_at_4960() {
         Some(crate::sync_daemon::snapshot_transfer::EngineReloadCtx {
             registry: &init_state.registry,
             device_id: INIT_DEV,
+            inbound: None,
         }),
     )
     .await

@@ -286,6 +286,7 @@ async fn run_catchup_with_ids(
             Some(EngineReloadCtx {
                 registry: &init_registry,
                 device_id: LOCAL_DEV,
+                inbound: None,
             }),
         ),
         try_offer_loro_snapshot_catchup(
@@ -719,6 +720,7 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
             Some(EngineReloadCtx {
                 registry: &init_registry,
                 device_id: LOCAL_DEV,
+                inbound: None,
             }),
         ),
     );
@@ -812,11 +814,15 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
     init_mat.shutdown();
 }
 
-/// #5712: a catch-up carries every space's snapshot, so it ends the pull the
-/// way a normal session does: a block its snapshot no longer holds, and no
-/// other engine does, is purged from SQL once the last snapshot has merged.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn loro_snapshot_catchup_purges_what_its_snapshots_dropped_5712() {
+/// #5712: a catch-up whose snapshot no longer holds a block, which no other
+/// engine holds either. `inbound` is the claim the session handed it, if any.
+/// Returns the initiator's block ids, how many ids wait to be swept, and how
+/// many inbound syncs are in flight, once the catch-up has ended.
+async fn catchup_that_drops_a_block(
+    inbound: impl FnOnce(
+        &agaric_engine::loro::registry::LoroEngineRegistry,
+    ) -> Option<agaric_engine::loro::registry::InboundSync>,
+) -> (Vec<String>, i64, usize) {
     use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
     use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
     use agaric_engine::loro::registry::LoroEngineRegistry;
@@ -864,6 +870,7 @@ async fn loro_snapshot_catchup_purges_what_its_snapshots_dropped_5712() {
     let (client, server) = (&mut pair.client, &mut pair.server);
     let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let inbound = inbound(&init_registry);
     let (offer_res, recv_res) = tokio::join!(
         try_offer_loro_snapshot_catchup(
             &mut server.send,
@@ -885,6 +892,7 @@ async fn loro_snapshot_catchup_purges_what_its_snapshots_dropped_5712() {
             Some(EngineReloadCtx {
                 registry: &init_registry,
                 device_id: LOCAL_DEV,
+                inbound,
             }),
         ),
     );
@@ -895,16 +903,215 @@ async fn loro_snapshot_catchup_purges_what_its_snapshots_dropped_5712() {
         .fetch_all(&init_pool)
         .await
         .unwrap();
+    let deferred: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_deferred_purges")
+        .fetch_one(&init_pool)
+        .await
+        .unwrap();
+    init_mat.shutdown();
+    (rows, deferred, init_registry.inbound_syncs_in_flight())
+}
+
+/// #5712: a catch-up carries every space's snapshot, so it ends the pull the
+/// way a normal session does: a block its snapshot no longer holds, and no
+/// other engine does, is purged from SQL once the last snapshot has merged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn loro_snapshot_catchup_purges_what_its_snapshots_dropped_5712() {
+    let (rows, deferred, in_flight) = catchup_that_drops_a_block(|_| None).await;
     assert_eq!(
         rows,
-        vec![page.to_owned()],
+        vec!["01HZ0000000000000000PAGE57".to_owned()],
         "the catch-up's end purged the block its snapshot dropped"
+    );
+    assert_eq!(
+        (deferred, in_flight),
+        (0, 0),
+        "nothing waits for a later pull, and the catch-up is no longer in flight"
+    );
+}
+
+/// #5712: the claim a session's main loop took before it fell back to the
+/// catch-up is the one the catch-up's sweep ends. A catch-up that took a second
+/// claim beside it would never be the last to end, and sweep nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_catchup_ends_the_claim_its_session_handed_it_5712() {
+    let (rows, deferred, in_flight) =
+        catchup_that_drops_a_block(|registry| Some(registry.begin_inbound_sync())).await;
+    assert_eq!(
+        (rows, deferred, in_flight),
+        (vec!["01HZ0000000000000000PAGE57".to_owned()], 0, 0),
+        "the catch-up swept, and the handed-over claim left with it"
+    );
+}
+
+/// #5712: a catch-up is a pull too. A pull that ends while it still merges
+/// leaves what the catch-up has deferred, which the catch-up's last snapshot
+/// claims.
+///
+/// The responder moves `page` from the old space to the new one and sends the
+/// old space's snapshot first. Once the initiator has merged it, another pull
+/// ends, and only then does the new space's snapshot arrive.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pull_ending_during_a_catchup_leaves_what_the_catchup_deferred_5712() {
+    use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
+    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+
+    let (old, new) = (
+        SpaceId::from_trusted("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        SpaceId::from_trusted("01BX5ZZKBKACTAV9WEVGEMMVRZ"),
+    );
+    let (page, kid) = ("01HZ0000000000000000PAGE57", "01HZ000000000000000CHILD57");
+    let resp_registry = LoroEngineRegistry::new();
+    let before_the_move = {
+        let mut g = resp_registry.for_space(&old, REMOTE_DEV).unwrap();
+        let e = g.engine_mut();
+        e.apply_create_block(page, "page", "Plan", None, 0).unwrap();
+        e.apply_create_block(kid, "content", "step", Some(page), 0)
+            .unwrap();
+        e.export_snapshot().unwrap()
+    };
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    let init_registry = LoroEngineRegistry::new();
+    let outcome = loro_sync::apply_remote(
+        &init_pool,
+        &init_registry,
+        LOCAL_DEV,
+        LoroSyncMessage::Snapshot {
+            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+            space_id: old.clone(),
+            bytes: before_the_move,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(outcome, ApplyOutcome::Imported { .. }),
+        "precondition: the initiator holds the page and its block"
+    );
+    sqlx::query(
+        "INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, 'unsaved', 1)",
+    )
+    .bind(kid)
+    .execute(&init_pool)
+    .await
+    .unwrap();
+    resp_registry
+        .for_space(&old, REMOTE_DEV)
+        .unwrap()
+        .engine_mut()
+        .apply_purge_block(page)
+        .unwrap();
+    {
+        let mut g = resp_registry.for_space(&new, REMOTE_DEV).unwrap();
+        let e = g.engine_mut();
+        e.apply_create_block(page, "page", "Plan", None, 0).unwrap();
+        e.apply_create_block(kid, "content", "step", Some(page), 0)
+            .unwrap();
+    }
+    let snapshot = |space: &SpaceId| LoroSyncMessage::Snapshot {
+        protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+        space_id: space.clone(),
+        bytes: resp_registry
+            .for_space(space, REMOTE_DEV)
+            .unwrap()
+            .engine_mut()
+            .export_snapshot()
+            .unwrap(),
+    };
+
+    /// The page, its block and the draft on the block.
+    async fn rows(pool: &SqlitePool) -> (Vec<String>, i64) {
+        let blocks = sqlx::query_scalar("SELECT id FROM blocks ORDER BY id")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        let drafts = sqlx::query_scalar("SELECT COUNT(*) FROM block_drafts")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        (blocks, drafts)
+    }
+    let whole = rows(&init_pool).await;
+    assert_eq!(whole.0.len(), 2, "precondition: the page and its block");
+
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
+    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let responder = async {
+        let timeout = std::time::Duration::from_secs(30);
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::LoroSync {
+                msg: snapshot(&old),
+                is_last: false,
+            },
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(timeout, async {
+            while sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sync_deferred_purges")
+                .fetch_one(&init_pool)
+                .await
+                .unwrap()
+                == 0
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the catch-up merges the old space's snapshot");
+
+        let swept = loro_sync::sweep_deferred_purges(&init_pool, &init_registry)
+            .await
+            .unwrap();
+        assert!(swept.is_empty(), "the catch-up is still merging");
+        assert_eq!(rows(&init_pool).await, whole, "so nothing was deleted");
+
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::LoroSync {
+                msg: snapshot(&new),
+                is_last: true,
+            },
+        )
+        .await
+        .unwrap();
+    };
+    let (_, recv_res) = tokio::join!(
+        responder,
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &init_mat,
+            &init_sink,
+            REMOTE_DEV,
+            None,
+            Some(EngineReloadCtx {
+                registry: &init_registry,
+                device_id: LOCAL_DEV,
+                inbound: None,
+            }),
+        ),
+    );
+    recv_res.expect("initiator catch-up");
+
+    assert_eq!(
+        rows(&init_pool).await,
+        whole,
+        "the new space's snapshot claims the page, and the draft on its block stays"
     );
     let deferred: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_deferred_purges")
         .fetch_one(&init_pool)
         .await
         .unwrap();
-    assert_eq!(deferred, 0, "nothing waits for a later pull");
+    assert_eq!(
+        (deferred, init_registry.inbound_syncs_in_flight()),
+        (0, 0),
+        "the catch-up swept and left"
+    );
     init_mat.shutdown();
 }
 

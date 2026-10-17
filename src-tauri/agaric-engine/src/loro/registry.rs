@@ -74,7 +74,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use loro::{ExportMode, LoroDoc};
 use parking_lot::lock_api::ArcMutexGuard;
@@ -169,6 +169,12 @@ pub struct LoroEngineRegistry {
     /// FRESH peer id instead of forking the `(peer, counter)` space
     /// against this device's pre-reset ops still held by peers.
     peer_epoch: AtomicU64,
+    /// #5712: the inbound sync sessions (live pulls and snapshot catch-ups)
+    /// between their first import and the sweep that ends them. A session
+    /// holds the ids its imports took out of a doc until then, so a sweep
+    /// that ends one session leaves the ids alone while another is still in
+    /// this set; see [`Self::begin_inbound_sync`].
+    inbound_syncs: Arc<AtomicUsize>,
 }
 
 impl LoroEngineRegistry {
@@ -181,7 +187,25 @@ impl LoroEngineRegistry {
             mark_seq: AtomicU64::new(0),
             generation: AtomicU64::new(0),
             peer_epoch: AtomicU64::new(0),
+            inbound_syncs: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// #5712: an inbound sync session starts importing docs, and so may hold
+    /// ids it deferred until its sweep. The claim leaves the in-flight set when
+    /// dropped, or in [`InboundSync::leave`], which also says whether it was the
+    /// last one in flight.
+    pub fn begin_inbound_sync(&self) -> InboundSync {
+        self.inbound_syncs.fetch_add(1, Ordering::SeqCst);
+        InboundSync {
+            in_flight: Some(Arc::clone(&self.inbound_syncs)),
+        }
+    }
+
+    /// #5712: how many inbound sync sessions hold a claim. For a sweep that
+    /// holds none itself (boot, tests).
+    pub fn inbound_syncs_in_flight(&self) -> usize {
+        self.inbound_syncs.load(Ordering::SeqCst)
     }
 
     /// #792 — current peer-id epoch. See the field docs.
@@ -704,6 +728,35 @@ impl Default for LoroEngineRegistry {
     }
 }
 
+/// An inbound sync session's claim on [`LoroEngineRegistry::begin_inbound_sync`]
+/// (#5712). Leaves the in-flight set exactly once: in [`Self::leave`], or on
+/// drop for a session that fails or is cancelled first.
+#[derive(Debug)]
+pub struct InboundSync {
+    in_flight: Option<Arc<AtomicUsize>>,
+}
+
+impl InboundSync {
+    /// Leave the in-flight set. `true` when no other inbound sync is left in
+    /// it, which is the one caller entitled to sweep what the sessions
+    /// deferred. The decrement is atomic, so of sessions ending together
+    /// exactly one is told so.
+    #[must_use]
+    pub fn leave(mut self) -> bool {
+        self.in_flight
+            .take()
+            .is_some_and(|in_flight| in_flight.fetch_sub(1, Ordering::SeqCst) == 1)
+    }
+}
+
+impl Drop for InboundSync {
+    fn drop(&mut self) {
+        if let Some(in_flight) = self.in_flight.take() {
+            in_flight.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
 /// Owned RAII guard returned by [`LoroEngineRegistry::for_space`].
 ///
 /// Holds the **per-space engine mutex** (#2205 — NOT the registry map
@@ -865,6 +918,30 @@ mod tests {
             r.spaces_containing("BLOCK_NOWHERE").is_empty(),
             "no engine holds an unknown block"
         );
+    }
+
+    /// #5712 — of the inbound syncs in flight, only the last to leave is told
+    /// so; a claim dropped without leaving frees its place too.
+    #[test]
+    fn only_the_last_inbound_sync_to_leave_is_told_so_5712() {
+        let r = LoroEngineRegistry::new();
+        assert_eq!(r.inbound_syncs_in_flight(), 0, "a fresh registry has none");
+
+        let (first, second, third) = (
+            r.begin_inbound_sync(),
+            r.begin_inbound_sync(),
+            r.begin_inbound_sync(),
+        );
+        assert_eq!(r.inbound_syncs_in_flight(), 3);
+        assert!(!first.leave(), "two others are still in flight");
+        drop(second);
+        assert_eq!(
+            r.inbound_syncs_in_flight(),
+            1,
+            "a dropped claim leaves, without being told anything"
+        );
+        assert!(third.leave(), "nobody else is left in flight");
+        assert_eq!(r.inbound_syncs_in_flight(), 0, "leaving counts once");
     }
 
     #[test]

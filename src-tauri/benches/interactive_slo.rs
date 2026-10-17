@@ -69,6 +69,7 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
+use agaric_engine::loro::registry::LoroEngineRegistry;
 use agaric_lib::commands::pages::{
     ListPagesWithMetadataFilter, PageSort, PageSubtree, list_pages_with_metadata_inner,
 };
@@ -90,10 +91,12 @@ use agaric_store::op::OpRef;
 use agaric_store::pagination::{BlockRow, PageResponse};
 use agaric_store::search_types::SearchScope;
 use agaric_store::space::{SpaceId, SpaceScope};
+use agaric_sync::sync_protocol::loro_sync::sweep_deferred_purges;
 
 use sqlx::SqlitePool;
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
@@ -156,6 +159,10 @@ const PAGES_CACHE_SAMPLE_SIZE: usize = 50;
 /// returned row count. `+ 1` is the production probe-for-more pattern.
 const PAGES_MOSTLINKED_PAGE_LIMIT: usize = 50;
 const PAGES_MOSTLINKED_LIMIT_PLUS_ONE: i64 = PAGES_MOSTLINKED_PAGE_LIMIT as i64 + 1;
+
+/// #5712 — the ids the sweep probe purges per call: a big page moved to
+/// another space, whose old doc dropped it while the new one has yet to land.
+const SWEEP_DEFERRED_IDS: usize = 10_000;
 
 /// #5422 — page/children shape for the backlink-panel probes:
 /// `BACKLINK_PANEL_PAGES * (BACKLINK_PANEL_CHILDREN_PER_PAGE + 1) == FIXTURE_SIZE`.
@@ -3644,6 +3651,145 @@ fn bench_search_blocks_word_query(c: &mut Criterion) {
     assert_under_budget(CMD, &acc, SEARCH_WORD_BUDGET_MS);
 }
 
+/// #5712 — what the sweep that ends every completed pull
+/// (`loro_sync::sweep_deferred_purges`) costs at 100K blocks, which no command
+/// probe times because sync is not a command. Two cases on one fixture, both
+/// measurement only: no budget until `bench-slo` has measured them.
+///
+/// - `empty`: nothing deferred, which is what almost every pull pays.
+/// - `10k`: [`SWEEP_DEFERRED_IDS`] ids no engine holds, which a pull that
+///   brings the purge of a 10K-block page pays once, where the import paid
+///   it inline before. The engine registry is empty, so every deferred id is
+///   unheld.
+///
+/// The 10K case puts its rows back, untimed, after each sweep: the shape check
+/// runs per call rather than before the loop, because a mutator must not
+/// preflight the measured fixture.
+fn bench_sweep_deferred_purges(c: &mut Criterion) {
+    const EMPTY: &str = "sweep_deferred_purges (nothing deferred) @ 100K";
+    const TEN_K: &str = "sweep_deferred_purges (10K unheld ids) @ 100K";
+    let rt = Rc::new(Runtime::new().unwrap());
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_sweep_deferred_purges"));
+    let ids = rt.block_on(seed_blocks_bulk(&pool, FIXTURE_SIZE));
+    rt.block_on(assign_all_to_slo_space(&pool));
+    let registry = Arc::new(LoroEngineRegistry::new());
+
+    // The rows a 10K sweep deletes, kept to put back after each timed call.
+    let swept_ids = serde_json::to_string(&ids[..SWEEP_DEFERRED_IDS]).unwrap();
+    rt.block_on(async {
+        sqlx::query(
+            "CREATE TABLE bench_swept AS SELECT * FROM blocks \
+             WHERE id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(&swept_ids)
+        .execute(&pool)
+        .await
+        .unwrap();
+    });
+    let count = |sql: &'static str| -> i64 {
+        rt.block_on(async { sqlx::query_scalar(sql).fetch_one(&pool).await.unwrap() })
+    };
+    assert_eq!(
+        (
+            count("SELECT COUNT(*) FROM blocks"),
+            count("SELECT COUNT(*) FROM bench_swept"),
+            count("SELECT COUNT(*) FROM sync_deferred_purges"),
+        ),
+        (FIXTURE_SIZE as i64 + 1, SWEEP_DEFERRED_IDS as i64, 0),
+        "sweep_deferred_purges @ 100K: the vault holds 100K blocks and its space, \
+         a copy of the 10K rows, and nothing deferred"
+    );
+    // Nothing is deferred, so this deletes nothing (an empty sweep is no mutator).
+    let swept = rt
+        .block_on(sweep_deferred_purges(&pool, &registry))
+        .unwrap();
+    assert!(
+        swept.is_empty(),
+        "{EMPTY}: the untimed probe must sweep nothing"
+    );
+
+    let mut group = c.benchmark_group("interactive_slo");
+    group.sample_size(SAMPLE_SIZE);
+    let (acc_empty, acc_10k) = (Acc::new(), Acc::new());
+
+    {
+        let (pool, registry, acc, rt_for_bench) = (
+            pool.clone(),
+            Arc::clone(&registry),
+            acc_empty.clone(),
+            rt.clone(),
+        );
+        group.bench_function("sweep_deferred_purges_empty_100k", move |b| {
+            let (pool, registry, acc) = (pool.clone(), Arc::clone(&registry), acc.clone());
+            b.to_async(rt_for_bench.as_ref()).iter_custom(move |iters| {
+                let (pool, registry, acc) = (pool.clone(), Arc::clone(&registry), acc.clone());
+                async move {
+                    let start = Instant::now();
+                    for _ in 0..iters {
+                        let _ = sweep_deferred_purges(&pool, &registry).await.unwrap();
+                    }
+                    let elapsed = start.elapsed();
+                    acc.record(elapsed, iters);
+                    elapsed
+                }
+            });
+        });
+    }
+    {
+        let (pool, registry, acc, rt_for_bench) = (
+            pool.clone(),
+            Arc::clone(&registry),
+            acc_10k.clone(),
+            rt.clone(),
+        );
+        group.bench_function("sweep_deferred_purges_10k_100k", move |b| {
+            let (pool, registry, acc) = (pool.clone(), Arc::clone(&registry), acc.clone());
+            b.to_async(rt_for_bench.as_ref()).iter_custom(move |iters| {
+                let (pool, registry, acc) = (pool.clone(), Arc::clone(&registry), acc.clone());
+                async move {
+                    let mut elapsed = Duration::ZERO;
+                    for _ in 0..iters {
+                        sqlx::query(
+                            "INSERT INTO sync_deferred_purges (block_id) SELECT id FROM bench_swept",
+                        )
+                        .execute(&pool)
+                        .await
+                        .unwrap();
+                        let start = Instant::now();
+                        let swept = sweep_deferred_purges(&pool, &registry).await.unwrap();
+                        elapsed += start.elapsed();
+                        assert_eq!(
+                            swept.len(),
+                            SWEEP_DEFERRED_IDS,
+                            "sweep_deferred_purges @ 100K: every deferred id is unheld, so all are purged"
+                        );
+                        sqlx::query("INSERT INTO blocks SELECT * FROM bench_swept")
+                            .execute(&pool)
+                            .await
+                            .unwrap();
+                    }
+                    acc.record(elapsed, iters);
+                    elapsed
+                }
+            });
+        });
+    }
+    group.finish();
+
+    assert_eq!(
+        (
+            count("SELECT COUNT(*) FROM blocks"),
+            count("SELECT COUNT(*) FROM sync_deferred_purges"),
+        ),
+        (FIXTURE_SIZE as i64 + 1, 0),
+        "sweep_deferred_purges @ 100K: every timed sweep's rows were put back and its table cleared"
+    );
+
+    report_measurement_only(EMPTY, &acc_empty);
+    report_measurement_only(TEN_K, &acc_10k);
+}
+
 /// #5426 — `query_by_property` on `todo_state = 'TODO'`, which half of 100K
 /// blocks carry. PROBLEM TIER, report-only: equality reads its value index and
 /// sorts every match before the LIMIT, where an id-order walk stops after one
@@ -4788,6 +4934,8 @@ criterion_group!(
     bench_list_all_tags_in_space_10k,
     bench_search_blocks_short_query,
     bench_search_blocks_word_query,
+    // #5712 — what a completed pull's session-end sweep costs; no budget yet.
+    bench_sweep_deferred_purges,
     // #5402 — the MCP read paths.
     mcp_reads::bench_mcp_get_page_markdown,
     mcp_reads::bench_mcp_get_journal,
