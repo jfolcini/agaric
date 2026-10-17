@@ -27,7 +27,8 @@ test.describe.configure({ mode: 'serial' })
  *  4. Apply template to a page (inserts template children)
  *  5. Template variable expansion (<% today %> becomes current date)
  *  6. Set/remove journal template via kebab menu
- *  7. Pick the journal template from the journal; a new day copies it, nesting included
+ *  7. The journal offers the template pages and a new one; a new day copies the picked one,
+ *     nesting included
  *
  * Seed data (tauri-mock.ts):
  *   PAGE_TMPL_MEETING ("Meeting Notes Template") — 3 child blocks:
@@ -377,6 +378,10 @@ test.describe('Journal template button', () => {
 
     await navigateToView(page, 'Journal')
     await page.getByRole('button', { name: 'Configure journal template' }).click()
+    await expect(activePopover(page).getByRole('button')).toHaveText([
+      'Meeting Notes Template',
+      'New journal template',
+    ])
     await activePopover(page).getByRole('button', { name: 'Meeting Notes Template' }).click()
     await expect(page.locator('[aria-label="Page title"]')).toHaveText('Meeting Notes Template')
 
