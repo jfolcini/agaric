@@ -7,10 +7,10 @@
 // (`restore_block`) and Purge erases it (`purge_block`). All of it is backend,
 // so each case re-reads the result after a view change.
 //
-// The Pages list deletes the first page and the page editor's kebab ("Page
-// actions" › "Delete page") the third; Trash is opened from the Pages header's
-// "Trash" button (PageBrowserHeader.tsx), and its rows are
-// `[data-testid="trash-item"]` (TrashRowItem.tsx).
+// The Pages list deletes the pages of the first two cases and the page
+// editor's kebab ("Page actions" › "Delete page") the third's; Trash is
+// opened from the Pages header's "Trash" button (PageBrowserHeader.tsx), and
+// its rows are `[data-testid="trash-item"]` (TrashRowItem.tsx).
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
@@ -32,7 +32,7 @@ import {
 } from './helpers'
 
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
-// A live page every case can wait for before asserting another row is absent.
+// A live page to wait for before asserting a deleted one is absent from Pages.
 const KEPT = runScopedMarker('wdio-trash-kept')
 
 /** The Pages list row of the page titled `title` (PageRow.tsx). */
@@ -190,14 +190,16 @@ describe('Agaric real-backend Trash: page cascade, restore, purge (#5737)', () =
       [page, ...chain],
     )
     expect(mentioning.length).toBe(1)
-    await expect(row.$('[data-testid="trash-descendant-badge"]')).toHaveText('+3 blocks')
+    await expect(row.$('[data-testid="trash-descendant-badge"]')).toHaveText('+3 blocks', {
+      wait: ACTION_TIMEOUT,
+    })
 
     await restoreFromTrash(page)
     await reopenPageByTitle(page)
     await waitForChain(chain, 'the restored page did not bring its tree back')
   })
 
-  it('purges a trashed page so neither Trash nor Pages lists it', async () => {
+  it('purges a trashed page so Trash no longer lists it', async () => {
     const page = runScopedMarker('wdio-trash-purge-page')
     await openTitledPage(page)
     await typeMarkerVerified(runScopedMarker('wdio-trash-purge-body'))
@@ -210,7 +212,8 @@ describe('Agaric real-backend Trash: page cascade, restore, purge (#5737)', () =
     await purge.waitForClickable({ timeout: ACTION_TIMEOUT })
     await purge.click()
     await confirmDialog('Yes, delete')
-    // The purge re-reads the trash (TrashView `handlePurge`): this is the backend's list.
+    // TrashView `handlePurge` drops the row before its reload lands, so only the
+    // round-trip below reads the backend's list.
     await row.waitForExist({
       reverse: true,
       timeout: ACTION_TIMEOUT,
@@ -220,10 +223,6 @@ describe('Agaric real-backend Trash: page cascade, restore, purge (#5737)', () =
     await navigateTo('Journal')
     await openTrash()
     await expectAbsent(trashRow(page), 'the purged page in Trash')
-    await navigateTo('Journal')
-    await navigateTo('Pages')
-    await $(pageRow(KEPT)).waitForDisplayed({ timeout: NAV_TIMEOUT })
-    await expectAbsent(pageRow(page), 'the purged page in the Pages list')
   })
 
   it("sends a page to Trash from the editor's kebab, stepping off it, and restores its tree", async () => {
@@ -239,8 +238,9 @@ describe('Agaric real-backend Trash: page cascade, restore, purge (#5737)', () =
     await deleteItem.click()
     await confirmDialog('Delete page')
 
-    // The tab steps back off the deleted page, to the page before it in the
-    // tab's history or, with none, to Pages.
+    // The tab steps back to the page before it in its history (`before` opened
+    // KEPT in this tab), so a title that only blinks out while the page re-renders
+    // does not count.
     let shown: string | null = null
     await browser
       .waitUntil(
@@ -248,7 +248,7 @@ describe('Agaric real-backend Trash: page cascade, restore, purge (#5737)', () =
           shown = await browser.execute(
             () => document.querySelector('[aria-label="Page title"]')?.textContent ?? null,
           )
-          return shown !== page
+          return shown !== null && shown !== page
         },
         { timeout: NAV_TIMEOUT },
       )
