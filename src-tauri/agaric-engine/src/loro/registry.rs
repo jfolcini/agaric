@@ -411,7 +411,8 @@ impl LoroEngineRegistry {
 
     /// The registered spaces whose engine holds `block_id`, tombstoned or
     /// not, in arbitrary order. Boot replay asks this when SQL no longer
-    /// names the block's space (#5647). The caller must hold no engine guard.
+    /// names the block's space (#5647); an import's Pass D asks it before
+    /// sweeping a purged id (#5712). The caller must hold no engine guard.
     pub fn spaces_containing(&self, block_id: &str) -> Vec<SpaceId> {
         self.probe_engines(|engine| engine.contains_block(block_id).then_some(()))
             .into_iter()

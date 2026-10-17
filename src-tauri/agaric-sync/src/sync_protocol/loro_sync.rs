@@ -1127,19 +1127,23 @@ async fn project_pass_c(
 /// handed us the COMPLETE purged set, so no descendant CTE is needed.
 /// Atomic with the rest of the projection: a rollback leaves SQL untouched.
 /// #2292: sweep the UNION of the engine's purged set and the durable
-/// tombstone recovered from the inbox row — NARROWED (Fix 2) to
-/// `tombstone_to_sweep`, the recovered ids the engine no longer holds live,
-/// so a stale tombstone can never delete a block a later move resurrected.
-/// On a live apply the tombstone is empty and this is exactly the engine set;
-/// on a crash-recovery replay the engine set is empty (subtree already gone)
-/// and the narrowed tombstone carries the ids. `project_purge_blocks_to_sql`
-/// is idempotent (INSERT OR IGNORE into a keyed temp table, then joined
-/// DELETEs), so re-sweeping already-gone ids is a no-op and the dedup below
-/// is a courtesy, not a correctness requirement.
+/// tombstone recovered from the inbox row. On a live apply the tombstone is
+/// empty and this is exactly the engine set; on a crash-recovery replay the
+/// engine set is empty (subtree already gone) and the tombstone carries the
+/// ids. `project_purge_blocks_to_sql` is idempotent (INSERT OR IGNORE into a
+/// keyed temp table, then joined DELETEs), so re-sweeping already-gone ids is
+/// a no-op and the dedup below is a courtesy, not a correctness requirement.
+///
+/// Only the ids no engine holds are swept. #2292: a later move can resurrect
+/// an id a stale tombstone names. #5712: a page moved to another space leaves
+/// this doc as a prune (#2907), which reads here as a purge, but its rows now
+/// belong to the doc that holds it, whose import projects them whether it ran
+/// before this one or runs after.
 async fn project_pass_d(
     tx: &mut sqlx::SqliteConnection,
+    registry: &LoroEngineRegistry,
     purged_blocks: &[agaric_core::ulid::BlockId],
-    tombstone_to_sweep: &[agaric_core::ulid::BlockId],
+    tombstone_purged: &[agaric_core::ulid::BlockId],
 ) -> Result<(), AppError> {
     use agaric_engine::loro::projection::project_purge_blocks_to_sql;
 
@@ -1148,12 +1152,13 @@ async fn project_pass_d(
         .map(agaric_core::ulid::BlockId::as_str)
         .collect();
     purge_union.extend(
-        tombstone_to_sweep
+        tombstone_purged
             .iter()
             .map(agaric_core::ulid::BlockId::as_str),
     );
     purge_union.sort_unstable();
     purge_union.dedup();
+    purge_union.retain(|id| registry.spaces_containing(id).is_empty());
     if !purge_union.is_empty() {
         project_purge_blocks_to_sql(&mut *tx, &purge_union).await?;
     }
@@ -1748,9 +1753,9 @@ async fn stamp_purged_tombstone(
         // on EVERY slot in the batch. That is the conservative direction: if
         // the projection tx rolls back, each surviving slot carries at least
         // the ids it would have carried alone, so the next boot re-sweeps at
-        // least as much. Over-broad tombstones are harmless because Fix 2
-        // (`narrow_tombstone_to_sweep`) narrows any recovered tombstone to ids
-        // the engine no longer holds live. Single-id (live) behaviour is unchanged.
+        // least as much. Over-broad tombstones are harmless because Pass D
+        // sweeps only the ids no engine holds. Single-id (live) behaviour is
+        // unchanged.
         for id in inbox_ids {
             sqlx::query!(
                 "UPDATE loro_sync_inbox SET purged_ids = ? WHERE id = ?",
@@ -1762,34 +1767,6 @@ async fn stamp_purged_tombstone(
         }
     }
     Ok(())
-}
-
-/// #2292 (CR, Fix 2): a block the engine currently holds LIVE must not be
-/// swept by a stale recovered tombstone (a later move can resurrect a
-/// previously-purged id; Pass A upserts it live, and an unfiltered Pass D
-/// would then delete it → SQL-behind-engine divergence). Narrow the recovered
-/// tombstone to ids the engine no longer holds. Stays within #779: an engine
-/// that reloaded empty holds nothing live, so it still sweeps the full
-/// tombstone (the device's own durable record). Uncertain reads (Err) are
-/// treated as LIVE and excluded — prefer leaving a stale row over deleting a
-/// live one.
-fn narrow_tombstone_to_sweep(
-    registry: &LoroEngineRegistry,
-    device_id: &str,
-    space_id: &SpaceId,
-    tombstone_purged: &[agaric_core::ulid::BlockId],
-) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
-    Ok(if tombstone_purged.is_empty() {
-        Vec::new()
-    } else {
-        let mut guard = registry.for_space(space_id, device_id)?;
-        let engine = guard.engine_mut();
-        tombstone_purged
-            .iter()
-            .filter(|id| matches!(engine.read_block(id.as_str()), Ok(None)))
-            .cloned()
-            .collect()
-    })
 }
 
 /// #3194 (#535) — decide, BEFORE anything is deleted, which slots this import
@@ -2128,9 +2105,6 @@ pub(crate) async fn import_and_project(
 
     stamp_purged_tombstone(pool, inbox_ids, &purged_blocks, tombstone_purged).await?;
 
-    let tombstone_to_sweep =
-        narrow_tombstone_to_sweep(registry, device_id, space_id, tombstone_purged)?;
-
     // #2264: complete no-op import diff (a redelivered / echoed payload that
     // added zero new ops — the engine's oplog-frontier short-circuit, #2036).
     // The empty diff proves the ENGINE already had everything in `bytes`; it
@@ -2214,7 +2188,7 @@ pub(crate) async fn import_and_project(
 
     let swept_tombstones = project_pass_c(&mut tx, &changed_blocks, &block_states).await?;
 
-    project_pass_d(&mut tx, &purged_blocks, &tombstone_to_sweep).await?;
+    project_pass_d(&mut tx, registry, &purged_blocks, tombstone_purged).await?;
 
     clear_inbox_slots(&mut tx, &clearable_ids).await?;
 
@@ -2417,8 +2391,8 @@ pub struct InboxSlot {
     pub tombstone_purged: Vec<agaric_core::ulid::BlockId>,
 }
 
-/// Union of the batch's durable tombstones — Pass D narrows it to ids the engine
-/// no longer holds live (#2292 Fix 2), so the union is safe.
+/// Union of the batch's durable tombstones — Pass D sweeps only the ids no
+/// engine holds (#2292), so the union is safe.
 fn batch_tombstone_union(accepted: &[InboxSlot]) -> Vec<agaric_core::ulid::BlockId> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     accepted

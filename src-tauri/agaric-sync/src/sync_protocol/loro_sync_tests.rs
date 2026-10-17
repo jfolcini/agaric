@@ -2698,6 +2698,81 @@ async fn replay_sync_inbox_resweeps_purge_from_tombstone_2292() {
     assert_eq!(remaining, 0, "the replayed slot must be cleared");
 }
 
+/// #5712: a crash between importing the old space's prune of a moved page
+/// and projecting it leaves a slot whose tombstone names the page, while the
+/// new space's engine already holds it. Boot replay must keep the rows.
+#[tokio::test]
+async fn replay_keeps_rows_another_space_holds_despite_the_tombstone_5712() {
+    let (pool, _dir) = fresh_pool().await;
+    let old_space = SpaceId::from_trusted(SPACE_A);
+    let new_space = SpaceId::from_trusted("01HZ0000000000000000000SP2");
+    let (page, child) = (BLOCK_A, BLOCK_B);
+
+    let snapshot_bytes: Vec<u8> = {
+        let mut e = LoroEngine::with_peer_id("device-A").expect("engine");
+        e.apply_create_block(page, "page", "Parent", None, 0)
+            .expect("page");
+        e.apply_create_block(child, "content", "child", Some(page), 0)
+            .expect("child");
+        e.export_snapshot().expect("export")
+    };
+    let registry_b = LoroEngineRegistry::new();
+    apply_remote(
+        &pool,
+        &registry_b,
+        "device-B",
+        LoroSyncMessage::Snapshot {
+            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+            space_id: old_space.clone(),
+            bytes: snapshot_bytes.clone(),
+        },
+    )
+    .await
+    .expect("apply old space");
+    // The new space's doc has landed: its engine holds the page.
+    {
+        let mut g = registry_b
+            .for_space(&new_space, "device-B")
+            .expect("new space");
+        g.engine_mut().import(&snapshot_bytes).expect("import");
+    }
+    // The old space's prune reached the engine, not SQL.
+    let slot_bytes: Vec<u8> = {
+        let mut g = registry_b
+            .for_space(&old_space, "device-B")
+            .expect("old space");
+        g.engine_mut().apply_purge_block(page).expect("prune");
+        g.engine_mut().export_snapshot().expect("export post-prune")
+    };
+    let purged_json = serde_json::to_string(&[page, child]).expect("serialise tombstone");
+    sqlx::query(
+        "INSERT INTO loro_sync_inbox (space_id, bytes, purged_ids, created_at) \
+             VALUES (?, ?, ?, ?)",
+    )
+    .bind(old_space.as_str())
+    .bind(&slot_bytes)
+    .bind(&purged_json)
+    .bind(agaric_store::db::now_ms())
+    .execute(&pool)
+    .await
+    .expect("seed crashed slot");
+
+    let mat = agaric_engine::materializer::Materializer::new(pool.clone());
+    let replayed = crate::recovery::replay_sync_inbox(&pool, &registry_b, "device-B", &mat)
+        .await
+        .expect("replay");
+    assert_eq!(replayed, 1, "the crashed prune slot must replay");
+
+    for id in [page, child] {
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("count blocks");
+        assert_eq!(n, 1, "{id}'s row must survive: the new space holds it");
+    }
+}
+
 /// #2292 happy path: a normal inbound purge apply (Live) sweeps the SQL
 /// subtree AND clears the write-ahead slot on commit. The tombstone written
 /// mid-apply (before the projection tx) is transparent to the success path
