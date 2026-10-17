@@ -54,10 +54,12 @@ const ZIZMOR_CONFIG_PATH = join(REPO_ROOT, '.github', 'zizmor.yml')
 
 /**
  * How many inline `# zizmor: ignore[cache-poisoning]` suppressions the repo
- * is expected to carry — the two on ci.yml's `android-build` cache steps.
+ * is expected to carry — the one on ci.yml's `android-build` Rust cache step.
  * The `build` job's pair went with those steps into
- * `.github/actions/toolchain`, where the audit does not fire: cache-poisoning
- * keys off a workflow's publishing triggers, and a composite action has none.
+ * `.github/actions/toolchain`, and `android-build`'s `setup-node` step went
+ * into `.github/actions/setup-node`; the audit does not fire in a composite
+ * action: cache-poisoning keys off a workflow's publishing triggers, and a
+ * composite action has none.
  *
  * EXACT on purpose, and the strictness is the point: `checkHygiene` only
  * notices zero, so without an exact count a suppression appearing in some
@@ -66,7 +68,7 @@ const ZIZMOR_CONFIG_PATH = join(REPO_ROOT, '.github', 'zizmor.yml')
  * be a deliberate edit here, which is why the failure detail says so instead
  * of reading like a defect report.
  */
-export const EXPECTED_INLINE_SUPPRESSIONS = 2
+export const EXPECTED_INLINE_SUPPRESSIONS = 1
 
 // ---------------------------------------------------------------------------
 // (1) The regression this guard exists to catch: a line-anchored

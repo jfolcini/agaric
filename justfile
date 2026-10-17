@@ -11,6 +11,14 @@
 default:
     @just --list
 
+# Fail fast where `npm run` would start on an npm older than `engines.npm`:
+# `npm run` is not engine-gated, only `npm install` / `npm ci` are. Every recipe
+# that runs npm (directly, or through `cargo tauri`) depends on this; `setup`
+# does not, because it is what upgrades npm.
+[private]
+_require-npm:
+    @bash scripts/require-npm.sh >/dev/null
+
 # --- Bootstrap -------------------------------------------------------------
 
 # One-shot post-clone setup (npm ci, Playwright, .env, dev DB). Idempotent.
@@ -35,22 +43,22 @@ install-hooks:
 
 # Run the desktop app in dev mode with hot reload (Rust + frontend).
 [group('develop')]
-dev:
+dev: _require-npm
     cargo tauri dev
 
 # Run the frontend only (Vite dev server, no Tauri shell).
 [group('develop')]
-web:
+web: _require-npm
     npm run dev
 
 # Serve the production build locally (run `just build` first).
 [group('develop')]
-preview:
+preview: _require-npm
     npm run preview
 
 # Run the Android app in dev mode.
 [group('develop')]
-android:
+android: _require-npm
     npm run android:dev
 
 # --- Test ------------------------------------------------------------------
@@ -61,7 +69,7 @@ test: test-fe test-be
 
 # Frontend unit tests (Vitest, single run).
 [group('test')]
-test-fe:
+test-fe: _require-npm
     npm run test
 
 # `--workspace` (#3212): bare `cargo nextest run` from `src-tauri/` (a workspace
@@ -87,45 +95,45 @@ test-be-release:
 
 # Re-run frontend tests on change.
 [group('test')]
-test-watch:
+test-watch: _require-npm
     npm run test:watch
 
 # Frontend tests with coverage (feeds the coverage ratchet).
 [group('test')]
-coverage:
+coverage: _require-npm
     npm run test:coverage
 
 # End-to-end tests (Playwright).
 [group('test')]
-test-e2e:
+test-e2e: _require-npm
     npm run test:e2e
 
 # --- Lint & format ---------------------------------------------------------
 
 # Lint JS/TS (oxlint).
 [group('lint')]
-lint:
+lint: _require-npm
     npm run lint
 
 # Lint and auto-fix JS/TS (oxlint --fix).
 [group('lint')]
-lint-fix:
+lint-fix: _require-npm
     npm run lint:fix
 
 # Typecheck every tsconfig project (tsc -b --noEmit). Bare `npx tsc --noEmit` checks NOTHING — see AGENTS.md.
 [group('lint')]
-typecheck:
+typecheck: _require-npm
     npm run typecheck
 
 # Format files you changed vs HEAD: oxfmt (JS/TS/JSON) + taplo (TOML). See fmt-all for a whole-repo pass.
 [group('lint')]
-fmt:
+fmt: _require-npm
     npm run format:changed
     npm run format:toml
 
 # Format the entire repo (large diff — reserve for intentional repo-wide passes).
 [group('lint')]
-fmt-all:
+fmt-all: _require-npm
     npm run format
     npm run format:toml
 
@@ -154,17 +162,17 @@ push *ARGS:
 
 # Type-check and build the frontend bundle.
 [group('build')]
-build:
+build: _require-npm
     npm run build
 
 # Build the full desktop app — release bundle, slow.
 [group('build')]
-build-app:
+build-app: _require-npm
     npm run tauri:build
 
 # Build the Android app (release).
 [group('build')]
-android-build:
+android-build: _require-npm
     npm run android:build
 
 # --- Codegen ---------------------------------------------------------------
@@ -219,5 +227,5 @@ gen-sqlx:
 
 # Regenerate emoji data.
 [group('codegen')]
-gen-emoji:
+gen-emoji: _require-npm
     npm run gen:emoji

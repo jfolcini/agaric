@@ -437,6 +437,10 @@ for cmd in jq cargo git; do
   fi
 done
 
+# The release builds with the npm that package.json pins; refuse before the
+# first write rather than after the manifests are bumped.
+bash scripts/require-npm.sh >/dev/null || exit 1
+
 # Refuse to bump on a dirty tree when --commit is requested — the commit
 # would otherwise sweep up unrelated work in progress.
 if [ "$DO_COMMIT" -eq 1 ] && [ -n "$(git status --porcelain)" ]; then

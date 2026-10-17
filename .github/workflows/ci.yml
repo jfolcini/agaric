@@ -299,10 +299,7 @@ jobs:
             ndk;27.2.12479018
 
       - name: Install Node.js
-        # zizmor: ignore[cache-poisoning] — same rationale as the
-        # `android-build` job's Rust cache step above: build/test only, never
-        # signs or publishes. Anchored on the step itself (#3737).
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        uses: ./.github/actions/setup-node
         with:
           node-version: 24
           cache: npm

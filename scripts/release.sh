@@ -155,6 +155,11 @@ if git ls-remote --exit-code --tags origin "refs/tags/$NEW_VERSION" >/dev/null 2
   exit 1
 fi
 
+# ── Preflight: npm meets package.json's engines.npm ─────────────────────────
+#
+# Before the 5-10 minute local release build, which runs `npm run build`.
+bash scripts/require-npm.sh >/dev/null || exit 1
+
 # ── Preflight: the release identity can produce a verifiable commit ─────────
 #
 # Asked here rather than at the commit so it costs the error message instead

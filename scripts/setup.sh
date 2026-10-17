@@ -222,6 +222,12 @@ ensure_node() {
 }
 ensure_node
 
+# npm 12+ is a hard floor (`engines.npm`), and no Node release bundles it yet, so
+# install the `packageManager` pin on top of Node's own npm BEFORE `npm ci`.
+# `npm run setup` reaches here on an older npm because `npm run` is not
+# engine-gated; only the install below is.
+bash scripts/require-npm.sh --install
+
 npm ci
 # Playwright's chromium for e2e (no longer pulled by a package.json postinstall
 # — removed in #816, dead weight on the many CI jobs that never run e2e). This

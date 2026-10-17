@@ -2069,6 +2069,11 @@ if ! node_deps_problem_out="$(node_deps_problem "$REPO_ROOT")"; then
     exit 1
 fi
 
+# ── Preflight: npm floor ───────────────────────────────────────────
+# Same reason as above: the Node phases run `npm run` / `npx`, which an older
+# npm starts without complaint. The shared check names the fix.
+bash "$REPO_ROOT/scripts/require-npm.sh" >/dev/null || exit 1
+
 # shellcheck disable=SC1091
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
