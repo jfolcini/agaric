@@ -158,8 +158,15 @@ function blockIds(page: Page): Promise<string[]> {
 }
 
 /** A button on the buffer's toolbar. */
-function toolbarButton(page: Page, name: string): Locator {
+function toolbarButton(page: Page, name: string | RegExp): Locator {
   return page.getByTestId('page-source-toolbar').getByRole('button', { name, exact: true })
+}
+
+/** Save, which counts the changes once there are any. */
+const SAVE = /^Save(?: \(\d+ changes?\))?$/
+
+function saveButton(page: Page): Locator {
+  return page.getByRole('button', { name: SAVE })
 }
 
 function staticBlock(page: Page, id: string): Locator {
@@ -222,7 +229,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await moveLine(page, editor, CREATE, WELCOME)
     await selectLine(editor, WELCOME)
     await page.keyboard.type(HELLO_LINE)
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await saveButton(page).click()
 
     await expect(sourceEditor(page)).toHaveCount(0)
     await expect(pageActions(page)).toBeFocused()
@@ -268,7 +275,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await selectLine(editor, WELCOME)
     await page.keyboard.type(HELLO_LINE)
 
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await saveButton(page).click()
     const dialog = activeDialog(page)
     await expect(dialog.getByRole('heading', { name: 'This page changed' })).toBeVisible()
     await expect(dialog.getByRole('listitem')).toHaveCount(1)
@@ -289,7 +296,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await selectLine(editor, WELCOME)
     await page.keyboard.type(HELLO_LINE)
 
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await saveButton(page).click()
     await activeDialog(page).getByRole('button', { name: 'Merge', exact: true }).click()
 
     await expect(sourceEditor(page)).toHaveCount(0)
@@ -315,7 +322,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await selectLine(editor, WELCOME)
     await moveSelection(page, 'ArrowLeft')
     await page.keyboard.press('ControlOrMeta+v')
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await saveButton(page).click()
 
     await expect(sourceEditor(page)).toHaveCount(0)
     await expect(saveReport(page)).toBeVisible()
@@ -346,7 +353,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
       GS3,
       GS1,
     ])
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await saveButton(page).click()
 
     await expect(sourceEditor(page)).toHaveCount(0)
     await expect.poll(() => blockIds(page)).toEqual([GS3, GS1, GS2, GS4, GS5])
@@ -379,7 +386,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
       ['aliases: [getting-started, gs, handbook]', null],
     ])
 
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await saveButton(page).click()
 
     await expect(sourceEditor(page)).toHaveCount(0)
     await expect(pageActions(page)).toBeFocused()
@@ -435,7 +442,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await deleteLine(page, editor, SEARCH)
     await selectLine(editor, WELCOME)
     await page.keyboard.type(HELLO_LINE)
-    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await saveButton(page).click()
     await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4])
 
     await saveReport(page).getByRole('button', { name: 'Undo', exact: true }).click()
@@ -494,6 +501,36 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await editor.press('ControlOrMeta+s')
     await expect(sourceEditor(page)).toHaveCount(0)
     await expect(staticBlock(page, GS1)).toContainText('Quick Notes')
+  })
+
+  test('Changes marks what an edit added, Preview shows its link as a chip, and Save keeps it', async ({
+    page,
+  }) => {
+    const editor = await openSourceMode(page)
+    await caretAtEnd(page, editor, WELCOME)
+    await page.keyboard.type(' See [[Quick Notes]] now.')
+    await expect(saveButton(page)).toHaveText('Save (1 change)')
+
+    await page.getByRole('radio', { name: 'Changes', exact: true }).click()
+    const changes = page.getByRole('region', { name: 'Changes', exact: true })
+    await expect(editor).toBeHidden()
+    await expect(changes.locator('[data-change="removed"]')).toHaveText([
+      '−Removed: - Welcome to Agaric! This is your personal knowledge base.',
+    ])
+    await expect(changes.locator('mark')).toHaveText(['See [[Quick Notes]] now.'])
+
+    await page.getByRole('radio', { name: 'Preview', exact: true }).click()
+    const preview = page.getByRole('region', { name: 'Preview', exact: true })
+    const first = preview.getByTestId('page-source-preview-block').first()
+    await expect(first.getByTestId('block-link-chip')).toHaveText('Quick Notes')
+    await expect(first).toContainText('now.')
+    await expect(first).not.toContainText('[[')
+
+    await saveButton(page).click()
+    await expect(sourceEditor(page)).toHaveCount(0)
+    await reopenPage(page, PAGE)
+    await expect(staticBlock(page, GS1).getByTestId('block-link-chip')).toHaveText('Quick Notes')
+    await expect(staticBlock(page, GS1)).toContainText('knowledge base. See Quick Notes now.')
   })
 
   test('the toolbar’s Turn into makes the line at the cursor a heading, which saves as one', async ({
@@ -566,7 +603,7 @@ test.describe('Edit as Markdown on a 390 px phone', () => {
 
     await expect(toolbarButton(page, 'New line')).toBeInViewport()
     await expect(toolbarButton(page, 'Cancel')).toBeInViewport({ ratio: 1 })
-    const save = toolbarButton(page, 'Save')
+    const save = toolbarButton(page, SAVE)
     await expect(save).toBeInViewport({ ratio: 1 })
     await expect(page.getByRole('button', { name: 'Save', exact: true })).toHaveCount(1)
 

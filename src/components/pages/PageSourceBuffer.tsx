@@ -34,6 +34,11 @@ export interface PageSourceBufferProps {
   /** The page's line ids as loaded: the only ids a paste or a drop brings in. */
   pageIds: ReadonlyArray<string | null>
   readOnly: boolean
+  /** Out of sight, as while Preview or Changes shows in its place; its text and history are kept. */
+  hidden: boolean
+  /** The toolbar's Save, on touch: its label, and whether it is off with nothing to save. */
+  saveLabel: string
+  nothingToSave: boolean
   label: string
   describedBy: string
   className: string
@@ -50,6 +55,9 @@ export function PageSourceBuffer({
   initial,
   pageIds,
   readOnly,
+  hidden,
+  saveLabel,
+  nothingToSave,
   label,
   describedBy,
   className,
@@ -136,12 +144,14 @@ export function PageSourceBuffer({
   )
 
   return (
-    <div>
+    <div hidden={hidden}>
       {editor !== null && (
         <PageSourceToolbar
           editor={editor}
           pageId={pageId}
           saving={readOnly}
+          saveLabel={saveLabel}
+          nothingToSave={nothingToSave}
           onSave={onSave}
           onCancel={onCancel}
         />

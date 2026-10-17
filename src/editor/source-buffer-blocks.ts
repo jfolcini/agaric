@@ -79,8 +79,10 @@ const HEADING = /^#{1,6}(?:[ \t]|$)/
 /** `key:: value`, as the grammar reads a property line (`split_property_line`). */
 const PROPERTY_LINE = /^[ \t]*([A-Za-z0-9_-]{1,64})[ \t]*::(?:[ \t]+(.*?))?[ \t]*$/
 
-function startsBlock(line: PMNode): boolean {
-  return line.attrs['blockId'] != null || BLOCK_LINE.test(line.textContent)
+type LineIds = ReadonlyArray<string | null>
+
+function startsBlock(texts: readonly string[], ids: LineIds, i: number): boolean {
+  return ids[i] != null || BLOCK_LINE.test(texts[i] as string)
 }
 
 function lineTexts(doc: PMNode): string[] {
@@ -89,18 +91,24 @@ function lineTexts(doc: PMNode): string[] {
   return texts
 }
 
+function lineIds(doc: PMNode): Array<string | null> {
+  const ids: Array<string | null> = []
+  doc.forEach((line) => ids.push((line.attrs['blockId'] as string | null | undefined) ?? null))
+  return ids
+}
+
 /** Past `start`'s own lines: deeper lines starting no block, a fence's lines all its own. */
-function ownEnd(doc: PMNode, texts: readonly string[], start: number): number {
+function ownEnd(texts: readonly string[], ids: LineIds, start: number): number {
   const level = depthOf(texts[start] as string)
   let fence = FENCE_OPENER.exec(texts[start] as string)?.[1] ?? null
   let end = start + 1
   for (let i = start + 1; i < texts.length; i += 1) {
     const text = texts[i] as string
     if (isBlank(text)) continue
-    if (depthOf(text) <= level || doc.child(i).attrs['blockId'] != null) break
+    if (depthOf(text) <= level || ids[i] != null) break
     if (fence !== null) {
       if (closesFence(text, fence)) fence = null
-    } else if (startsBlock(doc.child(i))) {
+    } else if (startsBlock(texts, ids, i)) {
       break
     } else {
       fence = FENCE_OPENER.exec(text)?.[1] ?? null
@@ -118,19 +126,20 @@ function ownEnd(doc: PMNode, texts: readonly string[], start: number): number {
  */
 export function blockAt(doc: PMNode, index: number): SourceBlock | null {
   const texts = lineTexts(doc)
+  const ids = lineIds(doc)
   let start: number | null = null
   let end = 0
   for (let i = frontMatterEnd(texts); i <= Math.min(index, texts.length - 1); i += 1) {
-    if (i < end || !startsBlock(doc.child(i))) continue
+    if (i < end || !startsBlock(texts, ids, i)) continue
     start = i
-    end = ownEnd(doc, texts, i)
+    end = ownEnd(texts, ids, i)
   }
   if (start === null) return null
   return {
     line: start,
     end,
     subtreeEnd: subtreeEnd(texts, start, depthOf(texts[start] as string)),
-    id: (doc.child(start).attrs['blockId'] as string | null | undefined) ?? null,
+    id: ids[start] ?? null,
   }
 }
 
@@ -342,6 +351,70 @@ export function blockProperty(doc: PMNode, block: SourceBlock, key: string): str
   if (line === null) return null
   const value = PROPERTY_LINE.exec(texts[line] as string)?.[2]?.trim() ?? ''
   return value === '' ? null : value
+}
+
+/** A block of the buffer as the toolbar reads it, for the Preview. */
+export interface BlockReading {
+  /** How many blocks it is nested under. */
+  depth: number
+  listStyle: ListStyle
+  taskState: TodoState | null
+  /** Its text as the block holds it, markers and escapes off. */
+  text: string
+  properties: Array<[key: string, value: string]>
+}
+
+/**
+ * Every block below the front matter, in order. A run of lines no block owns
+ * and none of which starts one is a paragraph block of its own. A heading's
+ * ownership of what follows it is not read: only indentation nests.
+ */
+export function readBlocks(texts: readonly string[], ids: LineIds): BlockReading[] {
+  const blocks: BlockReading[] = []
+  const indents: number[] = []
+  let i = frontMatterEnd(texts)
+  while (i < texts.length) {
+    if (isBlank(texts[i] as string)) {
+      i += 1
+      continue
+    }
+    let end = i + 1
+    if (startsBlock(texts, ids, i)) end = ownEnd(texts, ids, i)
+    else
+      while (end < texts.length && !isBlank(texts[end] as string) && !startsBlock(texts, ids, end))
+        end += 1
+    const parts = readBlock(texts, { line: i, end, subtreeEnd: end, id: null })
+    const indent = depthOf(texts[i] as string)
+    while ((indents.at(-1) ?? -1) >= indent) indents.pop()
+    blocks.push({
+      depth: indents.length,
+      listStyle: listStyleOf(parts.head),
+      taskState: parts.head.box === '' ? null : taskStateFromMarker(parts.head.box.charAt(1)),
+      text: parts.text.join('\n'),
+      properties: parts.properties.map((line) => {
+        const match = PROPERTY_LINE.exec(texts[line] as string)
+        return [match?.[1] ?? '', match?.[2]?.trim() ?? '']
+      }),
+    })
+    indents.push(indent)
+    i = end
+  }
+  return blocks
+}
+
+/** The front matter's `key: value` lines; the lines under a `key: |` (or any) line continue its value. */
+export function frontMatterProperties(
+  texts: readonly string[],
+): Array<[key: string, value: string]> {
+  const properties: Array<[string, string]> = []
+  for (const text of texts.slice(1, Math.max(frontMatterEnd(texts) - 1, 1))) {
+    const last = properties.at(-1)
+    const match = /^([^\s:][^:]*):[ \t]*(.*)$/.exec(text)
+    if (match !== null)
+      properties.push([match[1] as string, (match[2] as string).trim().replace(/^\|$/, '')])
+    else if (last !== undefined && !isBlank(text)) last[1] = `${last[1]} ${text.trim()}`.trim()
+  }
+  return properties
 }
 
 /**

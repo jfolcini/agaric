@@ -157,6 +157,11 @@ function caretAtEnd(box: HTMLElement, find?: string): void {
   })
 }
 
+/** Save, labelled with the count of changes once there are any. */
+function saveButton(): HTMLElement {
+  return screen.getByRole('button', { name: /^Save(?: \(\d+ changes?\))?$/ })
+}
+
 function applyCalls(): unknown[] {
   return mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'apply_page_source').map(([, a]) => a)
 }
@@ -283,7 +288,7 @@ describe('PageSourceEditor saving', () => {
     const box = await loadedEditor()
 
     edit(box, WELCOME, HELLO)
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
@@ -328,7 +333,7 @@ describe('PageSourceEditor saving', () => {
     act(() => {
       ed.view.dispatch(ed.state.tr.insertText('- Hello, welcome', start))
     })
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
@@ -374,12 +379,14 @@ describe('PageSourceEditor saving', () => {
     expect(dispatch('get_block', { blockId: added })).toMatchObject({ content: 'Added by Enter' })
   })
 
-  it('Save with the buffer unchanged closes without any IPC', async () => {
+  it('with the buffer unchanged Save is off, and Ctrl+S closes without any IPC', async () => {
     const user = userEvent.setup()
     const { onClose } = renderEditor()
     await loadedEditor()
 
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    expect(saveButton()).toBeDisabled()
+    expect(saveButton()).toHaveAccessibleName(t('action.save'))
+    await user.keyboard('{Control>}s{/Control}')
 
     expect(onClose).toHaveBeenCalledOnce()
     expect(mockedInvoke.mock.calls.map(([cmd]) => cmd)).toEqual(['get_page_buffer'])
@@ -435,9 +442,9 @@ describe('PageSourceEditor saving', () => {
     const box = await loadedEditor()
     edit(box, 'first', 'first x')
 
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
 
-    expect(screen.getByRole('button', { name: t('action.save') })).toBeDisabled()
+    expect(saveButton()).toBeDisabled()
     await waitFor(() => expect(box).toHaveAttribute('contenteditable', 'false'))
     expect(box).toHaveAttribute('aria-readonly', 'true')
     pending.resolve(report())
@@ -453,7 +460,7 @@ describe('PageSourceEditor saving', () => {
     const { onClose } = renderEditor()
     edit(await loadedEditor(), 'first', 'first x')
 
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
@@ -481,7 +488,7 @@ describe('PageSourceEditor saving', () => {
     const box = await loadedEditor()
     edit(box, 'second', 'second, edited')
 
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
 
     expect(await screen.findByRole('alert')).toHaveTextContent(failure.message)
     expect(bufferOf(box)).toEqual({ text: '- first\n- second, edited\n', lineIds: [A, B, null] })
@@ -505,7 +512,7 @@ describe('PageSourceEditor saving', () => {
     edit(box, 'first', 'first x')
     caretAtEnd(box, 'first x')
 
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
 
     expect(await screen.findByRole('alert')).toHaveTextContent(failure.message)
     await waitFor(() => expect(box).toHaveFocus())
@@ -529,7 +536,7 @@ describe('PageSourceEditor front matter (#5160 S8)', () => {
     const { text, lineIds } = bufferOf(box)
     expect(text.split('\n').slice(0, FRONT_MATTER.length)).toEqual(FRONT_MATTER)
     expect(lineIds.slice(0, FRONT_MATTER.length + 1)).toEqual([null, null, null, null, BLOCK_GS_1])
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.keyboard('{Control>}s{/Control}')
 
     expect(onClose).toHaveBeenCalledOnce()
     expect(applyCalls()).toEqual([])
@@ -547,7 +554,7 @@ describe('PageSourceEditor front matter (#5160 S8)', () => {
 
     edit(box, 'aliases: [getting-started, gs]', 'aliases: [getting-started, gs, handbook]')
     edit(box, WELCOME, HELLO)
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
@@ -590,7 +597,7 @@ describe('PageSourceEditor emptying the page', () => {
       editorOf(box).chain().selectAll().deleteSelection().insertContent('  ').run()
     })
 
-    const save = screen.getByRole('button', { name: t('action.save') })
+    const save = saveButton()
     await user.click(save)
     const confirm = await screen.findByRole('alertdialog', {
       name: t('pageSource.deleteAllTitle'),
@@ -605,7 +612,7 @@ describe('PageSourceEditor emptying the page', () => {
     expect(bufferOf(box).text).toBe('  ')
     expect(onClose).not.toHaveBeenCalled()
 
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
     await user.click(
       within(await screen.findByRole('alertdialog')).getByRole('button', {
         name: t('pageSource.deleteAll'),
@@ -636,7 +643,7 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
     dispatch('edit_block', { blockId: BLOCK_GS_3, toText: ELSEWHERE })
     const current = pageBuffer(PAGE_GETTING_STARTED)
 
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
     const dialog = await screen.findByRole('dialog', { name: t('pageSource.conflictTitle') })
     return { ...rendered, base, box, current, dialog, edited, user }
   }
@@ -716,7 +723,7 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
     const { onClose } = renderEditor()
     const box = await loadedEditor()
     edit(box, 'first', 'first x')
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
     const dialog = await screen.findByRole('dialog', { name: t('pageSource.conflictTitle') })
 
     await user.click(within(dialog).getByRole('button', { name: t('pageSource.merge') }))
@@ -744,7 +751,7 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
     expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).toBeNull()
     // The new base is the page as it is now, so the reloaded buffer saves without a conflict.
     edit(box, WELCOME, HELLO)
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
     })
@@ -835,7 +842,7 @@ describe('PageSourceEditor draft', () => {
       `${t('pageSource.draftRestored')} ${t('pageSource.hint')}`,
     )
 
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
@@ -874,7 +881,7 @@ describe('PageSourceEditor draft', () => {
         new ClipboardEvent('paste', { clipboardData: cut, bubbles: true, cancelable: true }),
       )
     })
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()
@@ -906,7 +913,7 @@ describe('PageSourceEditor draft', () => {
     const { onClose } = renderEditor(PAGE_GETTING_STARTED)
     await loadedEditor()
 
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
 
     const dialog = await screen.findByRole('dialog', { name: t('pageSource.conflictTitle') })
     const gs1Now = now.text.split('\n')[now.line_ids.indexOf(BLOCK_GS_1)] as string
@@ -1007,6 +1014,111 @@ describe('PageSourceEditor with a draft from before the line ids (#5160 D-f)', (
     } finally {
       fallback.mockRestore()
     }
+  })
+})
+
+describe('PageSourceEditor Edit, Preview and Changes', () => {
+  function modeSwitch(): HTMLElement {
+    return screen.getByRole('radiogroup', { name: t('pageSource.view') })
+  }
+
+  it('Save is off while the text is the page’s, then counts the hunks the text changed', async () => {
+    renderEditor()
+    const box = await loadedEditor()
+    expect(saveButton()).toBeDisabled()
+    expect(saveButton()).toHaveAccessibleName(t('action.save'))
+
+    edit(box, 'first', 'first x')
+    await waitFor(() => expect(saveButton()).toHaveAccessibleName('Save (1 change)'))
+    expect(saveButton()).toBeEnabled()
+
+    caretAtEnd(box)
+    act(() => {
+      editorOf(box).commands.insertContent('- third')
+    })
+    await waitFor(() => expect(saveButton()).toHaveAccessibleName('Save (2 changes)'))
+
+    edit(box, 'first x', 'first')
+    edit(box, '- third', '')
+    await waitFor(() => expect(saveButton()).toBeDisabled())
+    expect(saveButton()).toHaveAccessibleName(t('action.save'))
+  })
+
+  it('Changes shows the changed word marked in place of the buffer, and Edit puts the caret back in it', async () => {
+    const user = userEvent.setup()
+    renderEditor()
+    const box = await loadedEditor()
+    edit(box, 'second', 'second edited')
+
+    const radios = within(modeSwitch()).getAllByRole('radio')
+    expect(radios.map((radio) => radio.textContent)).toEqual(['Edit', 'Preview', 'Changes'])
+    expect(radios[0]).toHaveAttribute('aria-checked', 'true')
+    await user.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+
+    expect(box).not.toBeVisible()
+    const changes = screen.getByRole('region', { name: t('pageSource.changes') })
+    expect([...changes.querySelectorAll('mark')].map((mark) => mark.textContent)).toEqual([
+      'edited',
+    ])
+    expect(changes).toHaveTextContent(`${t('pageSource.changeAdded')} - second edited`)
+
+    await user.click(screen.getByRole('radio', { name: t('pageSource.modeEdit') }))
+    expect(box).toBeVisible()
+    expect(box).toHaveFocus()
+    expect(screen.queryByRole('region', { name: t('pageSource.changes') })).not.toBeInTheDocument()
+  })
+
+  it('Preview shows the buffer as the page will, and Save from there saves it', async () => {
+    const base = routeToMockBackend()
+    const { PAGE_GETTING_STARTED } = SEED_IDS
+    const user = userEvent.setup()
+    const { onClose } = renderEditor(PAGE_GETTING_STARTED)
+    const box = await loadedEditor()
+    edit(box, WELCOME, '- Welcome to **Agaric**!')
+
+    await user.click(screen.getByRole('radio', { name: t('pageSource.preview') }))
+
+    const preview = await screen.findByRole('region', { name: t('pageSource.preview') })
+    expect(within(preview).getByText('Agaric').tagName).toBe('STRONG')
+    expect(within(preview).getAllByTestId('block-link-chip')).toHaveLength(1)
+    expect(within(preview).getAllByTestId('tag-ref-chip')).toHaveLength(2)
+    await user.click(saveButton())
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(pageBuffer(PAGE_GETTING_STARTED).text).toBe(
+      base.text.replace(WELCOME, '- Welcome to **Agaric**!'),
+    )
+  })
+
+  it('pressing the shown mode again keeps it', async () => {
+    const user = userEvent.setup()
+    renderEditor()
+    await loadedEditor()
+
+    await user.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+    await user.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+
+    expect(screen.getByRole('radio', { name: t('pageSource.changes') })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+    expect(screen.getByText(t('pageSource.noChanges'))).toBeInTheDocument()
+  })
+
+  it.each([
+    ['Preview', 'pageSource.preview'],
+    ['Changes', 'pageSource.changes'],
+  ] as const)('has no a11y violations showing %s', async (_, key) => {
+    const user = userEvent.setup()
+    const { container } = renderEditor()
+    edit(await loadedEditor(), 'second', 'second edited')
+
+    await user.click(screen.getByRole('radio', { name: t(key) }))
+    await screen.findByRole('region', { name: t(key) })
+
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
   })
 })
 
@@ -1275,7 +1387,7 @@ describe('PageSourceEditor save report', () => {
     const { onClose } = renderEditor()
     edit(await loadedEditor(), 'first', 'first x')
 
-    await user.click(screen.getByRole('button', { name: t('action.save') }))
+    await user.click(saveButton())
 
     await waitFor(() => {
       expect(onClose).toHaveBeenCalledOnce()

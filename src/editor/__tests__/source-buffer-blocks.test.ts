@@ -18,8 +18,10 @@ import {
   cyclePriority,
   deleteBlock,
   duplicateBlock,
+  frontMatterProperties,
   insertTagTrigger,
   insertTrigger,
+  readBlocks,
   setBlockProperty,
   setBlockText,
   type SourceBlock,
@@ -404,5 +406,65 @@ describe('text the toolbar writes', () => {
 
     run(ed, insertTagTrigger)
     expect(lines(ed)).toEqual([['- word # #', A]])
+  })
+})
+
+describe('readBlocks', () => {
+  it('reads each block under the front matter with its depth, list style, task, text and properties', () => {
+    const texts = [
+      '---',
+      'aliases: [gs]',
+      '---',
+      '',
+      '- [x] Done **well**',
+      '  further line',
+      '  priority:: 1',
+      '  - - child',
+      '    - 1. grandchild',
+      '- \\- not a marker',
+      'a bare paragraph',
+      'that runs on',
+      '',
+    ]
+    const ids = [null, null, null, null, A, null, null, B, null, C, null, null, null]
+
+    expect(readBlocks(texts, ids)).toEqual([
+      {
+        depth: 0,
+        listStyle: 'none',
+        taskState: 'DONE',
+        text: 'Done **well**\nfurther line',
+        properties: [['priority', '1']],
+      },
+      { depth: 1, listStyle: 'bullet', taskState: null, text: 'child', properties: [] },
+      { depth: 2, listStyle: 'ordered', taskState: null, text: 'grandchild', properties: [] },
+      { depth: 0, listStyle: 'none', taskState: null, text: '- not a marker', properties: [] },
+      {
+        depth: 0,
+        listStyle: 'none',
+        taskState: null,
+        text: 'a bare paragraph\nthat runs on',
+        properties: [],
+      },
+    ])
+  })
+
+  it('reads no block from an empty buffer', () => {
+    expect(readBlocks([''], [null])).toEqual([])
+  })
+})
+
+describe('frontMatterProperties', () => {
+  it('reads each key: value line, a key: | value from the lines under it', () => {
+    const texts = ['---', 'aliases: [a, b]', 'note: |', '  two', '  lines', '---', '- block']
+
+    expect(frontMatterProperties(texts)).toEqual([
+      ['aliases', '[a, b]'],
+      ['note', 'two lines'],
+    ])
+  })
+
+  it('reads nothing without front matter', () => {
+    expect(frontMatterProperties(['- block', 'key: value'])).toEqual([])
   })
 })
