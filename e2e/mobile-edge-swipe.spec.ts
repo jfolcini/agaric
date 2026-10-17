@@ -5,8 +5,8 @@
  * In `e2e/` because the gesture is frontend only (`useSidebarEdgeSwipe`). The
  * touches go through Chromium's own input pipeline (CDP
  * `Input.dispatchTouchEvent`) so the hook's document listeners see a real finger:
- * a start inside `SWIPE_EDGE_ZONE` (20 px) and horizontal travel past
- * `SWIPE_MIN_DISTANCE` (50 px).
+ * a start inside `SWIPE_EDGE_ZONE` and horizontal travel past
+ * `SWIPE_MIN_DISTANCE`.
  */
 
 import { devices } from '@playwright/test'
