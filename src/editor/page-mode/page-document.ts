@@ -10,6 +10,7 @@
 import { type JSONContent, Node } from '@tiptap/core'
 import type { Node as PMNode, ResolvedPos } from '@tiptap/pm/model'
 import { type Selection, TextSelection, type Transaction } from '@tiptap/pm/state'
+import { Mapping, type StepMap } from '@tiptap/pm/transform'
 
 import { parse } from '@/editor/markdown-serializer'
 import { blockIdOf } from '@/editor/token-ids'
@@ -127,6 +128,28 @@ export function pageDocContent(blocks: readonly PageBlockSeed[], newId: () => st
 /** `node`'s content as a block-mode document, the form the markdown serialiser reads. */
 export function blockDocJson(node: PMNode): DocNode {
   return { type: 'doc', content: node.content.toJSON() ?? [] } as DocNode
+}
+
+/**
+ * The ids of the blocks of `doc` that the steps behind `maps` changed, `maps`
+ * being every step that led to `doc`, in order: the block typed in, or every
+ * block a paste brought in. A change where two blocks meet counts for both.
+ */
+export function changedBlocks(doc: PMNode, maps: readonly StepMap[]): Set<string> {
+  const ids = new Set<string>()
+  const mapping = new Mapping([...maps])
+  maps.forEach((map, i) => {
+    const after = mapping.slice(i + 1)
+    map.forEach((_oldStart, _oldEnd, start, end) => {
+      const first = doc.resolve(after.map(start, -1)).index(0)
+      const last = doc.resolve(after.map(end, 1)).index(0)
+      for (let k = first; k <= last && k < doc.childCount; k += 1) {
+        const id = blockIdOf(doc.child(k))
+        if (id !== null) ids.add(id)
+      }
+    })
+  })
+  return ids
 }
 
 /** The start of the block at `index`, or the document's end past the last. */

@@ -7,6 +7,7 @@ import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Editor } from '@tiptap/core'
+import { ReactRenderer } from '@tiptap/react'
 import { createRef } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -406,13 +407,13 @@ describe('PageModeEditor', () => {
     const { container, store, onBlocked } = renderPageMode(pageId)
     await editorIn(container)
 
-    dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
+    dispatch('set_priority', { blockId: ids[0], level: '1' })
     await act(async () => {
       await store.getState().load()
     })
 
     await waitFor(() => {
-      expect(onBlocked).toHaveBeenCalledWith({ kind: 'tasks' })
+      expect(onBlocked).toHaveBeenCalledWith({ kind: 'priorities' })
     })
   })
 })
@@ -583,5 +584,274 @@ describe('PageModeEditor typed tags (#5743)', () => {
     expect(backendText(ids[0] as string)).toBe('first #newtag')
     expect(docTexts(editor)).toEqual(['first #newtag', 'second'])
     expect(tagIds().has('newtag')).toBe(false)
+  })
+})
+
+describe('PageModeEditor tasks (#5743)', () => {
+  function backendState(id: string): string | null {
+    return (dispatch('get_block', { blockId: id }) as BlockRow).todo_state
+  }
+
+  /** Block `id`'s checkbox, once it shows. */
+  async function checkbox(container: HTMLElement, id: string): Promise<HTMLElement> {
+    return waitFor(() => {
+      const found = container.querySelector<HTMLElement>(
+        `[data-page-block-id="${id}"] [data-testid="task-marker"]`,
+      )
+      if (found === null) throw new Error(`no checkbox on ${id}`)
+      return found
+    })
+  }
+
+  function caretTo(editor: Editor, index: number): void {
+    act(() => {
+      editor.commands.setTextSelection(at(editor, index, 0))
+    })
+  }
+
+  /** Press `key` in the editor; true when it took the key. */
+  function press(editor: Editor, key: string, init: KeyboardEventInit = {}): boolean {
+    let taken = false
+    act(() => {
+      taken =
+        editor.view.someProp('handleKeyDown', (f) =>
+          f(editor.view, new KeyboardEvent('keydown', { key, ...init })),
+        ) ?? false
+    })
+    return taken
+  }
+
+  it('opens a page of tasks, each with block mode’s checkbox, with no a11y violations', async () => {
+    const { pageId, ids } = seedPage(['todo', 'doing', 'done', 'plain'])
+    dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
+    dispatch('set_todo_state', { blockId: ids[1], state: 'DOING' })
+    dispatch('set_todo_state', { blockId: ids[2], state: 'DONE' })
+    const { container, onBlocked } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    expect((await checkbox(container, ids[0] as string)).getAttribute('aria-label')).toBe(
+      t('block.taskCycle', { state: 'TODO' }),
+    )
+    expect(
+      (await checkbox(container, ids[2] as string)).querySelector(
+        '[data-testid="task-checkbox-done"]',
+      ),
+    ).not.toBeNull()
+    expect(
+      container.querySelector(`[data-page-block-id="${ids[2]}"]`)?.getAttribute('data-todo-state'),
+    ).toBe('DONE')
+    expect(container.querySelector(`[data-page-block-id="${ids[3]}"] .task-marker`)).toBeNull()
+    expect(docTexts(editor)).toEqual(['todo', 'doing', 'done', 'plain'])
+    expect(onBlocked).not.toHaveBeenCalled()
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
+  it('a click cycles the state through the command, and the backend holds it', async () => {
+    const { pageId, ids } = seedPage(['buy milk'])
+    dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    await act(async () => {
+      fireEvent.click(await checkbox(container, ids[0] as string))
+    })
+
+    await waitFor(() => {
+      expect(backendState(ids[0] as string)).toBe('DOING')
+    })
+    await waitFor(async () => {
+      expect((await checkbox(container, ids[0] as string)).getAttribute('aria-label')).toBe(
+        t('block.taskCycle', { state: 'DOING' }),
+      )
+    })
+    expect(docTexts(editor)).toEqual(['buy milk'])
+    expect(backendText(ids[0] as string)).toBe('buy milk')
+  })
+
+  it('a refused state write says so and shows the state the backend kept', async () => {
+    const { pageId, ids } = seedPage(['buy milk'])
+    dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_todo_state') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    await act(async () => {
+      fireEvent.click(await checkbox(container, ids[0] as string))
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.setTaskStateFailed'))
+    })
+    expect((await checkbox(container, ids[0] as string)).getAttribute('aria-label')).toBe(
+      t('block.taskCycle', { state: 'TODO' }),
+    )
+    expect(backendState(ids[0] as string)).toBe('TODO')
+  })
+
+  it('Ctrl+Enter cycles the task of the block the caret is in, a new empty one too', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    caretTo(editor, 1)
+    expect(press(editor, 'Enter', { ctrlKey: true })).toBe(true)
+    await waitFor(() => {
+      expect(backendState(ids[1] as string)).toBe('TODO')
+    })
+    await checkbox(container, ids[1] as string)
+    expect(docTexts(editor)).toEqual(['first', 'second'])
+    expect(backendState(ids[0] as string)).toBeNull()
+
+    // A new block holds nothing yet: the cycle creates it to hold the state.
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 1, 6))
+    })
+    press(editor, 'Enter')
+    const added = blockIdOf(editor.state.doc.child(2)) as string
+    press(editor, 'Enter', { ctrlKey: true })
+    await waitFor(() => {
+      expect(backendPage(pageId)).toEqual([
+        [ids[0], 'first'],
+        [ids[1], 'second'],
+        [added, ''],
+      ])
+    })
+    await waitFor(() => {
+      expect(backendState(added)).toBe('TODO')
+    })
+    await checkbox(container, added)
+  })
+
+  it('a typed marker becomes the task once the caret leaves the block, not before', async () => {
+    const { pageId, ids } = seedPage(['first', 'buy milk'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.view.focus()
+    })
+
+    typeAt(editor, 1, 0, '[ ] ')
+    await act(async () => {
+      await flushActiveDraft()
+    })
+    expect(backendText(ids[1] as string)).toBe('\\[ \\] buy milk')
+    expect(backendState(ids[1] as string)).toBeNull()
+    expect(container.querySelector('[data-testid="task-marker"]')).toBeNull()
+
+    caretTo(editor, 0)
+    await waitFor(() => {
+      expect(backendState(ids[1] as string)).toBe('TODO')
+    })
+    await waitFor(() => {
+      expect(backendText(ids[1] as string)).toBe('buy milk')
+    })
+    await waitFor(() => {
+      expect(docTexts(editor)).toEqual(['first', 'buy milk'])
+    })
+    await checkbox(container, ids[1] as string)
+  })
+
+  it('a typed `- [x] ` gives DONE, and `TODO` stays a word, as in block mode', async () => {
+    const { pageId, ids } = seedPage(['first', 'shipped', 'later'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeAt(editor, 1, 0, '- [x] ')
+    typeAt(editor, 2, 0, 'TODO ')
+    caretTo(editor, 0)
+
+    await waitFor(() => {
+      expect(backendState(ids[1] as string)).toBe('DONE')
+    })
+    await waitFor(() => {
+      expect(docTexts(editor)).toEqual(['first', 'shipped', 'TODO later'])
+    })
+    expect(backendText(ids[1] as string)).toBe('shipped')
+    expect(backendState(ids[2] as string)).toBeNull()
+    expect(backendText(ids[2] as string)).toBe('TODO later')
+  })
+
+  it('pasted task lines each become a task once left', async () => {
+    const { pageId, ids } = seedPage(['first', ''])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 1, 0))
+      editor.view.pasteText('- [ ] one\n[/] two')
+    })
+    const pasted = blockIdOf(editor.state.doc.child(2)) as string
+    caretTo(editor, 0)
+
+    await waitFor(() => {
+      expect(backendState(ids[1] as string)).toBe('TODO')
+    })
+    await waitFor(() => {
+      expect(backendState(pasted)).toBe('DOING')
+    })
+    await waitFor(() => {
+      expect(docTexts(editor)).toEqual(['first', 'one', 'two'])
+    })
+  })
+
+  it('a marker whose state write is refused stays text, and says so', async () => {
+    const { pageId, ids } = seedPage(['first', 'buy milk'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_todo_state') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    typeAt(editor, 1, 0, '[ ] ')
+    caretTo(editor, 0)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.setTaskStateFailed'))
+    })
+    expect(backendText(ids[1] as string)).toBe('\\[ \\] buy milk')
+    expect(backendState(ids[1] as string)).toBeNull()
+    expect(docTexts(editor)).toEqual(['first', '\\[ \\] buy milk'])
+  })
+
+  it('typing in a block draws no checkbox again', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
+    dispatch('set_todo_state', { blockId: ids[1], state: 'DONE' })
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await checkbox(container, ids[1] as string)
+    const draw = vi.spyOn(ReactRenderer.prototype, 'render')
+
+    typeAt(editor, 1, 6, ' typed')
+    typeAt(editor, 0, 5, '!')
+
+    expect(draw).not.toHaveBeenCalled()
+  })
+
+  it('a peer’s state change shows on reload, outside the document and its undo', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, store } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    dispatch('set_todo_state', { blockId: ids[1], state: 'DONE' })
+    await act(async () => {
+      await store.getState().load()
+    })
+
+    await waitFor(() => {
+      expect(
+        container.querySelector(
+          `[data-page-block-id="${ids[1]}"] [data-testid="task-checkbox-done"]`,
+        ),
+      ).not.toBeNull()
+    })
+    expect(docTexts(editor)).toEqual(['first', 'second'])
+    expect(editor.can().undo()).toBe(false)
   })
 })
