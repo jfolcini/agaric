@@ -526,6 +526,37 @@ describe('PageModeEditor typed tags (#5743)', () => {
     })
   })
 
+  it('a block typed in again and left while its tag is being made is committed by the next save', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    let release = (): void => {}
+    const created = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'create_block' && (args as { blockType: string }).blockType === 'tag') {
+        await created
+      }
+      return dispatch(cmd, args)
+    })
+
+    typeAt(editor, 0, 5, ' #newtag')
+    caretTo(editor, 1)
+    // The commit is now waiting on the tag's creation.
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_all_tags_in_space', expect.anything())
+    })
+    typeAt(editor, 0, 13, 'X')
+    caretTo(editor, 1)
+    release()
+
+    await waitFor(() => {
+      expect(backendText(ids[0] as string)).toBe(`first #[${tagIds().get('newtagX')}]`)
+    })
+    expect(docTexts(editor)).toEqual([`first #[${tagIds().get('newtagX')}]`, 'second'])
+  })
+
   it('a tag that cannot be created leaves the name as text, and logs why', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     const { container } = renderPageMode(pageId)

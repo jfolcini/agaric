@@ -324,7 +324,9 @@ function PageModeDocument({
     /** Commit the typed tags of the blocks typed in and left, or of all of them when page mode closes. */
     const commitTags = async (closing: boolean): Promise<OpRef[]> => {
       const refs: OpRef[] = []
-      for (const id of typedIn) {
+      // A copy: a block typed in again while a commit awaits is for the next save, not this loop.
+      const pending = [...typedIn]
+      for (const id of pending) {
         // Never the caret's block: its name may still be being typed.
         if (!closing && cursorBlock() === id) continue
         typedIn.delete(id)
