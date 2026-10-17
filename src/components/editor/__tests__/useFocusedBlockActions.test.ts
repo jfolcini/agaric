@@ -112,4 +112,17 @@ describe('handleTurnIntoFocused', () => {
     expect(ed.getText()).toBe(TEXT)
     expect(ed.state.selection.from).toBe(caret)
   })
+
+  it('a caret moved past the trigger into the first word closes the picker and keeps the word', async () => {
+    const { ed, turnInto } = setup()
+    act(() => turnInto())
+    await waitFor(() => expect(popup.props).not.toBeNull())
+
+    act(() => {
+      ed.commands.setTextSelection(ed.state.selection.from + 3)
+    })
+    act(() => exitSuggestion(ed.view, slashCommandPluginKey))
+
+    expect(ed.getText()).toBe(TEXT)
+  })
 })

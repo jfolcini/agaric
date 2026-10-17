@@ -50,6 +50,21 @@ test.describe('Turn into by the Ctrl+Shift+T chord', () => {
     await expect(staticBlock(page).locator('blockquote')).toHaveText(GS_3_TEXT)
   })
 
+  test('moving the caret into the first word closes the picker and keeps the word', async ({
+    page,
+  }) => {
+    const { editor, list } = await openPickerAtEnd(page)
+    // Three characters past the caret: inside `Create` had the trigger been glued to it.
+    await selectEditorRange(page, 8, 8)
+
+    await expect(list).toBeHidden()
+    await expect(editor).toHaveText(GS_3_TEXT)
+
+    await page.keyboard.press('Escape')
+    await reopenPage(page, 'Getting Started')
+    await expect(staticBlock(page)).toHaveText(GS_3_TEXT)
+  })
+
   test('Escape closes the picker and leaves the text unchanged', async ({ page }) => {
     const { editor, list } = await openPickerAtEnd(page)
     await page.keyboard.press('Escape')
