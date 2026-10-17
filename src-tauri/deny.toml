@@ -57,6 +57,13 @@ ignore = [
     { id = "RUSTSEC-2025-0075", reason = "Tauri transitive dep: unic-char-range" },
     { id = "RUSTSEC-2025-0080", reason = "Tauri transitive dep: unic-common" },
     { id = "RUSTSEC-2025-0081", reason = "Tauri transitive dep: unic-char-property" },
+    # zbus 5.x folded zvariant, zvariant_derive and zbus_names into itself; the
+    # standalone crates are marked unmaintained. zbus 5.14 reaches us through
+    # notify-rust, tauri-plugin-opener and tauri-plugin-single-instance, which
+    # have not moved yet. Drops when those plugins release on the merged zbus.
+    { id = "RUSTSEC-2026-0370", reason = "Tauri transitive dep: zvariant (via zbus 5.14; folded into zbus upstream)" },
+    { id = "RUSTSEC-2026-0371", reason = "Tauri transitive dep: zbus_names (via zbus 5.14; folded into zbus upstream)" },
+    { id = "RUSTSEC-2026-0372", reason = "Tauri transitive dep: zvariant_derive (via zbus 5.14; folded into zbus upstream)" },
     # quick-xml <0.41 quadratic duplicate-attribute check (DoS-class, needs
     # attacker-controlled XML). Two remaining lock entries, both transitive
     # pins we cannot bump: quick-xml 0.39 (wayland-scanner ^0.39, its sole
