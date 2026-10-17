@@ -195,6 +195,9 @@ jobs:
         # certainly never taken. Explicitly pinning `dbus-daemon` stops that
         # from being an unstated assumption about what the image happens to
         # ship today.
+        #
+        # The gstreamer1.0-* packages are what `bundleMediaFramework` copies
+        # into the AppImage for camera and microphone capture (#5718).
         uses: ./.github/actions/apt-install
         with:
           packages: >-
@@ -205,6 +208,10 @@ jobs:
             libsoup-3.0-dev
             libappindicator3-dev
             patchelf
+            gstreamer1.0-plugins-base
+            gstreamer1.0-plugins-good
+            gstreamer1.0-pipewire
+            gstreamer1.0-gl
             pkg-config
             xvfb
             dbus-daemon
@@ -467,6 +474,13 @@ jobs:
             exit 1
           fi
           echo "OK: repacked AppImage ≥ pre-fix size"
+
+      - name: Verify the AppImage bundles the capture plugins
+        # #5718: without them the AppImage finds no camera or microphone.
+        if: matrix.platform == 'ubuntu-24.04'
+        env:
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/appimage
+        run: bash scripts/check-appimage-media-plugins.sh "$BUNDLE_DIR/Agaric.AppDir"
 
       # #4080 Tier 2 — start the artifact we are about to sign and publish.
       #

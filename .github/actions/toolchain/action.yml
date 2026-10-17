@@ -21,9 +21,10 @@ inputs:
     default: 'true'
   bundle-deps:
     description: >-
-      Also install the AppImage bundling deps (patchelf, libappindicator3-dev).
-      Such a lane skips the shared `.deb` cache: its package superset must not
-      land under the `apt-tauri-*-v1` key the other lanes share.
+      Also install the AppImage bundling deps (patchelf, libappindicator3-dev,
+      and the GStreamer plugins the AppImage bundles for camera and microphone
+      capture, #5718). Such a lane skips the shared `.deb` cache: its package
+      superset must not land under the `apt-tauri-*-v1` key the other lanes share.
     required: false
     default: 'false'
 
@@ -56,7 +57,7 @@ runs:
           libsoup-3.0-dev
           pkg-config
           mold
-          ${{ inputs.bundle-deps == 'true' && 'libappindicator3-dev patchelf' || '' }}
+          ${{ inputs.bundle-deps == 'true' && 'libappindicator3-dev patchelf gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pipewire gstreamer1.0-gl' || '' }}
 
     - name: Enable mold linker (CI-only .cargo/config.toml)
       # Shipped as `.example` so a dev box without mold still builds; CI always
