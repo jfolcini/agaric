@@ -14,8 +14,8 @@
  * Follows the same pattern as AtTagPicker and BlockLinkPicker.
  */
 
-import { Extension } from '@tiptap/core'
-import { PluginKey } from '@tiptap/pm/state'
+import { type Editor, Extension } from '@tiptap/core'
+import { PluginKey, TextSelection, type Transaction } from '@tiptap/pm/state'
 
 import { createPickerPlugin } from '@/editor/extensions/picker-plugin'
 import { createSuggestionRenderer } from '@/editor/suggestion-renderer'
@@ -23,6 +23,42 @@ import type { PickerItem } from '@/editor/SuggestionList'
 import { t } from '@/lib/i18n'
 
 export const slashCommandPluginKey = new PluginKey('slashCommand')
+
+/**
+ * Open the slash picker on `query` without the user typing it (the
+ * `turnIntoBlock` chord, #5733). The picker opens only for a `/` at a
+ * textblock start or after whitespace (see `allowedPrefixes`), so the trigger
+ * goes at the start of the caret's textblock, not at the caret. A pick deletes
+ * the trigger through the picker's own command; any other close (Escape, an
+ * outside click, the caret leaving) deletes it here and puts the caret back,
+ * so the block text is left as it was.
+ */
+export function openSlashPicker(editor: Editor, query: string): void {
+  const trigger = `/${query}`
+  const { from: caretBefore, $from } = editor.state.selection
+  const start = $from.start()
+  let caret = caretBefore + trigger.length
+  let range = { from: start, to: start + trigger.length }
+  editor.chain().focus().insertContentAt(start, trigger).setMeta('addToHistory', false).run()
+
+  const onTransaction = ({ transaction }: { transaction: Transaction }) => {
+    caret = transaction.mapping.map(caret)
+    const slash = slashCommandPluginKey.getState(editor.state) as
+      | { active: boolean; range: { from: number; to: number } }
+      | undefined
+    if (slash?.active) {
+      range = slash.range
+      return
+    }
+    editor.off('transaction', onTransaction)
+    // After a pick both ends map to one point: its command deleted the trigger.
+    const { mapping } = transaction
+    const tr = editor.state.tr.delete(mapping.map(range.from), mapping.map(range.to))
+    tr.setSelection(TextSelection.create(tr.doc, tr.mapping.map(caret)))
+    editor.view.dispatch(tr.setMeta('addToHistory', false))
+  }
+  editor.on('transaction', onTransaction)
+}
 
 export interface SlashCommandOptions {
   /** Return slash commands matching the query. Called on every keystroke after /. */

@@ -11,6 +11,7 @@
  */
 import { useCallback } from 'react'
 
+import { openSlashPicker } from '@/editor/extensions/slash-command'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 
 interface UseFocusedBlockActionsParams {
@@ -63,13 +64,10 @@ export function useFocusedBlockActions({
     if (focusedBlockId) void handleDuplicate(focusedBlockId)
   }, [focusedBlockId, handleDuplicate])
   // #976 (item 14) — open the "Turn into" type picker for the focused block via
-  // the `turnIntoBlock` keyboard binding. Rather than reimplement the type list,
-  // insert the `/turn` slash trigger into the live editor so the existing slash
-  // suggestion plugin surfaces the same conversion family (`turn-*`) the context
-  // menu submenu and `/turn` command expose.
+  // the `turnIntoBlock` keyboard binding: the slash picker on `/turn`, the same
+  // conversion family (`turn-*`) the context-menu submenu exposes.
   const handleTurnIntoFocused = useCallback(() => {
-    if (!focusedBlockId) return
-    rovingEditor.editor?.chain().focus().insertContent('/turn').run()
+    if (focusedBlockId && rovingEditor.editor) openSlashPicker(rovingEditor.editor, 'turn')
   }, [focusedBlockId, rovingEditor])
 
   return {
