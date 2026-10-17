@@ -168,3 +168,62 @@ test.describe('Agenda filter builder narrows the rendered list (#5366)', () => {
     await expectListed(page, ALL_TASKS)
   })
 })
+
+/**
+ * A date preset and a property filter AND with the default TODO + DOING
+ * status filter, and removing them returns the default list (#5735). The clock
+ * is pinned to a Wednesday so "This week" holds yesterday, today and tomorrow
+ * whichever day the week starts on, and never the task due a week out.
+ *
+ * `context = @office` goes on one task due next week, so neither filter alone
+ * yields the combined result.
+ */
+test.describe('Agenda date preset and property filter (#5735)', () => {
+  // SEED_IDS (src/lib/tauri-mock/seed.ts): BLOCK_PROJ_1, BLOCK_PROJ_2, BLOCK_PROJ_4.
+  const OFFICE_TASKS = [
+    '0000000000000000000BLOCK13',
+    '0000000000000000000BLOCK14',
+    '0000000000000000000BLOCK16',
+  ]
+  const DEFAULT_LIST = [
+    'Buy groceries',
+    'Review pull requests',
+    'Ship v2.0 release',
+    'Fix login bug',
+    'Design new dashboard',
+    'Submit report',
+  ]
+
+  test('Due this week and a property narrow the default list, and removing them restores it', async ({
+    page,
+  }) => {
+    await page.clock.setFixedTime(new Date('2026-10-14T10:00:00'))
+    await waitForBoot(page)
+    for (const blockId of OFFICE_TASKS) {
+      await ipc(page, 'set_property', { blockId, key: 'context', value: { value_text: '@office' } })
+    }
+    await page.getByRole('tab', { name: 'Agenda view' }).click()
+    await expectListed(page, DEFAULT_LIST)
+
+    await addFilter(page, 'Due date', check('This week'))
+    await expectListed(page, [
+      'Buy groceries',
+      'Review pull requests',
+      'Ship v2.0 release',
+      'Fix login bug',
+      'Submit report',
+    ])
+
+    await addFilter(page, 'Property', async (popover) => {
+      await popover.getByRole('combobox', { name: 'Property key', exact: true }).click()
+      await page.getByRole('option', { name: 'context', exact: true }).click()
+      await popover.getByRole('textbox', { name: 'Value (optional)', exact: true }).fill('@office')
+    })
+    await expectListed(page, ['Ship v2.0 release', 'Fix login bug'])
+
+    await page.getByRole('button', { name: 'Remove context = @office filter', exact: true }).click()
+    await page.getByRole('button', { name: 'Remove Due date filter', exact: true }).click()
+    await expect(page.getByRole('group', { name: 'Edit Status: TODO, DOING filter' })).toBeVisible()
+    await expectListed(page, DEFAULT_LIST)
+  })
+})

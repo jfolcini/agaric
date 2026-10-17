@@ -1,0 +1,114 @@
+import type { Page } from '@playwright/test'
+
+import { expect, test, waitForBoot } from './helpers'
+
+/**
+ * Monthly mode and the journal date picker: a day with a due and a scheduled
+ * task shows one dot per source, an empty day shows none, and clicking a
+ * dotted Monthly day opens Daily on that date with its journal page and its
+ * tasks (#5735).
+ *
+ * In `e2e/` because the mock models `count_agenda_batch_by_source` and the
+ * journal-page date lookup, which are all the dots read. The clock is pinned, and the seeded days are in the month
+ * after it: boot caches the current month's journal pages, so a page created
+ * over IPC shows only in a month fetched after it was created.
+ */
+
+const NOW = new Date('2026-10-14T10:00:00')
+const DOTTED_DAYS = ['2026-11-05', '2026-11-26']
+const EMPTY_DAY = '2026-11-09'
+// SEED_IDS.PAGE_PROJECTS (src/lib/tauri-mock/seed.ts).
+const PAGE_PROJECTS = '00000000000000000000PAGE04'
+
+async function seedDay(page: Page, date: string): Promise<void> {
+  await page.evaluate(
+    async ({ day, projects }) => {
+      const { invoke } = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const journalId = await invoke('create_page_in_space', {
+        parentId: null,
+        content: day,
+        spaceId: 'SPACE_PERSONAL',
+      })
+      const { blocks } = (await invoke('create_blocks_batch', {
+        specs: [
+          { blockType: 'content', content: `Note for ${day}`, parentId: journalId, position: null },
+          { blockType: 'content', content: `Due on ${day}`, parentId: projects, position: null },
+          {
+            blockType: 'content',
+            content: `Scheduled on ${day}`,
+            parentId: projects,
+            position: null,
+          },
+        ],
+      })) as { blocks: Array<{ id: string }> }
+      const [, due, scheduled] = blocks
+      for (const task of [due, scheduled]) {
+        await invoke('set_todo_state', { blockId: task?.id, state: 'TODO' })
+      }
+      await invoke('set_due_date', { blockId: due?.id, date: day })
+      await invoke('set_scheduled_date', { blockId: scheduled?.id, date: day })
+    },
+    { day: date, projects: PAGE_PROJECTS },
+  )
+}
+
+test('Monthly mode dots each source on a day, none on an empty day, and a click opens Daily', async ({
+  page,
+}) => {
+  await page.clock.setFixedTime(NOW)
+  await waitForBoot(page)
+  for (const day of DOTTED_DAYS) await seedDay(page, day)
+
+  await page.getByRole('tab', { name: 'Monthly view' }).click()
+  await page.getByRole('button', { name: 'Next month' }).click()
+  await expect(page.getByTestId('date-display')).toHaveText('November 2026')
+  const grid = page.getByRole('grid', { name: 'Monthly calendar' })
+  const cell = (date: string) => grid.locator(`[role="gridcell"][data-date="${date}"]`)
+
+  // The dots are aria-hidden spans whose colour token is the source type.
+  for (const day of DOTTED_DAYS) {
+    await expect(cell(day)).toHaveAccessibleName(/, 2 agenda items$/)
+    await expect(cell(day).locator('span.bg-date-due-foreground')).toHaveCount(1)
+    await expect(cell(day).locator('span.bg-date-scheduled-foreground')).toHaveCount(1)
+  }
+  await expect(cell(EMPTY_DAY)).toHaveAccessibleName('Monday, November 9, 2026')
+  await expect(cell(EMPTY_DAY).locator('span[aria-hidden="true"]')).toHaveCount(0)
+
+  await cell('2026-11-26').click()
+
+  await expect(page.getByRole('tab', { name: 'Daily view' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  await expect(page.getByTestId('date-display')).toHaveText('Thu, Nov 26, 2026')
+  await expect(page.getByText('Note for 2026-11-26', { exact: true })).toBeVisible()
+  const duePanel = page.getByTestId('due-panel')
+  await expect(duePanel.getByText('Due on 2026-11-26')).toBeVisible()
+  await expect(duePanel.getByText('Scheduled on 2026-11-26')).toBeVisible()
+})
+
+test('the date picker dots each source on a day and none on an empty day', async ({ page }) => {
+  await page.clock.setFixedTime(NOW)
+  await waitForBoot(page)
+  for (const day of DOTTED_DAYS) await seedDay(page, day)
+
+  await page.getByRole('button', { name: /Open calendar picker$/ }).click()
+  const picker = page.getByRole('dialog', { name: 'Date picker' })
+  await picker.getByRole('button', { name: 'Go to the Next Month' }).click()
+  const cell = (date: string) => picker.locator(`[role="gridcell"][data-day="${date}"]`)
+
+  // Page, due and scheduled each have their own colour token.
+  for (const day of DOTTED_DAYS) {
+    const dots = cell(day).getByTestId('calendar-dots')
+    await expect(dots.locator('span.bg-primary')).toHaveCount(1)
+    await expect(dots.locator('span.bg-date-due-foreground')).toHaveCount(1)
+    await expect(dots.locator('span.bg-date-scheduled-foreground')).toHaveCount(1)
+  }
+  await expect(picker).toHaveAttribute('aria-busy', 'false')
+  await expect(cell(EMPTY_DAY)).toBeVisible()
+  await expect(cell(EMPTY_DAY).getByTestId('calendar-dots')).toHaveCount(0)
+})
