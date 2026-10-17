@@ -8,7 +8,7 @@
  * single-entry undo plus the happy path.
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -80,6 +80,26 @@ afterEach(() => {
 })
 
 describe('ActivityFeed', () => {
+  describe('with a fake clock', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it("ages a row's time as time passes", () => {
+      render(<ActivityFeed entries={[{ ...UNDOABLE, timestamp: new Date().toISOString() }]} />)
+      const time = screen.getByText(t('sidebar.justNow'))
+
+      act(() => {
+        vi.advanceTimersByTime(5 * 60_000)
+      })
+      expect(time).toHaveTextContent(t('sidebar.minutesAgo', { count: 5 }))
+    })
+  })
+
   it('titles the feed with an h2 and renders the empty message as a paragraph, not a heading', async () => {
     const { container } = render(<ActivityFeed entries={[]} />)
 

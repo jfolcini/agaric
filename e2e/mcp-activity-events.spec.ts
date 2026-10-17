@@ -109,4 +109,27 @@ test.describe('mcp:activity live events (#2683 / #2686)', () => {
     await expect(sessionHeader).toHaveAttribute('data-session-id', 'session-2')
     await expect(page.locator('[data-testid="mcp-activity-revert-session"]')).toBeVisible()
   })
+
+  // The compiled settings tab caches the feed on its entries, so only the
+  // built bundle can show a row's time standing still.
+  test("a row's time ages as time passes", async ({ page }) => {
+    await page.clock.install()
+    await openAgentAccessTab(page)
+    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000)
+
+    await emitMockEvent(page, 'mcp:activity', {
+      toolName: 'search_blocks',
+      summary: 'Searched for "quarterly report"',
+      timestamp: await page.evaluate(() => new Date().toISOString()),
+      actorKind: 'agent',
+      agentName: 'claude',
+      result: { kind: 'ok' },
+      sessionId: 'session-3',
+    })
+    const time = page.locator('[data-testid="mcp-activity-row"] time')
+    await expect(time).toHaveText('just now')
+
+    await page.clock.fastForward('05:00')
+    await expect(time).toHaveText('5m ago')
+  })
 })

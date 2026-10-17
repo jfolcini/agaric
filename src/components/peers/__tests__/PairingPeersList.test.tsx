@@ -14,13 +14,14 @@
  *  - Accessibility audit
  */
 
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { PairingPeersList } from '@/components/peers/PairingPeersList'
 import type { PeerRef } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -171,6 +172,30 @@ describe('PairingPeersList', () => {
 
     // The first peer was synced 5 minutes ago
     expect(screen.getByText(/Last: 5m ago/)).toBeInTheDocument()
+  })
+
+  describe('with a fake clock', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('ages the last-synced time as time passes', () => {
+      render(
+        <PairingPeersList peers={[{ ...firstPeer, synced_at: Date.now() }]} onUnpair={vi.fn()} />,
+      )
+      const lastSynced = screen.getByText(t('device.lastSyncedAt', { time: t('sidebar.justNow') }))
+
+      act(() => {
+        vi.advanceTimersByTime(5 * 60_000)
+      })
+      expect(lastSynced).toHaveTextContent(
+        t('device.lastSyncedAt', { time: t('sidebar.minutesAgo', { count: 5 }) }),
+      )
+    })
   })
 
   it('shows reset count badge when > 0', () => {

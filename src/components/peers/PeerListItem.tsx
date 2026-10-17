@@ -27,6 +27,7 @@ import { IconButton } from '@/components/ui/icon-button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
+import { useMinuteClock } from '@/hooks/useMinuteClock'
 import { unwrap } from '@/lib/app-error'
 import type { PeerRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
@@ -59,6 +60,7 @@ export function PeerListItem({
   onAddressUpdated,
 }: PeerListItemProps): React.ReactElement {
   const { t } = useTranslation()
+  const now = useMinuteClock()
   const [addrOpen, setAddrOpen] = useState(false)
   const [addrInput, setAddrInput] = useState('')
 
@@ -190,7 +192,7 @@ export function PeerListItem({
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {t('device.unpairedByPeerSince', {
-                    time: formatRelativeTime(unpairedByPeerAt, t),
+                    time: formatRelativeTime(unpairedByPeerAt, t, now),
                   })}
                 </p>
               </div>
@@ -210,7 +212,7 @@ export function PeerListItem({
                 {t('device.lastSyncedAt', {
                   time:
                     lastActivityAt != null
-                      ? formatRelativeTime(lastActivityAt, t)
+                      ? formatRelativeTime(lastActivityAt, t, now)
                       : t('sidebar.lastSyncedNever'),
                 })}
               </p>

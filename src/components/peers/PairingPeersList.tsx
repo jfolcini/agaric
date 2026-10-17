@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { useMinuteClock } from '@/hooks/useMinuteClock'
 import type { PeerRef } from '@/lib/bindings'
 import { truncateId } from '@/lib/format'
 import { formatRelativeTime } from '@/lib/format-relative-time'
@@ -31,6 +32,7 @@ export interface PairingPeersListProps {
 
 export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): React.ReactElement {
   const { t } = useTranslation()
+  const now = useMinuteClock()
 
   // #4084 (review) — sort here, exactly as `DeviceManagement` does on load.
   // The prop arrives straight from `list_peer_refs`, whose `ORDER BY
@@ -128,7 +130,7 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                               </p>
                               <p className="text-xs text-muted-foreground">
                                 {t('device.unpairedByPeerSince', {
-                                  time: formatRelativeTime(peer.unpaired_by_peer_at_ms, t),
+                                  time: formatRelativeTime(peer.unpaired_by_peer_at_ms, t, now),
                                 })}
                               </p>
                             </div>
@@ -137,7 +139,7 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                               {t('device.lastSyncedAt', {
                                 time:
                                   lastActivity != null
-                                    ? formatRelativeTime(lastActivity, t)
+                                    ? formatRelativeTime(lastActivity, t, now)
                                     : t('sidebar.lastSyncedNever'),
                               })}
                             </p>

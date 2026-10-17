@@ -24,6 +24,7 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { MetricCard } from '@/components/ui/metric-card'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useMinuteClock } from '@/hooks/useMinuteClock'
 import { usePollingQuery } from '@/hooks/usePollingQuery'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -321,6 +322,7 @@ export function SyncStatusCard(): React.ReactElement | null {
   const syncLastSynced = useSyncStore((s) => s.lastSyncedAt)
   const syncOpsReceived = useSyncStore((s) => s.opsReceived)
   const syncOpsSent = useSyncStore((s) => s.opsSent)
+  const now = useMinuteClock()
 
   const { t } = useTranslation()
 
@@ -367,7 +369,7 @@ export function SyncStatusCard(): React.ReactElement | null {
             <MetricCard
               value={
                 <span className="sync-last-synced">
-                  {syncLastSynced ? formatRelativeTime(syncLastSynced, t) : '--'}
+                  {syncLastSynced ? formatRelativeTime(syncLastSynced, t, now) : '--'}
                 </span>
               }
               labelSlot={

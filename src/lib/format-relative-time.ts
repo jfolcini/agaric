@@ -13,9 +13,14 @@ import type { TFunction } from 'i18next'
  * - Less than 60 minutes:  t('sidebar.minutesAgo', { count })
  * - Less than 24 hours:    t('sidebar.hoursAgo', { count })
  * - Otherwise:             t('sidebar.daysAgo', { count })
+ *
+ * A component passes `now` from `useMinuteClock`, or its label never ages.
  */
-export function formatRelativeTime(isoString: string | number, t: TFunction): string {
-  const now = Date.now()
+export function formatRelativeTime(
+  isoString: string | number,
+  t: TFunction,
+  now: number = Date.now(),
+): string {
   const then = new Date(isoString).getTime()
   const diffMs = now - then
 
