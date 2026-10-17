@@ -58,6 +58,7 @@ export const editor: Record<string, string> = {
   'voiceNote.sizeLimitReached': 'Recording stopped at the 50 MB attachment limit',
   'voiceNote.micDenied': 'Microphone access was denied',
   'voiceNote.micNotFound': 'No microphone found',
+  'voiceNote.unavailable': "Voice notes can't be recorded on this device yet.",
   'voiceNote.micUnavailable': 'Recording is not available on this device',
   'voiceNote.micError': 'Could not start the microphone',
   // #1492 — external-image privacy placeholder (node view + static renderer).
