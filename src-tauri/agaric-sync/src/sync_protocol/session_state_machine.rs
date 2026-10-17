@@ -882,7 +882,6 @@ impl SyncOrchestrator {
     async fn absorb_imported_loro(
         &mut self,
         changed_blocks: &[agaric_core::ulid::BlockId],
-        purged_blocks: &[agaric_core::ulid::BlockId],
         changed_page_ids: Vec<String>,
     ) {
         // #1071: accumulate the resolved page ids (deduped) across this session's inbound
@@ -902,28 +901,25 @@ impl SyncOrchestrator {
         // #4305: and this is the honest count beside it — the blocks the import actually
         // moved. `ops_received` is incremented once per inbound message even when that
         // message's delta was empty, which is the steady state of a converged pair, so it
-        // can never answer "did anything change". Both id sets are already computed by
-        // `apply_remote` for the projection and the fan-out; they are disjoint (#2264 —
-        // `changed_blocks` enumerates live blocks only), so summing them double-counts
-        // nothing.
+        // can never answer "did anything change". The blocks the session purges are
+        // counted when it sweeps them (`complete_pull_session`).
         self.session.changed_blocks = self
             .session
             .changed_blocks
-            .saturating_add(changed_blocks.len())
-            .saturating_add(purged_blocks.len());
+            .saturating_add(changed_blocks.len());
         // #4: `apply_remote` wrote the per-block SQL projection (core columns, properties
         // incl. reserved hot-path columns, direct tag edges) and refreshed
         // `block_tag_inherited` (scoped, #2036/#2265), but NOT the read-path derived
         // caches / FTS. Enqueue the rebuild fan-out via the materializer (background,
         // deduped). #421: FTS is driven from `changed_blocks` (targeted per-block
         // reindex) instead of a full O(vault) rebuild. #2264: the fan-out itself
-        // short-circuits when the import was a complete no-op (both sets empty) — see
+        // short-circuits when the import changed nothing — see
         // `enqueue_inbound_sync_rebuilds`. Non-fatal: a queue-closed error must not
         // unwind the sync session — the projection already committed — so log + continue
         // (mirrors `dispatch_background_or_warn`).
         if let Err(e) = self
             .host
-            .enqueue_inbound_sync_rebuilds(changed_blocks, purged_blocks)
+            .enqueue_inbound_sync_rebuilds(changed_blocks, &[])
             .await
         {
             tracing::warn!(
@@ -1014,11 +1010,10 @@ impl SyncOrchestrator {
         match outcome {
             ApplyOutcome::Imported {
                 changed_blocks,
-                purged_blocks,
                 changed_page_ids,
                 ..
             } => {
-                self.absorb_imported_loro(&changed_blocks, &purged_blocks, changed_page_ids)
+                self.absorb_imported_loro(&changed_blocks, changed_page_ids)
                     .await;
             }
             ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
@@ -1979,6 +1974,24 @@ impl SyncOrchestrator {
             );
         }
 
+        // #5712: every space's doc this session carried has landed, so a block
+        // its imports took out of a doc that no engine holds now was purged,
+        // not moved. Before the bookkeeping, so a failed sweep leaves the peer
+        // due and the next pull retries it.
+        let swept = crate::sync_protocol::loro_sync::sweep_deferred_purges(
+            &self.pool,
+            &self.loro_state().registry,
+        )
+        .await?;
+        self.session.changed_blocks = self.session.changed_blocks.saturating_add(swept.len());
+        if let Err(e) = self.host.enqueue_inbound_sync_rebuilds(&[], &swept).await {
+            tracing::warn!(
+                device_id = %self.device_id,
+                error = %e,
+                "failed to enqueue the cache rebuilds for the swept purges"
+            );
+        }
+
         let last_hash = get_local_heads(&self.pool)
             .await?
             .into_iter()
@@ -2187,15 +2200,29 @@ mod tests {
         local_state: &Arc<agaric_engine::loro::shared::LoroState>,
         peer_state: &agaric_engine::loro::shared::LoroState,
     ) -> (usize, Option<usize>) {
+        pull_from_recording(pool, local_state, peer_state).await.0
+    }
+
+    /// [`pull_from`], also returning every cache fan-out the session asked
+    /// its host for, in order.
+    async fn pull_from_recording(
+        pool: &SqlitePool,
+        local_state: &Arc<agaric_engine::loro::shared::LoroState>,
+        peer_state: &agaric_engine::loro::shared::LoroState,
+    ) -> (
+        (usize, Option<usize>),
+        Vec<crate::apply_host::test_support::InboundRebuild>,
+    ) {
         use crate::sync_events::{RecordingEventSink, SyncEvent};
         use crate::sync_protocol::loro_sync;
 
         let sink = Arc::new(RecordingEventSink::new());
-        let host: Arc<dyn ApplyHost> = Arc::new(
+        let recording = Arc::new(
             crate::apply_host::test_support::RecordingApplyHost::with_loro_state(Arc::clone(
                 local_state,
             )),
         );
+        let host: Arc<dyn ApplyHost> = Arc::clone(&recording) as Arc<dyn ApplyHost>;
         let mut orch = SyncOrchestrator::new(pool.clone(), "DEV_LOCAL".to_owned(), host)
             .with_expected_remote_id("DEV_PEER".to_owned())
             .with_event_sink(Box::new(Arc::clone(&sink)));
@@ -2238,7 +2265,8 @@ mod tests {
             .expect("import the peer's per-space payload");
         }
 
-        sink.events()
+        let complete = sink
+            .events()
             .into_iter()
             .find_map(|e| match e {
                 SyncEvent::Complete {
@@ -2248,7 +2276,8 @@ mod tests {
                 } => Some((ops_received, changed_blocks)),
                 _ => None,
             })
-            .expect("the session must reach Complete")
+            .expect("the session must reach Complete");
+        (complete, recording.inbound_rebuilds())
     }
 
     /// #4305: a converged, idle pair still exchanges one `LoroSync` per space
@@ -2311,5 +2340,72 @@ mod tests {
             Some(1),
             "…while the honest counter tracks the one block that actually arrived"
         );
+    }
+
+    /// #5712: a pull that brings a purge records it at the import and purges
+    /// it when the session ends, after every doc has landed: the purged
+    /// blocks count as changed, and the last fan-out hands them to the host
+    /// as purged.
+    #[tokio::test]
+    async fn a_pull_purges_what_it_brought_at_its_end_and_fans_it_out_5712() {
+        use agaric_engine::loro::shared::LoroState;
+
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        let local_state = Arc::new(LoroState::new());
+        let peer_state = LoroState::new();
+        seed_spaces(&local_state, "DEV_LOCAL");
+        seed_spaces(&peer_state, "DEV_PEER");
+        let (page, child) = ("01HZ0000000000000000PAGE57", "01HZ000000000000000CHILD57");
+        let space = agaric_store::space::SpaceId::from_trusted(TWO_SPACES[0]);
+        {
+            let mut guard = peer_state
+                .registry
+                .for_space(&space, "DEV_PEER")
+                .expect("peer engine");
+            let engine = guard.engine_mut();
+            engine
+                .apply_create_block(page, "page", "Plan", None, 0)
+                .expect("page");
+            engine
+                .apply_create_block(child, "content", "step", Some(page), 0)
+                .expect("child");
+        }
+        pull_from(&pool, &local_state, &peer_state).await;
+        peer_state
+            .registry
+            .for_space(&space, "DEV_PEER")
+            .expect("peer engine")
+            .engine_mut()
+            .apply_purge_block(page)
+            .expect("the peer purges the page");
+
+        let ((_, changed_blocks), rebuilds) =
+            pull_from_recording(&pool, &local_state, &peer_state).await;
+
+        assert_eq!(
+            changed_blocks,
+            Some(2),
+            "the session counts the two blocks it purged"
+        );
+        let mut purged = vec![child, page];
+        purged.sort_unstable();
+        assert_eq!(
+            rebuilds.last().map(|r| (
+                r.changed_blocks.is_empty(),
+                r.purged_blocks
+                    .iter()
+                    .map(agaric_core::ulid::BlockId::as_str)
+                    .collect::<Vec<_>>()
+            )),
+            Some((true, purged)),
+            "the session's last fan-out hands the host the purged blocks"
+        );
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?)")
+            .bind(page)
+            .bind(child)
+            .fetch_one(&pool)
+            .await
+            .expect("count rows");
+        assert_eq!(rows, 0, "the purge reached SQL by the session's end");
     }
 }

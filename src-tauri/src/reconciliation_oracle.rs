@@ -1873,7 +1873,9 @@ const ENGINE_ROW_MISSING_OWNER: &str = "the block's ops took the SQL-only fallba
      resolved) and nothing replayed them into the engine: since #5418 a snapshot pass advances \
      the apply cursor, so boot replays only the ops after it. The engine is what syncs and what \
      an engine-first recovery reprojects, so this block reaches no peer and does not survive \
-     that recovery";
+     that recovery. Expected, not a defect, while the block is in sync_deferred_purges: a sync \
+     import took it out of its doc and the next completed pull purges it, or keeps it if \
+     another space's doc claims it (#5712)";
 
 const ENGINE_ROW_EXTRA_OWNER: &str = "a purge or projection cleared SQL without the engine, or \
      an inbound import's projection never committed: a peer importing this doc, or an \

@@ -138,7 +138,9 @@ type Command =
   | { cmd: 'sync_refused' }
   | { cmd: 'get_block'; id: string }
   | { cmd: 'create_block'; parent_id: string; content: string }
-  | { cmd: 'create_in_space'; block_type: 'page' | 'tag'; content: string }
+  | { cmd: 'create_in_space'; block_type: 'page' | 'tag'; content: string; space_id?: string }
+  | { cmd: 'create_space'; name: string }
+  | { cmd: 'move_to_space'; id: string; space_id: string }
   | { cmd: 'edit_block'; id: string; content: string }
   | { cmd: 'set_property'; id: string; key: string; value: string }
   | { cmd: 'set_todo_state'; id: string; state: string }
@@ -194,8 +196,15 @@ export interface SyncPeer {
   getBlock(id: string): Promise<PeerBlock>
   /** Write a content block under `parentId`; resolves to its id. */
   createBlock(parentId: string, content: string): Promise<string>
-  /** Write a page or tag in the Personal space, the one a fresh vault opens on; resolves to its id. */
-  createInSpace(blockType: 'page' | 'tag', content: string): Promise<string>
+  /**
+   * Write a page or tag in space `spaceId`, or in the Personal space, the one a
+   * fresh vault opens on; resolves to its id.
+   */
+  createInSpace(blockType: 'page' | 'tag', content: string, spaceId?: string): Promise<string>
+  /** Create a space named `name`; resolves to its id. */
+  createSpace(name: string): Promise<string>
+  /** Move page `id` and its blocks to space `spaceId`. */
+  moveToSpace(id: string, spaceId: string): Promise<void>
   /** Replace the whole text of block `id` with `content`. */
   editBlock(id: string, content: string): Promise<void>
   /** Set text property `key` on block `id`. */
@@ -278,8 +287,22 @@ export async function startSyncPeer(): Promise<SyncPeer> {
     },
     createBlock: async (parentId, content) =>
       (await request({ cmd: 'create_block', parent_id: parentId, content }, 'created')).id,
-    createInSpace: async (blockType, content) =>
-      (await request({ cmd: 'create_in_space', block_type: blockType, content }, 'created')).id,
+    createInSpace: async (blockType, content, spaceId) =>
+      (
+        await request(
+          {
+            cmd: 'create_in_space',
+            block_type: blockType,
+            content,
+            ...(spaceId === undefined ? {} : { space_id: spaceId }),
+          },
+          'created',
+        )
+      ).id,
+    createSpace: async (name) => (await request({ cmd: 'create_space', name }, 'created')).id,
+    moveToSpace: async (id, spaceId) => {
+      await request({ cmd: 'move_to_space', id, space_id: spaceId }, 'moved')
+    },
     editBlock: async (id, content) => {
       await request({ cmd: 'edit_block', id, content }, 'edited')
     },

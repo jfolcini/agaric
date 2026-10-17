@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM sync_deferred_purges",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "307a78f919df7be201d2e142139e96b8748aed807ca8baac4f9ac37b80ca5cab"
+}

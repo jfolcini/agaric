@@ -9,12 +9,13 @@
 //! Every step is the app's own code: `init_pools`, the daemon,
 //! `confirm_pairing_inner` with the fields of the QR the app showed (what a
 //! phone's camera hands the joiner), `create_block_inner`,
-//! `create_block_inner_with_space`, `edit_block_inner`, `set_property_inner`,
-//! `set_todo_state_inner`, `set_due_date_inner`, `add_tag_inner`,
-//! `move_block_inner`, `add_attachment_with_bytes_inner`,
-//! `get_active_block_inner`, `get_property_inner`, `list_attachments_inner`,
-//! `read_attachment_inner` and `list_peer_refs_inner`. `sync` wakes the daemon
-//! as `start_sync` does; it never runs a session itself.
+//! `create_block_inner_with_space`, `create_space_inner`, `edit_block_inner`,
+//! `set_property_inner`, `set_todo_state_inner`, `set_due_date_inner`,
+//! `add_tag_inner`, `move_block_inner`, `move_blocks_to_space_inner`,
+//! `add_attachment_with_bytes_inner`, `get_active_block_inner`,
+//! `get_property_inner`, `list_attachments_inner`, `read_attachment_inner` and
+//! `list_peer_refs_inner`. `sync` wakes the daemon as `start_sync` does; it
+//! never runs a session itself.
 //!
 //! A session is a pull by the device that dials (#610), so each direction has
 //! its own wait: `sync` for this vault's pull from the app (`synced_at`), and
@@ -34,9 +35,10 @@ use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{
     add_attachment_with_bytes_inner, add_tag_inner, confirm_pairing_inner, create_block_inner,
-    create_block_inner_with_space, edit_block_inner, get_active_block_inner, get_property_inner,
-    list_attachments_inner, list_peer_refs_inner, move_block_inner, read_attachment_inner,
-    set_due_date_inner, set_property_inner, set_todo_state_inner,
+    create_block_inner_with_space, create_space_inner, edit_block_inner, get_active_block_inner,
+    get_property_inner, list_attachments_inner, list_peer_refs_inner, move_block_inner,
+    move_blocks_to_space_inner, read_attachment_inner, set_due_date_inner, set_property_inner,
+    set_todo_state_inner,
 };
 use agaric_lib::db::{DbPools, init_pools, now_ms};
 use agaric_lib::materializer::Materializer;
@@ -82,11 +84,22 @@ enum Command {
         parent_id: String,
         content: String,
     },
-    /// Write a `page` or `tag` block, which has no parent, in the Personal
-    /// space: the space a fresh vault opens on.
+    /// Write a `page` or `tag` block, which has no parent, in space
+    /// `space_id`, or in the Personal space, the one a fresh vault opens on.
     CreateInSpace {
         block_type: String,
         content: String,
+        #[serde(default)]
+        space_id: Option<String>,
+    },
+    /// Create a space named `name`.
+    CreateSpace {
+        name: String,
+    },
+    /// Move page `id` and its blocks to space `space_id`.
+    MoveToSpace {
+        id: String,
+        space_id: String,
     },
     /// Replace the whole text of block `id` with `content`.
     EditBlock {
@@ -309,7 +322,10 @@ impl Peer {
             Command::CreateInSpace {
                 block_type,
                 content,
-            } => self.create_in_space(block_type, content).await,
+                space_id,
+            } => self.create_in_space(block_type, content, space_id).await,
+            Command::CreateSpace { name } => self.create_space(name).await,
+            Command::MoveToSpace { id, space_id } => self.move_to_space(id, space_id).await,
             Command::EditBlock { id, content } => self.edit_block(id, content).await,
             Command::SetProperty { id, key, value } => self.set_property(id, key, value).await,
             Command::SetTodoState { id, state } => self.set_todo_state(id, state).await,
@@ -442,8 +458,9 @@ impl Peer {
         &mut self,
         block_type: String,
         content: String,
+        space_id: Option<String>,
     ) -> Result<Reply, AppError> {
-        let personal = SpaceScope::Active(SpaceId::from_trusted(SPACE_PERSONAL_ULID));
+        let space = space_id.unwrap_or_else(|| SPACE_PERSONAL_ULID.to_owned());
         let row = create_block_inner_with_space(
             &self.pools.write,
             &self.device_id,
@@ -452,7 +469,7 @@ impl Peer {
             content,
             None,
             None,
-            &personal,
+            &SpaceScope::Active(SpaceId::from_trusted(&space)),
             None,
         )
         .await?;
@@ -460,6 +477,34 @@ impl Peer {
         Ok(Reply::Created {
             id: row.id.into_string(),
         })
+    }
+
+    async fn create_space(&mut self, name: String) -> Result<Reply, AppError> {
+        let id = create_space_inner(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            name,
+            None,
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::Created {
+            id: id.into_string(),
+        })
+    }
+
+    async fn move_to_space(&mut self, id: String, space_id: String) -> Result<Reply, AppError> {
+        move_blocks_to_space_inner(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            vec![BlockId::from_string(id)?],
+            space_id,
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::Moved)
     }
 
     async fn edit_block(&mut self, id: String, content: String) -> Result<Reply, AppError> {
@@ -799,8 +844,43 @@ mod tests {
             Ok(Command::CreateInSpace {
                 block_type: "tag".into(),
                 content: "marigold".into(),
+                space_id: None,
             }),
             "sync-peer.ts sends a page or tag as its block type and its text"
+        );
+        assert_eq!(
+            parse_command(
+                r#"{"cmd":"create_in_space","block_type":"page","content":"Plan","space_id":"S1"}"#
+            ),
+            Ok(Command::CreateInSpace {
+                block_type: "page".into(),
+                content: "Plan".into(),
+                space_id: Some("S1".into()),
+            }),
+            "…and names the space when it is not Personal"
+        );
+    }
+
+    #[test]
+    fn create_space_takes_a_name() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"create_space","name":"Alpha"}"#),
+            Ok(Command::CreateSpace {
+                name: "Alpha".into()
+            }),
+            "sync-peer.ts sends a space as its name"
+        );
+    }
+
+    #[test]
+    fn move_to_space_takes_a_page_and_a_space() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"move_to_space","id":"P1","space_id":"S2"}"#),
+            Ok(Command::MoveToSpace {
+                id: "P1".into(),
+                space_id: "S2".into(),
+            }),
+            "sync-peer.ts sends a move to another space as the page id and the space"
         );
     }
 

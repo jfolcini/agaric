@@ -54,9 +54,11 @@ use agaric_engine::materializer::Materializer;
 /// [`Materializer::enqueue_inbound_sync_rebuilds`] (see
 /// `session_state_machine.rs`) because the per-block projection does NOT
 /// refresh the derived read caches or the FTS index. This boot replay runs
-/// the SAME import+project, so it owes the same fan-out: the per-row
-/// `(changed, purged)` sets are accumulated (deduped) across the whole walk
-/// and `enqueue_inbound_sync_rebuilds` is fired ONCE at the end. No other
+/// the SAME import+project, so it owes the same fan-out: the per-row changed
+/// sets are accumulated (deduped) across the whole walk and
+/// `enqueue_inbound_sync_rebuilds` is fired ONCE at the end. The blocks a
+/// replay takes out of a doc, the crashed slot's tombstone among them, wait in
+/// `sync_deferred_purges` for the next completed pull's sweep (#5712). No other
 /// boot step compensates — `cache_refresh` covers recovered-draft ids only,
 /// and the `lib.rs` FTS rebuild fires only when the index is empty — so
 /// skipping this left remote content invisible to search until an unrelated
@@ -122,25 +124,22 @@ pub async fn replay_sync_inbox(
         quarantined,
         errors,
         changed_all,
-        purged_all,
     } = tally;
 
     // #2541: fire the inbound cache/FTS fan-out ONCE for everything the walk
     // imported — the exact rebuild set the live path enqueues after each
-    // import (`enqueue_inbound_sync_rebuilds` short-circuits when both sets
-    // are empty, #2264). Non-fatal: the projections committed in-tx above,
+    // import (`enqueue_inbound_sync_rebuilds` short-circuits when nothing
+    // changed, #2264). Non-fatal: the projections committed in-tx above,
     // so an enqueue failure (queue closed at shutdown) must not fail boot —
     // log and continue, mirroring the live orchestrator's convention.
     let changed: Vec<agaric_core::ulid::BlockId> = changed_all.into_iter().collect();
-    let purged: Vec<agaric_core::ulid::BlockId> = purged_all.into_iter().collect();
     if let Err(e) = materializer
-        .enqueue_inbound_sync_rebuilds(&changed, &purged)
+        .enqueue_inbound_sync_rebuilds(&changed, &[])
         .await
     {
         tracing::warn!(
             error = %e,
             changed = changed.len(),
-            purged = purged.len(),
             "#2541: failed to enqueue the inbound cache/FTS fan-out after the \
              sync-inbox replay — derived caches/FTS may be stale until the \
              next inbound sync or local mutation"
@@ -167,11 +166,10 @@ struct InboxReplayTally {
     /// #3226: slots moved to durable quarantine during this walk.
     quarantined: u64,
     errors: Vec<String>,
-    /// #2541: the per-row changed / tombstone-purged block ids, so the inbound
-    /// cache/FTS fan-out fires exactly once after the walk (sets: the same
-    /// block can recur across slots; the fan-out is per-id).
+    /// #2541: the per-row changed block ids, so the inbound cache/FTS
+    /// fan-out fires exactly once after the walk (a set: the same block can
+    /// recur across slots; the fan-out is per-id).
     changed_all: HashSet<agaric_core::ulid::BlockId>,
-    purged_all: HashSet<agaric_core::ulid::BlockId>,
 }
 
 /// The next bounded chunk of inbox rows, grouped so each space's slots replay
@@ -303,7 +301,6 @@ async fn replay_space_batches(
                 // census in `boot.rs`; this is the per-space log line.
                 tally.quarantined += outcome.quarantined;
                 tally.changed_all.extend(outcome.changed);
-                tally.purged_all.extend(outcome.purged);
                 for err in &outcome.errors {
                     tracing::error!(
                         space_id = %space_id,

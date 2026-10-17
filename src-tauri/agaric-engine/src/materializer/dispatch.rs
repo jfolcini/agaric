@@ -654,12 +654,13 @@ impl Materializer {
     /// A redelivered / echoed payload that changed nothing (`changed_blocks`
     /// AND `purged_blocks` both empty) projected nothing to SQL, so every
     /// cache is already consistent — return without enqueueing anything.
-    /// A purge-only import (`changed_blocks` empty, `purged_blocks` not)
-    /// MUST still fan out: Pass D removed rows from the base tables, and the
-    /// aggregate caches (`tags_cache.usage_count`, `pages_cache` counts,
-    /// page links, …) only converge through the debounced global rebuilds.
+    /// A purge-only call (`changed_blocks` empty, `purged_blocks` not: the
+    /// sweep that ends a pull session, #5712) MUST still fan out: the sweep
+    /// removed rows from the base tables, and the aggregate caches
+    /// (`tags_cache.usage_count`, `pages_cache` counts, page links, …) only
+    /// converge through the debounced global rebuilds.
     /// #2667: the per-changed-block `block_tag_refs` path below correctly
-    /// enqueues NOTHING for a purge-only import (`changed_blocks` empty) —
+    /// enqueues NOTHING for a purge-only call (`changed_blocks` empty) —
     /// the `block_tag_refs` FKs `ON DELETE CASCADE` (migration 0034) already
     /// removed the purged block's / purged tag's rows synchronously, so no
     /// rebuild is owed (same reason the FTS path enqueues nothing here).

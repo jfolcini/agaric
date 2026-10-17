@@ -1097,6 +1097,57 @@ async fn a_lost_block_returns_to_its_sql_place_among_reordered_siblings_5670() {
     );
 }
 
+/// #5712: a block a sync import took out of its doc waits in
+/// `sync_deferred_purges` for the pull's sweep. Boot replays the sync inbox
+/// before the repair runs, so the repair can meet one, and must not seed it
+/// back into the doc it left.
+#[tokio::test]
+async fn the_repair_leaves_a_block_a_sync_import_deferred_5712() {
+    use crate::repair::engine_missing_blocks::hydrate_engine_missing_blocks;
+
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    let state = crate::loro::shared::LoroState::new();
+    apply(&pool, &state, create_op(PAGE_ID, "page", None, "page")).await;
+    apply(
+        &pool,
+        &state,
+        create_op(CHILD_ID, "content", Some(PAGE_ID), "child"),
+    )
+    .await;
+    apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE_ID))).await;
+    state
+        .registry
+        .for_space(&space(), DEVICE_ID)
+        .expect("s1")
+        .engine_mut()
+        .apply_purge_block(PAGE_ID)
+        .expect("an import takes the page out of the doc");
+    for id in [PAGE_ID, CHILD_ID] {
+        sqlx::query("INSERT INTO sync_deferred_purges (block_id) VALUES (?)")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("Pass D defers it");
+    }
+
+    let mut tx = pool.begin().await.expect("begin");
+    let missing = hydrate_engine_missing_blocks(&mut tx, &state, DEVICE_ID)
+        .await
+        .expect("repair");
+    tx.commit().await.expect("commit");
+
+    assert_eq!(missing, 0, "a deferred block is not a missing one");
+    assert!(
+        !state
+            .registry
+            .for_space(&space(), DEVICE_ID)
+            .expect("s1")
+            .engine_mut()
+            .contains_block(PAGE_ID),
+        "the page stays out of the doc it left"
+    );
+}
+
 // --------------------------------------------------------------------------
 // 12. #5608 — a block's attachments are doc state too, so each space a page
 //     enters gets its blocks' attachment rows. Moving back into a space the
