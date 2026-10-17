@@ -10,7 +10,14 @@
 
 import type { Page } from '@playwright/test'
 
-import { expect, navigateToView, openSettingsTab, test, waitForBoot } from './helpers'
+import {
+  chooseSelectOption,
+  expect,
+  navigateToView,
+  openSettingsTab,
+  test,
+  waitForBoot,
+} from './helpers'
 
 // The whole class token: the palette themes add `theme-*-dark` alongside it.
 const DARK_CLASS = /(^|\s)dark(\s|$)/
@@ -19,12 +26,6 @@ async function openAppearance(page: Page): Promise<void> {
   await navigateToView(page, 'Settings')
   await openSettingsTab(page, 'Appearance')
   await expect(page.getByTestId('settings-panel-appearance')).toBeVisible()
-}
-
-async function choose(page: Page, combobox: string, option: string): Promise<void> {
-  await page.getByRole('combobox', { name: combobox }).click()
-  await page.getByRole('option', { name: option, exact: true }).click()
-  await expect(page.getByRole('combobox', { name: combobox })).toHaveText(option)
 }
 
 function bodyBackground(page: Page): Promise<string> {
@@ -44,7 +45,7 @@ test.describe('Settings › Appearance', () => {
     const lightBackground = await bodyBackground(page)
 
     await openAppearance(page)
-    await choose(page, 'Theme', 'Dark')
+    await chooseSelectOption(page, 'Theme', 'Dark')
     await expect(html).toHaveClass(DARK_CLASS)
     await expect.poll(() => bodyBackground(page)).not.toBe(lightBackground)
 
@@ -58,7 +59,7 @@ test.describe('Settings › Appearance', () => {
     const html = page.locator('html')
     const lightBackground = await bodyBackground(page)
     await openAppearance(page)
-    await choose(page, 'Theme', 'Dark')
+    await chooseSelectOption(page, 'Theme', 'Dark')
     await expect(html).toHaveClass(DARK_CLASS)
 
     await page.getByTestId('header-search-button').click()
@@ -79,7 +80,7 @@ test.describe('Settings › Appearance', () => {
     await expect(searchButton).not.toHaveCSS('transition-property', 'none')
 
     await openAppearance(page)
-    await choose(page, 'Animations', 'Off')
+    await chooseSelectOption(page, 'Animations', 'Off')
     await expect(html).toHaveAttribute('data-motion', 'off')
 
     await navigateToView(page, 'Journal')
@@ -99,7 +100,7 @@ test.describe('Settings › Appearance', () => {
   test('Tooltip delay Fast opens a tooltip after 150 ms, not before', async ({ page }) => {
     await page.clock.install()
     await openAppearance(page)
-    await choose(page, 'Tooltip delay', 'Fast')
+    await chooseSelectOption(page, 'Tooltip delay', 'Fast')
     await navigateToView(page, 'Journal')
 
     // Park the pointer off any tooltip trigger, then freeze time past Radix's

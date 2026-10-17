@@ -10,7 +10,14 @@
 
 import type { Page } from '@playwright/test'
 
-import { expect, navigateToView, openSettingsTab, test, waitForBoot } from './helpers'
+import {
+  chooseSelectOption,
+  expect,
+  navigateToView,
+  openSettingsTab,
+  test,
+  waitForBoot,
+} from './helpers'
 
 // Wednesday. A Monday week holds Jun 15-21, a Sunday week Jun 14-20.
 const NOW = new Date('2026-06-17T12:00:00')
@@ -23,12 +30,6 @@ async function openGeneral(page: Page): Promise<void> {
   await navigateToView(page, 'Settings')
   await openSettingsTab(page, 'General')
   await expect(page.getByTestId('settings-panel-general')).toBeVisible()
-}
-
-async function choose(page: Page, combobox: string, option: string): Promise<void> {
-  await page.getByRole('combobox', { name: combobox }).click()
-  await page.getByRole('option', { name: option, exact: true }).click()
-  await expect(page.getByRole('combobox', { name: combobox })).toHaveText(option)
 }
 
 test.describe('Settings › General journal preferences', () => {
@@ -46,8 +47,8 @@ test.describe('Settings › General journal preferences', () => {
     await expect(dayRegions(page).first()).toHaveAttribute('id', 'journal-2026-06-15')
 
     await openGeneral(page)
-    await choose(page, 'Week starts on', 'Sunday')
-    await choose(page, 'Journal date format', 'Month D, YYYY (e.g. June 17, 2026)')
+    await chooseSelectOption(page, 'Week starts on', 'Sunday')
+    await chooseSelectOption(page, 'Journal date format', 'Month D, YYYY (e.g. June 17, 2026)')
 
     await navigateToView(page, 'Journal')
     await page.getByRole('tab', { name: 'Weekly view' }).click()

@@ -103,7 +103,9 @@ test.describe('Settings › Help', () => {
     clearConsoleErrors(page)
   })
 
-  test('Show tour reopens the welcome modal, and once closed it stays closed', async ({ page }) => {
+  test('Show tour reopens the welcome modal, and closing it marks onboarding done', async ({
+    page,
+  }) => {
     const welcome = page.getByTestId('welcome-modal')
     await openAbout(page)
     await page.getByRole('button', { name: 'Show tour', exact: true }).click()
@@ -113,12 +115,9 @@ test.describe('Settings › Help', () => {
     await welcome.getByRole('button', { name: 'Get Started', exact: true }).click()
     await expect(welcome).toHaveCount(0)
 
-    await navigateToView(page, 'Journal')
-    await openAbout(page)
-    await expect(welcome).toHaveCount(0)
-
-    // The next launch reads this first-run flag (`useWelcomeGate`). Absence
-    // after a reload cannot be told from the modal's lazy chunk still loading.
+    // The next launch mounts the modal only without this flag (`useWelcomeGate`,
+    // pinned in App.test.tsx). Its absence on a fresh boot is no evidence: the
+    // modal is a lazy chunk, and nothing on screen says the chunk was never asked for.
     await expect
       .poll(() => page.evaluate(() => window.localStorage.getItem('agaric-onboarding-done')))
       .toBe('true')
@@ -129,8 +128,9 @@ test.describe('Settings › Help', () => {
     const button = page.getByRole('button', { name: 'Check for updates now' })
     const status = page.getByTestId('settings-panel-help').getByRole('status')
     const toast = (text: string) => page.locator('[data-sonner-toast]').filter({ hasText: text })
-    // The boot check is settled once the button is enabled again.
-    await expect(button).toBeEnabled()
+    // The boot check fails on the mock; its outcome on the card means it is
+    // over, so a click cannot join it and inherit its silence.
+    await expect(status).toHaveText(/^Last check failed/)
 
     await answerUpdateCheck(page, null)
     await button.click()

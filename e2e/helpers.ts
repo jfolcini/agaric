@@ -1481,3 +1481,15 @@ export async function selectEditorRange(page: Page, from: number, to: number): P
     { from, to },
   )
 }
+
+/** Pick `option` from the Select labelled `combobox` and wait for the trigger to show it. */
+export async function chooseSelectOption(
+  page: Page,
+  combobox: string,
+  option: string,
+): Promise<void> {
+  const trigger = page.getByRole('combobox', { name: combobox })
+  await trigger.click()
+  await page.getByRole('option', { name: option, exact: true }).click()
+  await expect(trigger).toHaveText(option)
+}
