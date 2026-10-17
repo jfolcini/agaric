@@ -59,6 +59,8 @@ const MILESTONES = [
   { key: 'repairsDone', prefix: 'content repair complete', last: true },
   { key: 'bootstrapDone', prefix: 'boot: space bootstrap, sweep and repairs done' },
   { key: 'syncStarted', prefix: 'SyncDaemon started' },
+  // `setup` has returned and the event loop has mapped the window: openbox focuses it.
+  { key: 'windowFocused', prefix: 'window focus changed', optional: true },
   { key: 'bootResolved', prefix: 'boot resolved', target: 'frontend' },
 ]
 // Headline spans: from log start to each mark, and the frontend's own part.
@@ -69,6 +71,8 @@ const SPANS = {
   syncStartedMs: ['logInit', 'syncStarted'],
   bootResolvedMs: ['logInit', 'bootResolved'],
   frontendMs: ['syncStarted', 'bootResolved'],
+  windowFocusedMs: ['logInit', 'windowFocused'],
+  webviewMs: ['windowFocused', 'bootResolved'],
   execToLogMs: ['exec', 'logInit'],
 }
 // The wrapper inside the display: refuse a leaked Wayland socket, wait for openbox to own the
@@ -123,7 +127,11 @@ function readMilestones(logDir) {
 async function boot(name, binary, round) {
   const run = fs.mkdtempSync(path.join(os.tmpdir(), `measure-boot-${name}-`))
   const vault = path.join(run, 'vault')
-  fs.cpSync(baseline, vault, { recursive: true })
+  // A baseline that has booted carries its log, whose milestones would be read first.
+  fs.cpSync(baseline, vault, {
+    recursive: true,
+    filter: (src) => src !== path.join(baseline, 'logs'),
+  })
   if (rewind > 0) {
     const db = new DatabaseSync(path.join(vault, 'notes.db'))
     const { top } = db.prepare('SELECT max(seq) AS top FROM op_log WHERE device_id = ?').get(device)
