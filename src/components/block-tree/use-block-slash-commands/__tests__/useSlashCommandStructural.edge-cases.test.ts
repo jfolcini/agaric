@@ -4,9 +4,10 @@
  * `BlockTree.test.tsx` only asserts that `insertContent` was *called*, against
  * a mock editor whose selection is pinned at pos 0. It never exercises real
  * selection-replacement, structural commands from a non-default block state,
- * or insert-then-blur (draft autosave). These tests drive the structural handlers through a REAL
- * minimal TipTap editor wired into the synthetic slash-command context, then
- * assert the SETTLED document — what the user would actually see.
+ * or insert-then-blur (draft autosave). These tests drive the structural
+ * handlers through a REAL minimal TipTap editor wired into the synthetic
+ * slash-command context, then assert the SETTLED document — what the user
+ * would actually see.
  *
  * The editor-insert handlers (`/link`, `/tag`, `/block-ref`, `/code`,
  * `/quote`) operate directly on `ctx.rovingEditor.editor` and never

@@ -46,10 +46,13 @@ export function BlockTablePicker({
         className="w-auto p-1"
         aria-label={t('toolbar.insertTable')}
         data-editor-portal
-        // There is no trigger to hand focus back to, so it goes to the editor.
+        // There is no trigger to hand focus back to, so it goes to the editor,
+        // unless a click outside already put it somewhere.
         onCloseAutoFocus={(e) => {
           e.preventDefault()
-          if (!editor.isDestroyed) editor.commands.focus()
+          if (document.activeElement === document.body && !editor.isDestroyed) {
+            editor.commands.focus()
+          }
         }}
       >
         <TablePicker editor={editor} onClose={onClose} initialRows={3} initialCols={3} />

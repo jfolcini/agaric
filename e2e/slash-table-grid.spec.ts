@@ -93,4 +93,14 @@ test.describe('Slash table grid', () => {
     )
     await expect(page.getByTestId('rich-table')).toHaveCount(0)
   })
+
+  test('a click on the page title closes the grid and keeps focus there', async ({ page }) => {
+    const { grid } = await openTableGrid(page)
+    const title = page.getByRole('textbox', { name: 'Page title' })
+    await title.click()
+
+    await expect(grid).toBeHidden()
+    await expect(title).toBeFocused()
+    await expect(page.locator('table')).toHaveCount(0)
+  })
 })

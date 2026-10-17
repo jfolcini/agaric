@@ -147,7 +147,11 @@ export function TablePicker({
           )
         })}
       </div>
-      <p className="text-center text-xs text-muted-foreground" data-testid="table-picker-label">
+      <p
+        className="text-center text-xs text-muted-foreground"
+        data-testid="table-picker-label"
+        aria-live="polite"
+      >
         {label}
       </p>
     </div>

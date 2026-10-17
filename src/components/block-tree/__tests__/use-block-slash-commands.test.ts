@@ -835,10 +835,11 @@ describe('useBlockSlashCommands handleSlashCommand stability (#)', () => {
 })
 
 // D-4 — dispatcher regression test. Asserts that every PickerItem id
-// produced by `SLASH_COMMANDS` (plus the `h1..h6` heading family) resolves to exactly one handler in the merged dispatch
-// table — no missing kinds, no exact-key collisions across sub-hooks, no
-// prefix double-routing. Pins the cross-sub-hook contract that the four
-// category hooks together cover the full command catalog.
+// produced by `SLASH_COMMANDS` (plus the `h1..h6` heading family) resolves to
+// exactly one handler in the merged dispatch table — no missing kinds, no
+// exact-key collisions across sub-hooks, no prefix double-routing. Pins the
+// cross-sub-hook contract that the four category hooks together cover the
+// full command catalog.
 describe('useBlockSlashCommands dispatcher coverage (# D-4)', () => {
   function getMergedTables() {
     const { result } = renderHook(

@@ -93,8 +93,9 @@ describe('TablePicker', () => {
 
     fireEvent.pointerEnter(screen.getByTestId('table-cell-2-3'))
 
-    // The label reflects the hovered dimensions.
+    // The label reflects the hovered dimensions, and announces them.
     expect(screen.getByTestId('table-picker-label')).toHaveTextContent('2 × 3')
+    expect(screen.getByTestId('table-picker-label')).toHaveAttribute('aria-live', 'polite')
     // Cells within the rectangle are selected; cells outside are not.
     expect(screen.getByTestId('table-cell-1-1')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('table-cell-2-3')).toHaveAttribute('aria-selected', 'true')
