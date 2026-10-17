@@ -148,6 +148,12 @@
 //! * `delete_attachment_inner` / the purge paths never unlink bytes or prune
 //!   `attachment_blobs` (#1993/#3259); `cleanup_orphaned_attachments` does.
 //!
+//! A peer's attachment is the same shape from the other side (#5728): its row
+//! lands in the op-sync phase with the hash it was added with, and its
+//! `attachment_blobs` entry is written when the file phase lands the bytes or
+//! links ones already held. Until then `attachment_blobs.refcount` names its
+//! hash, and it keeps doing so for an attachment no reachable peer holds.
+//!
 //! So the oracle is a statement about the **settled** state. A caller that
 //! drives an op which production defers MUST also drive production's
 //! deferred pass before asserting — that is what
@@ -725,8 +731,9 @@ pub async fn rebuild_attachment_blobs_from_base(
     let mut out: BTreeMap<String, BlobExpectation> = BTreeMap::new();
     for a in &attachments {
         let Some(hash) = a.content_hash.as_deref() else {
-            // Rows written by the op-apply arm (`apply_add_attachment_tx`)
-            // carry no hash at all and therefore impose no blob obligation.
+            // A row with no hash (an add that predates the op's hash, or a
+            // row the boot hash backfill has not reached) imposes no blob
+            // obligation.
             continue;
         };
         let entry = out

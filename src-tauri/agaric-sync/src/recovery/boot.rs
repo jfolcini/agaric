@@ -190,13 +190,14 @@ pub async fn recover_at_boot(
     // -----------------------------------------------------------------
     // Step 3: #1453 Phase 1 — backfill blake3 content_hash for attachment
     // rows that pre-date migration 0093 (or were materialized from a remote
-    // AddAttachment op, whose payload carries no hash). Idempotent (only
-    // `content_hash IS NULL` rows are touched) and tolerant of a missing
-    // file (leaves NULL). Best-effort: a failure is logged and boot
-    // continues — the persisted hash is an availability optimization, not a
-    // correctness invariant. `app_data_dir` comes from the Materializer,
-    // which `lib.rs` sets before boot recovery runs; if it is somehow unset
-    // (test harnesses, an early boot path) the backfill is skipped.
+    // AddAttachment op that predates the hash in its payload, #5728).
+    // Idempotent (only `content_hash IS NULL` rows are touched) and tolerant
+    // of a missing file (leaves NULL). Best-effort: a failure is logged and
+    // boot continues — the persisted hash is an availability optimization,
+    // not a correctness invariant. `app_data_dir` comes from the
+    // Materializer, which `lib.rs` sets before boot recovery runs; if it is
+    // somehow unset (test harnesses, an early boot path) the backfill is
+    // skipped.
     // -----------------------------------------------------------------
     run_attachment_backfills(pool, materializer).await;
 

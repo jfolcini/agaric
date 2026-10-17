@@ -1,9 +1,9 @@
 //! #1453 Phase 1 — backfill blake3 `content_hash` for pre-existing attachments.
 //!
 //! Migration `0093` adds a NULLABLE `content_hash` column. Rows attached before
-//! the column existed (and rows materialized purely from a remote `AddAttachment`
-//! op, whose payload carries no hash) have `content_hash IS NULL`. This one-shot
-//! boot-time pass fills them in by hashing the bytes on disk.
+//! the column existed (and rows materialized from a remote `AddAttachment` op
+//! that predates the hash in its payload, #5728) have `content_hash IS NULL`.
+//! This one-shot boot-time pass fills them in by hashing the bytes on disk.
 //!
 //! ## Design
 //!
