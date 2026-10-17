@@ -36,6 +36,7 @@ import type { PageSourceBufferHandle } from '@/components/pages/PageSourceBuffer
 import { PageSourceChanges } from '@/components/pages/PageSourceChanges'
 import { PageSourceConflictDialog } from '@/components/pages/PageSourceConflictDialog'
 import { latestUndoEntry, notifyPageSourceSaved } from '@/components/pages/PageSourceSaveReport'
+import { findUnresolvedUlidTokens } from '@/components/pages/ulid-tokens'
 import { Button } from '@/components/ui/button'
 import { SHARED_INPUT_CLASSES } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
@@ -270,8 +271,19 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     } else if (lines.text.trim() === '' && opened.base.text.trim() !== '') {
       setConfirmingDeleteAll(true)
     } else {
+      void warnUnresolvedTokens(lines.text)
       void submit(opened.base.source, false)
     }
+  }
+
+  // A warning, not a refusal: the save goes ahead (#5686).
+  const warnUnresolvedTokens = async (text: string): Promise<void> => {
+    const unresolved = await findUnresolvedUlidTokens(text)
+    if (unresolved.length === 0) return
+    const tokens = [...new Set(unresolved.map((token) => text.slice(token.from, token.to)))]
+    notify.warning(
+      t('pageSource.unresolvedTokens', { count: tokens.length, tokens: tokens.join(', ') }),
+    )
   }
 
   const discardAndClose = (): void => {

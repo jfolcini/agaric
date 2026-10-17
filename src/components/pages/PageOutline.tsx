@@ -10,6 +10,7 @@
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
+import { renderRichContent } from '@/components/RichContentRenderer'
 import {
   Sheet,
   SheetBody,
@@ -18,6 +19,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import { scrollElementIntoView } from '@/lib/scroll-into-view'
 import { cn } from '@/lib/utils'
 import type { FlatBlock } from '@/stores/page-blocks'
@@ -67,6 +69,9 @@ export function PageOutline({ open, onOpenChange, onCloseAutoFocus }: PageOutlin
   const { t } = useTranslation()
   const blocks = usePageBlockStore((s) => s.blocks)
   const headings = extractHeadings(blocks)
+  // Not `useBlockResolvers`: the outline mounts from `PageHeader`, outside the
+  // tree's resolver provider.
+  const resolvers = useRichContentCallbacks()
 
   const handleClick = (blockId: string) => {
     // Blocks render `data-block-id={blockId}`; the editable element's own `id`
@@ -105,7 +110,11 @@ export function PageOutline({ open, onOpenChange, onCloseAutoFocus }: PageOutlin
                       )}
                       onClick={() => handleClick(h.blockId)}
                     >
-                      {h.text}
+                      {renderRichContent(h.text, {
+                        ...resolvers,
+                        inline: true,
+                        interactive: false,
+                      })}
                     </button>
                   </li>
                 ))}

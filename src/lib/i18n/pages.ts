@@ -163,6 +163,10 @@ export const pages: Record<string, string> = {
   'pageSource.hint':
     "Each line keeps its block while you edit it, and a line you cut and paste moves its block. Removing a bullet deletes its block, a new bullet creates one, and joining two lines deletes the second line's block. Escape leaves the editor, asking first when you changed it.",
   'pageSource.draftRestored': 'Restored your unsaved edits.',
+  'pageSource.ulidHint': 'Points to {{title}}',
+  'pageSource.ulidHintDeleted': 'Points to {{title}}, deleted or missing',
+  'pageSource.unresolvedTokens_one': '{{count}} reference points to nothing: {{tokens}}',
+  'pageSource.unresolvedTokens_other': '{{count}} references point to nothing: {{tokens}}',
   'pageSource.legacyDraft':
     "Unsaved edits from an earlier version of Edit as Markdown cannot be opened here. Copy what you need from them: saving, discarding or editing this page's Markdown replaces them.",
   'pageSource.copyLegacyDraft': 'Copy earlier edits',

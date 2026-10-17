@@ -32,6 +32,7 @@ import { dispatch } from '@/lib/tauri-mock/handlers'
 import { opLog, pageAliases, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
@@ -477,6 +478,86 @@ describe('PageSourceEditor saving', () => {
         .map((item) => item.textContent),
     ).toEqual(warnings)
     expect(within(body).queryByText(/deleted/)).not.toBeInTheDocument()
+  })
+
+  describe('a ULID that resolves to nothing (#5686)', () => {
+    const GONE = '01J000000000000000000000GN'
+    const KNOWN = '01J0000000000000000000HERE'
+    /** ULID-shaped, but `O` is not Crockford: nothing can resolve it. */
+    const MALFORMED = '01J000000000000000000000OO'
+
+    beforeEach(() => {
+      useResolveStore.setState({ cache: new Map(), version: 0 })
+    })
+
+    function stubResolving(rows: CommandReturns['batch_resolve']) {
+      const batchResolve = vi.fn(() => rows)
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands({
+          get_page_buffer: () => BUFFER,
+          apply_page_source: () => report(),
+          load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
+          batch_resolve: batchResolve,
+        }),
+      )
+      return batchResolve
+    }
+
+    it('Save warns, naming each one once, and saves anyway', async () => {
+      stubResolving([])
+      const user = userEvent.setup()
+      const { onClose } = renderEditor()
+      edit(await loadedEditor(), 'first', `first ((${GONE})) [[${MALFORMED}]] ((${GONE}))`)
+
+      await user.click(screen.getByRole('button', { name: t('action.save') }))
+
+      await waitFor(() => {
+        expect(onClose).toHaveBeenCalledOnce()
+      })
+      expect(applyCalls()).toHaveLength(1)
+      await waitFor(() => {
+        expect(vi.mocked(toast.warning)).toHaveBeenCalledWith(
+          t('pageSource.unresolvedTokens', {
+            count: 2,
+            tokens: `((${GONE})), [[${MALFORMED}]]`,
+          }),
+        )
+      })
+    })
+
+    it('tells assistive tech the title of the one the cursor touches', async () => {
+      stubResolving([{ id: KNOWN, title: 'Known', block_type: 'content', deleted: false }])
+      renderEditor()
+      const box = await loadedEditor()
+      edit(box, 'first', `first ((${KNOWN}))`)
+      const status = screen.getByRole('status')
+
+      caretAtEnd(box, 'first')
+      await waitFor(() => {
+        expect(status).toHaveTextContent(t('pageSource.ulidHint', { title: 'Known' }))
+      })
+      caretAtEnd(box, 'second')
+      expect(status).toHaveTextContent(/^$/)
+    })
+
+    it('Save warns of nothing when every one resolves', async () => {
+      const batchResolve = stubResolving([
+        { id: KNOWN, title: 'Known', block_type: 'content', deleted: false },
+      ])
+      const user = userEvent.setup()
+      const { onClose } = renderEditor()
+      edit(await loadedEditor(), 'first', `first ((${KNOWN}))`)
+
+      await user.click(screen.getByRole('button', { name: t('action.save') }))
+
+      await waitFor(() => {
+        expect(onClose).toHaveBeenCalledOnce()
+      })
+      await waitFor(() => {
+        expect(batchResolve).toHaveBeenCalled()
+      })
+      expect(vi.mocked(toast.warning)).not.toHaveBeenCalled()
+    })
   })
 
   it('a rejected save shows the backend message inline, logs, and keeps the buffer open', async () => {

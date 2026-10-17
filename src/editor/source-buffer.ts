@@ -26,6 +26,7 @@ import { type Command, Plugin, TextSelection, type Transaction } from '@tiptap/p
 import { type Mappable, Mapping } from '@tiptap/pm/transform'
 
 import { SourceBufferKeys } from '@/editor/source-buffer-keys'
+import { clampSelectionToTokens, SourceBufferUlids } from '@/editor/source-buffer-ulids'
 
 export interface SourceLines {
   text: string
@@ -323,7 +324,8 @@ const SourceBufferBehaviour = Extension.create<SourceBufferOptions>({
           clipboardTextParser: (text, $context) => textLines($context.doc.type.schema, text),
           handlePaste(view, event, slice) {
             const pasted = incoming(view.state.schema, event.clipboardData, slice, pageIds)
-            view.dispatch(pasteLines(view.state.tr, pasted))
+            // A paste that would split a ULID token lands beside it (#5686).
+            view.dispatch(pasteLines(clampSelectionToTokens(view.state.tr), pasted))
             return true
           },
           handleDrop(view, event, slice, moved) {
@@ -352,5 +354,6 @@ export function sourceBufferExtensions(pageIds: ReadonlyArray<string | null>) {
     History,
     SourceBufferBehaviour.configure({ pageIds: new Set(pageIds) }),
     SourceBufferKeys,
+    SourceBufferUlids,
   ]
 }

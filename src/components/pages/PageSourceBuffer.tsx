@@ -10,6 +10,7 @@
 import { EditorContent, useEditor } from '@tiptap/react'
 import type React from 'react'
 import { useEffect, useImperativeHandle, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { PageSourceToolbar } from '@/components/pages/PageSourceToolbar'
@@ -20,6 +21,7 @@ import {
   type SourceLines,
 } from '@/editor/source-buffer'
 import { pickerOpen, SourceBufferPickers } from '@/editor/source-buffer-pickers'
+import { activeUlidToken } from '@/editor/source-buffer-ulids'
 
 export interface PageSourceBufferHandle {
   /** Focus the buffer with line `index`, counted from 0, selected, when it has that line. */
@@ -67,6 +69,7 @@ export function PageSourceBuffer({
   onCancel,
   ref,
 }: PageSourceBufferProps): React.ReactElement {
+  const { t } = useTranslation()
   const { searchPages, searchTags, searchBlockRefs } = useBlockResolve()
   // One options object for the editor's life: `useEditor` re-applies options
   // that change identity.
@@ -115,6 +118,22 @@ export function PageSourceBuffer({
     return () => dom.removeEventListener('keydown', keydown, true)
   }, [editor, onKeyDown])
 
+  // The title of the ULID token the cursor touches, for assistive tech, which
+  // the hint the stylesheet draws does not reach (#5686).
+  const [tokenTitle, setTokenTitle] = useState('')
+  useEffect(() => {
+    if (editor === null) return
+    const announce = (): void => {
+      const hint = activeUlidToken(editor.state)?.hint ?? null
+      const key = hint?.deleted === true ? 'pageSource.ulidHintDeleted' : 'pageSource.ulidHint'
+      setTokenTitle(hint === null ? '' : t(key, { title: hint.label }))
+    }
+    editor.on('transaction', announce)
+    return () => {
+      editor.off('transaction', announce)
+    }
+  }, [editor, t])
+
   useEffect(() => {
     if (editor === null) return
     editor.setEditable(!readOnly, false)
@@ -157,6 +176,7 @@ export function PageSourceBuffer({
         />
       )}
       <EditorContent editor={editor} />
+      <output className="sr-only">{tokenTitle}</output>
     </div>
   )
 }

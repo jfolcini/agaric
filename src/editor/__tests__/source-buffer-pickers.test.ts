@@ -116,4 +116,15 @@ describe('where the pickers open', () => {
     expect(typeAtEnd(ed, 0, '))')).toBeNull()
     expect(typeAtEnd(ed, 0, ' #[[multi')).toBeNull()
   })
+
+  it('[[ and (( stay closed with the caret inside a ULID token, which a pick could only split (#5686)', () => {
+    const ed = build([[`- [[${B}]] ((${B}))`, A]])
+    const suggestionAt = (offset: number): string | null => {
+      ed.view.dispatch(ed.state.tr.setSelection(TextSelection.create(ed.state.doc, 1 + offset)))
+      return ed.view.dom.querySelector('.suggestion')?.textContent ?? null
+    }
+
+    expect(suggestionAt(6)).toBeNull()
+    expect(suggestionAt(B.length + 10)).toBeNull()
+  })
 })

@@ -1461,6 +1461,35 @@
   text-decoration: line-through;
 }
 
+/* #5686 — Edit as Markdown: a ULID token's title, under it while hovered or
+   while the focused buffer's cursor touches it. Generated content, so it is
+   not text and is never copied; `/ ''` keeps it out of the accessibility
+   tree, where the buffer's live region says it instead. */
+.source-ulid-token {
+  position: relative;
+}
+
+.source-ulid-token[data-ulid-hint]:hover::after,
+.ProseMirror-focused .source-ulid-token[data-ulid-hint][data-ulid-active]::after {
+  @apply rounded-sm bg-muted px-1.5 text-xs text-muted-foreground shadow-sm;
+  content: attr(data-ulid-hint) / '';
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-sans);
+  pointer-events: none;
+  animation: suggestion-appear var(--duration-fast) var(--ease-out);
+}
+
+.source-ulid-token[data-ulid-deleted]::after {
+  text-decoration: line-through;
+}
+
 /* Tag reference chips — #[ULID] rendered as tag name pills. Muted metadata,
    not a strong fill, so a tagged line still reads as prose (#5332). */
 .tag-ref-chip {
