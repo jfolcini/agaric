@@ -259,6 +259,50 @@ describe('blocks created, moved and deleted elsewhere', () => {
     expect(backend.live()).toEqual(rowsOf(ed.state.doc))
   })
 
+  it('a block moved out of a parent deleted in the same reload is moved here, and no save moves it back', async () => {
+    const { ed, backend, save, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+      [C, 1, 'gamma'],
+    ])
+
+    await remote(async (b) => {
+      await b.move(C, PAGE, 2)
+      await b.remove(B)
+    })
+    backend.reset()
+    await save()
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'alpha'],
+      [C, 0, 'gamma'],
+    ])
+    expect(backend.calls).toEqual([])
+  })
+
+  it('a block moved out of a parent deleted elsewhere while edited here is moved here, and no save moves it back', async () => {
+    const { ed, backend, save, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+      [C, 1, 'gamma'],
+    ])
+    caret(ed, 1, 4)
+    type(ed, '!')
+
+    await remote(async (b) => {
+      await b.move(C, PAGE, 2)
+      await b.remove(B)
+    })
+    await save()
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'alpha'],
+      [C, 0, 'gamma'],
+      [KEPT_1, 0, 'beta!'],
+    ])
+    expect(backend.live()).toEqual(rowsOf(ed.state.doc))
+  })
+
   it('a block moved elsewhere moves here, with the blocks under it and the cursor in it', async () => {
     const { ed, backend, save, remote } = open([
       [A, 0, 'alpha'],
@@ -479,6 +523,34 @@ describe('what the property found', () => {
     await save()
 
     expect(idsOf(ed.state.doc)).not.toContain(B)
+    expect(backend.live()).toEqual(rowsOf(ed.state.doc))
+  })
+
+  it('with a refused create, every block still to be created is saved under a new id, not one per save', async () => {
+    const { ed, backend, state, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+      [C, 0, 'gamma'],
+    ])
+    ed.commands.setTextSelection({ from: posIn(ed, 1, 0), to: posIn(ed, 2, 'gamma'.length) })
+    const data = new DataTransfer()
+    ed.view.dom.dispatchEvent(
+      new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }),
+    )
+    await remote(async (b) => {
+      await b.remove(B)
+      await b.remove(C)
+    })
+    caret(ed, 0, 0)
+    ed.view.pasteHTML(data.getData('text/html'))
+    const refused = await savePage(ed.state.doc, state, backend)
+    expect(refused.failed).toMatchObject({ kind: 'create' })
+    const { id } = refused.failed as { id: string }
+
+    applyRemote(ed.view, state, await backend.tree(), idMinter('01KEPT'), new Set([id]))
+    const retried = await savePage(ed.state.doc, state, backend)
+
+    expect(retried.error).toBeUndefined()
     expect(backend.live()).toEqual(rowsOf(ed.state.doc))
   })
 })

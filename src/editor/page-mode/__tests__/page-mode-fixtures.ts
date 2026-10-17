@@ -94,9 +94,12 @@ export function caret(editor: Editor, index: number, offset: number): void {
   editor.commands.setTextSelection(posIn(editor, index, offset))
 }
 
-export function press(editor: Editor, key: string, init: KeyboardEventInit = {}): void {
-  editor.view.someProp('handleKeyDown', (f) =>
-    f(editor.view, new KeyboardEvent('keydown', { key, ...init })),
+/** Press `key`; true when the editor took it, so the browser does not act on it. */
+export function press(editor: Editor, key: string, init: KeyboardEventInit = {}): boolean {
+  return (
+    editor.view.someProp('handleKeyDown', (f) =>
+      f(editor.view, new KeyboardEvent('keydown', { key, ...init })),
+    ) ?? false
   )
 }
 

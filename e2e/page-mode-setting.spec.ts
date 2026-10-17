@@ -114,10 +114,16 @@ test.describe('page mode’s setting and switch (#5691)', () => {
     await seedPage(page, 'Switched here', ['alpha'])
     await seedPage(page, 'Not switched', ['beta'])
     await openViaPalette(page, 'Switched here')
+    // How the selected item looks, read off Blocks while it is the selected one.
+    const selectedLook = await modeSwitch(page, 'Blocks').evaluate(
+      (el) => getComputedStyle(el).backgroundColor,
+    )
 
     await page.keyboard.press('Control+Shift+M')
     await expect(page.locator(EDITOR)).toBeVisible()
     expect(await axeViolations(page, '[role="radiogroup"]')).toEqual([])
+    await expect(modeSwitch(page, 'Page')).toHaveCSS('background-color', selectedLook)
+    await expect(modeSwitch(page, 'Blocks')).not.toHaveCSS('background-color', selectedLook)
 
     await openViaPalette(page, 'Not switched')
     await expect(page.locator('[data-testid="block-static"]').first()).toBeVisible()
@@ -191,13 +197,13 @@ test.describe('page mode’s setting and switch (#5691)', () => {
     await seedPage(
       page,
       'Over the cap',
-      Array.from({ length: 1001 }, (_, i) => `block ${i}`),
+      Array.from({ length: 501 }, (_, i) => `block ${i}`),
     )
     await openViaPalette(page, 'Over the cap')
 
     await expect(modeSwitch(page, 'Page')).toHaveAttribute('aria-disabled', 'true')
     await expect(modeSwitch(page, 'Page')).toHaveAccessibleDescription(
-      'Page mode opens pages of up to 1000 blocks; this one has 1001.',
+      'Page mode opens pages of up to 500 blocks; this one has 501.',
     )
     await page.keyboard.press('Control+Shift+M')
     await expect(page.locator(EDITOR)).toHaveCount(0)

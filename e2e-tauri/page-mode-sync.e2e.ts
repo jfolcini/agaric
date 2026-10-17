@@ -145,11 +145,7 @@ describe('Agaric real-backend page mode while a peer edits (#5691)', () => {
       { timeout: NAV_TIMEOUT, interval: 1_000, timeoutMsg: "the peer's page never arrived" },
     )
     await chooseEditMode('Page')
-    expect((await pageModeBlocks()).map((block) => block.id)).toEqual([
-      firstId,
-      expect.any(String),
-      thirdId,
-    ])
+    expect((await pageModeBlocks()).map((block) => block.id)).toEqual([firstId, secondId, thirdId])
     // Marks this page-mode editor, so a remount, which would re-read the page, shows.
     await browser.execute((selector: string) => {
       document.querySelector(selector)?.setAttribute('data-wdio-mounted', 'once')

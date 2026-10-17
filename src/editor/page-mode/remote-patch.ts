@@ -240,7 +240,8 @@ function dropDeleted(
  * A block whose create or restore the backend refused, and which it does not
  * hold live: its id is one the backend keeps for a block deleted elsewhere
  * (a copy pasted after a peer deleted the original), so the block is saved
- * under a new id rather than refused again on every save.
+ * under a new id rather than refused again on every save. So is every block
+ * still to be created, which would be refused the same way, one save each.
  */
 function rekeyRefused(
   tr: Transaction,
@@ -249,12 +250,14 @@ function rekeyRefused(
   refused: ReadonlySet<string>,
   mintId: () => string,
 ): void {
-  for (const id of refused) {
-    const at = live.has(id) ? null : find(tr.doc, id)
-    if (at === null) continue
-    tr.setNodeAttribute(at.pos, 'blockId', mintId())
+  if (refused.size === 0) return
+  tr.doc.forEach((node, pos) => {
+    const id = blockIdOf(node) as string
+    const unsent = !save.saved.has(id) && !save.deletedAt.has(id)
+    if (live.has(id) || !(refused.has(id) || unsent)) return
+    tr.setNodeAttribute(pos, 'blockId', mintId())
     save.deletedAt.delete(id)
-  }
+  })
 }
 
 /**
@@ -308,6 +311,9 @@ export function remotePatch(
   const fresh = freshTree(rows, pageId)
   const tr = state.tr
   const ends = selectionEnds(state.doc, state.selection)
+  // Judged on the document as the user left it: a parent removed or rekeyed
+  // below would otherwise read as a move made here of the blocks under it.
+  const moved = movedElsewhere(state.doc, save, fresh.tree)
   const { dropped, keptAsNew, removed } = dropDeleted(
     tr,
     save,
@@ -315,7 +321,6 @@ export function remotePatch(
     mintId,
   )
   rekeyRefused(tr, save, fresh.content, refused, mintId)
-  const moved = movedElsewhere(tr.doc, save, fresh.tree)
   const shown = new Set<string>()
   tr.doc.forEach((node) => shown.add(blockIdOf(node) as string))
   const type = state.schema.nodes[PAGE_BLOCK] as NodeType

@@ -90,25 +90,26 @@ export function usePageMode(pageId: string): PageModeState {
   )
 
   const checkFit = useCallback(() => {
-    if (blocker !== null) return
+    if (inRows !== null) return
     const { blocks: rows, truncatedTotal } = pageStore.getState()
+    // Whatever was found before is looked for again: a property may be gone.
     pageModeBlocker(rows, truncatedTotal ?? rows.length).then(
-      (next) => {
-        if (next !== null) setFound({ pageId, blocker: next })
-      },
+      (next) => setFound(next === null ? null : { pageId, blocker: next }),
       (err: unknown) => {
         logger.warn('usePageMode', 'Failed to check the page for page mode', { pageId }, err)
       },
     )
-  }, [blocker, pageId, pageStore])
+  }, [inRows, pageId, pageStore])
 
   const changeMode = useCallback(
     (next: EditMode) => {
       if (next === 'page') {
-        if (blocker !== null) {
-          notify.info(blockerMessage(blocker))
+        if (inRows !== null) {
+          notify.info(blockerMessage(inRows))
           return
         }
+        // Opening looks again at what was found before, and says if it still holds.
+        setFound(null)
         // As for source mode: the block being edited commits as it loses focus.
         const focused = useBlockStore.getState().focusedBlockId
         setCursor(focused === null ? null : { pageId, blockId: focused })
@@ -131,7 +132,7 @@ export function usePageMode(pageId: string): PageModeState {
           })
       })
     },
-    [afterFlush, blocker, pageId, pageStore, setFocused],
+    [afterFlush, inRows, pageId, pageStore, setFocused],
   )
 
   return {

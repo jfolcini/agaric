@@ -230,6 +230,7 @@ import type { TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { PageEditor } from '@/components/pages/PageEditor'
 import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
+import type { PropertyRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import { useBlockStore } from '@/stores/blocks'
@@ -1453,6 +1454,62 @@ describe('PageEditor page mode (#5691)', () => {
 
     await waitFor(() => {
       expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.properties'))
+    })
+  })
+
+  describe('a property found on a block and since removed', () => {
+    const effort: PropertyRow = {
+      key: 'effort',
+      value_text: '1h',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    }
+
+    /** A page whose one block holds a property until `clearProperty` is called, blocked once pointed at. */
+    async function blockedByProperty(): Promise<() => void> {
+      let properties: Record<string, PropertyRow[]> = { B1: [effort] }
+      stubInvoke({
+        load_page_subtree: () => ({
+          blocks: [makeBlock({ id: 'B1', content: 'text', parent_id: 'PAGE_1' })],
+          truncated: false,
+          total: 1,
+        }),
+        get_batch_properties: () => properties,
+        list_attachments_batch: () => ({}),
+      })
+      render(<PageEditor pageId="PAGE_1" title="My Page" />)
+      await modeSwitch()
+      await loadPage()
+      act(() => capturedPageHeaderProps?.onEditModeIntent?.())
+      await waitFor(() => {
+        expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.properties'))
+      })
+      return () => {
+        properties = {}
+      }
+    }
+
+    it('pointing at the switch looks again, and Page is offered', async () => {
+      const clearProperty = await blockedByProperty()
+      clearProperty()
+
+      act(() => capturedPageHeaderProps?.onEditModeIntent?.())
+
+      await waitFor(() => {
+        expect(capturedPageHeaderProps?.editModeBlocked).toBeNull()
+      })
+    })
+
+    it('choosing Page looks again, and opens page mode', async () => {
+      const clearProperty = await blockedByProperty()
+      clearProperty()
+
+      act(() => capturedPageHeaderProps?.onEditModeChange?.('page'))
+
+      expect(await screen.findByTestId('page-mode')).toBeInTheDocument()
+      expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
     })
   })
 

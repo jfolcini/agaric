@@ -30,6 +30,7 @@ export function pageModeExtensions(options: PageModeExtensionOptions): Extension
     PageDocument,
     PageBlock,
     ...content.text,
+    ...content.lists,
     ...content.blocks,
     ...content.inline,
     ...content.chips,

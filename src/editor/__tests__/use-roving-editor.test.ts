@@ -509,13 +509,6 @@ describe('custom extension keyboard shortcuts', () => {
     expect(editor.extensionManager.extensions.some((e) => e.name === 'codeBlock')).toBe(true)
   })
 
-  it('CodeBlockWithShortcut installs one highlighter, the one that redoes only touched code', () => {
-    editor = createEditor([CodeBlockWithShortcut.configure({ lowlight: createLowlight(common) })])
-    const keys = editor.state.plugins.map((plugin) => (plugin as unknown as { key: string }).key)
-    expect(keys.filter((key) => key.startsWith('lowlight$'))).toEqual([])
-    expect(keys.filter((key) => key.startsWith('codeHighlight$'))).toHaveLength(1)
-  })
-
   it('CodeBlockWithShortcut renders a plain <pre><code> node view (no React wrapper)', () => {
     editor = createCodeBlockEditor()
     const pre = editor.view.dom.querySelector('pre')
@@ -1057,6 +1050,27 @@ describe('useRovingEditor integration (renderHook)', () => {
     expect(result.current.editor).not.toBeNull()
     expect(result.current.activeBlockId).toBeNull()
     expect(result.current.originalMarkdown).toBe('')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  // A later extension's plugins act first, so where `markdownReveal` sits
+  // decides whether its Backspace and arrow keys or the lists' come first (#5691).
+  it('places markdownReveal between the marks and the quote and lists', async () => {
+    const { result, unmount: unmountHook } = await setup()
+    const order = [
+      'underline',
+      'markdownReveal',
+      'blockquote',
+      'orderedList',
+      'bulletList',
+      'listItem',
+      'listMarkerDecoration',
+    ]
+    const names = (result.current.editor as Editor).extensionManager.extensions.map((e) => e.name)
+
+    expect(names.filter((name) => order.includes(name))).toEqual(order)
 
     result.current.editor?.destroy()
     unmountHook()

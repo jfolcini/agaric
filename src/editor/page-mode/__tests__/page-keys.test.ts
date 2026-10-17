@@ -16,6 +16,7 @@ import {
   type Row,
   rowsOf,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
+import { PREFERENCES, removePreference, writePreference } from '@/lib/preferences'
 import { MAX_BLOCK_DEPTH } from '@/lib/tree-utils'
 
 const A = blockId(1)
@@ -30,6 +31,7 @@ let editor: Editor | null = null
 afterEach(() => {
   editor?.destroy()
   editor = null
+  removePreference(PREFERENCES.tabIndentsBlocks)
 })
 
 function build(rows: Row[]): Editor {
@@ -214,6 +216,52 @@ describe('Shift+Tab', () => {
     press(ed, 'Tab', { shiftKey: true })
 
     expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'a']])
+  })
+})
+
+describe('the indent and dedent shortcuts', () => {
+  const CHORD = { ctrlKey: true, shiftKey: true }
+
+  it('indent and outdent the block at the cursor, as block mode’s do', () => {
+    const ed = build([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+    ])
+    caret(ed, 1, 0)
+
+    expect(press(ed, 'ArrowRight', CHORD)).toBe(true)
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'a'],
+      [B, 1, 'b'],
+    ])
+
+    expect(press(ed, 'ArrowLeft', CHORD)).toBe(true)
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+    ])
+  })
+
+  it('with Tab indents blocks off, Tab is left to the browser and the shortcuts still indent', () => {
+    writePreference(PREFERENCES.tabIndentsBlocks, false)
+    const ed = build([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+    ])
+    caret(ed, 1, 0)
+
+    expect(press(ed, 'Tab')).toBe(false)
+    expect(press(ed, 'Tab', { shiftKey: true })).toBe(false)
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+    ])
+
+    press(ed, 'ArrowRight', CHORD)
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'a'],
+      [B, 1, 'b'],
+    ])
   })
 })
 

@@ -6,7 +6,7 @@
  * via addToHistory:false on content replacement transactions.
  */
 
-import type { Content, Extensions, NodeConfig } from '@tiptap/core'
+import type { Content, Extensions } from '@tiptap/core'
 import Bold from '@tiptap/extension-bold'
 import Code from '@tiptap/extension-code'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
@@ -48,7 +48,6 @@ import { BlockRef } from '@/editor/extensions/block-ref'
 import { BlockRefPicker, blockRefPickerPluginKey } from '@/editor/extensions/block-ref-picker'
 import { CalloutBlockquote } from '@/editor/extensions/callout-blockquote'
 import { CheckboxInputRule } from '@/editor/extensions/checkbox-input-rule'
-import { codeHighlight } from '@/editor/extensions/code-highlight'
 import { EmojiPicker, emojiPickerPluginKey } from '@/editor/extensions/emoji-picker'
 import { ExternalLink } from '@/editor/extensions/external-link'
 import { withFlankingShortcuts } from '@/editor/extensions/flanking-marks'
@@ -313,22 +312,6 @@ function patchStyleProperties(
 
 /** CodeBlockLowlight with configurable shortcut to toggle code blocks. @internal Exported for testing. */
 export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
-  // CodeBlock's own plugins (a paste from VS Code), highlighted by
-  // `codeHighlight` rather than lowlight's plugin, which walks the whole
-  // document on every transaction (#5691). The inherited plugins also ran
-  // twice: `extend` copies the parent's config, so it ran as this extension's
-  // and again as its `parent`.
-  addProseMirrorPlugins() {
-    const codeBlock = CodeBlockLowlight.parent?.config as NodeConfig | undefined
-    return [
-      ...(codeBlock?.addProseMirrorPlugins?.call(this) ?? []),
-      codeHighlight({
-        name: this.name,
-        lowlight: this.options.lowlight,
-        defaultLanguage: this.options.defaultLanguage,
-      }),
-    ]
-  },
   addKeyboardShortcuts() {
     return {
       ...this.parent?.(),
@@ -578,12 +561,14 @@ export interface ContentExtensionOptions {
 /**
  * The content nodes, marks, chips and pickers block mode's roving editor and
  * page mode's document (#5691) share, in the groups each places its own
- * extensions between: `text` (paragraphs, marks, lists), `blocks` (rules,
- * tables, code, headings, history), `inline` (links, math, images) and
- * `chips` (tags, page links and block refs, with their pickers).
+ * extensions between: `text` (paragraphs, marks), `lists` (quotes, lists),
+ * `blocks` (rules, tables, code, headings, history), `inline` (links, math,
+ * images) and `chips` (tags, page links and block refs, with their pickers).
+ * The order is behaviour, since a later extension's plugins act first: block
+ * mode places `MarkdownReveal` between `text` and `lists`, where it was.
  */
 export function contentExtensions(o: ContentExtensionOptions) {
-  const lists = o.listInputRules
+  const listTypes = o.listInputRules
     ? [OrderedList, BulletList]
     : [
         OrderedList.extend({ addInputRules: () => [] }),
@@ -600,9 +585,11 @@ export function contentExtensions(o: ContentExtensionOptions) {
     withFlankingShortcuts(StrikeWithShortcut, ['~~']),
     withFlankingShortcuts(HighlightWithShortcut, ['==']),
     Underline,
+  ]
+  const lists: Extensions = [
     CalloutBlockquote,
     // #1436 — bullet/unordered lists share `ListItem` with ordered ones.
-    ...lists,
+    ...listTypes,
     ListItem,
   ]
   const blocks: Extensions = [
@@ -644,7 +631,7 @@ export function contentExtensions(o: ContentExtensionOptions) {
     BlockLinkPicker.configure({ items: o.searchPages, onCreate: o.onCreatePage }),
     BlockRefPicker.configure({ items: o.searchBlockRefs }),
   ]
-  return { text, blocks, inline, chips }
+  return { text, lists, blocks, inline, chips }
 }
 
 export interface RovingEditorOptions {
@@ -903,6 +890,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // #5689 — the caret's inline marks show their Markdown markers, behind the
       // off-by-default `revealMarkdownSyntax` preference. Block mode only (#5691).
       MarkdownReveal,
+      ...content.lists,
       // #3000 — paints the focused block's list marker (bullet / computed
       // ordinal) as a widget decoration, fed via `updateListMarker`.
       ListMarkerDecoration,

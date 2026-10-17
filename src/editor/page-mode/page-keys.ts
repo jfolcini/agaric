@@ -3,16 +3,17 @@
  * the block; Backspace at its start joins its text to the block before, and
  * Delete at its end joins the next one's. Tab and Shift+Tab move a block and
  * the blocks under it a level in or out, by block mode's own rules
- * (`block-tree-ops.ts`). Arrows cross blocks on their own: the
- * page is one editable surface. Escape leaves it, as it leaves a block. Inside a
- * list, a table or a code block the keys keep their meaning there, and an open
- * picker keeps its own keys.
+ * (`block-tree-ops.ts`); with *Tab indents blocks* off, Tab is left to move
+ * focus and the indent and dedent shortcuts do it, as in block mode. Arrows
+ * cross blocks on their own: the page is one editable surface. Escape leaves
+ * it, as it leaves a block. Inside a list, a table or a code block the keys
+ * keep their meaning there, and an open picker keeps its own keys.
  */
 
 import { Extension } from '@tiptap/core'
 import { joinTextblockBackward, joinTextblockForward } from '@tiptap/pm/commands'
 import type { Node as PMNode, NodeType, ResolvedPos } from '@tiptap/pm/model'
-import type { Command, EditorState, Transaction } from '@tiptap/pm/state'
+import { type Command, type EditorState, Plugin, type Transaction } from '@tiptap/pm/state'
 import { canSplit } from '@tiptap/pm/transform'
 
 import { atTagPickerPluginKey, hashTagPickerPluginKey } from '@/editor/extensions/at-tag-picker'
@@ -34,7 +35,9 @@ import {
   findPrevSiblingAt,
   indentTooDeep,
 } from '@/lib/block-tree-ops'
+import { isTabIndentEnabled } from '@/lib/editor-preferences'
 import { t } from '@/lib/i18n'
+import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { notify } from '@/lib/notify'
 import { computeSelectionRoots, type TreeItem } from '@/lib/tree-utils'
 
@@ -211,15 +214,32 @@ export const PageKeys = Extension.create({
         if (pickerOpen(state) || !when(state)) return false
         return command(state, view.dispatch, view)
       }
-    const notInListOrTable = (state: EditorState) => !insideListOrTable(state.selection.$from)
+    const tabIndents = (state: EditorState) =>
+      !insideListOrTable(state.selection.$from) && isTabIndentEnabled()
     return {
       Enter: run(splitPageBlock),
       Backspace: run(joinBackward),
       Delete: run(joinForward),
-      Tab: run(indentBlocks, notInListOrTable),
-      'Shift-Tab': run(outdentBlocks, notInListOrTable),
+      Tab: run(indentBlocks, tabIndents),
+      'Shift-Tab': run(outdentBlocks, tabIndents),
       // As block mode's "leave block": out of the document, which saves it.
       Escape: run(() => this.editor.commands.blur()),
     }
+  },
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        props: {
+          // The rebindable shortcuts, which still indent where Tab is left to move focus.
+          handleKeyDown(view, event) {
+            let command: Command | null = null
+            if (matchesShortcutBinding(event, 'indentBlock')) command = indentBlocks
+            else if (matchesShortcutBinding(event, 'dedentBlock')) command = outdentBlocks
+            if (command === null || pickerOpen(view.state)) return false
+            return command(view.state, view.dispatch, view)
+          },
+        },
+      }),
+    ]
   },
 })
