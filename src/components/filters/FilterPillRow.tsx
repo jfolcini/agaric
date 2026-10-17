@@ -80,11 +80,21 @@ export function filterSummary(
     case 'BlockType': {
       return `${tr('filter.summary.type', 'type')} = ${filter.block_type}`
     }
+    case 'TodoState': {
+      return `${tr('filter.summary.status', 'status')} = ${filter.state}`
+    }
+    case 'Priority': {
+      return `${tr('filter.summary.priority', 'priority')} = ${filter.level}`
+    }
+    case 'Not': {
+      // The Status / Priority `none` sentinel (`noneOf` in AddFilterRow).
+      const inner = filter.filter
+      const leaf = inner.type === 'Or' ? inner.filters[0]?.type : undefined
+      if (leaf === 'TodoState') return `${tr('filter.summary.status', 'status')} = none`
+      if (leaf === 'Priority') return `${tr('filter.summary.priority', 'priority')} = none`
+      return tr('filter.default', 'filter')
+    }
     case 'PropertyText': {
-      if (filter.key === 'todo')
-        return `${tr('filter.summary.status', 'status')} ${opLabel(filter.op, t)} ${filter.value}`
-      if (filter.key === 'priority')
-        return `${tr('filter.summary.priority', 'priority')} ${opLabel(filter.op, t)} ${filter.value}`
       return `${filter.key} ${opLabel(filter.op, t)} ${filter.value}`
     }
     case 'PropertyNum': {

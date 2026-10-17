@@ -27,6 +27,7 @@ import {
   type FilterWithKey,
   filterSummary,
 } from '@/components/filters/FilterPillRow'
+import type { BacklinkFilter } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 
 beforeEach(() => {
@@ -132,18 +133,23 @@ describe('FilterPillRow', () => {
 
   it('renders correct summary for various filter types', () => {
     const filters: FilterWithKey[] = [
-      { type: 'PropertyText', key: 'todo', op: 'Eq', value: 'DONE', _addId: 1 },
-      { type: 'PropertyNum', key: 'priority', op: 'Gt', value: 2, _addId: 2 },
+      { type: 'TodoState', state: 'DONE', _addId: 1 },
+      { type: 'PropertyNum', key: 'estimate', op: 'Gt', value: 2, _addId: 2 },
       { type: 'PropertyIsSet', key: 'due', _addId: 3 },
       { type: 'PropertyIsEmpty', key: 'assignee', _addId: 4 },
       { type: 'CreatedInRange', after: '2024-01-01', before: null, _addId: 5 },
       { type: 'HasTagPrefix', prefix: 'work', _addId: 6 },
+      { type: 'Priority', level: '1', _addId: 7 },
+      { type: 'PropertyText', key: 'todo', op: 'Eq', value: 'x', _addId: 8 },
     ]
 
     render(<FilterPillRow filters={filters} onRemove={vi.fn()} />)
 
     expect(screen.getByText('status = DONE')).toBeInTheDocument()
-    expect(screen.getByText('priority > 2')).toBeInTheDocument()
+    expect(screen.getByText('estimate > 2')).toBeInTheDocument()
+    expect(screen.getByText('priority = 1')).toBeInTheDocument()
+    // A user property that happens to be named `todo` is not the task status.
+    expect(screen.getByText('todo = x')).toBeInTheDocument()
     expect(screen.getByText('due is set')).toBeInTheDocument()
     expect(screen.getByText('assignee is empty')).toBeInTheDocument()
     expect(screen.getByText('created after 2024-01-01')).toBeInTheDocument()
@@ -157,7 +163,7 @@ describe('FilterPillRow', () => {
   it('routes dimension nouns and chip aria-labels through i18n keys', () => {
     const filters: FilterWithKey[] = [
       { type: 'BlockType', block_type: 'content', _addId: 1 },
-      { type: 'PropertyText', key: 'todo', op: 'Eq', value: 'DONE', _addId: 2 },
+      { type: 'TodoState', state: 'DONE', _addId: 2 },
       { type: 'HasTag', tag_id: 'TAG', _addId: 3 },
       { type: 'CreatedInRange', after: '2024-01-01', before: null, _addId: 4 },
     ]
@@ -253,6 +259,16 @@ describe('FilterPillRow', () => {
   })
 
   describe('filterSummary', () => {
+    it('names the Status and Priority `none` sentinels', () => {
+      const noneOf = (filters: BacklinkFilter[]): BacklinkFilter => ({
+        type: 'Not',
+        filter: { type: 'Or', filters },
+      })
+      expect(filterSummary(noneOf([{ type: 'TodoState', state: 'TODO' }]))).toBe('status = none')
+      expect(filterSummary(noneOf([{ type: 'Priority', level: '1' }]))).toBe('priority = none')
+      expect(filterSummary(noneOf([{ type: 'Contains', query: 'x' }]))).toBe('filter')
+    })
+
     it('returns correct summary for PropertyDate filter', () => {
       expect(
         filterSummary({ type: 'PropertyDate', key: 'due', op: 'Lte', value: '2024-12-31' }),

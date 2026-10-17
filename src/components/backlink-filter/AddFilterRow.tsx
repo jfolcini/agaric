@@ -41,7 +41,9 @@ import type { BacklinkFilter } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { getPriorityLevels } from '@/lib/priority-levels'
 import { requireActiveScope } from '@/lib/space-scope'
+import { TASK_STATES } from '@/lib/task-states'
 import { useSpaceStore } from '@/stores/space'
 
 type FilterCategory =
@@ -67,30 +69,30 @@ function buildTypeFilter(s: BuildState): BuildResult {
   return { filter: { type: 'BlockType', block_type: s.blockType } }
 }
 
+/**
+ * The `none` sentinel ("no state" / "no priority", as search's `state:none`).
+ * No variant says `IS NULL`, so this is "none of the values the app sets":
+ * task states are locked to `TASK_STATES`, but a block keeping a priority level
+ * since removed from the options also counts as `none`.
+ */
+function noneOf(leaves: BacklinkFilter[]): BacklinkFilter {
+  return { type: 'Not', filter: { type: 'Or', filters: leaves } }
+}
+
+// Status and priority live in their `blocks` columns, never in
+// `block_properties` (migrations 0012, 0088), so a property filter matches none.
 function buildStatusFilter(s: BuildState): BuildResult {
-  // Issue #1647 follow-up — the unified vocabulary includes `none`, which on
-  // the SEARCH side is a SENTINEL meaning "no state set" (the `state:` filter
-  // resolves `none` to `todo_state IS NULL`, not a literal match — see
-  // src-tauri/src/fts/metadata_filter.rs). A literal `PropertyText Eq 'none'`
-  // here would instead match blocks whose `todo` property is the string
-  // "none", silently diverging from search semantics. Map `none` to the
-  // "property absent" filter (`PropertyIsEmpty`) so both surfaces agree.
   if (s.statusValue === 'none') {
-    return { filter: { type: 'PropertyIsEmpty', key: 'todo' } }
+    return { filter: noneOf(TASK_STATES.map((state) => ({ type: 'TodoState', state }))) }
   }
-  return { filter: { type: 'PropertyText', key: 'todo', op: 'Eq', value: s.statusValue } }
+  return { filter: { type: 'TodoState', state: s.statusValue } }
 }
 
 function buildPriorityFilter(s: BuildState): BuildResult {
-  // #2281 item 10 — the priority vocabulary is now the shared
-  // `usePriorityLevels()` set plus the `none` sentinel, matching the search
-  // `priority:` form. Like `buildStatusFilter` above, `none` means "no
-  // priority set" and must emit the "property absent" filter, not a literal
-  // string match against "none".
   if (s.priorityValue === 'none') {
-    return { filter: { type: 'PropertyIsEmpty', key: 'priority' } }
+    return { filter: noneOf(getPriorityLevels().map((level) => ({ type: 'Priority', level }))) }
   }
-  return { filter: { type: 'PropertyText', key: 'priority', op: 'Eq', value: s.priorityValue } }
+  return { filter: { type: 'Priority', level: s.priorityValue } }
 }
 
 function buildContainsFilter(s: BuildState, t: TFunc): BuildResult {

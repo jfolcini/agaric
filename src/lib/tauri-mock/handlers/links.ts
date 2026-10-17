@@ -23,8 +23,10 @@ import {
   type TypedHandlers,
   classifyLinkKind,
   contentLinksTo,
+  fbqResolvePrefixTagIds,
   inSpaceScope,
   pageRequestLimit,
+  refInclusiveTags,
   scanLinkTargets,
   readActiveSpaceScope,
 } from '@/lib/tauri-mock/handlers/shared'
@@ -65,21 +67,38 @@ function textCompare(op: string, lhs: string, rhs: string): boolean {
 }
 
 /**
- * Narrow a backlink candidate set by `BacklinkFilter`s (mirrors the filter
- * evaluation `eval_backlink_query_grouped` runs on the backend).
+ * Narrow a backlink candidate set by `BacklinkFilter`s, AND-joined, as
+ * `compile_backlink_filters` does for `eval_backlink_query_grouped` on the
+ * backend (`agaric-store/src/backlink/filters.rs`). Pinned by
+ * `conformance/fixtures/query_backlinks_grouped_filters.json`.
+ *
+ * Not modelled: `CreatedInRange`, `DueDate`, `PropertyNum` and `PropertyDate`.
+ * Such a leaf matches every block, so it narrows nothing at the top level and
+ * empties the set under a `Not`.
  */
 function applyBacklinkFilters(
   items: Record<string, unknown>[],
   filterList: Array<Record<string, unknown>>,
 ): Record<string, unknown>[] {
-  let backlinkItems = items
-  // Apply simple filter support
-  for (const filter of filterList) {
-    const type = filter['type'] as string
-    if (type === 'BlockType') {
-      const bt = filter['block_type'] as string
-      backlinkItems = backlinkItems.filter((b) => b['block_type'] === bt)
-    } else if (type === 'Contains') {
+  return items.filter((b) => filterList.every((f) => matchesBacklinkFilter(b, f)))
+}
+
+function matchesBacklinkFilter(
+  b: Record<string, unknown>,
+  filter: Record<string, unknown>,
+): boolean {
+  const id = b['id'] as string
+  switch (filter['type'] as string) {
+    case 'BlockType': {
+      return b['block_type'] === filter['block_type']
+    }
+    case 'TodoState': {
+      return b['todo_state'] === filter['state']
+    }
+    case 'Priority': {
+      return b['priority'] === filter['level']
+    }
+    case 'Contains': {
       const query = (filter['query'] as string) ?? ''
       // #4022 — `BacklinkFilter::Contains` is `sanitize_fts_query` + `WHERE
       // fts_blocks MATCH ?1` (`agaric-store/src/backlink/filters.rs:381-421`,
@@ -101,28 +120,77 @@ function applyBacklinkFilters(
       // three-space substring test). Both are the pre-#4022 behaviour here,
       // unchanged by this seam, and both are reachable from this call site
       // because it does not test blank-ness first.
-      backlinkItems = backlinkItems.filter((b) =>
-        matchesFtsIndex(stripForFts(b['content'] as string | null), query),
-      )
-    } else if (type === 'PropertyText') {
+      return matchesFtsIndex(stripForFts(b['content'] as string | null), query)
+    }
+    case 'PropertyText': {
       const key = filter['key'] as string
       const value = filter['value'] as string
       const op = (filter['op'] as string | undefined) ?? 'Eq'
-      backlinkItems = backlinkItems.filter((b) => {
-        const text = properties.get(b['id'] as string)?.get(key)?.['value_text'] as
-          | string
-          | null
-          | undefined
-        // `EXISTS (… key = ? AND value_text <op> ?)` on the backend: a block
-        // without the property matches under no operator, `Neq` included.
-        if (text == null) return false
-        return textCompare(op, text, value)
-      })
+      const text = properties.get(id)?.get(key)?.['value_text'] as string | null | undefined
+      // `EXISTS (… key = ? AND value_text <op> ?)` on the backend: a block
+      // without the property matches under no operator, `Neq` included.
+      if (text == null) return false
+      return textCompare(op, text, value)
     }
-    // Unsupported filter types are ignored (graceful degradation)
+    case 'PropertyIsSet': {
+      return properties.get(id)?.has(filter['key'] as string) ?? false
+    }
+    case 'PropertyIsEmpty': {
+      return !(properties.get(id)?.has(filter['key'] as string) ?? false)
+    }
+    case 'HasTag': {
+      return refInclusiveTags(id).has(filter['tag_id'] as string)
+    }
+    case 'HasTagPrefix': {
+      const tags = refInclusiveTags(id)
+      return fbqResolvePrefixTagIds([filter['prefix'] as string]).some((t) => tags.has(t))
+    }
+    case 'SourcePage': {
+      return inSourcePages(b, filter['included'] as string[], filter['excluded'] as string[])
+    }
+    // An empty `And` / `Or` is the empty set (`1=0`), not the neutral element.
+    case 'And': {
+      const filters = filter['filters'] as Array<Record<string, unknown>>
+      return filters.length > 0 && filters.every((f) => matchesBacklinkFilter(b, f))
+    }
+    case 'Or': {
+      return (filter['filters'] as Array<Record<string, unknown>>).some((f) =>
+        matchesBacklinkFilter(b, f),
+      )
+    }
+    case 'Not': {
+      return !matchesBacklinkFilter(b, filter['filter'] as Record<string, unknown>)
+    }
+    default: {
+      return true
+    }
   }
+}
 
-  return backlinkItems
+/** The `SourcePage` leaf: under an included page (any, when none is named) and no excluded one. */
+function inSourcePages(
+  b: Record<string, unknown>,
+  included: string[],
+  excluded: string[],
+): boolean {
+  return (
+    (included.length === 0 || descendsFrom(b, new Set(included))) &&
+    !descendsFrom(b, new Set(excluded))
+  )
+}
+
+/**
+ * Whether `b` is one of `roots` or their descendant through live blocks, as the
+ * leaf's recursive CTE walks them, bounded at `depth < 100`.
+ */
+function descendsFrom(b: Record<string, unknown>, roots: ReadonlySet<string>): boolean {
+  let cur: Record<string, unknown> | undefined = b
+  for (let depth = 0; cur !== undefined && !cur['deleted_at'] && depth <= 100; depth++) {
+    if (roots.has(cur['id'] as string)) return true
+    const parentId = cur['parent_id'] as string | null
+    cur = parentId === null ? undefined : blocks.get(parentId)
+  }
+  return false
 }
 
 /**

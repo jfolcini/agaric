@@ -82,6 +82,16 @@ function getFilterKey(filter: BacklinkFilter): string {
     case 'BlockType': {
       return `BlockType:${filter.block_type}`
     }
+    case 'TodoState': {
+      return `TodoState:${filter.state}`
+    }
+    case 'Priority': {
+      return `Priority:${filter.level}`
+    }
+    case 'Not': {
+      // The stamped `_addId` rides on the outer filter only.
+      return `Not:${JSON.stringify(filter.filter)}`
+    }
     case 'PropertyText': {
       return `PropertyText:${filter.key}:${filter.op}:${filter.value}`
     }

@@ -2,7 +2,7 @@
  * stateVocabulary — the SINGLE canonical task-state vocabulary shared by
  * BOTH filter surfaces:
  *   - search builder `StateFilterForm`   (`state:` / `not-state:`)
- *   - backlink category `StatusFilterForm` (PropertyText key=`todo`)
+ *   - backlink category `BacklinkStateFilterForm` (`TodoState`)
  *
  * Issue #1647 follow-up — the maintainer decided to UNIFY the search
  * "State" and backlink "Status" vocabularies into one source of truth so

@@ -1,6 +1,6 @@
 /**
  * BacklinkPriorityFilterForm — priority selector for the `priority` filter
- * category.  Shortcut for `PropertyText` with key `priority`.
+ * category, applied as a `Priority` filter.
  *
  * Issue #2281 item 10 — the vocabulary is now the same user-configurable
  * `usePriorityLevels()` set the search `priority:` form uses (plus the
@@ -30,8 +30,7 @@ export function BacklinkPriorityFilterForm({
   const priorityLevels = usePriorityLevels()
 
   // Same vocabulary as the search `priority:` form: configured levels plus
-  // the `none` sentinel ("no priority set" — mapped to `PropertyIsEmpty`
-  // downstream in `buildPriorityFilter`, mirroring the Status form's `none`).
+  // the `none` sentinel ("no priority set", see `buildPriorityFilter`).
   const options = useMemo(() => {
     // Legacy 1/2/3 defaults keep their descriptive labels; anything the
     // user configured beyond that renders as its raw value.
