@@ -7257,8 +7257,9 @@ async fn pages_cache_0124_space_id_backfills_from_the_page_5371() {
 }
 
 /// #5667 — `mcp_agents` is STRICT and round-trips an agent; a name another
-/// agent holds in a different letter case, a mode outside the two, and a
-/// space list that is not a JSON array are refused.
+/// agent holds in a different letter case, a token another agent holds, a
+/// mode outside the two, a space list that is not a JSON array and a negative
+/// stamp are refused.
 #[tokio::test]
 async fn mcp_agents_0125_round_trips_an_agent_5667() {
     let (pool, _dir) = test_pool().await;
@@ -7327,6 +7328,26 @@ async fn mcp_agents_0125_round_trips_an_agent_5667() {
             .execute(&pool)
             .await
             .expect_err(what);
+    }
+    // Each row is valid but for the one constraint it names.
+    for (sql, what) in [
+        (
+            "INSERT INTO mcp_agents (id, name, mode, token, created_at_ms) \
+             VALUES ('A5', 'Twin', 'read_only', 'agt_one', 7)",
+            "a token another agent holds",
+        ),
+        (
+            "INSERT INTO mcp_agents (id, name, mode, token, created_at_ms) \
+             VALUES ('A6', 'Early', 'read_only', 'agt_six', -1)",
+            "a negative created_at_ms",
+        ),
+        (
+            "INSERT INTO mcp_agents (id, name, mode, token, created_at_ms, last_used_ms) \
+             VALUES ('A7', 'Used', 'read_only', 'agt_seven', 7, -1)",
+            "a negative last_used_ms",
+        ),
+    ] {
+        sqlx::query(sql).execute(&pool).await.expect_err(what);
     }
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_agents")
         .fetch_one(&pool)
