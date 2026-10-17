@@ -141,7 +141,7 @@ These are the bytes that cross into Agaric from outside the trust boundary. Each
 
 ### Residual risk: a poisoned frontend dependency
 
-A malicious release of a frontend dependency that reaches a build runs inside the WebView, and the WebView can call every IPC command the capability allowlist grants. The cooldowns, lockfile, provenance check and release gate above lower the odds it gets there; none of them limits what it can do once it has. The CSP closes the obvious exfiltration routes (`connect-src 'self' ipc: http://ipc.localhost` blocks `fetch`, XHR and WebSockets), but two remain: `img-src` allows `https:`, so injected code can encode data into an image URL, and `opener:allow-open-url` allows `https://*`, so it can open one in the system browser. The "Load remote images" setting (external-image policy, #1492) governs what the app itself renders, not what injected code can request. This is accepted: closing it means dropping remote images and external links, which are product features.
+A malicious dependency that reaches a build runs inside the WebView with the app's full reach: every IPC command the capabilities grant, and so the vault. Once it runs, no in-app control reliably stops it from sending data out, so the defence is keeping it out: the lockfile with `npm ci`, blocked install scripts, the npm 12 floor, the 7-day cooldowns, and the blocking signature check. The CSP's `connect-src` is defence in depth, not a boundary.
 
 ### Accepted risks
 
