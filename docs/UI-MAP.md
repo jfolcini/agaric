@@ -67,7 +67,7 @@ App
 | View | What the user sees | Opened from |
 | --- | --- | --- |
 | **Journal** | Eager-mounted; dated modes use the cursor to scope content, while Stream and Agenda hide the previous/next stepper and date display. | Sidebar |
-| **Search** | Debounced + cursor-paginated FTS; filter chips for pages and tags. `Ctrl+Shift+F` also focuses it (`Ctrl+F` is in-page find, not this view). | Sidebar |
+| **Search** | Debounced + cursor-paginated FTS; filter chips for page-path globs, tags and the other filter-DSL tokens. `Ctrl+Shift+F` also focuses it (`Ctrl+F` is in-page find, not this view). | Sidebar |
 | **Pages** | Virtualised list of all page blocks; multi-select + delete. Its header carries the view buttons below. | Sidebar |
 | **Tags** | Tag CRUD + colour picker + filtered task panel. | Sidebar, Pages header |
 | **Query** | Advanced-query builder (`AdvancedQuery/AdvancedQueryView.tsx`); navigate to saved/ad-hoc queries. | Pages header |

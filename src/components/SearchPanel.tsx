@@ -3,26 +3,22 @@
  *
  * Features:
  *  - Debounced search (300ms) on input change
- *  - Immediate search on form submit (Enter / button click)
- *  - Cursor-based pagination (`t('search.loadMoreButton')`) via usePaginatedQuery
+ *  - Immediate search on form submit (Enter / button click), a history pick,
+ *    or a filter-chip add / remove / clear
+ *  - Cursor-based pagination (`t('search.loadMoreButton')`) via `useSearchResults`
  *  - CJK limitation notice (p3-t6)
  *
- * Opened via Ctrl+F (see `App.tsx` global handler around line 712, the
- * `focusSearchmatchesShortcutBinding` branch — sub-fix 6).
+ * Opened via the `focusSearch` shortcut (Ctrl+Shift+F by default, handled in
+ * `useAppKeyboardShortcuts.ts`).
  *
- * D-3 — state-heavy logic decomposed into siblings under
- * `./SearchPanel/`:
- *  - `searchFilterReducer.ts` collapses the four applied-filter
- *    `useState`s into a single typed reducer.
- *  - `usePopoverEntity.ts` factors the page- and tag-popover state
- *    machines (4 useStates each) behind one parameterised hook.
- *  - `useAliasResolution.ts` owns the `[[alias]]` resolution effect.
+ * D-3 — `./SearchPanel/useAliasResolution.ts` owns the `[[alias]]`
+ * resolution effect.
  *
- * Phase 3b — JSX presentation lifted into siblings under
- * `./SearchPanel/`:
- *  - `SearchHeader.tsx` owns the input form + activity indicators.
- *  - `SearchFilters.tsx` owns the filter chip bar + popovers.
- *  - `SearchStatusRegion.tsx` owns the aria-live status announcer.
+ * Phase 3b — JSX presentation lifted into siblings:
+ *  - `./SearchPanel/SearchHeader.tsx` owns the input form + activity indicators.
+ *  - `./search/FilterChipRow.tsx` + `./search/FilterHelperPopover.tsx` own the
+ *    filter chip bar and the Add filter popover.
+ *  - `./SearchPanel/SearchStatusRegion.tsx` owns the aria-live status announcer.
  *  - The result listbox now lives in `./search/SearchResultGroups.tsx`
  * (Phase 4.M4 removed the stub `SearchResultList.tsx`).
  */
@@ -551,21 +547,28 @@ export function SearchPanel(): React.ReactElement {
     [cycling, setQueryAndCaret, historyEntries, handleRemoveHistory],
   )
 
-  // FE-A12 — chip / helper handlers. Each appends a filter token to
+  // FE-A12 — chip / helper handlers. Each edits the filter tokens of
   // the AST and re-serialises the canonical query string; they read the `ast`
   // memo (already `parse(query)`, recomputed on every `query` change and
   // current inside the same render's event handlers).
   function patchQuery(next: (currentAst: typeof ast) => typeof ast) {
     const nextValue = serialize(next(ast))
     setQueryAndCaret(nextValue)
+    // A chip edit is a discrete pick, not a keystroke: search it now, as a
+    // history pick does, instead of waiting for the typing debounce.
+    debounced.cancel()
+    setTyping(false)
+    setCleared((prev) => (nextValue === '' ? prev || searched : false))
+    setDebouncedQuery(nextValue)
+    setSearched(nextValue !== '')
   }
   function handleRemoveFilter(index: number) {
     patchQuery((a) => removeFilterAt(a, index))
   }
   function handleClearAllFilters() {
-    // Keep the LIVE free text (not the debounced/last-committed AST) so
+    // Keeps the LIVE free text (not the debounced/last-committed AST) so
     // just-typed-but-not-yet-debounced words aren't dropped.
-    setQueryAndCaret(ast.freeText)
+    patchQuery((a) => ({ ...a, filters: [] }))
   }
   function handleAddTag(name: string) {
     const token: FilterToken = { kind: 'tag', value: name, span: [0, 0] }
