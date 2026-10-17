@@ -1,0 +1,40 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!: String\",\n                  COALESCE(b.page_id, b.id) AS \"page_id!: String\",\n                  COALESCE(b.space_id, p.space_id) AS \"space_id!: String\"\n           FROM blocks b\n           LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL\n           WHERE b.deleted_at IS NULL\n             AND COALESCE(b.space_id, p.space_id) IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "page_id!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "space_id!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "4e17993b123ad25e9308f80969e63fe371e77f7614b937a67efa43061e1212ef"
+}

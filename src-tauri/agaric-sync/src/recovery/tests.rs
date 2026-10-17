@@ -4052,6 +4052,138 @@ async fn crash_tail_move_in_move_out_then_delete_the_old_parent_5630() {
     boot.shutdown();
 }
 
+/// #5670 — the sequence that lost a block from the maintainer's Work engine.
+/// A pre-#5418 session saved its engines at exit but left the apply cursor
+/// behind, so the next boot replayed the whole session onto an engine that
+/// already held it. Replayed over SQL that already shows C90 deleted, AKQ's
+/// move in swept it into C90's tombstone and its move out took the SQL-only
+/// fallback, so the engine kept AKQ under C90 and the later purge of C90 took
+/// AKQ with it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_over_an_engine_ahead_of_the_cursor_keeps_an_outdented_block_through_the_purge_5670()
+{
+    use agaric_store::op::{DeleteBlockPayload, MoveBlockPayload, PurgeBlockPayload};
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005670PG";
+    const BKK: &str = "T5670BKK";
+    const C90: &str = "T5670C90";
+    const AKQ: &str = "T5670AKQ";
+    let device_id = "dev-5670";
+    let id = BlockId::test_id;
+    let create = |block: &str, parent: &str, index: i64| {
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: id(block),
+            block_type: "content".into(),
+            parent_id: Some(id(parent)),
+            position: None,
+            index: Some(index),
+            content: block.into(),
+        })
+    };
+    let move_to = |block: &str, parent: &str, index: i64| {
+        OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: id(block),
+            new_parent_id: Some(id(parent)),
+            new_position: index + 1,
+            new_index: Some(index),
+        })
+    };
+    let (pool, _dir) = test_pool().await;
+    let session = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
+    let mut seqs = Vec::new();
+    for op in [
+        create(BKK, PAGE_ID, 0),
+        create(C90, PAGE_ID, 1),
+        move_to(C90, BKK, 0),
+        create(AKQ, BKK, 1),
+        move_to(AKQ, C90, 0),
+        move_to(AKQ, BKK, 0),
+        OpPayload::DeleteBlock(DeleteBlockPayload { block_id: id(C90) }),
+    ] {
+        seqs.push(
+            apply_like_a_command(&pool, &session, device_id, op)
+                .await
+                .seq,
+        );
+    }
+    // The exit save of a pre-#5418 build: every engine persisted, the cursor
+    // left before the session.
+    let pass =
+        agaric_engine::loro::snapshot::save_all_engines(&pool, &session.loro_state().registry)
+            .await;
+    assert_eq!(pass.saved, 1, "the exit save persists the one space");
+    set_cursor(&pool, seqs[0] - 1).await;
+    session.shutdown();
+    drop(session);
+
+    let boot = Materializer::new(pool.clone());
+    let registry = &boot.loro_state().registry;
+    let rehydrated =
+        agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id).await;
+    assert_eq!(rehydrated, 1, "boot starts from the saved engine");
+    super::boot::reset_recovery_guard();
+    let report = recover_at_boot(&pool, device_id, &boot, registry)
+        .await
+        .unwrap();
+    boot.flush_background().await.unwrap();
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+    assert_eq!(
+        report.ops_replayed,
+        u64::try_from(seqs.len()).unwrap(),
+        "the whole session replays onto the engine that holds it"
+    );
+    apply_like_a_command(
+        &pool,
+        &boot,
+        device_id,
+        OpPayload::PurgeBlock(PurgeBlockPayload { block_id: id(C90) }),
+    )
+    .await;
+    boot.flush_background().await.unwrap();
+
+    // Every block the engine holds, against every row SQL holds, as
+    // `id -> (parent, deleted)`.
+    let engine: std::collections::BTreeMap<String, (Option<String>, bool)> = {
+        let space = agaric_store::space::SpaceId::from_trusted(SPACE);
+        let mut guard = registry.for_space(&space, device_id).unwrap();
+        let engine = guard.engine_mut();
+        engine
+            .live_blocks_preorder()
+            .iter()
+            .map(|block| {
+                let block = block.as_str();
+                let parent = engine.read_block(block).unwrap().unwrap().parent_id;
+                let deleted = engine.read_deleted_at(block).unwrap().is_some();
+                (block.to_owned(), (parent, deleted))
+            })
+            .collect()
+    };
+    let sql: std::collections::BTreeMap<String, (Option<String>, bool)> =
+        sqlx::query_as::<_, (String, Option<String>, bool)>(
+            "SELECT id, parent_id, deleted_at IS NOT NULL FROM blocks WHERE id <> ?",
+        )
+        .bind(SPACE)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(block, parent, deleted)| (block, (parent, deleted)))
+        .collect();
+    assert_eq!(
+        engine.get(AKQ),
+        Some(&(Some(BKK.to_owned()), false)),
+        "AKQ survives C90's purge, live under BKK in the engine"
+    );
+    assert_eq!(engine, sql, "the engine and SQL hold the same tree");
+    boot.shutdown();
+}
+
 /// #5418 — one bad op inside a chunk. The chunk's transaction rolls back and
 /// the consumer re-applies its ops one at a time, so the bad op alone lands in
 /// the retry queue, every sibling applies, and the cursor passes all of them:
