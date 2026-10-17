@@ -564,3 +564,20 @@ describe('debugMode', () => {
     },
   )
 })
+
+describe('PREFERENCES.editMode (#5691)', () => {
+  it('is blocks until page is chosen, and reads back what was chosen', () => {
+    expect(readPreference(PREFERENCES.editMode)).toBe('blocks')
+
+    writePreference(PREFERENCES.editMode, 'page')
+
+    expect(localStorage.getItem('agaric-edit-mode')).toBe('page')
+    expect(readPreference(PREFERENCES.editMode)).toBe('page')
+  })
+
+  it('reads anything else on disk as blocks', () => {
+    localStorage.setItem('agaric-edit-mode', 'document')
+
+    expect(readPreference(PREFERENCES.editMode)).toBe('blocks')
+  })
+})

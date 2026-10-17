@@ -21,6 +21,7 @@ import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { PageTagSection } from '@/components/pages/PageTagSection'
 import { PageTitleEditor } from '@/components/pages/PageTitleEditor'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useBlockTags } from '@/hooks/useBlockTags'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { usePageAliases } from '@/hooks/usePageAliases'
@@ -39,6 +40,7 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import type { EditMode } from '@/lib/preferences'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { useNavigationStore } from '@/stores/navigation'
 import { announcePagesMovedOut } from '@/stores/page-move'
@@ -56,9 +58,20 @@ export interface PageHeaderProps {
   onEditSource?: (() => void) | undefined
   /** The page-actions kebab, so focus can return to it. */
   kebabRef?: React.RefObject<HTMLButtonElement | null> | undefined
+  /** The page's editing mode; the Blocks | Page switch shows only with `onEditModeChange`. */
+  editMode?: EditMode | undefined
+  onEditModeChange?: ((mode: EditMode) => void) | undefined
 }
 
-export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: PageHeaderProps) {
+export function PageHeader({
+  pageId,
+  title,
+  onBack,
+  onEditSource,
+  kebabRef,
+  editMode,
+  onEditModeChange,
+}: PageHeaderProps) {
   const { t } = useTranslation()
   const ownKebabRef = useRef<HTMLButtonElement>(null)
   const kebab = kebabRef ?? ownKebabRef
@@ -542,6 +555,20 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
               onKeyDown={handleTitleKeyDown}
               onKeyUp={handleTitleKeyUp}
             />
+            {onEditModeChange && (
+              <ToggleGroup
+                type="single"
+                value={editMode ?? 'blocks'}
+                onValueChange={(mode) => {
+                  // Radix reports '' when the pressed item is pressed again.
+                  if (mode === 'blocks' || mode === 'page') onEditModeChange(mode)
+                }}
+                aria-label={t('pageMode.switchLabel')}
+              >
+                <ToggleGroupItem value="blocks">{t('pageMode.blocks')}</ToggleGroupItem>
+                <ToggleGroupItem value="page">{t('pageMode.page')}</ToggleGroupItem>
+              </ToggleGroup>
+            )}
             <PageQuickActions
               pageId={pageId}
               title={title}

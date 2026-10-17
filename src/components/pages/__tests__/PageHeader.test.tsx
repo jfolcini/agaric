@@ -798,6 +798,49 @@ describe('PageHeader accessibility', () => {
   })
 })
 
+describe('PageHeader editing-mode switch (#5691)', () => {
+  it('shows no switch when the page offers no mode to switch to', () => {
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    expect(
+      screen.queryByRole('radiogroup', { name: t('pageMode.switchLabel') }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('marks the current mode and reports the other when it is chosen', async () => {
+    const user = userEvent.setup()
+    const onEditModeChange = vi.fn()
+    renderPageHeader(
+      <PageHeader
+        pageId="PAGE_1"
+        title="My Page"
+        editMode="blocks"
+        onEditModeChange={onEditModeChange}
+      />,
+    )
+    const group = screen.getByRole('radiogroup', { name: t('pageMode.switchLabel') })
+    const blocksItem = within(group).getByRole('radio', { name: t('pageMode.blocks') })
+    expect(blocksItem).toHaveAttribute('aria-checked', 'true')
+
+    // The mode already on reports nothing: Radix would report it as ''.
+    await user.click(blocksItem)
+    await user.click(within(group).getByRole('radio', { name: t('pageMode.page') }))
+
+    expect(onEditModeChange).toHaveBeenCalledTimes(1)
+    expect(onEditModeChange).toHaveBeenCalledWith('page')
+  })
+
+  it('has no a11y violations with the switch', async () => {
+    const { container } = renderPageHeader(
+      <PageHeader pageId="PAGE_1" title="My Page" editMode="page" onEditModeChange={() => {}} />,
+    )
+
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+})
+
 // ── Alias display & editing ───────────────────────────────────────────────
 
 describe('PageHeader alias display', () => {

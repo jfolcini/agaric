@@ -202,6 +202,14 @@ export const pages: Record<string, string> = {
   'pageSource.changeChanged': 'Changed:',
   'pageSource.view': 'Show',
   'pageSource.modeEdit': 'Edit',
+  'pageMode.switchLabel': 'Editing mode',
+  'pageMode.blocks': 'Blocks',
+  'pageMode.page': 'Page',
+  'pageMode.editorLabel': 'Page text',
+  'pageMode.saveFailed':
+    'Some changes to this page could not be saved yet; they are tried again with your next edit.',
+  'pageMode.overCap':
+    'Page mode opens pages of up to {{cap}} blocks. This page has {{count}}, so it stays in block mode.',
   'pageSource.preview': 'Preview',
   'pageSource.changes': 'Changes',
   'pageSource.saveChanges_one': 'Save ({{count}} change)',
