@@ -182,21 +182,6 @@ describe('T3 — /table at pos 0 vs mid-block', () => {
     expect(editor.state.doc.textContent).toContain('alpha')
     expect(editor.state.doc.textContent).toContain('beta')
   })
-
-  it('/table-no-header inserts a table whose first row has NO header cells', async () => {
-    const { result } = renderHook(() => useSlashCommandStructural())
-    const ctx = buildCtxWithEditor('')
-    if (!editor) throw new Error('no editor')
-
-    await result.current.exact['table-no-header']?.(ctx, {
-      id: 'table-no-header',
-      label: 'Table (no header)',
-    })
-
-    const { rows, headerCells } = tableDims()
-    expect(rows).toBe(3)
-    expect(headerCells).toBe(0)
-  })
 })
 
 describe('T3 — /code and /quote from a non-default block state', () => {

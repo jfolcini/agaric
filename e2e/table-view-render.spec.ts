@@ -29,10 +29,10 @@ test.describe('Table view-mode rendering (#215)', () => {
     await page.waitForTimeout(200)
 
     // Commit by focusing the page title: the editor saves on blur
-    // (serialize → persist), unlike Escape which discards. Pressing Enter
-    // inside a table cell does table-local things (not a block save), and
-    // clicking a sibling block races the blur→remount. Focusing the title
-    // input is an unambiguous blur target.
+    // (serialize → persist). Pressing Enter inside a table cell does
+    // table-local things (not a block save), and clicking a sibling block
+    // races the blur→remount. Focusing the title input is an unambiguous blur
+    // target.
     await page.getByRole('textbox', { name: 'Page title' }).click()
 
     // Blur saves (serialize → persist → view-mode remount). The visibility

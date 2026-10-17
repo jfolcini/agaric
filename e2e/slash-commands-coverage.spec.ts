@@ -32,19 +32,8 @@ import {
  * `reopenPage`, which forces a fresh fetch from the Tauri mock) to prove the
  * structure round-trips through persistence.
  *
- * Why no mark commands here (/bold /italic /code /strike /highlight):
- *   The slash menu only opens at a COLLAPSED caret — TipTap's Suggestion
- *   plugin fires on the typed `/`, which replaces/clears any active text
- *   selection, and the menu closes the moment the selection moves off the
- *   slash query range. The mark handler (`useSlashCommandMarks`) toggles the
- *   mark only when `from !== to`; at a collapsed caret it instead inserts the
- *   Markdown delimiter pair (e.g. `**` `**`) as literal text, which does NOT
- *   render as <strong>/<em>/<mark>/<s>/<code>. So there is no slash-menu path
- *   that applies a mark to a selection in this harness. The mark *effects* are
- *   already covered via Ctrl+B/I/E (markdown-syntax.spec.ts) and the bubble
- *   menu (selection-bubble.spec.ts). A slash-menu mark test is a separate
- *   slice and would need a product affordance that preserves the selection
- *   across the `/` trigger. See the #1169 follow-up note.
+ * The mark commands (/bold /italic /code /strike /highlight) are in
+ * `slash-marks.spec.ts`.
  *
  * Seed data (tauri-mock.ts):
  *   PAGE_GETTING_STARTED ("Getting Started") — 5 child blocks; GS_1 is the

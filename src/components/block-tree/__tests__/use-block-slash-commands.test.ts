@@ -258,6 +258,13 @@ describe('searchSlashCommands', () => {
     expect(results.every((r) => r.id !== 'table')).toBe(true)
   })
 
+  // The open menu ends its query at a space, so `table4x6` is the form a user can type.
+  it('handles the table NxM pattern typed without a space', () => {
+    const results = searchSlashCommands('table4x6', [])
+    expect(results[0]?.id).toBe('table:4:6')
+    expect(results.every((r) => r.id !== 'table')).toBe(true)
+  })
+
   it('returns empty array-like for non-matching query', () => {
     const results = searchSlashCommands('zzzzzzzznonexistent', [])
     expect(results.length).toBe(0)
