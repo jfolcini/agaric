@@ -245,9 +245,6 @@ pub struct PageHeading {
 /// generous while keeping the dynamic placeholder count safely under the
 /// limit. Oversized input is rejected up-front with
 /// [`AppError::Validation`]`("tag_ids.too_many")` before any SQL is built.
-///
-/// Returns only `(id, content)` because the existing callers
-/// (markdown export, graph view) ignore every other column.
 #[instrument(skip(pool, tag_ids), err)]
 pub async fn list_all_pages_in_space_inner(
     pool: &SqlitePool,
@@ -305,9 +302,9 @@ pub async fn list_all_pages_in_space_inner(
     Ok(rows)
 }
 
-/// Tauri command: list every page in the active space as
-/// `{ id, content }`, optionally restricted to pages carrying at least
-/// one of `tag_ids`. Delegates to [`list_all_pages_in_space_inner`].
+/// Tauri command: list every page in the active space as a [`PageHeading`],
+/// optionally restricted to pages carrying at least one of `tag_ids`.
+/// Delegates to [`list_all_pages_in_space_inner`].
 #[tauri::command]
 #[specta::specta]
 pub async fn list_all_pages_in_space(

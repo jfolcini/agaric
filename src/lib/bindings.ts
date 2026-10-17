@@ -935,9 +935,9 @@ export const commands = {
 	 */
 	listJournalPagesInRange: (startDate: string, endDate: string, scope: SpaceScope) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("list_journal_pages_in_range", { startDate, endDate, scope })),
 	/**
-	 *  Tauri command: list every page in the active space as
-	 *  `{ id, content }`, optionally restricted to pages carrying at least
-	 *  one of `tag_ids`. Delegates to [`list_all_pages_in_space_inner`].
+	 *  Tauri command: list every page in the active space as a [`PageHeading`],
+	 *  optionally restricted to pages carrying at least one of `tag_ids`.
+	 *  Delegates to [`list_all_pages_in_space_inner`].
 	 */
 	listAllPagesInSpace: (scope: SpaceScope, tagIds: string[] | null) => typedError<PageHeading[], AppError>(__TAURI_INVOKE("list_all_pages_in_space", { scope, tagIds })),
 	/**

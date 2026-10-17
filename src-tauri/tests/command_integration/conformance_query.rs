@@ -1357,10 +1357,24 @@ async fn run_step(pool: &SqlitePool, args: &StepArgs<'_>) -> Result<RawResult, A
             let tag_ids: Option<Vec<String>> = opt_arg_as(args, "tagIds");
             let rows =
                 list_all_pages_in_space_inner(pool, space_id.as_str(), tag_ids.as_deref()).await?;
-            // Bare `Vec<PageHeading>` — the response IS the row array.
+            // Bare `Vec<PageHeading>` — the response IS the row array. The task
+            // columns ride as attributes: the graph's filters read them.
             let v = serde_json::to_value(&rows).expect("serialize Vec<PageHeading>");
             RawResult {
-                rows: v.as_array().map(|a| ids_in(a, "id")).unwrap_or_default(),
+                rows: v
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|r| {
+                                row_token(
+                                    r,
+                                    "id",
+                                    &["todo_state", "priority", "due_date", "scheduled_date"],
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 has_more: None,
                 total_count: None,
                 next_cursor: None,

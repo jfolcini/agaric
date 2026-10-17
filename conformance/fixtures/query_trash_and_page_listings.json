@@ -1,5 +1,5 @@
 {
-  "description": "#3829 — READ-command differential over `list_trash`, `list_all_pages_in_space` and `list_template_page_ids_in_space`. The trash half is the multi-cohort shape #3818 turns on: S5 is deleted on its own, THEN its parent S4 (a separate cohort, so S5 keeps its own tombstone and stays a trash ROOT), while S6's delete cascades over S7 in ONE cohort (so S7 is NOT a root). The backend's root predicate is `parent_id IS NULL OR NOT EXISTS (parent p WHERE p.deleted_at = b.deleted_at)`, ordered `deleted_at DESC, id ASC`, space-scoped; a mock that lists every tombstone, or orders on anything but `deleted_at DESC` diverges here. NOT pinned: the space filter (the harness has one space, so every tombstone is in it) and the `id ASC` tiebreak (every delete mints its own cohort on both stacks, so no two roots share a `deleted_at`). The pages half pins the deleted-page exclusion (S3 is a template page that is deleted, so it is in neither listing), the tag filter (`tagIds: [S8]` keeps only S2; an EMPTY list is unfiltered on both stacks) and the case-insensitive content sort.",
+  "description": "#3829 — READ-command differential over `list_trash`, `list_all_pages_in_space` and `list_template_page_ids_in_space`. The trash half is the multi-cohort shape #3818 turns on: S5 is deleted on its own, THEN its parent S4 (a separate cohort, so S5 keeps its own tombstone and stays a trash ROOT), while S6's delete cascades over S7 in ONE cohort (so S7 is NOT a root). The backend's root predicate is `parent_id IS NULL OR NOT EXISTS (parent p WHERE p.deleted_at = b.deleted_at)`, ordered `deleted_at DESC, id ASC`, space-scoped; a mock that lists every tombstone, or orders on anything but `deleted_at DESC` diverges here. NOT pinned: the space filter (the harness has one space, so every tombstone is in it) and the `id ASC` tiebreak (every delete mints its own cohort on both stacks, so no two roots share a `deleted_at`). The pages half pins the deleted-page exclusion (S3 is a template page that is deleted, so it is in neither listing), the tag filter (`tagIds: [S8]` keeps only S2; an EMPTY list is unfiltered on both stacks) and the case-insensitive content sort, and each page row's four task columns: S1, S8 and S11 hold one each, and S2 holds its date through the tag filter's own SELECT.",
   "expected": {
     "block_tags": [
       {
@@ -19,7 +19,7 @@
         "position": 1,
         "priority": null,
         "scheduled_date": null,
-        "todo_state": null
+        "todo_state": "TODO"
       },
       {
         "block_type": "page",
@@ -31,7 +31,7 @@
         "parent_id": null,
         "position": 2,
         "priority": null,
-        "scheduled_date": null,
+        "scheduled_date": "2026-06-30",
         "todo_state": null
       },
       {
@@ -108,7 +108,7 @@
         "page_id": "B8",
         "parent_id": null,
         "position": 4,
-        "priority": null,
+        "priority": "2",
         "scheduled_date": null,
         "todo_state": null
       },
@@ -142,7 +142,7 @@
         "block_type": "page",
         "content": "Zebra",
         "deleted_at": null,
-        "due_date": null,
+        "due_date": "2026-07-01",
         "id": "B11",
         "page_id": "B11",
         "parent_id": null,
@@ -179,7 +179,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 7,
+      "count": 11,
       "ops": [
         {
           "key": "template",
@@ -191,6 +191,18 @@
         },
         {
           "op_type": "add_tag"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_scheduled_date"
         },
         {
           "op_type": "delete_block"
@@ -271,7 +283,16 @@
       "error": null,
       "has_more": null,
       "name": "pages_all_in_space",
-      "rows": ["B1", "B8", "B2", "B11", "B10", "B9", "B12", "B13"],
+      "rows": [
+        "B1#todo_state=TODO#priority=null#due_date=null#scheduled_date=null",
+        "B8#todo_state=null#priority=2#due_date=null#scheduled_date=null",
+        "B2#todo_state=null#priority=null#due_date=null#scheduled_date=2026-06-30",
+        "B11#todo_state=null#priority=null#due_date=2026-07-01#scheduled_date=null",
+        "B10#todo_state=null#priority=null#due_date=null#scheduled_date=null",
+        "B9#todo_state=null#priority=null#due_date=null#scheduled_date=null",
+        "B12#todo_state=null#priority=null#due_date=null#scheduled_date=null",
+        "B13#todo_state=null#priority=null#due_date=null#scheduled_date=null"
+      ],
       "total_count": null
     },
     {
@@ -279,7 +300,7 @@
       "error": null,
       "has_more": null,
       "name": "pages_tag_filter_keeps_tagged_only",
-      "rows": ["B2"],
+      "rows": ["B2#todo_state=null#priority=null#due_date=null#scheduled_date=2026-06-30"],
       "total_count": null
     },
     {
@@ -287,7 +308,16 @@
       "error": null,
       "has_more": null,
       "name": "pages_empty_tag_filter_is_unfiltered",
-      "rows": ["B1", "B8", "B2", "B11", "B10", "B9", "B12", "B13"],
+      "rows": [
+        "B1#todo_state=TODO#priority=null#due_date=null#scheduled_date=null",
+        "B8#todo_state=null#priority=2#due_date=null#scheduled_date=null",
+        "B2#todo_state=null#priority=null#due_date=null#scheduled_date=2026-06-30",
+        "B11#todo_state=null#priority=null#due_date=2026-07-01#scheduled_date=null",
+        "B10#todo_state=null#priority=null#due_date=null#scheduled_date=null",
+        "B9#todo_state=null#priority=null#due_date=null#scheduled_date=null",
+        "B12#todo_state=null#priority=null#due_date=null#scheduled_date=null",
+        "B13#todo_state=null#priority=null#due_date=null#scheduled_date=null"
+      ],
       "total_count": null
     },
     {
@@ -327,6 +357,34 @@
         "tagId": "S8"
       },
       "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "state": "TODO"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S8",
+        "level": "2"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S11",
+        "date": "2026-07-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2026-06-30"
+      },
+      "command": "set_scheduled_date"
     },
     {
       "args": {
