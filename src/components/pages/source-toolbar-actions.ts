@@ -149,7 +149,7 @@ export function sourceBlockActions(
   return {
     onToggleTodo: () => run(cycleTaskAt(block.line)),
     onTogglePriority: () => run(cyclePriority(block)),
-    onTurnInto: (_id, type) => run(turnInto(block, type)),
+    onTurnInto: (_id, type, calloutType) => run(turnInto(block, type, calloutType)),
     onIndent: () => run(indentRange(block.line, last)),
     onDedent: () =>
       run(

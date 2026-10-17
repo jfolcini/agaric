@@ -1,6 +1,7 @@
 /**
- * InlinePicker — shared building blocks for the toolbar's single-step, searchable
- * type/variant pickers (#3001).
+ * InlinePicker — shared building blocks for the toolbar's single-step type/variant
+ * pickers (#3001). The code-language picker filters its long list; the short
+ * callout list uses only `PickerRow`.
  *
  * Before #3001 choosing a callout variant or a code-block language was a two-step
  * "primary click → reopen menu → secondary selection" flow: the Turn-into row first
@@ -20,14 +21,16 @@
  *  - `PickerRow` — a ghost button row with the shared toolbar styling, an optional
  *    leading icon, a current-value check, and a keyboard-focused highlight.
  *
- * Rows use `onPointerDown + preventDefault` (not onClick) so focus stays in the
- * editor and the focus-keyed block command bus still targets the focused block —
- * mirroring every other toolbar popover trigger.
+ * Rows act on `pointerdown` with preventDefault (`toolbarPressHandlers`) so focus
+ * stays in the editor and the focus-keyed block command bus still targets the
+ * focused block, and on a keyboard click, so a row without a filter box above it
+ * (the callout picker) is still reachable by Tab + Enter.
  */
 
 import { Check } from 'lucide-react'
 import type React from 'react'
 
+import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
 import { toolbarMenuRowClass } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -143,10 +146,7 @@ export function PickerRow({
         active && 'font-medium',
         focused && 'bg-accent text-accent-foreground',
       )}
-      onPointerDown={(e) => {
-        e.preventDefault()
-        onSelect()
-      }}
+      {...toolbarPressHandlers(onSelect)}
     >
       {Icon ? <Icon className="h-3.5 w-3.5 shrink-0 mr-2" /> : null}
       <span>{label}</span>

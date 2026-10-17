@@ -297,10 +297,10 @@ function rewriteBlock(
 }
 
 /** Turn `block` into `type`, as the block editor's Turn into does: its text and its list style. */
-export function turnInto(block: SourceBlock, type: BlockTypeToken): Command {
+export function turnInto(block: SourceBlock, type: BlockTypeToken, calloutType?: string): Command {
   return rewriteBlock(
     block,
-    (parts) => convertBlockContent(parts.text.join('\n'), type).split('\n'),
+    (parts) => convertBlockContent(parts.text.join('\n'), type, calloutType).split('\n'),
     listStyleForBlockType(type),
   )
 }

@@ -150,9 +150,13 @@ function extractLines(content: string): string[] {
  * Re-marks the first line and preserves every trailing line: quote/callout
  * targets re-mark each line (so the whole block stays inside the quote);
  * other targets keep the tail verbatim (markdown lazy continuation keeps it
- * attached to list items).
+ * attached to list items). `calloutType` is the variant a `callout` target takes.
  */
-export function convertBlockContent(content: string, type: BlockTypeToken): string {
+export function convertBlockContent(
+  content: string,
+  type: BlockTypeToken,
+  calloutType = 'info',
+): string {
   if (type === 'code') {
     // Wrap the (marker-stripped) content in a fenced code block. If it is
     // already fenced, leave it as-is.
@@ -189,7 +193,7 @@ export function convertBlockContent(content: string, type: BlockTypeToken): stri
       return [text, ...rest].map((l) => `> ${l}`).join('\n')
     }
     case 'callout': {
-      return [`> [!INFO] ${text}`, ...rest.map((l) => `> ${l}`)].join('\n')
+      return [`> [!${calloutType.toUpperCase()}] ${text}`, ...rest.map((l) => `> ${l}`)].join('\n')
     }
     default: {
       return content

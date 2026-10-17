@@ -46,6 +46,7 @@ import {
 } from '@/components/editor/block-context-menu/hints'
 import { renderItem as renderMenuItem } from '@/components/editor/block-context-menu/menu-row'
 import type { BlockContextMenuProps, MenuItem } from '@/components/editor/block-context-menu/types'
+import { CALLOUT_CONFIG, CALLOUT_TYPES } from '@/components/RichContentRenderer/context'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
@@ -105,6 +106,9 @@ interface MenuGroupContext {
   turnIntoOpen: boolean
   setTurnIntoOpen: React.Dispatch<React.SetStateAction<boolean>>
   turnIntoGroupId: string
+  calloutOpen: boolean
+  setCalloutOpen: React.Dispatch<React.SetStateAction<boolean>>
+  calloutGroupId: string
   moveArrangeOpen: boolean
   setMoveArrangeOpen: React.Dispatch<React.SetStateAction<boolean>>
   moveArrangeGroupId: string
@@ -540,6 +544,50 @@ function buildContentCopyItems(ctx: MenuGroupContext): MenuItem[] {
   return items
 }
 
+/**
+ * Turn into → Callout: a disclosure of its own, whose rows pick the variant, as
+ * the toolbar's callout picker does. Stays a toggle on a callout, so its variant
+ * can change.
+ */
+function buildCalloutRows(
+  ctx: MenuGroupContext,
+  isActive: boolean,
+  CalloutIcon: React.ComponentType<{ className?: string | undefined }>,
+): MenuItem[] {
+  const { t, blockId, onClose, actions, calloutOpen, setCalloutOpen, calloutGroupId } = ctx
+  const label = t(turnIntoTypeKey('callout'))
+  const toggle: MenuItem = {
+    id: 'turnInto',
+    label,
+    icon: <CalloutIcon className="h-3.5 w-3.5" />,
+    active: isActive,
+    indented: true,
+    expanded: calloutOpen,
+    disclosureId: calloutGroupId,
+    action: () => setCalloutOpen((o) => !o),
+  }
+  if (!calloutOpen) return [toggle]
+  return [
+    toggle,
+    ...CALLOUT_TYPES.map((type): MenuItem => {
+      const Icon = CALLOUT_CONFIG[type]?.icon ?? CalloutIcon
+      return {
+        id: 'turnInto',
+        label: t(`callout.${type}`),
+        icon: <Icon className="h-3.5 w-3.5" />,
+        indented: true,
+        nested: true,
+        disclosureId: calloutGroupId,
+        disclosureLabel: label,
+        action: () => {
+          actions.onTurnInto?.(blockId, 'callout', type)
+          onClose()
+        },
+      }
+    }),
+  ]
+}
+
 /** #264 — "Turn into" disclosure group. */
 function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
   const {
@@ -565,11 +613,12 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
       shortcut: shortcutHint('turnIntoBlock'),
     },
     ...(turnIntoOpen
-      ? TURN_INTO_OPTIONS.map((opt): MenuItem => {
+      ? TURN_INTO_OPTIONS.flatMap((opt): MenuItem[] => {
           const Icon = opt.icon
           const blockType = opt.blockType as BlockTypeToken
           const isActive = activeBlockType === blockType
-          return {
+          if (blockType === 'callout') return buildCalloutRows(ctx, isActive, Icon)
+          const row: MenuItem = {
             id: 'turnInto',
             label: t(turnIntoTypeKey(opt.blockType)),
             icon: Icon ? <Icon className="h-3.5 w-3.5" /> : <span className="h-3.5 w-3.5" />,
@@ -584,6 +633,7 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
                   onClose()
                 },
           }
+          return [row]
         })
       : []),
   ]
@@ -672,6 +722,12 @@ export function BlockContextMenu({
   // #1003 — stable id linking the "Turn into" toggle (`aria-controls`) to the
   // inline-expanded options group, so screen readers announce the relationship.
   const turnIntoGroupId = useId()
+  const [calloutOpen, setCalloutOpen] = useState(false)
+  const calloutGroupId = useId()
+  // The variants open at the foot of a height-capped menu, below its fold.
+  useEffect(() => {
+    if (calloutOpen) document.getElementById(calloutGroupId)?.scrollIntoView({ block: 'nearest' })
+  }, [calloutOpen, calloutGroupId])
   // #1109 — the low-frequency block-ops (Duplicate / Merge / Move up / Move
   // down) are collapsed behind a single "Move & arrange" toggle, mirroring the
   // "Turn into" disclosure machinery above. Collapsed by default so the menu
@@ -897,6 +953,9 @@ export function BlockContextMenu({
     turnIntoOpen,
     setTurnIntoOpen,
     turnIntoGroupId,
+    calloutOpen,
+    setCalloutOpen,
+    calloutGroupId,
     moveArrangeOpen,
     setMoveArrangeOpen,
     moveArrangeGroupId,
@@ -908,17 +967,22 @@ export function BlockContextMenu({
   const visibleItems = groups.flat().filter((item) => item.action !== undefined)
 
   // ── Keyboard navigation ──────────────────────────────────────────
+  // `resetKey`: opening a disclosure adds rows below its toggle, so the cursor
+  // keeps its index instead of jumping back to the first row.
   const { focusedIndex, handleKeyDown: navHandleKeyDown } = useListKeyboardNavigation({
     itemCount: visibleItems.length,
     wrap: true,
     homeEnd: true,
+    resetKey: blockId,
   })
 
-  // ── Focus first item on mount and whenever the visible item set changes ──
+  // ── Focus the first item on mount, and again if the item set changed under focus ──
   // Items are conditional (zoom-in only when `hasChildren`, history only when
-  // `onShowHistory` is passed, etc.) — refire whenever the count changes so
-  // focus lands on the current first item rather than a stale reference.
+  // `onShowHistory` is passed, etc.). A disclosure that opens leaves focus on its
+  // toggle: refocusing the first row would scroll a height-capped menu back to
+  // the top, away from the rows just revealed.
   useEffect(() => {
+    if (menuRef.current?.contains(document.activeElement)) return
     itemRefs.current[0]?.focus()
   }, [visibleItems.length])
 
@@ -991,6 +1055,14 @@ export function BlockContextMenu({
         const indentedItems = group.filter((item) => item.indented)
         const subgroupId = indentedItems[0]?.disclosureId
         const subgroupLabel = indentedItems[0]?.disclosureLabel
+        // A second-level disclosure's rows (Callout's variants) are contiguous and
+        // render in place, in their own group, so DOM order stays roving order.
+        const nestedItems = indentedItems.filter((item) => item.nested)
+        const nested = nestedItems[0]
+        const nestedAt = indentedItems.findIndex((item) => item.nested)
+        const beforeNested = nestedAt === -1 ? indentedItems : indentedItems.slice(0, nestedAt)
+        const afterNested =
+          nestedAt === -1 ? [] : indentedItems.slice(nestedAt + nestedItems.length)
         return (
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- menu-item group inside a custom menu; <fieldset>/<optgroup> etc. would inject form/list semantics that conflict with the menu role
           <div key={group[0]?.label ?? `group-${groupIdx}`} role="group">
@@ -999,7 +1071,14 @@ export function BlockContextMenu({
             {indentedItems.length > 0 && (
               // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- nested menu-item subgroup; see above
               <div id={subgroupId} role="group" aria-label={subgroupLabel}>
-                {indentedItems.map(renderItem)}
+                {beforeNested.map(renderItem)}
+                {nestedItems.length > 0 && (
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- second-level subgroup (Callout's variants); see above
+                  <div id={nested?.disclosureId} role="group" aria-label={nested?.disclosureLabel}>
+                    {nestedItems.map(renderItem)}
+                  </div>
+                )}
+                {afterNested.map(renderItem)}
               </div>
             )}
           </div>
