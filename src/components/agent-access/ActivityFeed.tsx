@@ -332,7 +332,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                               data-testid="mcp-activity-undo"
                             >
                               {isUndoing ? (
-                                <Spinner size="sm" />
+                                <Spinner />
                               ) : (
                                 <>
                                   <Undo2 />

@@ -78,7 +78,6 @@ export interface PageQuickActionsProps {
 
 interface VariantPreset {
   size: 'icon-xs' | 'icon-sm' | 'icon'
-  iconClass: string
   /** Whether the action cluster fades in on group-hover (desktop). */
   hoverReveal: boolean
 }
@@ -86,12 +85,10 @@ interface VariantPreset {
 const PRESETS: Record<PageQuickActionsVariant, VariantPreset> = {
   header: {
     size: 'icon-sm',
-    iconClass: 'h-4 w-4',
     hoverReveal: false,
   },
   journal: {
     size: 'icon-xs',
-    iconClass: 'h-3.5 w-3.5',
     // Always visible (not hover-only): the star + delete in the journal day
     // header were too easy to miss when gated behind group-hover. Live UX
     // review asked for them to render unconditionally.
@@ -99,7 +96,6 @@ const PRESETS: Record<PageQuickActionsVariant, VariantPreset> = {
   },
   row: {
     size: 'icon-xs',
-    iconClass: 'h-3.5 w-3.5',
     hoverReveal: true,
   },
 }
@@ -163,7 +159,7 @@ export function PageQuickActions({
           'text-muted-foreground hover:text-star data-[starred=true]:text-star data-[starred=true]:opacity-100',
         )}
       >
-        <Bookmark className={preset.iconClass} fill={starred ? 'currentColor' : 'none'} />
+        <Bookmark fill={starred ? 'currentColor' : 'none'} />
       </IconButton>
       {showDelete && (
         <IconButton
@@ -179,7 +175,7 @@ export function PageQuickActions({
             'text-muted-foreground hover:text-destructive active:text-destructive active:scale-95',
           )}
         >
-          <Trash2 className={preset.iconClass} />
+          <Trash2 />
         </IconButton>
       )}
     </div>

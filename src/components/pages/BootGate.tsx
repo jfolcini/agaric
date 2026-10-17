@@ -83,7 +83,7 @@ export function BootGate({ children }: { children: React.ReactNode }) {
               <Spinner />
             ) : (
               <>
-                <RefreshCw className="h-3.5 w-3.5" />
+                <RefreshCw />
                 {t('action.retry')}
               </>
             )}

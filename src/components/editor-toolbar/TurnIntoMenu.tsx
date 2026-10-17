@@ -177,12 +177,12 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
                   setExpanded((cur) => (cur === disclosure ? null : disclosure)),
                 )}
               >
-                <opt.icon className="h-3.5 w-3.5 mr-2" />
+                <opt.icon className="mr-2" />
                 <span>{t(turnIntoTypeKey(opt.blockType))}</span>
-                {active && <Check className="ml-auto h-3.5 w-3.5" aria-hidden="true" />}
+                {active && <Check className="ml-auto" aria-hidden="true" />}
                 <ChevronRight
                   className={cn(
-                    'h-3.5 w-3.5 shrink-0 transition-transform',
+                    'shrink-0 transition-transform',
                     active ? 'ml-1' : 'ml-auto',
                     isOpen && 'rotate-90',
                   )}
@@ -204,9 +204,9 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
                 onClose()
               })}
             >
-              <opt.icon className="h-3.5 w-3.5 mr-2" />
+              <opt.icon className="mr-2" />
               <span>{t(turnIntoTypeKey(opt.blockType))}</span>
-              {active && <Check className="ml-auto h-3.5 w-3.5" aria-hidden="true" />}
+              {active && <Check className="ml-auto" aria-hidden="true" />}
             </Button>
           )
         })}
@@ -221,7 +221,7 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
             onClose()
           })}
         >
-          <Minus className="h-3.5 w-3.5 mr-2" />
+          <Minus className="mr-2" />
           <span>{t('toolbar.divider')}</span>
         </Button>
       </div>

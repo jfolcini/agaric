@@ -15,10 +15,7 @@ import { FormatMenu } from '@/components/editor-toolbar/FormatMenu'
 import { TablePicker } from '@/components/editor-toolbar/TablePicker'
 import { TurnIntoMenu } from '@/components/editor-toolbar/TurnIntoMenu'
 import { type RenderMode, Tip, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
-import {
-  toolbarIconClass,
-  toolbarMenuRowClass,
-} from '@/components/FormattingToolbar/toolbar-config'
+import { toolbarMenuRowClass } from '@/components/FormattingToolbar/toolbar-config'
 import { TableOpsSelector } from '@/components/TableOpsSelector'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
@@ -52,7 +49,7 @@ export function renderFormatButton({
   if (mode === 'sentinel') {
     return (
       <Button variant="ghost" size="icon-xs" aria-hidden tabIndex={-1}>
-        <Type className={toolbarIconClass} />
+        <Type />
       </Button>
     )
   }
@@ -68,7 +65,7 @@ export function renderFormatButton({
         className={toolbarMenuRowClass}
         {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
-        <Type className="h-3.5 w-3.5 mr-2" />
+        <Type className="mr-2" />
         <span>{t('toolbar.format')}</span>
       </Button>
     ) : (
@@ -81,7 +78,7 @@ export function renderFormatButton({
           aria-expanded={open}
           {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
         >
-          <Type className={toolbarIconClass} />
+          <Type />
         </Button>
       </Tip>
     )
@@ -141,7 +138,7 @@ export function renderTurnIntoButton({
   if (mode === 'sentinel') {
     return (
       <Button variant="ghost" size="icon-xs" aria-hidden tabIndex={-1}>
-        <Pilcrow className={toolbarIconClass} />
+        <Pilcrow />
       </Button>
     )
   }
@@ -157,7 +154,7 @@ export function renderTurnIntoButton({
         className={toolbarMenuRowClass}
         {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
-        <Pilcrow className="h-3.5 w-3.5 mr-2" />
+        <Pilcrow className="mr-2" />
         <span>{t('toolbar.turnInto')}</span>
       </Button>
     ) : (
@@ -170,7 +167,7 @@ export function renderTurnIntoButton({
           aria-expanded={open}
           {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
         >
-          <Pilcrow className={toolbarIconClass} />
+          <Pilcrow />
         </Button>
       </Tip>
     )
@@ -228,7 +225,7 @@ export function renderTableOpsButton({
         tabIndex={-1}
         className="h-7 gap-1 px-1.5 text-xs"
       >
-        <Table2 className={toolbarIconClass} />
+        <Table2 />
         <span className="font-medium">{t('toolbar.tableOps')}</span>
       </Button>
     )
@@ -243,7 +240,7 @@ export function renderTableOpsButton({
         className={toolbarMenuRowClass}
         {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
-        <Table2 className="h-3.5 w-3.5 mr-2" />
+        <Table2 className="mr-2" />
         <span>{t('toolbar.tableOps')}</span>
       </Button>
     ) : (
@@ -255,7 +252,7 @@ export function renderTableOpsButton({
           className="h-7 gap-1 px-1.5 text-xs"
           {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
         >
-          <Table2 className={toolbarIconClass} />
+          <Table2 />
           <span className="font-medium">{t('toolbar.tableOps')}</span>
         </Button>
       </Tip>
@@ -311,7 +308,7 @@ export function renderTablePickerButton({
   if (mode === 'sentinel') {
     return (
       <Button variant="ghost" size="icon-xs" aria-hidden tabIndex={-1}>
-        <Table className={toolbarIconClass} />
+        <Table />
       </Button>
     )
   }
@@ -325,7 +322,7 @@ export function renderTablePickerButton({
         className={toolbarMenuRowClass}
         {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
       >
-        <Table className="h-3.5 w-3.5 mr-2" />
+        <Table className="mr-2" />
         <span>{t('toolbar.insertTable')}</span>
       </Button>
     ) : (
@@ -336,7 +333,7 @@ export function renderTablePickerButton({
           aria-label={t('toolbar.insertTable')}
           {...toolbarPressHandlers(() => setOpen((prev) => !prev))}
         >
-          <Table className={toolbarIconClass} />
+          <Table />
         </Button>
       </Tip>
     )

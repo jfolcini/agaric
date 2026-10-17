@@ -117,7 +117,7 @@ export function PageTagSection({
             className="gap-1 text-muted-foreground"
             aria-label={t('pageHeader.addTag')}
           >
-            <Plus className="h-3.5 w-3.5" />
+            <Plus />
           </Button>
         </PopoverTrigger>
         <MenuPopoverContent className="space-y-2 p-3" aria-label={t('pageHeader.tagPicker')}>
@@ -144,7 +144,7 @@ export function PageTagSection({
               onClick={() => setEmojiPickerOpen(true)}
               aria-label={t('pageHeader.insertEmoji')}
             >
-              <Smile className="h-3.5 w-3.5" />
+              <Smile />
             </Button>
           </div>
           <ScrollArea className="max-h-40">

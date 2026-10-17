@@ -13,7 +13,6 @@ import type React from 'react'
 import type { ToolbarButtonConfig } from '@/components/FormattingToolbar/toolbar-config'
 import {
   toolbarActiveClass,
-  toolbarIconClass,
   toolbarMenuRowClass,
 } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
@@ -134,7 +133,7 @@ export function renderConfigButton(
           onAfterAction?.()
         })}
       >
-        <btn.icon className="h-3.5 w-3.5 mr-2" />
+        <btn.icon className="mr-2" />
         <span>{t(btn.label)}</span>
       </Button>
     )
@@ -151,7 +150,7 @@ export function renderConfigButton(
         className={cn(isActive && toolbarActiveClass)}
         {...toolbarPressHandlers(btn.action)}
       >
-        <btn.icon className={toolbarIconClass} />
+        <btn.icon />
       </Button>
     </Tip>
   )

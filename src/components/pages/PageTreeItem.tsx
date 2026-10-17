@@ -72,7 +72,7 @@ export function PageTreeItem({
               onDelete(leafId, node.fullPath)
             }}
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 />
           </Button>
         )}
       </div>

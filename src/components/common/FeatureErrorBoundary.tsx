@@ -91,7 +91,7 @@ export class FeatureErrorBoundary extends React.Component<
           </p>
           <div className="flex flex-wrap gap-2 justify-center">
             <Button variant="outline" size="sm" onClick={this.handleRetry}>
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RefreshCw />
               {i18n.t('action.retry')}
             </Button>
             <Button
@@ -100,7 +100,7 @@ export class FeatureErrorBoundary extends React.Component<
               onClick={this.handleReportBug}
               aria-label={i18n.t('bugReport.reportCrashTitle')}
             >
-              <Bug className="h-3.5 w-3.5" />
+              <Bug />
               {i18n.t('bugReport.reportCrashTitle')}
             </Button>
           </div>

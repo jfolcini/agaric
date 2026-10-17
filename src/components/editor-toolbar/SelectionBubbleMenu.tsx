@@ -29,7 +29,6 @@ import {
   createMarkToggles,
   MARK_TOGGLE_SHORTCUT_IDS,
   toolbarActiveClass,
-  toolbarIconClass,
   withShortcutHint,
 } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
@@ -398,7 +397,7 @@ export function SelectionBubbleMenu({
                 btn.action()
               }}
             >
-              <btn.icon className={toolbarIconClass} />
+              <btn.icon />
             </Button>
           </Tip>
         )
@@ -429,7 +428,7 @@ export function SelectionBubbleMenu({
             setLinkPopoverOpen((prev) => !prev)
           }}
         >
-          <Link2 className={toolbarIconClass} />
+          <Link2 />
         </Button>
       </Tip>
       <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>

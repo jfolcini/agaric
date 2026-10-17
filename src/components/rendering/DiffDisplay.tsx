@@ -260,7 +260,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
             disabled={atFirstHunk}
             aria-label={t('diff.prevHunk')}
           >
-            <ChevronUp className="h-3.5 w-3.5" />
+            <ChevronUp />
             {t('diff.prevHunk')}
           </Button>
           <Button
@@ -273,7 +273,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
             disabled={atLastHunk}
             aria-label={t('diff.nextHunk')}
           >
-            <ChevronDown className="h-3.5 w-3.5" />
+            <ChevronDown />
             {t('diff.nextHunk')}
           </Button>
         </div>

@@ -547,7 +547,7 @@ export function TrashView(): React.ReactElement {
                 onClick={() => setConfirmRestoreAll(true)}
                 data-testid="trash-restore-all-btn"
               >
-                <RotateCcw className="h-3.5 w-3.5" />
+                <RotateCcw />
                 {t('trash.restoreAllHeaderButton')}
               </Button>
               <Button
@@ -556,7 +556,7 @@ export function TrashView(): React.ReactElement {
                 onClick={() => setConfirmEmptyTrash(true)}
                 data-testid="trash-empty-trash-btn"
               >
-                <Trash2 className="h-3.5 w-3.5" />
+                <Trash2 />
                 {t('trash.emptyTrashButton')}
               </Button>
             </>
@@ -612,7 +612,7 @@ export function TrashView(): React.ReactElement {
                 data-testid="trash-batch-restore-btn"
                 aria-keyshortcuts="Shift+R"
               >
-                <RotateCcw className="h-3.5 w-3.5" />
+                <RotateCcw />
                 {t('trash.restoreSelectedButton')}
               </Button>
             </TooltipTrigger>
@@ -631,7 +631,7 @@ export function TrashView(): React.ReactElement {
             data-testid="trash-batch-purge-btn"
             aria-keyshortcuts="Shift+Delete"
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 />
             {t('trash.purgeSelectedButton')}
           </Button>
           {/*  sub-fix 6: surface Shift+Click range-select hint inside the toolbar. */}

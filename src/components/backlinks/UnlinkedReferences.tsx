@@ -645,7 +645,7 @@ export function UnlinkedReferences({
                             text: (block.content ?? '').slice(0, 40),
                           })}
                         >
-                          <Link2 className="h-3.5 w-3.5 mr-1" />
+                          <Link2 className="mr-1" />
                           {t('unlinkedRefs.linkIt')}
                         </Button>
                       </li>

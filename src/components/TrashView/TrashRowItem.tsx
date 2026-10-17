@@ -195,7 +195,7 @@ export function TrashRowItem({
               onClick={() => onRestore(block)}
               tabIndex={-1}
             >
-              <RotateCcw className="h-3.5 w-3.5" />
+              <RotateCcw />
               {t('trash.restoreButton')}
             </Button>
           </TooltipTrigger>

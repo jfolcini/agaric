@@ -148,9 +148,9 @@ export function PickerRow({
       )}
       {...toolbarPressHandlers(onSelect)}
     >
-      {Icon ? <Icon className="h-3.5 w-3.5 shrink-0 mr-2" /> : null}
+      {Icon ? <Icon className="shrink-0 mr-2" /> : null}
       <span>{label}</span>
-      {active && <Check className="ml-auto h-3.5 w-3.5" aria-hidden="true" />}
+      {active && <Check className="ml-auto" aria-hidden="true" />}
     </Button>
   )
 }

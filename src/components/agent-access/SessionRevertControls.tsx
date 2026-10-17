@@ -73,7 +73,7 @@ export function SessionRevertControls({
             data-testid="mcp-activity-revert-session"
           >
             {isReverting ? (
-              <Spinner size="sm" />
+              <Spinner />
             ) : (
               <>
                 <Undo2 />

@@ -485,7 +485,7 @@ export function KeyboardShortcuts({
           >
             <SettingsIcon className="h-4 w-4" />
             {t('keyboard.customizeButton')}
-            <ChevronRight className="h-3.5 w-3.5 ml-auto" aria-hidden="true" />
+            <ChevronRight className="ml-auto" aria-hidden="true" />
           </Button>
         </SheetFooter>
       </SheetContent>

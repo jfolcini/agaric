@@ -151,17 +151,16 @@ describe('Button', () => {
 
   // The compact sizes keep their own `size-3`; tailwind-merge must drop the base
   // `size-4` for them.
-  it('sizes icons at size-4 by default and size-3 on the xs variants', () => {
-    const iconRule = "[&_svg:not([class*='size-'])]:size-"
-    const base = renderButton('default', 'base')
-    expect(base.className).toContain(`${iconRule}4`)
-    expect(base.className).not.toContain('1.2em')
-
-    for (const size of ['xs', 'icon-xs'] as const) {
-      const btn = renderButton(size, `compact-${size}`)
-      expect(btn.className).toContain(`${iconRule}3`)
-      expect(btn.className).not.toContain(`${iconRule}4`)
+  it('sizes icons at size-4, and size-3 on the xs text button', () => {
+    const iconRule = '[:where(&)_svg]:size-'
+    for (const size of ['default', 'icon-xs'] as const) {
+      const btn = renderButton(size, `icons-${size}`)
+      expect(btn.className).toContain(`${iconRule}4`)
+      expect(btn.className).not.toContain(`${iconRule}3`)
     }
+    const xs = renderButton('xs', 'icons-xs')
+    expect(xs.className).toContain(`${iconRule}3`)
+    expect(xs.className).not.toContain(`${iconRule}4`)
   })
 
   // -- palette icons (#5368) ---------------------------------------------------

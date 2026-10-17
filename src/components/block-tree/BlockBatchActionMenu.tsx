@@ -91,7 +91,7 @@ export function BlockBatchActionMenu({
             disabled={batchInProgress}
             onClick={() => onBatchSetPriority()}
           >
-            <Signal className="h-3.5 w-3.5 mr-1" />
+            <Signal className="mr-1" />
             {t('contextMenu.cyclePrioritySelected')}
           </Button>
         ) : null}
@@ -102,7 +102,7 @@ export function BlockBatchActionMenu({
           disabled={batchInProgress}
           onClick={() => onSetBatchDeleteConfirm(true)}
         >
-          <Trash2 className="h-3.5 w-3.5 mr-1" />
+          <Trash2 className="mr-1" />
           {t('blockContext.delete')}
         </Button>
 
@@ -112,7 +112,7 @@ export function BlockBatchActionMenu({
           onClick={() => onClearSelection()}
           aria-label={t('history.clearSelectionButton')}
         >
-          <X className="h-3.5 w-3.5" />
+          <X />
         </Button>
       </div>
       <ConfirmDialog

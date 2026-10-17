@@ -1,7 +1,6 @@
 /**
- * The editing toolbar's and the selection bubble's icons render at the
- * toolbar icon size (`toolbarIconClass`). An `icon-xs` Button shrinks an icon
- * without a `size-*` class to 12 px, where lucide's strokes blur at 1x.
+ * The editing toolbar's and the selection bubble's icons render at 16 px, the
+ * `icon-xs` Button's icon size. At 12 px lucide's strokes blur at 1x.
  */
 
 import { expect, focusBlock, openPage, selectEditorRange, test, waitForBoot } from './helpers'
