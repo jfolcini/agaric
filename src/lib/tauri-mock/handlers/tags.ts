@@ -122,7 +122,7 @@ function tagCacheRows(): TagCacheRow[] {
  * recursion joins active rows only, so a tombstoned block breaks the chain for
  * everything above it as well as for itself.
  */
-function inheritedTagIds(blockId: string): string[] {
+export function inheritedTagIds(blockId: string): string[] {
   const self = blocks.get(blockId)
   // A tombstoned (or absent) block holds no inherited rows: the backend's walk
   // only ever emits rows for an active descendant.

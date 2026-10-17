@@ -19,6 +19,8 @@ export const references: Record<string, string> = {
   'references.loadingMore': 'Loading more references',
   'references.loadMoreLabel': 'Load more references',
   'references.backlinksFrom': 'Backlinks from {{title}}',
+  'references.showChildren': 'Show child blocks',
+  'references.hideChildren': 'Hide child blocks',
   // #4551 — the link-kind segmented control above the backlink filter builder.
   'references.kindFilterLabel': 'Filter by link kind',
   'references.kindAll': 'All',
@@ -191,6 +193,10 @@ export const references: Record<string, string> = {
   'taggedItems.noPages': 'No pages have this tag.',
   'taggedItems.noBlocks': 'No blocks have this tag.',
   'taggedItems.loadFailed': 'Failed to load what this tag is on.',
+  'taggedItems.noChildren': 'No child blocks.',
+  'taggedItems.moreChildren_one': '{{count}} more block \u2014 open the block to see it',
+  'taggedItems.moreChildren_other': '{{count}} more blocks \u2014 open the block to see them',
+  'taggedItems.searchUnder': 'Search everything under #{{name}}',
   'backlink.searchTextRequired': 'Search text is required',
   'backlink.propertyKeyRequired': 'Property key is required',
   'backlink.propertyNotFound': 'No blocks have property "{{key}}"',
@@ -339,6 +345,7 @@ export const references: Record<string, string> = {
   'searchQuery.propKeyValueRequired': '{{prefix}}: key=value required',
   'searchQuery.propExpectedKeyEqualsValue': "{{prefix}}: expected 'key=value'",
   'searchQuery.propKeyEmpty': '{{prefix}}: key cannot be empty',
+  'searchQuery.tagBesideUnder': 'tag: cannot be combined with under:; use under: for every tag',
   'search.filterSyntaxIntro':
     'Filter syntax is live — type tag:#name or path:Journal/* in the search input, or use the Add filter button. Press ? for help.',
   'search.searchTags': 'Search tags...',
@@ -572,6 +579,8 @@ export const references: Record<string, string> = {
   'search.help.filter.col.meaning': 'Meaning',
   'search.help.filter.cell.tagName': 'Block carries the tag `name`. Repeats AND.',
   'search.help.filter.cell.bareTag': 'Bare alias for tag:#name.',
+  'search.help.filter.cell.underTag':
+    'Block carries the tag attached, written inline, or inherited from its page or a parent block.',
   'search.help.filter.cell.path': 'Page-name glob include. Comma-separated values OR-combine.',
   'search.help.filter.cell.notPath': 'Page-name glob exclude.',
   'search.help.filter.cell.state':

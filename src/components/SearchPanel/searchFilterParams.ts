@@ -29,6 +29,7 @@ export const UNRESOLVED_TAG_SENTINEL = '__unresolved-tag__'
 
 export interface SearchFilterParams {
   tagIds?: string[] | undefined
+  tagsMatchInlineAndInherited?: boolean | undefined
   includePageGlobs?: string[] | undefined
   excludePageGlobs?: string[] | undefined
   stateFilter?: string[] | undefined
@@ -67,6 +68,7 @@ export function astFilterParams(
   const hasUnresolvedTag = projection.tagNames.length > tagIds.length
   return {
     tagIds: hasUnresolvedTag ? [UNRESOLVED_TAG_SENTINEL] : tagIds.length === 0 ? undefined : tagIds,
+    tagsMatchInlineAndInherited: projection.tagsMatchInlineAndInherited || undefined,
     includePageGlobs:
       projection.includePageGlobs.length === 0 ? undefined : projection.includePageGlobs,
     excludePageGlobs:

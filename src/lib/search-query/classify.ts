@@ -14,6 +14,7 @@
  * stable across input edits in the middle of the query.
  */
 
+import { t } from '@/lib/i18n'
 import { ensureRegistered } from '@/lib/search-query/register'
 import { looksLikeUnknownPrefix, recognise } from '@/lib/search-query/registry'
 import { type RawToken, tokenize } from '@/lib/search-query/tokenize'
@@ -117,6 +118,22 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
           error: `shadowed by a later ${kind}: — only the last ${kind}: filter applies`,
           span: shadowed.span,
         }
+      }
+    }
+  }
+
+  // The backend widens every tag of a query at once
+  // (`tags_match_inline_and_inherited`), so beside an `under:` a `tag:` chip
+  // would silently match inherited tags too. Flag it instead.
+  if (filters.some((f) => f.kind === 'under')) {
+    for (let i = 0; i < filters.length; i++) {
+      const f = filters[i]
+      if (f?.kind !== 'tag') continue
+      filters[i] = {
+        kind: 'invalid',
+        source: input.slice(f.span[0], f.span[1]),
+        error: t('searchQuery.tagBesideUnder'),
+        span: f.span,
       }
     }
   }

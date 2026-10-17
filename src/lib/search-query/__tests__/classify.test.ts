@@ -113,6 +113,23 @@ describe('classify / parse', () => {
     })
   })
 
+  it('#5679 — parses under:#tag, quoted or bare, and rejects an empty value', () => {
+    expect(parse('under:#idea').filters).toEqual([{ kind: 'under', value: 'idea', span: [0, 11] }])
+    expect(parse('under:#"my tag"').filters[0]).toMatchObject({ kind: 'under', value: 'my tag' })
+    expect(parse('under:#').filters[0]).toMatchObject({ kind: 'invalid', source: 'under:#' })
+  })
+
+  it('#5679 — flags a tag: or bare #tag beside an under: as invalid', () => {
+    // The backend widens every tag of the query at once, so a tag: chip that
+    // stayed valid would silently match inherited tags too.
+    const ast = parse('#work under:#idea tag:#home')
+    expect(ast.filters.map((f) => f.kind)).toEqual(['invalid', 'under', 'invalid'])
+    expect(ast.filters[0]).toMatchObject({ source: '#work' })
+    expect(ast.filters[2]).toMatchObject({ source: 'tag:#home' })
+    if (ast.filters[2]?.kind === 'invalid') expect(ast.filters[2].error).toContain('under:')
+    expect(parse('tag:#work tag:#home').filters.map((f) => f.kind)).toEqual(['tag', 'tag'])
+  })
+
   it('flags malformed glob as invalid with InvalidGlob: prefix', () => {
     const ast = parse('path:[unclosed')
     expect(ast.filters).toHaveLength(1)

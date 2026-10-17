@@ -642,6 +642,7 @@ describe('searchBlocks', () => {
         excludedPropertyFilters: [],
         excludedStateFilter: [],
         excludedPriorityFilter: [],
+        tagsMatchInlineAndInherited: false,
       },
     })
     expect(result).toEqual(emptyPage)
@@ -705,17 +706,19 @@ describe('searchBlocks', () => {
         excludedPropertyFilters: [],
         excludedStateFilter: [],
         excludedPriorityFilter: [],
+        tagsMatchInlineAndInherited: false,
       },
     })
     expect(result).toEqual(pageResp)
   })
 
-  it('marshals parentId and tagIds into the filter struct', async () => {
+  it('marshals parentId, tagIds and the under: mode into the filter struct', async () => {
     mockedInvoke.mockImplementation(mockInvokeCommands({ search_blocks: () => emptyPage }))
     await searchBlocks({
       query: 'q',
       parentId: 'PAGE1',
       tagIds: ['TAG1', 'TAG2'],
+      tagsMatchInlineAndInherited: true,
       spaceId: 'SPACE_42',
     })
     expect(mockedInvoke).toHaveBeenCalledWith('search_blocks', {
@@ -745,6 +748,7 @@ describe('searchBlocks', () => {
         excludedPropertyFilters: [],
         excludedStateFilter: [],
         excludedPriorityFilter: [],
+        tagsMatchInlineAndInherited: true,
       },
     })
   })

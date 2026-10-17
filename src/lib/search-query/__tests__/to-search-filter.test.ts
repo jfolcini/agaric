@@ -210,3 +210,23 @@ describe('astToFilterProjection —  (metadata)', () => {
     expect(p.excludedPropertyFilters).toEqual([{ key: 'archived', value: 'true' }])
   })
 })
+
+describe('astToFilterProjection — under: (#5679)', () => {
+  it('projects under:#tag as a tag name that also matches inline and inherited tags', () => {
+    const p = project('under:#idea')
+    expect(p.tagNames).toEqual(['idea'])
+    expect(p.tagsMatchInlineAndInherited).toBe(true)
+  })
+
+  it('leaves tag:#tag matching attached tags only', () => {
+    const p = project('tag:#idea')
+    expect(p.tagNames).toEqual(['idea'])
+    expect(p.tagsMatchInlineAndInherited).toBe(false)
+  })
+
+  it('drops a tag: chip that sits beside an under: one, as it renders invalid', () => {
+    const p = project('under:#idea tag:#work')
+    expect(p.tagNames).toEqual(['idea'])
+    expect(p.tagsMatchInlineAndInherited).toBe(true)
+  })
+})

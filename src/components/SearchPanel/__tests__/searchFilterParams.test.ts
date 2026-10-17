@@ -25,6 +25,7 @@ import type { AstFilterProjection } from '@/lib/search-query'
 function emptyProjection(): AstFilterProjection {
   return {
     tagNames: [],
+    tagsMatchInlineAndInherited: false,
     includePageGlobs: [],
     excludePageGlobs: [],
     stateFilter: [],
@@ -80,6 +81,16 @@ describe('astFilterParams', () => {
     expect(params.excludedPriorityFilter).toEqual(['C'])
     expect(params.propertyFilters).toEqual([{ key: 'owner', value: 'me' }])
     expect(params.excludedPropertyFilters).toEqual([{ key: 'archived', value: 'true' }])
+  })
+
+  it('#5679 — sends the under: mode only when the query has an under: chip', () => {
+    const under = astFilterParams(
+      { ...emptyProjection(), tagNames: ['idea'], tagsMatchInlineAndInherited: true },
+      ['TAG_IDEA'],
+    )
+    expect(under.tagsMatchInlineAndInherited).toBe(true)
+    expect(under.tagIds).toEqual(['TAG_IDEA'])
+    expect(astFilterParams(emptyProjection(), []).tagsMatchInlineAndInherited).toBeUndefined()
   })
 
   // Issue #717 — a `tag:` filter whose name resolved to no existing tag
@@ -261,6 +272,7 @@ describe('astFilterParams canonical-adapter parity (#1646)', () => {
       name: 'mixed bag (all categories)',
       projection: {
         tagNames: ['work'],
+        tagsMatchInlineAndInherited: false,
         includePageGlobs: ['Projects/*'],
         excludePageGlobs: ['Archive/*'],
         stateFilter: ['TODO', 'none'],

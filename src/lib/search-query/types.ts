@@ -62,6 +62,8 @@ export interface SearchPropertyFilter {
 /** A single recognised filter token in the parsed query. */
 export type FilterToken =
   | { kind: 'tag'; value: string; span: [number, number] }
+  // `under:#tag` — the tag attached, written inline, or inherited (#5679)
+  | { kind: 'under'; value: string; span: [number, number] }
   | { kind: 'pathInclude'; value: string; span: [number, number] }
   | { kind: 'pathExclude'; value: string; span: [number, number] }
   // `state:` / `not-state:`
