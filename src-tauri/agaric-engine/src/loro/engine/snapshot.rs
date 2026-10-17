@@ -136,7 +136,7 @@ impl LoroEngine {
     /// stale until [`Self::rebuild_index_after_import`] runs. Boot rehydrate
     /// runs the halves as separate passes so each is its own boot milestone
     /// (#5707); nothing may read the engine between them.
-    pub(crate) fn import_deferring_index(&mut self, bytes: &[u8]) -> Result<bool, AppError> {
+    pub fn import_deferring_index(&mut self, bytes: &[u8]) -> Result<bool, AppError> {
         // #2036: capture pre-import oplog frontiers for the no-op short-circuit
         // below.
         let before_frontiers = self.doc.oplog_frontiers();
@@ -159,7 +159,7 @@ impl LoroEngine {
     /// The second half of [`Self::import`]: rebuild the index and run the
     /// one-time sibling-order migration. Loro decodes container state lazily,
     /// so this walk also pays the decode of every live node's meta.
-    pub(crate) fn rebuild_index_after_import(&mut self) {
+    pub fn rebuild_index_after_import(&mut self) {
         self.rebuild_index();
         // A pre-#400 snapshot carries sibling order only in the `position`
         // meta; migrate it onto the fractional index exactly once. The guard (a

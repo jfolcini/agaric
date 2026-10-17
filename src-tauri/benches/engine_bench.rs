@@ -21,6 +21,8 @@ mod engine_checkpoint_bench;
 mod history_bench;
 #[path = "groups/op_log_bench.rs"]
 mod op_log_bench;
+#[path = "groups/rehydrate_bench.rs"]
+mod rehydrate_bench;
 #[path = "groups/soft_delete_bench.rs"]
 mod soft_delete_bench;
 #[path = "groups/sync_import_bench.rs"]
@@ -32,6 +34,7 @@ use criterion::criterion_main;
 
 criterion_main!(
     engine_checkpoint_bench::benches,
+    rehydrate_bench::benches,
     undo_redo::reverse_benches,
     undo_redo::page_history_benches,
     undo_redo::undo_benches,
