@@ -65,8 +65,7 @@ export interface RequestDeleteOptions {
   confirmCopy?: PageDeleteConfirmCopy
   /**
    * Called once the delete IPC resolves successfully. Used by hosts that
-   * need post-delete UI side effects (PageHeader → `onBack()` + AT
-   * `announce(...)`).
+   * need post-delete UI side effects (PageHeader → AT `announce(...)`).
    */
   onDeleted?: (pageId: string) => void
   /** Called once an Undo restore resolves successfully. */

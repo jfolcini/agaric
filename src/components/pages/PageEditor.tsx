@@ -47,34 +47,22 @@ import { useInPageFindStore } from '@/stores/useInPageFindStore'
 export interface PageEditorProps {
   pageId: string
   title: string
-  onBack?: (() => void) | undefined
   onNavigateToPage?: NavigateToPageFn | undefined
 }
 
 export function PageEditor({
   pageId,
   title,
-  onBack,
   onNavigateToPage,
 }: PageEditorProps): React.ReactElement {
   return (
     <PageBlockStoreProvider pageId={pageId}>
-      <PageEditorInner
-        pageId={pageId}
-        title={title}
-        onBack={onBack}
-        onNavigateToPage={onNavigateToPage}
-      />
+      <PageEditorInner pageId={pageId} title={title} onNavigateToPage={onNavigateToPage} />
     </PageBlockStoreProvider>
   )
 }
 
-function PageEditorInner({
-  pageId,
-  title,
-  onBack,
-  onNavigateToPage,
-}: PageEditorProps): React.ReactElement {
+function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): React.ReactElement {
   const { t } = useTranslation()
   const blocks = usePageBlockStore((s) => s.blocks)
   const blocksById = usePageBlockStore((s) => s.blocksById)
@@ -385,7 +373,6 @@ function PageEditorInner({
         key={sourceClosed}
         pageId={pageId}
         title={title}
-        onBack={onBack}
         onEditSource={isTagPage === false && !sourceMode ? handleEditSource : undefined}
         kebabRef={kebabRef}
         editMode={pageModeOffered ? pageMode.mode : 'blocks'}

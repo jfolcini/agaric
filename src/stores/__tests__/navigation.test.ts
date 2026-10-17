@@ -478,8 +478,8 @@ describe('useNavigationStore', () => {
     // ── #4287: leaving the stack returns to the route it was opened from ──
     //
     // The user's report: "when deleting a page you should be redirected to the
-    // previous route you were in". Delete → `PageHeader.onDeleted` → `onBack`
-    // → this `goBack`, so the store-level pop IS the delete destination.
+    // previous route you were in". Delete leaves through `removePages`, which
+    // shares this exit (`exitViewForTab`); the `removePages` cases pin that.
     for (const origin of ['journal', 'search', 'tags', 'query'] as const) {
       it(`returns to ${origin} after opening a page from ${origin} and popping the stack`, () => {
         useNavigationStore.getState().setView(origin)

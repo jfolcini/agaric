@@ -53,7 +53,6 @@ import { useUndoStore } from '@/stores/undo'
 export interface PageHeaderProps {
   pageId: string
   title: string
-  onBack?: (() => void) | undefined
   /** Opens source mode; the kebab offers "Edit as Markdown" only with it. */
   onEditSource?: (() => void) | undefined
   /** The page-actions kebab, so focus can return to it. */
@@ -70,7 +69,6 @@ export interface PageHeaderProps {
 export function PageHeader({
   pageId,
   title,
-  onBack,
   onEditSource,
   kebabRef,
   editMode,
@@ -366,22 +364,22 @@ export function PageHeader({
         // load blocks" error toast while leaving the stale, now-foreign
         // view on screen. Reloading this store is meaningless anyway:
         // the page no longer belongs to the space it is scoped to.
-        // Navigate away instead: the page is no longer valid in the
-        // current view.
+        // Close it in every tab instead, as a delete does: the page is no
+        // longer valid in the current view.
         // (Switching the app's active space to follow the page was
         // considered and rejected — `setCurrentSpace` drives
         // `createPerSpaceSlice`'s cross-store reconcile, which flushes
         // and restores the TARGET space's own last-active tab/view, not
         // necessarily this page, so "following" would not reliably land
         // back on the moved page anyway.)
-        onBack?.()
+        useTabsStore.getState().removePages([pageId])
       } catch (err) {
         logger.error('PageHeader', 'Failed to move page to space', { pageId, targetSpaceId }, err)
         notify.error(t('space.moveFailed'))
         announce(t('announce.pageMoveFailed'))
       }
     },
-    [availableSpaces, onBack, pageId, t],
+    [availableSpaces, pageId, t],
   )
 
   // Sync editableTitle when prop changes (e.g., navigating to a different page)

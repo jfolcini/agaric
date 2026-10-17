@@ -61,7 +61,6 @@ vi.mock('@/components/editor/BlockTree', () => ({
 interface CapturedPageHeaderProps {
   pageId: string
   title: string
-  onBack?: () => void
   onEditSource?: () => void
   kebabRef?: Ref<HTMLButtonElement>
   editMode?: 'blocks' | 'page'
@@ -297,13 +296,11 @@ beforeEach(() => {
 
 describe('PageEditor', () => {
   it('passes correct props to PageHeader', () => {
-    const onBack = vi.fn()
-    render(<PageEditor pageId="PAGE_1" title="My Test Page" onBack={onBack} />)
+    render(<PageEditor pageId="PAGE_1" title="My Test Page" />)
 
     expect(capturedPageHeaderProps).not.toBeNull()
     expect(capturedPageHeaderProps?.pageId).toBe('PAGE_1')
     expect(capturedPageHeaderProps?.title).toBe('My Test Page')
-    expect(capturedPageHeaderProps?.onBack).toBe(onBack)
   })
 
   it('renders PageHeader component', () => {
@@ -674,9 +671,7 @@ describe('PageEditor', () => {
   })
 
   it('has no a11y violations', async () => {
-    const { container } = render(
-      <PageEditor pageId="PAGE_1" title="Accessible Page" onBack={() => {}} />,
-    )
+    const { container } = render(<PageEditor pageId="PAGE_1" title="Accessible Page" />)
 
     await waitFor(async () => {
       const results = await axe(container)

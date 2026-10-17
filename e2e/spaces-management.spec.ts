@@ -432,13 +432,12 @@ test.describe('Spaces — move a page between spaces', () => {
     ).toBeVisible()
   })
 
-  // #2813 — #2803's `handleMoveToSpace` fix calls `onBack()` (tabs.ts
-  // `goBack`) instead of reloading under the stale old-space scope. `goBack`
-  // has two distinct landing branches depending on the ACTIVE TAB's stack
-  // depth at the moment of the move (tabs.ts:460-494): popping to a
-  // still-non-empty stack lands on the new top entry (the parent page,
-  // within the same tab); popping the last entry of a single tab switches
-  // the navigation view to Pages. The test above only exercises the
+  // #2813 — #2803's `handleMoveToSpace` fix closes the page in every tab
+  // (tabs.ts `removePages`) instead of reloading under the stale old-space
+  // scope. It has two distinct landing branches depending on the ACTIVE
+  // TAB's stack at the moment of the move: a stack with another page left
+  // lands on its new top entry (the parent page, within the same tab);
+  // emptying the only tab switches the navigation view to Pages. The test above only exercises the
   // "editor closes, no error toast" surface — it never asserts WHICH view
   // is landed on. The two tests below pin both landing branches explicitly.
   //
@@ -447,7 +446,7 @@ test.describe('Spaces — move a page between spaces', () => {
   // `await pageStore.getState().load()` shape) that `page-blocks.ts`'s own
   // `#2802` catch block ALSO calls `goBack()` when that reload's
   // space-membership check rejects — landing on the identical page/view as
-  // #2803's direct `onBack()` call. The one observable that DOES
+  // #2803's direct `removePages` call. The one observable that DOES
   // discriminate: #2802's fallback path additionally fires the
   // `error.pageNotInCurrentSpace` soft notice ("This page was moved to
   // another space") as a side effect of the rejected reload; #2803's direct
@@ -486,8 +485,8 @@ test.describe('Spaces — move a page between spaces', () => {
       await page.getByText('This page was moved to another space', { exact: true }).isVisible(),
     ).toBe(false)
 
-    // `goBack` pops one entry off a 2-deep stack — the new top entry (Quick
-    // Notes) is still there, so it lands back on the PARENT page within the
+    // `removePages` drops the top entry of a 2-deep stack — the new top entry
+    // (Quick Notes) is still there, so it lands back on the PARENT page within the
     // same tab, not the Pages view and not a closed tab. No stale-scope
     // reload of the moved page means no error toast either.
     await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
@@ -517,11 +516,10 @@ test.describe('Spaces — move a page between spaces', () => {
       await page.getByText('This page was moved to another space', { exact: true }).isVisible(),
     ).toBe(false)
 
-    // `goBack` pops the LAST entry off a single tab's stack — tabs.ts's
-    // `newStack.length === 0` branch takes the "switch to Pages view"
-    // path when there is only one tab open (the sibling "close this tab"
-    // path requires a second tab, not exercised here). The editor closes
-    // and no error toast appears.
+    // `removePages` empties the only tab, so it takes the "switch to Pages
+    // view" path (the sibling "close this tab" path requires a second tab,
+    // pinned in `delete-page-tabs.spec.ts`). The editor closes and no error
+    // toast appears.
     await expect(page.locator('[aria-label="Page title"]')).not.toBeVisible()
     await expect(page.getByRole('grid')).toBeVisible()
     await expect(page.getByText('Failed to load blocks', { exact: true })).not.toBeVisible()

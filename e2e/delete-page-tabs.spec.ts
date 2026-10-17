@@ -3,7 +3,8 @@ import type { Locator, Page } from '@playwright/test'
 import { activeAlertDialog, expect, navigateToView, openPage, test, waitForBoot } from './helpers'
 
 /**
- * E2E — deleting a page drops it from every editor tab, not only the active one.
+ * E2E — deleting a page, or moving it to another space, drops it from every editor tab, not
+ * only the active one.
  *
  * Seed data (tauri-mock): "Getting Started" and "Quick Notes" are pages.
  */
@@ -85,5 +86,36 @@ test.describe('deleting a page open in several tabs', () => {
     await openPage(page, 'Quick Notes')
     await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
     await expect(tabs(page)).toHaveCount(0)
+  })
+})
+
+test.describe('moving a page open in several tabs to another space', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('the page-header move closes it in the other tab too', async ({ page }) => {
+    // A second space to move into.
+    await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
+    await page.mouse.move(0, 0)
+    await page.getByRole('option', { name: 'Manage spaces…', exact: true }).click()
+    const spaces = page.getByTestId('settings-panel-spaces')
+    await spaces.getByRole('button', { name: 'Create new space', exact: true }).click()
+    await spaces.getByPlaceholder('New space name').fill('Work')
+    await spaces.getByRole('button', { name: 'Create', exact: true }).click()
+    await expect(spaces.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue('Work')
+
+    await openPage(page, 'Getting Started')
+    await page.keyboard.press('Control+t')
+    await expect(tabs(page)).toHaveCount(2)
+
+    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Move to space', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Work', exact: true }).click()
+
+    await expect(page.getByTestId('header-label')).toHaveText('Pages')
+    await expect(page.locator('[aria-label="Page title"]')).toHaveCount(0)
+    await expect(tabs(page)).toHaveCount(0)
+    await expect.poll(() => persistedTabTitles(page)).not.toContain('Getting Started')
   })
 })

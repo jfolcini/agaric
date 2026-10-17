@@ -143,9 +143,9 @@ interface TabsStore {
    */
   renamePage: (pageId: string, title: string) => void
   /**
-   * Drop every stack entry naming one of `pageIds` (just trashed) from every tab of the active
-   * space. A tab left empty closes; when none is left, the editor is left the way `goBack`
-   * leaves it on the last tab. No-op when no tab holds any of them.
+   * Drop every stack entry naming one of `pageIds` (just trashed, or moved out of the space) from
+   * every tab of the active space. A tab left empty closes; when none is left, the editor is left
+   * the way `goBack` leaves it on the last tab. No-op when no tab holds any of them.
    */
   removePages: (pageIds: readonly string[]) => void
   /** Open a page in a new tab and switch to it. */
