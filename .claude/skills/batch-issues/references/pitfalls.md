@@ -30,6 +30,10 @@ Never take a Dependabot `Cargo.lock` verbatim: it is a snapshot of an older `mai
 
 After a failed commit, never `git switch` with changes still staged: they ride into the other branch. Finish or unstage first.
 
+### Two green PRs that break main together
+
+Each PR's CI tests it against the `main` it was cut from, so two approved PRs that touch the same component can each be green and still fail once both are in (a renamed label and a new test that looks it up by the old name). Before merging the second of two PRs that share files or a component, rebase it on the first and wait for its CI.
+
 ## Branches and `gh` in a cloud session
 
 A cloud session is handed one designated branch. It carries at most one PR; every other item gets its own `claude/<issue>-<slug>` branch off `origin/main`, pushed and opened the same way. The repo deletes a branch when its PR merges, so a designated branch whose PR merged is restarted from `origin/main` before it carries new work.
@@ -50,6 +54,7 @@ GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` an
 - Never `oxfmt --write .` or `npm run format`: it reformats all TOML in a style taplo rejects. Format only your files.
 - A rules-config change and its linter version bump land in one commit; oxlint rejects a config naming rules it does not know.
 - Swapping `<div role="status">` for `<output>` removes the literal attribute a test may query. Grep the tests for `[role=` / `toHaveAttribute('role'` first, and run the full suite for a11y sweeps.
+- The gitleaks hook flags a random-looking fixture secret (a token like `agt_0123…cdef`) as a leaked key. Build fixtures from a repeated character (`` `agt_${'a'.repeat(32)}` ``), never an allowlist entry.
 
 ## Rust and sqlx
 
@@ -57,6 +62,7 @@ GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` an
 - Before migrating a timestamp or enum column, grep the column name for cross-table `> ?` / `< ?` predicates and for values copied between columns; migrate a coupled cluster in one PR. Backfill with `CAST(ROUND((julianday(col) - 2440587.5) * 86400000.0) AS INTEGER)`, NULL-guarded.
 - Bumping a ratchet baseline (`dynamic-sql-baseline.txt`, `table-ownership-baseline.txt`) is a last resort. "The safe construct can't express this" is usually an arity problem: N fixed-arity `query_scalar!` call sites beat one dynamic call. If you do bump, say what you tried.
 - Broken rustdoc intra-doc links red the push (`cargo-doc-links` hook). Links in a `mod x;` declaration resolve in the parent's scope.
+- `internal compiler error: encountered incremental compilation error` is the toolchain, not the code: delete that crate's `src-tauri/target/debug/incremental/<crate>-*` directory and rebuild.
 
 ## Baseline reds in a worktree
 

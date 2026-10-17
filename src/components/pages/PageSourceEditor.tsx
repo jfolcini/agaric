@@ -254,7 +254,11 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
         const message = formatErrorForDisplay(err, { fallback: t('pageSource.saveFailed') })
         setSaveError(message)
         const line = refusedLine(message)
-        if (line !== null) bufferRef.current?.selectLine(line)
+        if (line !== null) {
+          // From Preview or Changes, the buffer the line is in is hidden.
+          flushSync(() => setMode('edit'))
+          bufferRef.current?.selectLine(line)
+        }
       }
     } finally {
       savingRef.current = false

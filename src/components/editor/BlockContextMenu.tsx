@@ -598,6 +598,7 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
     activeBlockType,
     turnIntoOpen,
     setTurnIntoOpen,
+    setCalloutOpen,
     turnIntoGroupId,
   } = ctx
   const { onTurnInto } = actions
@@ -607,7 +608,11 @@ function buildTurnIntoGroup(ctx: MenuGroupContext): MenuItem[] {
       id: 'turnInto',
       label: t('contextMenu.turnInto'),
       icon: <Replace className="h-3.5 w-3.5" />,
-      action: () => setTurnIntoOpen((o) => !o),
+      // Reopening shows Callout collapsed, so its variants never sit below the fold.
+      action: () => {
+        setTurnIntoOpen((o) => !o)
+        setCalloutOpen(false)
+      },
       expanded: turnIntoOpen,
       disclosureId: turnIntoGroupId,
       shortcut: shortcutHint('turnIntoBlock'),

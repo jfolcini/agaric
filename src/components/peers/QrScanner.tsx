@@ -8,8 +8,8 @@ import { logger } from '@/lib/logger'
 // QR scanner component — production-ready implementation.
 // Uses html5-qrcode for camera access and QR code detection.
 // See docs/architecture/sync-and-network.md § Pairing for the
-// platform constraint (Android CAMERA permission + file-upload + 4-word
-// manual-entry fallbacks).
+// platform constraint (Android CAMERA permission + 4-word manual-entry
+// fallback).
 
 /** One camera start; the effect cleanup ends it. */
 interface CameraSession {
@@ -84,8 +84,8 @@ export function QrScanner({ onScan }: QrScannerProps) {
     // media-capable WebView. On Android the app must hold the CAMERA
     // permission AND be served from a secure origin (tauri.localhost) for
     // this to be defined. When it isn't, html5-qrcode throws a cryptic
-    // library error — bail early with a clear, actionable message and fall
-    // back to manual entry instead.
+    // library error — bail early with a clear, actionable message and a
+    // Retry button.
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       logger.warn(
         'QrScanner',

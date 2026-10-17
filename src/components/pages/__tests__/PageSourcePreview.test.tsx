@@ -7,7 +7,7 @@ import { render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
-import { PageSourcePreview, withNameIds } from '@/components/pages/PageSourcePreview'
+import { emptyNewNames, PageSourcePreview, withNameIds } from '@/components/pages/PageSourcePreview'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -30,22 +30,27 @@ beforeEach(() => {
 describe('withNameIds', () => {
   it('writes a known [[Title]] and #tag as their ids, a label kept, a code span left alone', () => {
     expect(
-      withNameIds('see [[Quick Notes]] and [[Quick Notes|these]] #work `[[Quick Notes]]`', lookup),
+      withNameIds(
+        'see [[Quick Notes]] and [[Quick Notes|these]] #work `[[Quick Notes]]`',
+        lookup,
+        emptyNewNames(),
+      ),
     ).toBe(`see [[${NOTES}]] and [[${NOTES}|these]] #[${WORK}] \`[[Quick Notes]]\``)
   })
 
   it('reads a link body naming a page whole before splitting off a label', () => {
-    expect(withNameIds('[[Draft|Final]] [[Quick Notes|Final]]', lookup)).toBe(
+    expect(withNameIds('[[Draft|Final]] [[Quick Notes|Final]]', lookup, emptyNewNames())).toBe(
       `[[${PIPED}]] [[${NOTES}|Final]]`,
     )
   })
 
   it('writes a name nothing holds as one id, the same each time', () => {
-    const once = withNameIds('[[Brand New]]', lookup)
+    const newNames = emptyNewNames()
+    const once = withNameIds('[[Brand New]]', lookup, newNames)
 
     expect(once).toMatch(/^\[\[Z{16}\d{10}\]\]$/)
-    expect(withNameIds('[[Brand New]]', lookup)).toBe(once)
-    expect(withNameIds('[[Other]]', lookup)).not.toBe(once)
+    expect(withNameIds('[[Brand New]]', lookup, newNames)).toBe(once)
+    expect(withNameIds('[[Other]]', lookup, newNames)).not.toBe(once)
   })
 })
 

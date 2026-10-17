@@ -601,6 +601,30 @@ describe('PageSourceEditor saving', () => {
     expect(editorOf(box).state.doc.textBetween(from, to)).toBe('- second')
     expect(lineOf(editorOf(box), '- second').start).toBe(from)
   })
+
+  it('a refusal naming a line, saved from Changes, goes back to Edit with that line selected', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const failure = { kind: 'validation', message: "line 2: 'due' takes a date" }
+    stubSource(() => Promise.reject(failure))
+    const user = userEvent.setup()
+    renderEditor()
+    const box = await loadedEditor()
+    edit(box, 'first', 'first x')
+    await user.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+    expect(box).not.toBeVisible()
+
+    await user.click(saveButton())
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(failure.message)
+    expect(screen.getByRole('radio', { name: t('pageSource.modeEdit') })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+    expect(box).toBeVisible()
+    await waitFor(() => expect(box).toHaveFocus())
+    const { from, to } = editorOf(box).state.selection
+    expect(editorOf(box).state.doc.textBetween(from, to)).toBe('- second')
+  })
 })
 
 describe('PageSourceEditor front matter (#5160 S8)', () => {

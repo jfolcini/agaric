@@ -247,6 +247,14 @@ describe('typing', () => {
     expect(text(ed)).toBe(`- see ((${REF}))xow`)
   })
 
+  it('over a selection inside a token is refused', () => {
+    const ed = build(SEE)
+    select(ed, FROM + 5, FROM + 8)
+
+    type(ed, 'x')
+    expect(text(ed)).toBe(SEE)
+  })
+
   it('an IME composition inside a token is refused, and one beside it is not', () => {
     const ed = build(SEE)
     ed.view.dispatch(ed.state.tr.insertText('か', at(FROM + 5)).setMeta('composition', 1))

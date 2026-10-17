@@ -14,7 +14,7 @@
  */
 
 import type React from 'react'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -33,40 +33,52 @@ import { useSpaceStore } from '@/stores/space'
 /** Ids for the names the save would create: no ULID starts above `7`. */
 const NEW_NAME_ID_PREFIX = 'ZZZZZZZZZZZZZZZZ'
 
+/** The names the save would create, each with the id it shows under, and back. */
+interface NewNames {
+  ids: Map<string, string>
+  titles: Map<string, string>
+}
+
+export function emptyNewNames(): NewNames {
+  return { ids: new Map(), titles: new Map() }
+}
+
 /**
  * `content` with each `[[Name]]` and `#name` written as the stored token of
- * the id `idOf` gives its name: `[[ID]]` (`[[ID|label]]` with a label) and
- * `#[ID]`. A link tries each reading of its body (`linkBodyReadings`) in turn.
+ * the id `idOf` gives its name, or else of its id in `newNames`: `[[ID]]`
+ * (`[[ID|label]]` with a label) and `#[ID]`. A link tries each reading of its
+ * body (`linkBodyReadings`) in turn.
  */
-export function withNameIds(content: string, idOf: (name: string) => string | null): string {
+export function withNameIds(
+  content: string,
+  idOf: (name: string) => string | null,
+  newNames: NewNames,
+): string {
   let out = ''
   let at = 0
   for (const token of scanNameTokens(content)) {
     out += content.slice(at, token.start)
     at = token.end
     if (token.kind === 'tag') {
-      out += `#[${idOf(token.name) ?? newNameId(token.name)}]`
+      out += `#[${idOf(token.name) ?? newNameId(newNames, token.name)}]`
       continue
     }
     const reading = linkBodyReadings(token.body).find(({ name }) => idOf(name) !== null)
     const name = reading?.name ?? token.name
     const label = reading === undefined ? token.label : reading.label
-    const id = idOf(name) ?? newNameId(name)
+    const id = idOf(name) ?? newNameId(newNames, name)
     out += label === undefined ? `[[${id}]]` : `[[${id}|${label}]]`
   }
   return out + content.slice(at)
 }
 
-const newNames = new Map<string, string>()
-const newNameTitles = new Map<string, string>()
-
 /** The id a name the save would create shows under, the same one each time. */
-function newNameId(name: string): string {
-  const known = newNames.get(name)
+function newNameId({ ids, titles }: NewNames, name: string): string {
+  const known = ids.get(name)
   if (known !== undefined) return known
-  const id = NEW_NAME_ID_PREFIX + String(newNames.size).padStart(10, '0')
-  newNames.set(name, id)
-  newNameTitles.set(id, name)
+  const id = NEW_NAME_ID_PREFIX + String(ids.size).padStart(10, '0')
+  ids.set(name, id)
+  titles.set(id, name)
   return id
 }
 
@@ -95,6 +107,7 @@ export function PageSourcePreview({ lines }: { lines: SourceLines }): React.Reac
   const { t } = useTranslation()
   const callbacks = useRichContentCallbacks()
   const idOf = useTitleIds()
+  const [newNames] = useState(emptyNewNames)
   const { blocks, pageProperties } = useMemo(() => {
     const texts = lines.text.split('\n')
     return {
@@ -105,12 +118,12 @@ export function PageSourcePreview({ lines }: { lines: SourceLines }): React.Reac
 
   const options = {
     interactive: false,
-    resolveBlockTitle: (id: string) => newNameTitles.get(id) ?? callbacks.resolveBlockTitle(id),
-    resolveTagName: (id: string) => newNameTitles.get(id) ?? callbacks.resolveTagName(id),
+    resolveBlockTitle: (id: string) => newNames.titles.get(id) ?? callbacks.resolveBlockTitle(id),
+    resolveTagName: (id: string) => newNames.titles.get(id) ?? callbacks.resolveTagName(id),
     resolveBlockStatus: (id: string) =>
-      newNameTitles.has(id) ? ('active' as const) : callbacks.resolveBlockStatus(id),
+      newNames.titles.has(id) ? ('active' as const) : callbacks.resolveBlockStatus(id),
     resolveTagStatus: (id: string) =>
-      newNameTitles.has(id) ? ('active' as const) : callbacks.resolveTagStatus(id),
+      newNames.titles.has(id) ? ('active' as const) : callbacks.resolveTagStatus(id),
   }
   const ordinals: number[] = []
 
@@ -150,7 +163,7 @@ export function PageSourcePreview({ lines }: { lines: SourceLines }): React.Reac
             )}
             <div className="block-static min-w-0 flex-1">
               <ListMarker style={block.listStyle} ordinal={ordinal} />
-              {renderRichContent(withNameIds(block.text, idOf), options)}
+              {renderRichContent(withNameIds(block.text, idOf, newNames), options)}
             </div>
             {block.properties.map(([key, value], j) => (
               // oxlint-disable-next-line react/no-array-index-key -- a key may be written twice on a block
