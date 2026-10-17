@@ -10,7 +10,7 @@
  * Validates:
  *  - Renders "Add filter" button
  *  - Adding a BlockType filter
- *  - Adding a Status filter (PropertyText key=todo)
+ *  - Adding a Status / Priority filter (TodoState / Priority)
  *  - Adding a Contains filter
  *  - Adding a Property filter (PropertyText)
  *  - Adding a Date filter (CreatedInRange)
@@ -202,7 +202,9 @@ describe('BacklinkFilterBuilder', () => {
       expect(onFiltersChange).toHaveBeenCalledTimes(1)
     })
 
-    it('adds a Status filter (shortcut for PropertyText key=todo)', async () => {
+    // The state lives in `blocks.todo_state`, never in `block_properties`, so
+    // only the `TodoState` variant can match a task.
+    it('adds a Status filter as a TodoState filter', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
@@ -213,17 +215,13 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        expect.objectContaining({ type: 'PropertyText', key: 'todo', op: 'Eq', value: 'DONE' }),
+        expect.objectContaining({ type: 'TodoState', state: 'DONE' }),
       ])
     })
 
-    // Issue #1647 follow-up — `none` is a SENTINEL ("no state set"), NOT a
-    // literal value. On the search side `state:none` resolves to
-    // `todo_state IS NULL` (src-tauri/src/fts/metadata_filter.rs). The
-    // backlink Status `none` must therefore emit the "property absent"
-    // filter (`PropertyIsEmpty`), not a literal `PropertyText Eq 'none'`
-    // (which would match blocks whose `todo` property is the string "none").
-    it('emits PropertyIsEmpty for the `none` sentinel (not a literal Eq match)', async () => {
+    // `none` means "no state set" (search's `state:none`), never a literal
+    // state: no task state the app can set.
+    it('emits "none of the task states" for the `none` sentinel', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
@@ -234,11 +232,16 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        expect.objectContaining({ type: 'PropertyIsEmpty', key: 'todo' }),
-      ])
-      // Must NOT be a literal text match on the string "none".
-      expect(onFiltersChange).not.toHaveBeenCalledWith([
-        expect.objectContaining({ type: 'PropertyText', value: 'none' }),
+        expect.objectContaining({
+          type: 'Not',
+          filter: {
+            type: 'Or',
+            filters: ['TODO', 'DOING', 'DONE', 'CANCELLED'].map((state) => ({
+              type: 'TodoState',
+              state,
+            })),
+          },
+        }),
       ])
     })
 
@@ -270,18 +273,19 @@ describe('BacklinkFilterBuilder', () => {
       expect(values).toContain('none')
     })
 
-    it('adds a Priority filter', async () => {
+    // `priority` lives in `blocks.priority`; `block_properties` rejects the key.
+    it('adds a Priority filter as a Priority filter', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
 
       await openAddFilterRow(user)
       await user.selectOptions(screen.getByLabelText('Filter category'), 'priority')
-      await user.selectOptions(screen.getByLabelText('Priority value'), '1')
+      await user.selectOptions(screen.getByLabelText('Priority value'), '2')
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        expect.objectContaining({ type: 'PropertyText', key: 'priority', op: 'Eq', value: '1' }),
+        expect.objectContaining({ type: 'Priority', level: '2' }),
       ])
     })
 
@@ -303,10 +307,9 @@ describe('BacklinkFilterBuilder', () => {
       expect(values).toEqual(['1', '2', '3', 'none'])
     })
 
-    // #2281 item 10 — like Status, priority `none` is a SENTINEL ("no
-    // priority set") and must emit the "property absent" filter, not a
-    // literal `PropertyText Eq 'none'` string match.
-    it('emits PropertyIsEmpty for the priority `none` sentinel', async () => {
+    // Like Status, priority `none` means "no priority set": none of the
+    // configured levels.
+    it('emits "none of the priority levels" for the priority `none` sentinel', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()
       renderBuilder({ onFiltersChange })
@@ -317,10 +320,13 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
-        expect.objectContaining({ type: 'PropertyIsEmpty', key: 'priority' }),
-      ])
-      expect(onFiltersChange).not.toHaveBeenCalledWith([
-        expect.objectContaining({ type: 'PropertyText', value: 'none' }),
+        expect.objectContaining({
+          type: 'Not',
+          filter: {
+            type: 'Or',
+            filters: ['1', '2', '3'].map((level) => ({ type: 'Priority', level })),
+          },
+        }),
       ])
     })
 
@@ -796,6 +802,38 @@ describe('BacklinkFilterBuilder', () => {
         { type: 'HasTag', tag_id: TAG_A },
         expect.objectContaining({ type: 'HasTag', tag_id: TAG_B }),
       ])
+    })
+
+    // The filters the parent holds carry the `_addId` stamp; a fresh one does not.
+    it.each([
+      ['status', 'TODO', 'Status value'],
+      ['status', 'none', 'Status value'],
+      ['priority', '1', 'Priority value'],
+      ['priority', 'none', 'Priority value'],
+    ])('detects a duplicate %s = %s filter', async (category, value, valueLabel) => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      const { rerender } = renderBuilder({ onFiltersChange })
+      const addFilter = async () => {
+        await openAddFilterRow(user)
+        await user.selectOptions(screen.getByLabelText('Filter category'), category)
+        await user.selectOptions(screen.getByLabelText(valueLabel), value)
+        await user.click(screen.getByRole('button', { name: /Apply filter/i }))
+      }
+
+      await addFilter()
+      const stamped = onFiltersChange.mock.calls[0]?.[0] as BacklinkFilter[]
+      rerender(
+        <BacklinkFilterBuilder
+          {...defaultProps}
+          filters={stamped}
+          onFiltersChange={onFiltersChange}
+        />,
+      )
+      await addFilter()
+
+      expect(toast.error).toHaveBeenCalledWith('Filter already applied')
+      expect(onFiltersChange).toHaveBeenCalledTimes(1)
     })
 
     it('still detects true duplicates', async () => {
