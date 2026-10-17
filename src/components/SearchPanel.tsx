@@ -34,6 +34,7 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
+import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { ResultCard } from '@/components/common/ResultCard'
 import { SearchHelpDialog } from '@/components/help/SearchHelpDialog'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
@@ -702,9 +703,11 @@ export function SearchPanel(): React.ReactElement {
           <ul aria-labelledby="search-recent-heading" className="space-y-1 list-none m-0 p-0">
             {recentPages.map((page) => (
               <li key={page.id}>
-                <CardButton className="text-sm" onClick={() => handleRecentClick(page)}>
-                  {page.title}
-                </CardButton>
+                <NewTabTarget pageId={page.id} title={page.title}>
+                  <CardButton className="text-sm" onClick={() => handleRecentClick(page)}>
+                    {page.title}
+                  </CardButton>
+                </NewTabTarget>
               </li>
             ))}
           </ul>

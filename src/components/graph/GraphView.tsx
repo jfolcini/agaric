@@ -35,7 +35,7 @@ import {
   useGraphSimulation,
 } from '@/hooks/useGraphSimulation'
 import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
-import { useIsMobile } from '@/hooks/useIsMobile'
+import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
@@ -196,9 +196,7 @@ export function GraphView(): React.ReactElement {
   const { structureKey } = useGraphStructureEvents()
   const invalidationKey = propertyKey + structureKey
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
-  const openInNewTab = useTabsStore((s) => s.openInNewTab)
-  // The tab bar is desktop-only, so on mobile a new tab would open out of sight.
-  const isMobile = useIsMobile()
+  const openInBackgroundTab = useOpenInBackgroundTab()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const svgRef = useRef<SVGSVGElement>(null)
   // #1530: remember the last combined `invalidationKey` applied to a fetch so a
@@ -259,9 +257,10 @@ export function GraphView(): React.ReactElement {
         announce(t('graph.selected', { page: label }))
       },
       open: navigateToPage,
-      openInNewTab: isMobile ? navigateToPage : openInNewTab,
+      // The tab bar is desktop-only, so on mobile a new tab would open out of sight.
+      openInNewTab: openInBackgroundTab ?? navigateToPage,
     }),
-    [t, navigateToPage, openInNewTab, isMobile],
+    [t, navigateToPage, openInBackgroundTab],
   )
 
   // Extract the tag filter's tagIds — these drive server-side fetching.

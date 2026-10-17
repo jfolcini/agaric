@@ -95,6 +95,7 @@ interface MenuGroupContext {
   todoState: (string | null) | undefined
   priority: (string | null) | undefined
   linkUrl: string | undefined
+  pageLinkId: string | undefined
   pageRefId: string | undefined
   /**
    * The containing page's flat block list — the serialization source for the
@@ -356,9 +357,23 @@ function buildHistoryGroup(ctx: MenuGroupContext): MenuItem[] {
   ]
 }
 
-/** Link group: Open link / Copy URL / Copy block ref / Copy page ref. */
+/** Link group: Open in new tab / Open link / Copy URL / Copy block ref / Copy page ref. */
 function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
-  const { t, blockId, onClose, linkUrl, pageRefId } = ctx
+  const { t, blockId, onClose, linkUrl, pageLinkId, pageRefId } = ctx
+  const { onOpenLinkInNewTab } = ctx.actions
+
+  const openInNewTabItem: MenuItem | null =
+    pageLinkId && onOpenLinkInNewTab
+      ? {
+          id: 'openInNewTab',
+          label: t('tabs.openInNewTab'),
+          icon: <ExternalLink className="h-3.5 w-3.5" />,
+          action: () => {
+            onOpenLinkInNewTab(pageLinkId)
+            onClose()
+          },
+        }
+      : null
 
   // #2960 — the raw `linkUrl` here is captured from an anchor's
   // `href`/`data-href` by the long-press / right-click gesture
@@ -450,7 +465,7 @@ function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
       }
     : null
 
-  return [openLinkItem, copyUrlItem, copyBlockRefItem, copyPageRefItem]
+  return [openInNewTabItem, openLinkItem, copyUrlItem, copyBlockRefItem, copyPageRefItem]
     .filter((item): item is MenuItem => item !== null)
     .concat(buildContentCopyItems(ctx))
 }
@@ -682,6 +697,7 @@ export function BlockContextMenu({
   priority,
   dueDate: _dueDate,
   linkUrl,
+  pageLinkId,
   pageRefId,
   activeBlockType,
   selectedBlockIds: selectedBlockIdsProp,
@@ -947,6 +963,7 @@ export function BlockContextMenu({
     todoState,
     priority,
     linkUrl,
+    pageLinkId,
     pageRefId,
     blocks,
     activeBlockType,

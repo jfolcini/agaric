@@ -5,7 +5,7 @@
  * A single `<nav>` holding the MRU **recents scroller**: the existing
  * recents list — `<ScrollArea orientation="horizontal">`, wheel-to-horizontal
  * handler, overflow mask, MRU exclusion of the currently-open page. Click →
- * `navigateToPage`, Ctrl/Cmd/middle → `openInNewTab`. Recents are per-space
+ * `navigateToPage`, Ctrl/Cmd/middle → a background tab. Recents are per-space
  * (Phase 3). Chips stay text-only (history).
  *
  * The former "destinations cluster" (a hard-coded Pages/Tags/Graph/Search
@@ -30,9 +30,11 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { RecentPageChip } from '@/components/ui/recent-page-chip'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 import { getPageDisplayName } from '@/lib/page-display'
 import { shouldReduceMotion } from '@/lib/preferences'
 import { type PageRef, selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
@@ -55,7 +57,7 @@ export function QuickAccessBar(): React.ReactElement | null {
   })
 
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
-  const openInNewTab = useTabsStore((s) => s.openInNewTab)
+  const openInBackgroundTab = useOpenInBackgroundTab()
 
   const visible = recentPages.filter((p) => p.pageId !== activePageId)
 
@@ -93,14 +95,14 @@ export function QuickAccessBar(): React.ReactElement | null {
 
   const handleRecentClick = useCallback(
     (ref: PageRef, e: React.MouseEvent) => {
-      if (e.ctrlKey || e.metaKey || e.button === 1) {
+      if ((e.ctrlKey || e.metaKey) && openInBackgroundTab) {
         e.preventDefault()
-        openInNewTab(ref.pageId, ref.title)
+        openInBackgroundTab(ref.pageId, ref.title)
         return
       }
       navigateToPage(ref.pageId, ref.title)
     },
-    [navigateToPage, openInNewTab],
+    [navigateToPage, openInBackgroundTab],
   )
 
   // Vertical wheel deltas → horizontal scroll (recents zone only).
@@ -165,25 +167,20 @@ export function QuickAccessBar(): React.ReactElement | null {
               const fullTitle = ref.title || t('recent.untitled')
               const displayTitle = getPageDisplayName(fullTitle, 'leaf').label
               return (
-                <RecentPageChip
-                  key={ref.pageId}
-                  ref={(el) => {
-                    if (el != null) buttonRefs.current.set(idx, el)
-                    else buttonRefs.current.delete(idx)
-                  }}
-                  tabIndex={idx === focusedIndex ? 0 : -1}
-                  className="truncate justify-start"
-                  title={fullTitle}
-                  onClick={(e) => handleRecentClick(ref, e)}
-                  onAuxClick={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault()
-                      openInNewTab(ref.pageId, ref.title)
-                    }
-                  }}
-                >
-                  <span className="truncate">{displayTitle}</span>
-                </RecentPageChip>
+                <NewTabTarget key={ref.pageId} pageId={ref.pageId} title={ref.title}>
+                  <RecentPageChip
+                    ref={(el) => {
+                      if (el != null) buttonRefs.current.set(idx, el)
+                      else buttonRefs.current.delete(idx)
+                    }}
+                    tabIndex={idx === focusedIndex ? 0 : -1}
+                    className="truncate justify-start"
+                    title={fullTitle}
+                    onClick={(e) => handleRecentClick(ref, e)}
+                  >
+                    <span className="truncate">{displayTitle}</span>
+                  </RecentPageChip>
+                </NewTabTarget>
               )
             })}
           </div>

@@ -95,7 +95,7 @@ describe('useBlockTouchLongPress', () => {
 
     expect(touchEnd(hook)).toBe(true)
     expect(hook.openContextMenu).toHaveBeenCalledOnce()
-    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined, undefined)
     hook.unmount()
   })
 
@@ -142,7 +142,7 @@ describe('useBlockTouchLongPress', () => {
     hold()
     hook.isDraggingRef.current = true
     touchEnd(hook)
-    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined, undefined)
     hook.unmount()
   })
 
@@ -163,7 +163,7 @@ describe('useBlockTouchLongPress', () => {
     // hypot(3, 2) ≈ 3.6 px — a held finger is never perfectly still.
     touchMove(hook, [{ x: 103, y: 202 }])
     touchEnd(hook)
-    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined, undefined)
     hook.unmount()
   })
 
@@ -173,7 +173,7 @@ describe('useBlockTouchLongPress', () => {
     hold()
     touchMove(hook, [{ x: 102, y: 198 }])
     touchEnd(hook)
-    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined, undefined)
     hook.unmount()
   })
 
@@ -246,7 +246,7 @@ describe('useBlockTouchLongPress', () => {
     hold()
     expect(mockedHaptic).toHaveBeenCalledOnce()
     touchEnd(hook)
-    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 100, undefined)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 100, undefined, undefined)
     hook.unmount()
   })
 
@@ -288,7 +288,7 @@ describe('useBlockTouchLongPress', () => {
       touchStart(hook, [{ x: 10, y: 20 }], { target: staticBody })
       hold()
       touchEnd(hook)
-      expect(hook.openContextMenu).toHaveBeenCalledWith(10, 20, undefined)
+      expect(hook.openContextMenu).toHaveBeenCalledWith(10, 20, undefined, undefined)
       staticBody.remove()
       hook.unmount()
     })
@@ -372,7 +372,7 @@ describe('useBlockTouchLongPress', () => {
     touchStart(hook, [{ x: 30, y: 40 }], { target: span })
     hold()
     touchEnd(hook)
-    expect(hook.openContextMenu).toHaveBeenCalledWith(30, 40, 'https://example.com')
+    expect(hook.openContextMenu).toHaveBeenCalledWith(30, 40, 'https://example.com', undefined)
 
     link.remove()
     hook.unmount()
@@ -394,7 +394,7 @@ describe('useBlockTouchLongPress', () => {
       } as unknown as React.MouseEvent)
     })
     expect(preventDefault).toHaveBeenCalledOnce()
-    expect(hook.openContextMenu).toHaveBeenCalledWith(300, 400, undefined)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(300, 400, undefined, undefined)
     div.remove()
     hook.unmount()
   })
@@ -413,13 +413,37 @@ describe('useBlockTouchLongPress', () => {
         target: span,
       } as unknown as React.MouseEvent)
     })
-    expect(hook.openContextMenu).toHaveBeenCalledWith(50, 60, 'https://fallback.com')
+    expect(hook.openContextMenu).toHaveBeenCalledWith(50, 60, 'https://fallback.com', undefined)
     span.remove()
     hook.unmount()
   })
 
   // Android WebView fires a NATIVE `contextmenu` ~500 ms into a hold, by which
   // time the drag has activated (400 ms); it must not also pop the menu.
+  it.each([
+    ['block-link', 'a [[link]]'],
+    ['block-ref', 'a ((ref))'],
+  ])('handleContextMenu passes the target of %s chip under the pointer (%s)', (type) => {
+    const hook = setup()
+    const chip = document.createElement('span')
+    chip.setAttribute('data-type', type)
+    chip.setAttribute('data-id', 'TARGET01')
+    const label = document.createElement('span')
+    chip.append(label)
+    document.body.append(chip)
+    act(() => {
+      hook.result.current.handleContextMenu({
+        preventDefault: vi.fn(),
+        clientX: 5,
+        clientY: 6,
+        target: label,
+      } as unknown as React.MouseEvent)
+    })
+    expect(hook.openContextMenu).toHaveBeenCalledWith(5, 6, undefined, 'TARGET01')
+    chip.remove()
+    hook.unmount()
+  })
+
   it('handleContextMenu suppresses the browser menu but opens nothing while a drag is active', () => {
     const hook = setup(true)
     const div = document.createElement('div')
@@ -445,7 +469,7 @@ describe('useBlockTouchLongPress', () => {
         target: div,
       } as unknown as React.MouseEvent)
     })
-    expect(hook.openContextMenu).toHaveBeenCalledWith(10, 20, undefined)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(10, 20, undefined, undefined)
     div.remove()
     hook.unmount()
   })
@@ -478,12 +502,12 @@ describe('useBlockTouchLongPress', () => {
 
     touchEnd(hook)
     expect(hook.openContextMenu).toHaveBeenCalledOnce()
-    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined)
+    expect(hook.openContextMenu).toHaveBeenCalledWith(100, 200, undefined, undefined)
 
     // The press is over: a later right-click opens as usual.
     contextMenuAt(0)
     expect(hook.openContextMenu).toHaveBeenCalledTimes(2)
-    expect(hook.openContextMenu).toHaveBeenLastCalledWith(300, 400, undefined)
+    expect(hook.openContextMenu).toHaveBeenLastCalledWith(300, 400, undefined, undefined)
     div.remove()
     hook.unmount()
   })

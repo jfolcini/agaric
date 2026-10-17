@@ -144,6 +144,8 @@ interface TabsStore {
   renamePage: (pageId: string, title: string) => void
   /** Open a page in a new tab and switch to it. */
   openInNewTab: (pageId: string, title: string) => void
+  /** Open a page in a new tab behind the active one, leaving the view and active tab as they are. */
+  openInBackgroundTab: (pageId: string, title: string) => void
   /** Close a tab by index. If last tab closed, switch to 'pages' view. */
   closeTab: (tabIndex: number) => void
   /**
@@ -699,6 +701,19 @@ export const useTabsStore = create<TabsStore>()(
         set(spliceTabs(state, newTabs, newIndex))
         setNavigationView('page-editor')
         setNavigationSelectedBlockId(null)
+      },
+
+      openInBackgroundTab: (pageId: string, title: string) => {
+        const state = get()
+        const { tabs, activeTabIndex } = readActiveSlice(state)
+        // No `enteredFrom`: the tab is entered later through `switchTab`,
+        // which records the route it is entered from.
+        const newTab: Tab = {
+          id: String(nextTabId++),
+          pageStack: [{ pageId, title }],
+          label: title,
+        }
+        set(spliceTabs(state, [...tabs, newTab], activeTabIndex))
       },
 
       closeTab: (tabIndex: number) => {

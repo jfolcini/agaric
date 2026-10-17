@@ -188,6 +188,7 @@ export function SearchResultGroups({
                 id={`search-result-${block.id}`}
                 isFocused={!!focusedRow && focusedRow.id === block.id}
                 onClick={() => onResultClick(block)}
+                page={{ id: group.page_id, title }}
                 loading={loadingResultId === block.id}
                 style={style}
                 measureRef={measureRef}

@@ -99,7 +99,7 @@ A force-directed graph of pages and the links between them.
 - **Local graph**: *Focus on this page* narrows the graph to the open page's 1- or 2-hop neighbourhood. Selecting a node re-centres the neighbourhood on it, so you can walk the graph hop by hop; nodes that stay keep their place, and *Back to "…"* returns to the page you started from. *Show in graph* in the page kebab (palette: *Show this page in graph*, `Ctrl+Shift+G`) opens it from the page; mode and depth are remembered per space, and a page the filters hide says so. Coming back to the graph shows the layout and zoom as they were left, for the session.
 - **Zoom / pan** with mouse / trackpad / touch. A fresh layout is fitted to the view once it settles; *Fit to view* (`0`) frames every node again.
 - **Labels** stay the same size on screen at every zoom, with a halo in the background colour so they read over edges. The open page, the hovered, focused and selected nodes, and their neighbours are always labelled; other nodes are labelled once they are big enough on screen, so hubs come first and more appear as you zoom in, and a label that would overlap one already shown is hidden. Labels are chosen again when the layout settles or a zoom ends.
-- **Select, then open**: a click or tap selects a node, which takes the accent, keeps its neighbourhood highlighted and shows its full title. A second click on the selected node opens it in place; Ctrl/Cmd-click or middle-click opens it in a new tab (on mobile, in place).
+- **Select, then open**: a click or tap selects a node, which takes the accent, keeps its neighbourhood highlighted and shows its full title. A second click on the selected node opens it in place; Ctrl/Cmd-click or middle-click opens it in a background tab (on mobile, in place).
 - **Keyboard**: Tab enters the graph; the arrow keys move to the nearest node in that direction on screen, and typing moves to the next node whose name starts with what was typed; the node moved to pans into view. Space selects, Enter opens, and Escape clears the selection. The nodes are the options of a listbox, and a selection is announced.
 - **Web Worker**: the simulation runs in a worker so the main thread stays responsive on large graphs. Falls back to the main thread if Web Workers are unavailable.
 - **Reduced motion**: the simulation honours `prefers-reduced-motion` and skips the layout animation.
@@ -157,6 +157,8 @@ The view that opens when you navigate to a single page. Not a sidebar entry — 
 
 A **TabBar** above the active view holds open pages (desktop only; hidden on mobile and when a single tab is open). Each tab persists per space — switching spaces restores that space's tabs.
 
+A middle click on anything that opens a page opens it in a **background tab**, as a browser does, leaving the current view on screen: a `[[link]]` or `((ref))` in a block, a Pages row or tree entry, a bookmark, a recent page, a search result, a reference, an agenda or task row, a page link in a list, a graph node. Right-click (long-press on touch) offers *Open in new tab* for the same; on a block's link it is the first row of the block menu. Mobile shows no tabs, so there neither applies.
+
 ## Recent pages strip
 
-Below the TabBar on desktop, a horizontal strip of the recently-opened pages in the active space. Click to re-open; right-click to remove from the strip.
+Below the TabBar on desktop, a horizontal strip of the recently-opened pages in the active space. Click to re-open; Ctrl/Cmd-click or middle-click opens it in a background tab.

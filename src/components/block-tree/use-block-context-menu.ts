@@ -4,7 +4,7 @@
  * menu and the inline property editor popover.
  *
  * State:
- * - `contextMenu`: `{ x, y, linkUrl? } | null` — anchor for the floating menu
+ * - `contextMenu`: `{ x, y, linkUrl?, pageLinkId? } | null` — anchor for the floating menu
  * - `editingProp`: `{ key, value } | null` — property currently being edited
  * - `editingKey`:  `{ oldKey, value } | null` — property key currently being renamed
  *
@@ -17,6 +17,8 @@ export interface BlockContextMenuPosition {
   x: number
   y: number
   linkUrl?: string
+  /** Target id of the `[[link]]` / `((ref))` chip the menu was opened on. */
+  pageLinkId?: string
 }
 
 export interface BlockEditingProp {
@@ -31,7 +33,7 @@ export interface BlockEditingKey {
 
 export interface UseBlockContextMenuReturn {
   contextMenu: BlockContextMenuPosition | null
-  openContextMenu: (x: number, y: number, linkUrl?: string) => void
+  openContextMenu: (x: number, y: number, linkUrl?: string, pageLinkId?: string) => void
   closeContextMenu: () => void
   editingProp: BlockEditingProp | null
   setEditingProp: React.Dispatch<React.SetStateAction<BlockEditingProp | null>>
@@ -44,9 +46,17 @@ export function useBlockContextMenu(): UseBlockContextMenuReturn {
   const [editingProp, setEditingProp] = useState<BlockEditingProp | null>(null)
   const [editingKey, setEditingKey] = useState<BlockEditingKey | null>(null)
 
-  const openContextMenu = useCallback((x: number, y: number, linkUrl?: string) => {
-    setContextMenu(linkUrl ? { x, y, linkUrl } : { x, y })
-  }, [])
+  const openContextMenu = useCallback(
+    (x: number, y: number, linkUrl?: string, pageLinkId?: string) => {
+      setContextMenu({
+        x,
+        y,
+        ...(linkUrl ? { linkUrl } : {}),
+        ...(pageLinkId ? { pageLinkId } : {}),
+      })
+    },
+    [],
+  )
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)

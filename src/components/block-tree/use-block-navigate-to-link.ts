@@ -46,8 +46,11 @@ export interface UseBlockNavigateToLinkParams {
 }
 
 export interface UseBlockNavigateToLinkReturn {
-  /** Promise-returning navigation handler. */
-  handleNavigate: (targetId: string) => Promise<void>
+  /**
+   * Promise-returning navigation handler. With `openPage` the target's page is
+   * handed to it instead of being navigated to, and the editor is left alone.
+   */
+  handleNavigate: (targetId: string, openPage?: NavigateToPageFn) => Promise<void>
   /**
    * Stable ref pointing at the latest `handleNavigate` — wire this
    * into `useRovingEditor.onNavigate` to break the circular dep.
@@ -78,9 +81,10 @@ export function useBlockNavigateToLink({
   const handleNavigateRef = useRef<(id: string) => void>(() => {})
 
   const handleNavigate = useCallback(
-    async (targetId: string): Promise<void> => {
+    async (targetId: string, openPage?: NavigateToPageFn): Promise<void> => {
       // Flush current editor state before navigating
-      handleFlushRef.current()
+      if (!openPage) handleFlushRef.current()
+      const open = openPage ?? onNavigateToPage
       try {
         const spaceId = useSpaceStore.getState().currentSpaceId
         const [targetResult, resolvedInSpace] = await Promise.all([
@@ -147,16 +151,17 @@ export function useBlockNavigateToLink({
 
         // If target is a page, navigate to it in the page editor
         if (targetBlock.block_type === 'page') {
-          onNavigateToPage?.(targetId, targetBlock.content ?? 'Untitled')
+          open?.(targetId, targetBlock.content ?? 'Untitled')
           return
         }
 
-        // If target's parent differs from our tree's parent, navigate to the parent page
-        if (targetBlock.parent_id && targetBlock.parent_id !== rootParentId) {
+        // If target's parent differs from our tree's parent, navigate to the parent
+        // page; a page opened elsewhere is opened even when it is this tree's.
+        if (targetBlock.parent_id && (openPage || targetBlock.parent_id !== rootParentId)) {
           // Fetch the parent to get the actual page title (not the target block's content)
           try {
             const parentBlock = unwrap(await commands.getBlock(targetBlock.parent_id))
-            onNavigateToPage?.(targetBlock.parent_id, parentBlock.content ?? 'Untitled', targetId)
+            open?.(targetBlock.parent_id, parentBlock.content ?? 'Untitled', targetId)
           } catch (err) {
             logger.warn(
               'BlockTree',
@@ -166,10 +171,11 @@ export function useBlockNavigateToLink({
               },
               err,
             )
-            onNavigateToPage?.(targetBlock.parent_id, 'Untitled', targetId)
+            open?.(targetBlock.parent_id, 'Untitled', targetId)
           }
           return
         }
+        if (openPage) return
 
         // Same tree — navigate locally
         if (!storeOwnsBlock(pageStore, targetId)) await load()

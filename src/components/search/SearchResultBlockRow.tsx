@@ -20,6 +20,7 @@ import type React from 'react'
 import { memo, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { SnippetHighlight } from '@/components/search/SnippetHighlight'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
@@ -30,6 +31,8 @@ export interface SearchResultBlockRowProps {
   row: SearchBlockRowT
   isFocused: boolean
   onClick: () => void
+  /** The page the row belongs to, which a middle click opens in a background tab. */
+  page?: { id: string; title: string } | undefined
   /** Whether the row is currently waiting on a navigation IPC. */
   loading?: boolean
   /** DOM id used by the parent listbox `aria-activedescendant`. */
@@ -98,6 +101,7 @@ function SearchResultBlockRowImpl({
   row,
   isFocused,
   onClick,
+  page,
   loading,
   id,
   style,
@@ -121,7 +125,7 @@ function SearchResultBlockRowImpl({
     onClick()
   }
 
-  return (
+  const li = (
     // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- tabIndex={-1} keeps the row out of the focus path; keyboard activation flows through the parent combobox's input via aria-activedescendant per the WAI-ARIA 1.2 combobox pattern. Phase 3.U3 removed the dead row-level onKeyDown that was never reachable.
     <li
       id={id}
@@ -157,6 +161,13 @@ function SearchResultBlockRowImpl({
       )}
     </li>
   )
+  return page ? (
+    <NewTabTarget pageId={page.id} title={page.title}>
+      {li}
+    </NewTabTarget>
+  ) : (
+    li
+  )
 }
 
 /**
@@ -187,6 +198,8 @@ export const SearchResultBlockRow = memo(
     prev.row.content === next.row.content &&
     prev.row.snippet === next.row.snippet &&
     prev.row.match_offsets === next.row.match_offsets &&
+    prev.page?.id === next.page?.id &&
+    prev.page?.title === next.page?.title &&
     prev.isFocused === next.isFocused &&
     prev.loading === next.loading &&
     prev.id === next.id &&

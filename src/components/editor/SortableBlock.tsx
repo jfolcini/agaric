@@ -661,10 +661,10 @@ function SortableBlockInner({
   // composed row handlers below): swipe arming happens in moves AFTER the
   // menu opens, so resetting the recognizer once at menu-open is not enough.
   const openContextMenuClaimingGesture = useCallback(
-    (x: number, y: number, linkUrl?: string) => {
+    (x: number, y: number, linkUrl?: string, pageLinkId?: string) => {
       touchGestureClaimedRef.current = true
       swipeReset()
-      openContextMenu(x, y, linkUrl)
+      openContextMenu(x, y, linkUrl, pageLinkId)
     },
     [openContextMenu, swipeReset],
   )
@@ -888,6 +888,7 @@ function SortableBlockInner({
           priority={priority}
           dueDate={dueDate}
           linkUrl={contextMenu.linkUrl}
+          pageLinkId={contextMenu.pageLinkId}
           // #1445 — resolved page-reference id for "Copy page reference".
           pageRefId={pageRefId}
         />
