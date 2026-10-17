@@ -23,6 +23,7 @@ import {
 
 const TITLE = runScopedMarker('wdio-mcp-burst-page')
 const MARKER = runScopedMarker('wdio-mcp-burst-block')
+const AGENT = runScopedMarker('wdio-mcp-burst-agent')
 // Each MCP connection rewrites its own block; every write emits twice.
 const CONNECTIONS = 4
 const WRITES_PER_CONNECTION = 50
@@ -58,14 +59,19 @@ describe('Agaric real-backend MCP write burst', () => {
   it('stays responsive while a burst of MCP writes reloads the open page', async () => {
     await waitForAppReady()
 
-    await invoke('mcp_rw_set_enabled', { enabled: true })
-    const { socket_path: socketPath } = await invoke<{ socket_path: string }>('get_mcp_rw_status')
+    await invoke('mcp_set_enabled', { enabled: true })
+    const { socket_path: socketPath } = await invoke<{ socket_path: string }>('get_mcp_status')
+    const { token } = await invoke<{ token: string }>('create_mcp_agent', {
+      name: AGENT,
+      mode: 'read_write',
+      spaceIds: null,
+    })
     await browser.waitUntil(() => existsSync(socketPath), {
       timeout: NAV_TIMEOUT,
-      timeoutMsg: `MCP RW socket never appeared at ${socketPath}`,
+      timeoutMsg: `MCP socket never appeared at ${socketPath}`,
     })
     const clients = await Promise.all(
-      Array.from({ length: CONNECTIONS }, () => McpClient.connect(socketPath)),
+      Array.from({ length: CONNECTIONS }, () => McpClient.connect(socketPath, token)),
     )
     const [first] = clients
     if (first === undefined) throw new Error('no MCP connection')
@@ -97,7 +103,7 @@ describe('Agaric real-backend MCP write burst', () => {
           const internals = (window as unknown as { __TAURI_INTERNALS__: Internals })
             .__TAURI_INTERNALS__
           const loop = async () => {
-            for (let i = 0; i < rounds; i++) await internals.invoke('get_mcp_rw_status')
+            for (let i = 0; i < rounds; i++) await internals.invoke('get_mcp_status')
           }
           await Promise.all(Array.from({ length: loops }, loop))
         },

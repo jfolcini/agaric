@@ -219,7 +219,7 @@ After installing Agaric, point your MCP client's `command` field at the stub:
 | macOS `.app` | `/Applications/Agaric.app/Contents/MacOS/agaric-mcp` |
 | Windows installer | `C:\Program Files\Agaric\agaric-mcp.exe` |
 
-Override the default socket path with the `--socket <path>` flag or `AGARIC_MCP_SOCKET` environment variable if your setup puts Agaric's data directory somewhere non-standard. The read-only socket is gated by a Settings → Agent access toggle that ships **off by default** (as does the separate read-write socket); enable it explicitly before an MCP client can connect.
+Each client connects as an agent with its own token, read-only or read-write mode and spaces: add one in Settings → Agent access and copy its config, which passes the stub `--socket <path>` and `--token <token>`. The socket is gated by a switch on that tab that ships **off by default**; turn it on before an MCP client can connect.
 
 ### Project Structure
 

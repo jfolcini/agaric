@@ -127,6 +127,12 @@ export const MODULES = {
   // anyone adds "just one more".
   // ───────────────────────────────────────────────────────────────────────
 
+  // #5667 — the snippet an agent's client runs: a wrong token or path is a
+  // client that cannot connect.
+  'agent-config': {
+    src: 'src/lib/agent-config.ts',
+    tests: ['src/lib/__tests__/agent-config.test.ts'],
+  },
   'block-tree-ops': {
     src: 'src/lib/block-tree-ops.ts',
     tests: ['src/lib/__tests__/block-tree-ops.test.ts'],

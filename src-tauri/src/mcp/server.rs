@@ -1,32 +1,45 @@
 //! MCP server lifecycle and accept-loop driver.
 //!
-//! As of the per-connection JSON-RPC framing and
-//! `tools/call` dispatch live in [`super::rmcp_adapter::RmcpAdapter`]
-//! (the rmcp adapter). This module owns the bits that the rmcp adapter
-//! does not touch:
+//! Per-connection JSON-RPC framing and `tools/call` dispatch live in
+//! [`super::rmcp_adapter::RmcpAdapter`]. This module owns the bits rmcp does
+//! not touch:
 //!
 //! - [`serve`] / `serve_unix` / `serve_pipe` (the latter is
 //!   `#[cfg(windows)]`, so it is absent from a non-Windows doc build) — accept-loop with the
 //!   H-2 enable/disable gate and the disconnect signal.
-//! - `run_connection` — per-connection lifecycle wrapper around the
-//!   rmcp adapter, threading [`super::McpLifecycle`]'s connection
-//!   counter and the disconnect grace period.
-//! - [`handle_connection`] — the thin rmcp-adapter entry point that
-//!   `run_connection` drives.
+//! - `run_connection` — per-connection lifecycle wrapper threading
+//!   [`super::McpLifecycle`]'s connection counter and the disconnect grace
+//!   period.
+//! - [`handle_connection`] — reads the bridge's token preamble, refuses a
+//!   connection without a live agent's token, and serves the rest through
+//!   the registry the agent's mode picks.
 //!
 //! Framing: handled by rmcp's `serve` (line-delimited JSON-RPC over
 //! the Unix-domain socket / Windows named pipe).
 
-use tokio::io::{AsyncRead, AsyncWrite};
+use std::sync::Arc;
 
-use super::{ConnectionCounterGuard, McpLifecycle, McpSurface, SocketKind};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+
+use super::activity::ActivityContext;
+use super::agents::{AgentStore, McpAgentMode};
+use super::rmcp_adapter::RmcpAdapter;
+use super::{ConnectionCounterGuard, McpLifecycle, SocketKind, TOKEN_PREAMBLE};
 use agaric_core::error::AppError;
 
 // Re-export the registry types so external callers (tests, mod.rs's
-// `spawn_mcp_ro_task` default path) that still refer to
-// `server::ToolRegistry` / `server::PlaceholderRegistry` keep compiling
-// After moved the real trait into the `registry` submodule.
+// spawn path) that refer to `server::ToolRegistry` /
+// `server::PlaceholderRegistry` keep compiling.
 pub use super::registry::{PlaceholderRegistry, ToolDescription, ToolRegistry};
+
+/// What every connection on the socket shares: the registry for each mode,
+/// the agents table, and the activity feed (`None` in tests).
+pub struct McpServer<RO, RW> {
+    pub read_only: Arc<RO>,
+    pub read_write: Arc<RW>,
+    pub agents: AgentStore,
+    pub activity_ctx: Option<ActivityContext>,
+}
 
 // ---------------------------------------------------------------------------
 // Protocol constants
@@ -63,6 +76,19 @@ pub(crate) const ERROR_CLIP_CAP: usize = 200;
 /// is purely about giving the reply + activity entry a chance to land.
 pub(crate) const MCP_DISCONNECT_GRACE_PERIOD: std::time::Duration =
     std::time::Duration::from_secs(2);
+
+/// The longest line read before MCP traffic starts: the token preamble, or
+/// the first request of a connection being refused.
+const PREAMBLE_LINE_CAP: u64 = 64 * 1024;
+
+/// The refusal for a connection whose first line is not a token preamble:
+/// an `agaric-mcp` from before #5667, or a client that skips the bridge.
+pub(crate) const NO_TOKEN_REFUSAL: &str = "this connection sent no agent token. Update \
+     agaric-mcp and copy this client's config from Settings → Agent access";
+
+/// The refusal for a token no agent holds.
+pub(crate) const UNKNOWN_TOKEN_REFUSAL: &str = "no agent has this token: it was revoked, or \
+     made on another device. Copy this client's config from Settings → Agent access";
 
 /// #636 — maximum back-off for consecutive `accept()` failures.
 ///
@@ -111,28 +137,104 @@ pub(crate) fn compute_accept_backoff_duration(failure_count: u32) -> std::time::
 // Per-connection loop
 // ---------------------------------------------------------------------------
 
-/// Drive a single MCP connection to completion via the `rmcp` adapter.
+/// Drive a single MCP connection to completion.
 ///
-/// `activity_ctx` is the activity-emission seam. Pass `None`
-/// when no activity tracking is desired (stub binary, tests); pass
-/// `Some(ActivityContext::from_app_handle(...))` in production. When
-/// `Some`, successful tool dispatches will emit `mcp:activity` events
-/// via the bundled emitter.
-pub async fn handle_connection<S, R>(
+/// The first line is the bridge's `AGARIC-TOKEN <token>`. A live agent's
+/// token picks the registry its mode serves, and the stream, with any bytes
+/// read past that line, goes to rmcp. Anything else gets one JSON-RPC error
+/// naming Settings → Agent access, in reply to the client's first request,
+/// and the connection closes.
+pub async fn handle_connection<S, RO, RW>(
     stream: S,
-    registry: std::sync::Arc<R>,
-    activity_ctx: Option<super::activity::ActivityContext>,
-    surface: McpSurface,
+    server: Arc<McpServer<RO, RW>>,
 ) -> Result<(), AppError>
 where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    RO: ToolRegistry,
+    RW: ToolRegistry,
+{
+    let mut stream = BufReader::new(stream);
+    let Some(first_line) = read_capped_line(&mut stream).await? else {
+        // Closed before a byte: the bind-time liveness probe, or a client
+        // that gave up.
+        return Ok(());
+    };
+    let Some(token) = first_line.strip_prefix(TOKEN_PREAMBLE) else {
+        return refuse(stream, NO_TOKEN_REFUSAL, Some(&first_line)).await;
+    };
+    let Some(agent) = server.agents.connect(token.trim()).await? else {
+        let request = read_capped_line(&mut stream).await?;
+        return refuse(stream, UNKNOWN_TOKEN_REFUSAL, request.as_deref()).await;
+    };
+    let activity_ctx = server.activity_ctx.clone();
+    match agent.mode {
+        McpAgentMode::ReadOnly => {
+            serve_agent(
+                stream,
+                RmcpAdapter::new(server.read_only.clone(), activity_ctx, agent),
+            )
+            .await
+        }
+        McpAgentMode::ReadWrite => {
+            serve_agent(
+                stream,
+                RmcpAdapter::new(server.read_write.clone(), activity_ctx, agent),
+            )
+            .await
+        }
+    }
+}
+
+/// The next line of `stream`, without its line ending, cut at
+/// [`PREAMBLE_LINE_CAP`]. `None` at end of stream.
+async fn read_capped_line<S>(stream: &mut BufReader<S>) -> Result<Option<String>, AppError>
+where
+    S: AsyncRead + Unpin,
+{
+    let mut line = Vec::new();
+    (&mut *stream)
+        .take(PREAMBLE_LINE_CAP)
+        .read_until(b'\n', &mut line)
+        .await?;
+    if line.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(
+        String::from_utf8_lossy(&line)
+            .trim_end_matches(['\r', '\n'])
+            .to_owned(),
+    ))
+}
+
+/// Answer `request`, the client's first JSON-RPC request, with a `-32001`
+/// carrying `reason`, then close.
+async fn refuse<S>(mut stream: S, reason: &str, request: Option<&str>) -> Result<(), AppError>
+where
+    S: AsyncWrite + Unpin,
+{
+    use rmcp::model::{JsonRpcError, RequestId};
+
+    let id = request
+        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .and_then(|request| request.get("id").cloned())
+        .and_then(|id| serde_json::from_value::<RequestId>(id).ok());
+    let error = super::rmcp_adapter::app_error_to_rmcp(&AppError::NotFound(reason.to_owned()));
+    let mut reply = serde_json::to_vec(&JsonRpcError::new(id, error))?;
+    reply.push(b'\n');
+    stream.write_all(&reply).await?;
+    stream.shutdown().await?;
+    tracing::warn!(target: "mcp", reason, "MCP connection refused");
+    Ok(())
+}
+
+/// Serve `stream` through `adapter` until the client disconnects.
+async fn serve_agent<S, R>(stream: S, adapter: RmcpAdapter<R>) -> Result<(), AppError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     R: ToolRegistry,
 {
     use rmcp::service::ServiceExt;
 
-    // #693 — the surface drives what `get_info` advertises so the RW
-    // socket no longer introduces itself as the read-only server.
-    let adapter = super::rmcp_adapter::RmcpAdapter::new(registry, activity_ctx, surface);
     let server = adapter
         .serve(stream)
         .await
@@ -152,10 +254,8 @@ where
 /// driving them through [`handle_connection`]. Runs until the underlying
 /// listener errors or the task is aborted by the caller.
 ///
-/// `activity_ctx` is threaded into each spawned connection task so tool
-/// dispatches can emit activity events. Pass `None` in contexts that do
-/// not care about activity (stub binary, tests); pass
-/// `Some(ActivityContext::from_app_handle(...))` in production.
+/// `server` is shared by every connection: its registries, agents table
+/// and activity feed.
 ///
 /// `lifecycle` is the shared state. When `Some`, each per-
 /// connection task bumps `active_connections` on entry (decrementing on
@@ -169,25 +269,20 @@ where
 /// observes the cleared gate and returns, releasing the listener so the
 /// OS port / socket file is freed and a subsequent re-enable can re-bind
 /// cleanly.
-pub async fn serve<R>(
+pub async fn serve<RO, RW>(
     socket: SocketKind,
-    registry: std::sync::Arc<R>,
-    activity_ctx: Option<super::activity::ActivityContext>,
+    server: Arc<McpServer<RO, RW>>,
     lifecycle: Option<McpLifecycle>,
-    surface: McpSurface,
 ) -> Result<(), AppError>
 where
-    R: ToolRegistry + Send + Sync + 'static,
+    RO: ToolRegistry,
+    RW: ToolRegistry,
 {
     match socket {
         #[cfg(unix)]
-        SocketKind::Unix(listener) => {
-            serve_unix(listener, registry, activity_ctx, lifecycle, surface).await
-        }
+        SocketKind::Unix(listener) => serve_unix(listener, server, lifecycle).await,
         #[cfg(windows)]
-        SocketKind::Pipe { server, path } => {
-            serve_pipe(server, path, registry, activity_ctx, lifecycle, surface).await
-        }
+        SocketKind::Pipe { server: pipe, path } => serve_pipe(pipe, path, server, lifecycle).await,
     }
 }
 
@@ -227,15 +322,14 @@ async fn shutdown_requested(mut rx: tokio::sync::watch::Receiver<bool>) {
 }
 
 #[cfg(unix)]
-async fn serve_unix<R>(
+async fn serve_unix<RO, RW>(
     listener: tokio::net::UnixListener,
-    registry: std::sync::Arc<R>,
-    activity_ctx: Option<super::activity::ActivityContext>,
+    server: Arc<McpServer<RO, RW>>,
     lifecycle: Option<McpLifecycle>,
-    surface: McpSurface,
 ) -> Result<(), AppError>
 where
-    R: ToolRegistry + Send + Sync + 'static,
+    RO: ToolRegistry,
+    RW: ToolRegistry,
 {
     // #636 — consecutive accept-failure counter driving the M-53-style
     // exponential back-off. Reset to zero by every successful accept.
@@ -250,7 +344,6 @@ where
         if lifecycle_disabled(lifecycle.as_ref()) {
             tracing::info!(
                 target: "mcp",
-                kind = surface.label(),
                 "MCP accept loop exiting (lifecycle.enabled cleared)",
             );
             return Ok(());
@@ -294,8 +387,7 @@ where
                 let backoff = compute_accept_backoff_duration(accept_failure_count);
                 tracing::warn!(
                     target: "mcp",
-                    kind = surface.label(),
-                    error = %e,
+                        error = %e,
                     failure_count = accept_failure_count,
                     backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
                     "MCP accept() failed; backing off and retrying",
@@ -327,39 +419,33 @@ where
             drop(stream);
             tracing::info!(
                 target: "mcp",
-                kind = surface.label(),
                 "MCP accept loop exiting after racing accept (lifecycle.enabled cleared)",
             );
             return Ok(());
         }
 
-        let registry = registry.clone();
-        let activity_ctx = activity_ctx.clone();
+        let server = server.clone();
         let lifecycle = lifecycle.clone();
         tokio::spawn(async move {
-            run_connection(stream, registry, activity_ctx, lifecycle, surface).await;
+            run_connection(stream, server, lifecycle).await;
         });
     }
 }
 
 #[cfg(windows)]
-async fn serve_pipe<R>(
-    mut server: tokio::net::windows::named_pipe::NamedPipeServer,
+async fn serve_pipe<RO, RW>(
+    mut pipe: tokio::net::windows::named_pipe::NamedPipeServer,
     pipe_path: String,
-    registry: std::sync::Arc<R>,
-    activity_ctx: Option<super::activity::ActivityContext>,
+    server: Arc<McpServer<RO, RW>>,
     lifecycle: Option<McpLifecycle>,
-    surface: McpSurface,
 ) -> Result<(), AppError>
 where
-    R: ToolRegistry + Send + Sync + 'static,
+    RO: ToolRegistry,
+    RW: ToolRegistry,
 {
     // The pipe path is threaded through from the bound listener
-    // (captured on the `SocketKind::Pipe` variant) rather than being
-    // recovered from `super::MCP_RO_PIPE_PATH`. The previous version
-    // hard-coded the RO constant here, which silently routed RW
-    // callers onto the RO pipe namespace once the first RW client
-    // connected and the loop spun up the second server instance.
+    // (captured on the `SocketKind::Pipe` variant) so each successor
+    // instance is created on the namespace that was bound (M-83).
     let pipe_path = pipe_path.as_str();
 
     // #636 — consecutive connect-failure counter; see `serve_unix`.
@@ -370,7 +456,6 @@ where
         if lifecycle_disabled(lifecycle.as_ref()) {
             tracing::info!(
                 target: "mcp",
-                kind = surface.label(),
                 "MCP accept loop exiting (lifecycle.enabled cleared)",
             );
             return Ok(());
@@ -381,11 +466,11 @@ where
                 // #2824 — race `connect()` against the level-triggered
                 // shutdown wake (see `serve_unix`).
                 tokio::select! {
-                    res = server.connect() => Some(res),
+                    res = pipe.connect() => Some(res),
                     () = shutdown_requested(lc.shutdown_signal.subscribe()) => None,
                 }
             }
-            None => Some(server.connect().await),
+            None => Some(pipe.connect().await),
         };
 
         match outcome {
@@ -403,8 +488,7 @@ where
                 let backoff = compute_accept_backoff_duration(accept_failure_count);
                 tracing::warn!(
                     target: "mcp",
-                    kind = surface.label(),
-                    error = %e,
+                        error = %e,
                     failure_count = accept_failure_count,
                     backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
                     "MCP pipe connect() failed; backing off and retrying",
@@ -432,13 +516,12 @@ where
         if lifecycle_disabled(lifecycle.as_ref()) {
             tracing::info!(
                 target: "mcp",
-                kind = surface.label(),
                 "MCP accept loop exiting after racing connect (lifecycle.enabled cleared)",
             );
             return Ok(());
         }
 
-        let connected = server;
+        let connected = pipe;
         // Prepare the next server instance before handing off the current
         // connection. Without this, the second client would fail to connect.
         //
@@ -462,13 +545,12 @@ where
         // successors must NOT re-claim it (re-claiming would either fail
         // spuriously or, worse, race another instance into accepting a
         // connection meant for us).
-        server = loop {
+        pipe = loop {
             // H-2: honor a disable that arrived while we were retrying.
             if lifecycle_disabled(lifecycle.as_ref()) {
                 tracing::info!(
                     target: "mcp",
-                    kind = surface.label(),
-                    "MCP accept loop exiting during successor-instance creation (lifecycle.enabled cleared)",
+                        "MCP accept loop exiting during successor-instance creation (lifecycle.enabled cleared)",
                 );
                 return Ok(());
             }
@@ -483,8 +565,7 @@ where
                     let backoff = compute_accept_backoff_duration(accept_failure_count);
                     tracing::warn!(
                         target: "mcp",
-                        kind = surface.label(),
-                        error = %e,
+                                error = %e,
                         failure_count = accept_failure_count,
                         backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
                         "MCP successor pipe create() failed; backing off and retrying",
@@ -507,11 +588,10 @@ where
             }
         };
 
-        let registry = registry.clone();
-        let activity_ctx = activity_ctx.clone();
+        let server = server.clone();
         let lifecycle = lifecycle.clone();
         tokio::spawn(async move {
-            run_connection(connected, registry, activity_ctx, lifecycle, surface).await;
+            run_connection(connected, server, lifecycle).await;
         });
     }
 }
@@ -521,15 +601,14 @@ where
 /// and `select!` on `disconnect_signal.notified()` so a `mcp_disconnect_all`
 /// call exits the handler promptly. When `lifecycle` is `None` this is a
 /// straight passthrough.
-async fn run_connection<S, R>(
+async fn run_connection<S, RO, RW>(
     stream: S,
-    registry: std::sync::Arc<R>,
-    activity_ctx: Option<super::activity::ActivityContext>,
+    server: Arc<McpServer<RO, RW>>,
     lifecycle: Option<McpLifecycle>,
-    surface: McpSurface,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    R: ToolRegistry,
+    RO: ToolRegistry,
+    RW: ToolRegistry,
 {
     // Bind the RAII counter guard to the task lifetime so panics (or the
     // disconnect-signal branch below) still decrement the counter.
@@ -537,7 +616,7 @@ async fn run_connection<S, R>(
         .as_ref()
         .map(|lc| ConnectionCounterGuard::new(lc.active_connections.clone()));
 
-    let fut = handle_connection(stream, registry, activity_ctx, surface);
+    let fut = handle_connection(stream, server);
 
     let result = match lifecycle.as_ref() {
         Some(lc) => {
@@ -582,7 +661,6 @@ async fn run_connection<S, R>(
     if let Err(e) = result {
         tracing::warn!(
             target: "mcp",
-            kind = surface.label(),
             error = %e,
             "MCP connection ended with error",
         );
@@ -648,12 +726,11 @@ mod tests_rmcp;
 // Regression tests
 // ---------------------------------------------------------------------------
 //
-// `serve_pipe` previously hard-coded the successor pipe path to
-// `super::MCP_RO_PIPE_PATH`, which silently re-bound the RW server's
-// successor named-pipe instances onto the RO namespace once the first
-// RW client connected. The fix threads the bound pipe path through the
-// `SocketKind::Pipe { server, path }` variant so the type system makes
-// the correct path available to the accept loop.
+// `serve_pipe` previously hard-coded the successor pipe path to a
+// constant, which re-bound a second server's successor named-pipe
+// instances onto the first one's namespace (M-83). The fix threads the
+// bound pipe path through the `SocketKind::Pipe { server, path }` variant
+// so the type system makes the correct path available to the accept loop.
 //
 // Linux / macOS see no behaviour change — Windows named pipes are the
 // only platform that recreates per-instance servers, so the tests here
@@ -674,14 +751,13 @@ mod tests_m83 {
     #[cfg(windows)]
     mod tests_m83_windows {
         use crate::mcp::server::{PlaceholderRegistry, serve};
-        use crate::mcp::{MCP_RO_PIPE_PATH, MCP_RW_PIPE_PATH, McpLifecycle, SocketKind};
-        use std::sync::Arc;
+        use crate::mcp::test_support;
+        use crate::mcp::{MCP_PIPE_PATH, McpLifecycle, SocketKind};
         use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
 
-        /// Pick a pipe name that is guaranteed to differ from both
-        /// `MCP_RO_PIPE_PATH` and `MCP_RW_PIPE_PATH`. Includes the
-        /// current process id and a random ULID so concurrent test
-        /// runs do not collide.
+        /// Pick a pipe name that is guaranteed to differ from
+        /// `MCP_PIPE_PATH`. Includes the current process id and a random
+        /// ULID so concurrent test runs do not collide.
         fn unique_pipe_path(tag: &str) -> String {
             format!(
                 r"\\.\pipe\agaric-mcp-m83-{tag}-{pid}-{ulid}",
@@ -692,25 +768,21 @@ mod tests_m83 {
         }
 
         /// Acceptance test. Bind a `NamedPipeServer` on a custom
-        /// path that differs from both the RO and RW constants, hand
+        /// path that differs from the production constant, hand
         /// the listener to `serve()` via `SocketKind::Pipe { server,
         /// path }`, and verify that after the first client connects
         /// (and the accept loop creates the next server instance) a
         /// SECOND client can connect to the SAME custom path. Pre-fix
-        /// the second connect would either fail (custom path differs
-        /// from `MCP_RO_PIPE_PATH`) or — worse — succeed against the
-        /// RO pipe namespace and route RW traffic through the RO
-        /// listener.
+        /// the second connect failed: the successor was created on the
+        /// constant's namespace instead.
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn m83_serve_pipe_uses_threaded_path_not_hardcoded_constant() {
             let pipe_path = unique_pipe_path("threaded");
 
-            // Make sure the chosen path is genuinely distinct from
-            // both production constants — defends the test against a
-            // future tweak to `unique_pipe_path` that accidentally
-            // matches one of them.
-            assert_ne!(pipe_path.as_str(), MCP_RO_PIPE_PATH);
-            assert_ne!(pipe_path.as_str(), MCP_RW_PIPE_PATH);
+            // Make sure the chosen path is genuinely distinct from the
+            // production constant — defends the test against a future
+            // tweak to `unique_pipe_path` that accidentally matches it.
+            assert_ne!(pipe_path.as_str(), MCP_PIPE_PATH);
 
             let server = ServerOptions::new()
                 .first_pipe_instance(true)
@@ -722,19 +794,15 @@ mod tests_m83 {
                 path: pipe_path.clone(),
             };
 
-            let registry = Arc::new(PlaceholderRegistry);
+            let server = test_support::server(
+                PlaceholderRegistry,
+                PlaceholderRegistry,
+                test_support::unused_pool(),
+            );
             let lifecycle = McpLifecycle::new();
             let serve_lc = lifecycle.clone();
-            let serve_task = tokio::spawn(async move {
-                serve(
-                    socket,
-                    registry,
-                    None,
-                    Some(serve_lc),
-                    crate::mcp::McpSurface::ReadWrite,
-                )
-                .await
-            });
+            let serve_task =
+                tokio::spawn(async move { serve(socket, server, Some(serve_lc)).await });
 
             // First client: connect on the custom path. The accept
             // loop hands the connection off to a per-connection task
@@ -747,7 +815,7 @@ mod tests_m83 {
 
             // Second client: connect AGAIN on the custom path. This
             // would fail pre-fix because the accept loop re-created
-            // the second server instance on `MCP_RO_PIPE_PATH`
+            // the second server instance on the constant's namespace
             // instead of the bound custom path, so no server exists
             // on `pipe_path` to honour the connect.
             //

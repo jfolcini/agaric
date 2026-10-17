@@ -1,12 +1,5 @@
-//! MCP (Model Context Protocol) server — read-only access to Agaric's notes
-//! for external agents via a local Unix domain socket (Linux/macOS) or
-//! Windows named pipe.
-//!
-//! This module is the entry point for the umbrella. (this
-//! slice) ships the transport + handshake skeleton; later sub-items fill in
-//! the tool registry, the read-only tool handlers, and
-//! the activity ring buffer. Sibling modules are pre-declared here
-//! so each sub-item can land additively without rewriting `mod.rs`.
+//! MCP (Model Context Protocol) server — agent access to Agaric's notes
+//! over a local Unix domain socket (Linux/macOS) or Windows named pipe.
 //!
 //! # Threat model
 //!
@@ -14,13 +7,14 @@
 //! current user via mode `0600`. On Windows the *default* named-pipe DACL
 //! is **not** owner-only — it grants read access to `Everyone` and
 //! `Anonymous` (#2720) — so relying on it would leave the fixed-name MCP
-//! pipes open to any local process. Each pipe instance is therefore
+//! pipe open to any local process. Each pipe instance is therefore
 //! created with an *explicit* security descriptor whose DACL grants
 //! access only to the current process user's SID (plus SYSTEM and the
 //! local Administrators group); see
-//! `win_security::current_user_security_attributes`. There are no
-//! bearer tokens, no rate limits, no crypto. See `AGENTS.md` §Threat
-//! Model for the rationale.
+//! `win_security::current_user_security_attributes`. A connection presents
+//! an agent's token (#5667), which keeps an agent to its mode and spaces;
+//! it guards against an agent's mistakes, not an attacker. No rate limits,
+//! no crypto. See `AGENTS.md` §Threat Model for the rationale.
 
 pub mod activity;
 pub mod agents;
@@ -54,7 +48,7 @@ use agaric_core::error::AppError;
 // Server surface (#693)
 // ---------------------------------------------------------------------------
 
-/// The id and content-token rules both surfaces' instructions share.
+/// The id and content-token rules both modes' instructions share.
 macro_rules! ids_and_tokens_primer {
     () => {
         "Ids are 26-character ULIDs in uppercase Crockford base32 \
@@ -67,17 +61,17 @@ macro_rules! ids_and_tokens_primer {
     };
 }
 
-/// The read tools' rules, which both surfaces serve (#5379).
+/// The read tools' rules, which both modes serve (#5379).
 macro_rules! read_tools_primer {
     () => {
         "Where ids come from:\n\
-         - spaces: `list_spaces`. Call it first.\n\
+         - spaces: `list_spaces`, the spaces you may use. Call it first.\n\
          - pages and blocks: `list_pages`, `search`, `get_page`, `get_journal`, \
          `list_journal`, `list_trash`.\n\
          - tags: `list_tags`, one space at a time.\n\
          Spaces: every tool but `list_spaces` and `list_property_defs` requires \
-         `space_id`; nothing defaults it. A call on a block or page in another space \
-         is refused.\n\
+         `space_id`; nothing defaults it. A call naming a space you may not use, or \
+         on a block or page in another space, is refused.\n\
          Dates are YYYY-MM-DD; `get_journal` also takes `today` or `yesterday`, on \
          this device's clock.\n\
          History: `page_history` and `block_history` show who changed what, and \
@@ -98,45 +92,26 @@ macro_rules! read_tools_primer {
     };
 }
 
-/// Which MCP surface a serve loop / adapter instance fronts.
-///
-/// #693 — the RO and RW sockets share the accept-loop and adapter
-/// machinery, but they must not share their *advertisement*: agents
-/// weight the `initialize` instructions heavily, and an RW socket that
-/// introduces itself as "read-only" can suppress legitimate write-tool
-/// use. The surface is threaded from the spawn helpers through the
-/// serve loop into [`RmcpAdapter`](rmcp_adapter::RmcpAdapter)'s
-/// `ServerHandler::get_info`, and also
-/// labels the accept-loop log lines (previously hardcoded "RO" on both
-/// paths).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum McpSurface {
-    ReadOnly,
-    ReadWrite,
-}
+/// The first line `agaric-mcp` writes, before any MCP byte:
+/// `AGARIC-TOKEN <token>`. MCP lines are JSON objects, so a line that starts
+/// with this is never MCP traffic.
+pub const TOKEN_PREAMBLE: &str = "AGARIC-TOKEN";
 
-impl McpSurface {
-    /// Short diagnostic label used in log lines and bind errors.
-    pub fn label(self) -> &'static str {
-        match self {
-            McpSurface::ReadOnly => "RO",
-            McpSurface::ReadWrite => "RW",
-        }
-    }
-
+impl agents::McpAgentMode {
     /// MCP `initialize` instructions advertised by
     /// [`RmcpAdapter`](rmcp_adapter::RmcpAdapter)'s `ServerHandler::get_info`:
     /// a short primer so an agent knows the id, token, space and name rules
-    /// before its first call.
+    /// before its first call. Agents weight it heavily, so a read-write agent
+    /// is never told it is read-only (#693).
     pub fn instructions(self) -> &'static str {
         match self {
-            McpSurface::ReadOnly => concat!(
+            Self::ReadOnly => concat!(
                 "Agaric MCP read-only server: reads a local, block-based notes vault. \
                  Use tools/list for the tools.\n",
                 ids_and_tokens_primer!(),
                 read_tools_primer!(),
             ),
-            McpSurface::ReadWrite => concat!(
+            Self::ReadWrite => concat!(
                 "Agaric MCP read-write server: reads and writes a local, block-based notes \
                  vault. Use tools/list for the tools. Every mutation is recorded in the \
                  user-visible activity feed and is reversible from the app.\n",
@@ -183,7 +158,7 @@ impl McpSurface {
 ///   *and* immediately after each accepted socket. Set to `false` by
 ///   [`shutdown`] (called from `mcp_set_enabled(false)`) to make the
 ///   accept loop drop its listener and return cleanly. Reset to `true`
-///   by `spawn_*_task_with_registry` before each re-spawn so a fresh
+///   by `spawn_mcp_task_with_server` before each re-spawn so a fresh
 ///   enable gets a fresh gate.
 ///
 /// [`enabled`]: McpLifecycle#structfield.enabled
@@ -206,7 +181,7 @@ pub struct McpLifecycle {
     /// (≤30s) back-off elapsed — the disable latency this field closes.
     ///
     /// `true` == shutdown requested. `shutdown` sets it; the
-    /// `spawn_*_task_with_registry` helpers reset it to `false` alongside
+    /// `spawn_mcp_task_with_server` helper resets it to `false` alongside
     /// `enabled` before each re-spawn so a prior shutdown does not leak
     /// across enable/disable cycles (the lifecycle — and thus this
     /// channel — is reused, not recreated). Wrapped in `Arc` because
@@ -217,7 +192,7 @@ pub struct McpLifecycle {
     /// H-2 gate consulted by the accept loop. Defaults to `true` so a
     /// freshly-constructed lifecycle is ready to serve. `mcp_set_enabled(false)`
     /// flips this to `false` via [`shutdown`](McpLifecycle::shutdown);
-    /// `spawn_*_task_with_registry` restores it to `true` before each
+    /// `spawn_mcp_task_with_server` restores it to `true` before each
     /// re-spawn so a previous shutdown does not leak across enable/
     /// disable cycles.
     pub enabled: Arc<std::sync::atomic::AtomicBool>,
@@ -247,7 +222,7 @@ impl McpLifecycle {
     }
 
     /// `true` while the accept loop is gated open. Cleared by [`shutdown`]
-    /// and reset by `spawn_*_task_with_registry` on re-enable.
+    /// and reset by `spawn_mcp_task_with_server` on re-enable.
     ///
     /// [`shutdown`]: McpLifecycle::shutdown
     pub fn is_enabled(&self) -> bool {
@@ -318,31 +293,6 @@ impl Default for McpLifecycle {
     }
 }
 
-/// Newtype wrapper around an [`Arc<McpLifecycle>`] for the **read-write**
-/// MCP server (slice 2).
-///
-/// Tauri's managed-state resolver keys on type, so the RO and RW servers
-/// cannot share `Arc<McpLifecycle>` as separate managed states — the
-/// resolver would collide. The newtype gives them distinct types at the
-/// type-system level without duplicating the lifecycle machinery itself.
-///
-/// Callers read the inner lifecycle transparently via `Deref`:
-///
-/// ```ignore
-/// let rw_lifecycle: McpRwLifecycle = state.inner().clone();
-/// let n = rw_lifecycle.connection_count(); // same as (*rw_lifecycle).connection_count()
-/// ```
-#[derive(Debug, Clone)]
-pub struct McpRwLifecycle(pub Arc<McpLifecycle>);
-
-impl std::ops::Deref for McpRwLifecycle {
-    type Target = McpLifecycle;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 /// RAII guard used by per-connection tasks to keep
 /// [`McpLifecycle::active_connections`] balanced even when the task panics
 /// or returns an error mid-way. Dropping the guard decrements the counter.
@@ -371,88 +321,67 @@ impl Drop for ConnectionCounterGuard {
 pub const APP_IDENTIFIER: &str = "com.agaric.app";
 
 /// Marker-file name inside the application data directory. When this file
-/// exists, the MCP read-only socket is bound at startup; otherwise the task
-/// Stays dormant. wires the Settings UI toggle to create / remove
-/// This file atomically; only reads it.
-pub const MCP_RO_ENABLED_MARKER: &str = "mcp-ro-enabled";
+/// exists, the MCP socket is bound at startup; otherwise the task stays
+/// dormant. Settings' switch (`mcp_set_enabled`) creates and removes it.
+pub const MCP_ENABLED_MARKER: &str = "mcp-enabled";
+
+/// The markers of the read-only and read-write sockets before #5667.
+const LEGACY_ENABLED_MARKERS: [&str; 2] = ["mcp-ro-enabled", "mcp-rw-enabled"];
 
 /// Default socket file-name under the application data directory on unix.
 #[cfg(unix)]
-pub const MCP_RO_SOCKET_FILENAME: &str = "mcp-ro.sock";
+pub const MCP_SOCKET_FILENAME: &str = "mcp.sock";
 
 /// Default named-pipe path on Windows. Named pipes live in a global
 /// namespace rather than the filesystem, so the app data directory is not
 /// involved.
 #[cfg(windows)]
-pub const MCP_RO_PIPE_PATH: &str = r"\\.\pipe\agaric-mcp-ro";
+pub const MCP_PIPE_PATH: &str = r"\\.\pipe\agaric-mcp";
 
-/// Resolve the default MCP read-only socket path for the given app data
-/// directory.
+/// Resolve the default MCP socket path for the given app data directory.
 ///
-/// - Linux / macOS: `<app_data_dir>/mcp-ro.sock`
-/// - Windows: the fixed named-pipe path `MCP_RO_PIPE_PATH` (`#[cfg(windows)]`,
+/// - Linux / macOS: `<app_data_dir>/mcp.sock`
+/// - Windows: the fixed named-pipe path `MCP_PIPE_PATH` (`#[cfg(windows)]`,
 ///   so it is absent from a non-Windows doc build; the
 ///   `app_data_dir` argument is unused there).
-pub fn default_mcp_ro_socket_path(
+pub fn default_mcp_socket_path(
     #[cfg_attr(windows, allow(unused_variables))] app_data_dir: &Path,
 ) -> PathBuf {
     #[cfg(unix)]
     {
-        app_data_dir.join(MCP_RO_SOCKET_FILENAME)
+        app_data_dir.join(MCP_SOCKET_FILENAME)
     }
     #[cfg(windows)]
     {
-        PathBuf::from(MCP_RO_PIPE_PATH)
+        PathBuf::from(MCP_PIPE_PATH)
     }
 }
 
-/// Return `true` when the MCP read-only socket is enabled. The gate is a
-/// marker file in the application data directory; its presence means "on"
-/// and absence means "off". This mirrors the on-disk patterns used for
-/// `device-id` and `sync-cert` so no new persistence mechanism is introduced
-/// By.
-///
-/// Ignored on Windows in the same way as unix (the marker file is created
-/// in the same `app_data_dir` on every platform; only the socket transport
-/// differs).
-pub fn mcp_ro_enabled(app_data_dir: &Path) -> bool {
-    app_data_dir.join(MCP_RO_ENABLED_MARKER).is_file()
+/// Return `true` when the MCP socket is enabled: the marker file exists in
+/// the application data directory. This mirrors the on-disk patterns used
+/// for `device-id` and `sync-cert`, so no new persistence mechanism is
+/// introduced. The marker lives in `app_data_dir` on every platform; only
+/// the socket transport differs.
+pub fn mcp_enabled(app_data_dir: &Path) -> bool {
+    app_data_dir.join(MCP_ENABLED_MARKER).is_file()
 }
 
-/// Marker-file name for the MCP **read-write** socket (slice 2).
-/// Distinct from [`MCP_RO_ENABLED_MARKER`] so the user can opt into
-/// read-only access without also opening the write socket.
-pub const MCP_RW_ENABLED_MARKER: &str = "mcp-rw-enabled";
-
-/// Default socket file-name for the MCP RW socket on unix.
-#[cfg(unix)]
-pub const MCP_RW_SOCKET_FILENAME: &str = "mcp-rw.sock";
-
-/// Default named-pipe path for the MCP RW server on Windows.
-#[cfg(windows)]
-pub const MCP_RW_PIPE_PATH: &str = r"\\.\pipe\agaric-mcp-rw";
-
-/// Resolve the default MCP read-write socket path for the given app data
-/// directory. Mirrors [`default_mcp_ro_socket_path`] for the RW surface:
-/// a sibling socket file on unix, a distinct named pipe on Windows.
-pub fn default_mcp_rw_socket_path(
-    #[cfg_attr(windows, allow(unused_variables))] app_data_dir: &Path,
-) -> PathBuf {
-    #[cfg(unix)]
-    {
-        app_data_dir.join(MCP_RW_SOCKET_FILENAME)
+/// Agent access that was on under either of the two pre-#5667 sockets stays
+/// on: either legacy marker becomes [`MCP_ENABLED_MARKER`], and both go.
+pub fn adopt_legacy_markers(app_data_dir: &Path) -> std::io::Result<()> {
+    let legacy: Vec<PathBuf> = LEGACY_ENABLED_MARKERS
+        .iter()
+        .map(|marker| app_data_dir.join(marker))
+        .filter(|path| path.is_file())
+        .collect();
+    if legacy.is_empty() {
+        return Ok(());
     }
-    #[cfg(windows)]
-    {
-        PathBuf::from(MCP_RW_PIPE_PATH)
+    std::fs::write(app_data_dir.join(MCP_ENABLED_MARKER), b"")?;
+    for path in legacy {
+        std::fs::remove_file(path)?;
     }
-}
-
-/// Return `true` when the MCP read-write socket is enabled. Parallel to
-/// [`mcp_ro_enabled`]; the two gates are independent so the Settings UI
-/// can expose RO and RW as separate toggles.
-pub fn mcp_rw_enabled(app_data_dir: &Path) -> bool {
-    app_data_dir.join(MCP_RW_ENABLED_MARKER).is_file()
+    Ok(())
 }
 
 /// Transport-agnostic listener handle. The rest of the module matches on
@@ -468,12 +397,9 @@ pub enum SocketKind {
     /// is handed off to a connection handler; `serve_pipe` takes care of
     /// That in accept loop.
     ///
-    /// The bound `path` is captured on the variant (fix) so the
-    /// accept loop creates each successor instance on the same pipe
-    /// namespace it bound on. Recovering the path from a constant
-    /// (the pre-M-83 implementation) silently routed RW callers onto
-    /// the RO pipe namespace once the first RW client connected and
-    /// the loop tried to spin up the second server instance.
+    /// The bound `path` is captured on the variant so the accept loop
+    /// creates each successor instance on the same pipe namespace it
+    /// bound on (M-83), including a test's own pipe.
     #[cfg(windows)]
     Pipe {
         server: tokio::net::windows::named_pipe::NamedPipeServer,
@@ -492,7 +418,7 @@ impl std::fmt::Debug for SocketKind {
     }
 }
 
-/// Bind the MCP read-only socket at `socket_path`.
+/// Bind the MCP socket at `socket_path`.
 ///
 /// On unix this creates the parent directory if missing, binds a
 /// `UnixListener`, and enforces mode `0600` on the resulting socket file.
@@ -508,14 +434,8 @@ impl std::fmt::Debug for SocketKind {
 /// (a second Agaric instance racing on the same app data directory), the
 /// function returns [`AppError::InvalidOperation`] so the caller can log
 /// a structured warning instead of panicking.
-///
-/// `socket_kind` is a short identifier (`"RO"` / `"RW"`) baked into the
-/// log + error-message strings so operators can tell which server failed
-/// when the marker-file gate is flipped on both paths simultaneously. The
-/// function itself is transport-agnostic — the label is purely for
-/// diagnostics.
 #[cfg(unix)]
-pub async fn bind_socket(socket_path: &Path, socket_kind: &str) -> Result<SocketKind, AppError> {
+pub async fn bind_socket(socket_path: &Path) -> Result<SocketKind, AppError> {
     use std::os::unix::fs::PermissionsExt;
     use tokio::net::{UnixListener, UnixStream};
 
@@ -526,7 +446,7 @@ pub async fn bind_socket(socket_path: &Path, socket_kind: &str) -> Result<Socket
         match UnixStream::connect(socket_path).await {
             Ok(_) => {
                 return Err(AppError::InvalidOperation(format!(
-                    "MCP {socket_kind} socket already bound at {}",
+                    "MCP socket already bound at {}",
                     socket_path.display()
                 )));
             }
@@ -535,7 +455,6 @@ pub async fn bind_socket(socket_path: &Path, socket_kind: &str) -> Result<Socket
                 if let Err(e) = std::fs::remove_file(socket_path) {
                     tracing::warn!(
                         target: "mcp",
-                        kind = socket_kind,
                         path = %socket_path.display(),
                         error = %e,
                         "failed to remove stale MCP socket file",
@@ -561,7 +480,6 @@ pub async fn bind_socket(socket_path: &Path, socket_kind: &str) -> Result<Socket
 
     tracing::info!(
         target: "mcp",
-        kind = socket_kind,
         path = %socket_path.display(),
         "MCP socket bound",
     );
@@ -573,8 +491,8 @@ pub async fn bind_socket(socket_path: &Path, socket_kind: &str) -> Result<Socket
 ///
 /// The default DACL on a Windows named pipe is **not** owner-only — it
 /// grants read access to `Everyone` and `Anonymous`. Left unaddressed, any
-/// local process could open the fixed-name MCP pipes
-/// (`\\.\pipe\agaric-mcp-ro` / `-rw`). These helpers build an explicit
+/// local process could open the fixed-name MCP pipe
+/// (`\\.\pipe\agaric-mcp`). These helpers build an explicit
 /// security descriptor whose DACL grants access only to the current
 /// process user's SID (plus SYSTEM and the local Administrators group) and
 /// hand it to tokio's `create_with_security_attributes_raw`, so every pipe
@@ -865,10 +783,10 @@ pub(crate) mod win_security {
 }
 
 #[cfg(windows)]
-pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKind, AppError> {
+pub async fn bind_socket(pipe_path: &Path) -> Result<SocketKind, AppError> {
     let pipe_str = pipe_path.to_str().ok_or_else(|| {
         AppError::InvalidOperation(format!(
-            "MCP {socket_kind} pipe path is not valid UTF-8: {}",
+            "MCP pipe path is not valid UTF-8: {}",
             pipe_path.display()
         ))
     })?;
@@ -890,7 +808,7 @@ pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKi
             AppError::Io(std::io::Error::new(
                 e.kind(),
                 format!(
-                    "MCP {socket_kind} named pipe {} is already held by another \
+                    "MCP named pipe {} is already held by another \
                      process (os error {:?}); refusing to attach to a \
                      potentially squatted pipe name",
                     pipe_path.display(),
@@ -904,7 +822,6 @@ pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKi
 
     tracing::info!(
         target: "mcp",
-        kind = socket_kind,
         path = %pipe_path.display(),
         "MCP named pipe created with per-user security descriptor",
     );
@@ -915,47 +832,26 @@ pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKi
     })
 }
 
-/// Spawn the MCP read-only task onto the current Tokio runtime.
+/// Spawn the MCP task onto the current Tokio runtime.
 ///
-/// Checks the `mcp-ro-enabled` marker-file gate and, when enabled, binds the
+/// Checks the `mcp-enabled` marker-file gate and, when enabled, binds the
 /// default socket for `app_data_dir` and spawns the serve loop. When
 /// disabled, logs at info level and returns. When the socket is already
 /// bound by another instance, logs at warn level and returns — the first
 /// owner keeps the socket.
 ///
-/// Wires the real [`tools_ro::ReadOnlyTools`] registry, replacing
-/// [`server::PlaceholderRegistry`]. The registry owns the
-/// read-pool [`SqlitePool`], the [`Materializer`] (used only by the
-/// `journal_for_date` tool for idempotent page creation), and this
-/// device's `device_id` so any op-log entries the tool creates are
-/// attributed correctly.
-///
-/// `journal_for_date` is the only RO tool with a write side-effect
-/// (it inserts a fresh `page` block whenever the requested date has no
-/// existing journal page). The registry therefore takes **both** pools:
-/// `read_pool` backs the eight pure-read tools and the lookup branch of
-/// `journal_for_date`, while `write_pool` backs the create branch —
-/// `BEGIN IMMEDIATE` on the read pool fails with `SQLITE_READONLY`
-/// because that pool sets `PRAGMA query_only = ON`.
-///
-/// `app_handle` is used to build the activity emitter — every
-/// completed tool call pushes an [`activity::ActivityEntry`] into the ring
-/// and emits an `mcp:activity` event on this handle's bus.
+/// Each connection is served by the registry its agent's mode picks:
+/// [`tools_ro::ReadOnlyTools`] or [`tools_rw::ReadWriteTools`]. Reads use
+/// `read_pool`; writes, and `journal_for_date`'s create, use `write_pool`,
+/// because the read pool sets `PRAGMA query_only = ON`. Agents are looked up
+/// on `read_pool` and their last use stamped on `write_pool`.
 ///
 /// `activity_ring` (#695) is the **shared, managed** ring backing the
-/// `get_mcp_recent_activity` command. Threading it in (instead of
-/// letting `ActivityContext` allocate a fresh ring per spawn) makes
-/// the ring readable and persistent across enable/disable cycles.
-///
-/// `lifecycle` is the managed state that surfaces connection
-/// counts and disconnect-signal plumbing to the Settings UI. Passed as
-/// `Option` so headless / test callers can elide it.
-// One spawn entry point assembling the full RO server dependency set
-// (pools, materializer, device id, the #695 shared activity ring, and
-// The lifecycle handle); grouping these into a struct would just
-// move the same fields behind one more indirection.
-#[allow(clippy::too_many_arguments)]
-pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
+/// `get_mcp_recent_activity` command, so the feed survives enable/disable
+/// cycles. `lifecycle` surfaces connection counts and the disconnect signal
+/// to Settings; `None` for headless / test callers.
+#[expect(clippy::too_many_arguments)]
+pub fn spawn_mcp_task<R: tauri::Runtime>(
     app_data_dir: &Path,
     app_handle: tauri::AppHandle<R>,
     read_pool: SqlitePool,
@@ -965,51 +861,61 @@ pub fn spawn_mcp_ro_task<R: tauri::Runtime>(
     activity_ring: Arc<std::sync::Mutex<activity::ActivityRing>>,
     lifecycle: Option<McpLifecycle>,
 ) {
-    if !mcp_ro_enabled(app_data_dir) {
+    if !mcp_enabled(app_data_dir) {
         tracing::info!(
             target: "mcp",
-            "MCP RO disabled ({} marker absent)", MCP_RO_ENABLED_MARKER,
+            "MCP disabled ({} marker absent)", MCP_ENABLED_MARKER,
         );
         return;
     }
 
-    let socket_path = default_mcp_ro_socket_path(app_data_dir);
-    // #5314: `journal_for_date` can create a page; see the RW spawn below.
+    let socket_path = default_mcp_socket_path(app_data_dir);
+    // #2505 / #5314: a write, or `journal_for_date`'s create, emits
+    // `blocks:changed` on the same bus the activity feed uses, so open views
+    // reload. Built before the handle moves into the activity context.
     let view_emitter: Arc<dyn view_notify::ViewChangeEmitter> =
         Arc::new(view_notify::TauriViewChangeEmitter::new(app_handle.clone()));
     let activity_ctx =
         activity::ActivityContext::from_app_handle_with_ring(app_handle, activity_ring);
-    let registry = tools_ro::ReadOnlyTools::new(read_pool, write_pool, materializer, device_id)
-        .with_view_emitter(view_emitter);
-    spawn_mcp_ro_task_with_registry(socket_path, registry, Some(activity_ctx), lifecycle);
+    let read_only = tools_ro::ReadOnlyTools::new(
+        read_pool.clone(),
+        write_pool.clone(),
+        materializer.clone(),
+        device_id.clone(),
+    )
+    .with_view_emitter(view_emitter.clone());
+    let read_write = tools_rw::ReadWriteTools::new(
+        write_pool.clone(),
+        read_pool.clone(),
+        materializer,
+        device_id,
+    )
+    .with_view_emitter(view_emitter);
+    let server = server::McpServer {
+        read_only: Arc::new(read_only),
+        read_write: Arc::new(read_write),
+        agents: agents::AgentStore::new(read_pool, write_pool),
+        activity_ctx: Some(activity_ctx),
+    };
+    spawn_mcp_task_with_server(socket_path, server, lifecycle);
 }
 
-/// Spawn the MCP RO task against a caller-supplied registry and socket path.
+/// Spawn the MCP task against a caller-supplied server and socket path, so
+/// integration tests can drive bind + accept + dispatch on a tempdir socket.
 ///
-/// Exposed separately so later sub-items (4c) can swap in the real
-/// `ReadOnlyTools` registry and integration tests can exercise the bind +
-/// accept + dispatch pipeline against a tempdir socket path.
-///
-/// `activity_ctx` is optional: production passes
-/// `Some(ActivityContext::from_app_handle(...))`; tests and headless
-/// scenarios pass `None` (and any tool dispatches fall through without
-/// emitting events).
-///
-/// `lifecycle` is the shared state that exposes the
-/// disconnect-signal and per-connection counter to the Settings UI. When
-/// `Some`, the serve loop sets `task_running = true` on entry and back to
-/// `false` on exit so `get_mcp_status` reflects the accept loop's state;
-/// each spawned per-connection task increments / decrements
+/// When `lifecycle` is `Some`, the serve loop sets `task_running = true` on
+/// entry and back to `false` on exit so `get_mcp_status` reflects the accept
+/// loop's state; each per-connection task increments / decrements
 /// `active_connections` and `select!`s on the disconnect signal.
-pub fn spawn_mcp_ro_task_with_registry<R>(
+pub fn spawn_mcp_task_with_server<RO, RW>(
     socket_path: PathBuf,
-    registry: R,
-    activity_ctx: Option<activity::ActivityContext>,
+    server: server::McpServer<RO, RW>,
     lifecycle: Option<McpLifecycle>,
 ) where
-    R: server::ToolRegistry + Send + Sync + 'static,
+    RO: server::ToolRegistry,
+    RW: server::ToolRegistry,
 {
-    let registry = std::sync::Arc::new(registry);
+    let server = Arc::new(server);
     tauri::async_runtime::spawn(async move {
         // H-2: a previous disable cleared `enabled` to `false` and left
         // it that way (so the prior accept loop observed the gate and
@@ -1020,30 +926,20 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
             lc.enabled.store(true, std::sync::atomic::Ordering::Release);
             // #2824 — reset the level-triggered shutdown gate too, so a
             // prior shutdown's stored `true` does not immediately tear
-            // down the freshly-spawned accept loop. Reset alongside
-            // `enabled` (before bind) so a bind failure cannot leave it
-            // stuck at `true`.
+            // down the freshly-spawned accept loop.
             lc.shutdown_signal.send_replace(false);
         }
-        match bind_socket(&socket_path, "RO").await {
+        match bind_socket(&socket_path).await {
             Ok(socket) => {
                 if let Some(ref lc) = lifecycle {
                     lc.task_running
                         .store(true, std::sync::atomic::Ordering::Release);
                 }
-                if let Err(e) = server::serve(
-                    socket,
-                    registry,
-                    activity_ctx,
-                    lifecycle.clone(),
-                    McpSurface::ReadOnly,
-                )
-                .await
-                {
+                if let Err(e) = server::serve(socket, server, lifecycle.clone()).await {
                     tracing::error!(
                         target: "mcp",
                         error = %e,
-                        "MCP RO serve loop exited with error",
+                        "MCP serve loop exited with error",
                     );
                 }
                 if let Some(ref lc) = lifecycle {
@@ -1052,132 +948,11 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
                 }
             }
             Err(AppError::InvalidOperation(msg)) => {
-                tracing::warn!(target: "mcp", kind = "RO", msg = %msg, "already bound");
+                tracing::warn!(target: "mcp", msg = %msg, "already bound");
             }
             Err(e) => {
                 tracing::error!(
                     target: "mcp",
-                    kind = "RO",
-                    error = %e,
-                    path = %socket_path.display(),
-                    "failed to bind MCP socket",
-                );
-            }
-        }
-    });
-}
-
-/// Spawn the MCP **read-write** task onto the current Tokio runtime
-/// (slice 2).
-///
-/// Mirrors [`spawn_mcp_ro_task`] but reads the RW marker
-/// ([`MCP_RW_ENABLED_MARKER`]) and builds a [`tools_rw::ReadWriteTools`]
-/// registry: its write tools use `write_pool`, its read tools `read_pool`.
-///
-/// When the marker is absent, logs at info level and returns. When the
-/// socket is already bound by another instance, logs at warn level and
-/// returns — the first owner keeps the socket.
-///
-/// `lifecycle` is the managed state that surfaces
-/// connection counts and disconnect-signal plumbing to the Settings UI.
-/// Passed as `Option` so headless / test callers can elide it. Call sites
-/// normally wrap the lifecycle in an [`McpRwLifecycle`] newtype before
-/// handing it to Tauri's managed-state resolver.
-///
-/// `activity_ring` (#695) — same shared managed ring as the RO task,
-/// so the `get_mcp_recent_activity` command surfaces one merged feed.
-// The same dependency set as `spawn_mcp_ro_task`, for the same reason.
-#[expect(clippy::too_many_arguments)]
-pub fn spawn_mcp_rw_task<R: tauri::Runtime>(
-    app_data_dir: &Path,
-    app_handle: tauri::AppHandle<R>,
-    write_pool: SqlitePool,
-    read_pool: SqlitePool,
-    materializer: Materializer,
-    device_id: String,
-    activity_ring: Arc<std::sync::Mutex<activity::ActivityRing>>,
-    lifecycle: Option<McpLifecycle>,
-) {
-    if !mcp_rw_enabled(app_data_dir) {
-        tracing::info!(
-            target: "mcp",
-            "MCP RW disabled ({} marker absent)", MCP_RW_ENABLED_MARKER,
-        );
-        return;
-    }
-
-    let socket_path = default_mcp_rw_socket_path(app_data_dir);
-    // #2505: the RW registry emits `blocks:changed` / `block:properties-changed`
-    // on the same `app_handle` bus the activity feed uses, so an MCP write
-    // propagates to open views (not just the activity feed). Build the Tauri
-    // view-change emitter BEFORE the handle is moved into the activity context.
-    let view_emitter: Arc<dyn view_notify::ViewChangeEmitter> =
-        Arc::new(view_notify::TauriViewChangeEmitter::new(app_handle.clone()));
-    let activity_ctx =
-        activity::ActivityContext::from_app_handle_with_ring(app_handle, activity_ring);
-    let registry = tools_rw::ReadWriteTools::new(write_pool, read_pool, materializer, device_id)
-        .with_view_emitter(view_emitter);
-    spawn_mcp_rw_task_with_registry(socket_path, registry, Some(activity_ctx), lifecycle);
-}
-
-/// Spawn the MCP RW task against a caller-supplied registry and socket
-/// path. Mirrors [`spawn_mcp_ro_task_with_registry`] — see its docs for
-/// the `activity_ctx` / `lifecycle` semantics.
-pub fn spawn_mcp_rw_task_with_registry<R>(
-    socket_path: PathBuf,
-    registry: R,
-    activity_ctx: Option<activity::ActivityContext>,
-    lifecycle: Option<McpLifecycle>,
-) where
-    R: server::ToolRegistry + Send + Sync + 'static,
-{
-    let registry = std::sync::Arc::new(registry);
-    tauri::async_runtime::spawn(async move {
-        // H-2: see RO spawn helper for the rationale — clear any stale
-        // `enabled = false` left over by a previous shutdown before
-        // binding the new listener.
-        if let Some(ref lc) = lifecycle {
-            lc.enabled.store(true, std::sync::atomic::Ordering::Release);
-            // #2824 — reset the level-triggered shutdown gate too, so a
-            // prior shutdown's stored `true` does not immediately tear
-            // down the freshly-spawned accept loop. Reset alongside
-            // `enabled` (before bind) so a bind failure cannot leave it
-            // stuck at `true`.
-            lc.shutdown_signal.send_replace(false);
-        }
-        match bind_socket(&socket_path, "RW").await {
-            Ok(socket) => {
-                if let Some(ref lc) = lifecycle {
-                    lc.task_running
-                        .store(true, std::sync::atomic::Ordering::Release);
-                }
-                if let Err(e) = server::serve(
-                    socket,
-                    registry,
-                    activity_ctx,
-                    lifecycle.clone(),
-                    McpSurface::ReadWrite,
-                )
-                .await
-                {
-                    tracing::error!(
-                        target: "mcp",
-                        error = %e,
-                        "MCP RW serve loop exited with error",
-                    );
-                }
-                if let Some(ref lc) = lifecycle {
-                    lc.task_running
-                        .store(false, std::sync::atomic::Ordering::Release);
-                }
-            }
-            Err(AppError::InvalidOperation(msg)) => {
-                tracing::warn!(target: "mcp", kind = "RW", msg = %msg, "already bound");
-            }
-            Err(e) => {
-                tracing::error!(
-                    target: "mcp",
-                    kind = "RW",
                     error = %e,
                     path = %socket_path.display(),
                     "failed to bind MCP socket",
@@ -1192,121 +967,177 @@ pub fn spawn_mcp_rw_task_with_registry<R>(
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    //! Fixtures the MCP tests share: a vault with an agent in it, and a
+    //! server over a pair of registries.
+
+    use std::sync::Arc;
+
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    use super::agents::{AgentStore, ConnectedAgent, McpAgent, McpAgentMode, insert_agent};
+    use super::server::{McpServer, ToolRegistry};
+
+    /// A fresh vault holding one agent named `name`.
+    pub(crate) async fn vault_with_agent(
+        name: &str,
+        mode: McpAgentMode,
+        space_ids: Option<Vec<String>>,
+    ) -> (SqlitePool, McpAgent, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("mcp.db"))
+            .await
+            .unwrap();
+        let agent = insert_agent(&pool, name, mode, space_ids)
+            .await
+            .unwrap()
+            .expect("the name is free");
+        (pool, agent, dir)
+    }
+
+    /// `agent`'s connection, as `handle_connection` makes it from its token.
+    pub(crate) async fn connected(pool: &SqlitePool, agent: &McpAgent) -> ConnectedAgent {
+        AgentStore::new(pool.clone(), pool.clone())
+            .connect(&agent.token)
+            .await
+            .unwrap()
+            .expect("the token is live")
+    }
+
+    /// A server whose read-only agents get `read_only` and read-write agents
+    /// `read_write`, finding agents in `pool`.
+    pub(crate) fn server<RO: ToolRegistry, RW: ToolRegistry>(
+        read_only: RO,
+        read_write: RW,
+        pool: SqlitePool,
+    ) -> Arc<McpServer<RO, RW>> {
+        Arc::new(McpServer {
+            read_only: Arc::new(read_only),
+            read_write: Arc::new(read_write),
+            agents: AgentStore::new(pool.clone(), pool),
+            activity_ctx: None,
+        })
+    }
+
+    /// A pool that never opens, for a server no connection gets a token to.
+    pub(crate) fn unused_pool() -> SqlitePool {
+        SqlitePool::connect_lazy("sqlite::memory:").unwrap()
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
     #[test]
-    fn mcp_ro_enabled_returns_false_when_marker_absent() {
+    fn mcp_enabled_returns_false_when_marker_absent() {
         let dir = TempDir::new().unwrap();
         assert!(
-            !mcp_ro_enabled(dir.path()),
+            !mcp_enabled(dir.path()),
             "expected gate off when marker absent",
         );
     }
 
     #[test]
-    fn mcp_ro_enabled_returns_true_when_marker_present() {
+    fn mcp_enabled_returns_true_when_marker_present() {
         let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join(MCP_RO_ENABLED_MARKER), b"").unwrap();
+        std::fs::write(dir.path().join(MCP_ENABLED_MARKER), b"").unwrap();
         assert!(
-            mcp_ro_enabled(dir.path()),
+            mcp_enabled(dir.path()),
             "expected gate on when marker present",
         );
     }
 
     #[test]
-    fn mcp_ro_enabled_ignores_directory_with_marker_name() {
+    fn mcp_enabled_ignores_directory_with_marker_name() {
         // A directory at the marker path must not be mistaken for the gate.
         let dir = TempDir::new().unwrap();
-        std::fs::create_dir(dir.path().join(MCP_RO_ENABLED_MARKER)).unwrap();
+        std::fs::create_dir(dir.path().join(MCP_ENABLED_MARKER)).unwrap();
         assert!(
-            !mcp_ro_enabled(dir.path()),
+            !mcp_enabled(dir.path()),
             "directory at marker path must not flip the gate",
         );
     }
 
     #[cfg(unix)]
     #[test]
-    fn default_mcp_ro_socket_path_under_app_data_dir_on_unix() {
+    fn default_mcp_socket_path_under_app_data_dir_on_unix() {
         let dir = TempDir::new().unwrap();
-        let path = default_mcp_ro_socket_path(dir.path());
-        assert_eq!(path, dir.path().join(MCP_RO_SOCKET_FILENAME));
+        let path = default_mcp_socket_path(dir.path());
+        assert_eq!(path, dir.path().join(MCP_SOCKET_FILENAME));
     }
 
     #[cfg(windows)]
     #[test]
-    fn default_mcp_ro_socket_path_is_named_pipe_on_windows() {
+    fn default_mcp_socket_path_is_named_pipe_on_windows() {
         let dir = TempDir::new().unwrap();
-        let path = default_mcp_ro_socket_path(dir.path());
-        assert_eq!(path, std::path::PathBuf::from(MCP_RO_PIPE_PATH));
+        let path = default_mcp_socket_path(dir.path());
+        assert_eq!(path, std::path::PathBuf::from(MCP_PIPE_PATH));
     }
 
-    // -----------------------------------------------------------------
-    // RW parity tests (slice 2)
-    // -----------------------------------------------------------------
-
+    /// Access that was on through the read-write socket alone stays on.
     #[test]
-    fn mcp_rw_enabled_returns_false_when_marker_absent() {
+    fn legacy_markers_become_mcp_enabled_5667() {
         let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("mcp-rw-enabled"), b"").unwrap();
+
+        adopt_legacy_markers(dir.path()).unwrap();
+
         assert!(
-            !mcp_rw_enabled(dir.path()),
-            "expected RW gate off when marker absent",
+            mcp_enabled(dir.path()),
+            "the RW marker alone turns access on"
+        );
+        assert!(
+            !dir.path().join("mcp-rw-enabled").exists(),
+            "the RW marker is removed",
         );
     }
 
     #[test]
-    fn mcp_rw_enabled_returns_true_when_marker_present() {
+    fn both_legacy_markers_become_one_and_both_go_5667() {
         let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join(MCP_RW_ENABLED_MARKER), b"").unwrap();
+        for marker in ["mcp-ro-enabled", "mcp-rw-enabled"] {
+            std::fs::write(dir.path().join(marker), b"").unwrap();
+        }
+
+        adopt_legacy_markers(dir.path()).unwrap();
+
+        assert!(mcp_enabled(dir.path()), "access stays on");
+        for marker in ["mcp-ro-enabled", "mcp-rw-enabled"] {
+            assert!(!dir.path().join(marker).exists(), "{marker} is removed");
+        }
+    }
+
+    #[test]
+    fn no_legacy_marker_leaves_access_off_5667() {
+        let dir = TempDir::new().unwrap();
+        adopt_legacy_markers(dir.path()).unwrap();
         assert!(
-            mcp_rw_enabled(dir.path()),
-            "expected RW gate on when marker present",
+            !mcp_enabled(dir.path()),
+            "access off before the upgrade stays off"
         );
     }
 
+    /// #693: agents weight the instructions heavily, and a read-write agent
+    /// told it is read-only stops using its write tools.
     #[test]
-    fn mcp_rw_enabled_ignores_directory_with_marker_name() {
-        // Mirror of the RO guard: a directory at the marker path must
-        // not be mistaken for the gate.
-        let dir = TempDir::new().unwrap();
-        std::fs::create_dir(dir.path().join(MCP_RW_ENABLED_MARKER)).unwrap();
+    fn instructions_match_the_agents_mode() {
+        let read_only = agents::McpAgentMode::ReadOnly.instructions();
         assert!(
-            !mcp_rw_enabled(dir.path()),
-            "directory at RW marker path must not flip the gate",
+            read_only.contains("read-only"),
+            "a read-only agent is told so: {read_only:?}",
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn default_mcp_rw_socket_path_under_app_data_dir_on_unix() {
-        let dir = TempDir::new().unwrap();
-        let path = default_mcp_rw_socket_path(dir.path());
-        assert_eq!(path, dir.path().join(MCP_RW_SOCKET_FILENAME));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn default_mcp_rw_socket_path_is_named_pipe_on_windows() {
-        let dir = TempDir::new().unwrap();
-        let path = default_mcp_rw_socket_path(dir.path());
-        assert_eq!(path, std::path::PathBuf::from(MCP_RW_PIPE_PATH));
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn bind_socket_ro_and_rw_can_coexist_in_same_dir() {
-        // Pins the invariant that the RO and RW sockets do not clash
-        // on the filesystem — they live side-by-side under the same
-        // app data directory.
-        let dir = TempDir::new().unwrap();
-        let ro_path = dir.path().join(MCP_RO_SOCKET_FILENAME);
-        let rw_path = dir.path().join(MCP_RW_SOCKET_FILENAME);
-        let _ro = bind_socket(&ro_path, "RO").await.expect("RO bind");
-        let _rw = bind_socket(&rw_path, "RW").await.expect("RW bind");
-        assert!(ro_path.exists(), "RO socket file exists");
-        assert!(rw_path.exists(), "RW socket file exists");
-        assert_ne!(ro_path, rw_path, "RO and RW must not share a path");
+        let read_write = agents::McpAgentMode::ReadWrite.instructions();
+        assert!(
+            read_write.contains("read-write"),
+            "a read-write agent is told so: {read_write:?}",
+        );
+        assert!(
+            !read_write.contains("read-only"),
+            "a read-write agent is never told it is read-only: {read_write:?}",
+        );
     }
 
     #[cfg(unix)]
@@ -1314,13 +1145,13 @@ mod tests {
     async fn bind_socket_enforces_mode_0600() {
         use std::os::unix::fs::PermissionsExt;
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("mcp-ro.sock");
-        let _socket = bind_socket(&path, "RO").await.expect("bind succeeds");
+        let path = dir.path().join(MCP_SOCKET_FILENAME);
+        let _socket = bind_socket(&path).await.expect("bind succeeds");
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(
             mode & 0o777,
             0o600,
-            "MCP RO socket must be user-only (0600), got {:o}",
+            "MCP socket must be user-only (0600), got {:o}",
             mode & 0o777,
         );
     }
@@ -1329,12 +1160,10 @@ mod tests {
     #[tokio::test]
     async fn bind_socket_removes_stale_file() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("mcp-ro.sock");
+        let path = dir.path().join(MCP_SOCKET_FILENAME);
         // Prior-run stale file — not a live listener.
         std::fs::write(&path, b"stale").unwrap();
-        let _socket = bind_socket(&path, "RO")
-            .await
-            .expect("bind succeeds over stale");
+        let _socket = bind_socket(&path).await.expect("bind succeeds over stale");
         assert!(path.exists(), "socket file exists after re-bind");
     }
 
@@ -1342,73 +1171,56 @@ mod tests {
     #[tokio::test]
     async fn bind_socket_rejects_second_live_instance() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("mcp-ro.sock");
-        let _first = bind_socket(&path, "RO").await.expect("first bind succeeds");
-        let second = bind_socket(&path, "RO").await;
+        let path = dir.path().join(MCP_SOCKET_FILENAME);
+        let _first = bind_socket(&path).await.expect("first bind succeeds");
+        let second = bind_socket(&path).await;
         assert!(
             matches!(second, Err(AppError::InvalidOperation(_))),
             "second bind must return InvalidOperation, got {second:?}",
         );
     }
 
-    // End-to-end smoke test of the `agaric-mcp` stub binary against a
-    // locally-bound UDS. Gated by the `ci-smoke` feature. CI enables this
-    // with `cargo nextest run --features ci-smoke ...` after a
-    // `cargo build --bin agaric-mcp` step. Local devs can run it the same
-    // way; the test never runs by default.
-    // Run with:  cargo nextest run stub_binary --features ci-smoke
+    /// The `agaric-mcp` binary built by `cargo build --bin agaric-mcp`.
     #[cfg(all(unix, feature = "ci-smoke"))]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn stub_binary_roundtrips_initialize_over_uds() {
+    fn bridge_binary() -> std::path::PathBuf {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        ["debug", "release"]
+            .iter()
+            .map(|p| manifest_dir.join("target").join(p).join("agaric-mcp"))
+            .find(|p| p.exists())
+            .expect("run `cargo build --bin agaric-mcp` before this test")
+    }
+
+    /// Serves one connection on `socket_path` as the production server does,
+    /// then runs the real bridge with `bridge_args` and sends it one
+    /// `initialize`, returning its first reply line.
+    #[cfg(all(unix, feature = "ci-smoke"))]
+    async fn bridge_reply(
+        socket_path: &std::path::Path,
+        server: Arc<server::McpServer<server::PlaceholderRegistry, server::PlaceholderRegistry>>,
+        bridge_args: &[&str],
+    ) -> serde_json::Value {
         use std::io::BufRead;
         use std::io::Write as _;
         use std::process::{Command, Stdio};
 
-        use crate::mcp::server::{PlaceholderRegistry, handle_connection};
-        use tokio::net::UnixListener;
-
-        let dir = TempDir::new().unwrap();
-        let socket_path = dir.path().join("bin-test.sock");
-        let listener = UnixListener::bind(&socket_path).unwrap();
-
-        // Spawn the in-process server against this socket.
+        let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
         tokio::spawn(async move {
-            let (server_side, _) = listener.accept().await.unwrap();
-            let _ = handle_connection(
-                server_side,
-                std::sync::Arc::new(PlaceholderRegistry),
-                None,
-                crate::mcp::McpSurface::ReadOnly,
-            )
-            .await;
+            let (stream, _) = listener.accept().await.unwrap();
+            let _ = server::handle_connection(stream, server).await;
         });
 
-        // Locate the built binary relative to CARGO_MANIFEST_DIR.
-        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let bin_path = ["debug", "release"]
-            .iter()
-            .map(|p| manifest_dir.join("target").join(p).join("agaric-mcp"))
-            .find(|p| p.exists())
-            .expect(
-                "run `cargo build --bin agaric-mcp` before running this ignored integration test",
-            );
-
-        let mut child = Command::new(&bin_path)
+        let mut child = Command::new(bridge_binary())
             .arg("--socket")
-            .arg(&socket_path)
+            .arg(socket_path)
+            .args(bridge_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn agaric-mcp");
-
         let mut stdin = child.stdin.take().expect("stdin");
-        let stdout = child.stdout.take().expect("stdout");
-
-        // MCP spec (and rmcp) require `capabilities` in the initialize
-        // params. The hand-rolled framing used to tolerate the field
-        // being absent; rmcp rejects the handshake and closes the
-        // connection without responding, so include the bag explicitly.
+        // rmcp rejects an `initialize` without `capabilities`.
         stdin
             .write_all(
                 b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\
@@ -1420,18 +1232,83 @@ mod tests {
         stdin.flush().unwrap();
         drop(stdin);
 
-        let mut reader = std::io::BufReader::new(stdout);
         let mut line = String::new();
-        reader.read_line(&mut line).expect("read response");
-        let response: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-        assert_eq!(response["id"], 1);
-        // rmcp's `serverInfo.name` defaults to the implementation name
-        // passed at adapter construction — `agaric` for the production
-        // adapter. Assert the current production identifier so a future
-        // rmcp bump that changes the field surfaces here as a focused diff.
-        assert_eq!(response["result"]["serverInfo"]["name"], "agaric");
-
+        std::io::BufReader::new(child.stdout.take().expect("stdout"))
+            .read_line(&mut line)
+            .expect("read the reply");
         let _ = child.kill();
         let _ = child.wait();
+        serde_json::from_str(line.trim()).expect("the reply is JSON-RPC")
+    }
+
+    // The mcp-tests CI lane runs these after `cargo build --bin agaric-mcp`:
+    //   cargo nextest run --features ci-smoke -E 'test(stub_binary_)'
+    #[cfg(all(unix, feature = "ci-smoke"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stub_binary_roundtrips_initialize_over_uds() {
+        let (pool, agent, dir) =
+            test_support::vault_with_agent("Smoke", agents::McpAgentMode::ReadOnly, None).await;
+        let server = test_support::server(
+            server::PlaceholderRegistry,
+            server::PlaceholderRegistry,
+            pool,
+        );
+        let socket_path = dir.path().join("bin-test.sock");
+
+        let response = bridge_reply(&socket_path, server, &["--token", &agent.token]).await;
+
+        assert_eq!(response["id"], 1);
+        assert_eq!(
+            response["result"]["serverInfo"]["name"], "agaric",
+            "the bridge's token reaches an agent, so the server answers initialize: {response}",
+        );
+    }
+
+    #[cfg(all(unix, feature = "ci-smoke"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stub_binary_with_a_revoked_token_is_refused_5667() {
+        let (pool, agent, dir) =
+            test_support::vault_with_agent("Smoke", agents::McpAgentMode::ReadOnly, None).await;
+        // A live agent a lookup could wrongly fall back to.
+        agents::insert_agent(&pool, "Live", agents::McpAgentMode::ReadOnly, None)
+            .await
+            .unwrap()
+            .unwrap();
+        agents::delete_agent(&pool, &agent.id).await.unwrap();
+        let server = test_support::server(
+            server::PlaceholderRegistry,
+            server::PlaceholderRegistry,
+            pool,
+        );
+        let socket_path = dir.path().join("bin-test.sock");
+
+        let response = bridge_reply(&socket_path, server, &["--token", &agent.token]).await;
+
+        assert_eq!(response["id"], 1, "the refusal answers the initialize");
+        assert_eq!(response["error"]["code"], -32001);
+        let message = response["error"]["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("Settings → Agent access"),
+            "the refusal names where to get a token: {message}",
+        );
+    }
+
+    #[cfg(all(unix, feature = "ci-smoke"))]
+    #[test]
+    fn stub_binary_without_a_token_exits_2_naming_settings_5667() {
+        let output = std::process::Command::new(bridge_binary())
+            .args(["--socket", "/nonexistent/mcp.sock"])
+            .output()
+            .expect("run agaric-mcp");
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "a missing --token is a usage error"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Settings → Agent access"),
+            "the error names where to get a token: {stderr}",
+        );
     }
 }

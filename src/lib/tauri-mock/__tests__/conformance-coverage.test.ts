@@ -253,9 +253,7 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   set_trace_sampling: 'no persistent state — runtime tracing toggle',
   notify_task: 'no persistent state — OS notification side effect',
   mcp_set_enabled: 'no persistent domain state — MCP server runtime toggle',
-  mcp_rw_set_enabled: 'no persistent domain state — MCP server runtime toggle',
   mcp_disconnect_all: 'no persistent domain state — MCP transport reset',
-  mcp_rw_disconnect_all: 'no persistent domain state — MCP transport reset',
 }
 
 // ---------------------------------------------------------------------------
@@ -421,7 +419,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
   get_os_network_block_status: 'no domain state — OS per-uid network-block status',
   is_flatpak: 'no domain state — packaging/environment probe',
   get_mcp_status: 'no domain state — MCP server runtime status',
-  get_mcp_rw_status: 'no domain state — MCP server runtime status',
   get_mcp_recent_activity: 'no domain state — in-memory MCP activity ring buffer',
 }
 
@@ -527,9 +524,7 @@ const NO_DOMAIN_STATE_MUTATING: ReadonlySet<string> = new Set([
   'set_trace_sampling',
   'notify_task',
   'mcp_set_enabled',
-  'mcp_rw_set_enabled',
   'mcp_disconnect_all',
-  'mcp_rw_disconnect_all',
 ])
 
 const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
@@ -544,7 +539,6 @@ const NO_DOMAIN_STATE_READ: ReadonlySet<string> = new Set([
   'get_os_network_block_status',
   'is_flatpak',
   'get_mcp_status',
-  'get_mcp_rw_status',
   'get_mcp_recent_activity',
 ])
 

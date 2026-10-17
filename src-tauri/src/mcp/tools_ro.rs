@@ -198,8 +198,8 @@ pub const SEARCH_TERM_TOTAL_BYTES_CAP: usize = crate::commands::MAX_CONTENT_LENG
 /// Before this bound, `handle_journal_for_date` parsed **any** valid
 /// `YYYY-MM-DD` string and delegated straight into
 /// [`journal_for_date_inner`], which creates the page unconditionally on
-/// a miss. That meant a prompt-injected agent connected to the nominally
-/// read-only socket could append an unbounded number of `CreateBlock` +
+/// a miss. That meant a prompt-injected, nominally read-only agent could
+/// append an unbounded number of `CreateBlock` +
 /// `SetProperty(space)` op pairs to the append-only `op_log` — roughly
 /// 3.6M distinct dates per space, none of them reclaimable. Bounding the
 /// *create* branch to a year on either side of today closes that path
@@ -527,8 +527,7 @@ struct ListJournalArgs {
 /// (reader) backs every read, the space checks included; `writer_pool` backs
 /// only the in-window create branch of `journal_for_date` (#5402).
 ///
-/// Because of the carve-out, **enabling the read-only MCP server
-/// implicitly grants the agent permission to append a single
+/// Because of the carve-out, **a read-only agent may append a single
 /// `CreateBlock` + `SetProperty(space)` op pair to `op_log` (origin
 /// `agent:<name>`) on the first call for a given `(space_id, date)` pair
 /// — but only when `date` is within the bounded create window.** Outside
@@ -537,8 +536,8 @@ struct ListJournalArgs {
 /// [`AppError::NotFound`] instead of a write. The op (when it happens) is
 /// reversible (ordinary `page` block via `create_block_inner`) and shows
 /// up in the agent activity feed like any other agent-authored write, but
-/// it is **not** a pure read. The Settings "Read-only access" tooltip
-/// (`agentAccess.roToggleDescription` in `src/lib/i18n.ts`) and
+/// it is **not** a pure read. The Settings create-agent note
+/// (`agentAccess.agents.readOnlyNote` in `src/lib/i18n/settings.ts`) and
 /// `src-tauri/src/mcp/AGENTS.md` §Read-only vs read-write surfaces both
 /// surface this bounded carve-out to the user / reader. Splitting
 /// `journal_for_date` into RO+RW halves was rejected as a public API
@@ -1098,9 +1097,9 @@ fn tool_desc_journal_for_date() -> ToolDescription {
 fn tool_desc_list_spaces() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_SPACES.to_string(),
-        description: "List every space as { id, name, is_default }. Every other tool except \
-             list_property_defs requires a space_id — call this first to discover one. \
-             is_default marks the seeded Personal space."
+        description: "List the spaces you may use as { id, name, is_default }. Every other \
+             tool except list_property_defs requires a space_id — call this first to discover \
+             one. is_default marks the seeded Personal space."
             .to_string(),
         input_schema: json!({
             "type": "object",
@@ -2722,7 +2721,7 @@ mod tests_m82 {
 // Before this fix, `handle_journal_for_date` parsed ANY valid `YYYY-MM-DD`
 // string and delegated straight into `journal_for_date_inner`, which
 // creates the page unconditionally on a miss — an unbounded mutation path
-// on the nominally read-only socket (any of ~3.6M reachable dates per
+// for a nominally read-only agent (any of ~3.6M reachable dates per
 // space, each one a free, non-reclaimable `CreateBlock` + `SetProperty`
 // op pair into `op_log`). These tests pin the bounded-window fix:
 //

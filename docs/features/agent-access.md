@@ -5,10 +5,12 @@ Agaric exposes itself to AI agents (Claude Desktop, Cursor, Continue, and any ot
 
 ## What you can do
 
-- **Enable / disable MCP** (Settings → Agent access). Reads and writes are two
-  separate sockets with two separate toggles, so you can leave reads on while
-  writes stay off. The read-write socket also serves every read tool, so
-  turning reads off does not stop a client on the read-write socket reading.
+- **Enable / disable MCP** (Settings → Agent access): one switch for the one
+  socket.
+- **Give each client its own agent** (Settings → Agent access → Agents): a
+  name, read-only or read-write, the spaces it may use, and a token. Copy its
+  Claude Desktop config or Claude Code command from its row; revoke it there
+  too.
 - **Watch agent activity in real time** in the **ActivityFeed** (Settings → Agent access).
 - **Revert a whole session's edits** with one click (the **SessionRevertControls** action).
 - **Open Agaric from another app** via the `agaric://` deep-link scheme.
@@ -16,29 +18,38 @@ Agaric exposes itself to AI agents (Claude Desktop, Cursor, Continue, and any ot
 
 ## How agents connect
 
-Agaric runs local MCP server endpoints when MCP is enabled. Each endpoint is a Unix domain socket (Linux / macOS) or a Windows named pipe — never an open TCP port. Agents connect via the stdio bridge (`agaric-mcp`) bundled with the app.
-
-There are **two sockets**: a read-only one and a read-write one, each with its own toggle. The bridge connects to the read-only socket unless you point it elsewhere with `--socket` or `AGARIC_MCP_SOCKET`, so a bare `command` entry gets read access only:
+Agaric runs a local MCP server when MCP is enabled: a Unix domain socket (Linux / macOS) or a Windows named pipe — never an open TCP port. Agents connect through the stdio bridge (`agaric-mcp`) bundled with the app, which presents an agent's token before anything else:
 
 ```json
 {
   "mcpServers": {
-    "agaric": {
-      "command": "/path/to/agaric-mcp",
-      "env": { "AGARIC_MCP_SOCKET": "/path/to/mcp-ro.sock" }
+    "agaric-planner-3kq9vz": {
+      "command": "agaric-mcp",
+      "args": ["--socket", "/path/to/mcp.sock", "--token", "agt_…"]
     }
   }
 }
 ```
 
-To give an agent the write tools, point `AGARIC_MCP_SOCKET` at the read-write socket instead; that one entry serves the read tools too. Cursor and Continue use the same shape under their respective MCP config keys. While a toggle is on, the *Agent access* settings tab shows that socket's exact path for the current install and its connection count, with *Disconnect all* while any agent is connected; the read-only card copies ready-made snippets for both sockets: a Claude Desktop JSON with an `agaric-ro` and an `agaric-rw` entry, and `claude mcp add` commands for Claude Code.
+Settings → Agent access makes that entry for you: add an agent, then use its row's *Copy Claude Desktop config* or *Copy Claude Code command* (`claude mcp add -s user <name> -- agaric-mcp --socket "<path>" --token <token>`). Cursor and Continue use the same command and arguments under their own MCP config keys. While the switch is on, the tab shows the socket's path and its connection count, with *Disconnect all* while any agent is connected.
+
+Each agent has:
+
+- **A name**, which its edits carry in History and the activity feed (`agent:<name>`). What the client calls itself is not used.
+- **Read-only or read-write.** A read-only agent gets only the read tools; a write tool is an unknown tool to it.
+- **Spaces**: every space, including ones created later, or a list. The agent sees and uses only those (see [Space scoping](#space-scoping)).
+- **A token** (`agt_` and 32 hex digits) that works only against this device's socket. Agents are not synced.
+
+A connection without a token, or with one no agent holds, is refused with an error naming Settings → Agent access, and closed. Revoking an agent refuses its next call, even on a connection that is still open. To change an agent's access, revoke it and add a new one.
+
+**Upgrading from the two sockets.** Before agents, a read-only and a read-write socket each had a switch and a config entry (`agaric-ro`, `agaric-rw`). Those entries stop working: add one agent per client and replace that client's entries with the agent's. Access that was on stays on.
 
 ## What agents can do
 
 The MCP surface is split into:
 
-- **Read-only tools** (always available when MCP is enabled): list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, list spaces, fetch a journal page by date, page history, block history, get journal, list journal, list trash, resolve names, query. One carve-out: `journal_for_date` **creates** the journal page if it doesn't exist yet and the date is near today — the only read-registry tool with a write side effect. A day it creates gets the space's journal template, as a day the journal creates does.
-- **Read-write tools**: append block, append markdown, update block content, set property, add tag, create page, delete block, move page to space, create tag, delete property, undo, capture, move blocks, remove tag, restore block, batch, edit page markdown, set page aliases, plus every read-only tool. Move blocks reparents or reorders blocks in one call and one transaction, keeping their ids, so links to them and their history survive. Append markdown lands a whole Markdown outline under a parent in one call and one undo, exactly as a paste in the app does: list items nest, headings own what follows them, `key:: value` lines become properties, and a `[[Page]]` or `#tag` that matches nothing in the parent's space creates that page or tag there. Separate from read-only so you can disable writes while keeping reads on.
+- **Read-only tools** (served to every agent): list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, list spaces, fetch a journal page by date, page history, block history, get journal, list journal, list trash, resolve names, query. One carve-out: `journal_for_date` **creates** the journal page if it doesn't exist yet and the date is near today — the only read-registry tool with a write side effect. A day it creates gets the space's journal template, as a day the journal creates does.
+- **Read-write tools** (served to a read-write agent): append block, append markdown, update block content, set property, add tag, create page, delete block, move page to space, create tag, delete property, undo, capture, move blocks, remove tag, restore block, batch, edit page markdown, set page aliases, plus every read-only tool. Move blocks reparents or reorders blocks in one call and one transaction, keeping their ids, so links to them and their history survive. Append markdown lands a whole Markdown outline under a parent in one call and one undo, exactly as a paste in the app does: list items nest, headings own what follows them, `key:: value` lines become properties, and a `[[Page]]` or `#tag` that matches nothing in the parent's space creates that page or tag there.
 
 What the page reads return:
 
@@ -70,7 +81,7 @@ The journal in one call:
 
 Undo and history:
 
-- Every write tool's result carries `op_refs` (`[{ device_id, seq }]`), the operations it wrote; a call that wrote nothing has none. `undo { op_refs, space_id }` reverts them through the same path as the activity feed's Undo, as one action that gets its own feed entry, so you can undo the agent's undo. It refuses an operation written by you or by another agent (a guard against mistakes, not a security boundary: an agent's name is whatever its client reports).
+- Every write tool's result carries `op_refs` (`[{ device_id, seq }]`), the operations it wrote; a call that wrote nothing has none. `undo { op_refs, space_id }` reverts them through the same path as the activity feed's Undo, as one action that gets its own feed entry, so you can undo the agent's undo. It refuses an operation written by you or by another agent (a guard against mistakes, not a security boundary).
 - `list_trash { space_id }` lists a space's deleted blocks, newest first and cursor paginated; `restore_block { block_id, deleted_at, space_id }` brings one back with what was deleted with it.
 - `page_history { page_id, space_id }` and `block_history { block_id, space_id }` list who changed what and when, newest first and cursor paginated: device, origin (`user` or `agent:<name>`), op type, timestamp, block, the text or property value the op wrote and, for an edit, the text before it, each clipped to a short excerpt.
 
@@ -85,20 +96,28 @@ Every tool takes a required `space_id` except `list_spaces`, which lists the spa
 
 | Pattern | Tools | Behaviour |
 | --- | --- | --- |
-| **`space_id` required** | every other tool | The call runs inside the named space. Listings and searches return only that space's rows; a tool that addresses a block or page by id refuses a target in another space with a validation error. `create_page`, `create_tag` and `capture` create in that space; `move_page_to_space` moves the page into any live `target_space_id`. |
-| **`space_id` absent** | `list_spaces`, `list_property_defs` | Vault-wide by nature: the list of spaces, and the property schema every space shares. |
+| **`space_id` required** | every other tool | The call runs inside the named space. Listings and searches return only that space's rows; a tool that addresses a block or page by id refuses a target in another space with a validation error. `create_page`, `create_tag` and `capture` create in that space; `move_page_to_space` moves the page into a live `target_space_id`. |
+| **`space_id` absent** | `list_spaces`, `list_property_defs` | `list_spaces` lists the spaces the agent may use; `list_property_defs` is the property schema every space shares. |
 
-### Security implication
+An agent limited to some spaces is refused, before the tool runs, any call whose `space_id` or `target_space_id` names another space; the refusal reaches the activity feed.
 
-**`space_id` is not an isolation boundary.** It confines each call, but nothing binds a connection or an agent to a set of spaces: `list_spaces` hands the agent every real `space_id`, and it can pass any of them to any tool. A refusal for a target in another space usually names the target's actual space (`"block '…' belongs to space '…'"`), so the next call can pass that value straight back. The argument catches accidental cross-space reads and writes from a stale or mismatched ULID; it does not stop an agent that means to cross spaces.
+### What a limited agent can still see
 
-If you have a space whose contents an agent must not read or write, **do not rely on the MCP `space_id` argument to fence it off** — disable MCP, or don't expose that data to the agent's vault. Real per-space isolation would require binding a connection/agent to an authorised space set and enforcing it in the dispatch layer, which does not exist today.
+The limit guards against an agent's mistakes; it is not isolation. Each of these shows at most a title or an id from a space the agent may not use, and only through a link or move you made:
+
+1. `get_page_markdown` and `get_journal` write a link, tag, block reference or ref-typed value that points into another space with its target's title or name. A link written across spaces is refused, so such a link comes from moving one of its pages.
+2. `block_history` and `page_history` show a moved block's earlier text from the space it moved out of.
+3. `list_backlinks` takes a target in another space; the sources it lists are in the agent's space.
+4. A refusal for a block or page in another space names that space's id; the next call naming it is refused.
+5. `search.parent_id`, ids inside `query`, and links in written content may name ids from other spaces; what is read or written stays in the agent's space. A ref-typed property naming another space's block is refused.
+
+If a space's contents must not reach an agent at all, don't give that agent the space, and don't link or move pages into its spaces from that one.
 
 ## Activity feed
 
-The **ActivityFeed** in the Settings → Agent access tab streams a window of recent tool invocations. It has its own card and stays visible with both toggles off, so past agent writes can still be undone. Each entry shows:
+The **ActivityFeed** in the Settings → Agent access tab streams a window of recent tool invocations. It has its own card and stays visible with the switch off, so past agent writes can still be undone. Each entry shows:
 
-- Relative timestamp (*"3s ago"*).
+- Relative timestamp (*"3s ago"*) and the agent's name.
 - Tool name and a short, field-filtered summary using the real output shape (for example,
   `search — 4 matches` or `add_tag — applied 01HZTEST to 01HZB10C`).
 - Operation count if the call wrote anything.
@@ -132,7 +151,7 @@ On **Android** the custom scheme isn't available, so the same three routes are s
 ## Pitfalls to know
 
 - **MCP listens locally only.** It's never exposed over the network. Two computers can't share one Agaric's MCP — pair them via [sync.md](sync.md) instead.
-- **The MCP `space_id` argument is not an isolation boundary.** It confines each call to the space it names, but an agent can name any space `list_spaces` returns. See [Space scoping](#space-scoping) above. Don't rely on the MCP space argument to hide or protect one space's contents from an agent.
+- **An agent's spaces are a guard against mistakes, not isolation.** A link or a move can show it a title or an id from another space; see [What a limited agent can still see](#what-a-limited-agent-can-still-see).
 - **Reverting a session is coarse, and bounded by the feed.** It reverts every agent op still in the 100-entry activity window — not a surgical subset, and not ops that have already scrolled out. Use the History view for either of those.
 - **Reverting a session can be too large to run.** It sends every op of every action in one revert, which is capped at `MAX_REVERT_OPS` (`src-tauri/src/commands/history.rs`), so a session holding large `append_markdown` calls can exceed it. Undo those entries one by one instead.
 - **The activity feed is bounded and in-memory.** It holds 100 entries and doesn't survive a restart. For a long-term record, the History view is the source of truth — though it doesn't distinguish agent ops from your own, so match them up by time. An agent's `page_history` / `block_history` does show each op's origin.

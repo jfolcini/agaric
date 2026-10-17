@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT origin AS \"origin!: String\" FROM op_log WHERE origin LIKE 'agent:%'",
+  "describe": {
+    "columns": [
+      {
+        "name": "origin!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "origin"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8b06f8b59511f810df7ce31b10594315f7b27ad24bf6295505e799265dbfcbd8"
+}

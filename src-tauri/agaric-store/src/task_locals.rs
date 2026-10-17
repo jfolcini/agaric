@@ -241,20 +241,19 @@ use std::fmt;
 /// task-local scope is active — this preserves backward compatibility for
 /// frontend-invoked commands, which never enter the MCP task.
 ///
-/// `Actor::Agent` carries the self-reported `clientInfo.name` from the MCP
-/// handshake. The name is treated as PII-adjacent and kept out of `Debug`
-/// output (see the manual `Debug` impl on this enum).
+/// `Actor::Agent` carries the name of the agent whose token the MCP
+/// connection presented. The name is treated as PII-adjacent and kept out of
+/// `Debug` output (see the manual `Debug` impl on this enum).
 #[derive(Clone)]
 pub enum Actor {
     /// Frontend-invoked commands (the implicit default). No additional
     /// information is carried.
     User,
-    /// MCP request from an external agent identified by the handshake
-    /// `clientInfo.name`. The name is structured-log-only and must not be
-    /// embedded in `Debug` output (see module docs).
+    /// MCP request from an external agent, by its name in Settings. The name
+    /// is structured-log-only and must not be embedded in `Debug` output (see
+    /// module docs).
     Agent {
-        /// Self-reported `clientInfo.name` from the MCP handshake. Never
-        /// printed via `{:?}`.
+        /// The agent's name. Never printed via `{:?}`.
         name: String,
     },
     /// The app acting on its own behalf — a boot-time maintenance job that
@@ -531,9 +530,9 @@ mod actor_tests {
 
     #[test]
     fn origin_tag_preserves_arbitrary_agent_name_chars() {
-        // Agent names are self-reported via MCP `clientInfo.name` — we do
-        // NOT sanitise them here. Downstream consumers (activity feed
-        // render, log scrubbing) are responsible for display escaping.
+        // Agent names come from Settings, which validates them — we do NOT
+        // sanitise them here. Downstream consumers (activity feed render,
+        // log scrubbing) are responsible for display escaping.
         let a = Actor::Agent {
             name: "weird:name with spaces/and:colons".to_string(),
         };

@@ -132,9 +132,9 @@ export function pageRowInvokeFallback(command: string): Promise<unknown> {
  * `typedError` wraps it. That `T` is what a stub here must produce.
  *
  * The generated object is camelCase-keyed and `invoke` is called with the
- * snake_case IPC name, so the key is converted at the type level. A digit is
- * its own `Lowercase`, which keeps `mcpRwSetEnabled` → `mcp_rw_set_enabled`
- * right rather than splitting on the digits.
+ * snake_case IPC name, so the key is converted at the type level
+ * (`mcpSetEnabled` → `mcp_set_enabled`). A digit is its own `Lowercase`, so
+ * it never starts a new word.
  */
 type CamelToSnake<S extends string> = S extends `${infer C}${infer R}`
   ? C extends Lowercase<C>

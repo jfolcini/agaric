@@ -5,7 +5,7 @@ External-facing surfaces: MCP for AI agents, `agaric://` deep links.
 
 ## MCP (agent access)
 
-Local-only MCP server for AI clients (Claude Desktop, Cursor, Continue). Read-only + read-write tool surfaces, each on its own socket.
+Local-only MCP server for AI clients (Claude Desktop, Cursor, Continue), on one socket. Each client connects as an agent made in Settings, with a token, a mode (read-only or read-write) and the spaces it may use (#5667).
 
 ### Transport
 
@@ -16,18 +16,20 @@ Local-only MCP server for AI clients (Claude Desktop, Cursor, Continue). Read-on
   `Everyone` and `Anonymous`, so Agaric deliberately does not rely on it (#2720).
 - **Never** a TCP port.
 
-The `agaric-mcp` binary is a stdio↔socket bridge bundled with the app. Agents spawn it; it forwards JSON-RPC frames over the socket. Configuration snippets live in [`docs/features/agent-access.md`](../features/agent-access.md).
+The `agaric-mcp` binary is a stdio↔socket bridge bundled with the app. Agents spawn it with `--token <agent token>`; it writes `AGARIC-TOKEN <token>` before any MCP byte, then forwards JSON-RPC frames over the socket. Configuration snippets live in [`docs/features/agent-access.md`](../features/agent-access.md).
 
-### Surfaces
+### Agents and tokens
 
-Two separate sockets, two marker files (`mcp-ro-enabled` / `mcp-rw-enabled`):
+Agents are device-local rows of `mcp_agents` (migration 0125): a name, a mode, the spaces (`NULL`: every space) and a plain-text `agt_` token. No op type: a token only works against this device's socket. `handle_connection` (`src-tauri/src/mcp/server.rs`) reads the token line, refuses a connection without a live agent's token with one JSON-RPC `-32001` naming Settings → Agent access, and serves the rest through the registry the agent's mode picks. Every `tools/call` re-reads the agent (`ConnectedAgent::authorize`), so a revoke refuses the next call, and refuses a `space_id` or `target_space_id` outside its spaces. The token guards against an agent's mistakes, not an attacker.
 
-- **Read-only**: list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces.
-- **Read-write**: append block, update block content, set property, add tag, create page, delete block, …, then every read-only tool.
+### Registries
 
-`list_spaces` returns `{ id, name, is_default }` for every space; it is the discovery surface for the `space_id` every tool but `list_spaces` and `list_property_defs` requires. Wire names live as `TOOL_*` constants in `src-tauri/src/mcp/registry.rs`; the authoritative advertised and dispatched sets are `list_tool_descriptions()` and the `call_tool()` match arms in `tools_ro.rs` / `tools_rw.rs`.
+One socket, one marker file (`mcp-enabled`):
 
-Splitting by R/W lets users disable writes while keeping reads on.
+- **Read-only agents**: list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces.
+- **Read-write agents**: append block, update block content, set property, add tag, create page, delete block, …, then every read-only tool.
+
+`list_spaces` returns `{ id, name, is_default }` for every space the agent may use; it is the discovery surface for the `space_id` every tool but `list_spaces` and `list_property_defs` requires. Wire names live as `TOOL_*` constants in `src-tauri/src/mcp/registry.rs`; the authoritative advertised and dispatched sets are `list_tool_descriptions()` and the `call_tool()` match arms in `tools_ro.rs` / `tools_rw.rs`.
 
 ### `ToolRegistry` trait
 
@@ -50,8 +52,9 @@ Splitting by R/W lets users disable writes while keeping reads on.
 Every tool requires `space_id` except `list_spaces` and `list_property_defs` (property
 definitions are vault-wide). Reads are confined to that space, a tool that addresses a block or
 page by id rejects a target in another space, and `create_page` uses it to select the destination
-space. It is not an authorization boundary. See [Agent Access → Space scoping](../features/agent-access.md#space-scoping)
-for the full contract.
+space. An agent limited to some spaces is refused any other; this guards against mistakes and is
+not isolation. See [Agent Access → Space scoping](../features/agent-access.md#space-scoping) for
+the full contract and the gaps it accepts.
 
 The MCP `search` tool takes `parent_id`, `tag_ids`, and `space_id` as **top-level** arguments (alongside `query`, `cursor`, `limit`) — `space_id` is required, the other two are optional. Everything else is carried by an optional structured `filter` arg that mirrors the user-facing `SearchFilter` minus those three already-top-level slots: `include_page_globs`, `exclude_page_globs`, `state_filter`, `priority_filter`, `excluded_state_filter`, `excluded_priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters`, `block_type_filter`, `case_sensitive`, `whole_word`, `is_regex`, `last_edited`. (`SearchFilterArgs` in `src-tauri/src/mcp/tools_ro.rs` is `deny_unknown_fields`, so passing `parent_id`/`tag_ids`/`space_id` *inside* `filter` is rejected.) Inline filter syntax (`tag:` / `state:` / `prop:`…) is **not** re-parsed from `query` at the MCP boundary — agents pass structured arguments. Omitting `filter` preserves the prior query-string-only behaviour. Unlike the app's search, its `tag_ids` also match inline `#tag` references and inherited tags (`SearchFilter::tags_match_inline_and_inherited`).
 
@@ -59,10 +62,10 @@ Block rows in every tool result leave out their null fields (`to_tool_result` in
 
 ### `ActorContext` plumbing
 
-Task-locals carry the agent identity through every IPC. The agent name comes from the MCP client's `clientInfo.name`, sanitized once at the trust boundary (`sanitize_agent_name` in `src-tauri/src/mcp/rmcp_adapter.rs`, #1569): control chars stripped, trimmed, truncated to 128 chars on a char boundary, empty → the `unknown` placeholder. Purposes:
+Task-locals carry the agent identity through every IPC. The name is the agent's, from its row; the MCP client's `clientInfo` is not read. Settings validated it when the agent was made (trimmed, no control characters, at most `MAX_AGENT_NAME_LEN` chars). Purposes:
 
 - **PII redaction** in logs (the agent name never leaks into telemetry).
-- **`op_log.origin`** column gets stamped so user vs agent edits are distinguishable in History view + Activity Feed. A *named* client stamps `agent:<name>`. An *anonymous* client (absent/empty `clientInfo.name`) is **not** stamped a bare `agent:` — it stamps `agent:unknown:<session-ulid>` (`durable_agent_name`, #1545), folding the per-connection session ULID in so two simultaneous anonymous agents stay distinguishable in the append-only log. Both forms keep the `agent:` prefix, so any `LIKE 'agent:%'` consumer still matches. Agent ops are revertable like any other op.
+- **`op_log.origin`** column gets stamped `agent:<name>` so user vs agent edits are distinguishable in History view + Activity Feed. Agent ops are revertable like any other op.
 - **Activity feed emission** — every tool call writes a field-filtered summary to the in-memory ring
   buffer. Summaries may contain structural counts, dates, property keys, non-text property values
   (number / date / bool), and eight-character ULID/reference prefixes. They never contain block
@@ -71,7 +74,7 @@ Task-locals carry the agent identity through every IPC. The agent name comes fro
 
 ### Lifecycle
 
-`McpServer` holds a small set of atomics: enabled gate, disconnect notify, in-flight connection counter, task-running flag. The marker file (`mcp-ro-enabled` / `mcp-rw-enabled`) is the on-disk gate — checked at boot. Disabling wakes the accept loop and lets in-flight calls finish with a short grace period before the socket closes.
+`McpLifecycle` holds a small set of atomics: enabled gate, disconnect notify, in-flight connection counter, task-running flag. The marker file (`mcp-enabled`) is the on-disk gate — checked at boot, where either pre-#5667 marker (`mcp-ro-enabled`, `mcp-rw-enabled`) becomes it. Disabling wakes the accept loop and lets in-flight calls finish with a short grace period before the socket closes.
 
 ### Activity feed
 
@@ -84,15 +87,15 @@ feed is per-device, not persisted, and bounded so old entries roll off.
 
 ### Session revert
 
-`SessionRevertControls` exposes a one-click "undo everything this agent did since connect". The grouping key is the **per-connection session ULID** (`sessionId`), not the `origin` string — a `origin = 'agent:<name>'` exact-match walk would be wrong (it would over-match every connection sharing a name, and would miss anonymous ops entirely, which are stamped `agent:unknown:<session-ulid>`). Implementation (`src/components/agent-access/ActivityFeed.tsx`): bucket the `opRef`s of every agent + `Ok` activity-feed entry by `sessionId` from the in-memory ring buffer, then submit that exact set to `revertOps`. The revert itself is a normal op log entry, so it's also undo-able.
+`SessionRevertControls` exposes a one-click "undo everything this agent did since connect". The grouping key is the **per-connection session ULID** (`sessionId`), not the `origin` string — an `origin = 'agent:<name>'` exact-match walk would be wrong: it would over-match every connection of the same agent. Implementation (`src/components/agent-access/ActivityFeed.tsx`): bucket the `opRef`s of every agent + `Ok` activity-feed entry by `sessionId` from the in-memory ring buffer, then submit that exact set to `revertOps`. The revert itself is a normal op log entry, so it's also undo-able.
 
 ### Threat model carve-out
 
-Single-user, local-only, kernel-rooted trust. No bearer tokens. No rate limits. No per-agent budgets. If an attacker is the user on the user's box, they already have all the access they need; MCP doesn't widen the attack surface.
+Single-user, local-only, kernel-rooted trust. Agent tokens keep each agent to its mode and spaces, against an agent's mistakes; they are not secrets kept from an attacker (anyone who can read `notes.db` reads every note). No rate limits. No per-agent budgets. If an attacker is the user on the user's box, they already have all the access they need; MCP doesn't widen the attack surface.
 
 ### rmcp framing
 
-The migration to the official Rust MCP SDK (`rmcp`) is **complete and unconditional** — there is no feature flag. `rmcp` is a hard dependency (the former `mcp_rmcp_spike` Cargo feature has been retired) and `RmcpAdapter` (`src-tauri/src/mcp/rmcp_adapter.rs`, parameterised on `McpSurface` so it fronts both the RO and RW surfaces, #693) is the sole production dispatcher for `tools/list` and `tools/call`. The hand-rolled JSON-RPC framing that used to live in `src-tauri/src/mcp/server.rs` has been deleted; that module now owns only the connection lifecycle (accept loop, H-2 enable/disable gate, disconnect grace period). Canonical, code-level rules for the framing layer live in [`src-tauri/src/mcp/AGENTS.md`](../../src-tauri/src/mcp/AGENTS.md) — that is the authoritative reference; do not reintroduce hand-rolled framing.
+The migration to the official Rust MCP SDK (`rmcp`) is **complete and unconditional** — there is no feature flag. `rmcp` is a hard dependency (the former `mcp_rmcp_spike` Cargo feature has been retired) and `RmcpAdapter` (`src-tauri/src/mcp/rmcp_adapter.rs`, one per connection, over the registry its agent's mode picks) is the sole production dispatcher for `tools/list` and `tools/call`. The hand-rolled JSON-RPC framing that used to live in `src-tauri/src/mcp/server.rs` has been deleted; that module now owns only the connection lifecycle (accept loop, token handshake, H-2 enable/disable gate, disconnect grace period). Canonical, code-level rules for the framing layer live in [`src-tauri/src/mcp/AGENTS.md`](../../src-tauri/src/mcp/AGENTS.md) — that is the authoritative reference; do not reintroduce hand-rolled framing.
 
 ## `agaric://` deep links
 

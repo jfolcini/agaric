@@ -125,10 +125,9 @@ export const appSettings = new Map<string, string>()
 // clock could never observe the reveal.
 export const pairingPeerReveal = { readsRemaining: 0 }
 
-// The MCP servers' runtime on/off flags, so `get_mcp_status` /
-// `get_mcp_rw_status` report the last `mcp_set_enabled` /
-// `mcp_rw_set_enabled` call. Held here so `seedBlocks()` resets them.
-export const mcpEnabled = { ro: false, rw: false }
+// The MCP server's runtime on/off flag, so `get_mcp_status` reports the
+// last `mcp_set_enabled` call. Held here so `seedBlocks()` resets it.
+export const mcpEnabled = { on: false }
 
 // Op log for undo/redo/history
 export interface MockOpLogEntry {
@@ -374,8 +373,7 @@ export function seedBlocks(): void {
   // `attachmentBytes` had the same pre-existing leak; cleared alongside.
   peerRefs.clear()
   pairingPeerReveal.readsRemaining = 0
-  mcpEnabled.ro = false
-  mcpEnabled.rw = false
+  mcpEnabled.on = false
   appSettings.clear()
   blockDrafts.clear()
   pageOpens.clear()

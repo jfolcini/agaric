@@ -346,15 +346,15 @@ export const syncHandlers = {
   // ---------------------------------------------------------------------------
 
   get_mcp_status: () => ({
-    enabled: mcpEnabled.ro,
-    socket_path: '/mock/agaric-mcp-ro.sock',
+    enabled: mcpEnabled.on,
+    socket_path: '/mock/agaric/mcp.sock',
     active_connections: 0,
   }),
 
   mcp_set_enabled: (args) => {
     const a = args as Record<string, unknown>
-    mcpEnabled.ro = (a['enabled'] as boolean) ?? false
-    return mcpEnabled.ro
+    mcpEnabled.on = (a['enabled'] as boolean) ?? false
+    return mcpEnabled.on
   },
 
   mcp_disconnect_all: returnNull,
@@ -362,20 +362,6 @@ export const syncHandlers = {
   // #695 — activity-ring read surface. The mock server has no agent
   // traffic, so the recent-activity feed is always empty.
   get_mcp_recent_activity: () => [],
-
-  get_mcp_rw_status: () => ({
-    enabled: mcpEnabled.rw,
-    socket_path: '/mock/agaric-mcp-rw.sock',
-    active_connections: 0,
-  }),
-
-  mcp_rw_set_enabled: (args) => {
-    const a = args as Record<string, unknown>
-    mcpEnabled.rw = (a['enabled'] as boolean) ?? false
-    return mcpEnabled.rw
-  },
-
-  mcp_rw_disconnect_all: returnNull,
 
   // #5667 — the device-local `mcp_agents` rows (`commands/mcp_agents.rs`).
   // `ORDER BY name, id`, and the name column is NOCASE.
@@ -461,9 +447,6 @@ export const syncHandlers = {
   | 'mcp_set_enabled'
   | 'mcp_disconnect_all'
   | 'get_mcp_recent_activity'
-  | 'get_mcp_rw_status'
-  | 'mcp_rw_set_enabled'
-  | 'mcp_rw_disconnect_all'
   | 'list_mcp_agents'
   | 'create_mcp_agent'
   | 'revoke_mcp_agent'

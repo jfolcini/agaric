@@ -191,24 +191,19 @@ test.describe('Settings panel', () => {
   // #2687 / #2686 — Agent access tab was never opened by any spec. Deeper
   // toggle / activity-feed coverage lives in e2e/agent-access.spec.ts; this
   // is the tab-rail-level smoke check plus one representative interaction.
-  test('Agent access tab renders MCP status controls and the RO toggle round-trips', async ({
-    page,
-  }) => {
+  test('Agent access tab renders the MCP switch and it round-trips', async ({ page }) => {
     await page.getByRole('tab', { name: 'Agent access' }).click()
     await expect(page.locator('[data-testid="settings-panel-agent"]')).toBeVisible()
 
-    const roToggle = page.getByRole('switch', { name: 'Read-only access' })
-    const rwToggle = page.getByRole('switch', { name: 'Read-write access' })
-    const roSocket = page.locator('[data-testid="mcp-socket-path"]')
-    await expect(roToggle).toBeVisible()
-    await expect(rwToggle).toBeVisible()
-    // Socket paths show only while their toggle is on.
-    await expect(roSocket).toHaveCount(0)
-    await expect(page.locator('[data-testid="mcp-rw-socket-path"]')).toHaveCount(0)
+    const toggle = page.getByRole('switch', { name: 'Let agents connect' })
+    const socket = page.locator('[data-testid="mcp-socket-path"]')
+    await expect(toggle).toBeVisible()
+    // The socket path shows only while the switch is on.
+    await expect(socket).toHaveCount(0)
 
-    await roToggle.click()
-    await expect(page.getByText('Read-only agent access enabled')).toBeVisible()
-    await expect(roSocket).toBeVisible()
+    await toggle.click()
+    await expect(page.getByText('Agent access enabled')).toBeVisible()
+    await expect(socket).toBeVisible()
   })
 
   // #2687 — the `?settings=<tab>` deep link (docs/features/views.md:114)

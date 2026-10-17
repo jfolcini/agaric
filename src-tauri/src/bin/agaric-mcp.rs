@@ -11,16 +11,21 @@
 //! line-delimited JSON-RPC from stdin and forwards it to the socket, then
 //! reads responses from the socket and writes them to stdout.
 //!
+//! Before any MCP byte it writes `AGARIC-TOKEN <token>`, the token of the
+//! agent Settings → Agent access made for this client (#5667); the app
+//! serves the connection as that agent, or refuses it.
+//!
 //! Discovery:
 //!
 //! 1. `--socket <path>` CLI override, if present.
 //! 2. `$AGARIC_MCP_SOCKET`, if set.
-//! 3. Platform default: `~/.local/share/com.agaric.app/mcp-ro.sock` on
-//!    Linux, `~/Library/Application Support/com.agaric.app/mcp-ro.sock`
-//!    on macOS, `\\.\pipe\agaric-mcp-ro` on Windows.
+//! 3. Platform default: `~/.local/share/com.agaric.app/mcp.sock` on
+//!    Linux, `~/Library/Application Support/com.agaric.app/mcp.sock`
+//!    on macOS, `\\.\pipe\agaric-mcp` on Windows.
 //!
-//! The stub exits 0 on clean EOF (either side) and exits 1 with a single
-//! stderr line when the socket cannot be reached.
+//! The stub exits 0 on clean EOF (either side), 2 on a bad or missing
+//! argument, and 1 with a single stderr line when the socket cannot be
+//! reached.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -29,24 +34,28 @@ use std::process::ExitCode;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-// Consume the canonical identifiers from
-// `agaric_lib::mcp` instead of redeclaring them locally. Keeping the
-// path constants in one place prevents the stub binary from drifting
-// from the in-process server (e.g. a default socket-filename change
-// that would silently strand any agent already running this stub).
+// Consume the canonical identifiers from `agaric_lib::mcp` instead of
+// redeclaring them locally, so the stub binary cannot drift from the
+// in-process server (e.g. a default socket-filename change that would
+// silently strand any agent already running this stub).
 //
 // `APP_IDENTIFIER` is only needed by the unix branches of
 // [`default_socket_path`] — on Windows the named-pipe path is
-// already a fixed namespace constant ([`MCP_RO_PIPE_PATH`]) and the
-// identifier is not threaded through.
+// already a fixed namespace constant ([`MCP_PIPE_PATH`]).
 #[cfg(unix)]
 use agaric_lib::mcp::APP_IDENTIFIER;
 #[cfg(windows)]
-use agaric_lib::mcp::MCP_RO_PIPE_PATH;
+use agaric_lib::mcp::MCP_PIPE_PATH;
 #[cfg(unix)]
-use agaric_lib::mcp::MCP_RO_SOCKET_FILENAME;
+use agaric_lib::mcp::MCP_SOCKET_FILENAME;
+use agaric_lib::mcp::TOKEN_PREAMBLE;
 
 const SOCKET_ENV: &str = "AGARIC_MCP_SOCKET";
+
+/// The refusal for a config without `--token`: every config from before
+/// #5667.
+const MISSING_TOKEN: &str = "--token is required: add an agent for this client in \
+     Settings → Agent access and copy its config";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -60,7 +69,10 @@ async fn main() -> ExitCode {
             print_help();
             ExitCode::SUCCESS
         }
-        ParsedArgs::Run { socket_override } => run(socket_override).await,
+        ParsedArgs::Run {
+            socket_override,
+            token,
+        } => run(socket_override, &token).await,
         ParsedArgs::BadArg(msg) => {
             eprintln!("agaric-mcp: {msg}");
             eprintln!("Try `agaric-mcp --help` for usage.");
@@ -70,7 +82,10 @@ async fn main() -> ExitCode {
 }
 
 enum ParsedArgs {
-    Run { socket_override: Option<PathBuf> },
+    Run {
+        socket_override: Option<PathBuf>,
+        token: String,
+    },
     Version,
     Help,
     BadArg(String),
@@ -78,6 +93,7 @@ enum ParsedArgs {
 
 fn parse_args(args: &[String]) -> ParsedArgs {
     let mut socket_override = None;
+    let mut token = None;
     let mut iter = args.iter().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -89,6 +105,10 @@ fn parse_args(args: &[String]) -> ParsedArgs {
                     return ParsedArgs::BadArg("--socket requires a path argument".into());
                 }
             },
+            "--token" => match iter.next() {
+                Some(value) if !value.is_empty() => token = Some(value.clone()),
+                _ => return ParsedArgs::BadArg("--token requires a value".into()),
+            },
             other if other.starts_with("--socket=") => {
                 let (_, value) = other.split_once('=').unwrap();
                 if value.is_empty() {
@@ -96,12 +116,25 @@ fn parse_args(args: &[String]) -> ParsedArgs {
                 }
                 socket_override = Some(PathBuf::from(value));
             }
+            other if other.starts_with("--token=") => {
+                let (_, value) = other.split_once('=').unwrap();
+                if value.is_empty() {
+                    return ParsedArgs::BadArg("--token requires a value".into());
+                }
+                token = Some(value.to_owned());
+            }
             other => {
                 return ParsedArgs::BadArg(format!("unknown argument: {other}"));
             }
         }
     }
-    ParsedArgs::Run { socket_override }
+    match token {
+        Some(token) => ParsedArgs::Run {
+            socket_override,
+            token,
+        },
+        None => ParsedArgs::BadArg(MISSING_TOKEN.to_owned()),
+    }
 }
 
 fn print_help() {
@@ -109,9 +142,10 @@ fn print_help() {
         "agaric-mcp — stdio ↔ socket bridge for the Agaric MCP server\n\
          \n\
          USAGE:\n    \
-             agaric-mcp [--socket <path>]\n\
+             agaric-mcp --token <token> [--socket <path>]\n\
          \n\
          OPTIONS:\n    \
+             --token <token>   The agent's token, from Settings → Agent access.\n    \
              --socket <path>   Override the MCP socket / named-pipe path.\n    \
              -V, --version     Print version and exit.\n    \
              -h, --help        Print this help and exit.\n\
@@ -152,7 +186,7 @@ fn default_socket_path() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join(APP_IDENTIFIER).join(MCP_RO_SOCKET_FILENAME)
+    base.join(APP_IDENTIFIER).join(MCP_SOCKET_FILENAME)
 }
 
 #[cfg(target_os = "macos")]
@@ -160,12 +194,12 @@ fn default_socket_path() -> PathBuf {
     let base = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join("Library/Application Support"))
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join(APP_IDENTIFIER).join(MCP_RO_SOCKET_FILENAME)
+    base.join(APP_IDENTIFIER).join(MCP_SOCKET_FILENAME)
 }
 
 #[cfg(windows)]
 fn default_socket_path() -> PathBuf {
-    PathBuf::from(MCP_RO_PIPE_PATH)
+    PathBuf::from(MCP_PIPE_PATH)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
@@ -174,7 +208,7 @@ fn default_socket_path() -> PathBuf {
     let base = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join(".local/share"))
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join(APP_IDENTIFIER).join(MCP_RO_SOCKET_FILENAME)
+    base.join(APP_IDENTIFIER).join(MCP_SOCKET_FILENAME)
 }
 
 /// #696 — message for a CONNECT-phase failure: the socket could not be
@@ -202,7 +236,7 @@ fn bridge_failure_message(socket_path: &std::path::Path, err: &std::io::Error) -
     )
 }
 
-async fn run(socket_override: Option<PathBuf>) -> ExitCode {
+async fn run(socket_override: Option<PathBuf>, token: &str) -> ExitCode {
     let socket_path = resolve_socket_path(socket_override);
 
     // #696 — connect and bridge are distinct phases with distinct
@@ -215,7 +249,7 @@ async fn run(socket_override: Option<PathBuf>) -> ExitCode {
         }
     };
 
-    match bridge(stream).await {
+    match bridge(stream, token, tokio::io::stdin(), tokio::io::stdout()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{}", bridge_failure_message(&socket_path, &e));
@@ -244,20 +278,24 @@ async fn connect(
     ClientOptions::new().open(pipe_str)
 }
 
-/// Shuttle bytes between stdin/stdout and the connected socket. When stdin
-/// closes, shut down the socket's write half so the server observes EOF —
-/// but keep reading from the socket until the server closes it. This is
-/// the standard MCP stdio-stub convention and lets the server flush any
-/// pending response before the bin exits.
-async fn bridge<S>(stream: S) -> std::io::Result<()>
+/// Write the agent's token preamble, then shuttle bytes between
+/// stdin/stdout and the connected socket. When stdin closes, shut down the
+/// socket's write half so the server observes EOF — but keep reading from
+/// the socket until the server closes it. This is the standard MCP
+/// stdio-stub convention and lets the server flush any pending response
+/// before the bin exits.
+async fn bridge<S, I, O>(stream: S, token: &str, mut stdin: I, mut stdout: O) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    I: AsyncRead + Unpin + Send + 'static,
+    O: AsyncWrite + Unpin,
 {
     use tokio::io::AsyncWriteExt;
 
     let (mut read_half, mut write_half) = tokio::io::split(stream);
-    let mut stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::stdout();
+    write_half
+        .write_all(format!("{TOKEN_PREAMBLE} {token}\n").as_bytes())
+        .await?;
 
     let to_socket = tokio::spawn(async move {
         let r = tokio::io::copy(&mut stdin, &mut write_half).await;
@@ -284,11 +322,53 @@ mod tests {
         argv.iter().map(|s| (*s).to_string()).collect()
     }
 
+    /// The socket of a parsed `Run`, panicking on anything else.
+    fn run_args(argv: &[&str]) -> (Option<PathBuf>, String) {
+        match parse_args(&args_from(argv)) {
+            ParsedArgs::Run {
+                socket_override,
+                token,
+            } => (socket_override, token),
+            _ => panic!("expected Run for {argv:?}"),
+        }
+    }
+
     #[test]
-    fn parse_args_default_is_run_without_override() {
-        match parse_args(&args_from(&["agaric-mcp"])) {
-            ParsedArgs::Run { socket_override } => assert!(socket_override.is_none()),
-            _ => panic!("expected Run"),
+    fn parse_args_token_alone_runs_on_the_default_socket() {
+        let (socket, token) = run_args(&["agaric-mcp", "--token", "agt_1"]);
+        assert!(socket.is_none(), "no --socket means the default socket");
+        assert_eq!(token, "agt_1");
+    }
+
+    #[test]
+    fn parse_args_takes_both_token_forms_5667() {
+        assert_eq!(run_args(&["agaric-mcp", "--token", "agt_a"]).1, "agt_a");
+        assert_eq!(run_args(&["agaric-mcp", "--token=agt_b"]).1, "agt_b");
+    }
+
+    /// Every config from before #5667 lacks `--token`.
+    #[test]
+    fn parse_args_without_a_token_is_a_bad_arg_naming_settings_5667() {
+        match parse_args(&args_from(&["agaric-mcp", "--socket", "/tmp/x.sock"])) {
+            ParsedArgs::BadArg(msg) => assert!(
+                msg.contains("Settings → Agent access"),
+                "the error names where to get a token: {msg}",
+            ),
+            _ => panic!("a config without --token must not run"),
+        }
+    }
+
+    #[test]
+    fn parse_args_token_missing_value_is_bad_arg() {
+        for argv in [
+            &["agaric-mcp", "--token"][..],
+            &["agaric-mcp", "--token="][..],
+            &["agaric-mcp", "--token", ""][..],
+        ] {
+            assert!(
+                matches!(parse_args(&args_from(argv)), ParsedArgs::BadArg(_)),
+                "{argv:?} gives no token",
+            );
         }
     }
 
@@ -314,32 +394,24 @@ mod tests {
 
     #[test]
     fn parse_args_socket_override_space_form() {
-        match parse_args(&args_from(&["agaric-mcp", "--socket", "/tmp/x.sock"])) {
-            ParsedArgs::Run { socket_override } => {
-                assert_eq!(socket_override.unwrap(), PathBuf::from("/tmp/x.sock"));
-            }
-            _ => panic!("expected Run"),
-        }
+        let (socket, _) = run_args(&["agaric-mcp", "--socket", "/tmp/x.sock", "--token", "t"]);
+        assert_eq!(socket.unwrap(), PathBuf::from("/tmp/x.sock"));
     }
 
     #[test]
     fn parse_args_socket_override_equals_form() {
-        match parse_args(&args_from(&["agaric-mcp", "--socket=/tmp/y.sock"])) {
-            ParsedArgs::Run { socket_override } => {
-                assert_eq!(socket_override.unwrap(), PathBuf::from("/tmp/y.sock"));
-            }
-            _ => panic!("expected Run"),
-        }
+        let (socket, _) = run_args(&["agaric-mcp", "--token", "t", "--socket=/tmp/y.sock"]);
+        assert_eq!(socket.unwrap(), PathBuf::from("/tmp/y.sock"));
     }
 
     #[test]
     fn parse_args_socket_missing_value_is_bad_arg() {
         assert!(matches!(
-            parse_args(&args_from(&["agaric-mcp", "--socket"])),
+            parse_args(&args_from(&["agaric-mcp", "--token", "t", "--socket"])),
             ParsedArgs::BadArg(_)
         ));
         assert!(matches!(
-            parse_args(&args_from(&["agaric-mcp", "--socket="])),
+            parse_args(&args_from(&["agaric-mcp", "--token", "t", "--socket="])),
             ParsedArgs::BadArg(_)
         ));
     }
@@ -350,6 +422,42 @@ mod tests {
             ParsedArgs::BadArg(msg) => assert!(msg.contains("unknown")),
             _ => panic!("expected BadArg"),
         }
+    }
+
+    /// The server reads the token from the first line, before any MCP byte;
+    /// stdin that is already waiting must not overtake it.
+    #[tokio::test]
+    async fn writes_preamble_first_5667() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (server_side, bridge_side) = tokio::io::duplex(1024);
+        let (mut client_stdin, bridge_stdin) = tokio::io::duplex(1024);
+        client_stdin
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n")
+            .await
+            .unwrap();
+        drop(client_stdin);
+
+        let bridge_task = tokio::spawn(bridge(
+            bridge_side,
+            "agt_0123",
+            bridge_stdin,
+            tokio::io::sink(),
+        ));
+
+        let mut server = BufReader::new(server_side);
+        let mut first = String::new();
+        server.read_line(&mut first).await.unwrap();
+        assert_eq!(first, "AGARIC-TOKEN agt_0123\n", "the token comes first");
+        let mut second = String::new();
+        server.read_line(&mut second).await.unwrap();
+        assert!(
+            second.starts_with("{\"jsonrpc\""),
+            "stdin follows the preamble: {second:?}",
+        );
+
+        drop(server);
+        bridge_task.await.unwrap().expect("the bridge ends cleanly");
     }
 
     #[test]
