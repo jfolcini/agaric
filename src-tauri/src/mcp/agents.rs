@@ -305,7 +305,8 @@ pub struct ConnectedAgent {
 impl ConnectedAgent {
     /// The agent as it stands now, when it may make a call with `args`.
     /// Read on every call, so a revoke takes effect on the next one; stamps
-    /// `last_used_ms`.
+    /// `last_used_ms`. That read is the accepted cost of an immediate revoke
+    /// (#5667), measured by `core_bench -- mcp_dispatch`.
     pub async fn authorize(&self, args: &Value) -> Result<McpAgent, AppError> {
         let agent = agent_by_id(&self.store.reads, &self.id)
             .await?
