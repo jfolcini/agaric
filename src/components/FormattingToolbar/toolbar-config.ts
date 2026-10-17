@@ -40,6 +40,13 @@ import { dispatchBlockCommand } from '@/stores/block-command-bus'
 /** Shared active-state class applied to toolbar buttons when their feature is on. */
 export const toolbarActiveClass = 'bg-accent text-accent-foreground'
 
+/**
+ * The icon in an inline toolbar button. An `icon-xs` Button shrinks an icon
+ * without a `size-*` class to 12 px, where lucide's 2 px strokes land between
+ * pixels and blur at 1x.
+ */
+export const toolbarIconClass = 'size-4'
+
 /** A row in a toolbar popover menu: the app's menu-row recipe on a ghost Button. */
 export const toolbarMenuRowClass =
   'justify-start rounded-sm px-2 text-sm font-normal w-full active:scale-100 [@media(pointer:coarse)]:min-h-11'
