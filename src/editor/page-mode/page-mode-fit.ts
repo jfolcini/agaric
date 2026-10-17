@@ -55,7 +55,8 @@ export function blockerIn(blocks: readonly FlatBlock[], count: number): PageMode
  * What keeps the page out of page mode, its blocks' properties and
  * attachments included: one read of each for the whole page. The stamps a
  * task's state writes (`created_at`, `completed_at`) are not the user's and
- * block mode draws them nowhere, so they keep nothing out.
+ * block mode's property row hides them (`INTERNAL_PROPERTY_KEYS`; only its
+ * drawer lists them, read-only), so they keep nothing out.
  */
 export async function pageModeBlocker(
   blocks: readonly FlatBlock[],

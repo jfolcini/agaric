@@ -834,6 +834,109 @@ describe('PageModeEditor tasks (#5743)', () => {
     expect(draw).not.toHaveBeenCalled()
   })
 
+  /** How many checkboxes React holds for the editor: one portal each. */
+  function liveCheckboxes(editor: Editor): number {
+    const content = (editor as unknown as { contentComponent: { getSnapshot: () => object } })
+      .contentComponent
+    return Object.keys(content.getSnapshot()).length
+  }
+
+  it('Enter at the start of a task leaves the checkbox on the task, not on the new block', async () => {
+    const { pageId, ids } = seedPage(['first', 'buy milk'])
+    dispatch('set_todo_state', { blockId: ids[1], state: 'TODO' })
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await checkbox(container, ids[1] as string)
+
+    caretTo(editor, 1)
+    press(editor, 'Enter')
+
+    expect(editor.state.doc.childCount).toBe(3)
+    expect(blockIdOf(editor.state.doc.child(2))).toBe(ids[1])
+    await checkbox(container, ids[1] as string)
+    expect(container.querySelectorAll('[data-testid="task-marker"]')).toHaveLength(1)
+    expect(liveCheckboxes(editor)).toBe(1)
+  })
+
+  it('a checkbox goes with its block: deleted, brought back by undo, and page mode closed', async () => {
+    const { pageId, ids } = seedPage(['a', 'b', 'c'])
+    dispatch('set_todo_state', { blockId: ids[1], state: 'DOING' })
+    const { container, unmount } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await checkbox(container, ids[1] as string)
+    expect(liveCheckboxes(editor)).toBe(1)
+    const portals = (editor as unknown as { contentComponent: { getSnapshot: () => object } })
+      .contentComponent
+
+    act(() => {
+      editor.commands.setTextSelection({ from: at(editor, 1, 0), to: at(editor, 2, 0) })
+      editor.commands.deleteSelection()
+    })
+    await waitFor(() => {
+      expect(liveCheckboxes(editor)).toBe(0)
+    })
+    expect(container.querySelector('.react-renderer')).toBeNull()
+
+    act(() => {
+      editor.commands.undo()
+    })
+    await checkbox(container, ids[1] as string)
+    expect(liveCheckboxes(editor)).toBe(1)
+    await act(async () => {
+      await flushActiveDraft()
+    })
+    await waitFor(() => {
+      expect(backendState(ids[1] as string)).toBe('DOING')
+    })
+
+    unmount()
+    expect(Object.keys(portals.getSnapshot())).toHaveLength(0)
+  })
+
+  it('a peer’s text that starts like a marker stays text: only the user’s own changes are committed', async () => {
+    const { pageId, ids } = seedPage(['a', 'b', 'c'])
+    const { container, store } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    dispatch('edit_block', { blockId: ids[1], toText: '[ ] from a peer' })
+    await act(async () => {
+      await store.getState().load()
+    })
+    await waitFor(() => {
+      expect(docTexts(editor)[1]).toBe('\\[ \\] from a peer')
+    })
+
+    // The user types in another block and leaves it: its save is the one that runs.
+    typeAt(editor, 0, 1, '!')
+    caretTo(editor, 2)
+    await waitFor(() => {
+      expect(backendText(ids[0] as string)).toBe('a!')
+    })
+
+    expect(backendText(ids[1] as string)).toBe('[ ] from a peer')
+    expect(backendState(ids[1] as string)).toBeNull()
+  })
+
+  it('deleting a block turns no marker in the block after it into a task', async () => {
+    const { pageId, ids } = seedPage(['a', '[ ] b', 'c'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    act(() => {
+      editor.commands.setTextSelection({ from: at(editor, 0, 0), to: at(editor, 1, 0) })
+      editor.commands.deleteSelection()
+    })
+    caretTo(editor, 1)
+    await act(async () => {
+      await flushActiveDraft()
+    })
+    await waitFor(() => {
+      expect(backendPage(pageId).map(([id]) => id)).toEqual([ids[1], ids[2]])
+    })
+
+    expect(backendText(ids[1] as string)).toBe('[ ] b')
+    expect(backendState(ids[1] as string)).toBeNull()
+  })
+
   it('a peer’s state change shows on reload, outside the document and its undo', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     const { container, store } = renderPageMode(pageId)

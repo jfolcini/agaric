@@ -1152,9 +1152,6 @@
 .page-mode-editor .page-block-controls {
   @apply absolute top-0 right-full mr-1 select-none;
 }
-.page-mode-editor .page-block-content {
-  @apply transition-[text-decoration-color,color] duration-moderate;
-}
 /* A closed task reads as block mode's, struck and muted, but not while edited;
    muted by the token rather than by opacity, which leaves it 3.4:1. */
 .page-mode-editor

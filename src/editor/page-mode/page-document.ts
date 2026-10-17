@@ -133,19 +133,24 @@ export function blockDocJson(node: PMNode): DocNode {
 /**
  * The ids of the blocks of `doc` that the steps behind `maps` changed, `maps`
  * being every step that led to `doc`, in order: the block typed in, or every
- * block a paste brought in. A change where two blocks meet counts for both.
+ * block a paste brought in. A change where two blocks meet counts for both;
+ * blocks inserted or deleted whole touch their neighbours' edges only, so
+ * those are not changed.
  */
 export function changedBlocks(doc: PMNode, maps: readonly StepMap[]): Set<string> {
   const ids = new Set<string>()
   const mapping = new Mapping([...maps])
   maps.forEach((map, i) => {
     const after = mapping.slice(i + 1)
-    map.forEach((_oldStart, _oldEnd, start, end) => {
-      const first = doc.resolve(after.map(start, -1)).index(0)
-      const last = doc.resolve(after.map(end, 1)).index(0)
-      for (let k = first; k <= last && k < doc.childCount; k += 1) {
+    map.forEach((_oldStart, _oldEnd, newStart, newEnd) => {
+      const start = after.map(newStart, -1)
+      const end = after.map(newEnd, 1)
+      const $start = doc.resolve(start)
+      const last = doc.resolve(end).index(0)
+      for (let k = $start.index(0); k <= last && k < doc.childCount; k += 1) {
+        const from = $start.posAtIndex(k, 0)
         const id = blockIdOf(doc.child(k))
-        if (id !== null) ids.add(id)
+        if (id !== null && start < from + doc.child(k).nodeSize && end > from) ids.add(id)
       }
     })
   })
