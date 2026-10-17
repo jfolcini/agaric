@@ -113,7 +113,7 @@ names, search query strings, or text property values (`value_text`).
 
 ## Session revert
 
-If you decide an agent's last batch of edits was a mistake, hit **Revert session** in the **SessionRevertControls**. It unwinds the agent's ops in reverse — specifically the ones still in the activity feed's 100-entry window, so it reverts exactly what you can see. The revert itself is a normal op log entry, so you can undo the revert if you change your mind. For a longer session, use the History view.
+If you decide an agent's last batch of edits was a mistake, hit **Revert session** in the **SessionRevertControls**. It unwinds the agent's ops in reverse — specifically the ones still in the activity feed's 100-entry window, so it reverts exactly what you can see. The revert is itself recorded in the op log, so you can undo it if you change your mind: select its entries in the History view and choose **Revert selected**. For a longer session, use the History view.
 
 ## `agaric://` deep links
 
