@@ -39,7 +39,6 @@ The Due Panel surfaces today's tasks that have a due / scheduled / property-deri
 - **Source filter pills**: *All / Due / Scheduled / Properties*. Click one to narrow the list to that source only.
 - **Hide-before-scheduled toggle**: hides scheduled tasks whose scheduled date hasn't arrived yet (useful if you only want what's actionable now).
 - **Overdue label**: tasks past their due date show *(Xd overdue)*. Clicking jumps to the task in its source page.
-- **Property pills**: tasks pulled in via a property carry a pill in the form `key = value` so you can see why they landed in the panel.
 
 ## Done Panel (Daily mode)
 
