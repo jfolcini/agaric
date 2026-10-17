@@ -12,7 +12,11 @@
 import { describe, expect, it } from 'vitest'
 
 import { MAX_MARKER_INDENT, TASK_ITEM_RE } from '@/editor/markdown-parse/vocab'
-import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '@/lib/block-utils'
+import {
+  INTERNAL_PROPERTY_KEYS,
+  isSortablePropertyType,
+  processCheckboxSyntax,
+} from '@/lib/block-utils'
 
 describe('processCheckboxSyntax', () => {
   it('detects TODO checkbox and strips prefix', () => {
@@ -124,10 +128,24 @@ describe('processCheckboxSyntax', () => {
 })
 
 describe('INTERNAL_PROPERTY_KEYS', () => {
-  it('contains exactly the 5 expected keys', () => {
-    expect(INTERNAL_PROPERTY_KEYS.size).toBe(5)
+  it('contains exactly the expected keys', () => {
     expect([...INTERNAL_PROPERTY_KEYS].toSorted()).toEqual(
-      ['repeat', 'created_at', 'completed_at', 'repeat-seq', 'repeat-origin'].toSorted(),
+      [
+        'repeat',
+        'created_at',
+        'completed_at',
+        'repeat-seq',
+        'repeat-origin',
+        'is_space',
+        'accent_color',
+        'personal_to_work_migration_v1',
+        'template',
+        'journal-template',
+        'listStyle',
+        'image_width',
+        'image_alignment',
+        'image_caption',
+      ].toSorted(),
     )
   })
 
@@ -137,5 +155,19 @@ describe('INTERNAL_PROPERTY_KEYS', () => {
 
   it('returns false for `todo_state` (lives in NON_DELETABLE_PROPERTIES, not here)', () => {
     expect(INTERNAL_PROPERTY_KEYS.has('todo_state')).toBe(false)
+  })
+})
+
+describe('isSortablePropertyType', () => {
+  it('offers number, date and select', () => {
+    expect(['number', 'date', 'select'].filter(isSortablePropertyType)).toEqual([
+      'number',
+      'date',
+      'select',
+    ])
+  })
+
+  it('leaves out text, url, ref and boolean', () => {
+    expect(['text', 'url', 'ref', 'boolean'].filter(isSortablePropertyType)).toEqual([])
   })
 })

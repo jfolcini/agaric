@@ -368,6 +368,30 @@ export function LinkedReferences({
         </div>
       )}
 
+      {/* Outside `ListViewState` for the kind toggle's reason: a sort or filter
+          change re-keys the query, and the skeleton would unmount the control
+          just used and drop focus. */}
+      {expanded && (
+        <div
+          className="linked-references-advanced-filters mt-1 px-2"
+          onFocusCapture={() => setFilterBuilderTouched(true)}
+          // Safari does not focus a button on click, so focus alone misses a mouse press.
+          onPointerDownCapture={() => setFilterBuilderTouched(true)}
+        >
+          <BacklinkFilterBuilder
+            filters={filters}
+            sort={sort}
+            onFiltersChange={setFilters}
+            onSortChange={setSort}
+            totalCount={totalCount}
+            filteredCount={filteredCount}
+            propertyKeys={propertyKeys}
+            loadSortProperties={filterBuilderTouched}
+            tagResolver={resolveTagName}
+          />
+        </div>
+      )}
+
       {expanded && (
         <ListViewState
           loading={loading}
@@ -388,24 +412,6 @@ export function LinkedReferences({
         >
           {() => (
             <div className="linked-references-content mt-1 space-y-2">
-              <div
-                className="linked-references-advanced-filters px-2"
-                onFocusCapture={() => setFilterBuilderTouched(true)}
-                // Safari does not focus a button on click, so focus alone misses a mouse press.
-                onPointerDownCapture={() => setFilterBuilderTouched(true)}
-              >
-                <BacklinkFilterBuilder
-                  filters={filters}
-                  sort={sort}
-                  onFiltersChange={setFilters}
-                  onSortChange={setSort}
-                  totalCount={totalCount}
-                  filteredCount={filteredCount}
-                  propertyKeys={propertyKeys}
-                  tagResolver={resolveTagName}
-                />
-              </div>
-
               {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- focusable group implements roving keyboard navigation over reference rows; keydown delegation belongs on the container */}
               <div
                 ref={listRef}

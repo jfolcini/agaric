@@ -22,6 +22,7 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
+import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { logger } from '@/lib/logger'
 import {
   _resetPropertyChangeDispatchForTest,
@@ -47,14 +48,17 @@ export function propertyKeysQueryKey(
 }
 
 /**
- * Backing `queryFn`. Swallows IPC errors to an empty array (matching the
+ * Backing `queryFn`. Drops the app's own bookkeeping keys, which no picker
+ * offers. Swallows IPC errors to an empty array (matching the
  * old cache, which cached `[]` on failure) so pickers/popovers still render
  * rather than hanging in a loading state forever. The error is logged once
  * per fetch.
  */
 export const propertyKeysQueryFn = async (): Promise<string[]> => {
   try {
-    return unwrap(await commands.listPropertyKeys())
+    return unwrap(await commands.listPropertyKeys()).filter(
+      (key) => !INTERNAL_PROPERTY_KEYS.has(key),
+    )
   } catch (e) {
     logger.warn('property-keys-cache', 'failed to load property data', undefined, e)
     return []

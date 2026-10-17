@@ -31,6 +31,7 @@ import { useBlockReschedule } from '@/hooks/useBlockReschedule'
 import { usePropertySave } from '@/hooks/usePropertySave'
 import { announce } from '@/lib/announcer'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import {
@@ -302,7 +303,10 @@ export function BlockPropertyDrawer({
   // exclude already-set keys and system-managed builtin keys.
   const existingKeys = new Set(properties.map((p) => p.key))
   const availableDefs = definitions.filter(
-    (d) => !existingKeys.has(d.key) && !NON_DELETABLE_PROPERTIES.has(d.key),
+    (d) =>
+      !existingKeys.has(d.key) &&
+      !NON_DELETABLE_PROPERTIES.has(d.key) &&
+      !INTERNAL_PROPERTY_KEYS.has(d.key),
   )
 
   return (

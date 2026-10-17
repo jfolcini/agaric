@@ -12,6 +12,7 @@ use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
 use super::types::{BacklinkSort, SortDir};
+use crate::op::RESERVED_PROPERTY_KEYS;
 use agaric_core::error::AppError;
 
 /// Sort a set of block IDs according to the given sort mode.
@@ -50,6 +51,8 @@ pub(crate) async fn sort_ids(
 /// `block_properties(key = ?)` and orders by the requested column with
 /// `NULLS LAST`; rows that share a value (or both lack the property)
 /// fall back to ascending `b.id` so the output is fully deterministic.
+/// A reserved key never has a `block_properties` row (migration 0088), so it
+/// orders by its own `blocks` column instead.
 ///
 /// `column` is a static `&'static str` (`"value_text"` / `"value_num"`
 /// / `"value_date"`) chosen by the caller — never user input — so
@@ -79,13 +82,21 @@ async fn sort_by_property_column(
     let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
     let json_ids = serde_json::to_string(&id_vec)?;
 
+    // The spliced name is one of the `&'static str` literals, never `key`.
+    let order_by = match RESERVED_PROPERTY_KEYS
+        .iter()
+        .find(|reserved| **reserved == key)
+    {
+        Some(reserved) => format!("b.{reserved}"),
+        None => format!("bp.{column}"),
+    };
     let sql = format!(
         "SELECT b.id \
          FROM blocks b \
          LEFT JOIN block_properties bp \
            ON bp.block_id = b.id AND bp.key = ? \
          WHERE b.id IN (SELECT value FROM json_each(?)) \
-         ORDER BY bp.{column} {direction} NULLS LAST, b.id ASC"
+         ORDER BY {order_by} {direction} NULLS LAST, b.id ASC"
     );
 
     let rows: Vec<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))

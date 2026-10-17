@@ -31,6 +31,7 @@ import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { FilterPrimitive } from '@/lib/bindings'
+import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { encodeInlineQueryPayload, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { logger } from '@/lib/logger'
 import { parseQueryExpression } from '@/lib/query-utils'
@@ -161,7 +162,11 @@ export function QueryBuilderModal({
       .listPropertyDefs(null, null)
       .then(unwrap)
       .then(({ items: defs }) => {
-        if (!cancelled) setKnownPropertyKeys(defs.map((d) => d.key))
+        if (!cancelled) {
+          setKnownPropertyKeys(
+            defs.map((d) => d.key).filter((key) => !INTERNAL_PROPERTY_KEYS.has(key)),
+          )
+        }
       })
       .catch((err) => {
         logger.warn('QueryBuilderModal', 'failed to load property definitions', undefined, err)

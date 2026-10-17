@@ -8,16 +8,19 @@ import { MARKER_INDENT_SRC } from '@/editor/markdown-parse/vocab'
 import { taskStateFromMarker, type TodoState } from '@/lib/task-states'
 
 /**
- * Property keys that are tracked internally by the materializer but never
- * shown in the per-block UI display. Filter sites should import this set
+ * Property keys the app writes for its own bookkeeping, never the user's: the
+ * one rule for what stays out of property chips, sort and filter pickers,
+ * add-property lists and query-table columns. Filter sites import this set
  * rather than redeclaring the list inline.
+ *
+ * Besides the recurrence and lifecycle keys: the space marker and accent
+ * (`is_space`, `accent_color`), the retired Personal-to-Work migration marker
+ * still stored on old installs (`personal_to_work_migration_v1`), the template
+ * flags, the list style, and the image presentation keys.
  *
  * Distinct from `NON_DELETABLE_PROPERTIES` in `property-save-utils.ts`,
  * which mirrors `is_builtin_property_key` in `src-tauri/agaric-store/src/op.rs` for
- * deletion guards. That set is broader (includes `todo_state`, `priority`,
- * `due_date`, `scheduled_date`, `repeat-until`, `repeat-count`).
- *
- * Added for.
+ * deletion guards.
  */
 export const INTERNAL_PROPERTY_KEYS: ReadonlySet<string> = new Set([
   'repeat',
@@ -25,7 +28,28 @@ export const INTERNAL_PROPERTY_KEYS: ReadonlySet<string> = new Set([
   'completed_at',
   'repeat-seq',
   'repeat-origin',
+  'is_space',
+  'accent_color',
+  'personal_to_work_migration_v1',
+  'template',
+  'journal-template',
+  'listStyle',
+  'image_width',
+  'image_alignment',
+  'image_caption',
 ])
+
+/**
+ * Whether a property of this definition type has an order worth sorting by,
+ * the one rule every sort control applies to the user's properties. `number`
+ * and `date` order by value; `select` orders by its option text, A to Z in
+ * byte order, since the backend has no option-order sort. `text` is left out
+ * because the backend orders it by bytes, not by locale (`Zed` before
+ * `apple`); `url`, `ref` and `boolean` have no useful order.
+ */
+export function isSortablePropertyType(valueType: string): boolean {
+  return valueType === 'number' || valueType === 'date' || valueType === 'select'
+}
 
 /**
  * Detect a leading GFM task-list marker on a single block's content and fold it

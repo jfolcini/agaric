@@ -1,0 +1,596 @@
+{
+  "description": "The member order a `sort` gives the grouped References readers (`sort_ids`, `agaric-store/src/backlink/sort.rs`), which `query_backlinks_grouped.json` leaves unpinned. Four sources on page B2 link to B1. `Created` is id order in either direction. A property sort orders by its variant's column, `NULLS LAST` in BOTH directions with ties by id ascending: B6 has no due date, no priority and no estimate, and stays last every time. `due_date` and `priority` are reserved keys, which live in their `blocks` column and never in `block_properties`, so their sort reads the column. `estimate` is a `block_properties` number read through `value_num`, where 10 must sort after 9 (a text sort would put it first). Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Notes",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "note 3 on [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": "2025-03-01",
+        "id": "B3",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": "2",
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "note 4 on [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": "2025-01-01",
+        "id": "B4",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 2,
+        "priority": "3",
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "note 5 on [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": "2025-02-01",
+        "id": "B5",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 3,
+        "priority": "1",
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "note 6 on [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 4,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 13,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "key": "estimate",
+          "op_type": "set_property"
+        },
+        {
+          "key": "estimate",
+          "op_type": "set_property"
+        },
+        {
+          "key": "estimate",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "kind": "page_link",
+        "source_id": "B3",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B4",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B5",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      },
+      {
+        "kind": "page_link",
+        "source_id": "B6",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      }
+    ],
+    "properties": [
+      {
+        "block_id": "B3",
+        "key": "estimate",
+        "value": 9.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B4",
+        "key": "estimate",
+        "value": 10.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B5",
+        "key": "estimate",
+        "value": 2.0,
+        "value_type": "Num"
+      }
+    ]
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "created_asc",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B5#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=4#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "created_desc",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "B2->B5#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "filtered#count=4#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "due_asc",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B5#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=4#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "due_desc",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B5#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=4#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "priority_asc",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B5#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=4#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "priority_desc",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B5#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=4#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "estimate_num_asc",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B5#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=4#truncated=false"
+      ],
+      "total_count": 4
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "estimate_num_desc",
+      "rows": [
+        "B2#page_title=Notes#truncated=false",
+        "B2->B4#parent_id=B2#page_id=B2#position=2#deleted_at=null",
+        "B2->B3#parent_id=B2#page_id=B2#position=1#deleted_at=null",
+        "B2->B5#parent_id=B2#page_id=B2#position=3#deleted_at=null",
+        "B2->B6#parent_id=B2#page_id=B2#position=4#deleted_at=null",
+        "filtered#count=4#truncated=false"
+      ],
+      "total_count": 4
+    }
+  ],
+  "name": "query_backlinks_grouped_sort",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3",
+        "toText": "note 3 on [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "toText": "note 4 on [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "toText": "note 5 on [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "toText": "note 6 on [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "date": "2025-03-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "date": "2025-01-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "date": "2025-02-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "level": "2"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "level": "3"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "level": "1"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "estimate",
+        "value": {
+          "value_num": 9
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "key": "estimate",
+        "value": {
+          "value_num": 10
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S5",
+        "key": "estimate",
+        "value": {
+          "value_num": 2
+        }
+      },
+      "command": "set_property"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "sort": {
+          "dir": "Asc",
+          "type": "Created"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Creation order, oldest first: B3, B4, B5, B6.",
+      "name": "created_asc"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "sort": {
+          "dir": "Desc",
+          "type": "Created"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Reversed: B6, B5, B4, B3.",
+      "name": "created_desc"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "sort": {
+          "dir": "Asc",
+          "key": "due_date",
+          "type": "PropertyDate"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Earliest due first: B4, B5, B3; B6 has none and is last.",
+      "name": "due_asc"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "sort": {
+          "dir": "Desc",
+          "key": "due_date",
+          "type": "PropertyDate"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Latest due first: B3, B5, B4; B6 is still last, not first.",
+      "name": "due_desc"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "sort": {
+          "dir": "Asc",
+          "key": "priority",
+          "type": "PropertyText"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Priority 1 first: B5, B3, B4, then B6.",
+      "name": "priority_asc"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "sort": {
+          "dir": "Desc",
+          "key": "priority",
+          "type": "PropertyText"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Priority 3 first: B4, B3, B5, then B6.",
+      "name": "priority_desc"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "sort": {
+          "dir": "Asc",
+          "key": "estimate",
+          "type": "PropertyNum"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Numeric: 2, 9, 10 is B5, B3, B4, then B6.",
+      "name": "estimate_num_asc"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "limit": 10,
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "sort": {
+          "dir": "Desc",
+          "key": "estimate",
+          "type": "PropertyNum"
+        }
+      },
+      "command": "list_backlinks_grouped",
+      "comment": "Numeric, reversed: B4, B3, B5, then B6.",
+      "name": "estimate_num_desc"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Notes",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S4",
+        "parent_id": "S2",
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S5",
+        "parent_id": "S2",
+        "position": 3
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "id": "S6",
+        "parent_id": "S2",
+        "position": 4
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

@@ -16,7 +16,7 @@ import { useTranslation } from 'react-i18next'
 import { FilterPillRow, type FilterWithKey } from '@/components/filters/FilterPillRow'
 import { FilterSortControls } from '@/components/filters/FilterSortControls'
 import { Button } from '@/components/ui/button'
-import type { BacklinkFilter, BacklinkSort, SortDir } from '@/lib/bindings'
+import type { BacklinkFilter, BacklinkSort } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
 
 // #5441 — lazy: the add-filter row (its category forms and cmdk) only renders after
@@ -37,6 +37,8 @@ export interface BacklinkFilterBuilderProps {
   totalCount: number
   filteredCount: number
   propertyKeys: string[]
+  /** Passed to `FilterSortControls` as `loadProperties`. */
+  loadSortProperties?: boolean
   tagResolver?: (id: string) => string
 }
 
@@ -125,6 +127,7 @@ export function BacklinkFilterBuilder({
   totalCount,
   filteredCount,
   propertyKeys,
+  loadSortProperties = true,
   tagResolver,
 }: BacklinkFilterBuilderProps): React.ReactElement {
   const { t } = useTranslation()
@@ -166,28 +169,6 @@ export function BacklinkFilterBuilder({
     onSortChange(null)
     requestAnimationFrame(() => addFilterButtonRef.current?.focus())
   }, [onFiltersChange, onSortChange])
-
-  const handleSortTypeChange = useCallback(
-    (value: string) => {
-      if (value === '') {
-        onSortChange(null)
-        return
-      }
-      const dir: SortDir = sort?.dir ?? 'Desc'
-      if (value === 'Created') {
-        onSortChange({ type: 'Created', dir })
-      } else {
-        onSortChange({ type: 'PropertyText', key: value, dir })
-      }
-    },
-    [sort, onSortChange],
-  )
-
-  const handleSortDirToggle = useCallback(() => {
-    if (!sort) return
-    const newDir: SortDir = sort.dir === 'Asc' ? 'Desc' : 'Asc'
-    onSortChange({ ...sort, dir: newDir })
-  }, [sort, onSortChange])
 
   const hasFilters = filters.length > 0 || sort !== null
 
@@ -239,9 +220,8 @@ export function BacklinkFilterBuilder({
         {/* Sort control */}
         <FilterSortControls
           sort={sort}
-          propertyKeys={propertyKeys}
-          onSortTypeChange={handleSortTypeChange}
-          onSortDirToggle={handleSortDirToggle}
+          onSortChange={onSortChange}
+          loadProperties={loadSortProperties}
         />
       </div>
 

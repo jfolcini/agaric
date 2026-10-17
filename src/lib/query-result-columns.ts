@@ -20,13 +20,12 @@ import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 export const CUSTOM_COLUMN_PREFIX = 'prop:'
 
 /** Keys never surfaced as a custom column: the reserved block fields (already
- * shown as `KNOWN_PROPERTY_KEYS`), materializer-internal bookkeeping keys, and
- * the space marker. */
+ * shown as `KNOWN_PROPERTY_KEYS`), the app's bookkeeping keys, and the space
+ * membership. */
 const EXCLUDED_COLUMN_KEYS: ReadonlySet<string> = new Set<string>([
   ...NON_DELETABLE_PROPERTIES,
   ...INTERNAL_PROPERTY_KEYS,
   'space',
-  'image_width',
 ])
 
 /** Render a property row to a display string, or `null` when it carries no

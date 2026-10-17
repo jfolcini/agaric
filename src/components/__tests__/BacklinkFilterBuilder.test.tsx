@@ -68,6 +68,8 @@ const defaultProps: BacklinkFilterBuilderProps = {
   totalCount: 10,
   filteredCount: 10,
   propertyKeys: ['todo', 'priority', 'due'],
+  // The sort's property group is FilterSortControls' own test; none of these needs it.
+  loadSortProperties: false,
 }
 
 type RenderOptions = Partial<BacklinkFilterBuilderProps> & {
@@ -676,9 +678,13 @@ describe('BacklinkFilterBuilder', () => {
       const onSortChange = vi.fn()
       renderBuilder({ onSortChange })
 
-      await user.selectOptions(screen.getByLabelText('Sort by'), 'Created')
+      await user.selectOptions(screen.getByLabelText('Sort by'), 'priority')
 
-      expect(onSortChange).toHaveBeenCalledWith({ type: 'Created', dir: 'Desc' })
+      expect(onSortChange).toHaveBeenCalledWith({
+        type: 'PropertyText',
+        key: 'priority',
+        dir: 'Asc',
+      })
     })
 
     it('toggles sort direction', async () => {
@@ -689,22 +695,9 @@ describe('BacklinkFilterBuilder', () => {
         onSortChange,
       })
 
-      await user.click(screen.getByLabelText(/Toggle sort direction/i))
+      await user.click(screen.getByRole('button', { name: 'Sorted descending, click to reverse' }))
 
       expect(onSortChange).toHaveBeenCalledWith({ type: 'Created', dir: 'Asc' })
-    })
-
-    it('clears sort when default option is selected', async () => {
-      const user = userEvent.setup()
-      const onSortChange = vi.fn()
-      renderBuilder({
-        sort: { type: 'Created', dir: 'Desc' },
-        onSortChange,
-      })
-
-      await user.selectOptions(screen.getByLabelText('Sort by'), '__none__')
-
-      expect(onSortChange).toHaveBeenCalledWith(null)
     })
   })
 
@@ -762,17 +755,10 @@ describe('BacklinkFilterBuilder', () => {
   })
 
   describe('sort direction always visible (#333)', () => {
-    it('renders sort direction button even when sort is null', () => {
+    it('renders an enabled sort direction button even when sort is null', () => {
       renderBuilder()
-      const btn = screen.getByRole('button', { name: /Toggle sort direction/i })
-      expect(btn).toBeInTheDocument()
-      expect(btn).toBeDisabled()
-    })
-
-    it('enables sort direction button when sort is active', () => {
-      renderBuilder({ sort: { type: 'Created', dir: 'Desc' } })
-      const btn = screen.getByRole('button', { name: /Toggle sort direction/i })
-      expect(btn).not.toBeDisabled()
+      const btn = screen.getByRole('button', { name: 'Sorted ascending, click to reverse' })
+      expect(btn).toBeEnabled()
     })
   })
 

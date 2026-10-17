@@ -20,6 +20,7 @@ import { usePropertySave } from '@/hooks/usePropertySave'
 import { unwrap } from '@/lib/app-error'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { INTERNAL_PROPERTY_KEYS } from '@/lib/block-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import {
@@ -308,7 +309,8 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     (d) =>
       !properties.some((p) => p.key === d.key) &&
       !TASK_ONLY_PROPERTIES.has(d.key) &&
-      !NON_DELETABLE_PROPERTIES.has(d.key),
+      !NON_DELETABLE_PROPERTIES.has(d.key) &&
+      !INTERNAL_PROPERTY_KEYS.has(d.key),
   )
 
   const propertyCount = properties.length

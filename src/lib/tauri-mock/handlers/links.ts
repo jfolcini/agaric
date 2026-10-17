@@ -152,8 +152,7 @@ function countedSources(
  *     source on the TARGET's root page as a self-reference — from the groups
  *     and from both counts;
  *   * orders groups by `(page_title, page_id)` (`cmp_group`) whatever the
- *     user's sort, which orders MEMBERS only — the default `Created { Asc }`
- *     is ULID order, so the id compare below;
+ *     user's sort, which orders MEMBERS only ({@link compareBacklinkMembers});
  *   * counts `limit` in GROUPS and mints `Cursor::for_group`: `page_id` in
  *     `id`, `page_title` in the `deleted_at` slot;
  *   * for the backlink reader only, answers `total_count: 0` /
@@ -185,9 +184,8 @@ function groupedBacklinkResponse(
   const filterList = (a['filters'] as Array<Record<string, unknown>> | null) ?? []
   const filtered = applyBacklinkFilters(base, filterList)
   const byPage = new Map<string, Record<string, unknown>[]>()
-  for (const b of filtered.toSorted((x, y) =>
-    (x['id'] as string) < (y['id'] as string) ? -1 : 1,
-  )) {
+  const sort = (a['sort'] as Record<string, unknown> | null | undefined) ?? null
+  for (const b of filtered.toSorted(compareBacklinkMembers(sort))) {
     const pid = b['page_id'] as string
     const group = byPage.get(pid)
     if (group === undefined) byPage.set(pid, [b])
@@ -219,6 +217,56 @@ function groupedBacklinkResponse(
     total_count: recount ? base.length : 0,
     filtered_count: recount ? filtered.length : 0,
     truncated: false,
+  }
+}
+
+/** The keys a property sort reads from their `blocks` column (`is_reserved_property_key`). */
+const RESERVED_SORT_KEYS: ReadonlySet<string> = new Set([
+  'todo_state',
+  'priority',
+  'due_date',
+  'scheduled_date',
+])
+
+/**
+ * `sort_ids` (`agaric-store/src/backlink/sort.rs`). No sort is `Created { Asc }`;
+ * `Created` is id order in either direction. A property sort orders by its
+ * variant's value column, or by the `blocks` column for a reserved key,
+ * `NULLS LAST` in both directions, ties by id ascending.
+ */
+function compareBacklinkMembers(
+  sort: Record<string, unknown> | null,
+): (x: Record<string, unknown>, y: Record<string, unknown>) => number {
+  const byId = (x: Record<string, unknown>, y: Record<string, unknown>): number =>
+    compareUtf8Bytes(x['id'] as string, y['id'] as string)
+  const desc = sort?.['dir'] === 'Desc'
+  if (sort === null || sort['type'] === 'Created') {
+    return (x, y) => (desc ? -byId(x, y) : byId(x, y))
+  }
+  const key = sort['key'] as string
+  const column =
+    sort['type'] === 'PropertyNum'
+      ? 'value_num'
+      : sort['type'] === 'PropertyDate'
+        ? 'value_date'
+        : 'value_text'
+  const valueOf = (row: Record<string, unknown>): string | number | null =>
+    ((RESERVED_SORT_KEYS.has(key)
+      ? row[key]
+      : properties.get(row['id'] as string)?.get(key)?.[column]) as string | number | null) ?? null
+  return (x, y) => {
+    const a = valueOf(x)
+    const b = valueOf(y)
+    if (a === null || b === null) {
+      if (a === b) return byId(x, y)
+      return a === null ? 1 : -1
+    }
+    const order =
+      typeof a === 'number' && typeof b === 'number'
+        ? a - b
+        : compareUtf8Bytes(String(a), String(b))
+    if (order === 0) return byId(x, y)
+    return desc ? -order : order
   }
 }
 
