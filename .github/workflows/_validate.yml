@@ -471,7 +471,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # lint — prek hook suite (excluding vitest/cargo-test/no-commit-to-branch),
-  # npm audit signatures (warn-only), cargo audit (blocking — see PEND-41 R5), and the sqlx
+  # npm audit signatures (blocking), cargo audit (blocking — see PEND-41 R5), and the sqlx
   # offline-cache drift check. Needs the full Node + Rust + mold + cargo
   # plugins stack because prek's hooks invoke clippy, cargo-deny, sqruff,
   # zizmor, etc.
@@ -546,15 +546,16 @@ jobs:
           scripts/check-baseline-paths.test.mjs
 
       - name: Verify npm package provenance signatures
-        # Requires Node 22.5+; rejects packages whose registry-side Sigstore
-        # provenance attestation is missing or invalid. Catches the
+        # Requires Node 22.5+; fails on a package whose registry signature or
+        # Sigstore provenance attestation is invalid. Catches the
         # "compromised maintainer republishes from a different machine"
         # class of attack (Sigstore signs at publish time from CI, so a
-        # local laptop republish has no valid attestation). Mode is `audit`
-        # not `install` so missing attestations log a warning rather than
-        # failing the build — many transitive deps don't yet publish with
-        # provenance and we don't want to gate CI on that today.
-        run: npm audit signatures || echo "::warning::npm audit signatures had findings (warn-only mode); review the log above"
+        # local laptop republish has no valid attestation). A package that
+        # publishes no attestation at all is reported, not failed, so the
+        # many transitive deps without provenance do not red the build.
+        # Retried like `npm-audit`: it fetches from the registry, and one
+        # transient error must not red the required `validate-all` context.
+        run: bash scripts/npm-audit-retry.sh npm audit signatures
 
       - name: Prepare externalBin placeholder (FEAT-4f)
         # ci/path-conditional-jobs: these placeholders exist only to satisfy
@@ -797,7 +798,7 @@ jobs:
         # only pre-commit-stage hooks — does NOT execute it. Invoke it
         # explicitly with `--hook-stage pre-push` (mirrors the lychee step in
         # the docs-lint job) so the advisory vulnerability scan stays in CI.
-        # `npm audit signatures` above is a different, warn-only provenance
+        # `npm audit signatures` above is a different, provenance
         # check and does not cover advisories.
         if: needs.detect-changes.outputs.frontend == 'true'
         run: prek run --all-files --hook-stage pre-push npm-audit

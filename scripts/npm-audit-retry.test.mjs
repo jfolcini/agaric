@@ -19,7 +19,7 @@ const SCRIPT_PATH = join(import.meta.dirname, 'npm-audit-retry.sh')
  * `failuresBeforeSuccess` is how many `npx` invocations exit non-zero before
  * one exits 0; `Infinity` never succeeds.
  */
-function runWrapper(failuresBeforeSuccess) {
+function runWrapper(failuresBeforeSuccess, args = []) {
   const dir = mkdtempSync(join(tmpdir(), 'npm-audit-retry-'))
   try {
     const callLog = join(dir, 'npx-calls')
@@ -34,21 +34,20 @@ function runWrapper(failuresBeforeSuccess) {
     }
     // Counts its own invocations, so "fail the first N" needs no shared state
     // beyond the log the assertions read back.
-    stub(
-      'npx',
-      [
-        `echo "$@" >> ${JSON.stringify(callLog)}`,
-        `calls=$(wc -l < ${JSON.stringify(callLog)})`,
-        `if [ "$calls" -le ${failuresBeforeSuccess === Infinity ? 999 : failuresBeforeSuccess} ]; then`,
-        '  echo "npm error audit endpoint returned an error" >&2',
-        '  exit 1',
-        'fi',
-        'echo "🤝  All good!"',
-      ].join('\n'),
-    )
+    const counting = [
+      `echo "$@" >> ${JSON.stringify(callLog)}`,
+      `calls=$(wc -l < ${JSON.stringify(callLog)})`,
+      `if [ "$calls" -le ${failuresBeforeSuccess === Infinity ? 999 : failuresBeforeSuccess} ]; then`,
+      '  echo "npm error audit endpoint returned an error" >&2',
+      '  exit 1',
+      'fi',
+      'echo "🤝  All good!"',
+    ].join('\n')
+    stub('npx', counting)
+    stub('npm', counting)
     stub('sleep', `echo "$1" >> ${JSON.stringify(sleepLog)}`)
 
-    const result = spawnSync('bash', [SCRIPT_PATH], {
+    const result = spawnSync('bash', [SCRIPT_PATH, ...args], {
       encoding: 'utf8',
       env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ''}` },
     })
@@ -56,6 +55,7 @@ function runWrapper(failuresBeforeSuccess) {
       status: result.status,
       stdout: result.stdout,
       stderr: result.stderr,
+      calls: readFileSync(callLog, 'utf8').split('\n').filter(Boolean),
       npxCalls: readFileSync(callLog, 'utf8').split('\n').filter(Boolean).length,
       sleeps: readFileSync(sleepLog, 'utf8').split('\n').filter(Boolean),
     }
@@ -86,4 +86,12 @@ void test('a failure that never clears fails closed, inside the attempt budget',
   // The underlying command's own output still reaches the reader.
   assert.match(run.stderr, /npm error audit endpoint returned an error/)
   assert.match(run.stderr, /attempt 3 of 3 failed \(exit 1\); no attempts left\./)
+})
+
+// `npm audit signatures` is retried through the same wrapper, not through npx.
+void test('arguments replace the default command', () => {
+  const run = runWrapper(1, ['npm', 'audit', 'signatures'])
+  assert.equal(run.status, 0)
+  assert.equal(run.npxCalls, 2)
+  assert.deepEqual(run.calls, ['audit signatures', 'audit signatures'])
 })

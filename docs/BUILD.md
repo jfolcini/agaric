@@ -236,7 +236,7 @@ Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — 
 | D2 | `cargo test --doc --workspace` | Only if Rust changed |
 | E | `cargo sqlx prepare --check`, all 4 lanes (root + `agaric-store`/`agaric-engine`/`agaric-sync`) | Only if Rust changed |
 | F | `agaric-mcp` release build + MCP UDS smoke + externalBin verify | Only if MCP paths changed |
-| G | `cargo audit` + `npm audit signatures` (warn-only, never blocks) | Always |
+| G | `cargo audit` + `npm audit signatures` (warn-only here; both block in CI) | Always |
 
 **Playwright is deliberately skipped locally** — CI still runs the full e2e suite on every PR; run `npx playwright test` by hand first if you've touched anything interaction-heavy. The full (non-range-scoped) `vitest run` / `cargo nextest run --workspace --profile ci`, and the desktop bundle build, are likewise CI/manual-only — see [Release pre-flight](#release-pre-flight) for the bundle build.
 

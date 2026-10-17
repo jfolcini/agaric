@@ -2570,7 +2570,7 @@ npm_sig_log="$(mktemp -t pre-push-npm-sig.XXXXXX)"
 if npm audit signatures > "$npm_sig_log" 2>&1; then
     echo "  ✓ npm audit signatures (all verified)"
 else
-    echo "  ⚠ npm audit signatures had findings (warn-only); not every npm dep ships Sigstore provenance yet"
+    echo "  ⚠ npm audit signatures failed (warn-only here; CI blocks on it); see: npm audit signatures"
 fi
 rm -f "$npm_sig_log"
 

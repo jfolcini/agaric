@@ -82,7 +82,8 @@ set -euo pipefail
 #      address, key or bot account is hardcoded here.
 #   2. AFTER the push — `release_require_verified_commit` asks GitHub
 #      itself, BETWEEN the `main` push and the tag push. The tag push is the
-#      point of no return (release.yml publishes with no approval gate), so
+#      point of no return (the signing jobs wait for the `release` environment
+#      approval, but nothing gates publishing after it), so
 #      a commit that landed unverified stops the release before it starts
 #      rather than after. The bypass block scrolls past in a wall of push
 #      output; it survived 0.9.4 and 0.9.8 — and probably 0.9.3 — precisely
@@ -711,7 +712,8 @@ fi
 git push --no-verify origin main
 
 # Between the two pushes, deliberately. The TAG push is the point of no
-# return — release.yml publishes with no approval gate — so a bump commit
+# return — the signing jobs wait for the `release` environment approval, but
+# nothing gates publishing after it — so a bump commit
 # that landed unverified stops the release before it starts rather than
 # after. This is the assertion #3745 asked for: the "Bypassed rule
 # violations" block scrolls past in a wall of push output, which is exactly

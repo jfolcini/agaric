@@ -68,6 +68,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history so `origin/main` can be compared with the tagged
+          # commit below.
+          fetch-depth: 0
+      - name: Verify the tagged commit is on main
+        # The tag ruleset limits who can create a release tag, not which commit
+        # it points at; a tag on a side branch would otherwise build and sign
+        # code that never went through main's review.
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tagged commit $GITHUB_SHA is not on main. Release tags must point at a commit already merged to main; delete the tag and re-tag from main."
+            exit 1
+          fi
       - name: Verify tag matches manifest versions
         run: |
           set -euo pipefail
@@ -106,6 +119,9 @@ jobs:
     # so give Linux 50% headroom (60 -> 90) until a cold tag run can replace
     # this estimate with observed whole-job timing.
     timeout-minutes: ${{ matrix.platform == 'ubuntu-24.04' && 90 || matrix.platform == 'windows-2025-vs2026' && 75 || 60 }}
+    # Reads TAURI_SIGNING_PRIVATE_KEY(_PASSWORD), stored as environment secrets:
+    # the job waits for the maintainer to approve the `release` environment.
+    environment: release
     permissions:
       contents: write # tauri-action uploads release bundles
       id-token: write # actions/attest-build-provenance — Sigstore OIDC token
@@ -1762,6 +1778,9 @@ jobs:
     # estimate no measurement supported. Tightening further wants more sample
     # DAYS, not more arithmetic on these three runs.
     timeout-minutes: 50
+    # Reads ANDROID_KEYSTORE_* / ANDROID_KEY_*, stored as environment secrets.
+    # Starts after the desktop matrix, so it asks for its own approval.
+    environment: release
     permissions:
       contents: write # gh release upload attaches the APK to the existing release
       id-token: write # actions/attest-build-provenance — Sigstore OIDC token
