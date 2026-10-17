@@ -45,6 +45,8 @@ export interface UseBlockDatePickerReturn {
   datePickerCursorPos: RefObject<number | undefined>
   setDatePickerOpen: (open: boolean) => void
   setDatePickerMode: (mode: DatePickerMode) => void
+  /** Open the picker for `blockId` instead of the focused block (a date chip). */
+  openDatePickerFor: (blockId: string, mode: 'due' | 'schedule') => void
   handleDatePick: (d: Date) => Promise<void>
 }
 
@@ -227,9 +229,24 @@ export function useBlockDatePicker({
   registerCreatedPage,
   t,
 }: UseBlockDatePickerParams): UseBlockDatePickerReturn {
-  const [datePickerOpen, setDatePickerOpen] = useState(false)
+  const [datePickerOpen, setOpen] = useState(false)
   const [datePickerMode, setDatePickerMode] = useState<DatePickerMode>('date')
+  // The block a date chip opened the picker for, which need not be the focused
+  // one (#5736). Every other opener acts on the focused block, so any other
+  // open or close drops it.
+  const [chipBlockId, setChipBlockId] = useState<string | null>(null)
   const datePickerCursorPos = useRef<number | undefined>(undefined)
+
+  const setDatePickerOpen = useCallback((open: boolean) => {
+    setChipBlockId(null)
+    setOpen(open)
+  }, [])
+
+  const openDatePickerFor = useCallback((blockId: string, mode: 'due' | 'schedule') => {
+    setChipBlockId(blockId)
+    setDatePickerMode(mode)
+    setOpen(true)
+  }, [])
 
   // Invariant — `rovingEditor` is stable across the lifetime
   // of the BlockTree mount (the hook only ever runs inside a BlockTree
@@ -252,7 +269,7 @@ export function useBlockDatePicker({
     async (d: Date) => {
       setDatePickerOpen(false)
       const ctx: DatePickContext = {
-        blockId: focusedBlockId,
+        blockId: chipBlockId ?? focusedBlockId,
         rootParentId,
         pageStore,
         rovingEditor: rovingEditorRef.current,
@@ -263,7 +280,15 @@ export function useBlockDatePicker({
       }
       await MODE_HANDLERS[datePickerMode](ctx)
     },
-    [datePickerMode, focusedBlockId, rootParentId, pageStore, registerCreatedPage],
+    [
+      datePickerMode,
+      chipBlockId,
+      focusedBlockId,
+      rootParentId,
+      pageStore,
+      registerCreatedPage,
+      setDatePickerOpen,
+    ],
   )
 
   return {
@@ -272,6 +297,7 @@ export function useBlockDatePicker({
     datePickerCursorPos,
     setDatePickerOpen,
     setDatePickerMode,
+    openDatePickerFor,
     handleDatePick,
   }
 }

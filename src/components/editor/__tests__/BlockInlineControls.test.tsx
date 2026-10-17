@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { BLOCK_EVENTS } from '@/lib/block-events'
 import { t } from '@/lib/i18n'
 
 vi.mock('lucide-react', () => ({
@@ -147,27 +146,6 @@ import {
 } from '@/components/editor/BlockInlineControls'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useBlockStore } from '@/stores/blocks'
-
-// #2222: `dispatchBlockCommand` no longer broadcasts a legacy document
-// CustomEvent (the broadcast had zero production listeners; the focus-keyed
-// command bus is the only delivery path). These tests observe producer
-// dispatches as document events, so shim the bus back onto `document`: the
-// existing assertions keep pinning the producer contract — typed
-// BLOCK_EVENTS key mapped to the expected event name, plus the detail
-// payload — and fail if a producer stops dispatching or changes its detail.
-vi.mock('@/stores/block-command-bus', async () => {
-  const actual = await vi.importActual<typeof import('@/stores/block-command-bus')>(
-    '@/stores/block-command-bus',
-  )
-  const { BLOCK_EVENTS: EVENT_NAMES } =
-    await vi.importActual<typeof import('@/lib/block-event-names')>('@/lib/block-event-names')
-  return {
-    ...actual,
-    dispatchBlockCommand: (name: keyof typeof EVENT_NAMES, detail?: unknown) => {
-      document.dispatchEvent(new CustomEvent(EVENT_NAMES[name], { detail }))
-    },
-  }
-})
 
 function renderControls(props: BlockInlineControlsProps) {
   return render(
@@ -316,7 +294,7 @@ describe('DateChip', () => {
           )) as unknown as LucideIcon
         }
         colorClass="bg-muted"
-        eventName="OPEN_DUE_DATE_PICKER"
+        onOpen={vi.fn()}
         i18nKey="block.dueDate"
         chipClass="test-chip"
       />,
@@ -334,7 +312,7 @@ describe('DateChip', () => {
         date="2099-06-15"
         icon={(() => <svg />) as unknown as LucideIcon}
         colorClass="bg-muted"
-        eventName="OPEN_DUE_DATE_PICKER"
+        onOpen={vi.fn()}
         i18nKey="block.dueDate"
         chipClass="test-chip"
       />,
@@ -348,38 +326,6 @@ describe('DateChip', () => {
     const title = button.getAttribute('title')
     expect(title).toContain(compact)
     expect(button.getAttribute('aria-label')).toBe(title)
-  })
-
-  // #1251: DateChip routes its click through the typed `dispatchBlockCommand`
-  // helper, so it emits the `BLOCK_EVENTS` constant for the given typed key —
-  // not a hand-built literal. Assert producer ↔ constant for both pickers a
-  // chip can open, listening on the same name the consumer subscribes to.
-  it.each([
-    ['OPEN_DUE_DATE_PICKER', BLOCK_EVENTS.OPEN_DUE_DATE_PICKER],
-    ['OPEN_SCHEDULED_DATE_PICKER', BLOCK_EVENTS.OPEN_SCHEDULED_DATE_PICKER],
-  ] as const)('dispatches the %s typed event on click', async (eventName, emittedName) => {
-    const user = userEvent.setup()
-    let receivedType: string | null = null
-    const handler = (e: Event) => {
-      receivedType = e.type
-    }
-    document.addEventListener(emittedName, handler)
-
-    render(
-      <DateChip
-        date="2099-01-01"
-        icon={(() => <svg />) as unknown as LucideIcon}
-        colorClass=""
-        eventName={eventName}
-        i18nKey="block.dueDate"
-        chipClass=""
-      />,
-    )
-
-    await user.click(screen.getByRole('button'))
-    expect(receivedType).toBe(emittedName)
-
-    document.removeEventListener(emittedName, handler)
   })
 })
 
@@ -611,6 +557,21 @@ describe('BlockMetadataRow', () => {
   it('renders scheduled date chip when scheduledDate is set', () => {
     renderMetadata(makeMetaProps({ scheduledDate: '2099-07-01' }))
     expect(screen.getByText('Jul 1, 2099')).toBeInTheDocument()
+  })
+
+  // A chip keeps focus where it was, so it must name its own block rather than
+  // go through the focus-keyed command bus (#5736).
+  it.each([
+    ['due', { dueDate: '2099-03-15' }, 'Due Mar 15, 2099'],
+    ['schedule', { scheduledDate: '2099-07-01' }, 'Scheduled Jul 1, 2099'],
+  ] as const)('opens the %s picker for its own block on click', async (mode, dates, name) => {
+    const user = userEvent.setup()
+    const onOpenDatePicker = vi.fn()
+
+    renderMetadata(makeMetaProps({ ...dates, onOpenDatePicker }))
+    await user.click(screen.getByRole('button', { name }))
+
+    expect(onOpenDatePicker).toHaveBeenCalledExactlyOnceWith('BLOCK_1', mode)
   })
 
   it('renders repeat indicator when repeat property exists', () => {
@@ -1094,27 +1055,14 @@ describe('BlockInlineControls focus retention (#1498)', () => {
     expect(onShowProperties).toHaveBeenCalledWith('BLOCK_1')
   })
 
-  it('DateChip: prevents default on mousedown and still dispatches its picker event', async () => {
+  it('date chip: prevents default on mousedown and still fires onOpenDatePicker', async () => {
     const user = userEvent.setup()
-    const handler = vi.fn()
-    document.addEventListener(BLOCK_EVENTS.OPEN_DUE_DATE_PICKER, handler)
-    render(
-      <TooltipProvider>
-        <DateChip
-          date="2099-03-15"
-          icon={(() => <svg />) as unknown as LucideIcon}
-          colorClass=""
-          eventName="OPEN_DUE_DATE_PICKER"
-          i18nKey="block.dueDate"
-          chipClass="due-date-chip"
-        />
-      </TooltipProvider>,
-    )
+    const onOpenDatePicker = vi.fn()
+    renderMetadata(makeMetaProps({ dueDate: '2099-03-15', onOpenDatePicker }))
     const btn = screen.getByRole('button', { name: /due/i })
     fireMouseDownAndAssertPrevented(btn)
     await user.click(btn)
-    expect(handler).toHaveBeenCalledOnce()
-    document.removeEventListener(BLOCK_EVENTS.OPEN_DUE_DATE_PICKER, handler)
+    expect(onOpenDatePicker).toHaveBeenCalledWith('BLOCK_1', 'due')
   })
 })
 

@@ -8,12 +8,10 @@ import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
-import type { BLOCK_EVENTS } from '@/lib/block-events'
 import { dueDateColor, formatCompactDate } from '@/lib/date-utils'
 import { priorityColor } from '@/lib/priority-color'
 import { formatRepeatLabel } from '@/lib/repeat-utils'
 import { cn } from '@/lib/utils'
-import { dispatchBlockCommand } from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
 
 /**
@@ -34,12 +32,7 @@ interface DateChipProps {
   date: string
   icon: LucideIcon
   colorClass: string
-  /**
-   * Typed BLOCK_EVENTS key (not a raw event-name string) so the producer here
-   * stays in lockstep with the listener: a constant rename is now a compile
-   * error instead of a silent desync.
-   */
-  eventName: keyof typeof BLOCK_EVENTS
+  onOpen: () => void
   i18nKey: string
   chipClass: string
 }
@@ -48,7 +41,7 @@ export function DateChip({
   date,
   icon: Icon,
   colorClass,
-  eventName,
+  onOpen,
   i18nKey,
   chipClass,
 }: DateChipProps) {
@@ -66,13 +59,11 @@ export function DateChip({
       )}
       title={label}
       aria-label={label}
-      // #1498: keep editor focus on click so the date-picker event fires (a
-      // blur would flush/remount the block and swallow the click). See the
+      // #1498: keep editor focus on click so the picker opens (a blur would
+      // flush/remount the block and swallow the click). See the
       // collapse-toggle note in BlockInlineControls for the full rationale.
       onMouseDown={(e) => e.preventDefault()}
-      onClick={() => {
-        dispatchBlockCommand(eventName)
-      }}
+      onClick={onOpen}
     >
       {/* The chips pin text-xs, where 1em stays 12px at every font size, so
           their icons size from the setting itself (#5369). */}
@@ -165,6 +156,12 @@ export interface BlockMetadataRowProps {
   onTogglePriority?: ((blockId: string) => void) | undefined
   dueDate?: (string | null) | undefined
   scheduledDate?: (string | null) | undefined
+  /**
+   * Opens a date chip's picker. It takes the row's own id: a chip keeps focus
+   * where it was, so the focus-keyed command bus would open the picker for
+   * whichever block is being edited, or for none (#5736).
+   */
+  onOpenDatePicker?: ((blockId: string, mode: 'due' | 'schedule') => void) | undefined
   properties?: Array<{ key: string; value: string }> | undefined
   filteredProperties: Array<{ key: string; value: string }>
   /**
@@ -570,6 +567,7 @@ export const BlockMetadataRow = React.memo(
     onTogglePriority,
     dueDate,
     scheduledDate,
+    onOpenDatePicker,
     properties,
     filteredProperties,
     maxInlineProperties,
@@ -656,7 +654,7 @@ export const BlockMetadataRow = React.memo(
             date={dueDate}
             icon={CalendarDays}
             colorClass={dueDateColor(dueDate)}
-            eventName="OPEN_DUE_DATE_PICKER"
+            onOpen={() => onOpenDatePicker?.(blockId, 'due')}
             i18nKey="block.dueDate"
             chipClass="due-date-chip"
           />
@@ -673,7 +671,7 @@ export const BlockMetadataRow = React.memo(
             date={scheduledDate}
             icon={Calendar}
             colorClass="bg-secondary text-secondary-foreground"
-            eventName="OPEN_SCHEDULED_DATE_PICKER"
+            onOpen={() => onOpenDatePicker?.(blockId, 'schedule')}
             i18nKey="block.scheduledDate"
             chipClass="scheduled-chip"
           />
