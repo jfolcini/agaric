@@ -13,21 +13,14 @@
  * Edit, Preview and Changes switch what is shown in the buffer's place: the
  * buffer as the page will show it (`PageSourcePreview`, loaded lazily like
  * the buffer), and the line diff against the page as loaded
- * (`PageSourceChanges`), whose hunks Save counts.
+ * (`PageSourceChanges`), whose hunks Save counts. The diff reads the text as
+ * it was when typing paused, or when Changes opened, so a page edited at length
+ * is not diffed on every keystroke.
  */
 
 import { Copy } from 'lucide-react'
 import type React from 'react'
-import {
-  lazy,
-  Suspense,
-  useDeferredValue,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
@@ -145,6 +138,8 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   const [mode, setMode] = useState<Mode>('edit')
   // The buffer as last typed, for what shows beside it; null until it changes.
   const [typedLines, setTypedLines] = useState<SourceLines | null>(null)
+  // The text the diff is of once typing pauses; before that, the text the buffer opened with.
+  const [diffedText, setDiffedText] = useState<string | null>(null)
   // A draft an earlier version stored, its ids as `^ID` anchors in its text (#5160 D-f).
   const [legacyDraft, setLegacyDraft] = useState<string | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
@@ -198,7 +193,9 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   }, [pageId])
 
   const draftSaver = useDebouncedCallback(() => {
-    if (typed.current !== null) storeDraft(pageId, typed.current)
+    if (typed.current === null) return
+    storeDraft(pageId, typed.current)
+    setDiffedText(typed.current.lines.text)
   }, 300)
   useEffect(
     () => () => {
@@ -216,9 +213,9 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   const currentLines = (open: Opened): SourceLines => typed.current?.lines ?? open.initial
 
   const shown = typedLines ?? opened?.initial ?? null
-  const shownText = useDeferredValue(shown?.text ?? '')
   const pageText = opened?.page.text ?? ''
-  const diff = useMemo(() => diffLines(pageText, shownText), [pageText, shownText])
+  const diffText = diffedText ?? opened?.initial.text ?? ''
+  const diff = useMemo(() => diffLines(pageText, diffText), [pageText, diffText])
   const unchanged = opened === null || shown === null || sameLines(shown, opened.page)
   const saveLabel =
     unchanged || diff.hunks.length === 0
@@ -342,6 +339,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
       generation: opened.generation + 1,
     })
     setTypedLines(null)
+    setDiffedText(null)
     setConflict(null)
     setSaveError(null)
   }
@@ -364,7 +362,11 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     // Radix sends '' when the shown mode is pressed again.
     const next = MODES.find((m) => m === value)
     if (next === undefined) return
-    flushSync(() => setMode(next))
+    flushSync(() => {
+      // The diff may be a pause behind the buffer.
+      if (next === 'changes' && typed.current !== null) setDiffedText(typed.current.lines.text)
+      setMode(next)
+    })
     if (next === 'edit') bufferRef.current?.focus()
   }
 

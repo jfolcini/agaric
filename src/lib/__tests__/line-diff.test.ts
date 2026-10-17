@@ -35,6 +35,26 @@ describe('diffLines', () => {
     expect(diffLines('- one\r- two', '- one\n- two').hunks).toEqual([])
   })
 
+  it('finds the same hunks in a CRLF page as in the same page with LF breaks, with no carriage return left in a line', () => {
+    const lf = diffLines('- a\n- b\n- c\n', '- a\n- B\n- c\n- d\n')
+    const crlf = diffLines('- a\r\n- b\r\n- c\r\n', '- a\r\n- B\r\n- c\r\n- d\r\n')
+    const mixed = diffLines('- a\r\n- b\n- c\r\n', '- a\n- B\r\n- c\n- d\r\n')
+
+    expect(lf.hunks).toEqual([
+      { beforeStart: 1, afterStart: 1, removed: ['- b'], added: ['- B'] },
+      { beforeStart: 3, afterStart: 3, removed: [], added: ['- d'] },
+    ])
+    expect(crlf).toEqual(lf)
+    expect(mixed).toEqual(lf)
+    expect([...crlf.before, ...crlf.after].filter((line) => line.includes('\r'))).toEqual([])
+  })
+
+  it('a pasted Windows text edits the page it was pasted into line by line', () => {
+    expect(diffLines('- one\n- two', '- one\r\n- two\r\n- three').hunks).toEqual([
+      { beforeStart: 2, afterStart: 2, removed: [], added: ['- three'] },
+    ])
+  })
+
   it('a dropped last line break is a removed empty line', () => {
     expect(diffLines('- one\n', '- one').hunks).toEqual([
       { beforeStart: 1, afterStart: 1, removed: [''], added: [] },
@@ -48,6 +68,25 @@ describe('diffLines', () => {
     ])
     expect(diffLines('- last', '').hunks).toEqual([
       { beforeStart: 0, afterStart: 0, removed: ['- last'], added: [''] },
+    ])
+  })
+
+  it('an added last line break is an added empty line, and CRLF counts as one', () => {
+    expect(diffLines('- one', '- one\n').hunks).toEqual([
+      { beforeStart: 1, afterStart: 1, removed: [], added: [''] },
+    ])
+    expect(diffLines('- one', '- one\r\n').hunks).toEqual(diffLines('- one', '- one\n').hunks)
+    expect(diffLines('- one\n\n', '- one\n').hunks).toEqual([
+      { beforeStart: 2, afterStart: 2, removed: [''], added: [] },
+    ])
+  })
+
+  it('an emptied buffer removes every line of the page but the empty one it keeps, and refilling it adds them back', () => {
+    expect(diffLines('- one\n- two\n', '').hunks).toEqual([
+      { beforeStart: 0, afterStart: 0, removed: ['- one', '- two'], added: [] },
+    ])
+    expect(diffLines('', '- one\n- two\n').hunks).toEqual([
+      { beforeStart: 0, afterStart: 0, removed: [], added: ['- one', '- two'] },
     ])
   })
 
