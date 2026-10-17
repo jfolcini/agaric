@@ -298,7 +298,6 @@ macro_rules! agaric_commands {
             $crate::commands::mcp::mcp_disconnect_all,
             // MCP activity ring read surface (#695)
             $crate::commands::mcp::get_mcp_recent_activity,
-            // MCP RW (slice 2)
             // #5667 — the device-local agents Settings → Agent access manages
             $crate::commands::mcp_agents::list_mcp_agents,
             $crate::commands::mcp_agents::create_mcp_agent,
@@ -3464,6 +3463,39 @@ mod boot_path_tests {
             super::log_dir_for_app_data(dir.path()).is_dir(),
             "boot must create the log directory beneath the app-data dir it was handed, or \
              `agaric.log` and the bug-report bundle both resolve to a path that does not exist"
+        );
+    }
+
+    /// Access that was on under either pre-#5667 socket stays on: the boot
+    /// phase that starts the MCP server turns a legacy marker into
+    /// `mcp-enabled` (#5667).
+    #[test]
+    fn boot_turns_a_legacy_mcp_marker_into_mcp_enabled_5667() {
+        let runtime = tokio::runtime::Runtime::new().expect("a runtime for the pool");
+        let app = tauri::test::mock_app();
+        let dir = tempfile::tempdir().expect("throwaway app-data dir");
+        std::fs::write(dir.path().join("mcp-rw-enabled"), b"").expect("the legacy marker");
+        let wiring = runtime.block_on(async {
+            let pool = crate::db::init_pool(&dir.path().join("notes.db"))
+                .await
+                .expect("a migrated pool");
+            super::McpServerWiring {
+                materializer: crate::materializer::Materializer::new(pool.clone()),
+                read_pool: pool.clone(),
+                write_pool: pool,
+                device_id: "dev-5667".to_owned(),
+            }
+        });
+
+        super::wire_mcp_server(&app, dir.path(), wiring);
+
+        assert!(
+            crate::mcp::mcp_enabled(dir.path()),
+            "a client that had the read-write socket on must find access still on"
+        );
+        assert!(
+            !dir.path().join("mcp-rw-enabled").exists(),
+            "the legacy marker is replaced, not kept beside the new one"
         );
     }
 }

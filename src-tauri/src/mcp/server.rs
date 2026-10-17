@@ -83,11 +83,11 @@ const PREAMBLE_LINE_CAP: u64 = 64 * 1024;
 
 /// The refusal for a connection whose first line is not a token preamble:
 /// an `agaric-mcp` from before #5667, or a client that skips the bridge.
-pub(crate) const NO_TOKEN_REFUSAL: &str = "this connection sent no agent token. Update \
+const NO_TOKEN_REFUSAL: &str = "this connection sent no agent token. Update \
      agaric-mcp and copy this client's config from Settings → Agent access";
 
 /// The refusal for a token no agent holds.
-pub(crate) const UNKNOWN_TOKEN_REFUSAL: &str = "no agent has this token: it was revoked, or \
+const UNKNOWN_TOKEN_REFUSAL: &str = "no agent has this token: it was revoked, or \
      made on another device. Copy this client's config from Settings → Agent access";
 
 /// #636 — maximum back-off for consecutive `accept()` failures.
@@ -387,7 +387,7 @@ where
                 let backoff = compute_accept_backoff_duration(accept_failure_count);
                 tracing::warn!(
                     target: "mcp",
-                        error = %e,
+                    error = %e,
                     failure_count = accept_failure_count,
                     backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
                     "MCP accept() failed; backing off and retrying",
@@ -488,7 +488,7 @@ where
                 let backoff = compute_accept_backoff_duration(accept_failure_count);
                 tracing::warn!(
                     target: "mcp",
-                        error = %e,
+                    error = %e,
                     failure_count = accept_failure_count,
                     backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
                     "MCP pipe connect() failed; backing off and retrying",
@@ -550,7 +550,7 @@ where
             if lifecycle_disabled(lifecycle.as_ref()) {
                 tracing::info!(
                     target: "mcp",
-                        "MCP accept loop exiting during successor-instance creation (lifecycle.enabled cleared)",
+                    "MCP accept loop exiting during successor-instance creation (lifecycle.enabled cleared)",
                 );
                 return Ok(());
             }
@@ -565,7 +565,7 @@ where
                     let backoff = compute_accept_backoff_duration(accept_failure_count);
                     tracing::warn!(
                         target: "mcp",
-                                error = %e,
+                        error = %e,
                         failure_count = accept_failure_count,
                         backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
                         "MCP successor pipe create() failed; backing off and retrying",

@@ -56,7 +56,7 @@ Notable hooks that enforce architectural contracts:
 
 ### Threat model
 
-Single-user, local-only. The DB is in the user's home directory; kernel-level filesystem permissions are the trust boundary. No bearer tokens, no rate limits, no per-agent budgets — if an attacker can write to your home directory, they already have your data.
+Single-user, local-only. The DB is in the user's home directory; kernel-level filesystem permissions are the trust boundary. No rate limits, no per-agent budgets. An MCP agent's token keeps it to its mode and spaces against its own mistakes, not an attacker — if an attacker can write to your home directory, they already have your data.
 
 Full threat model in `SECURITY.md`. This file documents only the **architectural mechanisms**, not the policy.
 

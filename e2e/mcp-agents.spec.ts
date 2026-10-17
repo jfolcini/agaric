@@ -69,21 +69,24 @@ test.describe('Agents card', () => {
     await dialog.getByLabel('Name').fill('Planner')
     await dialog.getByLabel('Name').press('Enter')
     await expect(page.getByTestId('mcp-agent-row')).toContainText('Planner')
-    const token = await page.evaluate(async () => {
+    const { token, tail } = await page.evaluate(async () => {
       const internals = (
         window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string) => Promise<{ token: string }[]> }
+          __TAURI_INTERNALS__: {
+            invoke: (c: string) => Promise<{ id: string; token: string }[]>
+          }
         }
       ).__TAURI_INTERNALS__
       const [agent] = await internals.invoke('list_mcp_agents')
-      return agent?.token ?? ''
+      // The tail of the id the config's server name ends with, lowercased.
+      return { token: agent?.token ?? '', tail: (agent?.id ?? '').slice(-6).toLowerCase() }
     })
     expect(token).toMatch(/^agt_[0-9a-f]{32}$/)
 
     await page.getByRole('button', { name: 'Copy Claude Code command for Planner' }).click()
     await expect(page.getByText('Claude Code command copied')).toBeVisible()
     expect(await readClipboard(page)).toBe(
-      `claude mcp add -s user agaric-planner-${await serverTail(page)} -- agaric-mcp --socket "/mock/agaric/mcp.sock" --token ${token}`,
+      `claude mcp add -s user agaric-planner-${tail} -- agaric-mcp --socket "/mock/agaric/mcp.sock" --token ${token}`,
     )
 
     await page.getByRole('button', { name: 'Copy Claude Desktop config for Planner' }).click()
@@ -99,16 +102,3 @@ test.describe('Agents card', () => {
     ])
   })
 })
-
-/** The last six characters of the only agent's id, lowercased. */
-async function serverTail(page: Page): Promise<string> {
-  return page.evaluate(async () => {
-    const internals = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (c: string) => Promise<{ id: string }[]> }
-      }
-    ).__TAURI_INTERNALS__
-    const [agent] = await internals.invoke('list_mcp_agents')
-    return (agent?.id ?? '').slice(-6).toLowerCase()
-  })
-}

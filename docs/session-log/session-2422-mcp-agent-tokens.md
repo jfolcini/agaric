@@ -65,5 +65,12 @@ at connect is about 24 µs. A burst of 100 calls writes `last_used_ms` once.
 working; add an agent per client in Settings → Agent access and use its
 config.
 
-The `#[cfg(windows)]` pipe arms were edited by reading only; `release.yml`
-compiles them.
+The `#[cfg(windows)]` pipe arms pass `cargo check --target x86_64-pc-windows-msvc`
+(lib, tests and the bridge), with a stub C toolchain; an injected arity error
+in `serve_pipe` failed that check. Linking and a run on Windows are not
+covered: whether the -32001 refusal reaches a client over a closing named
+pipe needs a manual check before the release that carries this.
+
+Review added the 64 KiB preamble-cap test and a test of boot adopting a
+legacy marker (deleting that call had kept every test green), and moved the
+real-backend MCP specs #5754 added onto the token handshake.

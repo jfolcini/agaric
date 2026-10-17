@@ -1,13 +1,14 @@
 // ---------------------------------------------------------------------------
 // Real-backend agent access driven from Settings › Agent access (#5740).
 //
-// The RW switch starts the RW socket server, whose path the tab shows; an
-// agent connected there writes through the real tools; the activity feed
-// lists each call from the backend's ring (`get_mcp_recent_activity`, read
-// on every mount of the tab, so opening it is the durable re-query); and
-// Revert session sends the session's op refs to `revert_ops`. One file, one
-// vault: the `before` turns the channel on once, and each case opens its own
-// connection, so it is its own feed session.
+// The switch starts the MCP server, whose path the tab shows; an agent made
+// through the app's own command writes through the real tools on a connection
+// that presents its token; the activity feed lists each call from the
+// backend's ring (`get_mcp_recent_activity`, read on every mount of the tab,
+// so opening it is the durable re-query); and Revert session sends the
+// session's op refs to `revert_ops`. One file, one vault: the `before` turns
+// access on and makes the agent once, and each case opens its own connection,
+// so it is its own feed session.
 //
 // A session revert is undone from the History view, not Ctrl+Z: its reverse
 // ops carry `is_undo = 1`, which page-level undo skips
@@ -48,35 +49,56 @@ interface FeedRow {
 }
 
 let socketPath = ''
+let token = ''
 let spaceId = ''
 
-/** Settings › Agent access, ready once the RW switch can be used. */
+/** Settings › Agent access, ready once the switch can be used. */
 async function openAgentAccess(): Promise<void> {
   await navigateTo('Settings')
   const tab = $('#settings-tab-agent')
   await tab.waitForClickable({ timeout: ACTION_TIMEOUT })
   await tab.click()
-  await $('#mcp-rw-toggle').waitForClickable({ timeout: NAV_TIMEOUT })
+  await $('#mcp-toggle').waitForClickable({ timeout: NAV_TIMEOUT })
 }
 
-/** Turn RW access on with its switch and return the socket path the tab shows. */
-async function enableRwFromSettings(): Promise<string> {
+/** Turn access on with the switch and return the socket path the tab shows. */
+async function enableFromSettings(): Promise<string> {
   await openAgentAccess()
-  await $('#mcp-rw-toggle').click()
-  await waitForToast('Read-write agent access enabled')
-  const shown = $('[data-testid="mcp-rw-socket-path"]')
+  await $('#mcp-toggle').click()
+  await waitForToast('Agent access enabled')
+  const shown = $('[data-testid="mcp-socket-path"]')
   await shown.waitForDisplayed({ timeout: ACTION_TIMEOUT })
   const path = (await shown.getText()).trim()
   await browser.waitUntil(() => existsSync(path), {
     timeout: NAV_TIMEOUT,
-    timeoutMsg: `the RW switch is on, but no socket appeared at the shown path ${path}`,
+    timeoutMsg: `the switch is on, but no socket appeared at the shown path ${path}`,
   })
   return path
 }
 
+/** A read-write agent on every space, made through the app's own command; returns its token. */
+async function createAgent(name: string): Promise<string> {
+  const agent = await browser.execute(
+    (agentName: string) =>
+      (
+        window as unknown as {
+          __TAURI_INTERNALS__: {
+            invoke: (cmd: string, args: unknown) => Promise<{ token: string }>
+          }
+        }
+      ).__TAURI_INTERNALS__.invoke('create_mcp_agent', {
+        name: agentName,
+        mode: 'read_write',
+        spaceIds: null,
+      }),
+    name,
+  )
+  return agent.token
+}
+
 /** Append one block per entry of `contents` under the page titled `page`, over one connection. */
 async function agentAppends(page: string, contents: string[]): Promise<Block[]> {
-  const agent = await McpClient.connect(socketPath)
+  const agent = await McpClient.connect(socketPath, token)
   try {
     const blocks: Block[] = []
     for (const content of contents) {
@@ -134,8 +156,9 @@ async function expectShown(marker: string, what: string): Promise<void> {
 describe('Agaric real-backend agent access from Settings (#5740)', () => {
   before(async () => {
     await waitForAppReady()
-    socketPath = await enableRwFromSettings()
-    const setup = await McpClient.connect(socketPath)
+    socketPath = await enableFromSettings()
+    token = await createAgent(runScopedMarker('wdio-mcp-settings-agent'))
+    const setup = await McpClient.connect(socketPath, token)
     try {
       const spaces = (await setup.call('list_spaces', {})) as { id: string; is_default: boolean }[]
       spaceId = spaces.find((space) => space.is_default)?.id ?? ''
@@ -155,7 +178,7 @@ describe('Agaric real-backend agent access from Settings (#5740)', () => {
     await expectShown(marker, "the agent's block never showed on the open page")
 
     await openAgentAccess()
-    expect(await $('#mcp-rw-toggle').getAttribute('aria-checked')).toBe('true')
+    expect(await $('#mcp-toggle').getAttribute('aria-checked')).toBe('true')
     const summary = appendSummary(block)
     await feedRow((row) => row.summary === summary, summary)
 

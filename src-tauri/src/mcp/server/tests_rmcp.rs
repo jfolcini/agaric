@@ -22,7 +22,8 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use super::{
-    MCP_DISCONNECT_GRACE_PERIOD, McpServer, PlaceholderRegistry, handle_connection, run_connection,
+    MCP_DISCONNECT_GRACE_PERIOD, McpServer, PREAMBLE_LINE_CAP, PlaceholderRegistry,
+    handle_connection, run_connection,
 };
 use crate::materializer::Materializer;
 use crate::mcp::activity::{ActivityContext, ActivityRing, RecordingEmitter};
@@ -553,6 +554,32 @@ async fn malformed_preamble_is_refused_5667() {
     let server = test_support::server(PlaceholderRegistry, PlaceholderRegistry, pool);
     let (mut reader, _writer) = exchange(server, b"hello agaric\n").await;
     assert_refused(&mut reader, None).await;
+}
+
+/// A first line that never ends is cut at the cap and refused while the client
+/// is still sending, not buffered for as long as it runs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_first_line_that_never_ends_is_refused_at_the_cap_5667() {
+    let (pool, _agent, _dir) =
+        test_support::vault_with_agent("present", McpAgentMode::ReadWrite, None).await;
+    let server = test_support::server(PlaceholderRegistry, PlaceholderRegistry, pool);
+    let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(async move {
+        handle_connection(server_io, server)
+            .await
+            .expect("the connection ends cleanly");
+    });
+    let (r, mut w) = tokio::io::split(client_io);
+    let past_the_cap = usize::try_from(PREAMBLE_LINE_CAP).unwrap() + 1024;
+    // No newline, and the connection stays open: only the cap can end the line.
+    // The write breaks once the server has refused and closed.
+    let writer = tokio::spawn(async move {
+        let _ = w.write_all(&vec![b'x'; past_the_cap]).await;
+        w
+    });
+
+    assert_refused(&mut BufReader::new(r), None).await;
+    drop(writer.await);
 }
 
 // ──────────────────────────────────────────────────────────────────────

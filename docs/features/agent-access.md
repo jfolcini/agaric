@@ -42,7 +42,7 @@ Each agent has:
 
 A connection without a token, or with one no agent holds, is refused with an error naming Settings → Agent access, and closed. Revoking an agent refuses its next call, even on a connection that is still open. To change an agent's access, revoke it and add a new one.
 
-**Upgrading from the two sockets.** Before agents, a read-only and a read-write socket each had a switch and a config entry (`agaric-ro`, `agaric-rw`). Those entries stop working: add one agent per client and replace that client's entries with the agent's. Access that was on stays on.
+**Upgrading from the two sockets.** Before agents, a read-only and a read-write socket each had a switch and a config entry (`agaric-ro`, `agaric-rw`). Those entries stop working: add one agent per client and replace that client's entries with the agent's. Access that was on stays on. A copy of `agaric-mcp` from before agents rejects `--token`, so replace any copy you made (say, on your `PATH`) with the one that ships with the app ([README § Using Agaric with MCP clients](../../README.md#using-agaric-with-mcp-clients)).
 
 ## What agents can do
 
