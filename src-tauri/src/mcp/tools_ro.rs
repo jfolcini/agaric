@@ -545,6 +545,7 @@ struct ListJournalArgs {
 /// change requiring explicit user approval — bounding the create window
 /// (#2719) closes the unbounded-mutation risk while preserving the v1
 /// tool surface.
+#[derive(Clone)]
 pub struct ReadOnlyTools {
     pool: SqlitePool,
     /// Writer pool from `DbPools::write`: `journal_for_date`'s create

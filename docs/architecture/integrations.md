@@ -23,7 +23,7 @@ The `agaric-mcp` binary is a stdio↔socket bridge bundled with the app. Agents 
 Two separate sockets, two marker files (`mcp-ro-enabled` / `mcp-rw-enabled`):
 
 - **Read-only**: list pages, get page, read a page as Markdown, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces.
-- **Read-write**: append block, update block content, set property, add tag, create page, delete block — plus `list_spaces`, which both surfaces expose.
+- **Read-write**: append block, update block content, set property, add tag, create page, delete block, …, then every read-only tool.
 
 `list_spaces` returns `{ id, name, is_default }` for every space; it is the discovery surface for the `space_id` every tool but `list_spaces` and `list_property_defs` requires. Wire names live as `TOOL_*` constants in `src-tauri/src/mcp/registry.rs`; the authoritative advertised and dispatched sets are `list_tool_descriptions()` and the `call_tool()` match arms in `tools_ro.rs` / `tools_rw.rs`.
 
@@ -36,7 +36,9 @@ Splitting by R/W lets users disable writes while keeping reads on.
 
 1. Add its `TOOL_*` wire-name constant in `src-tauri/src/mcp/registry.rs`.
 2. In the matching `tools_ro.rs` / `tools_rw.rs`, add the tool-description factory and register it
-   in `list_tool_descriptions()` (the `list_tools()` enumeration).
+   in `list_tool_descriptions()` (the `list_tools()` enumeration), or, for a write tool, in
+   `write_tool_descriptions()` in `tools_rw.rs`, whose `list_tool_descriptions()` appends the read
+   tools.
 3. In that same tools file, add the `call_tool()` dispatch arm and handler implementation.
 4. Add a field-filtered `summarise_<name>` function and its `summarise()` match arm in
    `src-tauri/src/mcp/summarise.rs`.

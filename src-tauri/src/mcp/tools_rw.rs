@@ -18,7 +18,6 @@
 //! | `add_tag` | [`add_tag_inner`] | Tag block must already exist in the block's space. |
 //! | `create_page` | [`create_block_inner_with_space`] | `block_type = "page"`, `parent_id = None`. |
 //! | `delete_block` | [`delete_block_inner`] | Soft delete. Reversible via `reverse.rs`. |
-//! | `list_spaces` | [`list_spaces_registry_inner`] | #2728 — pure read, no `*_inner` mutation. Registered here too (mirroring `tools_ro.rs`) so an RW-only agent can discover the `space_id` every tool above requires. |
 //! | `move_page_to_space` | [`move_blocks_to_space_inner`] | Page blocks only: a page moves with its content blocks. |
 //! | `create_tag` | [`create_block_inner_with_space`] | `block_type = "tag"`; returns the space's same-name tag when one exists. |
 //! | `delete_property` | [`delete_property_inner`] | Rejects `space`; the inner refuses system-managed keys. |
@@ -30,6 +29,9 @@
 //! | `batch` | the `_in_tx` halves of the tools it names | #5399 — `append_block`, `update_block_content`, `set_property`, `add_tag`, `remove_tag`, `move_blocks` and `delete_block` calls in one transaction: one activity entry, one undo, nothing written when one is refused. |
 //! | `edit_page_markdown` | [`apply_page_source_inner`] | #5399 — the page's source as `get_page_markdown` with `editable` reads it, edited, saved as the app's source mode saves it. A stale `base` is refused. |
 //! | `set_page_aliases` | [`set_page_aliases_inner`] | Replaces the page's whole alias list in one transaction. An alias another page holds is refused, nothing written. |
+//!
+//! Every `tools_ro` tool follows the write tools, served by the
+//! [`ReadOnlyTools`] this registry holds (#5379).
 //!
 //! Every write tool's result carries the `op_refs` it appended, added by the
 //! adapter (`rmcp_adapter::with_op_refs`), not by these handlers.
@@ -61,7 +63,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
-use super::dispatch::{scoped_dispatch, unknown_tool_error};
+use super::dispatch::scoped_dispatch;
 use super::handler_utils::{
     Named, normalize_ulid_arg, parse_args, resolve_id_arg, resolve_journal_date, to_tool_result,
     with_space_guard,
@@ -69,10 +71,11 @@ use super::handler_utils::{
 use super::registry::{
     TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_APPEND_MARKDOWN, TOOL_BATCH, TOOL_CAPTURE,
     TOOL_CREATE_PAGE, TOOL_CREATE_TAG, TOOL_DELETE_BLOCK, TOOL_DELETE_PROPERTY,
-    TOOL_EDIT_PAGE_MARKDOWN, TOOL_LIST_SPACES, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE,
-    TOOL_REMOVE_TAG, TOOL_RESTORE_BLOCK, TOOL_SET_PAGE_ALIASES, TOOL_SET_PROPERTY, TOOL_UNDO,
+    TOOL_EDIT_PAGE_MARKDOWN, TOOL_MOVE_BLOCKS, TOOL_MOVE_PAGE_TO_SPACE, TOOL_REMOVE_TAG,
+    TOOL_RESTORE_BLOCK, TOOL_SET_PAGE_ALIASES, TOOL_SET_PROPERTY, TOOL_UNDO,
     TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
+use super::tools_ro::{self, ReadOnlyTools};
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::blocks::crud::{DeleteInTx, delete_block_in_tx, dispatch_deletes};
 use crate::commands::blocks::move_ops::move_blocks_batch_in_tx;
@@ -86,9 +89,8 @@ use crate::commands::{
     DeletePropertyResponse, DeleteResponse, MovedBlocks, SourceSaveFlags, TagResponse,
     add_tag_inner, append_markdown_inner, apply_page_source_inner, capture_to_journal_inner,
     create_block_inner_with_space, delete_block_inner, delete_property_inner,
-    get_active_block_inner, list_spaces_registry_inner, move_blocks_batch_inner,
-    move_blocks_to_space_inner, remove_tag_inner, restore_block_inner, revert_ops_inner,
-    set_page_aliases_inner, set_property_inner,
+    get_active_block_inner, move_blocks_batch_inner, move_blocks_to_space_inner, remove_tag_inner,
+    restore_block_inner, revert_ops_inner, set_page_aliases_inner, set_property_inner,
 };
 use crate::db::{CommandTx, validate_block_in_space};
 use crate::materializer::Materializer;
@@ -189,14 +191,6 @@ struct DeleteBlockArgs {
     space_id: String,
 }
 
-/// #2728 — `list_spaces` takes no arguments, mirroring the RO surface's
-/// `list_spaces` (`tools_ro.rs`). The empty struct (with
-/// `deny_unknown_fields`) keeps the strict-boundary posture so a typo'd
-/// argument surfaces as `-32602` instead of being silently ignored.
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ListSpacesArgs {}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MovePageToSpaceArgs {
@@ -292,17 +286,18 @@ struct SetPageAliasesArgs {
 // ReadWriteTools
 // ---------------------------------------------------------------------------
 
-/// Read-write MCP tool registry. Holds the **write pool**, the reader pool
-/// for `list_spaces`, a [`Materializer`] handle, and this device's
-/// `device_id` so every mutation lands with the correct attribution.
+/// Read-write MCP tool registry. Holds the **write pool**, the
+/// [`ReadOnlyTools`] that serves every read tool, a [`Materializer`] handle,
+/// and this device's `device_id` so every mutation lands with the correct
+/// attribution.
 ///
 /// The struct shape mirrors [`crate::mcp::tools_ro::ReadOnlyTools`] so the
 /// wiring in `mod.rs` can share helpers.
 pub struct ReadWriteTools {
     pool: SqlitePool,
-    /// The reader pool: `list_spaces` reads here, so it never waits for a
-    /// writer connection (#5402).
-    read_pool: SqlitePool,
+    /// Serves every read tool on the reader pool, so a read never waits for a
+    /// writer connection (#5379, #5402).
+    reads: ReadOnlyTools,
     materializer: Materializer,
     device_id: String,
     /// #2505: emits `blocks:changed` / `block:properties-changed` on the Tauri
@@ -314,8 +309,8 @@ pub struct ReadWriteTools {
 
 impl ReadWriteTools {
     /// Construct a read-write registry. `pool` must be the *writer* pool
-    /// — every tool but `list_spaces` mutates — and `read_pool` the reader
-    /// pool `list_spaces` reads.
+    /// the write tools use, and `read_pool` the reader pool the read tools
+    /// use.
     ///
     /// The view-change emitter defaults to a no-op; production callers chain
     /// [`with_view_emitter`](Self::with_view_emitter) to route change
@@ -327,8 +322,13 @@ impl ReadWriteTools {
         device_id: String,
     ) -> Self {
         Self {
+            reads: ReadOnlyTools::new(
+                read_pool,
+                pool.clone(),
+                materializer.clone(),
+                device_id.clone(),
+            ),
             pool,
-            read_pool,
             materializer,
             device_id,
             view_emitter: Arc::new(NoopViewChangeEmitter),
@@ -340,18 +340,15 @@ impl ReadWriteTools {
     /// recording emitter to assert payload parity with the local-write path.
     #[must_use]
     pub fn with_view_emitter(mut self, view_emitter: Arc<dyn ViewChangeEmitter>) -> Self {
+        // `journal_for_date` can create a page, so the reads notify views too.
+        self.reads = self.reads.with_view_emitter(view_emitter.clone());
         self.view_emitter = view_emitter;
         self
     }
 }
 
-/// Static tool-description list for the read-write MCP surface.
-///
-/// Lifted out of [`ToolRegistry::list_tools`] so callers that need the
-/// names without a constructed registry (notably the privacy-guard test
-/// In `summarise.rs`) can drive iteration from the live
-/// metadata. The `&self` impl below just delegates here.
-pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
+/// The write tools, in their wire order.
+pub(crate) fn write_tool_descriptions() -> Vec<ToolDescription> {
     vec![
         tool_desc_append_block(),
         tool_desc_update_block_content(),
@@ -359,15 +356,7 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_add_tag(),
         tool_desc_create_page(),
         tool_desc_delete_block(),
-        // #2728 — appended after them so the wire-contract ordering of the
-        // tools above is preserved for existing clients; `list_spaces` is the
-        // one PURE-READ tool on this otherwise-mutating registry (see
-        // `handle_list_spaces`), registered here so an agent connected
-        // solely to the RW socket has an in-band way to discover the
-        // `space_id` every other tool requires.
-        tool_desc_list_spaces(),
         tool_desc_append_markdown(),
-        // #5378 — appended last so the order above holds.
         tool_desc_move_page_to_space(),
         tool_desc_create_tag(),
         tool_desc_delete_property(),
@@ -380,6 +369,18 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_edit_page_markdown(),
         tool_desc_set_page_aliases(),
     ]
+}
+
+/// Static tool-description list for the read-write MCP surface.
+///
+/// Lifted out of [`ToolRegistry::list_tools`] so callers that need the
+/// names without a constructed registry (notably the privacy-guard test
+/// In `summarise.rs`) can drive iteration from the live
+/// metadata. The `&self` impl below just delegates here.
+pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
+    let mut descriptions = write_tool_descriptions();
+    descriptions.extend(tools_ro::list_tool_descriptions());
+    descriptions
 }
 
 impl ToolRegistry for ReadWriteTools {
@@ -396,7 +397,8 @@ impl ToolRegistry for ReadWriteTools {
         // ACTOR scope + name-clone boilerplate is
         // shared with `tools_ro` via `super::dispatch::scoped_dispatch`.
         let pool = self.pool.clone();
-        let read_pool = self.read_pool.clone();
+        let reads = self.reads.clone();
+        let read_ctx = ctx.clone();
         let materializer = self.materializer.clone();
         let device_id = self.device_id.clone();
         let emitter = self.view_emitter.clone();
@@ -422,8 +424,6 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_DELETE_BLOCK => {
                     handle_delete_block(&pool, &materializer, &device_id, emitter, args).await
                 }
-                // #2728 — pure read, on the reader pool (#5402).
-                TOOL_LIST_SPACES => handle_list_spaces(&read_pool, args).await,
                 TOOL_APPEND_MARKDOWN => {
                     handle_append_markdown(&pool, &materializer, &device_id, emitter, args).await
                 }
@@ -455,7 +455,8 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_SET_PAGE_ALIASES => {
                     handle_set_page_aliases(&pool, &materializer, &device_id, emitter, args).await
                 }
-                other => Err(unknown_tool_error(other)),
+                // Every read tool, and the unknown-tool error (#5379).
+                other => reads.call_tool(other, args, &read_ctx).await,
             }
         })
     }
@@ -650,35 +651,6 @@ fn tool_desc_delete_block() -> ToolDescription {
                     "description": "ULID of the space the agent is operating in. The delete is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
                 },
             },
-        }),
-    }
-}
-
-/// #2728 — space discovery for RW-only agents.
-///
-/// Every tool above requires a `space_id`, but before this fix `list_spaces`
-/// existed ONLY on the read-only registry (`tools_ro.rs`). Since the RO and
-/// RW gates are independent (an operator may run RW-only), an agent
-/// connected solely to the RW socket had no in-band way to learn a valid
-/// `space_id` — every call would fail the space check /
-/// `SpaceId::from_string`, and the RO tool's own description ("call this
-/// first to discover one") pointed at a tool the RW-only agent cannot see.
-///
-/// Mirrors the RO surface's `tool_desc_list_spaces` (schema + description
-/// text kept identical — same wire contract regardless of which registry
-/// serves the call) so a client that has only the RW socket gets the exact
-/// same discovery affordance.
-fn tool_desc_list_spaces() -> ToolDescription {
-    ToolDescription {
-        name: TOOL_LIST_SPACES.to_string(),
-        description: "List every space as { id, name, is_default }. Every other tool except \
-             list_property_defs requires a space_id — call this first to discover one. \
-             is_default marks the seeded Personal space."
-            .to_string(),
-        input_schema: json!({
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {},
         }),
     }
 }
@@ -993,8 +965,8 @@ fn tool_desc_edit_page_markdown() -> ToolDescription {
     ToolDescription {
         name: TOOL_EDIT_PAGE_MARKDOWN.to_string(),
         description: "Save an edited copy of a page's source in one transaction and one undo, \
-                      as the app's source mode saves it. Read the page with the other Agaric \
-                      server's get_page_markdown and `editable: true`, edit that text, and pass \
+                      as the app's source mode saves it. Read the page with get_page_markdown \
+                      and `editable: true`, edit that text, and pass \
                       it back as `markdown`, with the text you read as `base`. Blocks are matched \
                       by the `^ULID` each one's text ends with, so keep it with the block when \
                       you move or change it: a bullet without one is a new block, and a block \
@@ -1415,21 +1387,6 @@ async fn handle_delete_block(
     // owning page still resolves — the page must reload to drop the block from
     // its rendered tree.
     emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&block_id)).await;
-    to_tool_result(&resp)
-}
-
-/// Handle the `list_spaces` MCP tool call on the RW registry (#2728).
-///
-/// Pure read against the canonical `spaces` registry — reuses
-/// [`list_spaces_registry_inner`], the exact same data function the RO
-/// surface's `handle_list_spaces` calls, so there is no duplicated query
-/// logic between the two registries. Runs on the reader pool (#5402) and
-/// performs no write: no `BEGIN IMMEDIATE` and no `blocks:changed` /
-/// `block:properties-changed` notification, unlike every other handler in
-/// this file.
-async fn handle_list_spaces(read_pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
-    let _args: ListSpacesArgs = parse_args(TOOL_LIST_SPACES, args)?;
-    let resp = list_spaces_registry_inner(read_pool).await?;
     to_tool_result(&resp)
 }
 
