@@ -15,6 +15,7 @@ import { completedTag } from '@/editor/extensions/at-tag-picker'
 import { parseTypedLink, pickedLinkLabel } from '@/editor/extensions/block-link-picker'
 import { createPickerPlugin } from '@/editor/extensions/picker-plugin'
 import { closesFence, FENCE_OPENER } from '@/editor/source-buffer-blocks'
+import { insideUlidToken } from '@/editor/source-buffer-ulids'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { t } from '@/lib/i18n'
 import { scanNameTokens } from '@/lib/name-tokens'
@@ -135,7 +136,8 @@ export const SourceBufferPickers = Extension.create<SourceBufferPickersOptions>(
         // `#[[` starts a tag, not a page link (#5160 N7).
         allow: ({ state, range }) =>
           state.doc.textBetween(range.from - 1, range.from) !== '#' &&
-          stillOpen(state, range, ']]'),
+          stillOpen(state, range, ']]') &&
+          !insideUlidToken(state.doc, range.to),
         editor,
         items: (query) => options.searchPages(parseTypedLink(query)?.base ?? query),
         command: ({ editor: ed, range, props }) => {
@@ -178,7 +180,8 @@ export const SourceBufferPickers = Extension.create<SourceBufferPickersOptions>(
         char: '((',
         allowSpaces: true,
         allowedPrefixes: null,
-        allow: ({ state, range }) => stillOpen(state, range, '))'),
+        allow: ({ state, range }) =>
+          stillOpen(state, range, '))') && !insideUlidToken(state.doc, range.to),
         editor,
         items: (query) => options.searchBlockRefs(query),
         command: ({ editor: ed, range, props }) => {

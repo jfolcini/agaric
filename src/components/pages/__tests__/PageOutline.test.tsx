@@ -13,7 +13,7 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createElement } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 import { createStore } from 'zustand'
 
@@ -22,13 +22,8 @@ import { axe } from '@/__tests__/helpers/axe'
 import { extractHeadings, PageOutline } from '@/components/pages/PageOutline'
 import type { FlatBlock } from '@/stores/page-blocks'
 import { PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
-
-// ── Mocks ────────────────────────────────────────────────────────────────
-
-vi.mock('lucide-react', () => ({
-  X: () => <svg data-testid="x-icon" />,
-  XIcon: (props: Record<string, unknown>) => <svg data-testid="x-icon" {...props} />,
-}))
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -201,6 +196,56 @@ describe('PageOutline', () => {
     const headingBtn = screen.getByRole('button', { name: 'Heading 1' })
     expect(headingBtn).toHaveClass('focus-ring-visible')
     expect(headingBtn).toHaveClass('focus-visible:ring-inset')
+  })
+
+  // #5686 — a heading is stored markdown: its links, tags and refs are ids.
+  describe('rich heading text', () => {
+    const PAGE = '01K0000000000000000000PAGE'
+    const TAG = '01K00000000000000000000TAG'
+    const GONE = '01K000000000000000000000GN'
+
+    beforeEach(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
+      useResolveStore.setState({ cache: new Map(), version: 0 })
+      useResolveStore.getState().batchSet([
+        { id: PAGE, title: 'Project Plan', deleted: false },
+        { id: TAG, title: 'urgent', deleted: false },
+      ])
+    })
+
+    it('shows a linked page by its title, not its id', () => {
+      renderOutline([makeBlock({ id: 'b1', content: `# See [[${PAGE}]]` })])
+
+      const button = screen.getByRole('button', { name: 'See Project Plan' })
+      expect(button).not.toHaveTextContent(PAGE)
+    })
+
+    it('shows a tag by its name, not its id', () => {
+      renderOutline([makeBlock({ id: 'b1', content: `## Filed #[${TAG}]` })])
+
+      const button = screen.getByRole('button', { name: /^Filed\s+urgent$/ })
+      expect(button).not.toHaveTextContent(TAG)
+    })
+
+    it('renders marks as formatting, not as their markdown', () => {
+      renderOutline([makeBlock({ id: 'b1', content: '# A **bold** move' })])
+
+      const button = screen.getByRole('button', { name: 'A bold move' })
+      expect(button.querySelector('strong')).toHaveTextContent('bold')
+    })
+
+    it('shows the fallback label for a target nothing resolves', () => {
+      useResolveStore
+        .getState()
+        .batchSet([{ id: GONE, title: '[[01K00000...]]', deleted: true, resolved: false }])
+      renderOutline([makeBlock({ id: 'b1', content: `# Lost [[${GONE}]]` })])
+
+      const chip = within(screen.getByRole('navigation', { name: 'Page outline' })).getByTestId(
+        'block-link-chip',
+      )
+      expect(chip).toHaveClass('block-link-deleted')
+      expect(chip).toHaveTextContent('[[01K00000...]]')
+    })
   })
 
   it('passes axe a11y audit', async () => {
