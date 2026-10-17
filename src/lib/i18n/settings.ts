@@ -260,6 +260,51 @@ export const settings: Record<string, string> = {
   'agentAccess.revertSession.success_other': 'Session reverted ({{count}} actions)',
   'agentAccess.revertSession.failed': 'Could not revert session',
   'agentAccess.revertSession.nonReversible': 'One or more actions in this session cannot be undone',
+  'agentAccess.agents.title': 'Agents',
+  'agentAccess.agents.description':
+    'Each agent has its own token, access and spaces. Give each client its own agent.',
+  'agentAccess.agents.pendingEnforcement':
+    'Agent configs take effect once Agaric enforces agent tokens, in an upcoming update.',
+  'agentAccess.agents.loadFailed': 'Failed to load agents',
+  'agentAccess.agents.add': 'Add agent',
+  'agentAccess.agents.empty': 'No agents yet',
+  'agentAccess.agents.emptyDescription':
+    "Add one agent per client, then replace that client's agaric-ro and agaric-rw entries with the agent's config.",
+  'agentAccess.agents.modeReadOnly': 'Read only',
+  'agentAccess.agents.modeReadWrite': 'Read and write',
+  'agentAccess.agents.allSpaces': 'All spaces',
+  'agentAccess.agents.noSpacesLeft': 'No spaces left',
+  'agentAccess.agents.lastUsed': 'Last used {{when}}',
+  'agentAccess.agents.neverUsed': 'Never used',
+  'agentAccess.agents.copyDesktopButton': 'Copy Claude Desktop config',
+  'agentAccess.agents.copyDesktopAria': 'Copy Claude Desktop config for {{name}}',
+  'agentAccess.agents.copyCodeButton': 'Copy Claude Code command',
+  'agentAccess.agents.copyCodeAria': 'Copy Claude Code command for {{name}}',
+  'agentAccess.agents.codeCommandCopied': 'Claude Code command copied',
+  'agentAccess.agents.revoke': 'Revoke',
+  'agentAccess.agents.revokeAria': 'Revoke {{name}}',
+  'agentAccess.agents.revokeTitle': 'Revoke {{name}}?',
+  'agentAccess.agents.revokeDescription':
+    "{{name}}'s token stops working. To give a client access again, add a new agent and copy its config.",
+  'agentAccess.agents.revokeSuccess': 'Agent revoked',
+  'agentAccess.agents.revokeFailed': "Couldn't revoke the agent",
+  'agentAccess.agents.createTitle': 'Add agent',
+  'agentAccess.agents.createDescription':
+    'Choose what the agent may do and which spaces it may use. You can copy its config once it is added.',
+  'agentAccess.agents.nameLabel': 'Name',
+  'agentAccess.agents.namePlaceholder': 'Claude Desktop',
+  'agentAccess.agents.modeLabel': 'Access',
+  'agentAccess.agents.readOnlyNote':
+    'A read-only agent changes nothing, except that opening a journal day within a year of today may create that page.',
+  'agentAccess.agents.allSpacesCheckbox': 'All spaces, including new ones',
+  'agentAccess.agents.spacesLegend': 'Spaces',
+  'agentAccess.agents.cancel': 'Cancel',
+  'agentAccess.agents.create': 'Add',
+  'agentAccess.agents.created': 'Agent added',
+  'agentAccess.agents.createFailed': "Couldn't add the agent",
+  'agentAccess.agents.duplicateName': 'An agent named {{name}} already exists',
+  'agentAccess.agents.invalidName':
+    'Use a name of up to 128 characters, without control characters',
   // #1108 — grouped tab navigation. Shallow sections lower the altitude of
   // experimental/niche tabs so they no longer sit as flat peers of the core
   // ones (and remove the horizontal-overflow wheel workaround).

@@ -170,6 +170,7 @@ function makeActivityEntry(overrides: Partial<ActivityEntryFixture> = {}): Activ
  */
 function setupInvoke(status: McpStatus = makeStatus(), rwStatus: McpRwStatus = makeRwStatus()) {
   mockedInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'list_mcp_agents') return []
     if (cmd === 'get_mcp_status') return status
     if (cmd === 'mcp_set_enabled') return true
     if (cmd === 'mcp_disconnect_all') return null
@@ -249,6 +250,7 @@ describe('AgentAccessTab — rendering', () => {
       ['H2', 'Agent configuration'],
       ['H2', 'Connections'],
       ['H2', 'Read-write connections'],
+      ['H2', 'Agents'],
       ['H2', 'Recent activity'],
     ])
   })
@@ -311,6 +313,7 @@ describe('AgentAccessTab — content gated on the toggle', () => {
     const user = userEvent.setup()
     let roEnabled = false
     mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus({ enabled: roEnabled })
       if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'mcp_set_enabled') {
@@ -373,6 +376,7 @@ describe('AgentAccessTab — RO toggle', () => {
     const user = userEvent.setup()
     // First call: status load. Second call: mcp_set_enabled rejects.
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus({ enabled: false })
       if (cmd === 'get_mcp_rw_status') return makeRwStatus({ enabled: false })
       if (cmd === 'mcp_set_enabled') throw new Error('backend exploded')
@@ -441,6 +445,7 @@ describe('AgentAccessTab — RW toggle', () => {
   it('rolls back the RW toggle on IPC rejection and logs the error', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus({ enabled: false })
       if (cmd === 'get_mcp_rw_status') return makeRwStatus({ enabled: false })
       if (cmd === 'mcp_rw_set_enabled') throw new Error('rw backend exploded')
@@ -825,6 +830,7 @@ describe('AgentAccessTab — undo agent op', () => {
       resolveRevert = r
     })
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
       if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') return revertPromise
@@ -869,6 +875,7 @@ describe('AgentAccessTab — undo agent op', () => {
   it('logs and toasts a generic failure when revert_ops rejects with a non-NonReversible error', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
       if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') {
@@ -908,6 +915,7 @@ describe('AgentAccessTab — undo agent op', () => {
   it('fires the non-reversible toast when revert_ops rejects with kind=non_reversible', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
       if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') {
@@ -1389,6 +1397,7 @@ describe('AgentAccessTab — revert session', () => {
   it('fires the session-specific nonReversible toast when revert_ops rejects with kind=non_reversible', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
       if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') {
@@ -1647,6 +1656,7 @@ describe('AgentAccessTab — revertedOpKeys tracking', () => {
   it('keeps the per-entry Undo button clickable after a failed revert (user can retry)', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
       if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') {
@@ -1806,6 +1816,7 @@ describe('AgentAccessTab — touch discoverability', () => {
       resolveRevert = r
     })
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
       if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'revert_ops') return revertPromise
@@ -1890,6 +1901,7 @@ describe('AgentAccessTab — kill switch', () => {
   it('logs and toasts when mcp_disconnect_all rejects', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus({ enabled: true, active_connections: 1 })
       if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       if (cmd === 'mcp_disconnect_all') throw new Error('backend exploded')
@@ -1964,6 +1976,7 @@ describe('AgentAccessTab — RW kill switch', () => {
   it('logs and toasts when mcp_rw_disconnect_all rejects', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus()
       if (cmd === 'get_mcp_rw_status') return makeRwStatus({ enabled: true, active_connections: 1 })
       if (cmd === 'mcp_rw_disconnect_all') throw new Error('rw backend exploded')
@@ -1999,6 +2012,7 @@ describe('AgentAccessTab — RW kill switch', () => {
 describe('AgentAccessTab — status load error', () => {
   it('renders a degraded fallback UI when get_mcp_status rejects', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') throw new Error('backend down')
       if (cmd === 'get_mcp_rw_status') return makeRwStatus()
       return undefined
@@ -2031,6 +2045,7 @@ describe('AgentAccessTab — status load error', () => {
 
   it('renders gracefully when only get_mcp_rw_status rejects', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_mcp_agents') return []
       if (cmd === 'get_mcp_status') return makeStatus({ enabled: true })
       if (cmd === 'get_mcp_rw_status') throw new Error('rw backend down')
       return undefined

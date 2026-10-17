@@ -293,14 +293,21 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                       <Badge tone="outline" className="font-mono text-xs shrink-0">
                         {entry.toolName}
                       </Badge>
-                      <span
-                        className={cn(
-                          'flex-1 break-words',
-                          entry.result.kind === 'err' && 'text-destructive',
+                      <div className="min-w-0 flex-1">
+                        <span
+                          className={cn(
+                            'block break-words',
+                            entry.result.kind === 'err' && 'text-destructive',
+                          )}
+                        >
+                          {entry.summary}
+                        </span>
+                        {entry.actorKind === 'agent' && entry.agentName !== undefined && (
+                          <span className="block text-xs text-muted-foreground break-words">
+                            {entry.agentName}
+                          </span>
                         )}
-                      >
-                        {entry.summary}
-                      </span>
+                      </div>
                       <time
                         className="text-xs text-muted-foreground shrink-0 tabular-nums"
                         dateTime={entry.timestamp}
