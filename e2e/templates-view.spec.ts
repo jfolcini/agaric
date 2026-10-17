@@ -9,7 +9,7 @@ import { activePopover, expect, navigateToView, openPage, test, waitForBoot } fr
  * the view re-reads both properties from the backend when it opens, so the
  * mock can show either one going missing.
  *
- * Seed data (tauri-mock): "Getting Started" opens with GS_1 (below);
+ * Seed data (tauri-mock): "Getting Started" opens with `BLOCK_GS_1` (below);
  * "Meeting Notes Template" is a page template whose first block is
  * "## Attendees".
  */

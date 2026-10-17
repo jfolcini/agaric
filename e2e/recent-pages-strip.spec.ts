@@ -4,10 +4,10 @@ import { expect, openPage, test, waitForBoot } from './helpers'
 
 /**
  * The recents strip above the editor lists visited pages newest first, minus
- * the page on screen. A click reopens a page; a middle click or a Ctrl click
- * opens it in a background tab, leaving the current page on screen. All of it
- * is frontend state (the recent-pages and tabs stores), so the mock-backed
- * build can show any of it failing.
+ * the page on screen. A click reopens a page and moves it to the front; a
+ * middle click or a Ctrl click opens it in a background tab, leaving the
+ * current page on screen. All of it is frontend state (the recent-pages and
+ * tabs stores), so the mock-backed build can show any of it failing.
  */
 
 function recentChips(page: Page): Locator {
@@ -37,16 +37,20 @@ test('lists visited pages newest first; click reopens, middle and Ctrl click ope
   await recentChip(page, 'Quick Notes').click()
   await expect(pageTitle(page)).toHaveText('Quick Notes')
   await expect(recentChips(page)).toHaveText(['Meetings', 'Projects', 'Getting Started'])
+  // The page on screen is hidden, so its move to the front shows only once it is left.
+  await recentChip(page, 'Meetings').click()
+  await expect(pageTitle(page)).toHaveText('Meetings')
+  await expect(recentChips(page)).toHaveText(['Quick Notes', 'Projects', 'Getting Started'])
 
   await recentChip(page, 'Getting Started').click({ button: 'middle' })
   await expect(tabs(page)).toHaveCount(2)
   await expect(tabs(page).nth(1)).toHaveText(/Getting Started/)
   await expect(tabs(page).nth(1)).toHaveAttribute('aria-selected', 'false')
-  await expect(pageTitle(page)).toHaveText('Quick Notes')
+  await expect(pageTitle(page)).toHaveText('Meetings')
 
   await recentChip(page, 'Projects').click({ modifiers: ['ControlOrMeta'] })
   await expect(tabs(page)).toHaveCount(3)
   await expect(tabs(page).nth(2)).toHaveText(/Projects/)
   await expect(tabs(page).nth(2)).toHaveAttribute('aria-selected', 'false')
-  await expect(pageTitle(page)).toHaveText('Quick Notes')
+  await expect(pageTitle(page)).toHaveText('Meetings')
 })
