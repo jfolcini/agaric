@@ -1015,11 +1015,9 @@ export async function focusBlock(page: Page, index = 0) {
  *   - The test needs to focus a specific block by its ULID rather than by
  *     visual position.
  *
- * Callers that need to switch focus from one already-focused block to
- * another should send a `Escape` keystroke first to drain the previous
- * editor's blur path before clicking the new target — clicking a
- * block-static directly while another block holds the roving editor
- * triggers a blur+focus race that intermittently leaves no editor mounted.
+ * To move from an editor in another mounted tree (another journal day), send
+ * `Escape` first: the press blurs that editor, its block collapses, and the
+ * rows below move under the pointer before the release, so the click can miss.
  */
 export async function focusBlockById(page: Page, blockId: string) {
   await clickIntoStaticBlock(

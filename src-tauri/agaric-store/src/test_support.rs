@@ -31,6 +31,32 @@ pub async fn test_pool() -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 
+/// [`test_pool`] for a test that builds many pools, such as a proptest with
+/// one per case: migrating is most of what a pool costs, so this process
+/// migrates once and every call starts from a copy of that. [`init_pool`]
+/// still runs on the copy and applies anything missing.
+pub async fn test_pool_from_template() -> (SqlitePool, TempDir) {
+    static MIGRATED: tokio::sync::OnceCell<Vec<u8>> = tokio::sync::OnceCell::const_new();
+    let template = MIGRATED
+        .get_or_init(|| async {
+            let (pool, dir) = test_pool().await;
+            // Not a copy of `test.db`: migrated pages may still sit in its WAL.
+            let snapshot = dir.path().join("snapshot.db");
+            sqlx::query("VACUUM INTO ?")
+                .bind(snapshot.to_str().expect("temp path is UTF-8"))
+                .execute(&pool)
+                .await
+                .unwrap();
+            pool.close().await;
+            std::fs::read(&snapshot).unwrap()
+        })
+        .await;
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    std::fs::write(&db_path, template).unwrap();
+    (init_pool(&db_path).await.unwrap(), dir)
+}
+
 /// [`test_pool`] at a caller-chosen path — the same recovery-free stand-in
 /// for the app's `init_pool`, with its signature, so the materializer tests
 /// that moved down with #4502 keep their `init_pool(&db_path)` call shape.
@@ -95,4 +121,26 @@ pub async fn ensure_test_space(pool: &SqlitePool) {
         .execute(pool)
         .await
         .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A row written through one caller's pool, before the next caller's pool
+    /// exists, is absent from it: no two callers share a database.
+    #[tokio::test]
+    async fn test_pool_from_template_gives_each_caller_its_own_database() {
+        const BLOCK: &str = "01HZ0000000000000000000001";
+        let (first, _first_dir) = test_pool_from_template().await;
+        insert_block(&first, BLOCK, "page", "first", None, None).await;
+
+        let (second, _second_dir) = test_pool_from_template().await;
+        let seen: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(BLOCK)
+            .fetch_one(&second)
+            .await
+            .unwrap();
+        assert_eq!(seen, 0);
+    }
 }

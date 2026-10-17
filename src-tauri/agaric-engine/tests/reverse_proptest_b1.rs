@@ -30,12 +30,10 @@
 //!
 //! 64 cases (vs the proptest default of 256). Each case seeds a fresh
 //! TempDir SQLite pool and appends a chain of up to 24 ops, then calls
-//! `compute_reverse` once per reversible op — i.e. up to ~24 DB-backed
-//! reverse computations per case. At 256 cases this pushed the single
-//! test toward the 30 s nextest slow-timeout on a cold target; 64 cases
-//! runs comfortably (a few seconds) while still exploring thousands of
-//! distinct chains across a CI run. Raise [`B1_CASES`] if a deeper
-//! search is wanted locally.
+//! `compute_reverse` once per reversible op. Migrating a pool costs more
+//! than the rest of a case, so the cases copy one migrated template
+//! (`test_pool_from_template`). Raise [`B1_CASES`] if a deeper search is
+//! wanted locally.
 
 use agaric_core::error::AppError;
 use agaric_engine::proptest_db_harness::{
@@ -44,7 +42,7 @@ use agaric_engine::proptest_db_harness::{
 };
 use agaric_engine::reverse::*;
 use agaric_store::op::{OpPayload, OpType};
-use agaric_store::test_support::test_pool;
+use agaric_store::test_support::{test_pool, test_pool_from_template};
 use proptest::prelude::*;
 use sqlx::SqlitePool;
 use tokio::runtime::Runtime;
@@ -374,7 +372,7 @@ proptest! {
     fn compute_reverse_obeys_inverse_law(sketches in op_chain_strategy(CHAIN_LEN)) {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let (pool, _dir) = test_pool().await;
+            let (pool, _dir) = test_pool_from_template().await;
             let chain = seed_chain(&pool, &sketches).await;
             for (rec, payload) in chain.iter() {
                 assert_inverse_law(&pool, &chain, rec, payload).await?;
@@ -389,7 +387,7 @@ proptest! {
     fn compute_reverse_is_deterministic(sketches in op_chain_strategy(CHAIN_LEN)) {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let (pool, _dir) = test_pool().await;
+            let (pool, _dir) = test_pool_from_template().await;
             let chain = seed_chain(&pool, &sketches).await;
             for (rec, _payload) in chain.iter() {
                 let first = compute_reverse(&pool, HARNESS_DEVICE, rec.seq).await;

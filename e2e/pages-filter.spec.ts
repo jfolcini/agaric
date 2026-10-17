@@ -256,8 +256,12 @@ test.describe('Pages compound-filter chip-row', () => {
         offsetPrefix,
       )
 
-    // Scrolling persists a (debounced) offset for this space.
-    await scrollGridToBottom(page)
+    // Scrolling persists a (debounced) offset for this space. Mid-list, not at
+    // the bottom: there the shorter filtered list clamps scrollTop, and that
+    // scroll rightly saves an offset for the new set, refilling the key.
+    await page.getByRole('grid').evaluate((el) => {
+      el.scrollTop = 400
+    })
     await expect.poll(savedKey).not.toBeNull()
 
     // Adding a filter invalidates the saved position against the new result set.

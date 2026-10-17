@@ -15,7 +15,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render as rtlRender, act, fireEvent, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ReactElement, ReactNode } from 'react'
+import type { MouseEventHandler, ReactElement, ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -88,14 +88,24 @@ vi.mock('@/components/editor/StaticBlock', () => ({
     blockId,
     content,
     onFocus,
+    onMouseDown,
   }: {
     blockId: string
     content: string
     onFocus: (id: string) => void
+    onMouseDown?: MouseEventHandler<HTMLDivElement>
   }) => (
-    <button type="button" data-testid={`static-block-${blockId}`} onClick={() => onFocus(blockId)}>
-      {content}
-    </button>
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- mirrors StaticBlock's passive container
+    <div onMouseDown={onMouseDown}>
+      <button
+        type="button"
+        data-testid={`static-block-${blockId}`}
+        onClick={() => onFocus(blockId)}
+      >
+        {content}
+      </button>
+      <span data-testid={`static-text-${blockId}`} />
+    </div>
   ),
 }))
 
@@ -394,6 +404,48 @@ describe('EditableBlock', () => {
 
       expect(mockSplitBlock).toHaveBeenCalledWith('PREV_BLOCK', 'line1\nline2')
       expect(mockEdit).not.toHaveBeenCalled()
+    })
+
+    it('a press on its text keeps the editor on another block focused until the click', () => {
+      const roving = makeRovingEditor({ activeBlockId: 'PREV_BLOCK' })
+      render(
+        <EditableBlock
+          blockId="B2"
+          content="New"
+          isFocused={false}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      expect(fireEvent.mouseDown(screen.getByTestId('static-text-B2'))).toBe(false)
+    })
+
+    it('a press leaves focus alone when no other block holds the editor', () => {
+      const roving = makeRovingEditor({ activeBlockId: null })
+      render(
+        <EditableBlock
+          blockId="B2"
+          content="New"
+          isFocused={false}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      expect(fireEvent.mouseDown(screen.getByTestId('static-text-B2'))).toBe(true)
+    })
+
+    it('a press on a control inside the block still moves focus to it', () => {
+      const roving = makeRovingEditor({ activeBlockId: 'PREV_BLOCK' })
+      render(
+        <EditableBlock
+          blockId="B2"
+          content="New"
+          isFocused={false}
+          rovingEditor={roving as never}
+        />,
+      )
+
+      expect(fireEvent.mouseDown(screen.getByTestId('static-block-B2'))).toBe(true)
     })
 
     it('does not unmount when there is no previous active block', async () => {

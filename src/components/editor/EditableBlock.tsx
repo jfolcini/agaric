@@ -410,6 +410,9 @@ function EditableBlockInner({
           rootParentId,
           pageStoreApiRef.current,
         )
+        // keepEditorUntilClick left the editor focused, and mount() refocuses
+        // only an unfocused editor, so moving it here would drop focus to body.
+        ;(document.activeElement as HTMLElement | null)?.blur()
       }
       // Mount into the new block
       logger.debug('editor', 'focus', { blockId: id })
@@ -417,6 +420,26 @@ function EditableBlockInner({
       rovingEditorRef.current.mount(id, content)
     },
     [content, setFocused, rootParentId],
+  )
+
+  // A press on this block's text while the editor sits on another block of this
+  // tree must not blur it: the blur collapses that block (its toolbar goes), the
+  // rows below move up under the pointer, the release lands on another element,
+  // and the click that would move the editor here never fires. Kept focused, the
+  // click runs handleFocus, which saves the other block first. A press on a chip
+  // or button inside the block still moves focus, so its blur saves as before.
+  const keepEditorUntilClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const active = rovingEditorRef.current.activeBlockId
+      if (active === null || active === blockId) return
+      if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return
+      const control = (e.target as Element).closest(
+        'a, button, input, select, textarea, [tabindex]',
+      )
+      if (control !== null && e.currentTarget.contains(control)) return
+      e.preventDefault()
+    },
+    [blockId],
   )
 
   const { handleBlur } = useEditorBlur({
@@ -492,6 +515,7 @@ function EditableBlockInner({
         resolveTagStatus={resolveTagStatus}
         isSelected={isSelected}
         onSelect={onSelect}
+        onMouseDown={keepEditorUntilClick}
       />
     )
   }

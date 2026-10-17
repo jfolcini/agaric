@@ -49,6 +49,7 @@ export interface StaticBlockProps {
   isSelected?: boolean | undefined
   /** Ctrl+Click / Shift+Click selection callback. */
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
+  onMouseDown?: React.MouseEventHandler<HTMLDivElement> | undefined
 }
 
 function StaticBlockInner({
@@ -62,6 +63,7 @@ function StaticBlockInner({
   resolveTagStatus,
   isSelected,
   onSelect,
+  onMouseDown,
 }: StaticBlockProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -171,6 +173,7 @@ function StaticBlockInner({
         )}
         data-testid="block-static"
         data-block-id={blockId}
+        onMouseDown={onMouseDown}
         onClick={handleOuterClick}
       >
         <ListMarker style={listStyle} ordinal={listOrdinal} />
