@@ -209,8 +209,8 @@ pub async fn list_block_history(
 /// `add_attachment` carries `block_id` exactly as a local one does
 /// (`ingest_remote_op_in_tx` fills the column from the payload), so the
 /// filter only hid the delete of a peer-added attachment. The three undo
-/// queries keep it: `delete_attachment` is non-reversible, so what this
-/// sheet lists never decides what Ctrl+Z offers.
+/// queries drop it too since #5608, which lets that delete reverse from the
+/// peer's add.
 ///
 /// `list_block_history` drops the inner gate too (#4336), because that
 /// query names the block it is asking about, so its paired-add probe

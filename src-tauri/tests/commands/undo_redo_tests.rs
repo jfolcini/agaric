@@ -1893,8 +1893,6 @@ async fn undo_page_op_depth_1_reverses_second_most_recent() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_page_op_finds_delete_attachment_op() {
-    use sqlx::Row;
-
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -1984,24 +1982,12 @@ async fn undo_page_op_finds_delete_attachment_op() {
     .await
     .unwrap();
 
-    sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
-        .bind(del_ts)
+    // A delete hard-deletes the row (C7, #345).
+    sqlx::query("DELETE FROM attachments WHERE id = ?")
         .bind(att_id)
         .execute(&pool)
         .await
         .unwrap();
-
-    // Verify attachment is soft-deleted
-    let row = sqlx::query("SELECT deleted_at FROM attachments WHERE id = ?")
-        .bind(att_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    let deleted_at: Option<String> = row.get("deleted_at");
-    assert!(
-        deleted_at.is_some(),
-        "attachment should be soft-deleted before undo"
-    );
 
     // 4. Undo most recent op — should find the delete_attachment op
     let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
@@ -2017,17 +2003,13 @@ async fn undo_page_op_finds_delete_attachment_op() {
         "attachment undo should not be flagged as redo"
     );
 
-    // 5. Verify the attachment is restored (deleted_at cleared)
-    let row = sqlx::query("SELECT deleted_at FROM attachments WHERE id = ?")
+    // 5. Verify the attachment row is back.
+    let restored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
         .bind(att_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let deleted_at: Option<String> = row.get("deleted_at");
-    assert!(
-        deleted_at.is_none(),
-        "attachment should be restored after undo (deleted_at should be NULL)"
-    );
+    assert_eq!(restored, 1, "attachment should be restored after undo");
 }
 
 // Regression for the #571 review fix: undo of a rename must restore the
@@ -9833,4 +9815,64 @@ async fn page_undo_stops_at_the_pages_birth_5259() {
         "History keeps the page's own create beside the typed block's"
     );
     mat.shutdown();
+}
+
+/// #5608: a peer's attachment reaches this device through the engine, so its
+/// only `add_attachment` here is the peer's replicated op. Undoing this
+/// device's delete of it rebuilds the row from that op, under the name and at
+/// the path the row held when it was deleted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_deleting_a_peers_attachment_restores_it_5608() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+    let att_id = "01HZ5608PEERATTACHMENTXXXX";
+    // Before the local delete, which `now` stamps.
+    let add_ts: i64 = 1_700_000_000_000;
+    append_replicated_op(
+        &pool,
+        "PEER-5608",
+        1,
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
+            attachment_id: BlockId::from_trusted(att_id),
+            block_id: BlockId::from_trusted(&child_ids[0]),
+            mime_type: "image/png".into(),
+            filename: "peer.png".into(),
+            size_bytes: 4,
+            fs_path: "attachments/PEERPATH".into(),
+        }),
+        add_ts,
+    )
+    .await;
+    // The row the import projected, at this device's path and renamed here.
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, 'image/png', 'kept.png', 4, 'attachments/LOCALPATH', ?)",
+    )
+    .bind(att_id)
+    .bind(&child_ids[0])
+    .bind(add_ts)
+    .execute(&pool)
+    .await
+    .unwrap();
+    delete_attachment_inner(&pool, DEV, &mat, dir.path(), BlockId::from_trusted(att_id))
+        .await
+        .unwrap();
+
+    let result = undo_page_op_inner(&pool, DEV, &mat, page_id, 0)
+        .await
+        .expect("the delete reverses from the peer's add");
+
+    assert_eq!(result.new_op_type, "add_attachment");
+    let row: (String, String) =
+        sqlx::query_as("SELECT filename, fs_path FROM attachments WHERE id = ?")
+            .bind(att_id)
+            .fetch_one(&pool)
+            .await
+            .expect("the row is back");
+    assert_eq!(
+        row,
+        ("kept.png".to_owned(), "attachments/LOCALPATH".to_owned()),
+        "as it stood when deleted"
+    );
 }

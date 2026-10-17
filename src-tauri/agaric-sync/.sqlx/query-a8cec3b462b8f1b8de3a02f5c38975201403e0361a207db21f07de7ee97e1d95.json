@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT payload FROM op_log\n         WHERE op_type = 'add_attachment'\n         AND attachment_id = ?1\n         AND (created_at < ?2\n              OR (created_at = ?2 AND (seq < ?3 OR (seq = ?3 AND device_id < ?4))))\n         ORDER BY created_at DESC, seq DESC, device_id DESC\n         LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "payload",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "payload"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a8cec3b462b8f1b8de3a02f5c38975201403e0361a207db21f07de7ee97e1d95"
+}

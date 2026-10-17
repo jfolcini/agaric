@@ -16,6 +16,7 @@
 mod prelude;
 
 mod agenda_cmd_tests;
+mod attachment_engine_tests;
 mod bibliography_cmd_tests;
 mod block_cmd_tests;
 mod compaction_cmd_tests;

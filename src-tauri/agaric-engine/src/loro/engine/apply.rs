@@ -925,8 +925,8 @@ impl LoroEngine {
         Ok(())
     }
     /// Mirrors `PurgeBlock` — hard-removes the block's tree node
-    /// (`tree.delete`), plus its `block_properties`, `block_tags` and
-    /// `page_aliases` entries (matches the SQL purge cascade in
+    /// (`tree.delete`), plus its `block_properties`, `block_tags`,
+    /// `page_aliases` and `block_attachments` entries (matches the SQL purge cascade in
     /// `materializer/handlers.rs::apply_purge_block_tx`).
     ///
     /// Note: the purge command emits a *single* `PurgeBlock` op for the
@@ -979,7 +979,15 @@ impl LoroEngine {
         let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
         let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
         let aliases_root: LoroMap = self.doc.get_map(PAGE_ALIASES_ROOT);
+        let attachments_root: LoroMap = self.doc.get_map(BLOCK_ATTACHMENTS_ROOT);
         for id in &purge_ids {
+            if attachments_root.get(id).is_some() {
+                attachments_root.delete(id).map_err(|e| {
+                    AppError::validation(format!(
+                        "loro: purge block {id}: block_attachments.delete: {e}"
+                    ))
+                })?;
+            }
             if aliases_root.get(id).is_some() {
                 aliases_root.delete(id).map_err(|e| {
                     AppError::validation(format!(

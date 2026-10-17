@@ -737,11 +737,13 @@ struct SeedNode {
     properties: Vec<(String, crate::loro::engine::PropertyValue)>,
     tags: Vec<String>,
     aliases: Vec<String>,
+    /// `(attachment_id, fields)` of the block's `attachments` rows.
+    attachments: Vec<(String, crate::loro::engine::AttachmentFields)>,
 }
 
 /// [`hydrate_page_subtree_into_engine`]'s per-row read: the node's
-/// `block_properties` and `block_tags` rows plus the four reserved keys from
-/// its `blocks` columns, and a page's `page_aliases` rows.
+/// `block_properties`, `block_tags` and `attachments` rows plus the four
+/// reserved keys from its `blocks` columns, and a page's `page_aliases` rows.
 async fn read_seed_node(
     conn: &mut sqlx::SqliteConnection,
     row: SubtreeRow,
@@ -811,6 +813,7 @@ async fn read_seed_node(
     } else {
         Vec::new()
     };
+    let attachments = read_seed_attachments(conn, &id).await?;
     Ok(SeedNode {
         id,
         block_type,
@@ -820,7 +823,37 @@ async fn read_seed_node(
         properties,
         tags,
         aliases,
+        attachments,
     })
+}
+
+/// `(attachment_id, fields)` of `block_id`'s `attachments` rows (#5608).
+async fn read_seed_attachments(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Vec<(String, crate::loro::engine::AttachmentFields)>, AppError> {
+    let rows = sqlx::query!(
+        r#"SELECT id AS "id!: String", filename, mime_type, fs_path, size_bytes, created_at,
+                  content_hash
+           FROM attachments WHERE block_id = ? ORDER BY id"#,
+        block_id
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let fields = crate::loro::engine::AttachmentFields {
+                filename: r.filename,
+                mime_type: r.mime_type,
+                fs_path: r.fs_path,
+                size_bytes: r.size_bytes,
+                created_at: r.created_at,
+                content_hash: r.content_hash,
+            };
+            (r.id, fields)
+        })
+        .collect())
 }
 
 /// How [`hydrate_page_subtree_into_engine`] places a seeded block among the
@@ -883,6 +916,7 @@ fn seed_nodes_into_engine(
         for alias in &n.aliases {
             engine.apply_add_page_alias(&n.id, alias)?;
         }
+        seed_attachments(engine, n)?;
         if !touched_parents.contains(&n.parent_id) {
             touched_parents.push(n.parent_id.clone());
         }
@@ -893,6 +927,32 @@ fn seed_nodes_into_engine(
     }
     drop(guard);
     Ok(orders)
+}
+
+/// Seed `n`'s attachment rows into its block's map (#5608). A map the block
+/// held when it last left this doc comes back with its old entries; any of
+/// them live with no row now was deleted while the block was away, so it is
+/// tombstoned rather than brought back.
+fn seed_attachments(
+    engine: &mut crate::loro::engine::LoroEngine,
+    n: &SeedNode,
+) -> Result<(), AppError> {
+    for (attachment_id, fields) in &n.attachments {
+        engine.apply_add_attachment(&n.id, attachment_id, fields)?;
+    }
+    let stale: Vec<String> = engine
+        .read_attachments(&n.id)?
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|e| e.deleted_at.is_none())
+        .map(|e| e.attachment_id)
+        .filter(|id| !n.attachments.iter().any(|(held, _)| held == id))
+        .collect();
+    let now = agaric_store::db::now_ms();
+    for attachment_id in stale {
+        engine.apply_delete_attachment(&n.id, &attachment_id, now)?;
+    }
+    Ok(())
 }
 
 /// #2326: Hydrate a page's whole block subtree into its (now-resolved) space
@@ -926,7 +986,8 @@ fn seed_nodes_into_engine(
 /// doc lacks (#4801). `space` stays out: membership is the doc itself. A
 /// page's `page_aliases` rows go in too (#5387): a reassignment prunes the old
 /// doc's alias map with the page, and a doc without one tells a peer the page
-/// has none.
+/// has none. Each block's `attachments` rows go in as well (#5608), so a peer
+/// of the new doc gets the rows and requests the bytes.
 ///
 /// ## Idempotency
 /// Each node is skipped (`read_block(...).is_some()`) if already present, so the
@@ -2009,6 +2070,120 @@ pub async fn apply_remove_page_alias_via_loro(
         );
     }
     crate::loro::projection::project_remove_page_alias_to_sql(conn, page_id, &p.alias).await
+}
+
+/// Apply AddAttachment through the block's engine, then project it to SQL
+/// (#5608). A block whose space does not resolve is projected without the
+/// engine, as the other ops' SQL-only fallback is.
+pub async fn apply_add_attachment_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    p: &AddAttachmentPayload,
+    created_at: i64,
+    replay: bool,
+) -> Result<(), AppError> {
+    if let Some(space_id) = resolve_doc_space(&mut *conn, &p.block_id, replay).await? {
+        let fields = crate::loro::engine::AttachmentFields::from_payload(p, created_at);
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
+        guard.engine_mut().apply_add_attachment(
+            p.block_id.as_str(),
+            p.attachment_id.as_str(),
+            &fields,
+        )?;
+    } else {
+        super::sql_only_fallback::record(
+            "add_attachment",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
+    }
+    apply_add_attachment_tx(conn, p.clone(), created_at).await
+}
+
+/// Apply DeleteAttachment through the engine holding the attachment, then
+/// project it to SQL (#5608). The engine entry becomes a tombstone stamped
+/// `deleted_at`.
+pub async fn apply_delete_attachment_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    p: &DeleteAttachmentPayload,
+    deleted_at: i64,
+    replay: bool,
+) -> Result<(), AppError> {
+    let attachment_id = p.attachment_id.as_str();
+    if let Some((space_id, block_id)) =
+        resolve_attachment_doc(conn, state, attachment_id, replay).await?
+    {
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
+        guard
+            .engine_mut()
+            .apply_delete_attachment(&block_id, attachment_id, deleted_at)?;
+    } else {
+        super::sql_only_fallback::record(
+            "delete_attachment",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
+    }
+    apply_delete_attachment_tx(conn, p.clone()).await
+}
+
+/// Apply RenameAttachment through the engine holding the attachment, then
+/// project it to SQL (#5608).
+pub async fn apply_rename_attachment_via_loro(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    p: &RenameAttachmentPayload,
+    replay: bool,
+) -> Result<(), AppError> {
+    let attachment_id = p.attachment_id.as_str();
+    if let Some((space_id, block_id)) =
+        resolve_attachment_doc(conn, state, attachment_id, replay).await?
+    {
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
+        guard
+            .engine_mut()
+            .apply_rename_attachment(&block_id, attachment_id, &p.new_filename)?;
+    } else {
+        super::sql_only_fallback::record(
+            "rename_attachment",
+            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+        );
+    }
+    apply_rename_attachment_tx(conn, p.clone()).await
+}
+
+/// The doc and block a delete or rename of `attachment_id` routes to; neither
+/// payload names its block. The `attachments` row names it on every live
+/// path. On boot replay a later op in the tail may have deleted the row
+/// already, and a tombstoned block resolves to no space off replay; the
+/// engine that holds the entry answers then.
+async fn resolve_attachment_doc(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    attachment_id: &str,
+    replay: bool,
+) -> Result<Option<(agaric_store::space::SpaceId, String)>, AppError> {
+    let block_id = sqlx::query_scalar!(
+        r#"SELECT block_id AS "block_id!: String" FROM attachments WHERE id = ?"#,
+        attachment_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(block_id) = block_id {
+        let block = agaric_core::ulid::BlockId::from_trusted(&block_id);
+        if let Some(space_id) = resolve_doc_space(&mut *conn, &block, replay).await? {
+            return Ok(Some((space_id, block_id)));
+        }
+    }
+    Ok(state.registry.find_attachment_block(attachment_id))
 }
 
 /// Apply DeleteProperty through the engine then project to SQL.

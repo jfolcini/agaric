@@ -45,8 +45,9 @@ pub(crate) mod divergence;
 /// #668 — NOT RFC-3339). It is the real `deleted_at` timestamp the
 /// `DeleteBlock` arm writes onto the engine seed (Phase 2) so
 /// the value is lossless across sync — see
-/// [`LoroEngine::apply_delete_block`](crate::loro::engine::LoroEngine::apply_delete_block). All other arms ignore it (their
-/// ops carry no timestamp the engine stores).
+/// [`LoroEngine::apply_delete_block`](crate::loro::engine::LoroEngine::apply_delete_block), and the
+/// `created_at` / `deleted_at` the attachment arms store. Other arms ignore it
+/// (their ops carry no timestamp the engine stores).
 ///
 /// Returns nothing.  Errors `tracing::warn!` and never propagate —
 /// the engine dispatch must not break the materializer hot path.
@@ -101,10 +102,8 @@ pub fn engine_apply(
     }
 }
 
-/// Dispatch on op_type. Covers every op type the engine models (the block,
-/// property, tag and page-alias ops).
-/// AddAttachment / DeleteAttachment log+skip — those are file-blob ops and
-/// the file lives outside the CRDT state, so nothing reaches the engine.
+/// Dispatch on op_type. Covers every op type: the block, property, tag,
+/// page-alias and attachment-metadata ops.
 fn dispatch_engine_op(
     engine: &mut crate::loro::engine::LoroEngine,
     op_id: &str,
@@ -164,19 +163,40 @@ fn dispatch_engine_op(
         agaric_store::op::OpPayload::RemovePageAlias(p) => {
             engine.apply_remove_page_alias(p.page_id.as_str(), &p.alias)
         }
-        // AddAttachment / DeleteAttachment are out of scope:
-        // attachments are file-blobs that live outside CRDT state —
-        // the file body sits on disk under `app_data_dir`, not inside
-        // the per-space LoroDoc.
-        other => {
-            tracing::debug!(
-                op_id,
-                op_type = %other.op_type_str(),
-                "engine_apply: op type out of scope (attachment file-blob); skipping",
-            );
-            Ok(())
+        agaric_store::op::OpPayload::AddAttachment(p) => engine.apply_add_attachment(
+            p.block_id.as_str(),
+            p.attachment_id.as_str(),
+            &crate::loro::engine::AttachmentFields::from_payload(p, op_created_ms(op_created_at)?),
+        ),
+        // Neither payload names its block: the entry says where it lives. An
+        // id this doc holds no entry for is not this doc's.
+        agaric_store::op::OpPayload::DeleteAttachment(p) => {
+            let id = p.attachment_id.as_str();
+            match engine.attachment_block(id) {
+                Some(block) => {
+                    engine.apply_delete_attachment(&block, id, op_created_ms(op_created_at)?)
+                }
+                None => Ok(()),
+            }
+        }
+        agaric_store::op::OpPayload::RenameAttachment(p) => {
+            let id = p.attachment_id.as_str();
+            match engine.attachment_block(id) {
+                Some(block) => engine.apply_rename_attachment(&block, id, &p.new_filename),
+                None => Ok(()),
+            }
         }
     }
+}
+
+/// `op_created_at` (an epoch-ms decimal string, #668) as the integer an
+/// attachment entry stores.
+fn op_created_ms(op_created_at: &str) -> Result<i64, agaric_core::error::AppError> {
+    op_created_at.parse().map_err(|e| {
+        agaric_core::error::AppError::validation(format!(
+            "engine_apply: op created_at {op_created_at:?} is not epoch ms: {e}"
+        ))
+    })
 }
 
 /// Store the value with its NATIVE type so the

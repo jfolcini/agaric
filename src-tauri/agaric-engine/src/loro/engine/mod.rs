@@ -17,14 +17,16 @@
 //!
 //! - `apply_add_tag` / `apply_remove_tag`
 //! - `apply_add_page_alias` / `apply_remove_page_alias`
+//! - `apply_add_attachment` / `apply_delete_attachment` /
+//!   `apply_rename_attachment`
 //! - `apply_restore_block` (undelete)
 //! - `apply_purge_block` (hard-delete)
 //! - `apply_delete_property`
 //!
-//! `AddAttachment` / `DeleteAttachment` are intentionally out of
-//! scope: those ops carry file blobs that live outside the CRDT
-//! state. `block_links` is also not here — it is a derived cache
-//! re-parsed from `blocks.content`, no engine support needed.
+//! Attachments carry only their metadata here; the bytes stay on disk
+//! and travel in the sync file phase. `block_links` is not here — it is
+//! a derived cache re-parsed from `blocks.content`, no engine support
+//! needed.
 //!
 //! Read-back surface: `read_block`, `read_property`, `read_parent`,
 //! `read_position`, `read_deleted`, `read_tags`,
@@ -247,6 +249,11 @@ const BLOCK_TAGS_ROOT: &str = "block_tags";
 /// written. See [`aliases`](self::aliases).
 const PAGE_ALIASES_ROOT: &str = "page_aliases";
 
+/// Top-level LoroMap key holding attachment metadata (#5608): per block a
+/// mergeable `LoroMap` keyed by attachment id, whose entries are mergeable
+/// field maps. See [`attachments`](self::attachments).
+const BLOCK_ATTACHMENTS_ROOT: &str = "block_attachments";
+
 // Field keys inside a tree node's meta map.  Kept as &'static str constants
 // so the round-trip read path uses the same key strings the writer used.
 const FIELD_BLOCK_ID: &str = "block_id";
@@ -273,8 +280,9 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 
 /// Engine on-disk format version. `1` = the legacy flat-map block model
 /// (no longer supported); `2` = the [`LoroTree`] block hierarchy (
-/// Phase 3); `3` = adds the `page_aliases` root (#5387), so the sync handshake
-/// turns away a peer that would carry alias ops it cannot project. The v1→v2
+/// Phase 3); `3` = adds the `page_aliases` root (#5387); `4` = adds the
+/// `block_attachments` root (#5608). Each bump makes the sync handshake turn
+/// away a peer that would carry state it cannot project. The v1→v2
 /// forward-migration was retired in #332 once every persisted snapshot had
 /// been re-saved as v2; [`LoroEngine::import`] now
 /// rejects a stray v1 snapshot loudly via
@@ -287,7 +295,7 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// well-formed-but-newer-than-supported Loro blob is rejected up front rather
 /// than trusted and left to fail downstream on the projection path. See
 /// `LoroEngine::stamp_format_version` / `LoroEngine::reject_unknown_format_version`.
-pub const ENGINE_FORMAT_VERSION: u32 = 3;
+pub const ENGINE_FORMAT_VERSION: u32 = 4;
 /// Key under [`ENGINE_META_ROOT`] recording the engine format version a doc was
 /// written under (#1584). Stored as a Loro `I64`. Absent ⇒ a pre-#1584 export
 /// (legacy-unstamped); such docs are *accepted* — see
@@ -571,6 +579,10 @@ mod apply;
 /// Page aliases (#5387): apply, read, and the key an alias is filed under.
 mod aliases;
 pub use aliases::page_alias_key;
+
+/// Attachment metadata (#5608): apply and read.
+mod attachments;
+pub use attachments::{AttachmentFields, EngineAttachment};
 
 /// Read-back getters and queries (`read_*`, `list_children_walk`,
 /// `count_alive_blocks`).

@@ -413,6 +413,24 @@ impl LoroEngineRegistry {
     /// not, in arbitrary order. Boot replay asks this when SQL no longer
     /// names the block's space (#5647). The caller must hold no engine guard.
     pub fn spaces_containing(&self, block_id: &str) -> Vec<SpaceId> {
+        self.probe_engines(|engine| engine.contains_block(block_id).then_some(()))
+            .into_iter()
+            .map(|(space_id, ())| space_id)
+            .collect()
+    }
+
+    /// The registered space and block whose engine holds an entry for
+    /// `attachment_id` (#5608), for an attachment op whose row is gone. The
+    /// caller must hold no engine guard.
+    pub fn find_attachment_block(&self, attachment_id: &str) -> Option<(SpaceId, String)> {
+        self.probe_engines(|engine| engine.attachment_block(attachment_id))
+            .into_iter()
+            .next()
+    }
+
+    /// `probe`'s answer from every registered engine that has one, locking
+    /// each engine in turn with the map lock already released.
+    fn probe_engines<T>(&self, probe: impl Fn(&LoroEngine) -> Option<T>) -> Vec<(SpaceId, T)> {
         let engines: Vec<(SpaceId, SharedEngine)> = self
             .inner
             .lock()
@@ -421,8 +439,7 @@ impl LoroEngineRegistry {
             .collect();
         engines
             .into_iter()
-            .filter(|(_, engine)| engine.lock().contains_block(block_id))
-            .map(|(space_id, _)| space_id)
+            .filter_map(|(space_id, engine)| probe(&engine.lock()).map(|t| (space_id, t)))
             .collect()
     }
 

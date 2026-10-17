@@ -114,8 +114,8 @@ impl LoroEngine {
         }
         // v in [0, supported): an older-but-stamped format. v == 1 is the
         // retired flat-map model, which `reject_legacy_v1_snapshot` already
-        // catches by structure. A v2 doc is a v3 doc with no page aliases, so
-        // it is accepted as is.
+        // catches by structure. A v2 or v3 doc is a v4 doc without the page
+        // alias or attachment roots, so it is accepted as is.
         Ok(())
     }
     /// Import bytes previously produced by `export_snapshot` (or any
@@ -978,7 +978,7 @@ fn classify_import_diff(cd: &loro::event::ContainerDiff, cap: &mut DiffCapture) 
                 cap.fallback = true;
             }
         }
-        BLOCK_PROPERTIES_ROOT | PAGE_ALIASES_ROOT => {
+        BLOCK_PROPERTIES_ROOT | PAGE_ALIASES_ROOT | BLOCK_ATTACHMENTS_ROOT => {
             collect_block_id_keys(cd, &mut cap.block_id_keys, &mut cap.fallback);
         }
         BLOCK_TAGS_ROOT => {
@@ -1005,9 +1005,10 @@ fn note_sibling_shift(cap: &mut DiffCapture, parent: TreeParentId, index: usize)
         .or_insert(index);
 }
 
-/// Extract the block_id(s) a `block_properties` / `block_tags` diff touches:
-/// the `Index::Key(block_id)` of a per-block sub-map diff, or the updated keys
-/// of a root-level map diff (first-time insert / purge removal).
+/// Extract the block_id(s) a per-block root's diff touches: the
+/// `Index::Key(block_id)` of a per-block sub-map diff at any depth (an
+/// attachment entry sits one level below its block's map), or the updated
+/// keys of a root-level map diff (first-time insert / purge removal).
 fn collect_block_id_keys(
     cd: &loro::event::ContainerDiff,
     out: &mut std::collections::HashSet<String>,

@@ -1039,6 +1039,62 @@ pub async fn project_remove_page_alias_to_sql(
     Ok(())
 }
 
+/// Re-project a block's attachments from the engine after an import or in
+/// disaster recovery (#5608). A live entry inserts its row, or renames the row
+/// it has; a tombstone deletes the row. A row the engine holds no entry for is
+/// left alone: the boot backfill has not reached it yet.
+///
+/// The entry's name and path come from a peer, so they get the sanitising
+/// (#3029) and coercion (#3370) the op apply path runs. `fs_path` and
+/// `content_hash` belong to this device once its row exists, since dedup
+/// repoints `fs_path`, so an existing row keeps them.
+pub async fn reproject_attachments_from_engine(
+    conn: &mut SqliteConnection,
+    block_id: &str,
+    entries: &[crate::loro::engine::EngineAttachment],
+) -> Result<(), AppError> {
+    for entry in entries {
+        let id = entry.attachment_id.as_str();
+        if entry.deleted_at.is_some() {
+            sqlx::query!("DELETE FROM attachments WHERE id = ?", id)
+                .execute(&mut *conn)
+                .await?;
+            continue;
+        }
+        let f = &entry.fields;
+        let filename = agaric_core::attachment_filename::sanitize_attachment_filename(&f.filename);
+        let fs_path =
+            agaric_core::attachment_path::AttachmentFsPath::coerce_from_peer(&f.fs_path, id);
+        let fs_path = fs_path.as_str();
+        if filename != f.filename || fs_path != f.fs_path {
+            tracing::warn!(
+                attachment_id = id,
+                filename = %f.filename,
+                fs_path = %f.fs_path,
+                "sanitized an unsafe attachment filename or fs_path on reprojection (#5608)"
+            );
+        }
+        sqlx::query!(
+            "INSERT INTO attachments \
+                 (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET filename = excluded.filename \
+             WHERE filename <> excluded.filename",
+            id,
+            block_id,
+            f.mime_type,
+            filename,
+            f.size_bytes,
+            fs_path,
+            f.created_at,
+            f.content_hash,
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
 /// Re-project a page's aliases from the engine after an import or in disaster
 /// recovery (#5387): the page's rows become `aliases`. Rows already equal to
 /// `aliases` are left alone.

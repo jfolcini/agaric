@@ -103,7 +103,7 @@ Precedents: `src-tauri/src/repair.rs` (driving `src-tauri/agaric-engine/src/repa
 - Each gets its own `CommandTx` with the engine rollback armed. A failure logs and rolls back that repair only; a boot-fatal transaction such as `bootstrap_spaces` is never shared.
 - Ops are appended under `Actor::Housekeeping`. Positional undo admits only `user` / `agent:%` origins, so the user's first Ctrl+Z after boot cannot revert a repair.
 - Every change is an op applied through `apply_op_projected`. A raw `UPDATE blocks` never reaches the engine: peers never see it, a reprojection from the engine loses it, and boot replay does not heal it, since replay starts at the apply cursor, which the snapshot pass also advances.
-- An engine-only repair (`engine_missing_blocks`: SQL holds a block its doc lost) is the exception: the block's ops are already in the log and no new op can recreate its node, so it seeds the doc from the rows with no op, and writes its marker only after the engines are saved.
+- An engine-only repair is the exception: its rows' ops are already in the log, so it writes no op and brings the engine up to the rows. `engine_missing_blocks` (SQL holds a block its doc lost) seeds the doc because no new op can recreate the node, and writes its marker only after the engines are saved; `hydrate_attachments_into_engine` (rows from before attachments were in the engine) writes no op because a second one per row would restamp it and double what History and undo read.
 - A second run is a no-op, with a test: the selection is empty the second time, a marker gates a closed population (`repair_misfiled_tag_spaces`), or a cursor walks an open one (`sweep_leaked_empty_blocks`).
 
 ## Markdown export and import
