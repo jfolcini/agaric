@@ -13,7 +13,7 @@
 
 import { mergeAttributes, Node } from '@tiptap/core'
 
-import { getTagColor } from '@/lib/tag-colors'
+import { getTagColor, tagColorStyle } from '@/lib/tag-colors'
 
 export interface TagRefOptions {
   /** Resolve a tag ULID to its display name. Falls back to truncated ULID. */
@@ -86,7 +86,7 @@ export const TagRef = Node.create<TagRefOptions>({
       function render(tagId: string) {
         currentId = tagId
         const name = options.resolveName(tagId)
-        const color = getTagColor(tagId)
+        const style = tagColorStyle(getTagColor(tagId))
 
         dom.textContent = name
         dom.className = 'tag-ref-chip'
@@ -95,13 +95,9 @@ export const TagRef = Node.create<TagRefOptions>({
         dom.setAttribute('data-testid', 'tag-ref-chip')
         dom.setAttribute('contenteditable', 'false')
 
-        if (color) {
-          dom.style.backgroundColor = `${color}20`
-          dom.style.color = color
-        } else {
-          dom.style.backgroundColor = ''
-          dom.style.color = ''
-        }
+        dom.style.setProperty('--tag-color', style?.['--tag-color'] ?? '')
+        dom.style.color = style?.color ?? ''
+        dom.style.backgroundColor = style?.backgroundColor ?? ''
       }
 
       render(currentId)

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -22,6 +22,7 @@ import {
   renderRichContent,
 } from '@/components/RichContentRenderer'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { setTagColor } from '@/lib/tag-colors'
 
 const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 const TAG_ID = '01CRZ3NDEKTSV4RRFFQ69G5FAV'
@@ -296,6 +297,32 @@ describe('RichContentRenderer', () => {
     const chip = screen.getByTestId('tag-ref-chip')
     expect(chip.classList.contains('tag-ref-deleted')).toBe(true)
     expect(chip).toHaveAttribute('aria-label', '#Dead (deleted)')
+  })
+
+  describe('tag_ref colour', () => {
+    beforeEach(() => {
+      localStorage.removeItem('tag-colors')
+    })
+
+    it('paints the chip in its tag colour and repaints when the colour changes', () => {
+      setTagColor(TAG_ID, 'accent-rose')
+      render(renderRichContent(`#[${TAG_ID}]`, { resolveTagName: () => '#MyTag' }))
+      const chip = screen.getByTestId('tag-ref-chip')
+      expect(chip.style.getPropertyValue('--tag-color')).toBe(
+        'var(--accent-rose, var(--accent-current))',
+      )
+
+      act(() => setTagColor(TAG_ID, 'accent-blue'))
+      expect(chip.style.getPropertyValue('--tag-color')).toBe(
+        'var(--accent-blue, var(--accent-current))',
+      )
+    })
+
+    it('leaves the chip of an uncoloured tag unstyled', () => {
+      setTagColor('01XRZ3NDEKTSV4RRFFQ69G5FAV', 'accent-rose')
+      render(renderRichContent(`#[${TAG_ID}]`, { resolveTagName: () => '#MyTag' }))
+      expect(screen.getByTestId('tag-ref-chip')).not.toHaveAttribute('style')
+    })
   })
 
   // -- Inline tokens: block_link ----------------------------------------------
