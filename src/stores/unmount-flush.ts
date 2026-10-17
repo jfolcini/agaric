@@ -136,7 +136,7 @@ export function classifyUnmountFlush(loaded: string, changed: string): UnmountFl
  * paste and Source read as tags; none when it holds a code block, which they
  * never read for names.
  */
-function tagsWrittenAsText(content: string): TagToken[] {
+export function tagsWrittenAsText(content: string): TagToken[] {
   const tags = scanNameTokens(content).filter((token): token is TagToken => token.kind === 'tag')
   if (tags.length === 0) return tags
   return parse(content).content?.some((node) => node.type === 'codeBlock') ? [] : tags

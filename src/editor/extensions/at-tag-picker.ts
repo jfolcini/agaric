@@ -13,7 +13,8 @@
  *   name with the rule import, paste and the buffer use (`scanNameTokens`), so
  *   `#42`, `a#b`, `(#tag`, `x.com/#frag`, `&#39;`, `\#tag` and a `#` in a URL,
  *   a link destination, inline code or a `[[link]]` stay text. A `#name` left
- *   as text when the block is saved becomes the tag then (`unmount-flush.ts`).
+ *   as text when the block is saved becomes the tag then (`unmount-flush.ts`;
+ *   in page mode, `page-tags.ts`).
  * - TipTap runs input rules when an IME composition ends, so a composed
  *   `#name ` becomes a tag too.
  *

@@ -14,6 +14,9 @@
  * refused reads the page again and saves once more: a block deleted elsewhere
  * while edited here is then kept as a new block, with a notice.
  *
+ * A `#name` typed into a block becomes the tag once the caret leaves that
+ * block or page mode closes (`page-tags.ts`).
+ *
  * Chips go where block mode's go (`useBlockNavigateToLink`, a block of this
  * page by moving the cursor to it), and each save's ops reach `UndoStore`
  * as block mode records them. `PageEditor` reaches this module only through a
@@ -44,6 +47,7 @@ import {
   savePage,
   type TreeRow,
 } from '@/editor/page-mode/page-save'
+import { commitPageTags } from '@/editor/page-mode/page-tags'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import { blockIdOf } from '@/editor/token-ids'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -51,7 +55,7 @@ import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
+import { commands, type OpRef } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { newBlockId } from '@/lib/block-id'
 import { t } from '@/lib/i18n'
@@ -289,6 +293,9 @@ function PageModeDocument({
       const { $head } = editor.state.selection
       return $head.depth < 1 ? null : blockIdOf($head.node(1))
     }
+    // The blocks the caret changed whose `#name`s are not committed as tags yet, and its block.
+    const typedIn = new Set<string>()
+    let caretIn = cursorBlock()
 
     /** Bring the page as the store holds it into the document, unless it holds what page mode cannot show. */
     const bringIn = async (
@@ -314,7 +321,21 @@ function PageModeDocument({
       }
     }
 
-    const runSave = async (): Promise<void> => {
+    /** Commit the typed tags of the blocks typed in and left, or of all of them when page mode closes. */
+    const commitTags = async (closing: boolean): Promise<OpRef[]> => {
+      const refs: OpRef[] = []
+      // A copy: a block typed in again while a commit awaits is for the next save, not this loop.
+      const pending = [...typedIn]
+      for (const id of pending) {
+        // Never the caret's block: its name may still be being typed.
+        if (!closing && cursorBlock() === id) continue
+        typedIn.delete(id)
+        refs.push(...(await commitPageTags(id, save, api)))
+      }
+      return refs
+    }
+
+    const runSave = async (closing: boolean): Promise<void> => {
       const start = performance.now()
       let result = await savePage(editor.state.doc, save, api)
       if (result.error !== undefined && !editor.isDestroyed) {
@@ -330,6 +351,12 @@ function PageModeDocument({
       }
       performance.clearMeasures(SAVE_MEASURE)
       performance.measure(SAVE_MEASURE, { start })
+      const tagRefs = await commitTags(closing)
+      if (tagRefs.length > 0) {
+        result.refs.push(...tagRefs)
+        // The tags' `#[ULID]` text comes back as a change from elsewhere does.
+        if (!editor.isDestroyed) await bringIn(await read())
+      }
       const coalesce = result.structural ? undefined : `edit:${cursorBlock() ?? pageId}`
       if (result.refs.length > 0) notifyUndoNewAction(pageId, result.refs, coalesce)
       if (result.error !== undefined) {
@@ -343,23 +370,30 @@ function PageModeDocument({
       })
       return chain
     }
-    const flush = (): Promise<void> => {
+    const flush = (closing = false): Promise<void> => {
       clearTimeout(timer)
-      return enqueue(runSave)
+      return enqueue(() => runSave(closing))
     }
-    flushRef.current = flush
+    // Its callers close page mode: the mode switch, source mode, a blocker, a link away.
+    flushRef.current = () => flush(true)
 
     const onTransaction = ({ transaction }: { transaction: Transaction }): void => {
-      if (!transaction.docChanged || transaction.getMeta(REMOTE_PATCH) === true) return
-      clearTimeout(timer)
-      timer = setTimeout(() => void flush(), CONTENT_COMMIT_DEBOUNCE_MS)
+      const was = caretIn
+      caretIn = cursorBlock()
+      if (transaction.docChanged && transaction.getMeta(REMOTE_PATCH) !== true) {
+        if (caretIn !== null) typedIn.add(caretIn)
+        clearTimeout(timer)
+        timer = setTimeout(() => void flush(), CONTENT_COMMIT_DEBOUNCE_MS)
+      }
+      // Block mode commits a typed `#name` as the block is left: here, as the caret leaves it.
+      if (was !== caretIn && was !== null && typedIn.has(was)) void flush()
     }
     let unregisterDraft = (): void => {}
     // As block mode's focused block: an export flushes this first (`flushActiveDraft`).
     const onFocus = (): void => {
       setActiveEditor(editor)
       unregisterDraft()
-      unregisterDraft = registerActiveDraftFlush(pageId, flush)
+      unregisterDraft = registerActiveDraftFlush(pageId, () => flush())
     }
     const onBlur = (): void => void flush()
     // As block mode's draft autosave: the window hidden or closing saves now.
@@ -400,7 +434,7 @@ function PageModeDocument({
       if (getActiveEditor() === editor) setActiveEditor(null)
       // Leaving the page: the save outlives the editor, and the page's next
       // page-mode session waits for it before it reads the page.
-      const leaving = flush()
+      const leaving = flush(true)
       savesInFlight.set(pageId, leaving)
       void leaving.then(() => {
         if (savesInFlight.get(pageId) === leaving) savesInFlight.delete(pageId)
