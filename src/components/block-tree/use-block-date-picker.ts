@@ -8,6 +8,7 @@ import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
 import type { OpRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import { invalidateCalendarPageDates } from '@/lib/calendar-page-dates-cache'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { requireActiveScope } from '@/lib/space-scope'
@@ -184,6 +185,8 @@ async function handleDateMode(ctx: DatePickContext): Promise<void> {
       // `recordCreatedRow` pair as `onCreatePage` / `onCreateTag` instead of
       // appending to `pagesListRef` by hand. See `registerCreatedPage`.
       ctx.registerCreatedPage({ id: newPageId, title: ctx.dateStr })
+      // A journal open on this month holds a page map that otherwise never hears of the new day.
+      invalidateCalendarPageDates()
     }
 
     if (ctx.rovingEditor.editor && datePageId) {

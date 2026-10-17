@@ -43,5 +43,6 @@ test('a page created in Stream shows in Day mode and in the date picker', async 
   const dots = picker
     .locator(`[role="gridcell"][data-day="${YESTERDAY}"]`)
     .getByTestId('calendar-dots')
+  // The content dot has no semantic hook; `bg-primary` is its `DOT_MODIFIERS` colour.
   await expect(dots.locator('span.bg-primary')).toHaveCount(1)
 })

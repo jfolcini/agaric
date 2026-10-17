@@ -10,6 +10,7 @@ import { makeBlock, makeBlockRow, makePageHeading } from '@/__tests__/fixtures'
 import { stubInvoke, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { useBlockDatePicker } from '@/components/block-tree/use-block-date-picker'
 import { announce } from '@/lib/announcer'
+import { getCalendarPageDatesEpoch } from '@/lib/calendar-page-dates-cache'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
@@ -428,6 +429,18 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
       id: 'NEW_PAGE',
       title: '2025-06-01',
     })
+  })
+
+  it('invalidates the journal page dates after creating a date page', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+    const epochBefore = getCalendarPageDatesEpoch()
+
+    await act(async () => {
+      await result.current.handleDatePick(new Date(2025, 5, 1))
+    })
+
+    expect(getCalendarPageDatesEpoch()).toBe(epochBefore + 1)
   })
 
   // The other arm: a create that did not happen must not be reported.
