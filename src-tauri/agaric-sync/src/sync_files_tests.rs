@@ -1335,6 +1335,7 @@ async fn offer_file_5608(
     let (client, server) = (&mut pair.client, &mut pair.server);
     let att = attachment_id.to_owned();
     let payload = bytes.to_vec();
+    let (receiver_done, receiver_done_rx) = tokio::sync::oneshot::channel::<()>();
     let sender = async move {
         let request = recv_sync_message(&mut server.recv).await.unwrap();
         assert!(
@@ -1360,12 +1361,14 @@ async fn offer_file_5608(
         )
         .await
         .unwrap();
-        let reply = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            recv_sync_message(&mut server.recv),
-        )
-        .await;
-        let acked = matches!(reply, Ok(Ok(SyncMessage::FileReceived { .. })));
+        // The receiver ACKs or ends the file phase without one. Its end, not a
+        // clock, closes this wait, so a slow disk cannot turn an ACK into none.
+        let acked = tokio::select! {
+            reply = recv_sync_message(&mut server.recv) => {
+                matches!(reply, Ok(SyncMessage::FileReceived { .. }))
+            }
+            _ = receiver_done_rx => false,
+        };
         if acked {
             send_sync_message(&mut server.send, &SyncMessage::FileTransferComplete)
                 .await
@@ -1374,17 +1377,20 @@ async fn offer_file_5608(
         acked
     };
     let cancel = AtomicBool::new(false);
-    let (acked, result) = tokio::join!(
-        sender,
-        request_and_receive_files(
+    let receiver = async {
+        let result = request_and_receive_files(
             &mut client.send,
             &mut client.recv,
             pool,
             app_data_dir,
             &cancel,
             None,
-        ),
-    );
+        )
+        .await;
+        let _ = receiver_done.send(());
+        result
+    };
+    let (acked, result) = tokio::join!(sender, receiver);
     (result, acked)
 }
 
@@ -1475,81 +1481,6 @@ async fn an_offer_of_the_added_bytes_is_accepted_5608() {
         std::fs::read(dir.path().join("attachments/h.bin")).unwrap(),
         added
     );
-}
-
-/// #5728 — what the receive path's hash costs on a 50 MB attachment: the
-/// production writer (`write_attachment_streaming` + `commit`, hashing as it
-/// writes, fsyncing before and after the rename) against the same writes,
-/// fsyncs and rename with no hash, and the hash alone, interleaved. The hash
-/// check against the row compares two strings and adds no hashing. A timing,
-/// not an assertion: run by hand with `cargo nextest run -p agaric-sync
-/// --run-ignored only --no-capture -E 'test(receive_hash_timing_5728)'` and
-/// read the `receive_hash_timing_5728:` lines.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "timing only (#5728); run by hand"]
-async fn receive_hash_timing_5728() {
-    use std::time::{Duration, Instant};
-    const SIZE: usize = 50 * 1024 * 1024;
-    const ROUNDS: usize = 9;
-    let chunk = crate::transport::bulk::BULK_COPY_BYTES;
-    let dir = TempDir::new().unwrap();
-    std::fs::create_dir_all(dir.path().join("attachments")).unwrap();
-    let bytes: Vec<u8> = (0..SIZE)
-        .map(|i| u8::try_from(i * 31 % 251).unwrap())
-        .collect();
-    let hash = blake3::hash(&bytes).to_hex().to_string();
-    let mut times: [Vec<Duration>; 3] = Default::default();
-    for round in 0..ROUNDS {
-        let started = Instant::now();
-        let mut writer = write_attachment_streaming(dir.path(), &format!("attachments/h{round}"))
-            .await
-            .unwrap();
-        for part in bytes.chunks(chunk) {
-            writer.write_all(part).await.unwrap();
-        }
-        writer.commit(&hash).await.unwrap();
-        times[0].push(started.elapsed());
-
-        let started = Instant::now();
-        let temp = dir.path().join(format!("attachments/p{round}.tmp"));
-        let mut file = tokio::fs::File::create(&temp).await.unwrap();
-        for part in bytes.chunks(chunk) {
-            file.write_all(part).await.unwrap();
-        }
-        file.flush().await.unwrap();
-        file.sync_all().await.unwrap();
-        drop(file);
-        tokio::fs::rename(&temp, dir.path().join(format!("attachments/p{round}")))
-            .await
-            .unwrap();
-        tokio::fs::File::open(dir.path().join("attachments"))
-            .await
-            .unwrap()
-            .sync_all()
-            .await
-            .unwrap();
-        times[1].push(started.elapsed());
-
-        let started = Instant::now();
-        let mut hasher = blake3::Hasher::new();
-        for part in bytes.chunks(chunk) {
-            hasher.update(part);
-        }
-        assert_eq!(hasher.finalize().to_hex().as_str(), hash);
-        times[2].push(started.elapsed());
-    }
-    for (name, mut run) in ["writer_with_hash", "write_without_hash", "hash_alone"]
-        .into_iter()
-        .zip(times)
-    {
-        run.sort();
-        eprintln!(
-            "receive_hash_timing_5728: {name} min={:?} median={:?} max={:?}",
-            run[0],
-            run[ROUNDS / 2],
-            run[ROUNDS - 1]
-        );
-    }
 }
 
 /// #638: an offer for an attachment with no local DB row must NOT stall

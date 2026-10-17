@@ -158,9 +158,11 @@ The rejection emits `SyncEvent::Error` with `code: "engine_format_mismatch"`
 (#5728); `message` keeps the English "peer engine format vN incompatible with
 local vM" for logs. The frontend words the code itself: "This device and
 Pixel 8 run different versions of Agaric. Update both to the latest version,
-then sync again.", naming the peer when it has a name for it. The responder ends the session without a frame, so the
-initiator learns only that the stream ended; each device shows the message
-when the other one dials it. A build from before #5728 shows the raw text.
+then sync again.", naming the peer when it has a name for it. Only the
+responder emits the event: it ends the session without a frame, so the
+initiator learns only that the stream ended. Each device therefore shows the
+message when the other one dials it, and a build from before #5728 shows the
+raw text.
 
 **Removed field: `wire_compression` (#2200, deleted in #3543).** It advertised
 that the sender could decompress zstd-compressed chunked `LoroSync` payloads.
