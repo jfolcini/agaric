@@ -88,6 +88,32 @@ test.describe('display math overflow (#5638)', () => {
     expect(reach.overflow).toBeGreaterThan(0)
     expect(reach.lastReachable, 'the last glyph is on screen once scrolled to the end').toBe(true)
   })
+  test('a wide equation being edited at 390 px scrolls inside its node view (#5693)', async ({
+    page,
+  }) => {
+    await page.setViewportSize(VIEWPORTS.phone)
+    await waitForBoot(page)
+    const [id] = await seedSearchBlocks(page, [{ content: WIDE_MATH }])
+    await openPageMobile(page, 'Projects')
+    await focusBlockById(page, id ?? '')
+    const view = page.getByTestId('math-block-node-view')
+    await expect(view.locator('.katex')).toBeVisible()
+
+    const scroller = view.locator('[data-slot="scroll-area-viewport"]')
+    const box = await scroller.evaluate((el) => ({
+      overflow: el.scrollWidth - el.clientWidth,
+      right: el.getBoundingClientRect().right,
+    }))
+    expect(box.overflow, 'the equation overflows its own scroller').toBeGreaterThan(0)
+    expect(box.right, 'the scroller ends on screen').toBeLessThanOrEqual(VIEWPORTS.phone.width)
+
+    await scroller.hover()
+    await page.mouse.wheel(200, 0)
+    await expect.poll(() => scroller.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0)
+
+    await view.getByTestId('math-rendered').click()
+    await expect(page.getByTestId('math-source-input')).toBeFocused()
+  })
 })
 
 /** Smallest rendered label size, and whether a too-wide diagram has its own scroller. */

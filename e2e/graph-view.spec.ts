@@ -402,6 +402,43 @@ test.describe('Graph view', () => {
     await expect(g).toHaveAttribute('transform', fitted)
   })
 
+  // The reduced-motion reset gives every element a transition duration; on the
+  // canvas that eased the zoom and the label size for a frame.
+  test('under reduced motion a zoom step draws the canvas and its labels at the new zoom at once', async ({
+    page,
+  }) => {
+    await settleAtOnce(page)
+    await navigateToView(page, 'Graph')
+    await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
+    await fittedTransform(page)
+
+    // What the browser draws the moment the zoom writes the new transform.
+    const drawn = await page.getByTestId('graph-svg').evaluate(
+      (svg) =>
+        new Promise<number[]>((resolve) => {
+          const g = svg.querySelector(':scope > g') as SVGGElement
+          const layer = g.querySelector('g.nodes-layer') as SVGGElement
+          const label = layer.querySelector('text') as SVGTextElement
+          new MutationObserver((_, observer) => {
+            observer.disconnect()
+            const scale = g.transform.baseVal.consolidate()?.matrix.a ?? Number.NaN
+            resolve([
+              new DOMMatrixReadOnly(getComputedStyle(g).transform).a / scale,
+              Number.parseFloat(getComputedStyle(label).fontSize) /
+                Number(layer.getAttribute('font-size')),
+            ])
+          }).observe(g, { attributes: true, attributeFilter: ['transform'] })
+          const zoomIn = svg
+            .closest('[data-testid="graph-view"]')
+            ?.querySelector<HTMLButtonElement>('button[aria-label^="Zoom in"]')
+          zoomIn?.click()
+        }),
+    )
+
+    expect(drawn[0]).toBeCloseTo(1, 3)
+    expect(drawn[1]).toBeCloseTo(1, 3)
+  })
+
   test('wheel-zoom over the canvas changes the graph transform scale', async ({ page }) => {
     await settleAtOnce(page)
     await navigateToView(page, 'Graph')
