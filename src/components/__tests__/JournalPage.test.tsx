@@ -145,6 +145,8 @@ import {
 } from '@/components/layout/ViewHeaderOutlet'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
 import type { BlockRow } from '@/lib/bindings'
+import { fetchPageMap } from '@/lib/calendar-page-dates-cache'
+import { getCalendarMonthRange } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { useBlockStore } from '@/stores/blocks'
 import { useJournalStore } from '@/stores/journal'
@@ -900,6 +902,50 @@ describe('JournalPage', () => {
         { timeout: 3000 },
       )
     }, 10000)
+
+    // The backend's `list_journal_pages_in_range` never reports the new page
+    // here, so the day view and the calendar cache can only learn it from the
+    // stream's create path.
+    it('a page created in stream mode reaches the day view and the calendar cache', async () => {
+      const user = userEvent.setup()
+      const yesterday = subDays(new Date(), 1)
+      const yesterdayStr = formatDate(yesterday)
+      useJournalStore.setState({ mode: 'stream', currentDate: yesterday })
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        const bug48 = bug48EmptyResponse(cmd)
+        if (bug48 !== BUG48_NOT_HANDLED) return bug48
+        if (cmd === 'create_page_in_space') return 'STREAM_PAGE'
+        return emptyPage
+      })
+
+      renderJournal()
+
+      const daySection = await screen.findByRole('region', {
+        name: `Journal for ${formatDateDisplay(yesterday)}`,
+      })
+      await user.click(within(daySection).getByRole('button', { name: /add.*block/i }))
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('create_page_in_space', {
+          parentId: null,
+          content: yesterdayStr,
+          spaceId: 'SPACE_TEST',
+        })
+      })
+      const rangeFetches = () =>
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_journal_pages_in_range').length
+      const fetchesBefore = rangeFetches()
+
+      await user.click(screen.getByRole('tab', { name: /daily view/i }))
+
+      expect(await screen.findByTestId('block-tree')).toHaveAttribute(
+        'data-parent-id',
+        'STREAM_PAGE',
+      )
+      const range = getCalendarMonthRange(yesterday)
+      const cached = await fetchPageMap('SPACE_TEST', range.startDate, range.endDate)
+      expect(cached.get(yesterdayStr)).toBe('STREAM_PAGE')
+      expect(rangeFetches()).toBe(fetchesBefore)
+    })
   })
 
   // ── Open in editor ──────────────────────────────────────────────────

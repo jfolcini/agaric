@@ -9,8 +9,7 @@
  * 3. The page map is built from `list_journal_pages_in_range` rows.
  * 4. `reachedEnd` flips true once the window reaches MIN_JOURNAL_DATE
  *    (and `loadOlder` then clamps).
- * 5. `addPage` merges a locally-created page without refetching.
- * 6. A calendar page-dates invalidation re-fetches the window in place.
+ * 5. A calendar page-dates invalidation re-fetches the window in place.
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react'
@@ -131,16 +130,6 @@ describe('useStreamDates', () => {
       '2026-05-24',
       '2026-06-20',
     ])
-  })
-
-  it('addPage merges a created page without an extra fetch', async () => {
-    const { result } = renderHook(() => useStreamDates())
-    await waitFor(() => expect(result.current.loading).toBe(false))
-    const callsBefore = listJournalPagesInRange.mock.calls.length
-
-    act(() => result.current.addPage('2026-06-20', 'new-page'))
-    expect(result.current.pageMap.get('2026-06-20')).toBe('new-page')
-    expect(listJournalPagesInRange.mock.calls.length).toBe(callsBefore)
   })
 
   // #5258 — a synced peer or an MCP agent writes a day's entry while the stream is open.

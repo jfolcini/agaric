@@ -244,7 +244,9 @@ export function JournalPage({
         {/* #1415 — the continuous stream owns its OWN windowed date list +
             page map (it grows past `currentDate`'s month range), so it does
             not consume JournalPage's `makeDayEntry`/`handleAddBlock`. */}
-        {!loading && mode === 'stream' && <StreamView onNavigateToPage={onNavigateToPage} />}
+        {!loading && mode === 'stream' && (
+          <StreamView onNavigateToPage={onNavigateToPage} onPageCreated={addPage} />
+        )}
         {!loading && mode === 'agenda' && <AgendaView onNavigateToPage={onNavigateToPage} />}
       </div>
 

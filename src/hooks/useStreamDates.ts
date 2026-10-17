@@ -17,8 +17,8 @@
  *    revealed days and merges them in (#5446 — refetching from today made
  *    the work grow quadratically with scroll depth). The first fetch, a
  *    space switch and a calendar invalidation fetch the full window and
- *    replace the map; a page created mid-window arrives through `addPage`
- *    or that invalidation.
+ *    replace the map; a page created mid-window renders from the caller's
+ *    `createdPages`.
  *  - `MIN_JOURNAL_DATE` caps how far back the stream can load, matching the
  *    navigable horizon of the other journal surfaces.
  */
@@ -61,8 +61,6 @@ export interface UseStreamDatesResult {
   reachedEnd: boolean
   /** Reveal another `STREAM_BATCH_DAYS` of older days. */
   loadOlder: () => void
-  /** Merge a locally-created page into the map without re-fetching. */
-  addPage: (dateStr: string, pageId: string) => void
 }
 
 /**
@@ -192,14 +190,5 @@ export function useStreamDates(): UseStreamDatesResult {
     }
   }, [t, currentSpaceId, startDate, endDate, epoch, today, oldestOffset])
 
-  const addPage = useCallback((dateStr: string, pageId: string) => {
-    setPageMap((prev) => {
-      if (prev.get(dateStr) === pageId) return prev
-      const next = new Map(prev)
-      next.set(dateStr, pageId)
-      return next
-    })
-  }, [])
-
-  return { dates, pageMap, loading, loadingOlder, reachedEnd, loadOlder, addPage }
+  return { dates, pageMap, loading, loadingOlder, reachedEnd, loadOlder }
 }
