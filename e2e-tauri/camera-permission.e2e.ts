@@ -1,19 +1,18 @@
 // ---------------------------------------------------------------------------
-// The real Linux webview grants the camera (#5386).
+// The real Linux webview delivers a live camera track (#5386).
 //
-// WebKitGTK denies a `permission-request` nobody answers, so the pairing QR
-// scanner's `getUserMedia` failed with `NotAllowedError` on Linux.
-// `allow_camera_permission` (src-tauri/src/lib.rs) answers it. This runner has
-// no camera, so under `AGARIC_E2E_SANDBOX` the app turns on WebKitGTK's mock
-// capture devices; without the handler the same call rejects. The Chromium
-// twin of the scanner flow is `e2e/qr-scanner-camera.spec.ts`, against the mock.
+// This runner has no camera, so under `AGARIC_E2E_SANDBOX` the app turns on
+// WebKitGTK's mock capture devices. It does not pin `allow_capture_permission`
+// (src-tauri/src/lib.rs): under WebDriver, WebKit grants `getUserMedia` itself
+// and never asks the app, so that handler's unit test is its only check. The
+// scanner itself is `qr-scanner-camera.e2e.ts`.
 //
 // Globals (`browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
 import { waitForAppReady } from './helpers'
 
-describe('Agaric real-webview camera permission (#5386)', () => {
+describe('Agaric real-webview camera (#5386)', () => {
   it('resolves getUserMedia({ video: true }) with a live video track', async () => {
     await waitForAppReady()
 
@@ -24,7 +23,8 @@ describe('Agaric real-webview camera permission (#5386)', () => {
         for (const track of stream.getTracks()) track.stop()
         return { states }
       } catch (err) {
-        return { error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }
+        // Not `error`: WebDriver reads a returned object with that key as a failed command.
+        return { failure: err instanceof Error ? `${err.name}: ${err.message}` : String(err) }
       }
     })
 
