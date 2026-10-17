@@ -116,13 +116,9 @@ function isBareLink(state: EditorState, run: MarkRun): boolean {
   return writesBareUrl(state.doc.textBetween(run.from, run.to), String(run.mark.attrs['href']))
 }
 
-/** A run's key: a textblock holds one run of a mark type from any position. */
-function runKey(run: MarkRun): string {
-  return `${run.mark.type.name}:${run.from}`
-}
-
 /** Collects the runs with revealed syntax that the visited children are part of. */
 function runCollector(state: EditorState) {
+  // Keyed `name:from`: a textblock holds one run of a mark type from any position.
   const runs = new Map<string, MarkRun>()
   const visit = (parent: PMNode, index: number, start: number): void => {
     for (const mark of parent.child(index).marks) {
@@ -130,23 +126,28 @@ function runCollector(state: EditorState) {
       if (!isRevealed(name)) continue
       const run = runThrough(parent, index, start, mark)
       if (name === 'link' && isBareLink(state, run)) continue
-      runs.set(runKey(run), run)
+      runs.set(`${name}:${run.from}`, run)
     }
   }
-  return { visit, runs: () => [...runs.values()] }
+  const visitAt = ($pos: ResolvedPos): void => {
+    for (const { index, start } of childrenAt($pos)) visit($pos.parent, index, start)
+  }
+  return { visit, visitAt, runs: () => [...runs.values()] }
 }
 
 /** The runs with revealed syntax that `$pos` is inside of or touches. */
 export function revealedRunsAt(state: EditorState, $pos: ResolvedPos): MarkRun[] {
-  const { visit, runs } = runCollector(state)
-  for (const { index, start } of childrenAt($pos)) visit($pos.parent, index, start)
+  const { visitAt, runs } = runCollector(state)
+  visitAt($pos)
   return runs()
 }
 
 /** Every run with revealed syntax the selection is inside of or touches. */
 function runsAtSelection(state: EditorState): MarkRun[] {
-  const { visit, runs } = runCollector(state)
+  const { visit, visitAt, runs } = runCollector(state)
   const { selection, doc } = state
+  visitAt(selection.$from)
+  visitAt(selection.$to)
   // Only a range has children strictly inside it; a caret skips the walk, which
   // would cover the block's children up to the caret on every transaction.
   if (!selection.empty) {
@@ -154,15 +155,7 @@ function runsAtSelection(state: EditorState): MarkRun[] {
       if (parent) visit(parent, index, pos)
     })
   }
-  const at = new Map<string, MarkRun>()
-  for (const run of [
-    ...revealedRunsAt(state, selection.$from),
-    ...revealedRunsAt(state, selection.$to),
-    ...runs(),
-  ]) {
-    at.set(runKey(run), run)
-  }
-  return [...at.values()]
+  return runs()
 }
 
 /** The text start and level of every heading the selection is in. */

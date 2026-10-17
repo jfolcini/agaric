@@ -211,9 +211,9 @@ pub struct EngineReloadCtx<'a> {
     /// This device's stable id, threaded into the rehydrate path.
     pub device_id: &'a str,
     /// #5712: the claim the session's main loop took on the registry's
-    /// in-flight inbound syncs when it imported before the reset, which this
-    /// catch-up's sweep ends. `None` when it imported nothing, and the
-    /// catch-up claims for itself.
+    /// in-flight inbound syncs when it imported before the reset, which a
+    /// merging catch-up's sweep ends (an empty one drops it). `None` when it
+    /// imported nothing, and the catch-up claims for itself.
     pub inbound: Option<InboundSync>,
 }
 
@@ -308,7 +308,7 @@ pub async fn try_receive_snapshot_catchup(
     event_sink: &Arc<dyn SyncEventSink>,
     remote_device_id: &str,
     expected_remote_id: Option<&str>,
-    mut engine_reload: Option<EngineReloadCtx<'_>>,
+    engine_reload: Option<EngineReloadCtx<'_>>,
 ) -> Result<(), AppError> {
     // #4097: settle the peer identity before anything is emitted, and shadow
     // the parameter with it so every event, log field and bookkeeping write
@@ -355,13 +355,10 @@ pub async fn try_receive_snapshot_catchup(
                 peer_id = %remote_device_id,
                 "snapshot catch-up: peer had nothing to catch us up with"
             );
-            // #5712: it still ends the pull whose main loop imported before the
-            // reset, so it sweeps what those imports deferred.
-            if let Some(ctx) = engine_reload.as_mut()
-                && let Some(inbound) = ctx.inbound.take()
-            {
-                sweep_after_catchup(pool, ctx, materializer, remote_device_id, inbound).await?;
-            }
+            // #5712: no sweep. Nothing was merged, so the docs from the one that
+            // fell back onwards never landed, and a block the main loop deferred
+            // may be a page moved into one of them. The session's claim leaves
+            // with `engine_reload`; the next completed pull sweeps.
             // #4960: an empty catch-up is still a completed pull from this
             // peer, so `synced_at` has to advance. `record_success` clears the
             // backoff while `peers_due_for_resync` reads `synced_at` alone, so

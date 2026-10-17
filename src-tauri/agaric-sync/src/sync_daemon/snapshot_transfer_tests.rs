@@ -179,11 +179,13 @@ async fn try_receive_snapshot_catchup_accepts_empty_offer() {
     materializer.shutdown();
 }
 
-/// #5712: an empty catch-up still ends the pull whose main loop imported
-/// before the reset, so it sweeps what those imports deferred instead of
-/// leaving it for the next pull.
+/// #5712: an empty catch-up merges nothing, so the docs from the one that fell
+/// back onwards never landed, and a block the main loop's imports deferred may
+/// be a page moved into one of them. Sweeping would purge its drafts, links and
+/// tags before its new doc arrives; the catch-up leaves the block and its
+/// deferral, and its claim, for the next completed pull.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_empty_catchup_sweeps_what_its_session_deferred_5712() {
+async fn an_empty_catchup_leaves_what_its_session_deferred_5712() {
     use agaric_engine::loro::registry::LoroEngineRegistry;
 
     const DEFERRED: &str = "01HZ5712000000000000DEFER0";
@@ -238,8 +240,8 @@ async fn an_empty_catchup_sweeps_what_its_session_deferred_5712() {
     .expect("count what is left");
     assert_eq!(
         (left, init_registry.inbound_syncs_in_flight()),
-        ((0, 0), 0),
-        "the empty catch-up swept the deferral and left"
+        ((1, 1), 0),
+        "the empty catch-up kept the block and its deferral, and its claim left"
     );
     materializer.shutdown();
 }

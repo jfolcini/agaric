@@ -3292,8 +3292,8 @@ async fn a_session_starting_while_a_sweep_waits_for_the_lock_is_not_swept_5712()
 /// One of them sweeps it. A read that sees the table empty before B commits
 /// cannot also let A leave as though nobody were left to sweep: either A leaves
 /// first, so B is the last, or B left first, so the read comes after B's
-/// commit. A progress handler on A's only connection holds its first read
-/// open while B records and ends.
+/// commit. A progress handler on A's only connection holds a read it makes
+/// before it leaves open while B records and ends.
 #[tokio::test]
 async fn a_deferral_recorded_while_another_session_ends_is_swept_5712() {
     const B_DEFERS: &str = "01HZ5712000000000000BDEFER";
@@ -3332,7 +3332,9 @@ async fn a_deferral_recorded_while_another_session_ends_is_swept_5712() {
     });
     let mut a_swept = None;
     tokio::select! {
-        reading = &mut reading_rx => reading.expect("A reads"),
+        // Resolves when A reads, or, as A ends without a read, when its pool
+        // drops the handler and the sender with it: both go on to B.
+        _ = &mut reading_rx => {}
         swept = &mut a_ends => a_swept = Some(swept.expect("join").expect("A ends")),
     }
 

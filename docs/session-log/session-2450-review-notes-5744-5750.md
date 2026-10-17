@@ -13,12 +13,17 @@ review, and four flaky specs, each checked against the code first.
   reads, and under the writer lock sweeps only while nobody is in flight. The
   claim-less pre-check is kept, so a pull that deferred nothing still takes no
   lock. `a_deferral_recorded_while_another_session_ends_is_swept_5712` holds
-  the first read open with a SQLite progress handler; on the old body B's
-  deferral survives. Removing the under-lock check reddens
+  a read A makes before it leaves open with a SQLite progress handler; on the
+  old body B's deferral survives. On the new body A leaves first and never
+  reads, so the test accepts a handler dropped unused. Removing the under-lock
+  check reddens
   `a_session_starting_while_a_sweep_waits_for_the_lock_is_not_swept_5712`.
-- **Empty-offer catch-up, fixed.** It ends the pull whose main loop imported
-  before the reset, so it now sweeps through `sweep_after_catchup` when it
-  holds that claim; `an_empty_catchup_sweeps_what_its_session_deferred_5712`.
+- **Empty-offer catch-up, no change.** It merges nothing. The session got
+  there because a doc fell back (`SnapshotFallbackRequested`), so the docs from
+  that one onwards never landed, and a block the earlier docs deferred may be a
+  page moved into one of them: a sweep would take its drafts, links and tags
+  before its doc arrives. The claim leaves with the catch-up and the next
+  completed pull sweeps. `an_empty_catchup_leaves_what_its_session_deferred_5712`.
 - **`SyncComplete` exits, no change.** `on_sync_complete` runs for the
   streamer or the empty-registry initiator, and neither imported, so neither
   holds a claim. Sweeping there without a claim would purge a failed pull's
