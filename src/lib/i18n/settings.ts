@@ -13,7 +13,7 @@ export const settings: Record<string, string> = {
   'settings.autostart.toggleFailed': "Couldn't update launch-on-login setting",
   'settings.debugMode.label': 'Debug mode',
   'settings.debugMode.description':
-    'Show technical error codes in notifications. Keep this off for everyday use; turn it on to capture the code when reporting a problem.',
+    'Show technical error codes in the error messages of dialogs and panels, such as a failed pairing. Keep this off for everyday use; turn it on to capture the code when reporting a problem.',
   // #3308 — re-entry into the first-run welcome tour.
   'settings.showWelcomeTour.title': 'Show the welcome tour again',
   'settings.showWelcomeTour.description':
