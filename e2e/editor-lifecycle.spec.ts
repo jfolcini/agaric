@@ -102,6 +102,33 @@ test.describe('Editor lifecycle', () => {
     await expect(page.getByText(originalText)).toBeVisible()
   })
 
+  test('a click on a lower block while editing moves the editor there and saves', async ({
+    page,
+  }) => {
+    await openGettingStarted(page)
+    const statics = page.locator('[data-testid="block-static"]')
+    const lastId = await statics.last().getAttribute('data-block-id')
+    await statics.first().click()
+    const editor = page.getByRole('textbox', { name: 'Block editor' })
+    await expect(editor).toBeVisible()
+    await page.keyboard.press('Control+a')
+    await page.keyboard.type('edited before moving')
+    await expect(editor).toHaveText('edited before moving')
+
+    // The press must not collapse the edited block before the release, or the
+    // rows below move up under the pointer and the click is lost.
+    await statics.last().click()
+
+    await expect(
+      page.locator(`[data-testid="block-editor"][data-block-id="${lastId}"]`),
+    ).toBeVisible()
+    await expect(statics.first()).toHaveText('edited before moving')
+    // The moved editor keeps keyboard focus: typing lands in the clicked block.
+    await page.keyboard.press('Control+a')
+    await page.keyboard.type('typed after moving')
+    await expect(editor).toHaveText('typed after moving')
+  })
+
   test('deletes a block via the delete button', async ({ page }) => {
     await openGettingStarted(page)
 
