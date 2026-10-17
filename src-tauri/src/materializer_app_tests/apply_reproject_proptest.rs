@@ -614,6 +614,7 @@ impl ChainDriver {
                     &self.device_id,
                     p,
                     None,
+                    false,
                     None,
                 )
                 .await
@@ -625,12 +626,19 @@ impl ChainDriver {
                     .expect("local edit_block");
             }
             OpPayload::MoveBlock(p) => {
-                loro_apply::apply_move_block_via_loro(&mut tx, state, &self.device_id, p, None)
-                    .await
-                    .expect("local move_block");
+                loro_apply::apply_move_block_via_loro(
+                    &mut tx,
+                    state,
+                    &self.device_id,
+                    p,
+                    false,
+                    None,
+                )
+                .await
+                .expect("local move_block");
             }
             OpPayload::SetProperty(p) => {
-                loro_apply::apply_set_property_via_loro(&mut tx, state, &self.device_id, p, false)
+                loro_apply::apply_set_property_via_loro(&mut tx, state, &self.device_id, p, None)
                     .await
                     .expect("local set_property");
             }

@@ -3550,9 +3550,8 @@ async fn replay_timing_5418() {
 
 /// #5418 — apply `payload` the way a LOCAL command does: append it and apply
 /// it to SQL and the engine in one `BEGIN IMMEDIATE` transaction, leaving the
-/// apply cursor where it is, then run a delete's post-commit cohort fan-out
-/// (`dispatch_delete_descendants`) and hand the index fan-out to the
-/// background queue.
+/// apply cursor where it is, then run a delete's or a restore's post-commit
+/// cohort fan-outs and hand the index fan-out to the background queue.
 async fn apply_like_a_command(
     pool: &SqlitePool,
     mat: &Materializer,
@@ -3579,6 +3578,20 @@ async fn apply_like_a_command(
         &record,
         &effects.deleted_cohort,
         effects.delete_space_id.as_ref(),
+        mat.loro_state(),
+    )
+    .await;
+    agaric_engine::materializer::dispatch_restore_descendants(
+        pool,
+        &record,
+        &effects.restored_cohort,
+        mat.loro_state(),
+    )
+    .await;
+    agaric_engine::materializer::dispatch_restore_ancestors(
+        pool,
+        &record,
+        &effects.restored_ancestors,
         mat.loro_state(),
     )
     .await;
@@ -4184,6 +4197,394 @@ async fn replay_over_an_engine_ahead_of_the_cursor_keeps_an_outdented_block_thro
     boot.shutdown();
 }
 
+/// #5647 — the crash: `session` dies without the exit save, so its tail is in
+/// the op log and SQL only. Then boot: rehydrate the `spaces` engines the last
+/// snapshot pass persisted, and recover.
+async fn crash_and_boot(
+    pool: &SqlitePool,
+    session: Materializer,
+    device_id: &str,
+    spaces: usize,
+) -> Materializer {
+    session.shutdown();
+    drop(session);
+    let boot = Materializer::new(pool.clone());
+    let registry = &boot.loro_state().registry;
+    let rehydrated =
+        agaric_engine::loro::snapshot::rehydrate_registry(pool, registry, device_id).await;
+    assert_eq!(
+        rehydrated, spaces,
+        "the pass's snapshot is what boot starts from"
+    );
+    super::boot::reset_recovery_guard();
+    let report = recover_at_boot(pool, device_id, &boot, registry)
+        .await
+        .unwrap();
+    boot.flush_background().await.unwrap();
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+    boot
+}
+
+/// A content block `block` under `parent` at `index`, its content its id.
+fn create_under(block: &str, parent: &str, index: i64) -> OpPayload {
+    OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::test_id(block),
+        block_type: "content".into(),
+        parent_id: Some(BlockId::test_id(parent)),
+        position: None,
+        index: Some(index),
+        content: block.into(),
+    })
+}
+
+/// #5647 — a delete and a purge in the replayed tail, of a block the snapshot
+/// holds. SQL no longer has the row, so neither op can name its space from
+/// it; the purge must still reach the engine that holds the block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_tail_delete_then_purge_reaches_the_engine_5647() {
+    use agaric_store::op::{DeleteBlockPayload, PurgeBlockPayload};
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005647PG";
+    const X: &str = "T5647X";
+    const Y: &str = "T5647Y";
+    const Z: &str = "T5647Z";
+    let device_id = "dev-5647-purge";
+    let ids = [X, Y, Z, PAGE_ID];
+    let x = BlockId::test_id(X);
+    let (pool, _dir) = test_pool().await;
+    let session = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
+    // Z is the op the pass's watermark withholds, so boot replays it again.
+    // It sits before X, so the purge leaves no gap in the page's positions
+    // for the end-of-replay reproject to close.
+    for op in [
+        create_under(X, PAGE_ID, 0),
+        create_under(Y, X, 0),
+        create_under(Z, PAGE_ID, 0),
+    ] {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let saved =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    assert_eq!(saved, 1, "the pass persists the one space");
+    for op in [
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: x.clone(),
+        }),
+        OpPayload::PurgeBlock(PurgeBlockPayload { block_id: x }),
+    ] {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let session_engine = engine_blocks(&session, device_id, SPACE, &ids);
+    let session_sql = projected_rows(&pool).await;
+
+    let boot = crash_and_boot(&pool, session, device_id, 1).await;
+
+    let booted = engine_blocks(&boot, device_id, SPACE, &ids);
+    for purged in [X, Y] {
+        let block = booted.iter().find(|b| b.0 == purged).unwrap();
+        assert_eq!(block.1, None, "{purged} is purged from the engine");
+    }
+    assert_eq!(
+        booted, session_engine,
+        "the engine must match the session's"
+    );
+    assert_eq!(
+        projected_rows(&pool).await,
+        session_sql,
+        "SQL must match the session's"
+    );
+    boot.shutdown();
+}
+
+/// #5647 — a restore in the replayed tail of a block deleted before the
+/// snapshot, with its child, under a parent deleted after it. SQL already
+/// holds the restore, so no row still carries the delete's timestamp and the
+/// parent is live; the engine must still get the child and the parent back.
+/// With `delete_again`, a later tail op deletes the block once more, so SQL no
+/// longer resolves its space when the restore's fan-out runs.
+async fn crash_tail_restore(delete_again: bool) {
+    use agaric_store::op::{DeleteBlockPayload, RestoreBlockPayload};
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005647PG";
+    const P: &str = "T5647RP";
+    const X: &str = "T5647RX";
+    const Y: &str = "T5647RY";
+    const Z: &str = "T5647RZ";
+    let device_id = "dev-5647-restore";
+    let ids = [P, X, Y, Z, PAGE_ID];
+    let delete = |block: &str| {
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id(block),
+        })
+    };
+    let (pool, _dir) = test_pool().await;
+    let session = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
+    for op in [
+        create_under(P, PAGE_ID, 0),
+        create_under(X, P, 0),
+        create_under(Y, X, 0),
+    ] {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let x_deleted_at = apply_like_a_command(&pool, &session, device_id, delete(X))
+        .await
+        .created_at;
+    apply_like_a_command(&pool, &session, device_id, delete(P)).await;
+    // The op the pass's watermark withholds, so boot replays it again; were
+    // it a delete, its replay would put the restore's cohort back in SQL.
+    apply_like_a_command(&pool, &session, device_id, create_under(Z, PAGE_ID, 1)).await;
+    let saved =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    assert_eq!(saved, 1, "the pass persists the one space");
+    let restore = OpPayload::RestoreBlock(RestoreBlockPayload {
+        block_id: BlockId::test_id(X),
+        deleted_at_ref: x_deleted_at,
+    });
+    apply_like_a_command(&pool, &session, device_id, restore).await;
+    let deleted_again_at = if delete_again {
+        let at = apply_like_a_command(&pool, &session, device_id, delete(X))
+            .await
+            .created_at;
+        Some(at.to_string())
+    } else {
+        None
+    };
+    let session_engine = engine_blocks(&session, device_id, SPACE, &ids);
+    let session_sql = projected_rows(&pool).await;
+
+    let boot = crash_and_boot(&pool, session, device_id, 1).await;
+
+    let booted = engine_blocks(&boot, device_id, SPACE, &ids);
+    let deleted_at = |wanted: &str| booted.iter().find(|b| b.0 == wanted).unwrap().2.clone();
+    assert_eq!(deleted_at(P), None, "the restore brought the parent back");
+    for restored in [X, Y] {
+        assert_eq!(
+            deleted_at(restored),
+            deleted_again_at,
+            "{restored} carries the restore and nothing older"
+        );
+    }
+    assert_eq!(
+        booted, session_engine,
+        "the engine must match the session's"
+    );
+    assert_eq!(
+        projected_rows(&pool).await,
+        session_sql,
+        "SQL must match the session's"
+    );
+    boot.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_tail_restore_of_a_block_deleted_before_the_snapshot_5647() {
+    crash_tail_restore(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_tail_restore_then_delete_again_5647() {
+    crash_tail_restore(true).await;
+}
+
+/// #5647 — a page moved to another space in the replayed tail, and with
+/// `delete_after` deleted there later in the tail. SQL already names the new
+/// space when the move replays (or, deleted, resolves none), so the move must
+/// still prune the old space's doc and seed the new one, rows tombstoned
+/// since included.
+async fn crash_tail_space_move(delete_after: bool) {
+    use agaric_store::op::{DeleteBlockPayload, SPACE_PROPERTY_KEY, SetPropertyPayload};
+
+    const S1: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const S2: &str = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
+    const A: &str = "01HZ0000000000000000005647";
+    // B's id sorts before A's, so the hydrated A follows B in S2 whether its
+    // seed reads the position SQL held at the move or the one the move's
+    // reprojection left, which is what replay's hydration reads.
+    const B: &str = "01HZ0000000000000000005640";
+    const C: &str = "T5647SC";
+    let device_id = "dev-5647-space-move";
+    let ids = [A, B, C];
+    let (pool, _dir) = test_pool().await;
+    let session = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, session.loro_state(), device_id, S1, A).await;
+    seed_space_and_page(&pool, session.loro_state(), device_id, S2, B).await;
+    apply_like_a_command(&pool, &session, device_id, create_under(C, A, 0)).await;
+    let saved =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    assert_eq!(saved, 2, "the pass persists both spaces");
+    let move_to_s2 = OpPayload::SetProperty(SetPropertyPayload {
+        block_id: BlockId::test_id(A),
+        key: SPACE_PROPERTY_KEY.into(),
+        value_text: None,
+        value_num: None,
+        value_date: None,
+        value_ref: Some(BlockId::test_id(S2)),
+        value_bool: None,
+    });
+    apply_like_a_command(&pool, &session, device_id, move_to_s2).await;
+    let deleted_at = if delete_after {
+        let delete = OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::test_id(A),
+        });
+        let at = apply_like_a_command(&pool, &session, device_id, delete)
+            .await
+            .created_at;
+        Some(at.to_string())
+    } else {
+        None
+    };
+    let session_s1 = engine_blocks(&session, device_id, S1, &ids);
+    let session_s2 = engine_blocks(&session, device_id, S2, &ids);
+    let session_sql = projected_rows(&pool).await;
+
+    let boot = crash_and_boot(&pool, session, device_id, 2).await;
+
+    let booted_s1 = engine_blocks(&boot, device_id, S1, &ids);
+    let booted_s2 = engine_blocks(&boot, device_id, S2, &ids);
+    let block = |engine: &[EngineBlock], wanted: &str| {
+        engine.iter().find(|b| b.0 == wanted).unwrap().clone()
+    };
+    for moved in [A, C] {
+        assert_eq!(
+            block(&booted_s1, moved).1,
+            None,
+            "{moved} left the old space's doc"
+        );
+        let in_s2 = block(&booted_s2, moved);
+        assert!(in_s2.1.is_some(), "{moved} is in the new space's doc");
+        assert_eq!(
+            in_s2.2, deleted_at,
+            "{moved} carries the later delete, if any"
+        );
+    }
+    assert_eq!(
+        booted_s1, session_s1,
+        "the old doc must match the session's"
+    );
+    assert_eq!(
+        booted_s2, session_s2,
+        "the new doc must match the session's"
+    );
+    assert_eq!(
+        projected_rows(&pool).await,
+        session_sql,
+        "SQL must match the session's"
+    );
+    boot.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_tail_space_move_reaches_the_engine_5647() {
+    crash_tail_space_move(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_tail_space_move_then_delete_reaches_the_engine_5647() {
+    crash_tail_space_move(true).await;
+}
+
+/// #5647 — a replayed op that exhausted its retries comes back from the
+/// retry queue. A later op in the same tail deleted its block, which only
+/// replay routing still resolves a space through, so the retry must keep it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retried_replay_op_keeps_replay_routing_5647() {
+    use agaric_engine::materializer::{MaterializeTask, retry_queue};
+    use agaric_store::op::DeleteBlockPayload;
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005647PG";
+    const X: &str = "T5647QX";
+    let device_id = "dev-5647-retry";
+    let (pool, _dir) = test_pool().await;
+    let session = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
+    apply_like_a_command(&pool, &session, device_id, create_under(X, PAGE_ID, 0)).await;
+    let saved =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    assert_eq!(saved, 1, "the pass persists the one space");
+    let edit = OpPayload::EditBlock(EditBlockPayload {
+        block_id: BlockId::test_id(X),
+        to_text: "X edited".into(),
+        prev_edit: None,
+    });
+    let edit = apply_like_a_command(&pool, &session, device_id, edit).await;
+    let delete = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::test_id(X),
+    });
+    let deleted_at = apply_like_a_command(&pool, &session, device_id, delete)
+        .await
+        .created_at
+        .to_string();
+    let session_engine = engine_blocks(&session, device_id, SPACE, &[X]);
+    let session_sql = projected_rows(&pool).await;
+    session.shutdown();
+    drop(session);
+
+    let boot = Materializer::new(pool.clone());
+    let registry = &boot.loro_state().registry;
+    let rehydrated =
+        agaric_engine::loro::snapshot::rehydrate_registry(&pool, registry, device_id).await;
+    assert_eq!(
+        rehydrated, 1,
+        "the pass's snapshot is what boot starts from"
+    );
+    // The edit's replay failed past its retries and the delete's replay
+    // applied, moving the cursor past both.
+    let failed = MaterializeTask::ReplayApplyOp(
+        std::sync::Arc::new(edit.clone()),
+        Some(agaric_engine::apply::kernel::ReplayDirtyParents::new()),
+    );
+    retry_queue::record_failure(&pool, &failed, "injected #5647", boot.metrics())
+        .await
+        .unwrap();
+    set_cursor(&pool, edit.seq).await;
+    let report = replay_unmaterialized_ops(&pool, &boot).await.unwrap();
+    assert_eq!(report.ops_replayed, 1, "replay applies the delete alone");
+    sqlx::query("UPDATE materializer_retry_queue SET next_attempt_at = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let re_enqueued = retry_queue::sweep_once(&pool, &pool, &boot).await.unwrap();
+    assert_eq!(re_enqueued, 1, "the sweep re-enqueues the edit");
+    boot.flush_foreground().await.unwrap();
+    boot.flush_background().await.unwrap();
+
+    let booted = engine_blocks(&boot, device_id, SPACE, &[X]);
+    assert_eq!(
+        booted[0].1.as_ref().map(|s| s.content.as_str()),
+        Some("X edited"),
+        "the retried edit reached the engine"
+    );
+    assert_eq!(
+        booted[0].2.as_deref(),
+        Some(deleted_at.as_str()),
+        "X stays deleted"
+    );
+    assert_eq!(
+        booted, session_engine,
+        "the engine must match the session's"
+    );
+    assert_eq!(
+        projected_rows(&pool).await,
+        session_sql,
+        "SQL must match the session's"
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM materializer_retry_queue")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "the retry that applied clears its row");
+    boot.shutdown();
+}
+
 /// #5418 — one bad op inside a chunk. The chunk's transaction rolls back and
 /// the consumer re-applies its ops one at a time, so the bad op alone lands in
 /// the retry queue, every sibling applies, and the cursor passes all of them:
@@ -4262,18 +4663,18 @@ async fn bad_op_inside_a_chunk_keeps_the_per_op_outcome_5418() {
         .unwrap();
     assert_eq!(orphans, 0, "the bad op never lands");
 
-    // `ApplyOp:` rows only: the #3298 background fan-out for the bad record may
+    // Apply-op rows only: the #3298 background fan-out for the bad record may
     // persist its own per-block rows, and its timing is not this test's.
     let retry_rows: Vec<String> = sqlx::query_scalar::<_, String>(
-        "SELECT task_kind FROM materializer_retry_queue WHERE task_kind LIKE 'ApplyOp:%'",
+        "SELECT task_kind FROM materializer_retry_queue WHERE task_kind LIKE '%ApplyOp:%'",
     )
     .fetch_all(&pool)
     .await
     .unwrap();
     assert_eq!(
         retry_rows,
-        vec![format!("ApplyOp:6:{device_id}")],
-        "exactly the bad op is persisted for the sweeper"
+        vec![format!("ReplayApplyOp:6:{device_id}")],
+        "exactly the bad op is persisted for the sweeper, as a replayed op (#5647)"
     );
     // The failed chunk rewinds the engine with its SQL: the bad create's
     // engine half must not outlive the rolled-back transaction.

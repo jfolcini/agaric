@@ -247,7 +247,11 @@ impl ReplayDirtyParents {
 /// (the live / local / remote path). [`ReplaySuppressed`](ApplyMode::ReplaySuppressed)
 /// defers the inline reproject, recording the touched group into the
 /// caller-owned [`ReplayDirtyParents`] sink for a single end-of-replay reproject
-/// (the boot-replay path only).
+/// (the boot-replay path only). [`ReplayRouted`](ApplyMode::ReplayRouted) is a
+/// replayed op the retry queue brings back after replay ended (#5647).
+///
+/// Both replay modes also route as replay: SQL already holds the ops after the
+/// one applying, so a tombstone may be a later op's (#5630).
 #[derive(Debug, Clone, Default)]
 pub enum ApplyMode {
     /// Reproject touched sibling groups inline — every non-replay path.
@@ -256,17 +260,24 @@ pub enum ApplyMode {
     /// Boot replay: skip the inline reproject and record the touched
     /// `(space_id, parent)` group into the sink for one end-of-replay pass.
     ReplaySuppressed(ReplayDirtyParents),
+    /// A retried replay op: replay routing, with the inline reproject, since
+    /// no end-of-replay pass is left to drain a sink.
+    ReplayRouted,
 }
 
 impl ApplyMode {
     /// The reprojection-deferral sink, if this mode suppresses inline
-    /// reprojection. `None` for [`ApplyMode::Normal`] — the caller reprojects
-    /// inline.
+    /// reprojection. `None` otherwise — the caller reprojects inline.
     pub fn replay_dirty(&self) -> Option<&ReplayDirtyParents> {
         match self {
-            ApplyMode::Normal => None,
+            ApplyMode::Normal | ApplyMode::ReplayRouted => None,
             ApplyMode::ReplaySuppressed(sink) => Some(sink),
         }
+    }
+
+    /// Whether the op is a replayed one, so SQL already holds the ops after it.
+    pub fn replay(&self) -> bool {
+        !matches!(self, ApplyMode::Normal)
     }
 }
 
@@ -412,9 +423,12 @@ impl ChunkAccumulator {
 /// the cohort is alive again so `dispatch_restore_descendants`
 /// can resolve the space inline; post-delete-UPDATE the cohort is
 /// dead, so we capture the space at the same pre-UPDATE moment as the
-/// cohort itself. Boot replay over SQL that already holds the delete is the
-/// exception: there is no pre-UPDATE moment, so both come from the rows the
-/// delete stamped (#5630, `apply_delete_block_op`).
+/// cohort itself. Boot replay over SQL that already holds the op is the
+/// exception for both: there is no pre-UPDATE moment, so a delete's cohort
+/// and space come from the rows it stamped (#5630, `apply_delete_block_op`),
+/// and a restore's cohort comes from the engine, with the space pinned in
+/// `restore_space_id` because a later op may have deleted the seed again
+/// (#5647, `apply_restore_block_op`).
 #[derive(Debug, Default)]
 pub struct ApplyEffects {
     /// Block ids restored by a `RestoreBlock` apply — seed AND every
@@ -432,6 +446,10 @@ pub struct ApplyEffects {
     /// engine post-commit, mirroring `restored_cohort`'s descendant fan-out.
     /// Empty unless the op was `RestoreBlock` and an ancestor chain existed.
     pub restored_ancestors: Vec<String>,
+    /// The space both restore fan-outs mirror into, set only when boot
+    /// replay rebuilt the cohort from the engine (#5647). `None` resolves the
+    /// seed's space post-commit.
+    pub restore_space_id: Option<agaric_store::space::SpaceId>,
     /// Block ids soft-deleted by a `DeleteBlock` apply — seed AND
     /// every active descendant the SQL CTE walked. Empty unless the op
     /// was `DeleteBlock`. Captured BEFORE the UPDATE so the
@@ -574,7 +592,8 @@ async fn apply_page_alias_op(
 /// #2896 — [`apply_op_tx`] with an EXPLICIT [`ApplyMode`]. Boot replay passes
 /// [`ApplyMode::ReplaySuppressed`] so each replayed create/move records its
 /// touched sibling group into the replay-owned [`ReplayDirtyParents`] sink
-/// instead of reprojecting inline; the [`apply_op_tx`] wrapper defaults to
+/// instead of reprojecting inline, and a retried replay op passes
+/// [`ApplyMode::ReplayRouted`]; the [`apply_op_tx`] wrapper defaults to
 /// [`ApplyMode::Normal`]. The mode is stated by each caller, so a concurrent
 /// non-replay applier can never inherit replay suppression (the #2896 soundness
 /// fix that retired the ambient boot-replay suppression global).
@@ -587,11 +606,7 @@ pub async fn apply_op_tx_with_mode(
     mode: ApplyMode,
 ) -> Result<ApplyEffects, AppError> {
     use std::str::FromStr;
-    // #2896: the reprojection-deferral sink for the boot-replay path. `None`
-    // (every non-replay caller — `ApplyMode::Normal`) means each touched sibling
-    // group reprojects inline. Threaded to the create/move handlers below.
-    let replay_dirty = mode.replay_dirty();
-    let replay = replay_dirty.is_some();
+    let replay = mode.replay();
     let op_type = OpType::from_str(&record.op_type).map_err(|e| {
         AppError::validation(format!("unknown op_type '{}': {}", record.op_type, e))
     })?;
@@ -608,8 +623,7 @@ pub async fn apply_op_tx_with_mode(
     match op_type {
         OpType::CreateBlock => {
             pre_state =
-                apply_create_block_op(conn, state, record, chunk.as_deref_mut(), replay_dirty)
-                    .await?;
+                apply_create_block_op(conn, state, record, chunk.as_deref_mut(), &mode).await?;
         }
         OpType::EditBlock => {
             pre_state = apply_edit_block_op(conn, state, record, replay).await?;
@@ -618,7 +632,7 @@ pub async fn apply_op_tx_with_mode(
             pre_state = apply_delete_block_op(conn, state, record, replay, &mut effects).await?;
         }
         OpType::RestoreBlock => {
-            pre_state = apply_restore_block_op(conn, state, record, &mut effects).await?;
+            pre_state = apply_restore_block_op(conn, state, record, replay, &mut effects).await?;
         }
         OpType::PurgeBlock => {
             let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
@@ -627,11 +641,10 @@ pub async fn apply_op_tx_with_mode(
             // which works from post-cascade state — so no pre-cascade
             // affected-pages snapshot is taken here.
             pre_state = PreOpState::Deferred;
-            apply_purge_block_via_loro(conn, state, &record.device_id, &p).await?;
+            apply_purge_block_via_loro(conn, state, &record.device_id, &p, replay).await?;
         }
         OpType::MoveBlock => {
-            pre_state =
-                apply_move_block_op(conn, state, record, replay_dirty, &mut effects).await?;
+            pre_state = apply_move_block_op(conn, state, record, &mode, &mut effects).await?;
         }
         OpType::AddTag => {
             let p: AddTagPayload = serde_json::from_str(&record.payload)?;
@@ -643,7 +656,8 @@ pub async fn apply_op_tx_with_mode(
         }
         OpType::SetProperty => {
             let p: SetPropertyPayload = serde_json::from_str(&record.payload)?;
-            apply_set_property_via_loro(conn, state, &record.device_id, &p, replay).await?;
+            let replayed_at = replay.then_some(record.created_at);
+            apply_set_property_via_loro(conn, state, &record.device_id, &p, replayed_at).await?;
         }
         OpType::DeleteProperty => {
             let p: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
@@ -687,13 +701,14 @@ pub async fn apply_op_tx_with_mode(
 
 /// `CreateBlock`: project the create and report the pre-state the count hook
 /// needs. `chunk` is `Some` only inside a chunk, where the dense-position
-/// reprojection is deferred to the end-of-chunk flush (#2200 Item 1).
+/// reprojection is deferred to the end-of-chunk flush (#2200 Item 1); `mode`
+/// carries boot replay's reprojection-deferral sink (#2896).
 async fn apply_create_block_op(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
     record: &OpRecord,
     chunk: Option<&mut ChunkAccumulator>,
-    replay_dirty: Option<&ReplayDirtyParents>,
+    mode: &ApplyMode,
 ) -> Result<PreOpState, AppError> {
     // The engine path is the only path; the SQL-only
     // `apply_*_sql_only` helpers remain as fallbacks for
@@ -707,7 +722,17 @@ async fn apply_create_block_op(
         block_type: p.block_type.clone(),
         content: p.content.clone(),
     };
-    apply_create_block_via_loro(conn, state, &record.device_id, &p, chunk, replay_dirty).await?;
+    let (replay, replay_dirty) = (mode.replay(), mode.replay_dirty());
+    apply_create_block_via_loro(
+        conn,
+        state,
+        &record.device_id,
+        &p,
+        chunk,
+        replay,
+        replay_dirty,
+    )
+    .await?;
 
     Ok(pre_state)
 }
@@ -781,12 +806,14 @@ async fn apply_restore_block_op(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
     record: &OpRecord,
+    replay: bool,
     effects: &mut ApplyEffects,
 ) -> Result<PreOpState, AppError> {
     let p: RestoreBlockPayload = serde_json::from_str(&record.payload)?;
     // Capture the descendant cohort BEFORE the UPDATE — once
     // the UPDATE clears `deleted_at`, the cohort is no longer
-    // identifiable by `(seed_id, deleted_at_ref)`.  This SELECT
+    // identifiable by `(seed_id, deleted_at_ref)` in SQL (boot
+    // replay reads it from the engine instead, below).  This SELECT
     // mirrors the same CTE the UPDATE uses so the captured set
     // is exactly what gets restored.
     //
@@ -799,7 +826,23 @@ async fn apply_restore_block_op(
     // apply on the seed is idempotent (engine's
     // `apply_restore_block` is a no-op on an already-restored
     // block).
-    let cohort = collect_restore_cohort(conn, &p).await?;
+    let mut cohort = collect_restore_cohort(conn, &p).await?;
+    // #5647: on boot replay SQL may already hold this restore, so no row
+    // still carries `deleted_at_ref` and its ancestors are live. The engine
+    // still shows the state the restore first met, so both come from there,
+    // and the fan-out keeps the seed's own space: a later op may have
+    // tombstoned the seed again, and then it no longer resolves.
+    let mut engine_ancestors = None;
+    if replay
+        && cohort.is_empty()
+        && let Some(space) =
+            agaric_store::space::resolve_soft_deleted_block_space(&mut *conn, &p.block_id).await?
+    {
+        let (descendants, ancestors) = engine_restore_cohort(state, &record.device_id, &space, &p)?;
+        cohort = descendants;
+        engine_ancestors = Some(ancestors);
+        effects.restore_space_id = Some(space);
+    }
     // #2017: `apply_restore_block_via_loro` returns the contiguous
     // soft-deleted ANCESTOR chain it un-deleted upward (the #1884
     // live-orphan fix). Surface it so the post-commit fan-out drives
@@ -809,9 +852,50 @@ async fn apply_restore_block_op(
     let restored_ancestors =
         apply_restore_block_via_loro(conn, state, &record.device_id, &p).await?;
     effects.restored_cohort = cohort;
-    effects.restored_ancestors = restored_ancestors;
+    effects.restored_ancestors = engine_ancestors.unwrap_or(restored_ancestors);
 
     Ok(PreOpState::Deferred)
+}
+
+/// #5647 — a restore's cohort read from `space_id`'s engine, for boot replay
+/// over SQL that already holds the restore. The descendants are the seed's
+/// subtree reached through nodes tombstoned at `deleted_at_ref`, the seed
+/// included only when it is one (`collect_restore_cohort`'s walk); the
+/// ancestors are the contiguous tombstoned chain above the seed
+/// (`restore_deleted_ancestor_chain`'s walk).
+fn engine_restore_cohort(
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    space_id: &agaric_store::space::SpaceId,
+    p: &RestoreBlockPayload,
+) -> Result<(Vec<String>, Vec<String>), AppError> {
+    let seed = p.block_id.as_str();
+    let mark = Some(p.deleted_at_ref.to_string());
+    let mut guard = state.registry.for_space(space_id, device_id)?;
+    let engine = guard.engine_mut();
+    let mut cohort = Vec::new();
+    if engine.read_deleted_at(seed)? == mark {
+        cohort.push(seed.to_owned());
+    }
+    let mut frontier = vec![seed.to_owned()];
+    while let Some(parent) = frontier.pop() {
+        for child in engine.children_ordered_block_ids(Some(&parent))? {
+            if engine.read_deleted_at(&child)? == mark {
+                frontier.push(child.clone());
+                cohort.push(child);
+            }
+        }
+    }
+    let mut ancestors = Vec::new();
+    let mut next = engine.read_block(seed)?.and_then(|s| s.parent_id);
+    while let Some(id) = next {
+        if engine.read_deleted_at(&id)?.is_none() {
+            break;
+        }
+        next = engine.read_block(&id)?.and_then(|s| s.parent_id);
+        ancestors.push(id);
+    }
+    Ok((cohort, ancestors))
 }
 
 /// `MoveBlock`: the reads either side of the projection are the whole point of
@@ -822,7 +906,7 @@ async fn apply_move_block_op(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
     record: &OpRecord,
-    replay_dirty: Option<&ReplayDirtyParents>,
+    mode: &ApplyMode,
     effects: &mut ApplyEffects,
 ) -> Result<PreOpState, AppError> {
     let p: MoveBlockPayload = serde_json::from_str(&record.payload)?;
@@ -870,8 +954,9 @@ async fn apply_move_block_op(
     // the subject — so an unchanged subject means an unchanged
     // subtree, and the walk below is skipped.
     let deleted_at_before = subject_deleted_at(conn, p.block_id.as_str()).await?;
+    let (replay, replay_dirty) = (mode.replay(), mode.replay_dirty());
     let unswept =
-        apply_move_block_via_loro(conn, state, &record.device_id, &p, replay_dirty).await?;
+        apply_move_block_via_loro(conn, state, &record.device_id, &p, replay, replay_dirty).await?;
     if subject_deleted_at(conn, p.block_id.as_str()).await? != deleted_at_before {
         effects.move_fts_cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
             conn,

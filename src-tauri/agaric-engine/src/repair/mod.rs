@@ -98,7 +98,7 @@ pub enum RepairOp {
     Delete {
         record: OpRecord,
         block_type: String,
-        effects: ApplyEffects,
+        effects: Box<ApplyEffects>,
     },
 }
 
@@ -287,7 +287,7 @@ async fn soft_delete(
     Ok(RepairOp::Delete {
         record,
         block_type: "page".to_owned(),
-        effects,
+        effects: Box::new(effects),
     })
 }
 

@@ -163,7 +163,7 @@ async fn run(
             } => {
                 let record = Arc::new(record);
                 tx.enqueue_lifecycle_background(Arc::clone(&record), block_type);
-                deletes.push((record, effects));
+                deletes.push((record, *effects));
             }
         }
     }

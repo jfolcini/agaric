@@ -1374,7 +1374,8 @@ async fn failed_replay_chunk_rolls_back_every_op_5418() {
 
 /// #5418 — a chunk that applies clears each op's retry row left by the
 /// previous boot; a surviving row would make the sweeper re-apply the op after
-/// every op that followed it.
+/// every op that followed it. The row is in the plain `ApplyOp` spelling an
+/// older binary wrote for a replayed op (#5647).
 #[tokio::test]
 async fn successful_replay_chunk_clears_its_ops_retry_rows_5418() {
     use crate::apply::kernel::ReplayDirtyParents;
@@ -1401,7 +1402,7 @@ async fn successful_replay_chunk_clears_its_ops_retry_rows_5418() {
 
     let metrics = Arc::new(crate::materializer::QueueMetrics::default());
     let dirty = ReplayDirtyParents::new();
-    let failed = MaterializeTask::ReplayApplyOp(Arc::new(record.clone()), dirty.clone());
+    let failed = MaterializeTask::ApplyOp(Arc::new(record.clone()));
     crate::materializer::retry_queue::record_failure(&pool, &failed, "previous boot", &metrics)
         .await
         .expect("seed retry row");

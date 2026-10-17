@@ -89,7 +89,7 @@ async fn apply_set_property_direct(
     payload: SetPropertyPayload,
 ) {
     let mut tx = pool.begin().await.expect("begin");
-    super::apply_set_property_via_loro(&mut tx, state, DEVICE_ID, &payload, false)
+    super::apply_set_property_via_loro(&mut tx, state, DEVICE_ID, &payload, None)
         .await
         .expect("apply_set_property_via_loro");
     tx.commit().await.expect("commit");

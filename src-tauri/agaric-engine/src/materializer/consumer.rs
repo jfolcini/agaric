@@ -551,11 +551,14 @@ pub(super) async fn process_single_foreground_task(
     if let MaterializeTask::ReplayApplyOps(records, dirty) = &task {
         match handle_foreground_task(pool, &task, loro).await {
             Ok(()) => {
-                // A replayed op may carry a retry row from the previous boot;
+                // A replayed op may carry a retry row from the previous boot,
+                // in either spelling (`clear_on_success` takes both, #5647);
                 // left behind, the sweeper would re-apply it out of order.
                 for record in records.iter() {
-                    let per_op =
-                        MaterializeTask::ReplayApplyOp(Arc::new(record.clone()), dirty.clone());
+                    let per_op = MaterializeTask::ReplayApplyOp(
+                        Arc::new(record.clone()),
+                        Some(dirty.clone()),
+                    );
                     if let Err(e) =
                         super::retry_queue::clear_on_success(pool, &per_op, metrics).await
                     {
@@ -577,8 +580,10 @@ pub(super) async fn process_single_foreground_task(
                      one at a time (#5418)"
                 );
                 for record in records.iter() {
-                    let per_op =
-                        MaterializeTask::ReplayApplyOp(Arc::new(record.clone()), dirty.clone());
+                    let per_op = MaterializeTask::ReplayApplyOp(
+                        Arc::new(record.clone()),
+                        Some(dirty.clone()),
+                    );
                     process_with_retry(pool, per_op, metrics, loro).await;
                 }
             }
@@ -689,7 +694,8 @@ async fn record_foreground_failure(
     let err_msg = last_error.unwrap_or("unknown error");
     match task {
         // #2896: a boot-replay op that exhausts retries is handled exactly
-        // like a plain `ApplyOp` (it persists as one — see `retry_queue`).
+        // like a plain `ApplyOp`; its row keeps the replay flag (#5647, see
+        // `retry_queue`).
         MaterializeTask::ApplyOp(record) | MaterializeTask::ReplayApplyOp(record, _) => {
             tracing::warn!(
                 kind = "ApplyOp",

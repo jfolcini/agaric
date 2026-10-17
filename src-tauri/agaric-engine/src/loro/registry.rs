@@ -409,6 +409,23 @@ impl LoroEngineRegistry {
         self.inner.lock().keys().cloned().collect()
     }
 
+    /// The registered spaces whose engine holds `block_id`, tombstoned or
+    /// not, in arbitrary order. Boot replay asks this when SQL no longer
+    /// names the block's space (#5647). The caller must hold no engine guard.
+    pub fn spaces_containing(&self, block_id: &str) -> Vec<SpaceId> {
+        let engines: Vec<(SpaceId, SharedEngine)> = self
+            .inner
+            .lock()
+            .iter()
+            .map(|(space_id, engine)| (space_id.clone(), Arc::clone(engine)))
+            .collect();
+        engines
+            .into_iter()
+            .filter(|(_, engine)| engine.lock().contains_block(block_id))
+            .map(|(space_id, _)| space_id)
+            .collect()
+    }
+
     /// Number of engines currently held.  Used by tests to assert
     /// per-space isolation.
     pub fn len(&self) -> usize {
@@ -800,6 +817,36 @@ mod tests {
         let _guard = r.for_space(&space, "device-1").expect("create engine");
         drop(_guard);
         assert_eq!(r.len(), 1);
+    }
+
+    /// #5647 — the engines holding a block, a tombstoned one included, and
+    /// none for a block no engine holds.
+    #[test]
+    fn spaces_containing_names_the_engines_holding_the_block_5647() {
+        let r = LoroEngineRegistry::new();
+        let a = SpaceId::from_trusted(SPACE_A);
+        let b = SpaceId::from_trusted(SPACE_B);
+        {
+            let mut g = r.for_space(&a, "device-1").expect("space A");
+            let engine = g.engine_mut();
+            engine
+                .apply_create_block("BLOCK_IN_A", "content", "a", None, 0)
+                .expect("create");
+            engine
+                .apply_delete_block("BLOCK_IN_A", "1")
+                .expect("delete");
+        }
+        drop(r.for_space(&b, "device-1").expect("space B"));
+
+        assert_eq!(
+            r.spaces_containing("BLOCK_IN_A"),
+            vec![a],
+            "only A holds the tombstoned block"
+        );
+        assert!(
+            r.spaces_containing("BLOCK_NOWHERE").is_empty(),
+            "no engine holds an unknown block"
+        );
     }
 
     #[test]

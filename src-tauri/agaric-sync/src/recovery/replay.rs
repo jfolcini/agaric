@@ -793,7 +793,7 @@ async fn enqueue_ops_for_replay(
                 .into_iter()
                 .map(|record| {
                     (
-                        MaterializeTask::ReplayApplyOp(Arc::new(record), dirty.clone()),
+                        MaterializeTask::ReplayApplyOp(Arc::new(record), Some(dirty.clone())),
                         1,
                     )
                 })

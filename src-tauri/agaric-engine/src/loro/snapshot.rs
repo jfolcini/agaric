@@ -97,8 +97,8 @@ fn now_ms() -> i64 {
 ///
 /// Draft recovery (`recovery::draft_recovery`), the empty-block sweep
 /// (`soft_delete::empty_block_sweep`), the boot repairs (`repair`) and boot
-/// replay's delete cohort fan-out (`recovery::replay`, #5630) also write the
-/// engine after commit, but they run only at boot and await those
+/// replay's delete and restore cohort fan-outs (`recovery::replay`, #5630,
+/// #5647) also write the engine after commit, but they run only at boot and await those
 /// writes before the periodic pass is spawned, so no pass reads a head between
 /// their commit and their engine write.
 ///
@@ -1934,7 +1934,7 @@ mod tests {
             block_id: BlockId::from_trusted(SPACE_PURGE_2910),
         };
         let mut tx = pool.begin().await.expect("begin");
-        apply_purge_block_via_loro(&mut tx, &state, "device-1", &payload)
+        apply_purge_block_via_loro(&mut tx, &state, "device-1", &payload, false)
             .await
             .expect("apply_purge_block_via_loro");
         tx.commit().await.expect("commit");
@@ -1985,7 +1985,7 @@ mod tests {
             block_id: BlockId::from_trusted(SPACE_PURGE_2910),
         };
         let mut tx = pool.begin().await.expect("begin");
-        apply_purge_block_via_loro(&mut tx, &state, "device-1", &payload)
+        apply_purge_block_via_loro(&mut tx, &state, "device-1", &payload, false)
             .await
             .expect("apply_purge_block_via_loro");
         tx.commit().await.expect("commit");

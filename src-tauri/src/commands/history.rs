@@ -1333,7 +1333,7 @@ async fn apply_reverse_set_property(
     // to SQL-only and never synced.
     if p.key == agaric_store::op::SPACE_PROPERTY_KEY {
         agaric_engine::apply::loro_apply::apply_set_property_via_loro(
-            tx, state, device_id, p, false,
+            tx, state, device_id, p, None,
         )
         .await?;
         // #5267: the forward move re-rooted the nested pages the hydration
