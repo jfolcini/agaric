@@ -1,14 +1,16 @@
+import { invoke } from '@tauri-apps/api/core'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { mockInvokeCommands, strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import type { TableColumn } from '@/components/query/QueryResultTable'
 import { QueryResultTable } from '@/components/query/QueryResultTable'
 import { unresolvedBlockLabel } from '@/lib/block-title'
 import { useNavigationStore } from '@/stores/navigation'
-import { useTabsStore } from '@/stores/tabs'
+import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 vi.mock('@tauri-apps/api/core', async () => ({
   invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
@@ -282,6 +284,33 @@ describe('QueryResultTable', () => {
     )
 
     expect(screen.getByRole('link', { name: 'Project Page' })).toBeInTheDocument()
+  })
+
+  // An indented result's `parent_id` is a block; only `page_id` names its page.
+  it('the Page link of an indented result opens its page, not its parent block', async () => {
+    const user = userEvent.setup()
+    // Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
+    vi.mocked(invoke).mockImplementation(mockInvokeCommands({ record_page_open: () => null }))
+    try {
+      render(
+        <QueryResultTable
+          results={[makeBlock({ id: 'B1', content: 'Task', parent_id: 'PARENT', page_id: 'P1' })]}
+          columns={[{ key: 'content', label: 'Content' }]}
+          pageTitles={new Map([['P1', 'Project Page']])}
+          sortKey={null}
+          sortDir="asc"
+          onColumnSort={vi.fn()}
+        />,
+      )
+
+      await user.click(screen.getByRole('link', { name: 'Project Page' }))
+
+      expect(selectPageStack(useTabsStore.getState())).toEqual([
+        { pageId: 'P1', title: 'Project Page' },
+      ])
+    } finally {
+      vi.mocked(invoke).mockImplementation(strictInvokeFallback)
+    }
   })
 
   it('renders empty Page cell when no page title available', () => {

@@ -459,24 +459,25 @@ export function useSearchResults({
           navigateToPage(block.id, block.content ?? t('common.untitled'))
           return
         }
-        if (block.parent_id) {
+        // `page_id`, not `parent_id`: an indented block's parent is a block.
+        if (block.page_id) {
           const resolve = useResolveStore.getState()
-          if (resolve.isResolved(block.parent_id)) {
-            const title = resolve.resolveTitle(block.parent_id)
-            addRecentPage(block.parent_id, title)
-            navigateToPage(block.parent_id, title, block.id)
+          if (resolve.isResolved(block.page_id)) {
+            const title = resolve.resolveTitle(block.page_id)
+            addRecentPage(block.page_id, title)
+            navigateToPage(block.page_id, title, block.id)
             return
           }
           try {
-            const parent = unwrap(await commands.getBlock(block.parent_id))
-            // A newer click superseded this one while the parent loaded.
+            const page = unwrap(await commands.getBlock(block.page_id))
+            // A newer click superseded this one while the page loaded.
             if (navGenerationRef.current !== gen) return
-            addRecentPage(block.parent_id, parent.content ?? t('common.untitled'))
-            navigateToPage(block.parent_id, parent.content ?? t('common.untitled'), block.id)
+            addRecentPage(block.page_id, page.content ?? t('common.untitled'))
+            navigateToPage(block.page_id, page.content ?? t('common.untitled'), block.id)
           } catch (err) {
             reportIpcError('SearchPanel', 'search.loadResultsFailed', err, t, {
               blockId: block.id,
-              parentId: block.parent_id,
+              pageId: block.page_id,
             })
           }
         } else {

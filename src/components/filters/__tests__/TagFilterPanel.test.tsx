@@ -858,6 +858,48 @@ describe('TagFilterPanel', () => {
     expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)
   })
 
+  // An indented result's `parent_id` is a block; only `page_id` names its page.
+  it.each([
+    ['looked up', false],
+    ['cached', true],
+  ])('opens the page of an indented result, its title %s', async (_case, cached) => {
+    stubTagFilter({
+      list_tags_by_prefix: () => [makeTag({ tag_id: 'T1', name: 'work', usage_count: 5 })],
+      get_block: (args) =>
+        args['blockId'] === 'PAGE1'
+          ? makeBlockRow({ id: 'PAGE1', block_type: 'page', content: 'Owning Page' })
+          : Promise.reject(new Error(`unexpected get_block ${String(args['blockId'])}`)),
+    })
+    if (cached) useResolveStore.getState().set('PAGE1', 'Owning Page', false)
+
+    render(<TagFilterPanel />)
+    await typeAndWaitForTags(screen.getByPlaceholderText(t('tagFilter.searchPlaceholder')), 'work')
+    stubTagQuery(() => ({
+      items: [
+        makeBlock({
+          id: 'CHILD1',
+          parent_id: 'PARENT_BLOCK',
+          page_id: 'PAGE1',
+          content: 'nested content',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }))
+    await user.click(screen.getByRole('button', { name: /Add/i }))
+    await vi.advanceTimersByTimeAsync(0)
+
+    await user.click(screen.getByText('nested content'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(selectPageStack(useTabsStore.getState())).toEqual([
+      { pageId: 'PAGE1', title: 'Owning Page' },
+    ])
+    expect(useNavigationStore.getState().selectedBlockId).toBe('CHILD1')
+  })
+
   it('navigates directly when clicking a page-type tag filter result', async () => {
     // list_tags_by_prefix response
     stubTagFilter({
