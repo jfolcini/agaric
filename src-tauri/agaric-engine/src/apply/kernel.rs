@@ -610,10 +610,13 @@ async fn apply_attachment_op(
             apply_delete_attachment_via_loro(conn, state, device_id, &p, record.created_at, replay)
                 .await
         }
-        _ => {
+        OpType::RenameAttachment => {
             let p: RenameAttachmentPayload = serde_json::from_str(&record.payload)?;
             apply_rename_attachment_via_loro(conn, state, device_id, &p, replay).await
         }
+        other => Err(AppError::InvalidOperation(format!(
+            "apply_attachment_op: {other:?} is not an attachment op"
+        ))),
     }
 }
 
@@ -1156,4 +1159,34 @@ pub async fn collect_delete_cohort(
     .fetch_all(&mut *conn)
     .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A payload routed with a non-attachment op type is refused, not decoded
+    /// and applied as a rename.
+    #[tokio::test]
+    async fn an_op_type_that_is_not_an_attachment_op_is_refused() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = agaric_store::test_support::init_pool(&dir.path().join("kernel.db"))
+            .await
+            .unwrap();
+        let rename = agaric_store::op::OpPayload::RenameAttachment(RenameAttachmentPayload {
+            attachment_id: agaric_core::ulid::BlockId::test_id("A1"),
+            old_filename: "a.png".into(),
+            new_filename: "b.png".into(),
+        });
+        let record = agaric_store::op_log::append_local_op_at(&pool, "dev", rename, 1)
+            .await
+            .unwrap();
+        let state = crate::loro::shared::LoroState::new();
+        let mut conn = pool.acquire().await.unwrap();
+
+        let result =
+            apply_attachment_op(&mut conn, &state, &record, OpType::CreateBlock, false).await;
+
+        assert!(result.is_err(), "got {result:?}");
+    }
 }

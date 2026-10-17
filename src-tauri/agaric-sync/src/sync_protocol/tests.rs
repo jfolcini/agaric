@@ -784,16 +784,22 @@ async fn orchestrator_rejects_incompatible_engine_format() {
         );
 
         let events = sink.events();
-        let err = events
+        let (err, code) = events
             .iter()
             .find_map(|e| match e {
-                SyncEvent::Error { message, .. } => Some(message.clone()),
+                SyncEvent::Error { message, code, .. } => Some((message.clone(), *code)),
                 _ => None,
             })
             .expect("a SyncEvent::Error must be emitted on rejection");
         assert!(
             err.contains("engine format"),
             "the error message must mention the engine format, got: {err:?}"
+        );
+        // #5728: the frontend words this one itself, off the code.
+        assert_eq!(
+            code,
+            Some(crate::sync_events::SyncErrorCode::EngineFormatMismatch),
+            "the rejection carries the code the frontend translates"
         );
         // No LoroSync payload is ever produced: the rejection returns Err before
         // `head_exchange_outgoing_loro`, so there is nothing queued to drain.

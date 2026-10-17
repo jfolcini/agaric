@@ -2203,6 +2203,7 @@ async fn perf26_delete_attachment_stores_null_block_id() {
             filename: "x.txt".into(),
             size_bytes: 1,
             fs_path: "/tmp/x.txt".into(),
+            content_hash: None,
         }),
     )
     .await
@@ -4520,6 +4521,7 @@ async fn crash_tail_attachment_ops_reach_the_engine_5608() {
             filename: format!("{att}.png"),
             size_bytes: 4,
             fs_path: format!("attachments/{att}"),
+            content_hash: None,
         })
     };
     let (pool, _dir) = test_pool().await;

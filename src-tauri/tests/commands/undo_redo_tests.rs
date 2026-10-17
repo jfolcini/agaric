@@ -1589,6 +1589,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
             filename: "photo.png".into(),
             size_bytes: 1024,
             fs_path: "attachments/photo.png".into(),
+            content_hash: None,
         }),
         att_ts,
     )
@@ -1712,6 +1713,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
             filename: "photo.png".into(),
             size_bytes: 1024,
             fs_path: "attachments/photo.png".into(),
+            content_hash: None,
         }),
         att_ts,
     )
@@ -1959,6 +1961,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
             filename: "photo.png".into(),
             size_bytes: 1024,
             fs_path: "attachments/photo.png".into(),
+            content_hash: None,
         }),
         att_ts,
     )
@@ -2076,6 +2079,7 @@ async fn undo_page_op_restores_renamed_attachment_filename() {
             filename: "original.png".into(),
             size_bytes: 8,
             fs_path: "attachments/original".into(),
+            content_hash: None,
         }),
         add_ts,
     )
@@ -2964,6 +2968,7 @@ async fn revert_add_attachment_hard_deletes_row_c7() {
             filename: "photo.png".into(),
             size_bytes: 1024,
             fs_path: "attachments/photo.png".into(),
+            content_hash: None,
         }),
         FIXED_TS,
     )
@@ -9840,6 +9845,7 @@ async fn undo_of_deleting_a_peers_attachment_restores_it_5608() {
             filename: "peer.png".into(),
             size_bytes: 4,
             fs_path: "attachments/PEERPATH".into(),
+            content_hash: None,
         }),
         add_ts,
     )

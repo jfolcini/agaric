@@ -4,6 +4,7 @@ expression: json
 ---
 attachment_id: A1
 block_id: 01ARZ3NDEKTSV4RRFFQ69G5FAV
+content_hash: blake3-of-photo
 filename: photo.png
 fs_path: /tmp/photo.png
 mime_type: image/png

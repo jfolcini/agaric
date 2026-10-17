@@ -168,6 +168,7 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
                 filename: "readme.txt".into(),
                 size_bytes: 256,
                 fs_path: "/tmp/readme.txt".into(),
+                content_hash: None,
             }),
         ),
         (

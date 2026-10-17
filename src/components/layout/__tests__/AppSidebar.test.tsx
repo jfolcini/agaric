@@ -265,7 +265,7 @@ describe('AppSidebar', () => {
   // dot was stuck on the no-peers token even when devices were paired.
   // Pin that paired (peers present) vs. unpaired now diverge.
   it('reflects hasPeers in the sync dot when paired vs unpaired (#1076)', () => {
-    const peer: PeerInfo = { peerId: 'PEER1', lastSyncedAt: null, resetCount: 0 }
+    const peer: PeerInfo = { peerId: 'PEER1', lastSyncedAt: null, resetCount: 0, name: null }
 
     // Paired + idle → the "idle, has peers" token (NOT the no-peers one).
     seedSyncStore({ state: 'idle', peers: [peer] })

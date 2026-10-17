@@ -47,10 +47,16 @@ async fn add(
 }
 
 async fn op_fs_path(pool: &SqlitePool, attachment_id: &str) -> String {
+    op_field(pool, attachment_id, "fs_path").await.unwrap()
+}
+
+/// `field` of `attachment_id`'s `add_attachment` payload.
+async fn op_field(pool: &SqlitePool, attachment_id: &str, field: &str) -> Option<String> {
     sqlx::query_scalar(
-        "SELECT json_extract(payload, '$.fs_path') FROM op_log \
+        "SELECT json_extract(payload, '$.' || ?) FROM op_log \
          WHERE op_type = 'add_attachment' AND attachment_id = ?",
     )
+    .bind(field)
     .bind(attachment_id)
     .fetch_one(pool)
     .await
@@ -76,10 +82,23 @@ async fn attachment_commands_write_the_engine_entry_with_the_row_5608() {
             entry.fields.fs_path.as_str(),
             entry.fields.size_bytes,
             entry.fields.created_at,
+            entry.fields.content_hash.as_deref(),
             entry.deleted_at,
         ),
-        ("photo.png", row.fs_path.as_str(), 4, row.created_at, None),
+        (
+            "photo.png",
+            row.fs_path.as_str(),
+            4,
+            row.created_at,
+            row.content_hash.as_deref(),
+            None
+        ),
         "with the row's fields"
+    );
+    assert_eq!(
+        op_field(&pool, row.id.as_str(), "content_hash").await,
+        row.content_hash,
+        "the op carries the bytes' hash to peers"
     );
 
     rename_attachment_inner(&pool, DEV, &mat, row.id.clone(), "renamed.png".into())

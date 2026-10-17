@@ -985,11 +985,15 @@ describe('useSyncTrigger', () => {
         peer_id: 'PEER_MAP',
         synced_at: Date.UTC(2025, 0, 15, 12, 0, 0),
         reset_count: 3,
+        device_name: 'Desk',
+        remote_device_name: 'desk-hostname',
       })
       expect(mapPeerRefToInfo(row)).toEqual({
         peerId: 'PEER_MAP',
         lastSyncedAt: '2025-01-15T12:00:00.000Z',
         resetCount: 3,
+        // #5728 — the name the user gave it wins, as everywhere a peer is named.
+        name: 'Desk',
       })
     })
 
@@ -1033,14 +1037,16 @@ describe('useSyncTrigger', () => {
       })
 
       expect(useSyncStore.getState().peers).toEqual([
-        { peerId: 'PEER_A', lastSyncedAt: '2025-01-01T00:00:00.000Z', resetCount: 1 },
-        { peerId: 'PEER_B', lastSyncedAt: null, resetCount: 0 },
+        { peerId: 'PEER_A', lastSyncedAt: '2025-01-01T00:00:00.000Z', resetCount: 1, name: null },
+        { peerId: 'PEER_B', lastSyncedAt: null, resetCount: 0, name: null },
       ])
     })
 
     it('clears stale store peers when backend returns none', async () => {
       // Seed a stale peer to prove the empty backend result clears it.
-      useSyncStore.getState().setPeers([{ peerId: 'OLD', lastSyncedAt: null, resetCount: 0 }])
+      useSyncStore
+        .getState()
+        .setPeers([{ peerId: 'OLD', lastSyncedAt: null, resetCount: 0, name: null }])
       mockListPeerRefs.mockResolvedValue([])
 
       const { result } = renderHook(() => useSyncTrigger())

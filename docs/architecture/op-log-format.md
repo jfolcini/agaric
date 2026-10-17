@@ -140,14 +140,16 @@ client must produce the identical canonical form:
 - Object keys sorted ascending; no insignificant whitespace
   (`serde_json` compact form — no spaces after `:` or `,`).
 - Optional fields that are present serialize as JSON `null` *unless* the
-  field is declared omit-when-absent. Two such cases exist in `op.rs`
-  (see the `skip_serializing_if = "Option::is_none"` attributes):
+  field is declared omit-when-absent (the `skip_serializing_if =
+  "Option::is_none"` attributes in `op.rs`):
   `create_block.position` / `create_block.index` and `move_block.new_index`
-  are **omitted entirely** when `None` (the post-#400 sibling-slot
-  fields), whereas e.g. `set_property.value_*` fields serialize as
-  explicit `null`. Backwards-compat: a missing `value_bool`
-  (`set_property`) or missing `fs_path` (`delete_attachment`) deserializes
-  to `None` / `""` respectively.
+  (the post-#400 sibling-slot fields) and `add_attachment.content_hash`
+  (#5728) are **omitted entirely** when `None`, whereas e.g.
+  `set_property.value_*` fields serialize as explicit `null`.
+  Backwards-compat: a missing `value_bool` (`set_property`), `fs_path`
+  (`delete_attachment`) or `content_hash` (`add_attachment`) deserializes
+  to `None` / `""` / `None` respectively, and an omitted `content_hash`
+  re-serializes to the text the op's hash was computed over.
 - **All ULID fields must be uppercase Crockford Base32** before
   serialization. The local writer calls `OpPayload::normalize_block_ids()`
   (a no-op marker today, because `BlockId` auto-uppercases on construction

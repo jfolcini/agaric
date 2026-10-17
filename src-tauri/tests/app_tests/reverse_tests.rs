@@ -412,6 +412,7 @@ async fn add_attachment_apply_then_reverse_round_trip_i_lifecycle_3() {
         filename: "rt.png".into(),
         size_bytes: 4096,
         fs_path: "attachments/rt.png".into(),
+        content_hash: None,
     });
     let add_rec = append_op(&pool, add_payload, 1_736_942_400_000).await;
     mat.dispatch_op(&add_rec).await.unwrap();

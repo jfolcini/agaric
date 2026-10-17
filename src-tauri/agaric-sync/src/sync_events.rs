@@ -106,6 +106,11 @@ pub enum SyncEvent {
     Error {
         message: String,
         remote_device_id: String,
+        /// `Some` for a failure the frontend words itself, in the user's
+        /// language; `message` stays the English text for logs. Omitted when
+        /// `None`, so every other error serializes as it always has.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        code: Option<SyncErrorCode>,
     },
     /// Per-frame attachment-transfer progress emitted
     /// by `sync_files`. The `ChannelEventSink` forwards these to the
@@ -190,6 +195,16 @@ pub enum SyncEvent {
         /// has no text to name.
         reason_key: Option<String>,
     },
+}
+
+/// A [`SyncEvent::Error`] the frontend explains in its own words (#5728).
+/// Serialized in snake case; `SyncErrorPayload` in `useSyncEvents.ts` mirrors it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncErrorCode {
+    /// The peer runs another engine format (#2130). Only updating both
+    /// devices to the same release lets them sync again.
+    EngineFormatMismatch,
 }
 
 // ---------------------------------------------------------------------------
@@ -554,6 +569,7 @@ mod tests {
         let event = SyncEvent::Error {
             message: "something broke".into(),
             remote_device_id: "DEV_B".into(),
+            code: None,
         };
         let json = serde_json::to_value(&event).expect("serialize Error");
         assert_eq!(
@@ -564,6 +580,23 @@ mod tests {
             json["message"], "something broke",
             "message field should be present"
         );
+        assert!(
+            json.get("code").is_none(),
+            "an uncoded error carries no code field, got {json}"
+        );
+    }
+
+    /// #5728: the code reaches the frontend as the snake-case string
+    /// `useSyncEvents.ts` matches on.
+    #[test]
+    fn sync_event_error_serializes_its_code_5728() {
+        let event = SyncEvent::Error {
+            message: "peer engine format v3 incompatible with local v4".into(),
+            remote_device_id: "DEV_B".into(),
+            code: Some(SyncErrorCode::EngineFormatMismatch),
+        };
+        let json = serde_json::to_value(&event).expect("serialize Error");
+        assert_eq!(json["code"], "engine_format_mismatch");
     }
 
     #[test]
@@ -977,6 +1010,7 @@ mod tests {
         let event = SyncEvent::Error {
             message: String::new(),
             remote_device_id: "DEV_EMPTY".into(),
+            code: None,
         };
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["type"], "error");

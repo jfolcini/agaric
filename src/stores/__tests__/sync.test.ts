@@ -68,25 +68,31 @@ describe('useSyncStore', () => {
   describe('setPeers', () => {
     it('sets the peers array', () => {
       const peers = [
-        { peerId: 'peer-1', lastSyncedAt: '2025-01-15T00:00:00Z', resetCount: 0 },
-        { peerId: 'peer-2', lastSyncedAt: null, resetCount: 1 },
+        { peerId: 'peer-1', lastSyncedAt: '2025-01-15T00:00:00Z', resetCount: 0, name: null },
+        { peerId: 'peer-2', lastSyncedAt: null, resetCount: 1, name: null },
       ]
       useSyncStore.getState().setPeers(peers)
       expect(useSyncStore.getState().peers).toEqual(peers)
     })
 
     it('replaces existing peers', () => {
-      useSyncStore.getState().setPeers([{ peerId: 'peer-1', lastSyncedAt: null, resetCount: 0 }])
       useSyncStore
         .getState()
-        .setPeers([{ peerId: 'peer-2', lastSyncedAt: '2025-01-15T00:00:00Z', resetCount: 2 }])
+        .setPeers([{ peerId: 'peer-1', lastSyncedAt: null, resetCount: 0, name: null }])
+      useSyncStore
+        .getState()
+        .setPeers([
+          { peerId: 'peer-2', lastSyncedAt: '2025-01-15T00:00:00Z', resetCount: 2, name: null },
+        ])
       const peers = useSyncStore.getState().peers
       expect(peers).toHaveLength(1)
       expect(peers[0]?.peerId).toBe('peer-2')
     })
 
     it('can set empty peers array', () => {
-      useSyncStore.getState().setPeers([{ peerId: 'peer-1', lastSyncedAt: null, resetCount: 0 }])
+      useSyncStore
+        .getState()
+        .setPeers([{ peerId: 'peer-1', lastSyncedAt: null, resetCount: 0, name: null }])
       useSyncStore.getState().setPeers([])
       expect(useSyncStore.getState().peers).toEqual([])
     })
@@ -196,7 +202,9 @@ describe('useSyncStore', () => {
       useSyncStore.getState().setState('error', 'Something broke')
       useSyncStore
         .getState()
-        .setPeers([{ peerId: 'peer-1', lastSyncedAt: '2025-01-15T00:00:00Z', resetCount: 0 }])
+        .setPeers([
+          { peerId: 'peer-1', lastSyncedAt: '2025-01-15T00:00:00Z', resetCount: 0, name: null },
+        ])
       useSyncStore.getState().updateLastSynced('2025-01-15T12:00:00Z')
       useSyncStore.getState().setOpsReceived(42)
       useSyncStore.getState().setOpsSent(17)
@@ -226,7 +234,9 @@ describe('useSyncStore', () => {
   // ---------------------------------------------------------------------------
   describe('state independence', () => {
     it('setState does not affect peers or counters', () => {
-      useSyncStore.getState().setPeers([{ peerId: 'peer-1', lastSyncedAt: null, resetCount: 0 }])
+      useSyncStore
+        .getState()
+        .setPeers([{ peerId: 'peer-1', lastSyncedAt: null, resetCount: 0, name: null }])
       useSyncStore.getState().setOpsReceived(5)
 
       useSyncStore.getState().setState('syncing')

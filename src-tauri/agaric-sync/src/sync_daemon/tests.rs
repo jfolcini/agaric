@@ -833,7 +833,7 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
     assert!(
         matches!(
             &events[1],
-            SyncEvent::Error { message, remote_device_id }
+            SyncEvent::Error { message, remote_device_id, .. }
                 if message.contains("Connection failed")
                     && remote_device_id.as_str() == "PEER_UNREACHABLE"
         ),
@@ -1849,6 +1849,79 @@ async fn handle_incoming_sync_rejects_a_key_not_bound_to_the_claimed_peer_800() 
         "#800: a refused claim must not re-point the victim's key binding"
     );
 
+    materializer.shutdown();
+}
+
+/// #5728 — a paired peer one engine format behind (a 0.18 device dialling a
+/// 0.19 one) is refused over a real QUIC session, and this device's error is
+/// coded and names the peer, so the frontend can say "update both".
+///
+/// The dialling side gets no frame back: the refusal ends the session, so all
+/// it can tell is that the stream ended.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_older_engine_format_is_refused_with_a_coded_error_naming_the_peer_5728() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let sink = Arc::new(RecordingEventSink::new());
+    let harness = ServiceHarness::new().await;
+    bind_client_as(&pool, "REMOTE_OLDER", &harness).await;
+
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        Arc::new(SyncScheduler::new()),
+        sink.clone(),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let mut client = harness.dial().await;
+    let mut hello = head_exchange(vec![fake_head("REMOTE_OLDER")], None);
+    if let SyncMessage::HeadExchange {
+        engine_format_version,
+        ..
+    } = &mut hello
+    {
+        *engine_format_version = agaric_engine::loro::engine::ENGINE_FORMAT_VERSION - 1;
+    }
+    send_sync_message(&mut client.send, &hello).await.unwrap();
+
+    let reply = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        recv_sync_message(&mut client.recv),
+    )
+    .await
+    .expect("the responder ends the session");
+    assert!(
+        reply.is_err(),
+        "the dialling side gets no frame, only the end of the stream: {reply:?}"
+    );
+    let result = tokio::time::timeout(std::time::Duration::from_secs(15), handle)
+        .await
+        .expect("the responder finishes")
+        .expect("the responder task does not panic");
+    assert!(result.is_err(), "the responder's session fails: {result:?}");
+
+    let coded: Vec<(String, crate::sync_events::SyncErrorCode)> = sink
+        .events()
+        .into_iter()
+        .filter_map(|e| match e {
+            SyncEvent::Error {
+                remote_device_id,
+                code: Some(code),
+                ..
+            } => Some((remote_device_id, code)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        coded,
+        vec![(
+            "REMOTE_OLDER".to_owned(),
+            crate::sync_events::SyncErrorCode::EngineFormatMismatch
+        )],
+        "one coded error, naming the peer"
+    );
     materializer.shutdown();
 }
 
@@ -5773,6 +5846,21 @@ async fn run_one_real_loopback_session_2129(
     resp_mat: &Materializer,
     resp_device: &str,
 ) -> crate::sync_protocol::SyncState {
+    run_real_loopback_session_reporting_to(
+        (init_pool, init_mat, init_device),
+        (resp_pool, resp_mat, resp_device),
+        Arc::new(RecordingEventSink::new()),
+    )
+    .await
+}
+
+/// [`run_one_real_loopback_session_2129`], with the initiator's events going
+/// to `init_sink`.
+async fn run_real_loopback_session_reporting_to(
+    (init_pool, init_mat, init_device): (&SqlitePool, &Materializer, &str),
+    (resp_pool, resp_mat, resp_device): (&SqlitePool, &Materializer, &str),
+    init_sink: Arc<dyn SyncEventSink>,
+) -> crate::sync_protocol::SyncState {
     use crate::sync_protocol::SyncOrchestrator;
 
     let timeout = std::time::Duration::from_secs(20);
@@ -5803,7 +5891,6 @@ async fn run_one_real_loopback_session_2129(
     )
     .with_expected_remote_id(resp_device.into());
     let init_cancel = AtomicBool::new(false);
-    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
     let init_run_host: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
         std::sync::Arc::new(init_mat.clone());
@@ -5876,6 +5963,7 @@ async fn issue5608_attachments_reach_the_other_device_over_real_loopback() {
             filename: filename.into(),
             size_bytes: 9,
             fs_path: format!("attachments/{id}"),
+            content_hash: None,
         })
     };
     let rename = |id: &str, old: &str, new: &str| {
@@ -6002,6 +6090,103 @@ async fn issue5608_attachments_reach_the_other_device_over_real_loopback() {
         device_vv_2141(a, &space),
         device_vv_2141(b, &space),
         "the engines converge"
+    );
+    for dev in &devices {
+        dev.flush_and_shutdown().await;
+    }
+}
+
+/// How many files `initiator` asked `responder` for in one real session.
+async fn files_requested_5608(initiator: &Device2141, responder: &Device2141) -> u64 {
+    let sink = Arc::new(RecordingEventSink::new());
+    let state = run_real_loopback_session_reporting_to(
+        (&initiator.pool, &initiator.mat, &initiator.id),
+        (&responder.pool, &responder.mat, &responder.id),
+        sink.clone(),
+    )
+    .await;
+    assert_eq!(state, crate::sync_protocol::SyncState::Complete);
+    sink.events()
+        .into_iter()
+        .filter_map(|e| match e {
+            SyncEvent::FileProgress {
+                phase, files_total, ..
+            } if phase == "receiving" => Some(files_total),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// #5608 step 6 — the add op carries the bytes' hash, so a peer's row holds
+/// it, and bytes the peer already holds under another attachment are linked
+/// rather than requested again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_peer_row_carries_the_hash_and_held_bytes_are_not_requested_again_5608() {
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{AddAttachmentPayload, OpPayload};
+
+    const BLOCK: &str = "01HZ5608HASHBLOCKXXXXXXXXX";
+    const IMG: &str = "01HZ5608HASHIMGXXXXXXXXXXX";
+    const COPY: &str = "01HZ5608HASHCOPYXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ5608HASHSPACEXXXXXXXXX");
+    let devices = make_n_devices_2141(&["DEV5608HA", "DEV5608HB"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+    let ts = 1_736_942_400_000;
+    let bytes = b"png bytes";
+    let hash = blake3::hash(bytes).to_hex().to_string();
+    // The same bytes under two paths, as two devices that each added them hold.
+    let add = |id: &str| {
+        OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: BlockId::from_trusted(id),
+            block_id: BlockId::from_trusted(BLOCK),
+            mime_type: "image/png".into(),
+            filename: "photo.png".into(),
+            size_bytes: 9,
+            fs_path: format!("attachments/{id}"),
+            content_hash: Some(hash.clone()),
+        })
+    };
+
+    make_local_edit_602(&a.pool, &a.mat, &a.state, &a.id, &space, BLOCK, "img", ts).await;
+    for id in [IMG, COPY] {
+        crate::sync_files::write_attachment_file(
+            a._dir.path(),
+            &format!("attachments/{id}"),
+            bytes,
+        )
+        .unwrap();
+    }
+    apply_local_op_602(&a.pool, &a.mat, &a.state, &a.id, &space, add(IMG), ts + 1).await;
+
+    assert_eq!(
+        files_requested_5608(b, a).await,
+        1,
+        "B asks for the first copy"
+    );
+    let b_hash: Option<String> =
+        sqlx::query_scalar("SELECT content_hash FROM attachments WHERE id = ?")
+            .bind(IMG)
+            .fetch_one(&b.pool)
+            .await
+            .unwrap();
+    assert_eq!(b_hash, Some(hash.clone()), "B's row carries the add's hash");
+
+    apply_local_op_602(&a.pool, &a.mat, &a.state, &a.id, &space, add(COPY), ts + 2).await;
+    assert_eq!(
+        files_requested_5608(b, a).await,
+        0,
+        "B holds these bytes already and does not ask for them again"
+    );
+    let copy_path: String = sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = ?")
+        .bind(COPY)
+        .fetch_one(&b.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        copy_path,
+        format!("attachments/{IMG}"),
+        "B's row for the copy is linked to the bytes it holds"
     );
     for dev in &devices {
         dev.flush_and_shutdown().await;

@@ -154,6 +154,14 @@ incompatible peer up front, before any raw-byte Loro merge (#2130). Also
 `#[serde(default)]`: a legacy peer deserializes as `0`, which falls through
 to the import-time format guards.
 
+The rejection emits `SyncEvent::Error` with `code: "engine_format_mismatch"`
+(#5728); `message` keeps the English "peer engine format vN incompatible with
+local vM" for logs. The frontend words the code itself: "This device and
+Pixel 8 run different versions of Agaric. Update both to the latest version,
+then sync again.", naming the peer when it has a name for it. The responder ends the session without a frame, so the
+initiator learns only that the stream ended; each device shows the message
+when the other one dials it. A build from before #5728 shows the raw text.
+
 **Removed field: `wire_compression` (#2200, deleted in #3543).** It advertised
 that the sender could decompress zstd-compressed chunked `LoroSync` payloads.
 Compression lived in the chunking layer of the retired `sync_daemon::wire` module
@@ -1014,6 +1022,14 @@ Mechanics:
   independently of the transfer hash; the actual skip-transfer decision is
   taken receiver-side in `find_missing_attachments` — a file whose hash
   already has a local blob is never requested, so it is never offered.
+- The `add_attachment` op carries the bytes' `content_hash` (#5728), so a
+  row a peer added holds the hash it was added with. That is what lets
+  `find_missing_attachments` link bytes the device already holds under
+  another attachment instead of requesting them, and it is what an offer is
+  held to: a `blake3_hash` that differs from the row's hash is refused before
+  any byte is read or a blob is linked (`file_offer.hash_mismatch`, no ACK;
+  the file phase ends and the next sync asks again). A row with no hash, from
+  an add before #5728, accepts the offer's own hash.
 - Binary data rides the same QUIC stream as the JSON control messages, copied
   through one `BULK_COPY_BYTES` (5 MB) buffer — the same path the snapshot
   transfer uses. A zero-length file sends **no bytes at all**: the old transport

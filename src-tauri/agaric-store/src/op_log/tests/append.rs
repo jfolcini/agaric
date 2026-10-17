@@ -458,6 +458,7 @@ async fn append_populates_attachment_id_column_for_attachment_ops_3452() {
             filename: "readme.txt".into(),
             size_bytes: 256,
             fs_path: "attachments/readme.txt".into(),
+            content_hash: None,
         }),
         FIXED_TS,
     )

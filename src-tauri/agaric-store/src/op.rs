@@ -293,6 +293,12 @@ pub struct DeletePropertyPayload {
 /// blake3 hash determinism that AGENTS.md invariant #8 relies on for
 /// cross-device sync. The serde wire format is unchanged (`BlockId` is
 /// `#[serde(transparent)]`).
+///
+/// `content_hash` is the blake3 hex of the bytes (#5608 step 6). A peer's row
+/// carries it, so the receiver can refuse bytes that do not match and link
+/// bytes it already holds instead of requesting them. Op-log entries written
+/// before it decode as `None`, and `None` is omitted when serialized, so those
+/// entries re-serialize to the text their hash was computed over.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AddAttachmentPayload {
     pub attachment_id: AttachmentId,
@@ -301,6 +307,8 @@ pub struct AddAttachmentPayload {
     pub filename: String,
     pub size_bytes: i64,
     pub fs_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
 }
 
 /// Payload for the `delete_attachment` op — removes an attachment by its ID (block_id is not needed).
@@ -757,6 +765,7 @@ mod tests {
                 filename: "photo.png".into(),
                 size_bytes: 1024,
                 fs_path: "/tmp/photo.png".into(),
+                content_hash: Some("blake3-of-photo".into()),
             }),
             OpPayload::DeleteAttachment(DeleteAttachmentPayload {
                 attachment_id: BlockId::test_id("A1"),
@@ -1065,6 +1074,39 @@ mod tests {
             }
             other => panic!("expected DeleteAttachment, got {other:?}"),
         }
+    }
+
+    /// #5608 step 6: an `add_attachment` written before `content_hash` existed
+    /// decodes with no hash, and re-serializes to the exact text it was stored
+    /// as, so its op hash still verifies.
+    #[test]
+    fn add_attachment_payload_legacy_json_decodes_and_reserializes_unchanged() {
+        let legacy = r#"{"op_type":"add_attachment","attachment_id":"ATT-LEGACY-5","block_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","mime_type":"image/png","filename":"photo.png","size_bytes":9,"fs_path":"attachments/photo.png"}"#;
+        let parsed: OpPayload = serde_json::from_str(legacy)
+            .expect("an add_attachment without content_hash must still decode");
+        let OpPayload::AddAttachment(inner) = &parsed else {
+            panic!("expected AddAttachment, got {parsed:?}");
+        };
+        assert_eq!(inner.content_hash, None);
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), legacy);
+    }
+
+    /// #5608 step 6: the hash round-trips when present.
+    #[test]
+    fn add_attachment_payload_round_trips_with_content_hash() {
+        let payload = AddAttachmentPayload {
+            attachment_id: BlockId::test_id("A1"),
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
+            mime_type: "image/png".into(),
+            filename: "photo.png".into(),
+            size_bytes: 9,
+            fs_path: "attachments/photo.png".into(),
+            content_hash: Some("ab12".into()),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains(r#""content_hash":"ab12""#), "got {json}");
+        let back: AddAttachmentPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, payload);
     }
 
     // -----------------------------------------------------------------------
