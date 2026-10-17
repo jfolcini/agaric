@@ -3766,18 +3766,23 @@ describe('MCP agents', () => {
 
   it('refuses what the backend refuses, with its codes', () => {
     invoke('create_mcp_agent', { name: 'Planner', mode: 'read_only', spaceIds: null })
-    const refused: [string, string[] | null, string][] = [
+    const refused: [string, string[] | null, string | undefined][] = [
       ['   ', null, 'InvalidAgentName'],
       ['Plan\u0007ner', null, 'InvalidAgentName'],
       ['x'.repeat(129), null, 'InvalidAgentName'],
       ['PLANNER', null, 'DuplicateAgentName'],
-      ['Other', [], 'InvalidAgentSpaces'],
-      ['Other', ['SPACE_PERSONAL', 'NOPE'], 'InvalidAgentSpaces'],
+      ['Other', [], undefined],
+      ['Other', ['SPACE_PERSONAL', 'NOPE'], undefined],
     ]
     for (const [name, spaceIds, code] of refused) {
-      expect(() => invoke('create_mcp_agent', { name, mode: 'read_only', spaceIds }), name).toThrow(
-        expect.objectContaining({ kind: 'validation', code }),
-      )
+      let thrown: unknown
+      try {
+        invoke('create_mcp_agent', { name, mode: 'read_only', spaceIds })
+      } catch (err) {
+        thrown = err
+      }
+      expect(thrown, name).toMatchObject({ kind: 'validation' })
+      expect((thrown as { code?: string }).code, name).toBe(code)
     }
     // The cap counts chars, not UTF-16 code units.
     invoke('create_mcp_agent', { name: '\u{1D11E}'.repeat(128), mode: 'read_only', spaceIds: null })

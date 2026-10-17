@@ -46,8 +46,6 @@ export const ValidationCode = {
   InvalidAgentName: 'InvalidAgentName',
   /** An MCP agent name another agent holds in any letter case (#5667). */
   DuplicateAgentName: 'DuplicateAgentName',
-  /** An MCP agent space list that is empty or names a space that is not live (#5667). */
-  InvalidAgentSpaces: 'InvalidAgentSpaces',
 } as const satisfies { [K in GeneratedValidationCode]: K }
 
 /**

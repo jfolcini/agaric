@@ -4616,12 +4616,7 @@ export type ValidationCode =
  *  (`create_mcp_agent`, #5667). Coded so the create dialog can name the
  *  clash beside the name field.
  */
-"DuplicateAgentName" | 
-/**
- *  An MCP agent's space list that is empty or names a space that is not
- *  live (`create_mcp_agent`, #5667).
- */
-"InvalidAgentSpaces";
+"DuplicateAgentName";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

@@ -26,8 +26,8 @@ pub async fn list_mcp_agents_inner(pool: &SqlitePool) -> Result<Vec<McpAgent>, A
 /// `Validation` coded [`ValidationCode::InvalidAgentName`] for a name that is
 /// blank after trimming, holds a control character or is longer than
 /// [`MAX_AGENT_NAME_LEN`]; [`ValidationCode::DuplicateAgentName`] for a name
-/// another agent holds in any letter case; [`ValidationCode::InvalidAgentSpaces`]
-/// for an empty space list or one naming a space that is not live.
+/// another agent holds in any letter case; uncoded `Validation` for an empty
+/// space list or one naming a space that is not live.
 #[instrument(skip(pool), err)]
 pub async fn create_mcp_agent_inner(
     pool: &SqlitePool,
@@ -40,18 +40,14 @@ pub async fn create_mcp_agent_inner(
         space_ids.map(|ids| ids.into_iter().map(SpaceId::into_string).collect());
     if let Some(ids) = &space_ids {
         if ids.is_empty() {
-            return Err(AppError::validation_coded(
-                ValidationCode::InvalidAgentSpaces,
-                "an agent needs at least one space, or every space",
+            return Err(AppError::validation(
+                "an agent needs at least one space, or every space".into(),
             ));
         }
         // Checked before the insert, outside a transaction: a space deleted
         // in between leaves an id that matches nothing, which grants nothing.
         if let Some(dead) = agents::first_dead_space(pool, ids).await? {
-            return Err(AppError::validation_coded(
-                ValidationCode::InvalidAgentSpaces,
-                format!("space {dead} does not exist"),
-            ));
+            return Err(AppError::validation(format!("space {dead} does not exist")));
         }
     }
     agents::insert_agent(pool, name, mode, space_ids)

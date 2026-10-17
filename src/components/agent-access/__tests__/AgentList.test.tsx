@@ -216,12 +216,12 @@ describe('AgentList — rows', () => {
       await screen.findByRole('button', { name: 'Copy Claude Code command for Planner' }),
     )
     expect(vi.mocked(writeText)).toHaveBeenLastCalledWith(
-      `claude mcp add -s user agaric-planner -- agaric-mcp --socket "${SOCKET}" --token ${TOKEN}`,
+      `claude mcp add -s user agaric-planner-000000 -- agaric-mcp --socket "${SOCKET}" --token ${TOKEN}`,
     )
 
     await user.click(screen.getByRole('button', { name: 'Copy Claude Desktop config for Planner' }))
     const desktop = vi.mocked(writeText).mock.lastCall?.[0] ?? ''
-    expect(JSON.parse(desktop).mcpServers['agaric-planner'].args).toEqual([
+    expect(JSON.parse(desktop).mcpServers['agaric-planner-000000'].args).toEqual([
       '--socket',
       SOCKET,
       '--token',

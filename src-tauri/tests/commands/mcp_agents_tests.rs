@@ -121,10 +121,9 @@ async fn create_refuses_an_empty_unknown_or_trashed_space_list_5667() {
         (spaces(&[TEST_SPACE_B_ID]), "a space in the Trash"),
     ] {
         let err = create(&pool, "Planner", space_ids).await.expect_err(what);
-        assert_eq!(
-            err.validation_code(),
-            Some(ValidationCode::InvalidAgentSpaces),
-            "{what} is refused"
+        assert!(
+            matches!(err, AppError::Validation { code: None, .. }),
+            "{what} is refused as an uncoded validation, got {err:?}"
         );
     }
     assert_eq!(list_mcp_agents_inner(&pool).await.unwrap(), Vec::new());
