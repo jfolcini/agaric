@@ -4,6 +4,7 @@ import Blockquote from '@tiptap/extension-blockquote'
 import Bold from '@tiptap/extension-bold'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
+import Heading from '@tiptap/extension-heading'
 import { BulletList } from '@tiptap/extension-list'
 import ListItem from '@tiptap/extension-list-item'
 import Paragraph from '@tiptap/extension-paragraph'
@@ -16,6 +17,7 @@ import { Selection } from '@tiptap/pm/state'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { ExternalLink } from '@/editor/extensions/external-link'
 import { MarkdownReveal } from '@/editor/extensions/markdown-reveal'
 import { setSelectionProbe } from '@/editor/pm-selection-probe'
 import {
@@ -2172,6 +2174,157 @@ describe('#5689 — a revealed Markdown marker beside the caret keeps its keys i
       expect(editor.isActive('bold')).toBe(false)
     } finally {
       unmount()
+      cleanup()
+    }
+  })
+})
+
+describe('#5689 — a revealed heading or link marker beside the caret keeps its keys in the block', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  function setup(content: Record<string, unknown>, opts: { off?: boolean } = {}) {
+    if (!opts.off) writePreference(PREFERENCES.revealMarkdownSyntax, true)
+    const element = document.createElement('div')
+    document.body.append(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text, Heading, ExternalLink, MarkdownReveal],
+      content: { type: 'doc', content: [content] },
+    })
+    const callbacks = makeCallbacks()
+    const cleanup = () => {
+      editor.destroy()
+      element.remove()
+    }
+    return { editor, callbacks, cleanup }
+  }
+
+  const heading = (text?: string) => ({
+    type: 'heading',
+    attrs: { level: 2 },
+    ...(text ? { content: [{ type: 'text', text }] } : {}),
+  })
+
+  /** ArrowLeft through the editor's own handlers: past the `#` run, left of it. */
+  function leftOfHashRun(editor: Editor): void {
+    const event = new KeyboardEvent('keydown', { key: 'ArrowLeft' })
+    editor.view.someProp('handleKeyDown', (f) => f(editor.view, event))
+  }
+
+  it('Backspace after a heading’s # run does not merge, and the heading drops a level', () => {
+    const { editor, callbacks, cleanup } = setup(heading('Title'))
+    const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+    try {
+      editor.commands.setTextSelection(1)
+      const event = makeEvent('Backspace')
+      handleBlockKeyDown(event, editor, callbacks)
+      expect(callbacks._calls['onMergeWithPrev']).toBeUndefined()
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      editor.view.dom.dispatchEvent(
+        new InputEvent('beforeinput', {
+          inputType: 'deleteContentBackward',
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+      expect(callbacks._calls['onMergeWithPrev']).toBeUndefined()
+      expect(editor.state.doc.firstChild?.attrs['level']).toBe(1)
+    } finally {
+      unmount()
+      cleanup()
+    }
+  })
+
+  it('Backspace left of a heading’s # run merges, as at any block start', () => {
+    const { editor, callbacks, cleanup } = setup(heading('Title'))
+    try {
+      editor.commands.setTextSelection(1)
+      leftOfHashRun(editor)
+      handleBlockKeyDown(makeEvent('Backspace'), editor, callbacks)
+      expect(callbacks._calls['onMergeWithPrev']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('ArrowLeft after a heading’s # run stays in the block, and left of it leaves', () => {
+    const { editor, callbacks, cleanup } = setup(heading('Title'))
+    try {
+      editor.commands.setTextSelection(1)
+      handleBlockKeyDown(makeEvent('ArrowLeft'), editor, callbacks)
+      expect(callbacks._calls['onFocusPrev']).toBeUndefined()
+      leftOfHashRun(editor)
+      handleBlockKeyDown(makeEvent('ArrowLeft'), editor, callbacks)
+      expect(callbacks._calls['onFocusPrev']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('Backspace in an empty heading lowers it instead of deleting the block', () => {
+    const { editor, callbacks, cleanup } = setup(heading())
+    const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+    try {
+      editor.commands.setTextSelection(1)
+      const event = makeEvent('Backspace')
+      handleBlockKeyDown(event, editor, callbacks)
+      expect(callbacks._calls['onDeleteBlock']).toBeUndefined()
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      const input = new InputEvent('beforeinput', {
+        inputType: 'deleteContentBackward',
+        bubbles: true,
+        cancelable: true,
+      })
+      editor.view.dom.dispatchEvent(input)
+      expect(callbacks._calls['onDeleteBlock']).toBeUndefined()
+      expect(input.defaultPrevented).toBe(true)
+      expect(editor.state.doc.firstChild?.attrs['level']).toBe(1)
+    } finally {
+      unmount()
+      cleanup()
+    }
+  })
+
+  it('Backspace in an empty heading deletes the block with the preference off', () => {
+    const { editor, callbacks, cleanup } = setup(heading(), { off: true })
+    try {
+      editor.commands.setTextSelection(1)
+      handleBlockKeyDown(makeEvent('Backspace'), editor, callbacks)
+      expect(callbacks._calls['onDeleteBlock']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('ArrowRight in an empty heading, left of its # run, stays in the block', () => {
+    const { editor, callbacks, cleanup } = setup(heading())
+    try {
+      editor.commands.setTextSelection(1)
+      handleBlockKeyDown(makeEvent('ArrowRight'), editor, callbacks)
+      expect(callbacks._calls['onFocusNext']).toBe(1)
+      leftOfHashRun(editor)
+      handleBlockKeyDown(makeEvent('ArrowRight'), editor, callbacks)
+      expect(callbacks._calls['onFocusNext']).toBe(1)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('ArrowRight at the end of a link label ending the block stays in the block, for the URL field', () => {
+    const { editor, callbacks, cleanup } = setup({
+      type: 'paragraph',
+      content: [
+        { type: 'text', text: 'see ' },
+        { type: 'text', text: 'label', marks: [{ type: 'link', attrs: { href: 'https://a.io' } }] },
+      ],
+    })
+    try {
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+      handleBlockKeyDown(makeEvent('ArrowRight'), editor, callbacks)
+      expect(callbacks._calls['onFocusNext']).toBeUndefined()
+    } finally {
       cleanup()
     }
   })

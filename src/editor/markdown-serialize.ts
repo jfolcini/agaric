@@ -306,7 +306,12 @@ function linkSpanPlainText(nodes: readonly InlineNode[]): string | null {
  */
 function isBareUrlGroup(group: NodeGroup): boolean {
   const rawText = linkSpanPlainText(group.nodes.map(stripLinkMark))
-  return rawText !== null && rawText === group.href && isAutolinkableUrl(group.href)
+  return rawText !== null && group.href !== null && writesBareUrl(rawText, group.href)
+}
+
+/** A link to `href` whose only content is the unmarked `text` is written as the bare URL. */
+export function writesBareUrl(text: string, href: string): boolean {
+  return text === href && isAutolinkableUrl(href)
 }
 
 /** Group consecutive inline nodes by their link mark href. */
