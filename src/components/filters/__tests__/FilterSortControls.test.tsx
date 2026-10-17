@@ -185,7 +185,9 @@ describe('FilterSortControls', () => {
 
   it('falls back to the built-in fields when the definitions fail to load', async () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
-    mockedInvoke.mockRejectedValue(new Error('ipc down'))
+    mockedInvoke.mockImplementation(
+      mockInvokeCommands({ list_property_defs: () => Promise.reject(new Error('ipc down')) }),
+    )
     renderControls()
 
     await waitFor(() => expect(warn).toHaveBeenCalled())
