@@ -604,7 +604,7 @@ export function GraphView(): React.ReactElement {
         </p>
         <svg
           ref={svgRef}
-          className="absolute inset-0 h-full w-full"
+          className="graph-canvas absolute inset-0 h-full w-full"
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- the listbox is the SVG canvas whose d3-drawn node groups are its options; a <select> cannot draw a graph
           role="listbox"
           aria-label={t('graph.title')}

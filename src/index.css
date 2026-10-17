@@ -2223,6 +2223,13 @@
   transition-timing-function: var(--ease-out);
 }
 
+/* The zoom moves the canvas and sizes its labels in one frame. The
+   reduced-motion reset's blanket duration would ease every property here and
+   draw a frame at the old zoom; the highlight above outranks this rule. */
+.graph-canvas * {
+  transition-property: none;
+}
+
 /* ── Accessibility / preference: no motion ─────────────────────────────
  *
  * Two triggers collapse motion to zero and share the same reset:
