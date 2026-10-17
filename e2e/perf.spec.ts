@@ -372,8 +372,13 @@ async function seedVault(page: Page): Promise<void> {
   await seedBigPage(page, pageIds)
 }
 
-/** Seed the `BIG_BLOCKS`-block page; its blocks link round-robin to `linkTargets`. */
-async function seedBigPage(page: Page, linkTargets: string[]): Promise<void> {
+/** Seed a `count`-block page; its blocks link round-robin to `linkTargets`. */
+async function seedBigPage(
+  page: Page,
+  linkTargets: string[],
+  count = BIG_BLOCKS,
+  title = BIG_TITLE,
+): Promise<void> {
   await page.evaluate(
     async ({ bigBlocks, bigTitle, linkTargets: targets }) => {
       const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
@@ -401,7 +406,7 @@ async function seedBigPage(page: Page, linkTargets: string[]): Promise<void> {
         }),
       })
     },
-    { bigBlocks: BIG_BLOCKS, bigTitle: BIG_TITLE, linkTargets },
+    { bigBlocks: count, bigTitle: title, linkTargets },
   )
 }
 
@@ -1348,4 +1353,271 @@ test('opening a page and following a link chip pin their IPC (#5445)', async ({ 
   )
   expect.soft(open, open.join(', ')).toEqual(PAGE_OPEN_IPC)
   expect(link, link.join(', ')).toEqual(LINK_CLICK_IPC)
+})
+
+// ===========================================================================
+// #5691 — page mode next to block mode
+// ===========================================================================
+
+const MODE_SIZES = [500, 2000, 5000] as const
+const MODE_REPEATS = Number(process.env['AGARIC_PERF_REPEATS'] ?? 3)
+const PAGE_MODE_EDITOR = '[data-testid="page-mode-editor"]'
+const BLOCK_WRITES = new Set([
+  'create_block',
+  'move_block',
+  'edit_block',
+  'delete_block',
+  'restore_block',
+])
+
+/** Keystroke to the frame after it is painted: from the event's own timestamp, past the next paint. */
+function installKeyLatencyProbe(): void {
+  const latencies: number[] = []
+  Object.assign(window, { __keyLatency__: latencies })
+  addEventListener(
+    'keydown',
+    (event) => {
+      requestAnimationFrame(() =>
+        setTimeout(() => latencies.push(performance.now() - event.timeStamp)),
+      )
+    },
+    true,
+  )
+}
+
+function quantile(values: readonly number[], q: number): number {
+  const sorted = values.toSorted((a, b) => a - b)
+  return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? Number.NaN
+}
+
+/** Median, and the band every repeat fell in. */
+function band(values: ReadonlyArray<number | null>): string {
+  const real = values.filter((v): v is number => v !== null && Number.isFinite(v))
+  if (real.length === 0) return '–'
+  const round = (v: number) => (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10)
+  return `${round(quantile(real, 0.5))} [${round(Math.min(...real))}–${round(Math.max(...real))}]`
+}
+
+/** Choose the editing mode as the switch does: the stored value, then the same-tab broadcast. */
+async function chooseEditMode(page: Page, mode: 'blocks' | 'page'): Promise<void> {
+  await page.evaluate((value) => {
+    const oldValue = localStorage.getItem('agaric-edit-mode')
+    localStorage.setItem('agaric-edit-mode', value)
+    dispatchEvent(
+      new StorageEvent('storage', { key: 'agaric-edit-mode', oldValue, newValue: value }),
+    )
+  }, mode)
+}
+
+/** The next page-mode save after `since` (performance time): its duration, waited for. */
+async function nextSave(page: Page, since: number): Promise<number> {
+  return page.evaluate(
+    (after) =>
+      new Promise<number>((resolve) => {
+        const poll = (): void => {
+          const save = performance.getEntriesByName('page-mode-save').at(-1)
+          if (save !== undefined && save.startTime > after) resolve(save.duration)
+          else setTimeout(poll, 20)
+        }
+        poll()
+      }),
+    since,
+  )
+}
+
+interface ModeSample {
+  mode: 'blocks' | 'page'
+  size: number
+  openMs: number
+  keyP50: number
+  keyP95: number
+  inp: number | null
+  typeLongFrames: number
+  typeWorstFrame: number
+  openWorstFrame: number
+  /** Block writes the typing's save made. */
+  typeWrites: number
+  /** Page mode's saves: after typing, on a blur with nothing to save, after Enter, after Tab. */
+  saves: Array<{ save: string; ms: number; writes: number }>
+}
+
+/**
+ * #5691 — page mode against block mode on the same page, at 500, 2,000 and
+ * 5,000 blocks (page mode's 500-block cap is lifted for the run). Each size
+ * runs `AGARIC_PERF_REPEATS` times (default 3) on a fresh vault, alternating
+ * which mode opens the page first; each cell is the median with the band the
+ * repeats fell in. Per mode: the open (block mode to its first block, page
+ * mode to its whole document, since ProseMirror renders every block),
+ * keystroke-to-paint latency over 30 keys (p50, p95), INP and long frames
+ * while typing; and each page-mode save's time and block writes. A save's time
+ * includes the mock IPC, which `installProbes` defers a task per call.
+ *
+ *   AGARIC_PERF=1 npx playwright test e2e/perf.spec.ts -g 'page mode'
+ *   AGARIC_PERF=1 AGARIC_PERF_CPU=4 npx playwright test e2e/perf.spec.ts -g 'page mode'
+ */
+test('perf: page mode next to block mode (#5691)', async ({ page }) => {
+  test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
+  test.setTimeout(60 * 60_000)
+
+  const rows: Row[] = []
+  await page.addInitScript(installProbes)
+  await page.addInitScript(installKeyLatencyProbe)
+  await page.addInitScript(() => Object.assign(window, { __pageModeBlockCap: 100_000 }))
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Performance.enable')
+  await cdp.send('Profiler.enable')
+  if (CPU > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU })
+  const measure = makeMeasure(page, cdp, rows)
+  const lastRow = (): Row => rows.at(-1) as Row
+  const samples: ModeSample[] = []
+  const sidebar = (label: string) =>
+    page.locator('[data-slot="sidebar"]').getByRole('button', { name: label, exact: true })
+  const ipcCount = () => page.evaluate(() => window.__perf__?.ipc.length ?? 0)
+  const writesSince = (from: number) =>
+    page.evaluate(
+      ({ from: f, writes }) =>
+        (window.__perf__?.ipc ?? []).slice(f).filter((c) => writes.includes(c)).length,
+      { from, writes: [...BLOCK_WRITES] },
+    )
+
+  for (const size of MODE_SIZES) {
+    for (let repeat = 0; repeat < MODE_REPEATS; repeat += 1) {
+      await page.goto('/')
+      // A reload reopens the last view.
+      await sidebar('Journal').click()
+      await page.locator('[data-testid="block-static"]').first().waitFor()
+      const title = `Perf modes ${size}`
+      await seedBigPage(page, [], size, title)
+      const order = repeat % 2 === 0 ? (['blocks', 'page'] as const) : (['page', 'blocks'] as const)
+      for (const mode of order) {
+        // From a view with no blocks, so the open's first block is this page's.
+        await sidebar('Tags').click()
+        await page.locator('[data-testid^="tag-item-"]').first().waitFor()
+        await chooseEditMode(page, mode)
+        const ready =
+          mode === 'page'
+            ? `${PAGE_MODE_EDITOR} > [data-page-block]:nth-child(${size})`
+            : '[data-testid="block-static"]'
+        let openMs = 0
+        await measure(`${mode} ${size}: open`, async () => {
+          openMs = await timeToReady(page, ready, () => openViaPalette(page, title))
+        })
+        const openWorstFrame = lastRow().worstFrame
+
+        if (mode === 'page') {
+          await page.locator(`${PAGE_MODE_EDITOR} > [data-page-block]`).nth(3).click()
+        } else {
+          await page.locator('[data-testid="block-static"]').nth(3).click()
+          await page.locator('[data-testid="block-editor"] [contenteditable="true"]').waitFor()
+        }
+        await page.keyboard.press('End')
+        // The click and End above settle before the keys measured.
+        await page.waitForTimeout(300)
+        await page.evaluate(() => {
+          ;(window as unknown as { __keyLatency__: number[] }).__keyLatency__.length = 0
+        })
+        const beforeTyping = await ipcCount()
+        const typingStart = await page.evaluate(() => performance.now())
+        await measure(`${mode} ${size}: type 30`, async () => {
+          await page.keyboard.type(' the quick brown fox jumps over', { delay: 100 })
+        })
+        const typed = lastRow()
+        const keys = await page.evaluate(
+          () => (window as unknown as { __keyLatency__: number[] }).__keyLatency__,
+        )
+        const sample: ModeSample = {
+          mode,
+          size,
+          openMs,
+          keyP50: quantile(keys, 0.5),
+          keyP95: quantile(keys, 0.95),
+          inp: typed.inp,
+          typeLongFrames: typed.appLongFrames,
+          typeWorstFrame: typed.worstFrame,
+          openWorstFrame,
+          typeWrites: 0,
+          saves: [],
+        }
+
+        if (mode === 'page') {
+          const timeNow = () => page.evaluate(() => performance.now())
+          const save = async (label: string, act: () => Promise<void>) => {
+            const since = await timeNow()
+            const from = await ipcCount()
+            await act()
+            const ms = await nextSave(page, since)
+            sample.saves.push({ save: label, ms, writes: await writesSince(from) })
+          }
+          sample.saves.push({
+            save: 'typing',
+            ms: await nextSave(page, typingStart),
+            writes: await writesSince(beforeTyping),
+          })
+          sample.typeWrites = sample.saves[0]?.writes ?? 0
+          await save('blur, nothing to save', async () => {
+            await page.locator('[aria-label="Page title"]').click()
+          })
+          await page.locator(`${PAGE_MODE_EDITOR} > [data-page-block]`).nth(3).click()
+          await page.keyboard.press('End')
+          await save('Enter, then a key', async () => {
+            await page.keyboard.press('Enter')
+            await page.keyboard.type('x')
+          })
+          await save('Tab', async () => {
+            await page.keyboard.press('Tab')
+          })
+        } else {
+          await page.waitForTimeout(1500)
+          sample.typeWrites = await writesSince(beforeTyping)
+        }
+        samples.push(sample)
+      }
+    }
+  }
+
+  const cells = (pick: (s: ModeSample) => number | null) =>
+    Object.fromEntries(
+      MODE_SIZES.flatMap((size) =>
+        (['blocks', 'page'] as const).map((mode) => [
+          `${mode} ${size}`,
+          band(samples.filter((s) => s.size === size && s.mode === mode).map(pick)),
+        ]),
+      ),
+    )
+  const table = {
+    'open, ms': cells((s) => s.openMs),
+    'worst frame while opening, ms': cells((s) => s.openWorstFrame),
+    'key to paint p50, ms': cells((s) => s.keyP50),
+    'key to paint p95, ms': cells((s) => s.keyP95),
+    'INP while typing, ms': cells((s) => s.inp),
+    'long frames while typing': cells((s) => s.typeLongFrames),
+    'worst frame while typing, ms': cells((s) => s.typeWorstFrame),
+    'block writes for the typing': cells((s) => s.typeWrites),
+  }
+  const saveLabels = ['typing', 'blur, nothing to save', 'Enter, then a key', 'Tab']
+  const saves = Object.fromEntries(
+    saveLabels.map((label) => [
+      label,
+      Object.fromEntries(
+        MODE_SIZES.map((size) => {
+          const runs = samples
+            .filter((s) => s.size === size && s.mode === 'page')
+            .map((s) => s.saves.find((x) => x.save === label))
+          return [
+            `page ${size}`,
+            `${band(runs.map((r) => r?.ms ?? null))} ms, ${band(runs.map((r) => r?.writes ?? null))} writes`,
+          ]
+        }),
+      ),
+    ]),
+  )
+  await saveOutput(
+    'perf-page-mode.json',
+    JSON.stringify({ cpuThrottle: CPU, repeats: MODE_REPEATS, samples, rows }, null, 2),
+  )
+  console.log(`\npage mode vs block mode (CPU ×${CPU}, ${MODE_REPEATS} repeats: median [min–max])`)
+  console.table(table)
+  console.log('page-mode saves: median [min–max]')
+  console.table(saves)
+  expect(samples).toHaveLength(MODE_SIZES.length * MODE_REPEATS * 2)
 })

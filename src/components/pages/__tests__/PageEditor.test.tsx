@@ -64,6 +64,10 @@ interface CapturedPageHeaderProps {
   onBack?: () => void
   onEditSource?: () => void
   kebabRef?: Ref<HTMLButtonElement>
+  editMode?: 'blocks' | 'page'
+  onEditModeChange?: (mode: 'blocks' | 'page') => void
+  editModeBlocked?: string | null
+  onEditModeIntent?: () => void
 }
 let capturedPageHeaderProps: CapturedPageHeaderProps | null = null
 vi.mock('@/components/pages/PageHeader', () => ({
@@ -89,6 +93,48 @@ vi.mock('@/components/pages/PageSourceEditor', () => ({
     </div>
   ),
 }))
+
+// ── Mock page mode's slot (#5691): the editor itself is tested on its own ──
+const pageModeFlush = vi.fn(() => Promise.resolve())
+const pageModeCursor = vi.fn((): string | null => null)
+vi.mock('@/editor/page-mode/PageModeSlot', async () => {
+  const { useImperativeHandle } = await import('react')
+  const { PAGE_MODE_BLOCK_CAP } = await import('@/editor/page-mode/page-mode-fit')
+  type Blocker = { kind: 'overCap'; count: number } | { kind: 'tasks' }
+  return {
+    PageModeSlot: (props: {
+      pageId: string
+      ready: boolean
+      onBlocked: (blocker: Blocker) => void
+      editorRef: Ref<{ flush: () => Promise<void>; cursorBlockId: () => string | null }>
+      cursorBlockId: string | null
+    }) => {
+      useImperativeHandle(
+        props.editorRef,
+        () => ({ flush: pageModeFlush, cursorBlockId: pageModeCursor }),
+        [],
+      )
+      return (
+        <div
+          data-testid="page-mode"
+          data-page-id={props.pageId}
+          data-ready={String(props.ready)}
+          data-cursor={props.cursorBlockId ?? ''}
+        >
+          <button
+            type="button"
+            onClick={() => props.onBlocked({ kind: 'overCap', count: PAGE_MODE_BLOCK_CAP + 1 })}
+          >
+            over the cap
+          </button>
+          <button type="button" onClick={() => props.onBlocked({ kind: 'tasks' })}>
+            a task arrives
+          </button>
+        </div>
+      )
+    },
+  }
+})
 
 // ── Mock panel components ───────────────────────────────────────────
 let capturedLinkedRefsPageId: string | undefined
@@ -183,7 +229,10 @@ import { makeBlock, makeBlockRow, makePage, withOps } from '@/__tests__/fixtures
 import type { TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { PageEditor } from '@/components/pages/PageEditor'
+import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
+import type { PropertyRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { getPageStore } from '@/stores/page-blocks'
@@ -1258,5 +1307,305 @@ describe(' responsive layout', () => {
     // doesn't accidentally change the vertical stacking of children.
     expect(root).toHaveClass('flex')
     expect(root).toHaveClass('flex-col')
+  })
+})
+
+describe('PageEditor page mode (#5691)', () => {
+  beforeEach(() => {
+    removePreference(PREFERENCES.editMode)
+    pageModeCursor.mockReturnValue(null)
+  })
+
+  /** Waits for `get_block` to settle the page type, which gates the switch. */
+  async function modeSwitch(): Promise<(mode: 'blocks' | 'page') => void> {
+    await waitFor(() => {
+      expect(capturedPageHeaderProps?.onEditModeChange).toBeTypeOf('function')
+    })
+    return capturedPageHeaderProps?.onEditModeChange as (mode: 'blocks' | 'page') => void
+  }
+
+  /** Load the page's store, as the block tree mocked here would. */
+  async function loadPage(pageId = 'PAGE_1'): Promise<void> {
+    await act(async () => {
+      await getPageStore(pageId)?.getState().load()
+    })
+  }
+
+  const emptyPage = () => ({ blocks: [], truncated: false, total: 0 })
+
+  it('with the setting on Blocks, shows the block tree and a switch on Blocks', async () => {
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    await modeSwitch()
+
+    expect(capturedPageHeaderProps?.editMode).toBe('blocks')
+    expect(capturedPageHeaderProps?.editModeBlocked).toBeNull()
+    expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+    expect(screen.queryByTestId('page-mode')).not.toBeInTheDocument()
+  })
+
+  it('with the setting on Page, opens the page in page mode', async () => {
+    writePreference(PREFERENCES.editMode, 'page')
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    await modeSwitch()
+
+    expect(capturedPageHeaderProps?.editMode).toBe('page')
+    expect(await screen.findByTestId('page-mode')).toHaveAttribute('data-ready', 'true')
+    expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+  })
+
+  it('the switch changes this page only: the setting stays, and the next page opens by it', async () => {
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_1' })
+    const { rerender } = render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    const switchMode = await modeSwitch()
+
+    act(() => switchMode('page'))
+
+    expect(useBlockStore.getState().focusedBlockId).toBeNull()
+    expect(screen.getByTestId('page-mode')).toHaveAttribute('data-cursor', 'BLOCK_1')
+    expect(screen.queryByRole('button', { name: /add block/i })).not.toBeInTheDocument()
+    expect(readPreference(PREFERENCES.editMode)).toBe('blocks')
+
+    rerender(<PageEditor pageId="PAGE_2" title="Other" />)
+    await waitFor(() => {
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+    })
+    expect(capturedPageHeaderProps?.editMode).toBe('blocks')
+  })
+
+  it('switching back saves page mode’s text, reloads, shows the blocks, the cursor’s block focused', async () => {
+    writePreference(PREFERENCES.editMode, 'page')
+    pageModeCursor.mockReturnValue('BLOCK_2')
+    const order: string[] = []
+    pageModeFlush.mockImplementationOnce(() => {
+      order.push('flush')
+      return Promise.resolve()
+    })
+    stubInvoke({
+      load_page_subtree: () => {
+        order.push('load')
+        return { blocks: [], truncated: false, total: 0 }
+      },
+    })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    const switchMode = await modeSwitch()
+    expect(await screen.findByTestId('page-mode')).toBeInTheDocument()
+
+    act(() => switchMode('blocks'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+    })
+    expect(order.slice(0, 2)).toEqual(['flush', 'load'])
+    expect(useBlockStore.getState().focusedBlockId).toBe('BLOCK_2')
+    expect(readPreference(PREFERENCES.editMode)).toBe('page')
+  })
+
+  it('a page whose blocks hold a task: Page is blocked with the reason, and choosing it says why', async () => {
+    stubInvoke({
+      load_page_subtree: () => ({
+        blocks: [
+          makeBlock({ id: 'B1', content: 'do it', parent_id: 'PAGE_1', todo_state: 'TODO' }),
+        ],
+        truncated: false,
+        total: 1,
+      }),
+    })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    await modeSwitch()
+    await loadPage()
+    await waitFor(() => {
+      expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.tasks'))
+    })
+
+    act(() => capturedPageHeaderProps?.onEditModeChange?.('page'))
+
+    expect(vi.mocked(toast.info)).toHaveBeenCalledWith(t('pageMode.blocked.tasks'))
+    expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+    expect(capturedPageHeaderProps?.editMode).toBe('blocks')
+  })
+
+  it('pointing at the switch reads the blocks’ properties, and a page with one is blocked', async () => {
+    stubInvoke({
+      load_page_subtree: () => ({
+        blocks: [makeBlock({ id: 'B1', content: 'text', parent_id: 'PAGE_1' })],
+        truncated: false,
+        total: 1,
+      }),
+      get_batch_properties: () => ({
+        B1: [
+          {
+            key: 'effort',
+            value_text: '1h',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
+      }),
+      list_attachments_batch: () => ({}),
+    })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    await modeSwitch()
+    await loadPage()
+    expect(capturedPageHeaderProps?.editModeBlocked).toBeNull()
+
+    act(() => capturedPageHeaderProps?.onEditModeIntent?.())
+
+    await waitFor(() => {
+      expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.properties'))
+    })
+  })
+
+  describe('a property found on a block and since removed', () => {
+    const effort: PropertyRow = {
+      key: 'effort',
+      value_text: '1h',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    }
+
+    /** A page whose one block holds a property until `clearProperty` is called, blocked once pointed at. */
+    async function blockedByProperty(): Promise<() => void> {
+      let properties: Record<string, PropertyRow[]> = { B1: [effort] }
+      stubInvoke({
+        load_page_subtree: () => ({
+          blocks: [makeBlock({ id: 'B1', content: 'text', parent_id: 'PAGE_1' })],
+          truncated: false,
+          total: 1,
+        }),
+        get_batch_properties: () => properties,
+        list_attachments_batch: () => ({}),
+      })
+      render(<PageEditor pageId="PAGE_1" title="My Page" />)
+      await modeSwitch()
+      await loadPage()
+      act(() => capturedPageHeaderProps?.onEditModeIntent?.())
+      await waitFor(() => {
+        expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.properties'))
+      })
+      return () => {
+        properties = {}
+      }
+    }
+
+    it('pointing at the switch looks again, and Page is offered', async () => {
+      const clearProperty = await blockedByProperty()
+      clearProperty()
+
+      act(() => capturedPageHeaderProps?.onEditModeIntent?.())
+
+      await waitFor(() => {
+        expect(capturedPageHeaderProps?.editModeBlocked).toBeNull()
+      })
+    })
+
+    it('choosing Page looks again, and opens page mode', async () => {
+      const clearProperty = await blockedByProperty()
+      clearProperty()
+
+      act(() => capturedPageHeaderProps?.onEditModeChange?.('page'))
+
+      expect(await screen.findByTestId('page-mode')).toBeInTheDocument()
+      expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
+    })
+  })
+
+  it('keeps a page over the cap in block mode, and the switch says why', async () => {
+    const user = userEvent.setup()
+    writePreference(PREFERENCES.editMode, 'page')
+    stubInvoke({ load_page_subtree: emptyPage })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    await modeSwitch()
+
+    await user.click(await screen.findByRole('button', { name: 'over the cap' }))
+
+    expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+    expect(capturedPageHeaderProps?.editMode).toBe('blocks')
+    expect(capturedPageHeaderProps?.editModeBlocked).toBe(
+      t('pageMode.blocked.overCap', { cap: PAGE_MODE_BLOCK_CAP, blocks: PAGE_MODE_BLOCK_CAP + 1 }),
+    )
+  })
+
+  it('leaving page mode for what it cannot show saves, reloads, and says so', async () => {
+    const user = userEvent.setup()
+    writePreference(PREFERENCES.editMode, 'page')
+    const order: string[] = []
+    pageModeFlush.mockImplementationOnce(() => {
+      order.push('flush')
+      return Promise.resolve()
+    })
+    stubInvoke({
+      load_page_subtree: () => {
+        order.push('load')
+        return emptyPage()
+      },
+    })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    await modeSwitch()
+
+    await user.click(await screen.findByRole('button', { name: 'a task arrives' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+    })
+    expect(order).toEqual(['flush', 'load'])
+    expect(vi.mocked(toast.info)).toHaveBeenCalledWith(
+      t('pageMode.switchedToBlocks', { reason: t('pageMode.blocked.tasks') }),
+    )
+  })
+
+  it('saves page mode’s text before Edit as Markdown loads the page', async () => {
+    writePreference(PREFERENCES.editMode, 'page')
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    await modeSwitch()
+    await screen.findByTestId('page-mode')
+
+    act(() => capturedPageHeaderProps?.onEditSource?.())
+
+    expect(pageModeFlush).toHaveBeenCalledTimes(1)
+    expect(await screen.findByTestId('page-source-mode')).toBeInTheDocument()
+  })
+
+  it('offers no switch on a tag page', async () => {
+    stubInvoke({
+      get_block: (args) =>
+        makePage({ id: args['blockId'] as string, block_type: 'tag', content: 'urgent' }),
+    })
+    render(<PageEditor pageId="TAG_1" title="urgent" />)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+    })
+    expect(capturedPageHeaderProps?.onEditModeChange).toBeUndefined()
+  })
+
+  it('offers no switch on touch, and a page there stays in block mode', async () => {
+    writePreference(PREFERENCES.editMode, 'page')
+    const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({
+          matches: query === '(pointer: coarse)',
+          media: query,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    )
+    const touchPoints = vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(5)
+    try {
+      render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+      await waitFor(() => {
+        expect(capturedPageHeaderProps?.onEditSource).toBeTypeOf('function')
+      })
+      expect(capturedPageHeaderProps?.onEditModeChange).toBeUndefined()
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+      expect(screen.queryByTestId('page-mode')).not.toBeInTheDocument()
+    } finally {
+      matchMedia.mockRestore()
+      touchPoints.mockRestore()
+    }
   })
 })

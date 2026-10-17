@@ -120,6 +120,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.showKeyboardShortcuts': 'Show keyboard shortcuts',
   'keyboard.exportPageMarkdown': 'Export page as Markdown',
   'keyboard.showPageInGraph': 'Show this page in graph',
+  'keyboard.togglePageMode': 'Edit this page as blocks or as one page',
   'keyboard.closeOverlays': 'Close overlays, cancel editing, clear selection',
   'keyboard.condition.whenOverlayOpen': 'When an overlay or editing surface is open',
   'keyboard.runLastCommand': 'Re-run last palette command',

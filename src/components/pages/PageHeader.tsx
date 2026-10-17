@@ -13,6 +13,7 @@ import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { EmojiPickerDialog } from '@/components/EmojiPicker'
 import { ViewHeader } from '@/components/layout/ViewHeader'
+import { EditModeSwitch } from '@/components/pages/EditModeSwitch'
 import { PageAliasSection } from '@/components/pages/PageAliasSection'
 import { PageHeaderMenu } from '@/components/pages/PageHeaderMenu'
 import { PageOutline } from '@/components/pages/PageOutline'
@@ -39,6 +40,7 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import type { EditMode } from '@/lib/preferences'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { useNavigationStore } from '@/stores/navigation'
 import { announcePagesMovedOut } from '@/stores/page-move'
@@ -56,9 +58,26 @@ export interface PageHeaderProps {
   onEditSource?: (() => void) | undefined
   /** The page-actions kebab, so focus can return to it. */
   kebabRef?: React.RefObject<HTMLButtonElement | null> | undefined
+  /** The page's editing mode; the Blocks | Page switch and its shortcut need `onEditModeChange`. */
+  editMode?: EditMode | undefined
+  onEditModeChange?: ((mode: EditMode) => void) | undefined
+  /** Why page mode is not offered for this page. */
+  editModeBlocked?: string | null | undefined
+  /** The switch was reached: find out whether page mode fits the page. */
+  onEditModeIntent?: (() => void) | undefined
 }
 
-export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: PageHeaderProps) {
+export function PageHeader({
+  pageId,
+  title,
+  onBack,
+  onEditSource,
+  kebabRef,
+  editMode,
+  onEditModeChange,
+  editModeBlocked,
+  onEditModeIntent,
+}: PageHeaderProps) {
   const { t } = useTranslation()
   const ownKebabRef = useRef<HTMLButtonElement>(null)
   const kebab = kebabRef ?? ownKebabRef
@@ -229,11 +248,14 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
       } else if (matchesShortcutBinding(e, 'showPageInGraph')) {
         e.preventDefault()
         showPageInGraph()
+      } else if (onEditModeChange && matchesShortcutBinding(e, 'togglePageMode')) {
+        e.preventDefault()
+        onEditModeChange(editMode === 'page' ? 'blocks' : 'page')
       }
     }
     document.addEventListener('keydown', handlePageShortcut)
     return () => document.removeEventListener('keydown', handlePageShortcut)
-  }, [copyPageMarkdownToClipboard])
+  }, [copyPageMarkdownToClipboard, editMode, onEditModeChange])
 
   // The kebab "Delete page" item calls this. `usePageDeleteAction` opens
   // its ConfirmDialog and, on confirm, runs the IPC + emits the success
@@ -542,6 +564,14 @@ export function PageHeader({ pageId, title, onBack, onEditSource, kebabRef }: Pa
               onKeyDown={handleTitleKeyDown}
               onKeyUp={handleTitleKeyUp}
             />
+            {onEditModeChange && (
+              <EditModeSwitch
+                mode={editMode ?? 'blocks'}
+                onChange={onEditModeChange}
+                blocked={editModeBlocked}
+                onIntent={onEditModeIntent}
+              />
+            )}
             <PageQuickActions
               pageId={pageId}
               title={title}

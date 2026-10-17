@@ -1055,6 +1055,27 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
+  // A later extension's plugins act first, so where `markdownReveal` sits
+  // decides whether its Backspace and arrow keys or the lists' come first (#5691).
+  it('places markdownReveal between the marks and the quote and lists', async () => {
+    const { result, unmount: unmountHook } = await setup()
+    const order = [
+      'underline',
+      'markdownReveal',
+      'blockquote',
+      'orderedList',
+      'bulletList',
+      'listItem',
+      'listMarkerDecoration',
+    ]
+    const names = (result.current.editor as Editor).extensionManager.extensions.map((e) => e.name)
+
+    expect(names.filter((name) => order.includes(name))).toEqual(order)
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
   // #925 — the contenteditable carries deliberate soft-keyboard attributes so
   // mobile keyboards don't guess the action key / capitalization.
   it('sets soft-keyboard attributes on the contenteditable', async () => {

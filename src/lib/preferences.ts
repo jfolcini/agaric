@@ -1504,6 +1504,24 @@ const PAGE_SOURCE_DRAFT_PREFERENCE: PreferenceDefinition<PageSourceDraft | null>
   serialize: jsonSerialize<PageSourceDraft | null>,
 }
 
+/** How a page is edited: one block at a time, or the whole page as one document (#5691). */
+export type EditMode = 'blocks' | 'page'
+
+/**
+ * `agaric-edit-mode` — Settings › Editor › *Edit pages as*: the mode pages open
+ * in on this device (#5691). A page header's switch changes only the page on
+ * screen. Desktop only: touch and the journal's week and stream views always
+ * edit blocks. Default `blocks`; anything else on disk reads as it.
+ */
+const EDIT_MODE_PREFERENCE: PreferenceDefinition<EditMode> = {
+  key: 'agaric-edit-mode',
+  scope: 'device',
+  version: 1,
+  defaultValue: 'blocks',
+  parse: (raw) => (raw === 'page' ? 'page' : 'blocks'),
+  serialize: identity,
+}
+
 /**
  * Central registry of every localStorage-backed app preference. New keys go
  * here (see module docstring) so preferences stay discoverable in one place.
@@ -1549,4 +1567,5 @@ export const PREFERENCES = {
   embedCollapse: EMBED_COLLAPSE_PREFERENCE,
   imageCollapse: IMAGE_COLLAPSE_PREFERENCE,
   pageSourceDraft: PAGE_SOURCE_DRAFT_PREFERENCE,
+  editMode: EDIT_MODE_PREFERENCE,
 } as const

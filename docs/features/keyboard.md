@@ -59,6 +59,7 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 | `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
 | `Ctrl+Shift+E` | Export current page as Markdown |
 | `Ctrl+Shift+G` | Show current page in the graph (local mode) |
+| `Ctrl+Shift+M` | Switch the page on screen between editing blocks and editing it as one document ([page mode](editor.md#page-mode)) |
 | `Ctrl+Space` | Toggle the focused block's selection |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste the selected blocks as a markdown outline, keeping their task state, priority, dates, list style and properties |
 

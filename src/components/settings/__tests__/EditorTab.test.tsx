@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { EditorTab } from '@/components/settings/EditorTab'
@@ -59,6 +59,47 @@ describe('EditorTab', () => {
     const select = screen.getByLabelText(t('settings.editor.externalImageLabel'))
     expect(select).toBe(screen.getByTestId('external-image-policy-select'))
     expect(select).toHaveAccessibleDescription(t('settings.editor.externalImageHelp'))
+  })
+
+  describe('edit pages as (#5691)', () => {
+    it('is labelled by its row, described by its help, and starts on Blocks', () => {
+      render(<EditorTab />)
+      const select = screen.getByLabelText(t('settings.editor.editModeLabel'))
+      expect(select).toBe(screen.getByTestId('edit-mode-select'))
+      expect(select).toHaveAccessibleDescription(t('settings.editor.editModeHelp'))
+      expect(select).toHaveValue('blocks')
+    })
+
+    it('choosing Page saves it for this device', async () => {
+      const user = userEvent.setup()
+      render(<EditorTab />)
+
+      await user.selectOptions(screen.getByTestId('edit-mode-select'), 'page')
+
+      expect(readPreference(PREFERENCES.editMode)).toBe('page')
+      expect(screen.getByTestId('edit-mode-select')).toHaveValue('page')
+    })
+
+    it('is not offered on touch, where pages stay in block mode', () => {
+      const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
+        (query: string) =>
+          ({
+            matches: query === '(pointer: coarse)',
+            media: query,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+          }) as unknown as MediaQueryList,
+      )
+      const touchPoints = vi.spyOn(navigator, 'maxTouchPoints', 'get').mockReturnValue(5)
+      try {
+        render(<EditorTab />)
+        expect(screen.queryByTestId('edit-mode-select')).not.toBeInTheDocument()
+        expect(screen.getByTestId('emoji-picker-toggle')).toBeInTheDocument()
+      } finally {
+        matchMedia.mockRestore()
+        touchPoints.mockRestore()
+      }
+    })
   })
 
   it('has no a11y violations', async () => {

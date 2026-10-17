@@ -202,6 +202,29 @@ export const pages: Record<string, string> = {
   'pageSource.changeChanged': 'Changed:',
   'pageSource.view': 'Show',
   'pageSource.modeEdit': 'Edit',
+  'pageMode.switchLabel': 'Editing mode',
+  'pageMode.blocks': 'Blocks',
+  'pageMode.page': 'Page',
+  'pageMode.pageHint': 'Edit the whole page as one document',
+  'pageMode.editorLabel': 'Page text',
+  'pageMode.saveFailed':
+    'Some changes to this page could not be saved yet; they are tried again with your next edit.',
+  'pageMode.placeholder':
+    'Type [[ to link, @ to tag, (( to reference a block · Shift+Enter for a line break',
+  'pageMode.keptAsNew_one':
+    'A block you were editing was deleted elsewhere. Your text is kept as a new block.',
+  'pageMode.keptAsNew_other':
+    '{{count}} blocks you were editing were deleted elsewhere. Your text is kept as new blocks.',
+  'pageMode.switchedToBlocks': '{{reason}} This page is back in block mode.',
+  'pageMode.blocked.overCap':
+    'Page mode opens pages of up to {{cap}} blocks; this one has {{blocks}}.',
+  'pageMode.blocked.tasks': 'Page mode can’t show tasks yet.',
+  'pageMode.blocked.priorities': 'Page mode can’t show priorities yet.',
+  'pageMode.blocked.dates': 'Page mode can’t show due or scheduled dates yet.',
+  'pageMode.blocked.properties': 'Page mode can’t show block properties yet.',
+  'pageMode.blocked.attachments': 'Page mode can’t show attachments yet.',
+  'pageMode.blocked.queries': 'Page mode can’t show queries yet.',
+  'pageMode.blocked.embeds': 'Page mode can’t show embedded blocks yet.',
   'pageSource.preview': 'Preview',
   'pageSource.changes': 'Changes',
   'pageSource.saveChanges_one': 'Save ({{count}} change)',

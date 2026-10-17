@@ -101,6 +101,17 @@ Page kebab → *Edit as Markdown* swaps the page's blocks for a plain-text edito
 - **Unsaved text is kept** on this device as a draft, with the block each line carries, and restored the next time you open *Edit as Markdown* on that page, until you save or discard it. A restored draft still catches what changed on the page since. A draft kept by an earlier version, whose blocks were `^ID` anchors in its text, is not loaded into the buffer: it shows read-only above it with *Copy earlier edits*, until editing, saving or discarding the buffer replaces it.
 - The front matter's lines carry no id.
 
+## Page mode
+
+Settings › Editor › *Edit pages as* sets how pages open on this device: **Blocks**, the default, one block at a time, or **Page**, the page as one document whose paragraphs are its blocks at their depths, the cursor moving across them freely. The page header's *Blocks | Page* switch, or `Ctrl+Shift+M`, changes it for the page on screen. On touch devices neither is shown and pages open in blocks.
+
+- **Every block keeps its id.** Enter splits a block and Backspace or Delete joins two, as in block mode, and `Tab` and `Shift+Tab` (or `Ctrl+Shift+→` / `Ctrl+Shift+←`) indent and outdent the blocks at the cursor with their children, as block mode does; with *Tab indents blocks* off in Settings → Editor, Tab moves focus instead. Cut and paste within the page moves blocks, so their `((refs))` and history go with them; a copy pasted is new blocks. Paragraphs pasted from elsewhere become blocks of their own, except inside a list or a table in a block, where they stay.
+- **It saves as you type**, after a short pause, and when you leave the editor or the page, before an export, and when the app is hidden or closed.
+- **Changes from elsewhere** (another device, an agent) come in while the page is open, block by block: a new block appears in its place, a moved one moves, a deleted one goes. Text you were typing into a block deleted elsewhere is kept as a new block, and a notice says so. A write the backend refuses makes the save read the page again and try once more, never in a loop.
+- **It shows** text with its marks, headings, code blocks with their highlighting, math, Mermaid, images written in the text, and links, tags and block references as chips that open what they point to, with the `[[`, `#` and `((` pickers. Collapsed blocks show their children, and stay collapsed in block mode. The slash menu, `::` property lines, drag handles and the block menu are block mode's: in page mode `/` and `::` are plain text (#5743).
+- **A page it cannot show yet opens in blocks**, and *Page* in the switch says why in its tooltip: a block with a task state, a priority, a due or scheduled date, a property, an attachment, a query or an embed, or more blocks than `PAGE_MODE_BLOCK_CAP` (#5743). A page that gains one of these while open in page mode goes back to blocks, with a notice.
+- A `#name` left as text when the block is saved becomes a tag in block mode, not in page mode (#5743).
+
 ## File attachments
 
 - **Drag-and-drop** files into the editor.

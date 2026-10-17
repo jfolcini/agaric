@@ -23,6 +23,8 @@ import { PageMetadataBar } from '@/components/pages/PageMetadataBar'
 import { PageSourceEditor } from '@/components/pages/PageSourceEditor'
 import { PagesTreeSection } from '@/components/pages/PagesTreeSection'
 import { TaggedItemsSection } from '@/components/pages/TaggedItemsSection'
+import { PageModeSlot } from '@/editor/page-mode/PageModeSlot'
+import { usePageMode } from '@/editor/page-mode/use-page-mode'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
@@ -79,6 +81,8 @@ function PageEditorInner({
   const createBelow = usePageBlockStore((s) => s.createBelow)
   const setFocused = useBlockStore((s) => s.setFocused)
   const pageStore = usePageBlockStoreApi()
+  // #5691 — page mode: the page as one document in place of the block tree.
+  const pageMode = usePageMode(pageId)
 
   // Scroll to and focus a specific block when navigating via a link
   const selectedBlockId = useNavigationStore((s) => s.selectedBlockId)
@@ -184,6 +188,8 @@ function PageEditorInner({
   // determines it, however many renders that takes.
   useLayoutEffect(() => {
     if (!selectedBlockId || blocks.length === 0) return
+    // Page mode puts the cursor on the block itself.
+    if (pageMode.wanted) return
     const target = blocksById.get(selectedBlockId)
     if (!target) return
     setFocused(selectedBlockId)
@@ -215,7 +221,7 @@ function PageEditorInner({
         pendingRevealBlockIdRef.current = null
       }
     }
-  }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection])
+  }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection, pageMode.wanted])
 
   // #4725 — a tag holds the blocks tagged with it, never children of its own,
   // so its page is read-only. `isTagPage` is null until `get_block` answers for
@@ -258,10 +264,15 @@ function PageEditorInner({
     setSourcePageId(null)
   }
   const sourceMode = sourcePageId === pageId && isTagPage === false
+  const { afterFlush } = pageMode
   const handleEditSource = useCallback(() => {
-    setFocused(null)
-    setSourcePageId(pageId)
-  }, [pageId, setFocused])
+    // Page mode's unsaved text first, or the buffer would load without it.
+    afterFlush(() => {
+      setFocused(null)
+      setSourcePageId(pageId)
+    })
+  }, [pageId, setFocused, afterFlush])
+  const pageModeOffered = pageMode.available && isTagPage === false && !sourceMode
   // Back to the kebab source mode was opened from, rather than `body`. The
   // header remounts first: a save may have changed the page's properties,
   // aliases and tags, which it reads once per mount (#5160 S8).
@@ -377,6 +388,10 @@ function PageEditorInner({
         onBack={onBack}
         onEditSource={isTagPage === false && !sourceMode ? handleEditSource : undefined}
         kebabRef={kebabRef}
+        editMode={pageModeOffered ? pageMode.mode : 'blocks'}
+        onEditModeChange={pageModeOffered ? pageMode.changeMode : undefined}
+        editModeBlocked={pageMode.blocked}
+        onEditModeIntent={pageMode.checkFit}
       />
 
       {isTagPage === true && (
@@ -387,6 +402,15 @@ function PageEditorInner({
 
       {sourceMode ? (
         <PageSourceEditor pageId={pageId} onClose={handleCloseSource} />
+      ) : pageMode.wanted && isTagPage !== true ? (
+        <PageModeSlot
+          pageId={pageId}
+          ready={isTagPage === false}
+          onBlocked={pageMode.onBlocked}
+          editorRef={pageMode.editorRef}
+          cursorBlockId={pageMode.cursorBlockId}
+          onNavigateToPage={onNavigateToPage}
+        />
       ) : (
         isTagPage !== true && (
           <>

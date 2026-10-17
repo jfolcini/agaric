@@ -31,6 +31,11 @@ export const settings: Record<string, string> = {
   'settings.tabProperties': 'Properties',
   'settings.tabAppearance': 'Appearance',
   'settings.tabEditor': 'Editor',
+  'settings.editor.editModeLabel': 'Edit pages as',
+  'settings.editor.editModeHelp':
+    'Blocks edits one block at a time; Page edits the whole page as one document. A page’s header switches the page on screen (Ctrl+Shift+M).',
+  'settings.editor.editModeBlocks': 'Blocks',
+  'settings.editor.editModePage': 'Page',
   'settings.editor.emojiPickerLabel': 'Emoji picker',
   'settings.editor.emojiPickerHelp':
     'Type : followed by a shortcode (e.g. :joy) to insert an emoji inline. Turn off to type a literal colon with no popup.',

@@ -209,6 +209,33 @@ export const MODULES = {
       'src/lib/__tests__/enex-import.property.test.ts',
     ],
   },
+
+  // Page mode (#5691): which block keeps which id across a cut, a paste or a
+  // drop, and the ops a save writes. A survivor is text saved under the
+  // wrong block, a lost `((ref))`, or an edit never written.
+  'token-ids': {
+    src: 'src/editor/token-ids.ts',
+    tests: [
+      'src/editor/page-mode/__tests__/page-block-ids.test.ts',
+      'src/editor/__tests__/source-buffer.test.ts',
+      'src/editor/__tests__/source-buffer-blocks.test.ts',
+    ],
+  },
+  'page-block-ids': {
+    src: 'src/editor/page-mode/page-block-ids.ts',
+    tests: [
+      'src/editor/page-mode/__tests__/page-block-ids.test.ts',
+      // A remote patch brings in the backend's ids, which the rules must leave be.
+      'src/editor/page-mode/__tests__/remote-patch.test.ts',
+    ],
+  },
+  'page-save': {
+    src: 'src/editor/page-mode/page-save.ts',
+    tests: [
+      'src/editor/page-mode/__tests__/page-save.test.ts',
+      'src/editor/page-mode/__tests__/remote-patch.test.ts',
+    ],
+  },
 }
 
 /**

@@ -1127,6 +1127,29 @@
   word-break: break-word;
 }
 
+/* Page mode (#5691): the page as one document, each block laid out as block
+   mode's row: its text box, the indent per depth (`PageBlock` sets it as a
+   margin), and the editing box on the block the cursor is in. The text starts
+   where block mode's does, past the slot its rows keep for the task checkbox
+   (`BlockInlineControls`), so switching modes does not shift it. */
+.ProseMirror.page-mode-editor {
+  @apply py-0 pr-0 pl-5.5;
+  min-height: 0;
+}
+.page-mode-editor [data-page-block] {
+  @apply rounded-md px-3 py-1;
+  min-height: 1.75rem;
+}
+.page-mode-editor .page-block-current {
+  @apply ring-1 ring-border bg-accent/[0.06] shadow-(--shadow-resting);
+}
+/* The placeholder shows where the cursor is, and on an empty page without it. */
+.page-mode-editor:not(.ProseMirror-focused)
+  > [data-page-block]:not(:only-child)
+  p.is-editor-empty::before {
+  content: none;
+}
+
 /* Static (non-focused) block content inherits user font size setting. */
 .block-static {
   font-size: var(--agaric-font-size, 1rem);

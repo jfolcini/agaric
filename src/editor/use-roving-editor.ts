@@ -6,7 +6,7 @@
  * via addToHistory:false on content replacement transactions.
  */
 
-import type { Content } from '@tiptap/core'
+import type { Content, Extensions } from '@tiptap/core'
 import Bold from '@tiptap/extension-bold'
 import Code from '@tiptap/extension-code'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
@@ -543,6 +543,97 @@ export const PriorityShortcuts = Extension.create({
   },
 })
 
+/** What the extensions both editors share call out to. */
+export interface ContentExtensionOptions {
+  resolveTagName: (id: string) => string
+  resolveBlockTitle: (id: string) => string
+  onNavigate: (id: string) => void
+  onTagClick: (id: string) => void
+  searchTags: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  onCreateTag: (name: string) => Promise<string>
+  searchPages: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  onCreatePage: (label: string) => Promise<string>
+  searchBlockRefs: (query: string) => PickerItem[] | Promise<PickerItem[]>
+  /** `- ` and `1. ` start a list, on which block mode's list-style and checkbox rules build. */
+  listInputRules: boolean
+}
+
+/**
+ * The content nodes, marks, chips and pickers block mode's roving editor and
+ * page mode's document (#5691) share, in the groups each places its own
+ * extensions between: `text` (paragraphs, marks), `lists` (quotes, lists),
+ * `blocks` (rules, tables, code, headings, history), `inline` (links, math,
+ * images) and `chips` (tags, page links and block refs, with their pickers).
+ * The order is behaviour, since a later extension's plugins act first: block
+ * mode places `MarkdownReveal` between `text` and `lists`, where it was.
+ */
+export function contentExtensions(o: ContentExtensionOptions) {
+  const listTypes = o.listInputRules
+    ? [OrderedList, BulletList]
+    : [
+        OrderedList.extend({ addInputRules: () => [] }),
+        BulletList.extend({ addInputRules: () => [] }),
+      ]
+  const text: Extensions = [
+    // #1481 — Paragraph carrying the GFM task `todoState` attr so parsed
+    // checkbox state survives `nodeFromJSON` (the stock Paragraph drops it).
+    TaskParagraph,
+    Text,
+    withFlankingShortcuts(Bold, ['**', '__']),
+    withFlankingShortcuts(Italic, ['*', '_']),
+    CodeWithShortcut,
+    withFlankingShortcuts(StrikeWithShortcut, ['~~']),
+    withFlankingShortcuts(HighlightWithShortcut, ['==']),
+    Underline,
+  ]
+  const lists: Extensions = [
+    CalloutBlockquote,
+    // #1436 — bullet/unordered lists share `ListItem` with ordered ones.
+    ...listTypes,
+    ListItem,
+  ]
+  const blocks: Extensions = [
+    HorizontalRule,
+    Table.configure({ resizable: false }),
+    TableRow,
+    TableHeader,
+    TableCell,
+    CodeBlockWithShortcut.configure({ lowlight }),
+    HeadingWithoutDefaultShortcuts.configure({ levels: [1, 2, 3, 4, 5, 6] }),
+    HardBreak,
+    History,
+  ]
+  const inline: Extensions = [
+    ExternalLink,
+    // #1437 — KaTeX math: inline `$…$` and block `$$…$$` atoms (lazy KaTeX).
+    MathInline,
+    MathBlock,
+    // #1434 — markdown `![alt](url)` image (inline atom, broken-image fallback).
+    Image,
+  ]
+  const chips: Extensions = [
+    TagRef.configure({ resolveName: o.resolveTagName, onClick: o.onTagClick }),
+    BlockLink.configure({ resolveTitle: o.resolveBlockTitle, onNavigate: o.onNavigate }),
+    BlockRef.configure({
+      // #4551 — `resolveBlockTitle` is the SAME resolver `BlockLink` gets, so a
+      // miss comes back `unresolvedBlockLabel`-shaped (`[[id…]]`, PAGE-link
+      // shaped) even for a `((ULID))` block ref. Mirrors `renderBlockRef`'s
+      // by-value substitution (`@/components/RichContentRenderer/marks/blockRef.tsx`)
+      // so the editing surface and the read-only renderer show the same
+      // `(( id… ))` shape for the same broken ref instead of disagreeing on click.
+      resolveContent: (id: string) => {
+        const resolved = o.resolveBlockTitle(id)
+        return resolved === unresolvedBlockLabel(id) ? unresolvedBlockRefLabel(id) : resolved
+      },
+      onNavigate: o.onNavigate,
+    }),
+    AtTagPicker.configure({ items: o.searchTags, onCreate: o.onCreateTag }),
+    BlockLinkPicker.configure({ items: o.searchPages, onCreate: o.onCreatePage }),
+    BlockRefPicker.configure({ items: o.searchBlockRefs }),
+  ]
+  return { text, lists, blocks, inline, chips }
+}
+
 export interface RovingEditorOptions {
   /** Resolve tag ULID → display name */
   resolveTagName?: (id: string) => string
@@ -771,103 +862,49 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // genuine. Every configured option already reads from a ref (`*.current`), so
   // the instances have no reactive inputs and an empty dep list is correct: the
   // placeholder, callbacks and resolvers all stay live via their refs.
-  const extensions = useMemo(
-    () => [
+  const extensions = useMemo(() => {
+    // oxlint-disable-next-line react/refs -- every ref here is read inside a closure TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — the resolvers, click handlers, pickers' searches and their creates; see #4406
+    const content = contentExtensions({
+      resolveTagName: (id: string) => resolveTagNameRef.current(id),
+      resolveBlockTitle: (id: string) => resolveBlockTitleRef.current(id),
+      onNavigate: (id: string) => onNavigateRef.current?.(id),
+      onTagClick: (id: string) => onTagClickRef.current?.(id),
+      searchTags: (query: string) => searchTagsRef.current(query),
+      onCreateTag: (name: string) => {
+        const fn = onCreateTagRef.current
+        if (!fn) return Promise.reject(new Error('onCreateTag not provided'))
+        return fn(name)
+      },
+      searchPages: (query: string) => searchPagesRef.current(query),
+      onCreatePage: (label: string) => {
+        const fn = onCreatePageRef.current
+        if (!fn) return Promise.reject(new Error('onCreatePage not provided'))
+        return fn(label)
+      },
+      searchBlockRefs: (query: string) => searchBlockRefsRef.current(query),
+      listInputRules: true,
+    })
+    return [
       Document,
-      // #1481 — Paragraph carrying the GFM task `todoState` attr so parsed
-      // checkbox state survives `nodeFromJSON` (the stock Paragraph drops it).
-      TaskParagraph,
-      Text,
-      withFlankingShortcuts(Bold, ['**', '__']),
-      withFlankingShortcuts(Italic, ['*', '_']),
-      CodeWithShortcut,
-      withFlankingShortcuts(StrikeWithShortcut, ['~~']),
-      withFlankingShortcuts(HighlightWithShortcut, ['==']),
-      Underline,
+      ...content.text,
       // #5689 — the caret's inline marks show their Markdown markers, behind the
-      // off-by-default `revealMarkdownSyntax` preference.
+      // off-by-default `revealMarkdownSyntax` preference. Block mode only (#5691).
       MarkdownReveal,
-      CalloutBlockquote,
-      OrderedList,
-      // #1436 — bullet/unordered lists. Shares `ListItem` with OrderedList and
-      // provides the `- ` / `* ` input rules (TipTap's BulletList default).
-      BulletList,
-      ListItem,
+      ...content.lists,
       // #3000 — paints the focused block's list marker (bullet / computed
       // ordinal) as a widget decoration, fed via `updateListMarker`.
       ListMarkerDecoration,
-      HorizontalRule,
-      Table.configure({ resizable: false }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      CodeBlockWithShortcut.configure({ lowlight }),
-      HeadingWithoutDefaultShortcuts.configure({ levels: [1, 2, 3, 4, 5, 6] }),
-      HardBreak,
-      History,
+      ...content.blocks,
       // #1439 — convert pasted clipboard HTML to Agaric markdown. MUST precede
       // ExternalLink and TaskPaste in the handlePaste chain: it only claims the
       // paste when there is usable `text/html`, otherwise returns false so those
       // handlers (and the plain-text fallback) run unchanged.
       HtmlPaste,
-      ExternalLink,
-      // #1437 — KaTeX math: inline `$…$` and block `$$…$$` atoms (lazy KaTeX).
-      MathInline,
-      MathBlock,
-      // #1434 — markdown `![alt](url)` image (inline atom, broken-image fallback).
-      Image,
+      ...content.inline,
       PriorityShortcuts,
       // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `placeholderRef` supplies the empty-state placeholder text; see #4406
       Placeholder.configure({ placeholder: () => placeholderRef.current }),
-      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `resolveTagNameRef` resolves a `#tag`'s display name and `onTagClickRef` fires on click; see #4406
-      TagRef.configure({
-        resolveName: (id: string) => resolveTagNameRef.current(id),
-        onClick: (id: string) => onTagClickRef.current?.(id),
-      }),
-      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `resolveBlockTitleRef` resolves the linked page's title and `onNavigateRef` fires on click; see #4406
-      BlockLink.configure({
-        resolveTitle: (id: string) => resolveBlockTitleRef.current(id),
-        onNavigate: (id: string) => onNavigateRef.current?.(id),
-      }),
-      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `resolveBlockTitleRef` resolves the embedded block's rendered content and `onNavigateRef` fires on click; see #4406
-      BlockRef.configure({
-        // #4551 — `resolveBlockTitleRef.current` is the SAME `resolveBlockTitle`
-        // `BlockLink.configure` above hands to `renderBlockLink`'s NodeView
-        // sibling, so a resolver's own "nothing resolved for this id" miss
-        // fallback comes back `unresolvedBlockLabel`-shaped (`[[id…]]`,
-        // PAGE-link shaped) even for a `((ULID))` block ref. Mirrors
-        // `renderBlockRef`'s by-value substitution
-        // (`@/components/RichContentRenderer/marks/blockRef.tsx`) so the
-        // editing surface and the read-only renderer show the same `(( id… ))`
-        // shape for the same broken ref instead of disagreeing on click.
-        resolveContent: (id: string) => {
-          const resolved = resolveBlockTitleRef.current(id)
-          return resolved === unresolvedBlockLabel(id) ? unresolvedBlockRefLabel(id) : resolved
-        },
-        onNavigate: (id: string) => onNavigateRef.current?.(id),
-      }),
-      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `searchTagsRef` powers the `@` and `#` tag pickers' query and `onCreateTagRef` creates a tag on demand; see #4406
-      AtTagPicker.configure({
-        items: (query: string) => searchTagsRef.current(query),
-        onCreate: (name: string) => {
-          const fn = onCreateTagRef.current
-          if (!fn) return Promise.reject(new Error('onCreateTag not provided'))
-          return fn(name)
-        },
-      }),
-      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `searchPagesRef` powers the `[[`-page picker's query and `onCreatePageRef` creates a page on demand; see #4406
-      BlockLinkPicker.configure({
-        items: (query: string) => searchPagesRef.current(query),
-        onCreate: (label: string) => {
-          const fn = onCreatePageRef.current
-          if (!fn) return Promise.reject(new Error('onCreatePage not provided'))
-          return fn(label)
-        },
-      }),
-      // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `searchBlockRefsRef` powers the `((`-block-ref picker's query; see #4406
-      BlockRefPicker.configure({
-        items: (query: string) => searchBlockRefsRef.current(query),
-      }),
+      ...content.chips,
       // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `searchSlashCommandsRef` powers the `/`-menu's query and `onSlashCommandRef` fires on selection; see #4406
       SlashCommand.configure({
         items: (query: string) => searchSlashCommandsRef.current(query),
@@ -930,9 +967,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // instead of literal `- [ ] x` text. Narrowly scoped to task lines on an
       // empty selection; every other paste falls through to default handling.
       TaskPaste,
-    ],
-    [],
-  )
+    ]
+  }, [])
 
   // #3134 — `immediatelyRender: false` is load-bearing, not a perf tweak.
   //
