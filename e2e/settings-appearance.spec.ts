@@ -85,6 +85,13 @@ test.describe('Settings › Appearance', () => {
     await navigateToView(page, 'Journal')
     await expect(html).toHaveAttribute('data-motion', 'off')
     await expect(searchButton).toHaveCSS('transition-property', 'none')
+
+    // The Settings control applies the choice itself, so only a launch that
+    // reopens on the journal shows the app shell applying the stored choice.
+    const relaunched = await page.context().newPage()
+    await waitForBoot(relaunched)
+    await expect(relaunched.locator('html')).toHaveAttribute('data-motion', 'off')
+
     await openAppearance(page)
     await expect(page.getByRole('combobox', { name: 'Animations' })).toHaveText('Off')
   })
