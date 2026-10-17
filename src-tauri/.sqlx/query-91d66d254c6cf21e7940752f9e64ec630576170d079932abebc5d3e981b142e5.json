@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT created_at FROM attachments WHERE id = ?",
+  "query": "SELECT block_id AS \"block_id!: String\" FROM attachments WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "created_at",
+        "name": "block_id!: String",
         "ordinal": 0,
-        "type_info": "Integer",
+        "type_info": "Text",
         "origin": {
           "Table": {
             "table": "attachments",
-            "name": "created_at"
+            "name": "block_id"
           }
         }
       }
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "25871741ac3e14552bcf7d20b8dcecfb09e73e34569ef2e78fb3bcc95fa09b98"
+  "hash": "91d66d254c6cf21e7940752f9e64ec630576170d079932abebc5d3e981b142e5"
 }

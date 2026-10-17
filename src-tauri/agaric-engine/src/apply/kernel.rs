@@ -144,8 +144,8 @@ pub async fn apply_op_projected_with_mode(
         advance_apply_cursor(tx, record.seq).await?;
         // #5371: the materializer path moves the op's page up "Last edited".
         // The LOCAL path (`advance_cursor = false`) leaves it to the command's
-        // `CommandTx::commit_and_dispatch`, which also sees the undo and
-        // attachment ops that never come through here.
+        // `CommandTx::commit_and_dispatch`, which also sees the undo ops that
+        // never come through here.
         if let Some(block_id) = record.block_id.as_deref() {
             agaric_store::cache::raise_pages_last_edited_ms(tx, &[(block_id, record.created_at)])
                 .await?;
@@ -589,6 +589,34 @@ async fn apply_page_alias_op(
     }
 }
 
+/// `AddAttachment` / `DeleteAttachment` / `RenameAttachment` (#5608); none
+/// moves the cache counts.
+async fn apply_attachment_op(
+    conn: &mut sqlx::SqliteConnection,
+    state: &crate::loro::shared::LoroState,
+    record: &OpRecord,
+    op_type: OpType,
+    replay: bool,
+) -> Result<(), AppError> {
+    let device_id = &record.device_id;
+    match op_type {
+        OpType::AddAttachment => {
+            let p: AddAttachmentPayload = serde_json::from_str(&record.payload)?;
+            apply_add_attachment_via_loro(conn, state, device_id, &p, record.created_at, replay)
+                .await
+        }
+        OpType::DeleteAttachment => {
+            let p: DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
+            apply_delete_attachment_via_loro(conn, state, device_id, &p, record.created_at, replay)
+                .await
+        }
+        _ => {
+            let p: RenameAttachmentPayload = serde_json::from_str(&record.payload)?;
+            apply_rename_attachment_via_loro(conn, state, device_id, &p, replay).await
+        }
+    }
+}
+
 /// #2896 — [`apply_op_tx`] with an EXPLICIT [`ApplyMode`]. Boot replay passes
 /// [`ApplyMode::ReplaySuppressed`] so each replayed create/move records its
 /// touched sibling group into the replay-owned [`ReplayDirtyParents`] sink
@@ -663,19 +691,8 @@ pub async fn apply_op_tx_with_mode(
             let p: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
             apply_delete_property_via_loro(conn, state, &record.device_id, &p, replay).await?;
         }
-        OpType::AddAttachment => {
-            // Attachments stay on the SQL-only path — they don't go
-            // through Loro.
-            let p: AddAttachmentPayload = serde_json::from_str(&record.payload)?;
-            apply_add_attachment_tx(conn, p, record.created_at).await?;
-        }
-        OpType::DeleteAttachment => {
-            let p: DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
-            apply_delete_attachment_tx(conn, p).await?;
-        }
-        OpType::RenameAttachment => {
-            let p: RenameAttachmentPayload = serde_json::from_str(&record.payload)?;
-            apply_rename_attachment_tx(conn, p).await?;
+        OpType::AddAttachment | OpType::DeleteAttachment | OpType::RenameAttachment => {
+            apply_attachment_op(conn, state, record, op_type, replay).await?;
         }
         OpType::AddPageAlias | OpType::RemovePageAlias => {
             apply_page_alias_op(conn, state, record, op_type, replay).await?;

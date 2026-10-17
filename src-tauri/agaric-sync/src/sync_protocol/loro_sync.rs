@@ -1030,16 +1030,17 @@ async fn project_pass_a(
         // SetProperty / DeleteProperty changes into `block_properties`.
         // Skipped for rank-only siblings (#3162) — this import carried no
         // property change for them.
-        if let Some((props, _, _, _)) = full_state {
+        if let Some((props, _, _, _, _)) = full_state {
             reproject_block_properties_from_engine(&mut *tx, block_id, props, &value_types).await?;
         }
     }
     Ok(())
 }
 
-/// Pass B — tags and page aliases. Mirrors remote AddTag / RemoveTag
-/// changes into `block_tags` and AddPageAlias / RemovePageAlias into
-/// `page_aliases`.  Runs AFTER Pass A so every referenced
+/// Pass B — tags, page aliases and attachments. Mirrors remote AddTag /
+/// RemoveTag changes into `block_tags`, AddPageAlias / RemovePageAlias into
+/// `page_aliases`, and the attachment ops into `attachments` (#5608), ahead
+/// of the session's file phase, which requests the bytes of the rows it finds.  Runs AFTER Pass A so every referenced
 /// tag block already has its `blocks` row (FK ordering, see above).
 /// Read the tag list under the guard, then write in the tx — same
 /// read-under-guard-then-write-in-tx discipline as the property pass.
@@ -1052,14 +1053,18 @@ async fn project_pass_b(
     block_states: &[ProjectedBlockState],
 ) -> Result<(), AppError> {
     use agaric_engine::loro::projection::{
-        reproject_block_tags_from_engine, reproject_page_aliases_from_engine,
+        reproject_attachments_from_engine, reproject_block_tags_from_engine,
+        reproject_page_aliases_from_engine,
     };
 
     for (block_id, (_, full_state)) in changed_blocks.iter().zip(block_states) {
-        if let Some((_, tag_ids, _, aliases)) = full_state {
+        if let Some((_, tag_ids, _, aliases, attachments)) = full_state {
             reproject_block_tags_from_engine(&mut *tx, block_id, tag_ids).await?;
             if let Some(aliases) = aliases {
                 reproject_page_aliases_from_engine(&mut *tx, block_id.as_str(), aliases).await?;
+            }
+            if let Some(attachments) = attachments {
+                reproject_attachments_from_engine(&mut *tx, block_id.as_str(), attachments).await?;
             }
         }
     }
@@ -1097,7 +1102,7 @@ async fn project_pass_c(
     // full-projection member of `changed_blocks` whose call here cascades over
     // its whole subtree — these siblings included.
     for (block_id, (_, full_state)) in changed_blocks.iter().zip(block_states) {
-        let Some((_, _, engine_deleted_at, _)) = full_state else {
+        let Some((_, _, engine_deleted_at, _, _)) = full_state else {
             continue;
         };
         let stamped = reproject_block_deleted_at_from_engine(
@@ -1445,9 +1450,9 @@ type ProjectionStates = (
 );
 
 /// One block's engine state for the projection passes: the core snapshot, plus
-/// the typed properties, tags, soft-delete seed and page aliases (`None` for a
-/// block that never held one) that every block except a rank-only sibling
-/// (#3162) needs.
+/// the typed properties, tags, soft-delete seed, page aliases and attachment
+/// entries (each `None` for a block that never held one) that every block
+/// except a rank-only sibling (#3162) needs.
 type ProjectedBlockState = (
     Option<agaric_engine::loro::engine::BlockSnapshot>,
     Option<(
@@ -1455,13 +1460,14 @@ type ProjectedBlockState = (
         Vec<String>,
         Option<String>,
         Option<Vec<String>>,
+        Option<Vec<agaric_engine::loro::engine::EngineAttachment>>,
     )>,
 );
 
 /// #540: snapshot EVERY changed block's engine state under ONE guard
 /// acquisition, drop the guard, then do all SQL writes. The previous
 /// shape re-acquired the `Mutex<LoroEngine>` once per block across three
-/// passes (3N acquisitions for N blocks); this reads all four projections
+/// passes (3N acquisitions for N blocks); this reads every projection
 /// per block under a single lock (1 acquisition total) into a local Vec,
 /// so the SQL writes never contend with — or hold — the engine mutex.
 /// Reads stay consistent (one atomic view of the engine); the three SQL
@@ -1538,7 +1544,7 @@ fn read_projection_states(
     // #4100 when preferring option 2. `read_blocks_bulk` is called ONCE
     // over `changed ++ candidates` (so the per-parent rank index is still
     // built once for the whole projection) and the extra per-candidate
-    // work is the same three engine reads a changed block pays, but the
+    // work is the same engine reads a changed block pays, but the
     // candidate count is not a constant: it is the number of DISTINCT
     // untouched ancestors of the changed set. For a sparse edit that is
     // tree depth — a handful — while a long offline catch-up can push it
@@ -1565,7 +1571,7 @@ fn read_projection_states(
         // its dense `position` — which `snapshot` already carries. The
         // import brought no property, tag, content or soft-delete change
         // for it (the resolver excludes anything it saw through another
-        // channel), so skip the three per-block engine reads AND their
+        // channel), so skip the per-block engine reads AND their
         // Pass-A-properties / B / C SQL below. That drops the recursive-CTE
         // `reproject_block_deleted_at_from_engine` for exactly the blocks
         // that provably cannot need it.
@@ -1577,6 +1583,7 @@ fn read_projection_states(
                 engine.read_tags(block_id.as_str())?,
                 engine.read_deleted_at(block_id.as_str())?,
                 engine.read_page_aliases(block_id.as_str())?,
+                engine.read_attachments(block_id.as_str())?,
             ))
         };
         states.push((snapshot, full_state));
@@ -1602,6 +1609,7 @@ fn read_projection_states(
             engine.read_tags(block_id)?,
             engine.read_deleted_at(block_id)?,
             engine.read_page_aliases(block_id)?,
+            engine.read_attachments(block_id)?,
         ));
         ancestor_states.push((snapshot, full_state));
     }

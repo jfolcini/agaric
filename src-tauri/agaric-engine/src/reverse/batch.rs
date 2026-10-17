@@ -773,10 +773,9 @@ async fn fetch_prior_attachment_batch(
                 qb.push(" UNION ALL SELECT ");
             }
             qb.push_bind((base + j) as i64);
-            // #2549: `AND is_replicated = 0` — mirrors
-            // `attachment_ops::reverse_delete_attachment`; a never-applied audit
-            // row (#2495) must not source the restored `add_attachment`.
-            qb.push(" AS idx, payload FROM (SELECT payload FROM op_log WHERE op_type = 'add_attachment' AND is_replicated = 0 AND attachment_id = ");
+            // #5608: either provenance — mirrors
+            // `attachment_ops::reverse_delete_attachment`.
+            qb.push(" AS idx, payload FROM (SELECT payload FROM op_log WHERE op_type = 'add_attachment' AND attachment_id = ");
             qb.push_bind(att_id);
             qb.push(" AND (created_at < ");
             qb.push_bind(record.created_at);

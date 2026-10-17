@@ -1,5 +1,5 @@
 //! Boot-time repairs of damage a since-closed write-side defect left behind
-//! (#4728, #4715, #5074, #5387, #5670).
+//! (#4728, #4715, #5074, #5387, #5670, #5608).
 //!
 //! The populations it repairs:
 //!
@@ -22,6 +22,9 @@
 //! * [`engine_missing_blocks`](crate::repair::engine_missing_blocks) — live
 //!   blocks their space's Loro engine lost to a purge after a pre-#5418 boot
 //!   replay (#5670). Each is hydrated back from its rows.
+//! * [`attachments`](crate::repair::attachments) — `attachments` rows written
+//!   before attachments were in the engine (#5608). Each row's fields enter its
+//!   block's doc.
 //!
 //! # Every change is an op
 //!
@@ -32,10 +35,12 @@
 //! [`agaric_store::op_log::append_local_op_in_tx`] and applies them through
 //! [`crate::apply::kernel::apply_op_projected`] — the same entry point the
 //! interactive commands and sync replay use. Deletes are soft, never purges.
-//! [`engine_missing_blocks`](crate::repair::engine_missing_blocks) is the
-//! exception: its rows already have their ops, so it writes none and puts their
-//! nodes back into the engine; SQL takes only the dense positions that seed
-//! reprojects.
+//! [`engine_missing_blocks`](crate::repair::engine_missing_blocks) and
+//! [`attachments`](crate::repair::attachments) are the exceptions: their rows
+//! already have their ops, so they write none and bring the engine up to the
+//! rows. No new op can put back a lost node, and a second `AddAttachment` would
+//! restamp its row and double what History and undo read. SQL takes only the
+//! dense positions the block seed reprojects.
 //!
 //! # Housekeeping, not the user's edits
 //!
@@ -50,7 +55,8 @@
 //! No op-emitting repair needs a marker: a re-homed orphan has a `page_id`, a merged
 //! duplicate is tombstoned and a task's `completed_at` matches its
 //! `todo_state`, so each selection query returns nothing the second time, and each is an
-//! indexed probe over a population that is small by construction. The app's `repair` module owns the transaction
+//! indexed probe over a population that is small by construction. Nor does the
+//! attachment backfill: a row whose entry the doc holds is not a candidate. The app's `repair` module owns the transaction
 //! boundary and the never-boot-fatal contract, and the marker that runs
 //! [`engine_missing_blocks`](crate::repair::engine_missing_blocks) once (see
 //! its driver for why).
@@ -67,6 +73,7 @@ use crate::block_ops::{create_block_in_tx, live_child_count, set_property_in_tx}
 use crate::loro::shared::LoroState;
 use crate::spaces::SPACE_PERSONAL_ULID;
 
+pub mod attachments;
 pub mod completed_at;
 pub mod engine_missing_blocks;
 pub mod journal_duplicates;

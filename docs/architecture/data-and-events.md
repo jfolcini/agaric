@@ -94,7 +94,7 @@ Append-only. Composite primary key `(device_id, seq)` where `seq` is the device-
 
 ULIDs are normalised to uppercase Crockford-Base32 in the preimage (and in every `block_id` slot) — the hash is byte-stable only when the normalisation is.
 
-**Op types** (the engine applies all of these; attachments are out-of-engine because the file blob lives on disk):
+**Op types** (the engine applies all of these; for attachments it holds the metadata, and the file bytes live on disk):
 
 | Type | What it changes |
 | --- | --- |

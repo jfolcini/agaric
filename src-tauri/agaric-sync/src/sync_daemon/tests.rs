@@ -5832,6 +5832,180 @@ async fn run_one_real_loopback_session_2129(
     init_orch.session().state.clone()
 }
 
+/// One full session each way: B pulls from A, then A from B.
+async fn sync_both_ways_5608(a: &Device2141, b: &Device2141) {
+    use crate::sync_protocol::SyncState;
+    assert_eq!(run_session_2141(b, a).await, SyncState::Complete, "B pulls");
+    assert_eq!(run_session_2141(a, b).await, SyncState::Complete, "A pulls");
+}
+
+/// `(id, filename, fs_path)` of every `attachments` row on `pool`, by id.
+async fn attachment_rows_5608(pool: &SqlitePool) -> Vec<(String, String, String)> {
+    sqlx::query_as("SELECT id, filename, fs_path FROM attachments ORDER BY id")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// #5608 — an attachment added on A reaches B over a real loopback session:
+/// the row through the engine, and the bytes through the same session's file
+/// phase, which requests the rows it finds without bytes. A rename converges,
+/// a delete removes B's row, and a delete on A against a concurrent rename on
+/// B ends deleted on both devices.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue5608_attachments_reach_the_other_device_over_real_loopback() {
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{
+        AddAttachmentPayload, DeleteAttachmentPayload, OpPayload, RenameAttachmentPayload,
+    };
+
+    const BLOCK: &str = "01HZ5608IMGBLOCKXXXXXXXXXX";
+    const IMG: &str = "01HZ5608ATTIMGXXXXXXXXXXXX";
+    const DOC: &str = "01HZ5608ATTDOCXXXXXXXXXXXX";
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ5608SPACEXXXXXXXXXXXXX");
+    let devices = make_n_devices_2141(&["DEV5608A", "DEV5608B"]).await;
+    let (a, b) = (&devices[0], &devices[1]);
+    let ts = 1_736_942_400_000;
+    let add = |id: &str, filename: &str| {
+        OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: BlockId::from_trusted(id),
+            block_id: BlockId::from_trusted(BLOCK),
+            mime_type: "image/png".into(),
+            filename: filename.into(),
+            size_bytes: 9,
+            fs_path: format!("attachments/{id}"),
+        })
+    };
+    let rename = |id: &str, old: &str, new: &str| {
+        OpPayload::RenameAttachment(RenameAttachmentPayload {
+            attachment_id: BlockId::from_trusted(id),
+            old_filename: old.into(),
+            new_filename: new.into(),
+        })
+    };
+    let delete = |id: &str, filename: &str| {
+        OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+            attachment_id: BlockId::from_trusted(id),
+            fs_path: format!("attachments/{id}"),
+            filename: filename.into(),
+        })
+    };
+
+    make_local_edit_602(&a.pool, &a.mat, &a.state, &a.id, &space, BLOCK, "img", ts).await;
+    let bytes = b"png bytes";
+    crate::sync_files::write_attachment_file(a._dir.path(), &format!("attachments/{IMG}"), bytes)
+        .unwrap();
+    apply_local_op_602(
+        &a.pool,
+        &a.mat,
+        &a.state,
+        &a.id,
+        &space,
+        add(IMG, "photo.png"),
+        ts + 1,
+    )
+    .await;
+
+    sync_both_ways_5608(a, b).await;
+
+    let b_rows = attachment_rows_5608(&b.pool).await;
+    assert_eq!(
+        b_rows,
+        vec![(
+            IMG.to_owned(),
+            "photo.png".to_owned(),
+            format!("attachments/{IMG}")
+        )],
+        "an add on A produces B's row"
+    );
+    let (b_bytes, _) = crate::sync_files::read_attachment_file(b._dir.path(), &b_rows[0].2)
+        .expect("B holds the bytes after the session's file phase");
+    assert_eq!(b_bytes, bytes, "B's bytes equal A's");
+
+    apply_local_op_602(
+        &a.pool,
+        &a.mat,
+        &a.state,
+        &a.id,
+        &space,
+        rename(IMG, "photo.png", "holiday.png"),
+        ts + 2,
+    )
+    .await;
+    sync_both_ways_5608(a, b).await;
+    assert_eq!(
+        attachment_rows_5608(&b.pool).await[0].1,
+        "holiday.png",
+        "a rename converges"
+    );
+
+    apply_local_op_602(
+        &a.pool,
+        &a.mat,
+        &a.state,
+        &a.id,
+        &space,
+        delete(IMG, "holiday.png"),
+        ts + 3,
+    )
+    .await;
+    sync_both_ways_5608(a, b).await;
+    assert_eq!(
+        attachment_rows_5608(&b.pool).await,
+        vec![],
+        "a delete removes B's row"
+    );
+
+    apply_local_op_602(
+        &a.pool,
+        &a.mat,
+        &a.state,
+        &a.id,
+        &space,
+        add(DOC, "doc.png"),
+        ts + 4,
+    )
+    .await;
+    sync_both_ways_5608(a, b).await;
+    apply_local_op_602(
+        &a.pool,
+        &a.mat,
+        &a.state,
+        &a.id,
+        &space,
+        delete(DOC, "doc.png"),
+        ts + 5,
+    )
+    .await;
+    apply_local_op_602(
+        &b.pool,
+        &b.mat,
+        &b.state,
+        &b.id,
+        &space,
+        rename(DOC, "doc.png", "renamed.png"),
+        ts + 6,
+    )
+    .await;
+    sync_both_ways_5608(a, b).await;
+    assert_eq!(
+        (
+            attachment_rows_5608(&a.pool).await,
+            attachment_rows_5608(&b.pool).await
+        ),
+        (vec![], vec![]),
+        "a delete against a concurrent rename ends deleted on both devices"
+    );
+    assert_eq!(
+        device_vv_2141(a, &space),
+        device_vv_2141(b, &space),
+        "the engines converge"
+    );
+    for dev in &devices {
+        dev.flush_and_shutdown().await;
+    }
+}
+
 /// #2481 phase 1 (acceptance) — an op authored on A replicates into B's
 /// op_log as audit-only metadata when B pulls from A over a REAL socket.
 ///

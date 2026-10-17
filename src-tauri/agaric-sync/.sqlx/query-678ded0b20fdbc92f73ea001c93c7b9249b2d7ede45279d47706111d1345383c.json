@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET filename = excluded.filename WHERE filename <> excluded.filename",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "678ded0b20fdbc92f73ea001c93c7b9249b2d7ede45279d47706111d1345383c"
+}

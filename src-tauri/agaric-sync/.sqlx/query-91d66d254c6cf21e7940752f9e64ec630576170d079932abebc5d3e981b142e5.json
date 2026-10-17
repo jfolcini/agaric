@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id AS \"block_id!: String\" FROM attachments WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "block_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "91d66d254c6cf21e7940752f9e64ec630576170d079932abebc5d3e981b142e5"
+}

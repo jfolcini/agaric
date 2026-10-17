@@ -4491,6 +4491,115 @@ async fn crash_tail_space_move_then_delete_reaches_the_engine_5647() {
     crash_tail_space_move(true).await;
 }
 
+/// `(id, filename, fs_path, created_at)` of every `attachments` row, by id.
+async fn attachment_rows(pool: &SqlitePool) -> Vec<(String, String, String, i64)> {
+    sqlx::query_as("SELECT id, filename, fs_path, created_at FROM attachments ORDER BY id")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// #5608 — attachment ops in a crashed tail reach the engine on replay, and
+/// leave it agreeing with SQL. The delete's row is gone by then, so it finds
+/// its block through the engine that holds the entry.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn crash_tail_attachment_ops_reach_the_engine_5608() {
+    use agaric_store::op::{
+        AddAttachmentPayload, DeleteAttachmentPayload, RenameAttachmentPayload,
+    };
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const PAGE_ID: &str = "01HZ00000000000000005608PG";
+    const X: &str = "T5608X";
+    let device_id = "dev-5608-replay";
+    let add = |att: &str| {
+        OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: BlockId::test_id(att),
+            block_id: BlockId::test_id(X),
+            mime_type: "image/png".into(),
+            filename: format!("{att}.png"),
+            size_bytes: 4,
+            fs_path: format!("attachments/{att}"),
+        })
+    };
+    let (pool, _dir) = test_pool().await;
+    let session = Materializer::new(pool.clone());
+    seed_space_and_page(&pool, session.loro_state(), device_id, SPACE, PAGE_ID).await;
+    // A1 is the op the pass's watermark withholds, so boot replays it again;
+    // A2's add is not replayed, so its row is gone when its delete replays.
+    for op in [create_under(X, PAGE_ID, 0), add("T5608A2"), add("T5608A1")] {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let saved =
+        agaric_engine::loro::snapshot::save_engines_and_advance_cursor(&pool, &session).await;
+    assert_eq!(saved, 1, "the pass persists the one space");
+    for op in [
+        OpPayload::RenameAttachment(RenameAttachmentPayload {
+            attachment_id: BlockId::test_id("T5608A1"),
+            old_filename: "T5608A1.png".into(),
+            new_filename: "renamed.png".into(),
+        }),
+        OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+            attachment_id: BlockId::test_id("T5608A2"),
+            fs_path: "attachments/T5608A2".into(),
+            filename: "T5608A2.png".into(),
+        }),
+        add("T5608A3"),
+    ] {
+        apply_like_a_command(&pool, &session, device_id, op).await;
+    }
+    let engine_entries = |mat: &Materializer| {
+        let space = agaric_store::space::SpaceId::from_trusted(SPACE);
+        let mut guard = mat
+            .loro_state()
+            .registry
+            .for_space(&space, device_id)
+            .unwrap();
+        guard.engine_mut().read_attachments(X).unwrap()
+    };
+    let session_engine = engine_entries(&session);
+    let session_sql = attachment_rows(&pool).await;
+    assert_eq!(
+        session_sql.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(),
+        vec!["renamed.png", "T5608A3.png"],
+        "the session's rows"
+    );
+
+    let boot = crash_and_boot(&pool, session, device_id, 1).await;
+
+    let booted = engine_entries(&boot);
+    let states: Vec<(String, String, bool)> = booted
+        .iter()
+        .flatten()
+        .map(|e| {
+            (
+                e.attachment_id.clone(),
+                e.fields.filename.clone(),
+                e.deleted_at.is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        states,
+        vec![
+            ("T5608A1".to_owned(), "renamed.png".to_owned(), false),
+            ("T5608A2".to_owned(), "T5608A2.png".to_owned(), true),
+            ("T5608A3".to_owned(), "T5608A3.png".to_owned(), false),
+        ],
+        "the rename, the delete and the add reached the engine"
+    );
+    assert_eq!(
+        booted, session_engine,
+        "the engine must match the session's"
+    );
+    assert_eq!(
+        attachment_rows(&pool).await,
+        session_sql,
+        "SQL must match the session's"
+    );
+    boot.shutdown();
+}
+
 /// #5647 — a replayed op that exhausted its retries comes back from the
 /// retry queue. A later op in the same tail deleted its block, which only
 /// replay routing still resolves a space through, so the retry must keep it.

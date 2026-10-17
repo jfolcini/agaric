@@ -1843,3 +1843,169 @@ mod criss_cross_move {
         );
     }
 }
+
+// ===========================================================================
+// Attachment metadata on three peers (#5608).
+//
+// Random add / rename / delete steps on three peers, interleaved with
+// one-way snapshot hand-offs in a random order, then run to a fixpoint. Every
+// peer must read the block's entries identically, and an id that was deleted
+// and never added again over a tombstone the adding peer could see must end
+// deleted: a delete is a tombstone that only a re-add (an undo) clears.
+// ===========================================================================
+
+#[cfg(test)]
+mod attachment_convergence {
+    use super::*;
+    use crate::loro::engine::AttachmentFields;
+
+    const PEERS: usize = 3;
+    const ATTACHMENT_POOL: &[&str] = &[
+        "01HZ0000000000000000000A01",
+        "01HZ0000000000000000000A02",
+        "01HZ0000000000000000000A03",
+    ];
+
+    #[derive(Debug, Clone)]
+    enum Step {
+        Add {
+            peer: usize,
+            att: usize,
+        },
+        Rename {
+            peer: usize,
+            att: usize,
+            name: String,
+        },
+        Delete {
+            peer: usize,
+            att: usize,
+        },
+        Handoff {
+            from: usize,
+            to: usize,
+        },
+    }
+
+    fn step_strategy() -> impl Strategy<Value = Step> {
+        let peer = 0..PEERS;
+        let att = 0..ATTACHMENT_POOL.len();
+        prop_oneof![
+            (peer.clone(), att.clone()).prop_map(|(peer, att)| Step::Add { peer, att }),
+            (peer.clone(), att.clone(), "[a-z]{1,6}").prop_map(|(peer, att, name)| Step::Rename {
+                peer,
+                att,
+                name
+            }),
+            (peer.clone(), att).prop_map(|(peer, att)| Step::Delete { peer, att }),
+            (peer.clone(), peer).prop_map(|(from, to)| Step::Handoff { from, to }),
+        ]
+    }
+
+    fn fields(name: &str, at: i64) -> AttachmentFields {
+        AttachmentFields {
+            filename: format!("{name}.png"),
+            mime_type: "image/png".to_owned(),
+            fs_path: format!("attachments/{name}"),
+            size_bytes: at,
+            created_at: at,
+            content_hash: None,
+        }
+    }
+
+    fn holds_tombstone(engine: &LoroEngine, block: &str, id: &str) -> bool {
+        engine
+            .read_attachments(block)
+            .expect("read")
+            .unwrap_or_default()
+            .iter()
+            .any(|e| e.attachment_id == id && e.deleted_at.is_some())
+    }
+
+    fn converge(peers: &mut [LoroEngine]) {
+        for _ in 0..4 {
+            let snapshots: Vec<Vec<u8>> = peers
+                .iter_mut()
+                .map(|p| p.export_snapshot().expect("export"))
+                .collect();
+            for peer in peers.iter_mut() {
+                for snapshot in &snapshots {
+                    peer.import(snapshot).expect("import");
+                }
+            }
+            let first = peers[0].version_vector();
+            if peers.iter().all(|p| p.version_vector() == first) {
+                return;
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn three_peers_converge_and_an_unrevived_delete_holds(
+            steps in proptest::collection::vec(step_strategy(), 1..=40),
+        ) {
+            let block = BLOCK_ID_POOL[0];
+            let mut peers: Vec<LoroEngine> = (0..PEERS)
+                .map(|i| LoroEngine::with_peer_id(&format!("DEV-ATT-{i}")).expect("peer"))
+                .collect();
+            peers[0]
+                .apply_create_block(block, "content", "seed", None, 0)
+                .expect("seed block");
+            let seed = peers[0].export_snapshot().expect("export seed");
+            for peer in &mut peers[1..] {
+                peer.import(&seed).expect("share seed");
+            }
+
+            let mut deleted = [false; 3];
+            let mut revived = [false; 3];
+            for (at, step) in (1_i64..).zip(&steps) {
+                match step {
+                    Step::Add { peer, att } => {
+                        let id = ATTACHMENT_POOL[*att];
+                        if holds_tombstone(&peers[*peer], block, id) {
+                            revived[*att] = true;
+                        }
+                        peers[*peer]
+                            .apply_add_attachment(block, id, &fields(id, at))
+                            .expect("add");
+                    }
+                    Step::Rename { peer, att, name } => peers[*peer]
+                        .apply_rename_attachment(block, ATTACHMENT_POOL[*att], name)
+                        .expect("rename"),
+                    Step::Delete { peer, att } => {
+                        deleted[*att] = true;
+                        peers[*peer]
+                            .apply_delete_attachment(block, ATTACHMENT_POOL[*att], at)
+                            .expect("delete");
+                    }
+                    Step::Handoff { from, to } => {
+                        if from != to {
+                            let bytes = peers[*from].export_snapshot().expect("export");
+                            peers[*to].import(&bytes).expect("import");
+                        }
+                    }
+                }
+            }
+            converge(&mut peers);
+
+            let reference = peers[0].read_attachments(block).expect("read reference");
+            for peer in &peers[1..] {
+                prop_assert_eq!(&peer.read_attachments(block).expect("read"), &reference);
+            }
+            for (att, id) in ATTACHMENT_POOL.iter().enumerate() {
+                if deleted[att] && !revived[att] {
+                    let entry = reference
+                        .as_ref()
+                        .and_then(|entries| entries.iter().find(|e| e.attachment_id == *id));
+                    prop_assert!(
+                        entry.is_some_and(|e| e.deleted_at.is_some()),
+                        "{} was deleted and never re-added, yet reads {:?}",
+                        id,
+                        entry
+                    );
+                }
+            }
+        }
+    }
+}

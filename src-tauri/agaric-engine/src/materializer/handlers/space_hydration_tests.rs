@@ -1096,3 +1096,76 @@ async fn a_lost_block_returns_to_its_sql_place_among_reordered_siblings_5670() {
         "the engine holds that order"
     );
 }
+
+// --------------------------------------------------------------------------
+// 12. #5608 — a block's attachments are doc state too, so each space a page
+//     enters gets its blocks' attachment rows. Moving back into a space the
+//     page left resurfaces the block's old map there; an attachment deleted
+//     while the page was away must come back deleted, not live.
+// --------------------------------------------------------------------------
+
+fn add_attachment_op(attachment_id: &str) -> OpPayload {
+    OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
+        attachment_id: BlockId::from_trusted(attachment_id),
+        block_id: BlockId::from_trusted(CHILD_ID),
+        mime_type: "image/png".into(),
+        filename: format!("{attachment_id}.png"),
+        size_bytes: 4,
+        fs_path: format!("attachments/{attachment_id}"),
+    })
+}
+
+/// `(attachment_id, deleted)` of every entry `space`'s doc holds for
+/// `CHILD_ID`; `None` when it has no map for it.
+fn doc_attachments(
+    state: &crate::loro::shared::LoroState,
+    space: &SpaceId,
+) -> Option<Vec<(String, bool)>> {
+    let mut guard = state
+        .registry
+        .for_space(space, DEVICE_ID)
+        .expect("for_space");
+    guard
+        .engine_mut()
+        .read_attachments(CHILD_ID)
+        .expect("read_attachments")
+        .map(|entries| {
+            entries
+                .into_iter()
+                .map(|e| (e.attachment_id, e.deleted_at.is_some()))
+                .collect()
+        })
+}
+
+#[tokio::test]
+async fn a_page_moved_away_and_back_brings_no_deleted_attachment_back_5608() {
+    const KEEP: &str = "01HZ0000000000000000005608";
+    const GONE: &str = "01HZ0000000000000000005609";
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    register_second_space(&pool).await;
+    let state = crate::loro::shared::LoroState::new();
+    create_no_space_subtree(&pool, &state).await;
+    apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE_ID))).await;
+    apply(&pool, &state, add_attachment_op(KEEP)).await;
+    apply(&pool, &state, add_attachment_op(GONE)).await;
+
+    apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE2_ID))).await;
+    assert_eq!(
+        doc_attachments(&state, &space2()),
+        Some(vec![(KEEP.to_owned(), false), (GONE.to_owned(), false)]),
+        "S2's doc is seeded with the block's attachments"
+    );
+    let delete = OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
+        attachment_id: BlockId::from_trusted(GONE),
+        fs_path: format!("attachments/{GONE}"),
+        filename: format!("{GONE}.png"),
+    });
+    apply(&pool, &state, delete).await;
+
+    apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE_ID))).await;
+    assert_eq!(
+        doc_attachments(&state, &space()),
+        Some(vec![(KEEP.to_owned(), false), (GONE.to_owned(), true)]),
+        "back in S1, the attachment deleted in S2 is a tombstone, not live"
+    );
+}

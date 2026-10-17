@@ -425,12 +425,11 @@ fn drive_reverse_engine(
 }
 
 /// The `attachments.fs_path` a reverse [`OpPayload::AddAttachment`] would
-/// store, computed exactly once so the byte-existence guard below and the
-/// `INSERT` in [`apply_reverse_in_tx`] can never disagree about which file
-/// the restored row names.
+/// store: the coercion `apply_add_attachment_tx` runs on the same payload, so
+/// the byte-existence guard below stats the file the restored row names.
 ///
 /// #3370 — the payload is reconstructed from an op-log record that may be a
-/// *peer's* op, so it gets the same coercion the apply path runs.
+/// *peer's* op.
 fn reverse_add_attachment_fs_path(
     p: &agaric_store::op::AddAttachmentPayload,
 ) -> agaric_core::attachment_path::AttachmentFsPath {
@@ -438,42 +437,6 @@ fn reverse_add_attachment_fs_path(
         &p.fs_path,
         p.attachment_id.as_str(),
     )
-}
-
-/// #4248 (SECURITY): the reverse-apply analogue of the #3029
-/// `sanitize_attachment_filename` call every FORWARD writer of
-/// `attachments.filename` already makes —
-/// `agaric_engine::apply::attachments::apply_add_attachment_tx`,
-/// `…::apply_rename_attachment_tx`, and `db::recovery`'s rename replay.
-/// Three writers sanitized and a fourth binding the payload value raw is
-/// exactly the shape that eventually gets
-/// one of them wrong, and it is the same asymmetry #3370 closed for
-/// `fs_path` in this very arm (see [`reverse_add_attachment_fs_path`]).
-///
-/// The reverse payload is rebuilt from an op-log record, so its `filename`
-/// is whatever some earlier writer put in that payload — a value that has
-/// never been through the sanitizer, only through the stricter *command*
-/// validator (`commands::attachments::validate_attachment_filename`,
-/// #2989), which did not exist for ops written before it landed. So the
-/// reverse arm must run the coercion itself rather than trusting the
-/// provenance of a row it merely reads.
-///
-/// Sanitize, never reject — identical policy to the forward apply: a
-/// reject would wedge an undo on one bad historical row, and the stored
-/// value must match byte-for-byte what the forward apply of the same
-/// payload would have written, or undo/redo of the same op diverge.
-fn reverse_attachment_filename(raw: &str, attachment_id: &str, arm: &'static str) -> String {
-    let sanitized = agaric_core::attachment_filename::sanitize_attachment_filename(raw);
-    if sanitized != raw {
-        tracing::warn!(
-            attachment_id,
-            arm,
-            original = %raw,
-            sanitized = %sanitized,
-            "sanitized traversal-unsafe attachment filename on reverse apply"
-        );
-    }
-    sanitized
 }
 
 /// #3706 — refuse to restore an `attachments` row whose bytes are gone.
@@ -857,9 +820,9 @@ impl ReverseCohortFanout {
 /// transaction (`tag_inheritance::apply_op_tag_inheritance`), as the forward
 /// commands do: nothing rebuilds it later.
 ///
-/// Attachment reverses (DeleteAttachment / RenameAttachment / AddAttachment) stay
-/// SQL-only: attachments are NOT modeled in the engine, so there is nothing to
-/// converge and they cannot trip the block-scoped #1257 gate.
+/// Attachment reverses (DeleteAttachment / RenameAttachment / AddAttachment)
+/// run the forward `apply_*_attachment_via_loro` writers, which write the
+/// engine entry and the row together (#5608).
 ///
 /// `op_created_at` is the SAME timestamp the caller bound as the reverse op's
 /// `op_log.created_at` (mint it via `reverse_op_timestamp`). The DeleteBlock
@@ -956,31 +919,31 @@ pub async fn apply_reverse_in_tx(
         OpPayload::DeleteProperty(p) => {
             apply_reverse_delete_property(tx, state, device_id, p).await?;
         }
+        // #5608: the forward writers, so the engine follows. A delete
+        // hard-deletes the row (C7, #345) and leaves the bytes to the orphan
+        // GC (#1993), as the forward delete does.
         OpPayload::DeleteAttachment(p) => {
-            // C7 (#345): hard-DELETE the row to match the runtime /
-            // materializer model. The forward `delete_attachment` path
-            // (`materializer::handlers::apply_delete_attachment_tx`) hard-
-            // deletes the row, and the runtime command
-            // (`commands::attachments::delete_attachment_inner`) deletes the
-            // row and defers byte reclamation to the GC pass (#1993). Undo is
-            // the *only* producer of soft-deleted
-            // attachment rows, but `list_attachments_*` has no `deleted_at`
-            // filter, so a soft-delete UPDATE here left a tombstone visible in
-            // listings that is never GC'd. A hard DELETE keeps the reverse of
-            // an `add_attachment` byte-identical to a normal delete's row
-            // effect. The on-disk file is reconciled by the C-3c orphan-GC
-            // sweep (`cleanup_orphaned_attachments`), the same backstop the
-            // forward delete relies on.
-            let attachment_id_str = p.attachment_id.as_str();
-            sqlx::query!("DELETE FROM attachments WHERE id = ?", attachment_id_str,)
-                .execute(&mut **tx)
-                .await?;
+            agaric_engine::apply::loro_apply::apply_delete_attachment_via_loro(
+                tx,
+                state,
+                device_id,
+                p,
+                op_created_at,
+                false,
+            )
+            .await?;
         }
+        // The payload is already swapped by `reverse_rename_attachment`, so
+        // `new_filename` is the name to restore.
         OpPayload::RenameAttachment(p) => {
-            apply_reverse_rename_attachment(tx, p).await?;
+            agaric_engine::apply::loro_apply::apply_rename_attachment_via_loro(
+                tx, state, device_id, p, false,
+            )
+            .await?;
         }
         OpPayload::AddAttachment(p) => {
-            apply_reverse_add_attachment(tx, p, app_data_dir).await?;
+            apply_reverse_add_attachment(tx, state, device_id, p, op_created_at, app_data_dir)
+                .await?;
         }
         // Note: CreateBlock never appears here because reverse::compute_reverse
         // maps CreateBlock → DeleteBlock, and RestoreBlock → DeleteBlock.
@@ -1408,48 +1371,13 @@ async fn apply_reverse_delete_property(
     Ok(())
 }
 
-/// `RenameAttachment` arm of [`apply_reverse_in_tx`] (SQL-only: attachments
-/// are not modeled in the engine).
-///
-/// `reverse_payload` is already swapped by `reverse_rename_attachment`, so the
-/// filename to restore lives in `new_filename` (mirroring the forward
-/// materializer, which also writes `p.new_filename`). Reading `old_filename`
-/// here would re-apply the current name — a no-op undo.
-async fn apply_reverse_rename_attachment(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    p: &agaric_store::op::RenameAttachmentPayload,
-) -> Result<(), AppError> {
-    let attachment_id_str = p.attachment_id.as_str();
-    // #4248 (SECURITY): same coercion `apply_rename_attachment_tx`
-    // runs on the forward path — see `reverse_attachment_filename`.
-    // Undoing a rename must land the byte-identical value the
-    // forward apply of that payload would have stored.
-    let new_filename =
-        reverse_attachment_filename(&p.new_filename, attachment_id_str, "rename_attachment");
-    sqlx::query!(
-        "UPDATE attachments SET filename = ? WHERE id = ?",
-        new_filename,
-        attachment_id_str
-    )
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
-}
-
-/// `AddAttachment` arm of [`apply_reverse_in_tx`] (SQL-only: attachments are
-/// not modeled in the engine).
-///
-/// Undo of AddAttachment: the forward delete was a hard-DELETE, so the row is
-/// gone and `original_created_at` is None in the normal case. `created_at` is
-/// regenerated via `now_ms()` then. A row may survive only via idempotency
-/// (e.g. double-undo replay), in which case we preserve its existing
-/// `created_at`.
+/// `AddAttachment` arm of [`apply_reverse_in_tx`]: the undo of a delete.
 ///
 /// #3706: the bytes this row will name must still be on disk. The orphan GC
 /// reclaims a deleted attachment's file as a matter of course (see
 /// `require_reverse_attachment_bytes`), and committing the row anyway is what
 /// turns a taken-back delete into permanent data loss on a vault with no peer
-/// to re-request from. Checked BEFORE the INSERT so the failure rolls the
+/// to re-request from. Checked BEFORE the write so the failure rolls the
 /// whole reverse back.
 ///
 /// `revert_ops_in_tx` runs the same check as a pre-append preflight; this one
@@ -1466,64 +1394,30 @@ async fn apply_reverse_rename_attachment(
 /// this arm reachable from the positional path too. The intended consequence:
 /// a Ctrl-Z after the sweep now hits the refusal below instead of quietly
 /// undoing something else.
+///
+/// The row is written by the forward `apply_add_attachment_via_loro`
+/// (#5608), which clears the engine tombstone and runs the #3029 filename
+/// sanitising and #3370 `fs_path` coercion a reverse payload needs: it may be
+/// rebuilt from a peer's op. The restored row is stamped with the reverse
+/// op's own `created_at`, the value a replay of that op writes.
 async fn apply_reverse_add_attachment(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    state: &agaric_engine::loro::shared::LoroState,
+    device_id: &str,
     p: &agaric_store::op::AddAttachmentPayload,
+    op_created_at: i64,
     app_data_dir: Option<&std::path::Path>,
 ) -> Result<(), AppError> {
     require_reverse_attachment_bytes(app_data_dir, p).await?;
-
-    let attachment_id_str = p.attachment_id.as_str();
-    let original_created_at: Option<i64> = sqlx::query_scalar!(
-        "SELECT created_at FROM attachments WHERE id = ?",
-        attachment_id_str,
+    agaric_engine::apply::loro_apply::apply_add_attachment_via_loro(
+        tx,
+        state,
+        device_id,
+        p,
+        op_created_at,
+        false,
     )
-    .fetch_optional(&mut **tx)
-    .await?;
-
-    let created_at = original_created_at.unwrap_or_else(crate::db::now_ms);
-    let block_id_str = p.block_id.as_str();
-
-    // #3370 (SECURITY): the second payload-carried writer into
-    // `attachments.fs_path`. The reverse payload is built from the
-    // op-log record of the op being undone, which may be a *peer's*
-    // op — so the same coercion the apply path runs must run here, or
-    // undo re-introduces the value apply just refused to store.
-    //
-    // Shared with the #3706 byte-existence guard above via
-    // `reverse_add_attachment_fs_path`, so the path that is checked
-    // and the path that is stored cannot drift apart.
-    // #4248 (SECURITY): the display `filename` is the OTHER
-    // payload-carried writer into this row, and `apply_add_attachment_tx`
-    // sanitizes it on the forward path (#3029) exactly as it coerces
-    // `fs_path` (#3370). Both halves of the pair now run here too;
-    // see `reverse_attachment_filename`.
-    let filename = reverse_attachment_filename(&p.filename, attachment_id_str, "add_attachment");
-    let fs_path = reverse_add_attachment_fs_path(p);
-    let fs_path_str = fs_path.as_str();
-    if fs_path_str != p.fs_path {
-        tracing::warn!(
-            attachment_id = attachment_id_str,
-            original = %p.fs_path,
-            canonical = fs_path_str,
-            "rewrote unsafe or non-canonical attachment fs_path on undo re-insert"
-        );
-    }
-
-    sqlx::query!(
-        "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
-        attachment_id_str,
-        block_id_str,
-        p.mime_type,
-        filename,
-        p.size_bytes,
-        fs_path_str,
-        created_at,
-    )
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
+    .await
 }
 
 /// List all ops for blocks descended from a page, with cursor pagination
@@ -2482,8 +2376,9 @@ async fn find_positional_undo_target(
     // its two per-site siblings.
     //
     // It is the SAME source `reverse::attachment_ops::reverse_delete_attachment`
-    // reads, with the same `is_replicated = 0` filter — but the admitted set
-    // and the rebuildable set are NOT equal, and neither containment holds.
+    // reads, an add of either provenance (#5608: a peer's add reaches this
+    // device through the engine) — but the admitted set and the rebuildable
+    // set are NOT equal, and neither containment holds.
     // Two deliberate residuals, both narrower than the bug being closed:
     //
     //   * ADMITTED BUT NOT REBUILDABLE. This probe has no "strictly before
@@ -2590,7 +2485,6 @@ async fn find_positional_undo_target(
                              SELECT 1 FROM op_log src_add \
                              WHERE src_add.op_type = 'add_attachment' \
                              AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
-                             AND src_add.is_replicated = 0 \
                              AND src_add.block_id IN (SELECT id FROM page_blocks) \
                          ) \
                      ) \
@@ -2917,7 +2811,6 @@ async fn undo_group_size(
                                  SELECT 1 FROM op_log src_add \
                                  WHERE src_add.op_type = 'add_attachment' \
                                  AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id') \
-                                 AND src_add.is_replicated = 0 \
                                  AND src_add.block_id IN (SELECT id FROM page_blocks) \
                              ) \
                          ) \
@@ -3128,7 +3021,6 @@ async fn enumerate_undo_group_in_tx(
                                  SELECT 1 FROM op_log src_add
                                  WHERE src_add.op_type = 'add_attachment'
                                  AND src_add.attachment_id = json_extract(ol.payload, '$.attachment_id')
-                                 AND src_add.is_replicated = 0
                                  AND src_add.block_id IN (SELECT id FROM page_blocks)
                              )
                          )

@@ -147,22 +147,11 @@ async fn persist_attachment(
     let attachment_id = ulid::Ulid::generate().to_string().to_uppercase();
     let now = now_ms();
 
-    // Build OpPayload. `attachment_id` is freshly generated via
-    // `Ulid::generate().to_string().to_uppercase()` above, so `from_trusted`
-    // is the correct entry point — it normalizes (no-op here, already
-    // uppercase) without re-validating the ULID format.
-    let payload = OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
-        attachment_id: BlockId::from_trusted(&attachment_id),
-        block_id: block_id.clone(),
-        mime_type: mime_type.clone(),
-        filename: filename.clone(),
-        size_bytes,
-        fs_path: fs_path.clone(),
-    });
-
     // Single IMMEDIATE transaction: validation + op_log + attachments write.
     // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "add_attachment").await?;
+    let state = materializer.loro_state();
+    tx.arm_engine_rollback(state);
 
     // Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let block_id_str = block_id.as_str();
@@ -181,25 +170,27 @@ async fn persist_attachment(
     let row_fs_path =
         resolve_attachment_blob(&mut tx, &fs_path, size_bytes, &content_hash, now).await?;
 
-    // Append to op_log within transaction
+    // `fs_path` is the canonical blob path (which may differ from the
+    // supplied path on a dedup reuse), so every read/sync path resolves the
+    // shared bytes, and the op and the engine name the path the row stores.
+    // `attachment_id` is freshly generated uppercase, so `from_trusted` only
+    // normalizes.
+    let payload = OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
+        attachment_id: BlockId::from_trusted(&attachment_id),
+        block_id: block_id.clone(),
+        mime_type: mime_type.clone(),
+        filename: filename.clone(),
+        size_bytes,
+        fs_path: row_fs_path.clone(),
+    });
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
-
-    // Insert into attachments table within same transaction. `fs_path` is the
-    // canonical blob path (which may differ from the supplied path on a dedup
-    // reuse), so every read/sync path resolves the shared bytes.
-    sqlx::query(
-        "INSERT INTO attachments \
-         (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    crate::materializer::apply_op_projected(&mut tx, &op_record, state, false).await?;
+    // The op does not carry the hash yet; the row keeps this device's.
+    sqlx::query!(
+        "UPDATE attachments SET content_hash = ? WHERE id = ?",
+        content_hash,
+        attachment_id
     )
-    .bind(&attachment_id)
-    .bind(block_id.as_str())
-    .bind(&mime_type)
-    .bind(&filename)
-    .bind(size_bytes)
-    .bind(&row_fs_path)
-    .bind(now)
-    .bind(&content_hash)
     .execute(&mut **tx)
     .await?;
 
@@ -620,6 +611,8 @@ pub async fn delete_attachment_inner(
     // Single IMMEDIATE transaction: validation + op_log + delete.
     // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "delete_attachment").await?;
+    let state = materializer.loro_state();
+    tx.arm_engine_rollback(state);
 
     // Validate attachment exists AND fetch its delete-time state in one query.
     // The fs_path goes into the op-log payload (so remote peers / future
@@ -653,14 +646,8 @@ pub async fn delete_attachment_inner(
         filename,
     });
 
-    // Append to op_log within transaction
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_ms()).await?;
-
-    // Delete from attachments table within same transaction
-    sqlx::query("DELETE FROM attachments WHERE id = ?")
-        .bind(attachment_id.as_str())
-        .execute(&mut **tx)
-        .await?;
+    crate::materializer::apply_op_projected(&mut tx, &op_record, state, false).await?;
 
     // Commit + fire-and-forget background cache dispatch. The materializer
     // reads from the committed op_log entry, not from the filesystem.
@@ -708,6 +695,8 @@ pub async fn rename_attachment_inner(
     new_filename: String,
 ) -> Result<(), AppError> {
     let mut tx = CommandTx::begin_immediate(pool, "rename_attachment").await?;
+    let state = materializer.loro_state();
+    tx.arm_engine_rollback(state);
 
     let attachment_id_str = attachment_id.as_str();
     let row = sqlx::query!(
@@ -736,14 +725,7 @@ pub async fn rename_attachment_inner(
     });
 
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_ms()).await?;
-
-    sqlx::query!(
-        "UPDATE attachments SET filename = ? WHERE id = ?",
-        new_filename,
-        attachment_id_str
-    )
-    .execute(&mut **tx)
-    .await?;
+    crate::materializer::apply_op_projected(&mut tx, &op_record, state, false).await?;
 
     tx.enqueue_background(op_record);
     tx.commit_and_dispatch(materializer).await?;

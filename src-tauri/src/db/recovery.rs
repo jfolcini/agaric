@@ -744,13 +744,15 @@ async fn load_engine_snapshots(
 }
 
 /// One block's engine-side derived state as [`reproject_space_from_engine`]
-/// reads it: typed properties, tag ids, the soft-delete stamp, and the page
-/// aliases (`None` for a block that never held one).
+/// reads it: typed properties, tag ids, the soft-delete stamp, the page
+/// aliases and the attachment entries (each `None` for a block that never
+/// held one).
 type EngineBlockState = (
     Vec<(String, agaric_engine::loro::engine::PropertyValue)>,
     Vec<String>,
     Option<String>,
     Option<Vec<String>>,
+    Option<Vec<agaric_engine::loro::engine::EngineAttachment>>,
 );
 
 /// [`reproject_space_from_engine`]'s core read.
@@ -801,7 +803,7 @@ fn read_engine_core_rows(
 }
 
 /// [`reproject_space_from_engine`]'s per-block derived reads (properties /
-/// tags / deleted_at / page aliases), each non-fatal (#2920). Aligned with `block_ids` by
+/// tags / deleted_at / page aliases / attachments), each non-fatal (#2920). Aligned with `block_ids` by
 /// index; a skipped block holds `None`.
 fn read_engine_block_states(
     engine: &agaric_engine::loro::engine::LoroEngine,
@@ -864,7 +866,19 @@ fn read_engine_block_states(
                 continue;
             }
         };
-        states.push(Some((props, tags, deleted_at, aliases)));
+        let attachments = match engine.read_attachments(block_id.as_str()) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!(
+                    space_id = %space_id_str, block_id = %block_id.as_str(), error = %e,
+                    "recovery (#2920): engine attachment read failed for block; skipping it"
+                );
+                skipped[i] = true;
+                states.push(None);
+                continue;
+            }
+        };
+        states.push(Some((props, tags, deleted_at, aliases, attachments)));
     }
     states
 }
@@ -925,12 +939,13 @@ async fn project_engine_derived_rows(
     skipped: &mut [bool],
 ) -> Result<(), agaric_core::error::AppError> {
     use agaric_engine::loro::projection::{
-        reproject_block_deleted_at_from_engine, reproject_block_properties_from_engine,
-        reproject_block_tags_from_engine, reproject_page_aliases_from_engine,
+        reproject_attachments_from_engine, reproject_block_deleted_at_from_engine,
+        reproject_block_properties_from_engine, reproject_block_tags_from_engine,
+        reproject_page_aliases_from_engine,
     };
     use sqlx::Acquire;
 
-    // Pass B/C/D — properties, then tags and page aliases (FK-ordered after
+    // Pass B/C/D — properties, then tags, page aliases and attachments (FK-ordered after
     // every Pass A core row exists), then soft-delete state. Grouped per block under one
     // savepoint (#2920): all Pass A rows are already present, so the
     // intra-block grouping preserves the cross-block FK ordering while still
@@ -939,7 +954,7 @@ async fn project_engine_derived_rows(
         if skipped[i] {
             continue;
         }
-        let Some((props, tags, deleted_at, aliases)) = states[i].as_ref() else {
+        let Some((props, tags, deleted_at, aliases, attachments)) = states[i].as_ref() else {
             continue;
         };
         let mut sp = tx.begin().await?;
@@ -948,6 +963,9 @@ async fn project_engine_derived_rows(
             reproject_block_tags_from_engine(&mut sp, block_id, tags).await?;
             if let Some(aliases) = aliases {
                 reproject_page_aliases_from_engine(&mut sp, block_id.as_str(), aliases).await?;
+            }
+            if let Some(attachments) = attachments {
+                reproject_attachments_from_engine(&mut sp, block_id.as_str(), attachments).await?;
             }
             reproject_block_deleted_at_from_engine(&mut sp, block_id, deleted_at.as_deref())
                 .await?;
@@ -1107,10 +1125,10 @@ async fn rebuild_caches_after_engine_reproject(pool: &SqlitePool) {
 ///   upserts every engine block (adding remote-authored blocks the op-log pass
 ///   never saw), and the property/tag reprojections DELETE-then-reinsert per
 ///   block, so the engine's complete set (local + remote) overwrites the op-log
-///   pass's local-only rows. Attachments are untouched.
+///   pass's local-only rows. Attachment rows the engine holds entries for are
+///   reprojected too (#5608).
 /// * #3268: [`recover_attachments_from_op_log`] runs AFTER this pass, not
-///   before. `attachments` is NOT modelled in the Loro engine, so this pass
-///   cannot restore (or repair) it — but its rows are FK-guarded on the owning
+///   before, for the ids no engine holds. Its rows are FK-guarded on the owning
 ///   block, and a peer-authored owning block exists only once THIS pass has
 ///   reprojected it. Replaying the attachment arms before this pass silently
 ///   drops every attachment on a peer-authored block, permanently.
@@ -4055,7 +4073,31 @@ async fn replay_attachment_op(
     Ok(())
 }
 
-/// The second half of the derived recovery: replay the `attachments` ops.
+/// #5608: every attachment id an engine snapshot holds under a block of its
+/// tree, live or tombstoned — the ids [`reproject_blocks_from_engine`]
+/// projects. A space whose snapshot does not decode contributes none, so its
+/// rows still come from the op log.
+async fn engine_held_attachment_ids(
+    pool: &SqlitePool,
+) -> Result<std::collections::HashSet<String>, agaric_core::error::AppError> {
+    let mut held = std::collections::HashSet::new();
+    for (_, bytes) in load_engine_snapshots(pool).await? {
+        let mut engine = agaric_engine::loro::engine::LoroEngine::new();
+        if engine.import(&bytes).is_err() {
+            continue;
+        }
+        for block_id in engine.live_blocks_preorder() {
+            if let Ok(Some(entries)) = engine.read_attachments(block_id.as_str()) {
+                held.extend(entries.into_iter().map(|e| e.attachment_id));
+            }
+        }
+    }
+    Ok(held)
+}
+
+/// The second half of the derived recovery: replay the `attachments` ops of
+/// the ids no engine holds (#5608). The engine is the merge truth for the
+/// rest, and [`reproject_blocks_from_engine`] has already projected them.
 ///
 /// **Run this AFTER [`reproject_blocks_from_engine`]** — the caller
 /// ([`crate::db::pool::init_pools`] / [`crate::db::init_pool`]) does, and the
@@ -4071,16 +4113,17 @@ async fn replay_attachment_op(
 /// peer-authored, from the Loro snapshots. Replaying the attachment arms in the
 /// first stage's transaction therefore drops EVERY attachment on a
 /// peer-authored block — the peer's own and this device's alike — because the
-/// owning block does not exist yet. That loss is permanent: `attachments` is
-/// the one table `reproject_blocks_from_engine` explicitly cannot repair
-/// (pool.rs), the bytes stay orphaned on disk, and the pending marker would
-/// have been cleared in the same transaction, so no later boot retries.
+/// owning block does not exist yet. For an id no engine holds that loss is
+/// permanent: `reproject_blocks_from_engine` cannot repair it, the bytes stay
+/// orphaned on disk, and the pending marker would have been cleared in the
+/// same transaction, so no later boot retries.
 ///
 /// The provenance rules, unchanged from the single-pass version:
 ///
-/// * `attachments` is NOT Loro-modelled, so unlike `block_properties` /
-///   `block_tags` a wrong row here can never be corrected downstream — and
-///   neither can a dropped one be rebuilt.
+/// * The ids replayed here are the ones no engine holds: rows written before
+///   #5608 whose backfill never reached a snapshot, or blocks outside every
+///   doc. A wrong row among them is corrected by nothing downstream, and a
+///   dropped one is rebuilt by nothing.
 /// * `attachments.block_id ... ON DELETE CASCADE` (0081) with `foreign_keys=ON`
 ///   means the `DROP TABLE blocks` that triggers this recovery deletes EVERY
 ///   attachment row, including peer-authored ones this device legitimately
@@ -4100,6 +4143,7 @@ async fn replay_attachment_op(
 pub(crate) async fn recover_attachments_from_op_log(
     pool: &SqlitePool,
 ) -> Result<(), agaric_core::error::AppError> {
+    let engine_held = engine_held_attachment_ids(pool).await?;
     let mut tx = pool.begin().await?;
 
     let mut cursor: Option<(i64, String, i64)> = None;
@@ -4120,6 +4164,12 @@ pub(crate) async fn recover_attachments_from_op_log(
             ));
             let payload: serde_json::Value =
                 serde_json::from_str(&payload_str).map_err(agaric_core::error::AppError::Json)?;
+            if payload["attachment_id"]
+                .as_str()
+                .is_some_and(|id| engine_held.contains(id))
+            {
+                continue;
+            }
 
             replay_attachment_op(&mut tx, &row, &op_type, &payload).await?;
         }
@@ -7030,6 +7080,70 @@ mod tests {
         assert_eq!(
             rows, expected,
             "the page's rows are the engine's aliases; the legacy row stays"
+        );
+    }
+
+    /// #5608: disaster recovery takes attachment rows from the engine, the
+    /// merge truth: a peer's attachment this device has no op for, and one
+    /// whose local rename a peer's later rename superseded. The op-log replay
+    /// skips the ids the engine holds, so the older local rename does not win.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recovery_restores_attachment_rows_from_the_engine_5608() {
+        use agaric_engine::loro::engine::{AttachmentFields, LoroEngine};
+        const BLOCK: &str = "01HZ0000000000000000000B01";
+        const PEERS: &str = "01HZ0000000000000000000A01";
+        const MINE: &str = "01HZ0000000000000000000A02";
+        let fields = |id: &str, filename: &str| AttachmentFields {
+            filename: filename.to_owned(),
+            mime_type: "image/png".to_owned(),
+            fs_path: format!("attachments/{id}"),
+            size_bytes: 4,
+            created_at: 1_000,
+            content_hash: None,
+        };
+        let (pool, _dir) = test_pool().await;
+        let mut engine = LoroEngine::with_peer_id("device-A").unwrap();
+        engine
+            .apply_create_block(BLOCK, "content", "img", None, 0)
+            .unwrap();
+        engine
+            .apply_add_attachment(BLOCK, PEERS, &fields(PEERS, "peer.png"))
+            .unwrap();
+        engine
+            .apply_add_attachment(BLOCK, MINE, &fields(MINE, "mine.png"))
+            .unwrap();
+        engine
+            .apply_rename_attachment(BLOCK, MINE, "renamed-by-peer.png")
+            .unwrap();
+        insert_snapshot(&pool, "space-1", engine.export_snapshot().unwrap()).await;
+        let add = serde_json::json!({
+            "attachment_id": MINE, "block_id": BLOCK, "mime_type": "image/png",
+            "filename": "mine.png", "size_bytes": 4, "fs_path": format!("attachments/{MINE}"),
+        });
+        seed_op(&pool, 1, "add_attachment", &add, 0).await;
+        let rename = serde_json::json!({
+            "attachment_id": MINE, "old_filename": "mine.png", "new_filename": "local.png",
+        });
+        seed_op(&pool, 2, "rename_attachment", &rename, 0).await;
+
+        assert!(
+            reproject_blocks_from_engine(&pool).await.unwrap(),
+            "reprojection fired"
+        );
+        recover_attachments_from_op_log(&pool).await.unwrap();
+
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, filename FROM attachments ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (PEERS.to_owned(), "peer.png".to_owned()),
+                (MINE.to_owned(), "renamed-by-peer.png".to_owned()),
+            ],
+            "the rows are the engine's"
         );
     }
 

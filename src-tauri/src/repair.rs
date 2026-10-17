@@ -1,4 +1,4 @@
-//! Boot driver for [`agaric_engine::repair`] (#4728, #4715, #5074, #5387, #5670).
+//! Boot driver for [`agaric_engine::repair`] (#4728, #4715, #5074, #5387, #5670, #5608).
 //!
 //! Runs once per boot, after `bootstrap_spaces` and the empty-block sweep,
 //! and never fails boot. Each repair gets a `CommandTx` of its own with the
@@ -9,7 +9,10 @@
 //! design; sharing its transaction would have made a repair boot-fatal too.
 //!
 //! The one-shot #5670 engine hydration follows them, with the same
-//! contract: see `hydrate_engine_missing_blocks_once`.
+//! contract: see `hydrate_engine_missing_blocks_once`. The #5608 attachment
+//! backfill runs after it: the backfill creates an engine for a space that
+//! had none, and the hydration, which skips a space with no engine, would
+//! then seed that space whole.
 //!
 //! The one-shot #5074 agenda rewrite follows the repairs, whatever they
 //! found: `DESIRED_AGENDA_SQL` changed under rows already in `agenda_cache`
@@ -34,6 +37,7 @@ use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_engine::apply::kernel::ApplyEffects;
 use agaric_engine::repair::RepairOp;
+use agaric_engine::repair::attachments::hydrate_attachments_into_engine;
 use agaric_engine::repair::completed_at::repair_completed_at;
 use agaric_engine::repair::engine_missing_blocks::hydrate_engine_missing_blocks;
 use agaric_engine::repair::journal_duplicates::repair_journal_duplicates;
@@ -41,18 +45,20 @@ use agaric_engine::repair::orphans::repair_orphans;
 use agaric_engine::repair::page_aliases::repair_page_aliases;
 use agaric_store::op_log::OpRecord;
 
-/// The repairs, in the order they run. Each is independent of the others; the
-/// order is only the order the issues were filed in.
+/// The repairs. The op-emitting ones run first, in [`Repair::OPS`] order,
+/// which is only the order the issues were filed in; `Attachments` runs after
+/// the #5670 hydration (see the module docs).
 #[derive(Debug, Clone, Copy)]
 enum Repair {
     Orphans,
     JournalDuplicates,
     CompletedAt,
     PageAliases,
+    Attachments,
 }
 
 impl Repair {
-    const ALL: [Self; 4] = [
+    const OPS: [Self; 4] = [
         Self::Orphans,
         Self::JournalDuplicates,
         Self::CompletedAt,
@@ -65,6 +71,7 @@ impl Repair {
             Self::JournalDuplicates => "repair_journal_duplicates",
             Self::CompletedAt => "repair_completed_at",
             Self::PageAliases => "repair_page_aliases",
+            Self::Attachments => "hydrate_attachments_into_engine",
         }
     }
 }
@@ -77,15 +84,8 @@ pub async fn repair_unreachable_content_at_boot(
     device_id: &str,
     materializer: &Materializer,
 ) {
-    for repair in Repair::ALL {
-        if let Err(e) = run(pool, device_id, materializer, repair).await {
-            tracing::error!(
-                error = %e,
-                repair = repair.label(),
-                "content repair failed — boot continues; the next boot retries it \
-                 (#4728 / #4715 / #5074)"
-            );
-        }
+    for repair in Repair::OPS {
+        run_or_log(pool, device_id, materializer, repair).await;
     }
 
     match hydrate_engine_missing_blocks_once(pool, device_id, materializer).await {
@@ -97,6 +97,8 @@ pub async fn repair_unreachable_content_at_boot(
         ),
     }
 
+    run_or_log(pool, device_id, materializer, Repair::Attachments).await;
+
     // Whatever the repairs found — a vault whose repairs find nothing is
     // exactly the one whose junk agenda rows would otherwise never clear.
     match agaric_store::cache::rewrite_agenda_cache_once(pool, read_pool).await {
@@ -106,6 +108,23 @@ pub async fn repair_unreachable_content_at_boot(
             error = %e,
             "agenda cache rewrite failed — boot continues; the next boot retries it (#5074)"
         ),
+    }
+}
+
+/// [`run`], logging a failure instead of returning it.
+async fn run_or_log(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    repair: Repair,
+) {
+    if let Err(e) = run(pool, device_id, materializer, repair).await {
+        tracing::error!(
+            error = %e,
+            repair = repair.label(),
+            "content repair failed — boot continues; the next boot retries it \
+             (#4728 / #4715 / #5074 / #5608)"
+        );
     }
 }
 
@@ -149,6 +168,10 @@ async fn run(
             let r = repair_page_aliases(&mut tx, state, device_id).await?;
             let summary = format!("backfilled = {}", r.ops.len());
             (r.ops, summary)
+        }
+        Repair::Attachments => {
+            let r = hydrate_attachments_into_engine(&mut tx, state, device_id).await?;
+            (Vec::new(), format!("hydrated = {}", r.hydrated))
         }
     };
     let mut deletes: Vec<(Arc<OpRecord>, ApplyEffects)> = Vec::new();
@@ -544,6 +567,51 @@ mod tests {
             );
         }
         assert!(deleted_at(&pool, &dup).await.is_some());
+    }
+
+    /// #5608 — boot runs the attachment backfill: a row written before
+    /// attachments were in the engine has its entry in the block's doc after.
+    /// It runs after the #5670 hydration, which leaves a space with no engine
+    /// alone.
+    #[tokio::test]
+    async fn boot_hydrates_legacy_attachment_rows_into_the_engine_5608() {
+        let (pool, _tmp) = test_pool().await;
+        bootstrap_spaces_for_test(&pool, DEV).await.unwrap();
+        let page = insert_page(&pool, "Photos").await;
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES ('ATT5608', ?, 'image/png', 'a.png', 4, 'attachments/ATT5608', 1000)",
+        )
+        .bind(&page)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mat = Materializer::new(pool.clone());
+        repair_unreachable_content_at_boot(&pool, &pool, DEV, &mat).await;
+        let held = {
+            let space = agaric_store::space::SpaceId::from_trusted(SPACE_WORK_ULID);
+            let mut guard = mat.loro_state().registry.for_space(&space, DEV).unwrap();
+            guard.engine_mut().read_attachments(&page).unwrap()
+        };
+        mat.shutdown();
+
+        let held: Vec<(String, bool)> = held
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| (e.attachment_id, e.deleted_at.is_some()))
+            .collect();
+        assert_eq!(
+            held,
+            vec![("ATT5608".to_owned(), false)],
+            "the row is a live entry in Work's doc"
+        );
+        assert_eq!(
+            marker(&pool).await.as_deref(),
+            Some("0"),
+            "the #5670 hydration ran before the backfill gave Work an engine, \
+             so it seeded none of Work's blocks"
+        );
     }
 
     /// The cache as the pre-#5074 projection left it for `done`: a

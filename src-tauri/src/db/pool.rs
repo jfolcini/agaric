@@ -449,9 +449,9 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, agaric_core::error::A
         reproject_blocks_from_engine(&write_pool).await?;
     }
 
-    // Recovery part 4 (#3268): restore `attachments` — the one table the engine
-    // reprojection above explicitly CANNOT repair, and the only one whose replay
-    // needs `blocks` to be complete first. Its arms are FK-guarded on the owning
+    // Recovery part 4 (#3268): restore the `attachments` rows no engine holds
+    // (#5608) — the ones the engine reprojection above cannot repair, and the
+    // only replay that needs `blocks` to be complete first. Its arms are FK-guarded on the owning
     // block existing, and a peer-authored block only exists once the engine
     // reprojection has run, so this must come after it. This pass is also what
     // retires `DERIVED_RECOVERY_PENDING_KEY`: a crash anywhere earlier in the
