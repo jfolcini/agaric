@@ -398,6 +398,8 @@ export async function searchBlocks(
     query: string
     parentId?: string | undefined
     tagIds?: string[] | undefined
+    /** Match `tagIds` inline and inherited too (`under:#tag`). See `SearchFilter`. */
+    tagsMatchInlineAndInherited?: boolean | undefined
     cursor?: string | undefined
     limit?: SafeLimit | undefined
     spaceId: string
@@ -477,6 +479,7 @@ export async function searchBlocks(
         excludedPropertyFilters: params.excludedPropertyFilters ?? [],
         excludedStateFilter: params.excludedStateFilter ?? [],
         excludedPriorityFilter: params.excludedPriorityFilter ?? [],
+        tagsMatchInlineAndInherited: params.tagsMatchInlineAndInherited ?? false,
       }),
       signal,
     ),

@@ -81,7 +81,7 @@ pub struct SearchBlockRow {
 }
 ```
 
-`tag_ids` matches attached tags (`block_tags`). `SearchFilter::tags_match_inline_and_inherited` widens each tag to inline `#[ULID]` references and inherited tags too, through the tag query's own leaf (`tag_query::tag_leaf_subquery_body`). It is `#[serde(skip)]`, so no IPC caller can set it: only the MCP `search` tool does.
+`tag_ids` matches attached tags (`block_tags`). `SearchFilter::tags_match_inline_and_inherited` widens each tag to inline `#[ULID]` references and inherited tags too, through the tag query's own leaf (`tag_query::tag_leaf_subquery_body`). The MCP `search` tool always sets it; the app sets it for a query with an `under:#tag` chip, which the Tags view's "Search everything under #tag" link opens (#5679). It is one flag for the whole filter, so the parser turns a `tag:#` chip beside an `under:` one invalid rather than let it widen silently.
 
 Two invariants ride on this contract:
 

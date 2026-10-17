@@ -3544,26 +3544,31 @@ fn slo_search_filter() -> SearchFilter {
 }
 
 /// The first page of `query`, as the Search panel asks for it.
-async fn search_first_page(pool: &SqlitePool, query: &str) -> PageResponse<SearchBlockRow> {
+async fn search_first_page(
+    pool: &SqlitePool,
+    query: &str,
+    filter: SearchFilter,
+) -> PageResponse<SearchBlockRow> {
     search_blocks_inner(
         pool,
         query.to_owned(),
         None,
         Some(SEARCH_PAGE_SIZE as i64),
-        slo_search_filter(),
+        filter,
         None,
     )
     .await
     .unwrap()
 }
 
-/// Time `search_first_page` for `query`.
+/// Time `search_first_page` for `query` under `filter`.
 fn time_search_blocks(
     c: &mut Criterion,
-    rt: Runtime,
+    rt: &Runtime,
     pool: SqlitePool,
     bench_name: &str,
     query: &'static str,
+    filter: SearchFilter,
 ) -> Acc {
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);
@@ -3573,13 +3578,15 @@ fn time_search_blocks(
     group.bench_function(bench_name, move |b| {
         let acc = acc_for_bench.clone();
         let pool = pool.clone();
-        b.to_async(&rt).iter_custom(move |iters| {
+        let filter = filter.clone();
+        b.to_async(rt).iter_custom(move |iters| {
             let pool = pool.clone();
             let acc = acc.clone();
+            let filter = filter.clone();
             async move {
                 let start = Instant::now();
                 for _ in 0..iters {
-                    let _ = search_first_page(&pool, query).await;
+                    let _ = search_first_page(&pool, query, filter.clone()).await;
                 }
                 let elapsed = start.elapsed();
                 acc.record(elapsed, iters);
@@ -3599,7 +3606,11 @@ fn bench_search_blocks_short_query(c: &mut Criterion) {
     let pool = rt.block_on(fresh_pool(&dir, "slo_search_short"));
     let (short_ids, _) = rt.block_on(seed_search_fixture(&pool));
 
-    let observed = rt.block_on(search_first_page(&pool, SEARCH_SHORT_QUERY));
+    let observed = rt.block_on(search_first_page(
+        &pool,
+        SEARCH_SHORT_QUERY,
+        slo_search_filter(),
+    ));
     let observed_ids: Vec<&str> = observed.items.iter().map(|row| row.id.as_str()).collect();
     assert_eq!(
         observed_ids,
@@ -3613,10 +3624,11 @@ fn bench_search_blocks_short_query(c: &mut Criterion) {
 
     let acc = time_search_blocks(
         c,
-        rt,
+        &rt,
         pool,
         "search_blocks_short_query_100k",
         SEARCH_SHORT_QUERY,
+        slo_search_filter(),
     );
     assert_under_budget(CMD, &acc, SEARCH_SHORT_BUDGET_MS);
 }
@@ -3629,7 +3641,11 @@ fn bench_search_blocks_word_query(c: &mut Criterion) {
     let pool = rt.block_on(fresh_pool(&dir, "slo_search_word"));
     let (_, word_ids) = rt.block_on(seed_search_fixture(&pool));
 
-    let observed = rt.block_on(search_first_page(&pool, SEARCH_WORD_QUERY));
+    let observed = rt.block_on(search_first_page(
+        &pool,
+        SEARCH_WORD_QUERY,
+        slo_search_filter(),
+    ));
     let mut observed_ids: Vec<&str> = observed.items.iter().map(|row| row.id.as_str()).collect();
     observed_ids.sort_unstable();
     assert_eq!(
@@ -3643,12 +3659,123 @@ fn bench_search_blocks_word_query(c: &mut Criterion) {
 
     let acc = time_search_blocks(
         c,
-        rt,
+        &rt,
         pool,
         "search_blocks_word_query_100k",
         SEARCH_WORD_QUERY,
+        slo_search_filter(),
     );
     assert_under_budget(CMD, &acc, SEARCH_WORD_BUDGET_MS);
+}
+
+/// The Tags view's "Search everything under #tag" (#5679): the tag attached
+/// to `UNDER_ATTACHED` blocks, inherited by `UNDER_CHILDREN` children of each,
+/// and written inline in `UNDER_ATTACHED` more.
+const UNDER_TAG_ID: &str = "SLOTAG00000000000000UNDER";
+const UNDER_ATTACHED: usize = 100;
+const UNDER_CHILDREN: usize = 9;
+
+/// Returns the blocks `under:#tag` matches and the ones `tag:#tag` matches,
+/// each newest first, the filter-only scan's `b.id DESC`.
+async fn seed_under_tag_fixture(pool: &SqlitePool) -> (Vec<String>, Vec<String>) {
+    let ids = seed_blocks_bulk(pool, FIXTURE_SIZE).await;
+    assign_all_to_slo_space(pool).await;
+    let mut under = Vec::new();
+    let mut attached = Vec::new();
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'tag', 'under', 1)",
+    )
+    .bind(UNDER_TAG_ID)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    let stride = FIXTURE_SIZE / UNDER_ATTACHED;
+    for k in 0..UNDER_ATTACHED {
+        let parent = &ids[k * stride];
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(parent)
+            .bind(UNDER_TAG_ID)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        for child in &ids[k * stride + 1..=k * stride + UNDER_CHILDREN] {
+            sqlx::query("UPDATE blocks SET parent_id = ? WHERE id = ?")
+                .bind(parent)
+                .bind(child)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            under.push(child.clone());
+        }
+        let inline = &ids[k * stride + stride / 2];
+        sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+            .bind(inline)
+            .bind(UNDER_TAG_ID)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        under.push(inline.clone());
+        under.push(parent.clone());
+        attached.push(parent.clone());
+    }
+    tx.commit().await.unwrap();
+    agaric_store::tag_inheritance::rebuild_all(pool)
+        .await
+        .unwrap();
+    under.sort_unstable_by(|a, b| b.cmp(a));
+    attached.sort_unstable_by(|a, b| b.cmp(a));
+    (under, attached)
+}
+
+/// `search_blocks` on `under:#tag` alone, the query the Tags view's link
+/// opens, beside `tag:#tag` on the same fixture. Measurement only: no budget
+/// until `bench-slo` has measured them.
+fn bench_search_blocks_under_tag(c: &mut Criterion) {
+    const UNDER: &str = "search_blocks (under:#tag, 1.1K of 100K) @ 100K";
+    const ATTACHED: &str = "search_blocks (tag:#tag, 100 of 100K) @ 100K";
+    let rt = Runtime::new().unwrap();
+    let dir = TempDir::new().unwrap();
+    let pool = rt.block_on(fresh_pool(&dir, "slo_search_under_tag"));
+    let (under_ids, attached_ids) = rt.block_on(seed_under_tag_fixture(&pool));
+    let tag_filter = |widen: bool| SearchFilter {
+        tag_ids: vec![UNDER_TAG_ID.to_owned()],
+        tags_match_inline_and_inherited: widen,
+        ..slo_search_filter()
+    };
+
+    for (cmd, widen, expected) in [(UNDER, true, &under_ids), (ATTACHED, false, &attached_ids)] {
+        let observed = rt.block_on(search_first_page(&pool, "", tag_filter(widen)));
+        let observed_ids: Vec<&str> = observed.items.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(
+            observed_ids,
+            &expected[..SEARCH_PAGE_SIZE],
+            "{cmd}: untimed probe must return the newest 50 matches"
+        );
+        assert!(
+            observed.has_more,
+            "{cmd}: the matches overflow one page of 50"
+        );
+    }
+
+    let acc_attached = time_search_blocks(
+        c,
+        &rt,
+        pool.clone(),
+        "search_blocks_tag_100k",
+        "",
+        tag_filter(false),
+    );
+    let acc_under = time_search_blocks(
+        c,
+        &rt,
+        pool,
+        "search_blocks_under_tag_100k",
+        "",
+        tag_filter(true),
+    );
+    report_measurement_only(UNDER, &acc_under);
+    report_measurement_only(ATTACHED, &acc_attached);
 }
 
 /// #5712 — what the sweep that ends every completed pull
@@ -4934,6 +5061,8 @@ criterion_group!(
     bench_list_all_tags_in_space_10k,
     bench_search_blocks_short_query,
     bench_search_blocks_word_query,
+    // #5679 — "Search everything under #tag"; no budget yet.
+    bench_search_blocks_under_tag,
     // #5712 — what a completed pull's session-end sweep costs; no budget yet.
     bench_sweep_deferred_purges,
     // #5402 — the MCP read paths.

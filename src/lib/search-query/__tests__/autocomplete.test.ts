@@ -16,6 +16,14 @@ describe('detectAutocompleteAnchor', () => {
     expect(a).toEqual({ active: 'tag', query: 'urg', anchor: 5 })
   })
 
+  it('#5679 — completes a tag name after under:#', () => {
+    expect(detectAutocompleteAnchor('under:#ur', 9)).toEqual({
+      active: 'tag',
+      query: 'ur',
+      anchor: 7,
+    })
+  })
+
   it('closes after space following tag', () => {
     expect(detectAutocompleteAnchor('tag:#urgent ', 12)).toBeNull()
   })

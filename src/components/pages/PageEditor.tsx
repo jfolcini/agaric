@@ -383,7 +383,7 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
 
       {isTagPage === true && (
         <FeatureErrorBoundary name="TaggedItemsSection">
-          <TaggedItemsSection tagId={pageId} onNavigateToPage={onNavigateToPage} />
+          <TaggedItemsSection tagId={pageId} tagName={title} onNavigateToPage={onNavigateToPage} />
         </FeatureErrorBoundary>
       )}
 

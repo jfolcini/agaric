@@ -233,10 +233,10 @@ pub struct SearchFilter {
     #[serde(default)]
     pub last_edited: Option<LastEditedSpec>,
     /// Match [`Self::tag_ids`] against inline `#tag` references and tags
-    /// inherited from an ancestor, not only attached tags. Only the MCP
-    /// `search` tool sets it: it is off the IPC wire, so the app's search
-    /// keeps matching attached tags.
-    #[serde(skip)]
+    /// inherited from an ancestor, not only attached tags. The MCP `search`
+    /// tool always sets it; the app sets it for an `under:#tag` search
+    /// ("Search everything under #tag", #5679).
+    #[serde(default)]
     pub tags_match_inline_and_inherited: bool,
 }
 

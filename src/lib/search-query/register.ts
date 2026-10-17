@@ -99,6 +99,20 @@ function stripSurroundingQuotes(value: string): string {
   return value
 }
 
+function parseTagToken(value: string, span: [number, number], kind: 'tag' | 'under'): FilterToken {
+  const unquoted = stripSurroundingQuotes(value)
+  const cleaned = unquoted.startsWith('#') ? stripSurroundingQuotes(unquoted.slice(1)) : unquoted
+  if (cleaned.length === 0) {
+    return {
+      kind: 'invalid',
+      source: `${kind}:${value}`,
+      error: t('searchQuery.valueRequired', { prefix: `${kind}:` }),
+      span,
+    }
+  }
+  return { kind, value: cleaned, span }
+}
+
 /** Re-recognise an existing token (`xxx:value`) without sending it back
  * through the tokeniser — used by tests and snapshot fixtures.
  */
@@ -111,19 +125,10 @@ export function ensureRegistered(): void {
   // explicitly: `tag:#日本語`, `tag:#📌` must round-trip).
   // #3288 — `tag:#"my tag"` peels the quotes like path:/prop: do, so a
   // multi-word tag (creatable through the importers) round-trips.
-  registerTokenPrefix('tag:', (value, span) => {
-    const unquoted = stripSurroundingQuotes(value)
-    const cleaned = unquoted.startsWith('#') ? stripSurroundingQuotes(unquoted.slice(1)) : unquoted
-    if (cleaned.length === 0) {
-      return {
-        kind: 'invalid',
-        source: `tag:${value}`,
-        error: t('searchQuery.valueRequired', { prefix: 'tag:' }),
-        span,
-      } satisfies FilterToken
-    }
-    return { kind: 'tag', value: cleaned, span }
-  })
+  registerTokenPrefix('tag:', (value, span) => parseTagToken(value, span, 'tag'))
+  // under: — the same value as tag:, matched attached, inline or inherited
+  // (#5679, "Search everything under #tag").
+  registerTokenPrefix('under:', (value, span) => parseTagToken(value, span, 'under'))
 
   // path: — page-name glob include. #718 — `path:"glob with spaces"`
   // strips the surrounding quotes (mirrors prop:'s #152 rule), so page

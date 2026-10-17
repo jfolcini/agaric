@@ -49,6 +49,9 @@ describe('serialize round-trip', () => {
     // #3288 — multi-word tag names round-trip via "..." quoting.
     'tag:#"my tag"',
     'tag:#"my tag" tag:#urgent leftover',
+    // #5679 — "Search everything under #tag".
+    'under:#idea',
+    'under:#"my tag" under:#urgent leftover',
   ]
 
   it('#3288 — tag: strips one surrounding quote pair, before or after the #', () => {
@@ -58,6 +61,11 @@ describe('serialize round-trip', () => {
       expect(chip?.kind === 'tag' && chip.value).toBe(s.includes('work') ? 'work' : 'my tag')
     }
     expect(tokenSource({ kind: 'tag', value: 'my tag', span: [0, 0] })).toBe('tag:#"my tag"')
+  })
+
+  it('#5679 — under: serialises with its own prefix', () => {
+    expect(tokenSource({ kind: 'under', value: 'my tag', span: [0, 0] })).toBe('under:#"my tag"')
+    expect(serialize(parse('under:#idea'))).toBe('under:#idea')
   })
 
   for (const s of canonicalInputs) {

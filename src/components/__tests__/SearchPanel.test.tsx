@@ -258,6 +258,7 @@ describe('SearchPanel', () => {
           excludedPropertyFilters: [],
           excludedStateFilter: [],
           excludedPriorityFilter: [],
+          tagsMatchInlineAndInherited: false,
         },
       })
     })
@@ -305,6 +306,7 @@ describe('SearchPanel', () => {
           excludedPropertyFilters: [],
           excludedStateFilter: [],
           excludedPriorityFilter: [],
+          tagsMatchInlineAndInherited: false,
         },
       })
     })
@@ -397,6 +399,7 @@ describe('SearchPanel', () => {
           excludedPropertyFilters: [],
           excludedStateFilter: [],
           excludedPriorityFilter: [],
+          tagsMatchInlineAndInherited: false,
         },
       })
     })
@@ -453,6 +456,7 @@ describe('SearchPanel', () => {
         excludedPropertyFilters: [],
         excludedStateFilter: [],
         excludedPriorityFilter: [],
+        tagsMatchInlineAndInherited: false,
       },
     })
   })
@@ -1022,6 +1026,7 @@ describe('SearchPanel', () => {
           excludedPropertyFilters: [],
           excludedStateFilter: [],
           excludedPriorityFilter: [],
+          tagsMatchInlineAndInherited: false,
         },
       })
     })
@@ -1062,6 +1067,7 @@ describe('SearchPanel', () => {
           excludedPropertyFilters: [],
           excludedStateFilter: [],
           excludedPriorityFilter: [],
+          tagsMatchInlineAndInherited: false,
         },
       })
     })
@@ -1120,6 +1126,7 @@ describe('SearchPanel', () => {
         excludedPropertyFilters: [],
         excludedStateFilter: [],
         excludedPriorityFilter: [],
+        tagsMatchInlineAndInherited: false,
       },
     })
   })

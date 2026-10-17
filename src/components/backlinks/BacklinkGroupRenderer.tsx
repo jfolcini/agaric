@@ -18,6 +18,7 @@
  * re-sort them client-side.
  */
 
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import type React from 'react'
 import { memo, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -26,6 +27,7 @@ import { CollapsibleGroupList } from '@/components/common/CollapsibleGroupList'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
+import { IconButton } from '@/components/ui/icon-button'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import type { BacklinkGroup, BlockRow } from '@/lib/bindings'
@@ -64,6 +66,18 @@ export interface BacklinkGroupRendererProps {
   anchorRefId?: string | undefined
   /** Names a group's row list; defaults to "Backlinks from {title}". */
   listAriaLabel?: ((title: string) => string) | undefined
+  /**
+   * Gives each row a disclosure that draws `render(block)` below it (#5679).
+   * The caller owns which rows are open; keep `onToggle` and `render` stable,
+   * since the rows are memoized.
+   */
+  blockChildren?: BlockChildren | undefined
+}
+
+export interface BlockChildren {
+  expanded: ReadonlySet<string>
+  onToggle: (blockId: string) => void
+  render: (block: BlockRow) => React.ReactNode
 }
 
 interface BacklinkRowProps {
@@ -99,6 +113,10 @@ interface BacklinkRowProps {
    * `undefined` means "unvirtualized", where `:last-child` is correct.
    */
   isLast?: boolean | undefined
+  /** See {@link BacklinkGroupRendererProps.blockChildren}. */
+  childrenExpanded?: boolean | undefined
+  onToggleChildren?: BlockChildren['onToggle'] | undefined
+  renderChildren?: BlockChildren['render'] | undefined
 }
 
 /**
@@ -131,7 +149,11 @@ function BacklinkRowInner({
   measureRef,
   dataIndex,
   isLast,
+  childrenExpanded = false,
+  onToggleChildren,
+  renderChildren,
 }: BacklinkRowProps): React.ReactElement {
+  const { t } = useTranslation()
   const onBlockClickRef = useRef(onBlockClick)
   onBlockClickRef.current = onBlockClick
   const onBlockKeyDownRef = useRef(onBlockKeyDown)
@@ -202,12 +224,35 @@ function BacklinkRowInner({
       onFocus={handleRowEnter}
       onBlur={prefetchIntent.cancel}
     >
+      {onToggleChildren && (
+        <IconButton
+          variant="ghost"
+          size="icon-xs"
+          className="linked-reference-item-toggle"
+          aria-expanded={childrenExpanded}
+          ariaLabel={t(childrenExpanded ? 'references.hideChildren' : 'references.showChildren')}
+          tooltip={t(childrenExpanded ? 'references.hideChildren' : 'references.showChildren')}
+          // The row opens the block on click and Enter; the toggle must not.
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleChildren(block.id)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+          }}
+        >
+          {childrenExpanded ? <ChevronDown /> : <ChevronRight />}
+        </IconButton>
+      )}
       {block.block_type !== 'content' && (
         <Badge tone="secondary" className="linked-reference-item-type shrink-0">
           {block.block_type}
         </Badge>
       )}
       <span className="linked-reference-item-text text-sm flex-1 truncate">{richContent}</span>
+      {childrenExpanded && renderChildren && (
+        <div className="linked-reference-item-children basis-full">{renderChildren(block)}</div>
+      )}
     </li>
   )
   return targetPageId ? (
@@ -236,6 +281,7 @@ export function BacklinkGroupRenderer({
   rowDomId,
   anchorRefId,
   listAriaLabel,
+  blockChildren,
 }: BacklinkGroupRendererProps): React.ReactElement {
   const { t } = useTranslation()
   const onTagClick = useTagClickHandler()
@@ -279,6 +325,9 @@ export function BacklinkGroupRenderer({
           domId={rowDomId ? rowDomId(block.id) : undefined}
           isFocused={focusedBlockId != null && block.id === focusedBlockId}
           anchorRefId={anchorRefId}
+          childrenExpanded={blockChildren?.expanded.has(block.id)}
+          onToggleChildren={blockChildren?.onToggle}
+          renderChildren={blockChildren?.render}
         />
       )}
     />

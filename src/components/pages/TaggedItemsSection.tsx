@@ -8,36 +8,53 @@
  * tagged page or block only inherits the tag and is not listed. Each panel is
  * one cursor-paginated `run_advanced_query`, newest first; the blocks panel
  * groups the loaded rows by page and renders them the way Linked references
- * does.
+ * does, each row expandable to its children.
+ *
+ * "Search everything under #tag" opens Search on `under:#tag`, which also
+ * matches the blocks that only inherit the tag.
  */
 
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { FileText, Tag } from 'lucide-react'
+import { FileText, Search, Tag } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { BacklinkGroupRenderer } from '@/components/backlinks/BacklinkGroupRenderer'
+import {
+  BacklinkGroupRenderer,
+  type BlockChildren,
+} from '@/components/backlinks/BacklinkGroupRenderer'
 import { EmptyState } from '@/components/common/EmptyState'
 import { ListViewState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { BlockListItem } from '@/components/editor/BlockListItem'
+import { TaggedBlockChildren } from '@/components/pages/TaggedBlockChildren'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { Button } from '@/components/ui/button'
 import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { unwrap } from '@/lib/app-error'
-import type { AdvancedQueryResponse, BacklinkGroup, QueryResultRow, SortKey } from '@/lib/bindings'
+import type {
+  AdvancedQueryResponse,
+  BacklinkGroup,
+  BlockRow,
+  QueryResultRow,
+  SortKey,
+} from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { subscribeToNameChanges } from '@/lib/name-change-bus'
 import { queryClient } from '@/lib/query-client'
+import { tokenSource } from '@/lib/search-query'
+import { useNavigationStore } from '@/stores/navigation'
 import { resolveTitles } from '@/stores/resolve-titles'
 import { useSpaceStore } from '@/stores/space'
+import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 
 const QUERY_KEY = 'taggedItems'
 const NEWEST_FIRST: SortKey[] = [{ source: { type: 'Column', name: 'created' }, desc: true }]
@@ -57,13 +74,17 @@ function blockRowDomId(blockId: string): string {
 
 export interface TaggedItemsSectionProps {
   tagId: string
+  /** The tag's name, which the search link writes into the query. */
+  tagName: string
   onNavigateToPage?: NavigateToPageFn | undefined
 }
 
 export function TaggedItemsSection({
   tagId,
+  tagName,
   onNavigateToPage,
 }: TaggedItemsSectionProps): React.ReactElement {
+  const { t } = useTranslation()
   // A sync or MCP write can tag or untag anything while this page is open.
   useEffect(
     () =>
@@ -77,10 +98,25 @@ export function TaggedItemsSection({
 
   return (
     <div className="space-y-6" data-testid="tagged-items">
+      <Button variant="link" size="sm" className="px-0" onClick={() => searchUnder(tagName)}>
+        <Search aria-hidden="true" />
+        {t('taggedItems.searchUnder', { name: tagName })}
+      </Button>
       <TaggedPages tagId={tagId} onNavigateToPage={onNavigateToPage} />
       <TaggedBlocks tagId={tagId} onNavigateToPage={onNavigateToPage} />
     </div>
   )
+}
+
+function searchUnder(tagName: string): void {
+  useCommandPaletteStore
+    .getState()
+    .setPendingViewQuery(tokenSource({ kind: 'under', value: tagName, span: [0, 0] }))
+  useNavigationStore.getState().setView('search')
+}
+
+function renderChildren(block: BlockRow): React.ReactNode {
+  return block.page_id ? <TaggedBlockChildren blockId={block.id} pageId={block.page_id} /> : null
 }
 
 /** The rows of one block type that carry `tagId` directly, newest first. */
@@ -239,6 +275,18 @@ function TaggedBlocks({ tagId, onNavigateToPage }: PanelProps): React.ReactEleme
   const { rows } = query
   const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const toggleChildren = useCallback((blockId: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(blockId)) next.add(blockId)
+      return next
+    })
+  }, [])
+  const blockChildren = useMemo<BlockChildren>(
+    () => ({ expanded, onToggle: toggleChildren, render: renderChildren }),
+    [expanded, toggleChildren],
+  )
 
   useEffect(() => {
     if (currentSpaceId == null) return
@@ -347,6 +395,7 @@ function TaggedBlocks({ tagId, onNavigateToPage }: PanelProps): React.ReactEleme
             rowDomId={blockRowDomId}
             anchorRefId={tagId}
             listAriaLabel={(title) => t('taggedItems.blocksIn', { title })}
+            blockChildren={blockChildren}
           />
         </div>
       )}

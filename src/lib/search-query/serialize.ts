@@ -50,8 +50,9 @@ export function quoteValueIfNeeded(v: string, prefix = 'x'): string {
 /** Render a single token back to its canonical source form. */
 export function tokenSource(t: FilterToken): string {
   switch (t.kind) {
-    case 'tag': {
-      return `tag:#${quoteValueIfNeeded(t.value)}`
+    case 'tag':
+    case 'under': {
+      return `${t.kind}:#${quoteValueIfNeeded(t.value)}`
     }
     case 'pathInclude': {
       return `path:${quoteValueIfNeeded(t.value)}`

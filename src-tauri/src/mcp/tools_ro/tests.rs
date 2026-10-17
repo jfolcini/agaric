@@ -5096,8 +5096,8 @@ fn row_ids(result: &Value) -> Vec<String> {
 
 /// A tag reaches a block attached, written inline, or inherited from its
 /// page, on the text path and the empty-query path alike, also across a
-/// cursor; every row names its page. The app's search, which cannot set the
-/// mode, still matches attached tags only.
+/// cursor; every row names its page. The app's search widens the same way
+/// only when it sets `tagsMatchInlineAndInherited`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_tag_matches_attached_inline_and_inherited_tags_5398() {
     let (tools, mat, _dir) = mk_tools().await;
@@ -5162,17 +5162,35 @@ async fn search_tag_matches_attached_inline_and_inherited_tags_5398() {
         assert_eq!(ids, want, "query {query:?}");
     }
 
-    let app_filter: crate::commands::SearchFilter = serde_json::from_value(json!({
-        "scope": SearchScope::Spaces(vec![SpaceId::from_trusted(&space)]),
-        "tagIds": [tag],
-        "tagsMatchInlineAndInherited": true,
-    }))
-    .unwrap();
-    let app = search_blocks_inner(&tools.pool, "needle".into(), None, None, app_filter, None)
+    // The app's search sets the mode over IPC ("Search everything under
+    // #tag", #5679); without it, `tagIds` matches attached tags only.
+    let app_search = |widen: Option<bool>| {
+        let mut filter = json!({
+            "scope": SearchScope::Spaces(vec![SpaceId::from_trusted(&space)]),
+            "tagIds": [tag],
+        });
+        if let Some(widen) = widen {
+            filter["tagsMatchInlineAndInherited"] = json!(widen);
+        }
+        let filter: crate::commands::SearchFilter = serde_json::from_value(filter).unwrap();
+        search_blocks_inner(&tools.pool, "needle".into(), None, None, filter, None)
+    };
+    let mut widened: Vec<String> = app_search(Some(true))
         .await
-        .unwrap();
-    let app_ids: Vec<&str> = app.items.iter().map(|row| row.id.as_str()).collect();
-    assert_eq!(app_ids, [attached.as_str()]);
+        .unwrap()
+        .items
+        .iter()
+        .map(|row| row.id.to_string())
+        .collect();
+    widened.sort();
+    let mut text_hits = vec![inherits, inline, attached.clone()];
+    text_hits.sort();
+    assert_eq!(widened, text_hits);
+    for widen in [None, Some(false)] {
+        let app = app_search(widen).await.unwrap();
+        let app_ids: Vec<&str> = app.items.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(app_ids, [attached.as_str()], "{widen:?}");
+    }
 }
 
 /// `filter.last_edited` narrows a search to the blocks edited in the window.

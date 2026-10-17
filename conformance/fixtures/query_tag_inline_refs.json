@@ -1,5 +1,5 @@
 {
-  "description": "What a tag's page lists: the blocks that carry the tag directly, attached (`block_tags`) or written inline as `#[id]` (`block_tag_refs`), never one that only inherits it from its page or an ancestor block. The inline reference is written by an `edit_block` op so the backend indexes it the way an edit does; the mock derives it from content. `list_tags_by_prefix` pins the Tags list's count as the same union.",
+  "description": "What a tag's page lists: the blocks that carry the tag directly, attached (`block_tags`) or written inline as `#[id]` (`block_tag_refs`), never one that only inherits it from its page or an ancestor block. The inline reference is written by an `edit_block` op so the backend indexes it the way an edit does; the mock derives it from content. `list_tags_by_prefix` pins the Tags list's count as the same union. `search_blocks` with `tagsMatchInlineAndInherited` pins \"Search everything under #tag\" as that union plus the inherited blocks.",
   "expected": {
     "block_tags": [
       {
@@ -156,6 +156,22 @@
       "name": "tags_list_count_is_the_direct_union",
       "rows": ["B7#name=idea#usage_count=3"],
       "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_everything_under_tag",
+      "rows": ["B7", "B6", "B5", "B4", "B2", "B1"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "search_tag_attached_only",
+      "rows": ["B4", "B1"],
+      "total_count": null
     }
   ],
   "name": "query_tag_inline_refs",
@@ -271,6 +287,39 @@
       "command": "list_tags_by_prefix",
       "comment": "`usage_count` counts S1, S4 and S6: pages plus blocks.",
       "name": "tags_list_count_is_the_direct_union"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagIds": ["S7"],
+          "tagsMatchInlineAndInherited": true
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "\"Search everything under #tag\": `tagsMatchInlineAndInherited` widens `tagIds` to the tag query's leaf, so the attached S1 and S4, the inline S6, and S2, S5 and the tag block S7 that inherit it from S1 or S4 all match.",
+      "name": "search_everything_under_tag"
+    },
+    {
+      "args": {
+        "filter": {
+          "scope": {
+            "kind": "spaces",
+            "space_ids": ["$SPACE"]
+          },
+          "tagIds": ["S7"]
+        },
+        "limit": 50,
+        "query": ""
+      },
+      "command": "search_blocks",
+      "comment": "Without the mode, `tagIds` matches attached tags only: S1 and S4.",
+      "name": "search_tag_attached_only"
     }
   ],
   "seed": {

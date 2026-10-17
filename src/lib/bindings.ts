@@ -3859,6 +3859,13 @@ export type SearchFilter = {
 	 *  observe today's behaviour unchanged.
 	 */
 	lastEdited?: LastEditedSpec | null,
+	/**
+	 *  Match [`Self::tag_ids`] against inline `#tag` references and tags
+	 *  inherited from an ancestor, not only attached tags. The MCP `search`
+	 *  tool always sets it; the app sets it for an `under:#tag` search
+	 *  ("Search everything under #tag", #5679).
+	 */
+	tagsMatchInlineAndInherited?: boolean,
 };
 
 /**

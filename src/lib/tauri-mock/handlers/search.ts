@@ -29,7 +29,9 @@ import {
   validationRejection,
   ownerSpaceOf,
   readActiveSpaceScope,
+  refInclusiveTags,
 } from '@/lib/tauri-mock/handlers/shared'
+import { inheritedTagIds } from '@/lib/tauri-mock/handlers/tags'
 import { blockTags, blocks } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
@@ -1482,6 +1484,7 @@ function searchStructuralCandidates(
     ? ((filter['blockTypeFilter'] as string | null | undefined) ?? null)
     : null
   const tagIds = (filter['tagIds'] as string[] | undefined) ?? []
+  const tagsWiden = filter['tagsMatchInlineAndInherited'] === true
   const includeGlobs = (filter['includePageGlobs'] as string[] | undefined) ?? []
   const excludeGlobs = (filter['excludePageGlobs'] as string[] | undefined) ?? []
   const metadata = searchMetadataPrimitives(filter)
@@ -1496,9 +1499,13 @@ function searchStructuralCandidates(
     if (parentId !== null && ((b['parent_id'] as string | null) ?? null) !== parentId) return false
     if (blockTypeFilter !== null && b['block_type'] !== blockTypeFilter) return false
     if (tagIds.length > 0) {
-      // ALL semantics, direct edges only (`block_tags`), matching the
-      // backend's tag clause.
-      const own = blockTags.get(b['id'] as string)
+      // ALL semantics over attached tags (`block_tags`), or, with
+      // `tagsMatchInlineAndInherited`, over the tag query's leaf: attached,
+      // inline `#[id]`, or inherited (`add_tags_via_projection`).
+      const id = b['id'] as string
+      const own = tagsWiden
+        ? new Set([...refInclusiveTags(id), ...inheritedTagIds(id)])
+        : blockTags.get(id)
       if (!own || !tagIds.every((t) => own.has(t))) return false
     }
     if (includeGlobs.length > 0 || excludeGlobs.length > 0) {
