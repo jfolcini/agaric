@@ -154,6 +154,7 @@ function BacklinkRowInner({
   renderChildren,
 }: BacklinkRowProps): React.ReactElement {
   const { t } = useTranslation()
+  const childrenRef = useRef<HTMLDivElement>(null)
   const onBlockClickRef = useRef(onBlockClick)
   onBlockClickRef.current = onBlockClick
   const onBlockKeyDownRef = useRef(onBlockKeyDown)
@@ -200,6 +201,19 @@ function BacklinkRowInner({
     [block.content, resolveVersion, emptyLabel, anchorRefId],
   )
 
+  // Clicking, or drag-selecting, text in the expanded children must not open the
+  // parent block. A drag that ends outside the children container lands its click
+  // on the row, so the selection is checked as well as the target.
+  const handleRowClick = (e: React.MouseEvent) => {
+    const children = childrenRef.current
+    if (children) {
+      if (e.target instanceof Node && children.contains(e.target)) return
+      const selection = window.getSelection()
+      if (selection && !selection.isCollapsed && children.contains(selection.anchorNode)) return
+    }
+    onBlockClickRef.current(block)
+  }
+
   const row = (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- keyboard-navigable reference row; click/keydown drive roving focus and block activation, the row is the interactive unit
     <li
@@ -217,7 +231,7 @@ function BacklinkRowInner({
       )}
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- li needs tabIndex for keyboard navigation
       tabIndex={0}
-      onClick={() => onBlockClickRef.current(block)}
+      onClick={handleRowClick}
       onKeyDown={(e) => onBlockKeyDownRef.current(e, block)}
       onMouseEnter={handleRowEnter}
       onMouseLeave={prefetchIntent.cancel}
@@ -251,7 +265,9 @@ function BacklinkRowInner({
       )}
       <span className="linked-reference-item-text text-sm flex-1 truncate">{richContent}</span>
       {childrenExpanded && renderChildren && (
-        <div className="linked-reference-item-children basis-full">{renderChildren(block)}</div>
+        <div ref={childrenRef} className="linked-reference-item-children basis-full">
+          {renderChildren(block)}
+        </div>
       )}
     </li>
   )

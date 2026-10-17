@@ -176,12 +176,12 @@ with_timeout() {
 install_sdk_packages() {
   local rc=0 p
   local -a slashed=()
-  # The android CLI downloads itself into ~/.android/bin on first use and prints
-  # nothing while it does; say so, or the pause looks like a hang.
-  if [ -z "$(ls -A "$HOME/.android/bin" 2>/dev/null)" ]; then
-    echo "note: first run of the android CLI downloads it into ~/.android/bin and prints nothing meanwhile; give it a few minutes (gives up after ${install_timeout}s)."
-  fi
   if [ -n "$android_cli" ]; then
+    # The android CLI downloads itself into ~/.android/bin on first use and prints
+    # nothing while it does; say so, or the pause looks like a hang.
+    if [ -z "$(ls -A "$HOME/.android/bin" 2>/dev/null)" ]; then
+      echo "note: first run of the android CLI downloads it into ~/.android/bin and prints nothing meanwhile; give it a few minutes (gives up after ${install_timeout}s)."
+    fi
     # Package names take slashes here, and licences need no separate step.
     for p in "$@"; do slashed+=("${p//;//}"); done
     with_timeout "$android_cli" --sdk="$sdk" sdk install "${slashed[@]}" || rc=$?

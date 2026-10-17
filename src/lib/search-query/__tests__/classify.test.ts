@@ -130,6 +130,12 @@ describe('classify / parse', () => {
     expect(parse('tag:#work tag:#home').filters.map((f) => f.kind)).toEqual(['tag', 'tag'])
   })
 
+  it('#5679 — the beside-under: message names a bare #tag as well as tag:', () => {
+    const bare = parse('#work under:#idea').filters[0]
+    expect(bare).toMatchObject({ kind: 'invalid', source: '#work' })
+    if (bare?.kind === 'invalid') expect(bare.error).toContain('#')
+  })
+
   it('flags malformed glob as invalid with InvalidGlob: prefix', () => {
     const ast = parse('path:[unclosed')
     expect(ast.filters).toHaveLength(1)

@@ -345,7 +345,8 @@ export const references: Record<string, string> = {
   'searchQuery.propKeyValueRequired': '{{prefix}}: key=value required',
   'searchQuery.propExpectedKeyEqualsValue': "{{prefix}}: expected 'key=value'",
   'searchQuery.propKeyEmpty': '{{prefix}}: key cannot be empty',
-  'searchQuery.tagBesideUnder': 'tag: cannot be combined with under:; use under: for every tag',
+  'searchQuery.tagBesideUnder':
+    'tag: and #tag cannot be combined with under:; use under: for every tag',
   'search.filterSyntaxIntro':
     'Filter syntax is live — type tag:#name or path:Journal/* in the search input, or use the Add filter button. Press ? for help.',
   'search.searchTags': 'Search tags...',
