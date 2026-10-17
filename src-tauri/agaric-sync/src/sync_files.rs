@@ -74,7 +74,6 @@ pub struct FileTransferStats {
     pub bytes_sent: u64,
     pub bytes_received: u64,
     pub skipped_not_found: usize,
-    pub skipped_hash_mismatch: usize,
 }
 
 /// Optional progress reporting hook for file-transfer functions.
@@ -2268,7 +2267,6 @@ pub async fn run_file_transfer_initiator(
         request_and_receive_files(send, recv, pool, app_data_dir, cancel, progress).await?;
     stats.files_received += recv_stats.files_received;
     stats.bytes_received += recv_stats.bytes_received;
-    stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;
     stats.skipped_not_found += recv_stats.skipped_not_found;
 
     // Phase 2: Respond to responder's file request
@@ -2277,7 +2275,6 @@ pub async fn run_file_transfer_initiator(
     stats.files_sent += send_stats.files_sent;
     stats.bytes_sent += send_stats.bytes_sent;
     stats.skipped_not_found += send_stats.skipped_not_found;
-    stats.skipped_hash_mismatch += send_stats.skipped_hash_mismatch;
 
     if stats.files_received > 0 || stats.files_sent > 0 {
         tracing::info!(
@@ -2342,14 +2339,12 @@ pub async fn run_file_transfer_responder(
     stats.files_sent += send_stats.files_sent;
     stats.bytes_sent += send_stats.bytes_sent;
     stats.skipped_not_found += send_stats.skipped_not_found;
-    stats.skipped_hash_mismatch += send_stats.skipped_hash_mismatch;
 
     // Phase 2: Request our missing files from initiator
     let recv_stats =
         request_and_receive_files(send, recv, pool, app_data_dir, cancel, progress).await?;
     stats.files_received += recv_stats.files_received;
     stats.bytes_received += recv_stats.bytes_received;
-    stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;
     stats.skipped_not_found += recv_stats.skipped_not_found;
 
     if stats.files_received > 0 || stats.files_sent > 0 {

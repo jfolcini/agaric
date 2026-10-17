@@ -308,7 +308,7 @@ pub async fn try_receive_snapshot_catchup(
     event_sink: &Arc<dyn SyncEventSink>,
     remote_device_id: &str,
     expected_remote_id: Option<&str>,
-    engine_reload: Option<EngineReloadCtx<'_>>,
+    mut engine_reload: Option<EngineReloadCtx<'_>>,
 ) -> Result<(), AppError> {
     // #4097: settle the peer identity before anything is emitted, and shadow
     // the parameter with it so every event, log field and bookkeeping write
@@ -355,6 +355,13 @@ pub async fn try_receive_snapshot_catchup(
                 peer_id = %remote_device_id,
                 "snapshot catch-up: peer had nothing to catch us up with"
             );
+            // #5712: it still ends the pull whose main loop imported before the
+            // reset, so it sweeps what those imports deferred.
+            if let Some(ctx) = engine_reload.as_mut()
+                && let Some(inbound) = ctx.inbound.take()
+            {
+                sweep_after_catchup(pool, ctx, materializer, remote_device_id, inbound).await?;
+            }
             // #4960: an empty catch-up is still a completed pull from this
             // peer, so `synced_at` has to advance. `record_success` clears the
             // backoff while `peers_due_for_resync` reads `synced_at` alone, so

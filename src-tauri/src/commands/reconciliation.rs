@@ -108,18 +108,21 @@ fn group_by_artefact(divergences: &[Divergence]) -> Vec<ArtefactDivergences> {
 /// Run every oracle artefact against `pool` and the engines in `engines`, and
 /// shape the result.
 ///
-/// `today` is the date the projected-agenda rebuild is pinned to; the wrapper
-/// passes the local clock, tests pass a constant.
+/// `app_data_dir` is where attachment files live, `None` where there are none
+/// to look at. `today` is the date the projected-agenda rebuild is pinned to;
+/// the wrapper passes the local clock, tests pass a constant.
 #[instrument(skip(pool, engines), err)]
 pub async fn compute_reconciliation_report_inner(
     pool: &SqlitePool,
     engines: &LoroState,
+    app_data_dir: Option<&std::path::Path>,
     today: chrono::NaiveDate,
 ) -> Result<ReconciliationReport, AppError> {
     let blocks_scanned: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
         .fetch_one(pool)
         .await?;
-    let divergences = reconciliation_oracle::reconcile_all(pool, engines, today).await?;
+    let divergences =
+        reconciliation_oracle::reconcile_all(pool, engines, app_data_dir, today).await?;
     Ok(ReconciliationReport {
         blocks_scanned,
         today: today.format("%Y-%m-%d").to_string(),
@@ -140,9 +143,14 @@ pub async fn compute_reconciliation_report(
     // The clock production's `rebuild_projected_agenda_cache` reads, so the
     // rebuild is pinned to the same day the cache was built for.
     let today = chrono::Local::now().date_naive();
-    compute_reconciliation_report_inner(&pool.0, materializer.loro_state(), today)
-        .await
-        .map_err(sanitize_internal_error)
+    compute_reconciliation_report_inner(
+        &pool.0,
+        materializer.loro_state(),
+        materializer.app_data_dir().as_deref(),
+        today,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 #[cfg(test)]
@@ -233,9 +241,10 @@ mod tests {
     async fn a_settled_vault_reports_no_divergences() {
         let (pool, _dir, mat, _page_id) = settled_vault().await;
 
-        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
-            .await
-            .expect("report");
+        let report =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
 
         assert_eq!(
             report.blocks_scanned, 2,
@@ -259,9 +268,10 @@ mod tests {
         .await
         .expect("corrupt the count");
 
-        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
-            .await
-            .expect("report");
+        let report =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
 
         assert_eq!(
             report.total_divergences, 1,
@@ -294,9 +304,10 @@ mod tests {
         .await
         .expect("corrupt the sort keys");
 
-        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
-            .await
-            .expect("report");
+        let report =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
 
         assert_eq!(
             report.artefacts,
@@ -329,9 +340,10 @@ mod tests {
             .await
             .expect("corrupt the space");
 
-        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
-            .await
-            .expect("report");
+        let report =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
 
         assert_eq!(
             report.artefacts,
@@ -405,9 +417,10 @@ mod tests {
             panic!("the fixture returns six ids");
         };
 
-        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
-            .await
-            .expect("report");
+        let report =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
         assert_eq!(
             report.artefacts,
             Vec::new(),
@@ -447,9 +460,10 @@ mod tests {
             query.execute(&pool).await.expect("write behind the engine");
         }
 
-        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
-            .await
-            .expect("report");
+        let report =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
         let mut engine: Vec<(String, Vec<String>)> = report
             .artefacts
             .into_iter()
@@ -479,6 +493,55 @@ mod tests {
             ],
             "each column names its block, a reorder names both swapped siblings, and a \
              rank gap that keeps the order names none"
+        );
+        mat.shutdown();
+    }
+
+    /// #5728: a peer's attachment row lands before its bytes, and has no blob
+    /// until they do. With the attachments directory to look in, the report
+    /// leaves out a hash whose file is absent, and still names one whose file
+    /// is on disk with no blob.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_peer_attachment_whose_bytes_have_not_landed_is_not_a_divergence_5728() {
+        let (pool, dir, mat, page_id) = settled_vault().await;
+        std::fs::create_dir_all(dir.path().join("attachments")).expect("attachments dir");
+        std::fs::write(dir.path().join("attachments/landed"), b"bytes").expect("landed bytes");
+        for (id, name, hash) in [
+            ("01PENDINGATTACHMENT572800", "pending", "PENDINGHASH5728"),
+            ("01LANDEDATTACHMENT5728000", "landed", "LANDEDHASH5728"),
+        ] {
+            let fs_path = format!("attachments/{name}");
+            sqlx::query(
+                "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, \
+                 fs_path, created_at, content_hash) VALUES (?, ?, 'image/png', ?, 5, ?, 1, ?)",
+            )
+            .bind(id)
+            .bind(&page_id)
+            .bind(name)
+            .bind(&fs_path)
+            .bind(hash)
+            .execute(&pool)
+            .await
+            .expect("a synced attachment row with no blob");
+        }
+
+        let report = compute_reconciliation_report_inner(
+            &pool,
+            mat.loro_state(),
+            Some(dir.path()),
+            pinned_today(),
+        )
+        .await
+        .expect("report");
+
+        assert_eq!(
+            report.artefacts,
+            vec![ArtefactDivergences {
+                artefact: "attachment_blobs.refcount".to_owned(),
+                count: 1,
+                sample_keys: vec!["LANDEDHASH5728".to_owned()],
+            }],
+            "only the hash whose bytes are on disk lacks a blob"
         );
         mat.shutdown();
     }
@@ -518,9 +581,10 @@ mod tests {
         }
         mat.flush_background().await.expect("flush_background");
 
-        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
-            .await
-            .expect("report");
+        let report =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
         assert_eq!(
             report.artefacts,
             Vec::new(),
@@ -567,9 +631,10 @@ mod tests {
                 .expect("delete in the engine alone");
         }
 
-        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
-            .await
-            .expect("report");
+        let report =
+            compute_reconciliation_report_inner(&pool, mat.loro_state(), None, pinned_today())
+                .await
+                .expect("report");
         let mut found: Vec<(String, Vec<String>)> = report
             .artefacts
             .into_iter()
@@ -615,9 +680,10 @@ mod tests {
             .await
             .expect("drop agenda_cache");
 
-        let err = compute_reconciliation_report_inner(&pool, &LoroState::new(), pinned_today())
-            .await
-            .expect_err("a missing derived table is an error, not zero divergences");
+        let err =
+            compute_reconciliation_report_inner(&pool, &LoroState::new(), None, pinned_today())
+                .await
+                .expect_err("a missing derived table is an error, not zero divergences");
 
         assert!(
             matches!(err, AppError::Database(_)),

@@ -3827,6 +3827,7 @@ async fn ti_divergences(
         reconcile_all(
             pool,
             &agaric_engine::loro::shared::LoroState::new(),
+            None,
             eq_today(),
         )
         .await
@@ -4618,6 +4619,7 @@ async fn reconcile_all_reports_every_artefact_from_one_unfiltered_dump_4901() {
     let divergences = reconcile_all(
         &pool,
         &agaric_engine::loro::shared::LoroState::new(),
+        None,
         eq_today(),
     )
     .await
@@ -4840,9 +4842,14 @@ async fn reconcile_all_scale_sweep_4901() {
         .expect("counts rebuild");
     let counts_took = started.elapsed();
     let started = std::time::Instant::now();
-    let divergences = reconcile_all(&pool, &agaric_engine::loro::shared::LoroState::new(), today)
-        .await
-        .expect("reconcile_all");
+    let divergences = reconcile_all(
+        &pool,
+        &agaric_engine::loro::shared::LoroState::new(),
+        None,
+        today,
+    )
+    .await
+    .expect("reconcile_all");
     let all_took = started.elapsed();
 
     let coverage = oracle_coverage(&pool).await.expect("coverage");

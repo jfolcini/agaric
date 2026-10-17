@@ -202,8 +202,7 @@ impl LoroEngineRegistry {
         }
     }
 
-    /// #5712: how many inbound sync sessions hold a claim. For a sweep that
-    /// holds none itself (boot, tests).
+    /// #5712: how many inbound sync sessions hold a claim.
     pub fn inbound_syncs_in_flight(&self) -> usize {
         self.inbound_syncs.load(Ordering::SeqCst)
     }

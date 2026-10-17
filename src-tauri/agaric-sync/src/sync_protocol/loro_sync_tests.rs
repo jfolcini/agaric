@@ -3231,12 +3231,10 @@ async fn only_the_last_inbound_sync_to_end_sweeps_5712() {
     );
 }
 
-/// #5712: a session leaves the in-flight set holding the writer lock, which
-/// an import needs to record a deferral. So a session that starts while the
-/// sweep waits for that lock, and records its deferral the moment the lock is
-/// free, is in flight when the sweep decides, and its ids are not swept.
-/// Leaving before the lock would let the sweep read them as an ended
-/// session's.
+/// #5712: a session that starts while the sweep waits for the writer lock,
+/// and records its deferral the moment the lock is free, is in flight when the
+/// sweep checks again under that lock, so its ids are not swept. Without that
+/// check the sweep would read them as an ended session's.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_session_starting_while_a_sweep_waits_for_the_lock_is_not_swept_5712() {
     const NEWCOMER: &str = "01HZ5712000000000000NEWCOM";
@@ -3288,6 +3286,91 @@ async fn a_session_starting_while_a_sweep_waits_for_the_lock_is_not_swept_5712()
         "nothing was swept"
     );
     drop(newcomer);
+}
+
+/// #5712: B records a deferral and ends while A, ending too, reads the table.
+/// One of them sweeps it. A read that sees the table empty before B commits
+/// cannot also let A leave as though nobody were left to sweep: either A leaves
+/// first, so B is the last, or B left first, so the read comes after B's
+/// commit. A progress handler on A's only connection holds its first read
+/// open while B records and ends.
+#[tokio::test]
+async fn a_deferral_recorded_while_another_session_ends_is_swept_5712() {
+    const B_DEFERS: &str = "01HZ5712000000000000BDEFER";
+    let (pool, dir) = fresh_pool().await;
+    let registry = std::sync::Arc::new(LoroEngineRegistry::new());
+    let (a, b) = (registry.begin_inbound_sync(), registry.begin_inbound_sync());
+
+    let pool_a = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(agaric_store::db::base_connect_options(
+            &dir.path().join("loro_sync_test.db"),
+        ))
+        .await
+        .expect("A's pool");
+    let (reading_tx, mut reading_rx) = tokio::sync::oneshot::channel::<()>();
+    let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+    let mut first_step = Some((reading_tx, go_rx));
+    pool_a
+        .acquire()
+        .await
+        .expect("A's connection")
+        .lock_handle()
+        .await
+        .expect("lock A's handle")
+        .set_progress_handler(1, move || {
+            if let Some((reading, go)) = first_step.take() {
+                reading.send(()).ok();
+                go.recv().ok();
+            }
+            true
+        });
+
+    let mut a_ends = tokio::spawn({
+        let registry = std::sync::Arc::clone(&registry);
+        async move { sweep_deferred_purges_if_last(&pool_a, &registry, Some(a)).await }
+    });
+    let mut a_swept = None;
+    tokio::select! {
+        reading = &mut reading_rx => reading.expect("A reads"),
+        swept = &mut a_ends => a_swept = Some(swept.expect("join").expect("A ends")),
+    }
+
+    let mut pass_d = pool.begin().await.expect("B's Pass D");
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'gone')")
+        .bind(B_DEFERS)
+        .execute(&mut *pass_d)
+        .await
+        .expect("seed B's block");
+    sqlx::query("INSERT INTO sync_deferred_purges (block_id) VALUES (?)")
+        .bind(B_DEFERS)
+        .execute(&mut *pass_d)
+        .await
+        .expect("B defers it");
+    pass_d.commit().await.expect("B commits");
+    let b_swept = sweep_deferred_purges_if_last(&pool, &registry, Some(b))
+        .await
+        .expect("B ends");
+    go_tx.send(()).ok();
+    let a_swept = match a_swept {
+        Some(swept) => swept,
+        None => a_ends.await.expect("join").expect("A ends"),
+    };
+
+    let swept: Vec<String> = a_swept
+        .iter()
+        .chain(&b_swept)
+        .map(|id| id.as_str().to_owned())
+        .collect();
+    assert_eq!(
+        (
+            swept,
+            deferred_purge_ids(&pool).await,
+            registry.inbound_syncs_in_flight()
+        ),
+        (vec![B_DEFERS.to_owned()], Vec::<String>::new(), 0),
+        "the last of the two to leave swept B's deferral"
+    );
 }
 
 /// #2292 happy path: a normal inbound purge apply (Live) defers the SQL

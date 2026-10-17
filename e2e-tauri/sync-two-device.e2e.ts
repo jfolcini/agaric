@@ -149,14 +149,23 @@ async function waitForOutline(expected: [string, number][], what: string): Promi
     })
 }
 
-/** Wait until block `id`'s static row reads exactly `text`. */
+/**
+ * Wait until block `id`'s static row reads exactly `text`. Read in one
+ * `execute`: a row resolved by one command can be re-rendered away by a sync
+ * before the next reads it.
+ */
 async function waitForStaticText(id: string, text: string, what: string): Promise<void> {
-  const row = $(`[data-testid="block-static"][data-block-id="${id}"]`)
   let seen = ''
   await browser
     .waitUntil(
       async () => {
-        seen = (await row.isExisting()) ? await row.getText() : '(no row)'
+        seen = await browser.execute(
+          (blockId: string) =>
+            document
+              .querySelector(`[data-testid="block-static"][data-block-id="${blockId}"]`)
+              ?.textContent?.trim() ?? '(no row)',
+          id,
+        )
         return seen === text
       },
       { timeout: NAV_TIMEOUT },

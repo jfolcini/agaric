@@ -613,21 +613,14 @@ test.describe('Global shortcuts', () => {
   })
 
   test('? opens keyboard shortcuts panel', async ({ page }) => {
-    // `KeyboardShortcuts` is React.lazy-loaded (App.tsx), and its global `?`
-    // keydown listener is only attached once the chunk resolves and the
-    // component mounts. Under parallel-worker load the chunk can still be
-    // in flight when the keystroke is dispatched, so we retry the press
-    // until the listener is live and the sheet opens.
-    await expect(async () => {
-      // Click on the header to ensure no input/textarea/contenteditable is focused
-      await page.locator('header').first().click()
-
-      // Type ? using keyboard.type which dispatches keydown with key='?'
-      await page.keyboard.type('?')
-
-      // Verify the shortcuts sheet is visible (it has a data-testid="shortcuts-table")
-      await expect(page.locator('[data-testid="shortcuts-table"]')).toBeVisible({ timeout: 1000 })
-    }).toPass({ timeout: 10000 })
+    // The `?` listener is App's own (`useAppDialogs`), live from boot; the
+    // sheet's lazy chunk loads only once `?` opens it, so one press is enough
+    // and the wait is for that chunk. Pressing again while it loads found the
+    // header covered by the opening sheet.
+    // Click on the header to ensure no input/textarea/contenteditable is focused
+    await page.locator('header').first().click()
+    await page.keyboard.type('?')
+    await expect(page.locator('[data-testid="shortcuts-table"]')).toBeVisible()
 
     // Also verify the sheet title (SheetTitle renders `shortcuts.title`,
     // i.e. "Quick Reference").
