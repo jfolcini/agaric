@@ -146,6 +146,9 @@ type Command =
   | { cmd: 'add_tag'; id: string; tag_id: string }
   | { cmd: 'move_block'; id: string; parent_id: string; index: number }
   | { cmd: 'get_property'; id: string; key: string }
+  | { cmd: 'add_attachment'; id: string; filename: string; mime_type: string; bytes: number[] }
+  | { cmd: 'list_attachments'; id: string }
+  | { cmd: 'read_attachment'; id: string }
   | { cmd: 'wait_pulled' }
   | { cmd: 'list_peers' }
 
@@ -162,6 +165,8 @@ type Reply =
   | { reply: 'property'; value_text: string | null }
   | { reply: 'pulled' }
   | { reply: 'peers'; peer_ids: string[] }
+  | { reply: 'attachments'; attachments: PeerAttachment[] }
+  | { reply: 'bytes'; bytes: number[] }
   | { reply: 'error'; message: string }
 
 /** A block as the peer's vault holds it. */
@@ -169,6 +174,14 @@ export interface PeerBlock {
   id: string
   parentId: string | null
   content: string
+}
+
+/** An attachment row as the peer's vault holds it. */
+export interface PeerAttachment {
+  id: string
+  filename: string
+  mime_type: string
+  size_bytes: number
 }
 
 export interface SyncPeer {
@@ -197,6 +210,12 @@ export interface SyncPeer {
   moveBlock(id: string, parentId: string, index: number): Promise<void>
   /** Text property `key` of block `id`; null when the block holds none. */
   getProperty(id: string, key: string): Promise<string | null>
+  /** Attach `bytes` to block `id` as `filename`; resolves to the attachment's id. */
+  addAttachment(id: string, filename: string, mimeType: string, bytes: Buffer): Promise<string>
+  /** The attachment rows of block `id`. */
+  listAttachments(id: string): Promise<PeerAttachment[]>
+  /** The bytes of attachment `id` on the peer's disk; rejects while the file is missing. */
+  readAttachment(id: string): Promise<Buffer>
   /** Resolves once the app has pulled since the peer's last write. */
   waitPulled(): Promise<void>
   /** The device ids the peer holds a pairing with. */
@@ -281,6 +300,17 @@ export async function startSyncPeer(): Promise<SyncPeer> {
     },
     getProperty: async (id, key) =>
       (await request({ cmd: 'get_property', id, key }, 'property')).value_text,
+    addAttachment: async (id, filename, mimeType, bytes) =>
+      (
+        await request(
+          { cmd: 'add_attachment', id, filename, mime_type: mimeType, bytes: [...bytes] },
+          'created',
+        )
+      ).id,
+    listAttachments: async (id) =>
+      (await request({ cmd: 'list_attachments', id }, 'attachments')).attachments,
+    readAttachment: async (id) =>
+      Buffer.from((await request({ cmd: 'read_attachment', id }, 'bytes')).bytes),
     waitPulled: async () => {
       await request({ cmd: 'wait_pulled' }, 'pulled')
     },

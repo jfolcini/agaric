@@ -54,6 +54,9 @@
 //   - `[data-testid="block-editor"]`        the roving TipTap editor box.
 //   - `[data-testid="block-static"]`        a committed (non-focused) block row
 //     (StaticBlock; carries `data-block-id`).
+//   - `[data-testid="image-rendered"]`      GatedImage.tsx's `<img>`, whose
+//     `src` is a `blob:` URL of `read_attachment`'s bytes for an
+//     `attachment:<id>` ref.
 //   - Settings › Sync & devices, for the sync specs: `#settings-tab-sync`,
 //     `[data-testid="settings-panel-sync"]`, "Pair new device",
 //     `[data-testid="pairing-qr-code"]` (its SVG is decoded in sync-peer.ts),
@@ -745,6 +748,46 @@ export async function pasteFileIntoFocusedBlock(
     filename,
     mimeType,
   )
+}
+
+/**
+ * Wait until block `id` renders exactly one image, decoded from a `blob:` URL:
+ * GatedImage wraps the bytes `read_attachment` returns, so a decoded image
+ * (`naturalWidth > 0`) proves the bytes are on disk.
+ */
+export async function expectImageRendered(id: string, when: string): Promise<void> {
+  await $(`[data-block-id="${id}"]`).scrollIntoView()
+  let seen: Array<{ src: string; complete: boolean; width: number }> = []
+  await browser
+    .waitUntil(
+      async () => {
+        seen = await browser.execute(
+          (blockId: string) =>
+            [...document.querySelectorAll<HTMLImageElement>('[data-testid="image-rendered"]')]
+              .filter(
+                (img) => img.closest('[data-block-id]')?.getAttribute('data-block-id') === blockId,
+              )
+              .map((img) => ({
+                src: img.getAttribute('src') ?? '',
+                complete: img.complete,
+                width: img.naturalWidth,
+              })),
+          id,
+        )
+        const [only] = seen
+        return (
+          seen.length === 1 &&
+          only !== undefined &&
+          only.src.startsWith('blob:') &&
+          only.complete &&
+          only.width > 0
+        )
+      },
+      { timeout: NAV_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(`${when}: the image block renders ${JSON.stringify(seen)}`)
+    })
 }
 
 const PAGE_SOURCE = '[data-testid="page-source-editor"]'

@@ -3,8 +3,8 @@
 //
 // The app pairs with a second device through its own pairing dialog, and one
 // edit crosses in each direction, then a property and a move, then two
-// concurrent edits to one block, and last an unpair. The second
-// device is `e2e_sync_peer`, a headless vault on the app's sync daemon
+// concurrent edits to one block, then an image each way, and last an unpair.
+// The second device is `e2e_sync_peer`, a headless vault on the app's sync daemon
 // (sync-peer.ts). It reads the dialog's QR as a phone's camera would; the QR
 // carries the address that mDNS, which a CI runner cannot be relied on for,
 // would otherwise have to find.
@@ -13,8 +13,12 @@
 // the peer too. Paired by the peer's dial, the app holds no address for it
 // until one is typed into the device list, as a user without mDNS would.
 //
-// Five tests in one vault: each after the second works on the pairing and the
-// page the second leaves. Unpair ends the pairing, so it runs last.
+// The tests share one vault: each after the second works on the pairing and
+// the page the second leaves. Unpair ends the pairing, so it runs last.
+//
+// An image's row and block arrive in a session's op phase, and its bytes in the
+// file phase after it, so neither side's sync wait covers the bytes: each image
+// test waits on the receiving side's `read_attachment` instead.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -25,8 +29,10 @@ import {
   blockStaticByMarker,
   enterBlankSibling,
   expectAbsent,
+  expectImageRendered,
   navigateTo,
   openNewPage,
+  pasteFileIntoFocusedBlock,
   reopenPageByTitle,
   runScopedMarker,
   typeMarkerVerified,
@@ -52,6 +58,20 @@ const PEER_VALUE = runScopedMarker('wdio-sync-remote-prop')
 const APP_TAIL = runScopedMarker('wdio-sync-app-tail')
 const PEER_HEAD = runScopedMarker('wdio-sync-remote-head')
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
+const APP_IMAGE = runScopedMarker('wdio-sync-app-image')
+const PEER_IMAGE = runScopedMarker('wdio-sync-remote-image')
+const FILENAME = 'wdio-sync-image.png'
+// A 1x1 transparent PNG, and a 2x1 red and blue one. The peer's image must not
+// be the app's: the peer would store bytes it already holds at the path of the
+// copy it pulled, which the app holds too, and nothing would cross.
+const APP_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+)
+const PEER_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADklEQVR42mP4z8AAQv8BD/kD/Zh51wAAAAAASUVORK5CYII=',
+  'base64',
+)
 
 /** Close the open pairing dialog through its "Cancel pairing?" guard. */
 async function cancelPairing(): Promise<void> {
@@ -161,6 +181,58 @@ async function waitForPeerText(device: SyncPeer, id: string, text: string): Prom
       throw new Error(
         `the peer did not converge: expected ${JSON.stringify(text)}, saw ${JSON.stringify(seen)}`,
       )
+    })
+}
+
+/** Wait until the peer's file for attachment `id` holds exactly `bytes`. */
+async function waitForPeerBytes(device: SyncPeer, id: string, bytes: Buffer): Promise<void> {
+  let seen = ''
+  await browser
+    .waitUntil(
+      async () => {
+        try {
+          const held = await device.readAttachment(id)
+          seen = held.toString('base64')
+          return held.equals(bytes)
+        } catch (error) {
+          seen = String(error)
+          return false
+        }
+      },
+      { timeout: ACTION_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(`the peer does not hold the image's bytes: ${seen}`)
+    })
+}
+
+/** Wait until the app's `read_attachment` serves attachment `id` as exactly `bytes`. */
+async function waitForAppBytes(id: string, bytes: Buffer): Promise<void> {
+  let seen = ''
+  await browser
+    .waitUntil(
+      async () => {
+        seen = await browser.execute(async (attachmentId: string) => {
+          const internals = (
+            window as unknown as {
+              __TAURI_INTERNALS__: {
+                invoke: (cmd: string, args: unknown) => Promise<ArrayBuffer>
+              }
+            }
+          ).__TAURI_INTERNALS__
+          try {
+            const held = new Uint8Array(await internals.invoke('read_attachment', { attachmentId }))
+            return btoa(String.fromCharCode(...held))
+          } catch (error) {
+            return JSON.stringify(error)
+          }
+        }, id)
+        return seen === bytes.toString('base64')
+      },
+      { timeout: ACTION_TIMEOUT },
+    )
+    .catch(() => {
+      throw new Error(`the app does not hold the image's bytes: ${seen}`)
     })
 }
 
@@ -363,6 +435,53 @@ describe('Agaric real-backend two-device sync (#5365)', () => {
     await peer.waitPulled()
     await reopenSharedPage()
     await waitForStaticText(peerBlockId, merged, 'the app did not converge')
+  })
+
+  it('an image pasted in the app reaches the peer, bytes included', async () => {
+    if (peer === undefined || paired === undefined) throw new Error('the pairing test failed')
+    await reopenSharedPage()
+    await editBlock(paired.peerBlockId)
+    await enterBlankSibling()
+    await typeMarkerVerified(APP_IMAGE)
+    await pasteFileIntoFocusedBlock(APP_PNG.toString('base64'), FILENAME, 'image/png')
+    await waitForToast(`Attached "${FILENAME}"`)
+    await reopenSharedPage()
+    const imageBlock = blockStaticByMarker(APP_IMAGE)
+    await imageBlock.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const imageBlockId = await imageBlock.getAttribute('data-block-id')
+    if (imageBlockId === null) throw new Error('the image block row carries no data-block-id')
+
+    await peer.sync()
+    const attachments = await peer.listAttachments(imageBlockId)
+    expect(attachments).toEqual([
+      {
+        id: expect.any(String),
+        filename: FILENAME,
+        mime_type: 'image/png',
+        size_bytes: APP_PNG.length,
+      },
+    ])
+    const [attachment] = attachments
+    if (attachment === undefined) throw new Error('the peer holds no attachment row')
+    expect((await peer.getBlock(imageBlockId)).content).toContain(`](attachment:${attachment.id})`)
+    await waitForPeerBytes(peer, attachment.id, APP_PNG)
+  })
+
+  it('an image the peer attaches renders in the app from its bytes', async () => {
+    if (peer === undefined || paired === undefined) throw new Error('the pairing test failed')
+    const { deviceId, pageId } = paired
+    // What a paste there writes: the attachment, then its ref in the block's text.
+    const imageBlockId = await peer.createBlock(pageId, PEER_IMAGE)
+    const attachmentId = await peer.addAttachment(imageBlockId, FILENAME, 'image/png', PEER_PNG)
+    await peer.editBlock(imageBlockId, `${PEER_IMAGE}![${FILENAME}](attachment:${attachmentId})`)
+
+    await openSyncSettings()
+    await clickSyncNow(deviceId)
+    await peer.waitPulled()
+    await waitForAppBytes(attachmentId, PEER_PNG)
+    await reopenSharedPage()
+    await blockStaticByMarker(PEER_IMAGE).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await expectImageRendered(imageBlockId, "after the app's pull")
   })
 
   it("unpairing refuses the peer's next sync and drops only this device's row", async () => {

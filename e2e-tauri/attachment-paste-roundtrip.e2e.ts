@@ -28,7 +28,7 @@ import {
 
 const MARKER = runScopedMarker('wdio-paste')
 const FILENAME = 'wdio-paste.png'
-// A 1x1 transparent PNG (68 bytes).
+// A 1x1 transparent PNG.
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 
