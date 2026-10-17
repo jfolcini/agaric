@@ -27,7 +27,7 @@
  * import them from there directly rather than through this module.
  */
 
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import type {
   SlashCommandContext,
@@ -57,9 +57,8 @@ export type {
  *   1. exact: template, date, property, structural, marks — keys are disjoint
  *      so the merge order is for readability only.
  *   2. prefix: property first (`assignee-`, `location-`, `effort-`,
- *      `repeat-limit-`, `repeat-`), then structural (`table:`, `callout-`).
- *      No prefix collisions across categories — `table:` (with colon) does
- *      not match the generic `table` exact key.
+ *      `repeat-limit-`, `repeat-`), then structural (`turn-`, `callout-`).
+ *      No prefix collisions across categories.
  *
  * Exported so the dispatcher regression test can verify the merged shape.
  */
@@ -127,6 +126,8 @@ export function useBlockSlashCommands({
     t,
   })
   const handleListStyleSyntax = useListStyleSyntax({ focusedBlockId, t })
+  const [tablePickerOpen, setTablePickerOpen] = useState(false)
+  const openTablePicker = () => setTablePickerOpen(true)
 
   const tables = useMemo(
     () => mergeSlashHandlerTables(template.tables, date, property, structural, marks),
@@ -149,6 +150,7 @@ export function useBlockSlashCommands({
     openTemplatePicker: template.openTemplatePicker,
     openQueryBuilder,
     openEmojiPicker,
+    openTablePicker,
     openPropertyDrawer,
     openVoiceNoteRecorder,
     tables,
@@ -165,6 +167,7 @@ export function useBlockSlashCommands({
       openTemplatePicker: template.openTemplatePicker,
       openQueryBuilder,
       openEmojiPicker,
+      openTablePicker,
       openPropertyDrawer,
       openVoiceNoteRecorder,
       tables,
@@ -178,7 +181,7 @@ export function useBlockSlashCommands({
       // collision with palette command ids) so empty `/` can surface a
       // "Recent" band. Recorded before dispatch; the band join (in
       // `searchSlashCommands`) skips ids absent from the base catalog, so
-      // recording expanded sub-option ids (e.g. `table:3:3`) is harmless.
+      // recording expanded sub-option ids (e.g. `priority-high`) is harmless.
       addRecentCommand(item.id, RECENT_SLASH_PREFIX)
       const { tables: t_, ...rest } = inputsRef.current
       const ctx: SlashCommandContext = { blockId: focusedBlockId, ...rest }
@@ -195,5 +198,7 @@ export function useBlockSlashCommands({
     templatePickerOpen: template.templatePickerOpen,
     templatePages: template.templatePages,
     setTemplatePickerOpen: template.setTemplatePickerOpen,
+    tablePickerOpen,
+    setTablePickerOpen,
   }
 }

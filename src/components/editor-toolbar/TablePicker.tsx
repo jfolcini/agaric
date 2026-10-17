@@ -1,12 +1,12 @@
 /**
- * TablePicker — toolbar grid picker for inserting an N×M table (#215b).
+ * TablePicker — grid picker for inserting an N×M table (#215b), hosted by the
+ * toolbar's Insert-table popover and by the `/table` slash command
+ * (`BlockTablePicker`).
  *
- * Today a table is only insertable via the `/table` slash command. This popover
- * surfaces the familiar Google-Docs / Notion grid: hovering (or arrow-keying)
- * over the grid highlights an R×C selection; clicking (or pressing Enter)
- * inserts that table. It inserts through the SAME path the slash command uses
- * (`editor.chain().focus().insertTable({ rows, cols, withHeaderRow: true })`)
- * so behaviour — header-row default included — is identical.
+ * The familiar Google-Docs / Notion grid: hovering (or arrow-keying) over the
+ * grid highlights an R×C selection; clicking (or pressing Enter) inserts that
+ * table with a header row
+ * (`editor.chain().focus().insertTable({ rows, cols, withHeaderRow: true })`).
  *
  * UI-only: no persistence, IPC, or schema change. Like the other toolbar
  * selectors it uses `onPointerDown` + `preventDefault` so the click never blurs
@@ -25,16 +25,23 @@ const MAX_COLS = 8
 export interface TablePickerProps {
   editor: Editor
   onClose: () => void
+  /** Selection highlighted on open; the toolbar opens with none. */
+  initialRows?: number
+  initialCols?: number
 }
 
-export function TablePicker({ editor, onClose }: TablePickerProps): React.ReactElement {
+export function TablePicker({
+  editor,
+  onClose,
+  initialRows = 0,
+  initialCols = 0,
+}: TablePickerProps): React.ReactElement {
   const { t } = useTranslation()
   // 1-based hovered/selected dimensions; 0 means nothing highlighted yet.
-  const [rows, setRows] = useState(0)
-  const [cols, setCols] = useState(0)
+  const [rows, setRows] = useState(initialRows)
+  const [cols, setCols] = useState(initialCols)
 
   const insert = (r: number, c: number) => {
-    // Same insert path as the `/table` slash command (header-row default).
     editor.chain().focus().insertTable({ rows: r, cols: c, withHeaderRow: true }).run()
     onClose()
   }
@@ -140,7 +147,11 @@ export function TablePicker({ editor, onClose }: TablePickerProps): React.ReactE
           )
         })}
       </div>
-      <p className="text-center text-xs text-muted-foreground" data-testid="table-picker-label">
+      <p
+        className="text-center text-xs text-muted-foreground"
+        data-testid="table-picker-label"
+        aria-live="polite"
+      >
         {label}
       </p>
     </div>

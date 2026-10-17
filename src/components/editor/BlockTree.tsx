@@ -113,6 +113,11 @@ const BlockDatePicker = lazy(() =>
 const TemplatePicker = lazy(() =>
   import('@/components/block-tree/TemplatePicker').then((m) => ({ default: m.TemplatePicker })),
 )
+const BlockTablePicker = lazy(() =>
+  import('@/components/block-tree/BlockTablePicker').then((m) => ({
+    default: m.BlockTablePicker,
+  })),
+)
 
 /**
  * Stable DnD measuring config — module-level to avoid re-creation per render.
@@ -702,6 +707,8 @@ export function BlockTree({
     templatePickerOpen,
     setTemplatePickerOpen,
     templatePages,
+    tablePickerOpen,
+    setTablePickerOpen,
   } = useBlockSlashCommands({
     focusedBlockId,
     rootParentId,
@@ -1589,6 +1596,16 @@ export function BlockTree({
                 <BlockDatePicker
                   onSelect={(day) => day && handleDatePick(day)}
                   onClose={() => setDatePickerOpen(false)}
+                />
+              </Suspense>
+            )}
+
+            {/* Size grid for the /TABLE slash command, at the caret */}
+            {tablePickerOpen && rovingEditor.editor && (
+              <Suspense fallback={null}>
+                <BlockTablePicker
+                  editor={rovingEditor.editor}
+                  onClose={() => setTablePickerOpen(false)}
                 />
               </Suspense>
             )}

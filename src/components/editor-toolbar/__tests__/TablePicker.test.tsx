@@ -1,9 +1,9 @@
 /**
- * Tests for TablePicker (#215b) — the toolbar N×M table grid picker.
+ * Tests for TablePicker (#215b) — the N×M table grid picker the toolbar and
+ * the `/table` slash command open.
  *
- * Verifies the grid renders, that selecting a cell inserts an N×M table via
- * the SAME `insertTable` path as the `/table` slash command (header-row
- * default), that keyboard navigation works, and that there are no a11y
+ * Verifies the grid renders, that selecting a cell inserts an N×M table with
+ * a header row, that keyboard navigation works, and that there are no a11y
  * violations (per the component-test convention).
  */
 
@@ -14,8 +14,8 @@ import { axe } from 'vitest-axe'
 
 import { TablePicker } from '@/components/editor-toolbar/TablePicker'
 
-// Mirror the slash command's chain: insertTable returns a chainable that
-// terminates in run(). We capture the dimensions it was called with.
+// insertTable returns a chainable that terminates in run(). We capture the
+// dimensions it was called with.
 const run = vi.fn()
 const insertTable = vi.fn(() => ({ run }))
 const focus = vi.fn(() => ({ insertTable }))
@@ -43,7 +43,6 @@ describe('TablePicker', () => {
     fireEvent.pointerDown(screen.getByTestId('table-cell-3-4'))
 
     expect(focus).toHaveBeenCalledTimes(1)
-    // SAME path + header-row default as the `/table` slash command.
     expect(insertTable).toHaveBeenCalledWith({ rows: 3, cols: 4, withHeaderRow: true })
     expect(run).toHaveBeenCalledTimes(1)
     expect(onClose).toHaveBeenCalledTimes(1)
@@ -94,8 +93,9 @@ describe('TablePicker', () => {
 
     fireEvent.pointerEnter(screen.getByTestId('table-cell-2-3'))
 
-    // The label reflects the hovered dimensions.
+    // The label reflects the hovered dimensions, and announces them.
     expect(screen.getByTestId('table-picker-label')).toHaveTextContent('2 × 3')
+    expect(screen.getByTestId('table-picker-label')).toHaveAttribute('aria-live', 'polite')
     // Cells within the rectangle are selected; cells outside are not.
     expect(screen.getByTestId('table-cell-1-1')).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('table-cell-2-3')).toHaveAttribute('aria-selected', 'true')
@@ -116,6 +116,17 @@ describe('TablePicker', () => {
     expect(insertTable).toHaveBeenCalledWith({ rows: 2, cols: 2, withHeaderRow: true })
     expect(run).toHaveBeenCalledTimes(1)
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('starts on the given selection, and the arrows move from it', async () => {
+    const user = userEvent.setup()
+    render(<TablePicker editor={editor} onClose={vi.fn()} initialRows={3} initialCols={3} />)
+
+    expect(screen.getByTestId('table-picker-label')).toHaveTextContent('3 × 3')
+    screen.getByRole('grid', { name: 'Insert table' }).focus()
+    await user.keyboard('{ArrowRight}{ArrowDown}{Enter}')
+
+    expect(insertTable).toHaveBeenCalledWith({ rows: 4, cols: 4, withHeaderRow: true })
   })
 
   it('has no a11y violations', async () => {

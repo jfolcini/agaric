@@ -22,6 +22,9 @@ test.describe('Table view-mode rendering (#215)', () => {
 
     const list = await typeSlashCommand(page, 'table')
     await list.locator('#suggestion-table').click()
+    // `/table` opens the size grid on 3×3; Enter inserts that.
+    await expect(page.getByRole('grid', { name: 'Insert table' })).toBeFocused()
+    await page.keyboard.press('Enter')
     await page.waitForTimeout(400)
 
     // Cursor lands in the first cell; type recognizable content.

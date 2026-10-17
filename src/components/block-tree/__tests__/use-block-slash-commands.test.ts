@@ -191,7 +191,7 @@ describe('searchSlashCommands', () => {
 
   it('skips stale recent ids absent from the base catalog (#1105)', () => {
     addRecentCommand('todo', RECENT_SLASH_PREFIX)
-    // `table:3:3` is an expanded sub-option, not a base SLASH_COMMANDS id.
+    // `table:3:3` is the removed table size suffix, not a base SLASH_COMMANDS id.
     addRecentCommand('table:3:3', RECENT_SLASH_PREFIX)
 
     const results = searchSlashCommands('', getRecentCommands(RECENT_SLASH_PREFIX))
@@ -252,19 +252,6 @@ describe('searchSlashCommands', () => {
     expect(results.some((r) => r.id === 'location-office')).toBe(true)
   })
 
-  it('handles table NxM pattern', () => {
-    const results = searchSlashCommands('table 4x6', [])
-    expect(results.some((r) => r.id === 'table:4:6')).toBe(true)
-    expect(results.every((r) => r.id !== 'table')).toBe(true)
-  })
-
-  // The open menu ends its query at a space, so `table4x6` is the form a user can type.
-  it('handles the table NxM pattern typed without a space', () => {
-    const results = searchSlashCommands('table4x6', [])
-    expect(results[0]?.id).toBe('table:4:6')
-    expect(results.every((r) => r.id !== 'table')).toBe(true)
-  })
-
   it('returns empty array-like for non-matching query', () => {
     const results = searchSlashCommands('zzzzzzzznonexistent', [])
     expect(results.length).toBe(0)
@@ -276,14 +263,6 @@ describe('searchSlashCommands', () => {
     expect(todoItem).toBeDefined()
     expect(todoItem?.category).toBe('slashCommand.categories.tasks')
     expect(todoItem?.icon).toBeTruthy()
-  })
-
-  it('dynamic table command includes category and icon', () => {
-    const results = searchSlashCommands('table 3x3', [])
-    const tableItem = results.find((r) => r.id === 'table:3:3')
-    expect(tableItem).toBeDefined()
-    expect(tableItem?.category).toBe('slashCommand.categories.structure')
-    expect(tableItem?.icon).toBeTruthy()
   })
 
   // -- Fuzzy matching --------------------------------------------------
@@ -400,6 +379,17 @@ describe('useBlockSlashCommands handleSlashCommand', () => {
 
     expect(params.setDatePickerMode).toHaveBeenCalledWith('date')
     expect(params.setDatePickerOpen).toHaveBeenCalledWith(true)
+  })
+
+  it('opens the table size grid for /table', async () => {
+    const { result } = renderHook(() => useBlockSlashCommands(makeDefaultParams()), { wrapper })
+    expect(result.current.tablePickerOpen).toBe(false)
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'table', label: 'TABLE' })
+    })
+
+    expect(result.current.tablePickerOpen).toBe(true)
   })
 
   it('opens date picker for /due command', async () => {
@@ -845,11 +835,11 @@ describe('useBlockSlashCommands handleSlashCommand stability (#)', () => {
 })
 
 // D-4 — dispatcher regression test. Asserts that every PickerItem id
-// produced by `SLASH_COMMANDS` (plus the dynamic `table:N:M` and the `h1..h6`
-// heading family) resolves to exactly one handler in the merged dispatch
-// table — no missing kinds, no exact-key collisions across sub-hooks, no
-// prefix double-routing. Pins the cross-sub-hook contract that the four
-// category hooks together cover the full command catalog.
+// produced by `SLASH_COMMANDS` (plus the `h1..h6` heading family) resolves to
+// exactly one handler in the merged dispatch table — no missing kinds, no
+// exact-key collisions across sub-hooks, no prefix double-routing. Pins the
+// cross-sub-hook contract that the four category hooks together cover the
+// full command catalog.
 describe('useBlockSlashCommands dispatcher coverage (# D-4)', () => {
   function getMergedTables() {
     const { result } = renderHook(
@@ -893,12 +883,6 @@ describe('useBlockSlashCommands dispatcher coverage (# D-4)', () => {
     for (let n = 1; n <= 6; n++) {
       expect(tables.exact[`h${n}`], `missing h${n}`).toBeDefined()
     }
-  })
-
-  it('dynamic table:N:M id matches the table prefix', () => {
-    const tables = getMergedTables()
-    const hit = tables.prefix.find(([p]) => 'table:3:4'.startsWith(p))
-    expect(hit?.[0]).toBe('table:')
   })
 
   it('exact handlers are disjoint across sub-hooks (no double-registered kind)', () => {

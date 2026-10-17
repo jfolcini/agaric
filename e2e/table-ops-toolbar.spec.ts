@@ -22,6 +22,9 @@ test.describe('Table ops toolbar (#215)', () => {
 
     const list = await typeSlashCommand(page, 'table')
     await list.locator('#suggestion-table').click()
+    // `/table` opens the size grid on 3×3; Enter inserts that.
+    await expect(page.getByRole('grid', { name: 'Insert table' })).toBeFocused()
+    await page.keyboard.press('Enter')
     await page.waitForTimeout(400)
 
     // Cursor is now in the first cell → the contextual trigger is visible

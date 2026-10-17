@@ -36,7 +36,7 @@ Typing `/` opens the slash menu. Commands are fuzzy-matched as you type — the 
 | **Dates** | `date`, `due`, `schedule` — open the date picker for the matching property |
 | **References** | `link`, `tag`, `block-ref` — insert a page link, tag, or block reference inline (sub-menu picker); `embed` — transclude a block or page's content inline, read-only (see [tags-and-links.md](tags-and-links.md) → *Embeds*); `attach` a file; `voice` records a voice note into an audio attachment; `emoji` opens the emoji picker |
 | **Formatting** | `bold`, `italic`, `code-mark`, `strike`, `highlight` — apply a mark without reaching for the chord |
-| **Structure** | `h1`–`h6`, `quote`, `code`, `callout` (sub-menu: tip / note / info / warning / error), `table` (with an optional dimension suffix — `table4x6` is 4 rows × 6 columns), `numbered-list`, `bullet-list`, `divider`, `turn` (convert this block to another type), `duplicate` |
+| **Structure** | `h1`–`h6`, `quote`, `code`, `callout` (sub-menu: tip / note / info / warning / error), `table` (opens a size grid at the caret, starting at 3×3), `numbered-list`, `bullet-list`, `divider`, `turn` (convert this block to another type), `duplicate` |
 | **Properties** | `effort`, `assignee`, `location` — sub-menus offer presets (effort's are fixed; `assignee` and `location` add a *Custom…* entry); bare `/assignee` and `/location`, and their *Custom…* entries, open the block's property drawer, whose **AddPropertyPopover** adds any defined property |
 | **Templates** | `template` — opens **TemplatePicker** to insert a template page's children under the current block |
 | **Queries** | `query` — insert an `{{query …}}` block; opens the visual **QueryBuilder** |
