@@ -140,12 +140,15 @@ function toolbar(): HTMLElement {
   return screen.getByRole('toolbar', { name: t('toolbar.formatting') })
 }
 
-function button(name: string): HTMLElement {
+function button(name: string | RegExp): HTMLElement {
   return within(toolbar()).getByRole('button', { name })
 }
 
+/** Save, labelled with the count of changes once there are any. */
+const SAVE = /^Save(?: \(\d+ changes?\))?$/
+
 async function saveAndClose(onClose: () => void): Promise<void> {
-  await userEvent.setup().click(screen.getByRole('button', { name: t('action.save') }))
+  await userEvent.setup().click(screen.getByRole('button', { name: SAVE }))
   await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
 }
 
@@ -634,7 +637,7 @@ describe('on a phone', () => {
     touch.value = true
   })
 
-  it('the toolbar is pinned and carries New line, Cancel and Save, the row under the buffer gone', async () => {
+  it('the toolbar is pinned and carries New line, Cancel and Save, off with nothing to save, the row under the buffer gone', async () => {
     renderEditor()
     await loadedEditor()
 
@@ -650,6 +653,7 @@ describe('on a phone', () => {
     ])
     expect(screen.getAllByRole('button', { name: t('action.save') })).toHaveLength(1)
     expect(screen.getAllByRole('button', { name: t('action.cancel') })).toHaveLength(1)
+    expect(button(SAVE)).toBeDisabled()
   })
 
   it('Save saves the buffer and closes it', async () => {
@@ -659,7 +663,24 @@ describe('on a phone', () => {
       ed.view.dispatch(ed.state.tr.insertText(' Saved.', positionOf(ed, 'knowledge base.', 15)))
     })
 
-    await userEvent.setup().click(button(t('action.save')))
+    await userEvent.setup().click(button(SAVE))
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(store.getState().blocksById.get(GS1)?.content).toBe(`${WELCOME_TEXT} Saved.`)
+  })
+
+  it('Preview and Changes hide the toolbar, so Save, counting the change, and Cancel are under them', async () => {
+    const { onClose, store } = renderEditor()
+    const ed = await loadedEditor()
+    act(() => {
+      ed.view.dispatch(ed.state.tr.insertText(' Saved.', positionOf(ed, 'knowledge base.', 15)))
+    })
+
+    await userEvent.setup().click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+
+    expect(screen.queryByRole('toolbar', { name: t('toolbar.formatting') })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: t('action.cancel') })).toHaveLength(1)
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Save (1 change)' }))
 
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
     expect(store.getState().blocksById.get(GS1)?.content).toBe(`${WELCOME_TEXT} Saved.`)
@@ -677,7 +698,7 @@ describe('on a phone', () => {
         : dispatch(cmd, args),
     )
 
-    await userEvent.setup().click(button(t('action.save')))
+    await userEvent.setup().click(button(SAVE))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('line 5: refused')
     expect(onClose).not.toHaveBeenCalled()

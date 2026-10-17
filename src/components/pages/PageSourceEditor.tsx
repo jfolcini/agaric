@@ -9,22 +9,38 @@
  * folded in. A saved buffer leaves a report (`notifyPageSourceSaved`). Cancel
  * and Escape ask first when the buffer is not the page as loaded. Unsaved text
  * survives leaving the page as a localStorage draft, cleared by Save or Cancel.
+ *
+ * Edit, Preview and Changes switch what is shown in the buffer's place: the
+ * buffer as the page will show it (`PageSourcePreview`, loaded lazily like
+ * the buffer), and the line diff against the page as loaded
+ * (`PageSourceChanges`), whose hunks Save counts.
  */
 
 import { Copy } from 'lucide-react'
 import type React from 'react'
-import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { flushSync } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import type { PageSourceBufferHandle } from '@/components/pages/PageSourceBuffer'
+import { PageSourceChanges } from '@/components/pages/PageSourceChanges'
 import { PageSourceConflictDialog } from '@/components/pages/PageSourceConflictDialog'
 import { latestUndoEntry, notifyPageSourceSaved } from '@/components/pages/PageSourceSaveReport'
 import { Button } from '@/components/ui/button'
 import { SHARED_INPUT_CLASSES } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { SourceLines } from '@/editor/source-buffer'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -33,6 +49,7 @@ import { commands, type PageBuffer } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { diffLines } from '@/lib/line-diff'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
@@ -43,6 +60,17 @@ import { usePageBlockStore } from '@/stores/page-blocks'
 const LazyPageSourceBuffer = lazy(() =>
   import('@/components/pages/PageSourceBuffer').then((m) => ({ default: m.PageSourceBuffer })),
 )
+const LazyPageSourcePreview = lazy(() =>
+  import('@/components/pages/PageSourcePreview').then((m) => ({ default: m.PageSourcePreview })),
+)
+
+const MODES = ['edit', 'preview', 'changes'] as const
+type Mode = (typeof MODES)[number]
+const MODE_LABELS = {
+  edit: 'pageSource.modeEdit',
+  preview: 'pageSource.preview',
+  changes: 'pageSource.changes',
+} as const
 
 // Styled here, not in the lazy buffer, so its chunk shares no design-system
 // module with startup that would split one off the startup chunks.
@@ -113,6 +141,9 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   const draftNoteId = useId()
   const legacyNoteId = useId()
   const [opened, setOpened] = useState<Opened | null>(null)
+  const [mode, setMode] = useState<Mode>('edit')
+  // The buffer as last typed, for what shows beside it; null until it changes.
+  const [typedLines, setTypedLines] = useState<SourceLines | null>(null)
   // A draft an earlier version stored, its ids as `^ID` anchors in its text (#5160 D-f).
   const [legacyDraft, setLegacyDraft] = useState<string | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
@@ -182,6 +213,16 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   }
 
   const currentLines = (open: Opened): SourceLines => typed.current?.lines ?? open.initial
+
+  const shown = typedLines ?? opened?.initial ?? null
+  const shownText = useDeferredValue(shown?.text ?? '')
+  const pageText = opened?.page.text ?? ''
+  const diff = useMemo(() => diffLines(pageText, shownText), [pageText, shownText])
+  const unchanged = opened === null || shown === null || sameLines(shown, opened.page)
+  const saveLabel =
+    unchanged || diff.hunks.length === 0
+      ? t('action.save')
+      : t('pageSource.saveChanges', { count: diff.hunks.length })
 
   const showConflict = async (): Promise<void> => {
     try {
@@ -253,6 +294,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   const handleChange = (lines: SourceLines): void => {
     if (opened === null) return
     typed.current = { base: opened.base, page: opened.page, lines }
+    setTypedLines(lines)
     draftSaver.schedule()
   }
 
@@ -283,6 +325,7 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
       draftRestored: false,
       generation: opened.generation + 1,
     })
+    setTypedLines(null)
     setConflict(null)
     setSaveError(null)
   }
@@ -298,6 +341,15 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     if (conflict === null || opened === null) return
     setConflict(null)
     void submit(opened.base.source, true)
+  }
+
+  // Back to Edit puts the caret back in the buffer, which was hidden.
+  const switchMode = (value: string): void => {
+    // Radix sends '' when the shown mode is pressed again.
+    const next = MODES.find((m) => m === value)
+    if (next === undefined) return
+    flushSync(() => setMode(next))
+    if (next === 'edit') bufferRef.current?.focus()
   }
 
   const copyLegacyDraft = async (): Promise<void> => {
@@ -358,6 +410,19 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
           {t('pageSource.draftRestored')}
         </p>
       )}
+      <ToggleGroup
+        type="single"
+        value={mode}
+        onValueChange={switchMode}
+        aria-label={t('pageSource.view')}
+        className="self-start"
+      >
+        {MODES.map((m) => (
+          <ToggleGroupItem key={m} value={m}>
+            {t(MODE_LABELS[m])}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
       <Suspense fallback={loading}>
         <LazyPageSourceBuffer
           key={opened.generation}
@@ -366,6 +431,9 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
           initial={opened.initial}
           pageIds={opened.page.lineIds}
           readOnly={saving}
+          hidden={mode !== 'edit'}
+          saveLabel={saveLabel}
+          nothingToSave={unchanged}
           label={t('pageSource.editorLabel')}
           describedBy={opened.draftRestored ? `${draftNoteId} ${hintId}` : hintId}
           className={BUFFER_CLASS}
@@ -375,23 +443,29 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
           onCancel={handleCancel}
         />
       </Suspense>
-      <p id={hintId} className="text-xs text-muted-foreground">
+      <p id={hintId} hidden={mode !== 'edit'} className="text-xs text-muted-foreground">
         {t('pageSource.hint')}
       </p>
+      {mode === 'preview' && shown !== null && (
+        <Suspense fallback={loading}>
+          <LazyPageSourcePreview lines={shown} />
+        </Suspense>
+      )}
+      {mode === 'changes' && <PageSourceChanges diff={diff} />}
       {saveError !== null && (
         <p role="alert" className="text-sm text-destructive">
           {saveError}
         </p>
       )}
-      {/* On touch, Save and Cancel are on the toolbar pinned above the keyboard (X9). */}
-      {!isTouch && (
+      {/* On touch, Save and Cancel are on the buffer's toolbar pinned above the keyboard (X9). */}
+      {(!isTouch || mode !== 'edit') && (
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={handleCancel} disabled={saving}>
             {t('action.cancel')}
           </Button>
-          <Button onClick={handleSave} disabled={saving}>
+          <Button onClick={handleSave} disabled={saving || unchanged}>
             {saving && <Spinner />}
-            {t('action.save')}
+            {saveLabel}
           </Button>
         </div>
       )}

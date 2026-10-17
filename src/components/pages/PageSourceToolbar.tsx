@@ -83,6 +83,8 @@ export interface PageSourceToolbarProps {
   editor: Editor
   pageId: string
   saving: boolean
+  saveLabel: string
+  nothingToSave: boolean
   onSave: () => void
   onCancel: () => void
 }
@@ -126,6 +128,8 @@ export function PageSourceToolbar({
   editor,
   pageId,
   saving,
+  saveLabel,
+  nothingToSave,
   onSave,
   onCancel,
 }: PageSourceToolbarProps): React.ReactElement {
@@ -276,8 +280,8 @@ export function PageSourceToolbar({
       }
       case SAVE: {
         return (
-          <Button size="sm" disabled={saving} {...toolbarPressHandlers(onSave)}>
-            {t('action.save')}
+          <Button size="sm" disabled={saving || nothingToSave} {...toolbarPressHandlers(onSave)}>
+            {saveLabel}
           </Button>
         )
       }
