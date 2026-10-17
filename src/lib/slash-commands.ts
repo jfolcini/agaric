@@ -259,7 +259,7 @@ export const SLASH_COMMANDS: PickerItem[] = [
   },
   {
     id: 'table',
-    label: 'TABLE — Insert table (e.g. /table4x6)',
+    label: 'TABLE — Insert table',
     category: 'slashCommand.categories.structure',
     icon: Grid3x3,
   },
@@ -709,9 +709,7 @@ export function searchSlashCommands(
     ? matchSorter(TURN_INTO_COMMANDS, q, { keys: ['label'] })
     : []
 
-  // The size may follow `table` directly: the slash menu closes on a space.
-  const tableMatch = q.match(/^table\s*(\d+)\s*x\s*(\d+)$/i)
-  let results = [
+  return [
     ...baseResults,
     ...priorityResults,
     ...headingResults,
@@ -723,18 +721,6 @@ export function searchSlashCommands(
     ...calloutResults,
     ...turnIntoResults,
   ]
-  if (tableMatch) {
-    const rows = Number.parseInt(tableMatch[1] as string, 10)
-    const cols = Number.parseInt(tableMatch[2] as string, 10)
-    results = results.filter((r) => r.id !== 'table')
-    results.unshift({
-      id: `table:${rows}:${cols}`,
-      label: `TABLE ${rows}\u00D7${cols} — Insert ${rows}\u00D7${cols} table`,
-      category: 'slashCommand.categories.structure',
-      icon: Grid3x3,
-    })
-  }
-  return results
 }
 
 export async function searchPropertyKeys(query: string): Promise<PickerItem[]> {

@@ -1,16 +1,15 @@
 /**
  * Slash-command insertion edge cases (T3 / #1024).
  *
- * `BlockTree.test.tsx` only asserts that `insertContent` / `insertTable` were
- * *called*, against a mock editor whose selection is pinned at pos 0. It never
- * exercises real selection-replacement, insertion at pos 0 vs mid-paragraph,
- * structural commands from a non-default block state, or insert-then-blur
- * (draft autosave). These tests drive the structural handlers through a REAL
+ * `BlockTree.test.tsx` only asserts that `insertContent` was *called*, against
+ * a mock editor whose selection is pinned at pos 0. It never exercises real
+ * selection-replacement, structural commands from a non-default block state,
+ * or insert-then-blur (draft autosave). These tests drive the structural handlers through a REAL
  * minimal TipTap editor wired into the synthetic slash-command context, then
  * assert the SETTLED document — what the user would actually see.
  *
  * The editor-insert handlers (`/link`, `/tag`, `/block-ref`, `/code`,
- * `/quote`, `/table`) operate directly on `ctx.rovingEditor.editor` and never
+ * `/quote`) operate directly on `ctx.rovingEditor.editor` and never
  * touch the page store, so a real editor + the production handler is the whole
  * code path.
  */
@@ -23,10 +22,6 @@ import CodeBlock from '@tiptap/extension-code-block'
 import Document from '@tiptap/extension-document'
 import Heading from '@tiptap/extension-heading'
 import Paragraph from '@tiptap/extension-paragraph'
-import { Table } from '@tiptap/extension-table'
-import { TableCell } from '@tiptap/extension-table-cell'
-import { TableHeader } from '@tiptap/extension-table-header'
-import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -39,19 +34,7 @@ vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
-const TABLE_EXTENSIONS = [
-  Document,
-  Paragraph,
-  Text,
-  Bold,
-  Heading,
-  Blockquote,
-  CodeBlock,
-  Table.configure({ resizable: false }),
-  TableRow,
-  TableHeader,
-  TableCell,
-]
+const EXTENSIONS = [Document, Paragraph, Text, Bold, Heading, Blockquote, CodeBlock]
 
 let editor: Editor | undefined
 
@@ -73,7 +56,7 @@ beforeEach(() => {
 function buildCtxWithEditor(initialText: string) {
   editor = new Editor({
     element: document.createElement('div'),
-    extensions: TABLE_EXTENSIONS,
+    extensions: EXTENSIONS,
     content: {
       type: 'doc',
       content: [
@@ -140,50 +123,6 @@ describe('T3 — /tag with a multi-word selection', () => {
   })
 })
 
-describe('T3 — /table at pos 0 vs mid-block', () => {
-  function tableDims(): { rows: number; headerCells: number } {
-    if (!editor) throw new Error('no editor')
-    let rows = 0
-    let headerCells = 0
-    editor.state.doc.descendants((node) => {
-      if (node.type.name === 'tableRow') rows += 1
-      if (node.type.name === 'tableHeader') headerCells += 1
-    })
-    return { rows, headerCells }
-  }
-
-  it('inserts a 3×3 table (with header row) when the caret is at pos 0', async () => {
-    const { result } = renderHook(() => useSlashCommandStructural())
-    const ctx = buildCtxWithEditor('paragraph text')
-    if (!editor) throw new Error('no editor')
-
-    editor.commands.setTextSelection({ from: 0, to: 0 })
-    await result.current.exact['table']?.(ctx, { id: 'table', label: 'Table' })
-
-    const { rows, headerCells } = tableDims()
-    expect(rows).toBe(3)
-    // withHeaderRow: true → the first row's 3 cells are tableHeader cells.
-    expect(headerCells).toBe(3)
-    // The original paragraph text survives somewhere in the doc.
-    expect(editor.state.doc.textContent).toContain('paragraph text')
-  })
-
-  it('inserts a table when the caret is mid-paragraph without losing the text', async () => {
-    const { result } = renderHook(() => useSlashCommandStructural())
-    const ctx = buildCtxWithEditor('alpha beta')
-    if (!editor) throw new Error('no editor')
-
-    // Caret between "alpha" and " beta" (offset 5 → pos 6).
-    editor.commands.setTextSelection({ from: 6, to: 6 })
-    await result.current.exact['table']?.(ctx, { id: 'table', label: 'Table' })
-
-    const { rows } = tableDims()
-    expect(rows).toBe(3)
-    expect(editor.state.doc.textContent).toContain('alpha')
-    expect(editor.state.doc.textContent).toContain('beta')
-  })
-})
-
 describe('T3 — /code and /quote from a non-default block state', () => {
   it('/code toggles a paragraph WITH an active text selection into a code block', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
@@ -204,7 +143,7 @@ describe('T3 — /code and /quote from a non-default block state', () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     editor = new Editor({
       element: document.createElement('div'),
-      extensions: TABLE_EXTENSIONS,
+      extensions: EXTENSIONS,
       content: {
         type: 'doc',
         content: [

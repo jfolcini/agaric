@@ -43,6 +43,8 @@ export interface SlashCommandContext {
   openQueryBuilder: () => void
   /** Open the browse-grid emoji picker (#286); on select it inserts at the caret. */
   openEmojiPicker: () => void
+  /** Open the table size grid at the caret; it inserts the picked table. */
+  openTablePicker: () => void
   /**
    * Open the block property drawer for value entry (#2656). Used by the
    * `/assignee` · `/location` commands (and their `Custom…` presets) instead

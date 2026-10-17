@@ -27,7 +27,7 @@ Type, paste, or use the toolbar:
 | Divider | Slash menu (`/divider`) |
 | Callout | Slash menu (`/callout`); types: tip / note / info / warning / error |
 | Ordered / unordered list | Toolbar, or markdown shortcut (`1.`, `-`) |
-| Table | Slash menu (`/table4x6` for 4 rows × 6 columns) |
+| Table | Slash menu (`/table` opens a size grid at the caret, starting at 3×3: arrows resize it, Enter inserts) |
 | Task | A checkbox and a space typed at the start of the block, with or without a `-` and a space before it: `[ ]` TODO, `[/]` DOING, `[x]` or `[X]` DONE, `[-]` CANCELLED. The marker disappears and the block takes the state; `Ctrl+Enter`, the checkbox and the toolbar cycle it from there. `TODO` stays a word |
 
 Markdown shortcuts trigger as you type (`#`, `##`, ``` ` ```, `**bold**`, `_italic_`, `~~strike~~`, `==highlight==`, `[text](url)`, `1.`, `-`, `>`, `[ ]`, `[/]`, `[x]`, `[-]`). A mark delimiter follows CommonMark's flanking rule, typed, pasted or stored alike: one with a space on its inner side stays text, so `5 * 3 = 15 and 2 * 4 = 8` is not italic, while a mid-word `un*break*able` is. A delimiter run never closes the mark it opened, so `a====b` stays text.

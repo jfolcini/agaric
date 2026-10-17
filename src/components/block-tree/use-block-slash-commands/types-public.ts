@@ -44,4 +44,7 @@ export interface UseBlockSlashCommandsReturn {
   templatePickerOpen: boolean
   templatePages: Array<{ id: string; content: string; preview: string | null }>
   setTemplatePickerOpen: (open: boolean) => void
+  /** The `/table` size grid (`BlockTablePicker`). */
+  tablePickerOpen: boolean
+  setTablePickerOpen: (open: boolean) => void
 }

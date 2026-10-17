@@ -187,10 +187,10 @@ Where OG and 2.0 differ materially, the Logseq column says so.
 | Code blocks | Fenced, syntax-highlighted | Fenced with lowlight (curated grammar set), language popover | Done |
 | Math / LaTeX | `$$…$$` native | `$…$` inline + `$$…$$` block, KaTeX lazy-loaded, raw-source node view, round-trips | Done |
 | **Mermaid diagrams** | **Plugin only** | ```` ```mermaid ```` fences render inline in both the editor and the read-only renderer, with a raw-source toggle; lazy-loaded | **Better** |
-| Tables | Markdown tables | Pipe tables + `/table`, `/tableRxC` dimension syntax, a grid picker, contextual table-ops popover | Better |
+| Tables | Markdown tables | Pipe tables + `/table` and the toolbar open a size grid, contextual table-ops popover | Better |
 | Callouts | Plugin/CSS convention | 5 built-in types (info/warning/tip/error/note), `> [!TYPE]` shape, slash commands | Better |
 | Lists | Outline bullets are the list | **Real ordered/bullet/task list nodes and markdown grammar, plus nested sub-lists** — the previous revision's "no lists" claim was wrong | Done |
-| Slash commands | ~20+ | Base commands plus sub-options that surface as you type (e.g. priority, heading, callout, turn-into) and a synthetic `tableRxC`; recents band on empty query | Better |
+| Slash commands | ~20+ | Base commands plus sub-options that surface as you type (e.g. priority, heading, callout, turn-into); recents band on empty query | Better |
 | Inline pickers | `[[`, `((`, `/`, `#` | **Seven**: `[[`, `@`, `((`, `/`, `::`, `:` (emoji), `{{` (query, with ghost-text hint) | Better |
 | Formatting toolbar | None — keyboard only | Standing bar: **Format popover** (6 caret marks), **Turn-into popover** (9 block types), internal-link, block-ref, tag, insert-query, emoji, table grid, cycle-priority, date/due/scheduled, todo, properties, undo/redo/discard, width-aware overflow. Plus a selection bubble menu (6 marks + external link) | Better |
 | Property value autocomplete | Suggests previously-used values | **Only in the search DSL's `prop:key=value`.** Not in the `::` editor picker, and not in the filter popover used by Pages and the query builder | Partial |

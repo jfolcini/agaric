@@ -292,10 +292,10 @@ interface TablePickerButtonProps {
 
 /**
  * Render the table-insert grid-picker trigger (#215b). Mirrors the callout /
- * table-ops popover triggers; opens a `TablePicker` grid whose selection
- * inserts an N×M table via the same `insertTable` path as the `/table` slash
- * command. Unlike the table-ops trigger this is always present (it inserts a
- * new table) — it does not depend on the selection being inside a table.
+ * table-ops popover triggers; opens the `TablePicker` grid the `/table` slash
+ * command also opens, whose selection inserts an N×M table. Unlike the
+ * table-ops trigger this is always present (it inserts a new table) — it does
+ * not depend on the selection being inside a table.
  */
 export function renderTablePickerButton({
   editor,

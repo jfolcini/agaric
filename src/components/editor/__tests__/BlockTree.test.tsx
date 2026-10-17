@@ -43,7 +43,6 @@ let capturedOnSlashCommand: ((item: PickerItem) => void) | undefined
 // Mock editor that tracks chain calls for slash command handler tests
 const mockInsertContent = vi.fn()
 const mockToggleCodeBlock = vi.fn()
-const mockInsertTable = vi.fn()
 const mockRun = vi.fn()
 const mockChain = {
   focus: vi.fn(() => mockChain),
@@ -53,10 +52,6 @@ const mockChain = {
   }),
   toggleCodeBlock: vi.fn(() => {
     mockToggleCodeBlock()
-    return mockChain
-  }),
-  insertTable: vi.fn((opts: { rows: number; cols: number; withHeaderRow: boolean }) => {
-    mockInsertTable(opts)
     return mockChain
   }),
   run: mockRun,
@@ -1770,26 +1765,7 @@ describe('BlockTree slash command wiring', () => {
     expect(results?.some((r) => r.id === 'query')).toBe(true)
   })
 
-  it('searchSlashCommands returns parameterized table item for "table 4x6" query', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
-
-    renderBlockTree()
-
-    await waitFor(() => {
-      expect(capturedSearchSlashCommands).toBeDefined()
-    })
-
-    const results = await capturedSearchSlashCommands?.('table 4x6')
-
-    expect(results?.some((r) => r.id === 'table:4:6')).toBe(true)
-    // The default 'table' item should be replaced
-    expect(results?.some((r) => r.id === 'table')).toBe(false)
-    // The parameterized item should be first
-    expect((results?.[0] as { id: string } | undefined)?.id).toBe('table:4:6')
-    expect((results?.[0] as { label: string } | undefined)?.label).toContain('4\u00D76')
-  })
-
-  it('searchSlashCommands returns default table for "table" query without dimensions', async () => {
+  it('searchSlashCommands returns the table command for a "table" query', async () => {
     stubBlockTree({ load_page_subtree: () => emptySubtree })
 
     renderBlockTree()
@@ -1801,82 +1777,6 @@ describe('BlockTree slash command wiring', () => {
     const results = await capturedSearchSlashCommands?.('table')
 
     expect(results?.some((r) => r.id === 'table')).toBe(true)
-    // No parameterized item
-    expect(results?.every((r) => !r.id.startsWith('table:'))).toBe(true)
-  })
-
-  it('searchSlashCommands handles "table 2x2" with small dimensions', async () => {
-    stubBlockTree({ load_page_subtree: () => emptySubtree })
-
-    renderBlockTree()
-
-    await waitFor(() => {
-      expect(capturedSearchSlashCommands).toBeDefined()
-    })
-
-    const results = await capturedSearchSlashCommands?.('table 2x2')
-
-    expect((results?.[0] as { id: string } | undefined)?.id).toBe('table:2:2')
-  })
-
-  it('onSlashCommand for /table with no dimensions inserts 3x3 table', async () => {
-    seedPageWith('BLOCK_01')
-    useMockEditor = true
-
-    renderBlockTree({ autoCreateFirstBlock: false })
-
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
-
-    await waitFor(() => {
-      expect(capturedOnSlashCommand).toBeDefined()
-    })
-
-    await act(async () => {
-      capturedOnSlashCommand?.({ id: 'table', label: 'TABLE — Insert table (e.g. /table4x6)' })
-    })
-
-    expect(mockInsertTable).toHaveBeenCalledWith({ rows: 3, cols: 3, withHeaderRow: true })
-  })
-
-  it('onSlashCommand for /table 4x6 inserts 4x6 table', async () => {
-    seedPageWith('BLOCK_01')
-    useMockEditor = true
-
-    renderBlockTree({ autoCreateFirstBlock: false })
-
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
-
-    await waitFor(() => {
-      expect(capturedOnSlashCommand).toBeDefined()
-    })
-
-    await act(async () => {
-      capturedOnSlashCommand?.({ id: 'table:4:6', label: 'TABLE 4\u00D76 — Insert 4\u00D76 table' })
-    })
-
-    expect(mockInsertTable).toHaveBeenCalledWith({ rows: 4, cols: 6, withHeaderRow: true })
-  })
-
-  it('onSlashCommand for /table 10x2 inserts 10x2 table', async () => {
-    seedPageWith('BLOCK_01')
-    useMockEditor = true
-
-    renderBlockTree({ autoCreateFirstBlock: false })
-
-    useBlockStore.setState({ focusedBlockId: 'BLOCK_01' })
-
-    await waitFor(() => {
-      expect(capturedOnSlashCommand).toBeDefined()
-    })
-
-    await act(async () => {
-      capturedOnSlashCommand?.({
-        id: 'table:10:2',
-        label: 'TABLE 10\u00D72 — Insert 10\u00D72 table',
-      })
-    })
-
-    expect(mockInsertTable).toHaveBeenCalledWith({ rows: 10, cols: 2, withHeaderRow: true })
   })
 
   it('slash command dialog uses standard max-sm breakpoint', async () => {
@@ -8100,7 +8000,7 @@ describe('BlockTree structural chords are confined to owned blocks (#4550)', () 
     renderBlockTree({ autoCreateFirstBlock: false })
 
     // Owned: the command runs. Without this half the assertion below could
-    // pass because `/table` never worked in this harness at all.
+    // pass because `/link` never worked in this harness at all.
     act(() => {
       useBlockStore.setState({ focusedBlockId: 'B1' })
     })
@@ -8108,19 +8008,19 @@ describe('BlockTree structural chords are confined to owned blocks (#4550)', () 
       expect(capturedOnSlashCommand).toBeDefined()
     })
     await act(async () => {
-      capturedOnSlashCommand?.({ id: 'table', label: 'TABLE — Insert table' })
+      capturedOnSlashCommand?.({ id: 'link', label: 'LINK — Insert page link' })
     })
-    expect(mockInsertTable).toHaveBeenCalledTimes(1)
+    expect(mockInsertContent).toHaveBeenCalledTimes(1)
 
     // Focused inside an unlocked embed. Every slash command writes through
     // THIS page's store, so on a foreign block the IPC would commit while the
     // optimistic update no-ops — a write with no UI trace until a reload — and
     // `notifyUndo(rootParentId)` would file the undo entry under this page.
-    mockInsertTable.mockClear()
+    mockInsertContent.mockClear()
     focusForeignBlockInAnEmbed('EMBEDDED')
     await act(async () => {
-      capturedOnSlashCommand?.({ id: 'table', label: 'TABLE — Insert table' })
+      capturedOnSlashCommand?.({ id: 'link', label: 'LINK — Insert page link' })
     })
-    expect(mockInsertTable).not.toHaveBeenCalled()
+    expect(mockInsertContent).not.toHaveBeenCalled()
   })
 })

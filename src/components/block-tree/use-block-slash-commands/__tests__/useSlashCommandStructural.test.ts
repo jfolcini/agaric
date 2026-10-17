@@ -1,6 +1,6 @@
 /**
  * Structural slash commands: headings (h1..h6), callouts (default + per-type),
- * code/quote toggles, numbered list, divider, table (default + N×M), plus
+ * code/quote toggles, numbered list, divider, table (opens the size grid), plus
  * the link/tag/query insert chains.
  */
 
@@ -519,20 +519,14 @@ describe('useSlashCommandStructural — editor inserts (link/tag/query/code/quot
 })
 
 describe('useSlashCommandStructural — table', () => {
-  it('/table no-ops when editor is null (would call insertTable otherwise)', () => {
+  it('/table opens the size grid instead of inserting a table', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
-    const { ctx } = makeSyntheticCtx()
-    expect(() =>
-      result.current.exact['table']?.(ctx, { id: 'table', label: 'Table' }),
-    ).not.toThrow()
-  })
-
-  it('/table:4:6 prefixed handler parses dimensions and no-ops without editor', () => {
-    const { result } = renderHook(() => useSlashCommandStructural())
-    const { ctx } = makeSyntheticCtx()
-    const handler = result.current.prefix.find(([p]) => p === 'table:')?.[1]
-    expect(handler).toBeDefined()
-    expect(() => handler?.(ctx, { id: 'table:4:6', label: 'Table 4×6' })).not.toThrow()
+    const { ctx, openTablePicker } = makeSyntheticCtx()
+    const chain = vi.fn()
+    ctx.rovingEditor.editor = { chain } as unknown as typeof ctx.rovingEditor.editor
+    await result.current.exact['table']?.(ctx, { id: 'table', label: 'Table' })
+    expect(openTablePicker).toHaveBeenCalledOnce()
+    expect(chain).not.toHaveBeenCalled()
   })
 })
 

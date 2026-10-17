@@ -122,17 +122,6 @@ async function handleDuplicate(ctx: SlashCommandContext): Promise<void> {
   await ctx.pageStore.getState().duplicateBlock(ctx.blockId)
 }
 
-function handleTable(ctx: SlashCommandContext, id: string): void {
-  let rows = 3
-  let cols = 3
-  const dimMatch = id.match(/^table:(\d+):(\d+)$/)
-  if (dimMatch) {
-    rows = Number.parseInt(dimMatch[1] as string, 10)
-    cols = Number.parseInt(dimMatch[2] as string, 10)
-  }
-  ctx.rovingEditor.editor?.chain().focus().insertTable({ rows, cols, withHeaderRow: true }).run()
-}
-
 export function useSlashCommandStructural(): SlashHandlerTables {
   return useMemo<SlashHandlerTables>(() => {
     // h1..h6 — six exact entries beat carrying a regex through the dispatch
@@ -188,12 +177,10 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         // #976 (item 13) — duplicate the current block + its subtree.
         duplicate: (ctx) => handleDuplicate(ctx),
         divider: (ctx) => handleDivider(ctx),
-        table: (ctx) => handleTable(ctx, 'table'),
+        // Opens the size grid at the caret; the grid inserts the table.
+        table: (ctx) => ctx.openTablePicker(),
       },
       prefix: [
-        // Order matters: dynamic-dimension `table:NxM` is matched before
-        // the generic `callout-` prefix.
-        ['table:', (ctx, item) => handleTable(ctx, item.id)],
         // #264 — `turn-*` block-type conversions. Disjoint from the other
         // prefixes; grouped here with the structural commands.
         ['turn-', (ctx, item) => handleTurnInto(ctx, item)],
