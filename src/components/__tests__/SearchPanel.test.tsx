@@ -1426,6 +1426,28 @@ describe('SearchPanel', () => {
     expect(selectPageStack(useTabsStore.getState())[0]?.title).toBe('Page One')
   })
 
+  // Blurring the input closes the history dropdown above the Recent list,
+  // which in a browser moves the card from under the pointer before the click.
+  it('pressing a recent item keeps the input focused and the history dropdown open', async () => {
+    const user = userEvent.setup()
+    seedRecentPages([{ pageId: 'P1', title: 'Page One', visitedAt: '2024-01-01T00:00:00.000Z' }])
+    useSearchHistoryStore.setState({ bySpace: { SPACE_TEST: ['alpha'] }, historyEnabled: true })
+
+    render(<SearchPanel />)
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    input.focus()
+    expect(await screen.findByTestId('search-history-dropdown')).toBeInTheDocument()
+
+    const card = screen.getByRole('button', { name: 'Page One' })
+    await user.pointer({ keys: '[MouseLeft>]', target: card })
+    expect(input).toHaveFocus()
+    expect(screen.getByTestId('search-history-dropdown')).toBeInTheDocument()
+
+    await user.pointer({ keys: '[/MouseLeft]', target: card })
+    expect(useNavigationStore.getState().currentView).toBe('page-editor')
+    expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('P1')
+  })
+
   it('updates recent pages in the store when clicking a search result (page type)', async () => {
     const user = userEvent.setup()
 
