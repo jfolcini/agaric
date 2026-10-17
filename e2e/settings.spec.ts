@@ -32,7 +32,7 @@ test.describe('Settings panel', () => {
       'Sync & devices',
       'Data',
       // Help
-      'Help',
+      'About',
       'App health',
     ]
     await expect(page.getByRole('tab')).toHaveText(tabNames)
@@ -150,13 +150,13 @@ test.describe('Settings panel', () => {
     await expect(reminderTime).toHaveValue('09:00')
   })
 
-  // #2687 — Help tab was never opened by any spec (bug-report-dialog.spec.ts
+  // #2687 — About tab (Help group) was never opened by any spec (bug-report-dialog.spec.ts
   // dispatches the `agaric:report-bug` window event directly rather than
   // clicking the Settings → Help "Report a Bug" button).
-  test('Help tab renders report-bug and update-check controls, and opens the bug-report dialog', async ({
+  test('About tab renders report-bug and update-check controls, and opens the bug-report dialog', async ({
     page,
   }) => {
-    await page.getByRole('tab', { name: 'Help' }).click()
+    await page.getByRole('tab', { name: 'About' }).click()
     await expect(page.locator('[data-testid="settings-panel-help"]')).toBeVisible()
 
     const reportBugButton = page.getByRole('button', { name: 'Report a bug' })
@@ -183,7 +183,7 @@ test.describe('Settings panel', () => {
     await panel.getByRole('button', { name: 'Run check' }).click()
     await expect(panel.getByText('Everything matches')).toBeVisible()
 
-    await page.getByRole('tab', { name: 'Help' }).click()
+    await page.getByRole('tab', { name: 'About' }).click()
     await page.getByRole('button', { name: 'Report a bug' }).click()
     await expect(page.getByTestId('bug-report-preview')).toContainText('## Integrity check')
   })

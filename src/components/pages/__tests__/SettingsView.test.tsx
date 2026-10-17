@@ -199,9 +199,7 @@ describe('SettingsView', () => {
       render(<SettingsView />)
 
       // Headers are role="presentation" (a real heading can't live inside a
-      // WAI-ARIA tablist), so assert on the known header element ids — the
-      // "Help" group label collides with the "Help" tab label, so a plain
-      // text query would be ambiguous.
+      // WAI-ARIA tablist), so assert on the known header element ids.
       expect(document.getElementById('settings-group-workspace')).toHaveTextContent(
         t('settings.groupWorkspace'),
       )
@@ -268,6 +266,15 @@ describe('SettingsView', () => {
           expect(tab).toHaveAttribute('aria-describedby', headerId)
         }
       }
+    })
+
+    it('names the help-group tab "About" and no tab "Help"', () => {
+      render(<SettingsView />)
+
+      const group = document.getElementById('settings-group-help')?.parentElement as HTMLElement
+      expect(document.getElementById('settings-group-help')).toHaveTextContent('Help')
+      expect(within(group).getByRole('tab', { name: 'About' })).toBeInTheDocument()
+      expect(screen.queryByRole('tab', { name: 'Help' })).not.toBeInTheDocument()
     })
 
     it('every tab is reachable and selectable from its group', async () => {
@@ -345,7 +352,7 @@ describe('SettingsView', () => {
     expect(panel.getByTestId('notifications-enabled-switch')).toBeInTheDocument()
   })
 
-  it('Help tab dispatches BUG_REPORT_EVENT on click', async () => {
+  it('About tab dispatches BUG_REPORT_EVENT on click', async () => {
     const user = userEvent.setup()
     const listener = vi.fn()
     window.addEventListener('agaric:report-bug', listener)
