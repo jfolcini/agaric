@@ -26,6 +26,8 @@ const FLOWCHART =
   '```mermaid\ngraph TD\n  A[Capture idea] --> B{Worth doing?}\n  B -->|yes| C[Plan it]\n  B -->|no| D[Archive]\n```'
 const SEQUENCE =
   '```mermaid\nsequenceDiagram\n  Phone->>Laptop: hello over mDNS\n  Laptop-->>Phone: pairing proof\n```'
+const CLASS_DIAGRAM =
+  '```mermaid\nclassDiagram\n  Page "1" *-- "many" Block : contains\n  Block ..> Tag : tagged\n```'
 
 const WIDE_FLOWCHART =
   '```mermaid\ngraph LR\n  Inbox --> Triage --> Today --> Doing --> Review --> Done\n  Triage --> Someday[Someday / maybe]\n  Doing --> Blocked[Blocked on someone]\n  Blocked --> Doing\n  Review --> Weekly[Weekly retrospective]\n  Done --> Archived[Archived for later reference] --> Reopened[Reopened next quarter]\n```'
@@ -192,6 +194,72 @@ function measureContrast(page: Page) {
       actorStroke: ratio(style(actor, 'stroke'), background),
       message: ratio(style(seq.querySelector('.messageLine0'), 'stroke'), background),
     }
+  })
+}
+
+/**
+ * Whether every node shape has a stroke, and every edge label's painted
+ * background (anything opaque between its text and the SVG) is the canvas.
+ */
+function measureShapesAndLabels(page: Page) {
+  return page.evaluate(() => {
+    // Through a canvas pixel, so `lab()` and `rgb()` spellings compare.
+    const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
+    if (!ctx) throw new Error('no 2D canvas')
+    const rgb = (css: string) => {
+      ctx.clearRect(0, 0, 1, 1)
+      ctx.fillStyle = css
+      ctx.fillRect(0, 0, 1, 1)
+      return [...ctx.getImageData(0, 0, 1, 1).data].join()
+    }
+    const diagrams = [...document.querySelectorAll('[data-testid="mermaid-diagram"]')]
+    const canvas = rgb(
+      getComputedStyle(diagrams[0]?.closest('[data-slot="scroll-area"]') ?? document.body)
+        .backgroundColor,
+    )
+    const unstroked = diagrams.flatMap((d) =>
+      [...d.querySelectorAll('.node rect, .node polygon, .node circle, .node path')]
+        .filter((el) => {
+          const cs = getComputedStyle(el)
+          return cs.stroke === 'none' || Number.parseFloat(cs.strokeWidth) === 0
+        })
+        .map((el) => el.closest('.node')?.id ?? el.tagName),
+    )
+    const labelBackgrounds = diagrams.flatMap((d) =>
+      [...d.querySelectorAll('.edgeLabel')]
+        .filter((label) => label.textContent?.trim())
+        .flatMap((label) => {
+          const painted: string[] = []
+          const text = label.querySelector('p, span, text') ?? label
+          for (let n: Element | null = text; n && n.tagName !== 'svg'; n = n.parentElement) {
+            const cs = getComputedStyle(n)
+            const bg = n instanceof SVGElement ? cs.fill : cs.backgroundColor
+            if (n instanceof HTMLElement && bg !== 'rgba(0, 0, 0, 0)') painted.push(rgb(bg))
+            const rect = n.querySelector(':scope > rect')
+            if (rect && getComputedStyle(rect).fill !== 'none') {
+              painted.push(rgb(getComputedStyle(rect).fill))
+            }
+          }
+          return painted
+        }),
+    )
+    return { canvas, unstroked, labelBackgrounds }
+  })
+}
+
+for (const theme of ['light', 'dark']) {
+  test(`every node has a border and edge labels sit on the page background (${theme})`, async ({
+    page,
+  }) => {
+    await page.addInitScript((t) => localStorage.setItem('theme-preference', t), theme)
+    await openSeeded(page, 'desktop', [FLOWCHART, CLASS_DIAGRAM])
+    await expect(page.locator('[data-testid="mermaid-diagram"] svg')).toHaveCount(2)
+
+    const m = await measureShapesAndLabels(page)
+    expect(m.unstroked, 'node shapes without a stroke').toEqual([])
+    // yes, no, contains and tagged.
+    expect(m.labelBackgrounds.length).toBeGreaterThanOrEqual(4)
+    expect(new Set(m.labelBackgrounds)).toEqual(new Set([m.canvas]))
   })
 }
 

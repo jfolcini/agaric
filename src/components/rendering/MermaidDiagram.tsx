@@ -11,7 +11,11 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 're
 import { useTranslation } from 'react-i18next'
 
 import { DiagramViewer } from '@/components/rendering/DiagramViewer'
-import { mermaidThemeVariables, readDiagramColors } from '@/components/rendering/mermaid-theme'
+import {
+  mermaidThemeCss,
+  mermaidThemeVariables,
+  readDiagramColors,
+} from '@/components/rendering/mermaid-theme'
 import { SCROLL_ONLY_WHEN_WIDER, ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { useTheme } from '@/hooks/useTheme'
@@ -48,6 +52,7 @@ function initializeMermaid(isDark: boolean): void {
             isDark,
             getComputedStyle(document.body).fontFamily,
           ),
+          themeCSS: mermaidThemeCss(colors),
         }
       : { theme: isDark ? 'dark' : 'default' }),
   })
