@@ -1,0 +1,331 @@
+{
+  "description": "What a tag's page lists: the blocks that carry the tag directly, attached (`block_tags`) or written inline as `#[id]` (`block_tag_refs`), never one that only inherits it from its page or an ancestor block. The inline reference is written by an `edit_block` op so the backend indexes it the way an edit does; the mock derives it from content. `list_tags_by_prefix` pins the Tags list's count as the same union.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B1",
+        "tag_id": "B7"
+      },
+      {
+        "block_id": "B4",
+        "tag_id": "B7"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tagged",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "under tagged page",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Plain",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "direct",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "under direct",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B3",
+        "parent_id": "B4",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "inline #[000000000000000000000000S7]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "tag",
+        "content": "idea",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B7",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 3,
+      "ops": [
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "direct_blocks_attached_or_inline",
+      "rows": [
+        "B4#parent_id=B3#page_id=B3#position=1#deleted_at=null",
+        "B6#parent_id=B3#page_id=B3#position=2#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "direct_pages",
+      "rows": ["B1#parent_id=null#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_tag_or_ref_newest_first",
+      "rows": ["B6", "B4"],
+      "total_count": 2
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "tags_list_count_is_the_direct_union",
+      "rows": ["B7#name=idea#usage_count=3"],
+      "total_count": null
+    }
+  ],
+  "name": "query_tag_inline_refs",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S1",
+        "tagId": "S7"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "tagId": "S7"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S6",
+        "toText": "inline #[000000000000000000000000S7]"
+      },
+      "command": "edit_block"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "blockType": "content",
+        "cursor": null,
+        "includeInherited": false,
+        "limit": 100,
+        "mode": "or",
+        "prefixes": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": ["S7"]
+      },
+      "command": "query_by_tags",
+      "comment": "S4 is attached, S6 names the tag inline; S2 (under the tagged page S1) and S5 (under the tagged block S4) only inherit it.",
+      "name": "direct_blocks_attached_or_inline"
+    },
+    {
+      "args": {
+        "blockType": "page",
+        "cursor": null,
+        "includeInherited": false,
+        "limit": 100,
+        "mode": "or",
+        "prefixes": [],
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        },
+        "tagIds": ["S7"]
+      },
+      "command": "query_by_tags",
+      "comment": "The tagged page S1 itself.",
+      "name": "direct_pages"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "children": [
+              {
+                "primitive": {
+                  "tag": "S7",
+                  "type": "TagOrRef"
+                },
+                "type": "Leaf"
+              },
+              {
+                "primitive": {
+                  "exclude": false,
+                  "type": "BlockType",
+                  "values": ["content"]
+                },
+                "type": "Leaf"
+              }
+            ],
+            "type": "And"
+          },
+          "limit": 50,
+          "sort": [
+            {
+              "desc": true,
+              "source": {
+                "name": "created",
+                "type": "Column"
+              }
+            }
+          ],
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "The index-backed form of the same set, `TagOrRef` narrowed to content blocks, newest first.",
+      "name": "advanced_tag_or_ref_newest_first",
+      "ordered": true
+    },
+    {
+      "args": {
+        "prefix": "idea",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_tags_by_prefix",
+      "comment": "`usage_count` counts S1, S4 and S6: pages plus blocks.",
+      "name": "tags_list_count_is_the_direct_union"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Tagged",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "under tagged page",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Plain",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "direct",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "under direct",
+        "id": "S5",
+        "parent_id": "S4",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "inline",
+        "id": "S6",
+        "parent_id": "S3",
+        "position": 2
+      },
+      {
+        "block_type": "tag",
+        "content": "idea",
+        "id": "S7",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

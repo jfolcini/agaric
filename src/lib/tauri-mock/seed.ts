@@ -40,10 +40,9 @@ export const properties = new Map<string, Map<string, Record<string, unknown>>>(
 // Block-tag associations (ATTACHED tags): block_id → Set<tag_id>
 export const blockTags = new Map<string, Set<string>>()
 
-// Inline tag REFERENCES (`block_tag_refs.source_id → tag_id`): a block whose
-// body references `#tag` without the tag being explicitly attached. Legacy tag
-// queries match `block_tags UNION block_tag_refs`, so the mock models both to
-// stay faithful to the backend. `source_id → Set<tag_id>`.
+// Inline tag REFERENCES (`block_tag_refs.source_id → tag_id`) set directly. The
+// `#[ULID]` tokens in a block's content count as well: `refInclusiveTags`
+// derives them, the way the backend's reindex does. `source_id → Set<tag_id>`.
 export const blockTagRefs = new Map<string, Set<string>>()
 
 // Property definitions store

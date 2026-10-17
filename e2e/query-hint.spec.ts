@@ -37,7 +37,8 @@ test.describe('Query syntax hint', () => {
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
-    await expect(queryResult).toContainText('3 result', { timeout: 5000 })
+    // The 3 blocks tagged "work" and BLOCK_GS_4, which names it inline
+    await expect(queryResult).toContainText('4 result', { timeout: 5000 })
   })
 
   test('a ghost hint appears mid-key and Enter still saves while it is visible', async ({
@@ -64,6 +65,7 @@ test.describe('Query syntax hint', () => {
     const firstBlock = page.locator('[data-testid="sortable-block"]').first()
     const queryResult = firstBlock.locator('[data-testid="query-result"]')
     await expect(queryResult).toBeVisible({ timeout: 5000 })
-    await expect(queryResult).toContainText('3 result', { timeout: 5000 })
+    // The 3 blocks tagged "work" and BLOCK_GS_4, which names it inline
+    await expect(queryResult).toContainText('4 result', { timeout: 5000 })
   })
 })

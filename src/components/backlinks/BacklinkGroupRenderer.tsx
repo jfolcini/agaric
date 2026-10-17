@@ -62,6 +62,8 @@ export interface BacklinkGroupRendererProps {
    * which one earned it a place in this list.
    */
   anchorRefId?: string | undefined
+  /** Names a group's row list; defaults to "Backlinks from {title}". */
+  listAriaLabel?: ((title: string) => string) | undefined
 }
 
 interface BacklinkRowProps {
@@ -233,6 +235,7 @@ export function BacklinkGroupRenderer({
   focusedBlockId,
   rowDomId,
   anchorRefId,
+  listAriaLabel,
 }: BacklinkGroupRendererProps): React.ReactElement {
   const { t } = useTranslation()
   const onTagClick = useTagClickHandler()
@@ -246,7 +249,7 @@ export function BacklinkGroupRenderer({
       groupClassName="linked-references-group"
       headerClassName="linked-references-group-header flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors"
       listClassName="linked-references-blocks ml-4 mt-1 space-y-1"
-      listAriaLabel={(title) => t('references.backlinksFrom', { title })}
+      listAriaLabel={listAriaLabel ?? ((title) => t('references.backlinksFrom', { title }))}
       {...(onNavigateToPage && {
         onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
       })}

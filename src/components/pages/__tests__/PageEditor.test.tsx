@@ -113,6 +113,12 @@ vi.mock('@/components/pages/PagesTreeSection', () => ({
   },
 }))
 
+vi.mock('@/components/pages/TaggedItemsSection', () => ({
+  TaggedItemsSection: (props: { tagId: string }) => (
+    <div data-testid="tagged-items" data-tag-id={props.tagId} />
+  ),
+}))
+
 let capturedUnlinkedRefsProps: { pageId: string; pageTitle: string } | undefined
 vi.mock('@/components/backlinks/UnlinkedReferences', () => ({
   UnlinkedReferences: (props: {
@@ -789,6 +795,23 @@ describe('PageEditor tag page is read-only (#4725)', () => {
       expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
     })
     expect(screen.queryByRole('button', { name: /add block/i })).not.toBeInTheDocument()
+  })
+
+  it('lists what the tag is on', async () => {
+    stubTagPage()
+
+    render(<PageEditor pageId="TAG_1" title="urgent" />)
+
+    expect(await screen.findByTestId('tagged-items')).toHaveAttribute('data-tag-id', 'TAG_1')
+  })
+
+  it('lists nothing tagged on a plain page', async () => {
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+
+    await waitFor(() => {
+      expect(capturedAutoCreateFirstBlock).toBe(true)
+    })
+    expect(screen.queryByTestId('tagged-items')).not.toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
