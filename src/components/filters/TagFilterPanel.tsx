@@ -566,17 +566,18 @@ export function TagFilterPanel(): React.ReactElement {
         navigateToPage(block.id, block.content ?? 'Untitled')
         return
       }
-      if (block.parent_id) {
+      // `page_id`, not `parent_id`: an indented block's parent is a block.
+      if (block.page_id) {
         const resolve = useResolveStore.getState()
-        if (resolve.isResolved(block.parent_id)) {
-          navigateToPage(block.parent_id, resolve.resolveTitle(block.parent_id), block.id)
+        if (resolve.isResolved(block.page_id)) {
+          navigateToPage(block.page_id, resolve.resolveTitle(block.page_id), block.id)
           return
         }
         try {
-          const parent = unwrap(await commands.getBlock(block.parent_id))
-          navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
+          const page = unwrap(await commands.getBlock(block.page_id))
+          navigateToPage(block.page_id, page.content ?? 'Untitled', block.id)
         } catch (err) {
-          logger.warn('TagFilterPanel', 'parent lookup failed', { parentId: block.parent_id }, err)
+          logger.warn('TagFilterPanel', 'page lookup failed', { pageId: block.page_id }, err)
           notify.error(t('tags.loadFailed'))
         }
       }

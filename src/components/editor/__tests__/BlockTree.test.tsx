@@ -2150,6 +2150,7 @@ describe('BlockTree handleNavigate', () => {
               id: CONTENT_ID,
               content: 'Some block text',
               parent_id: PARENT_ID,
+              page_id: PARENT_ID,
               position: 0,
             }),
     })
@@ -3609,6 +3610,7 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
           id: CONTENT_ID,
           content: 'Cross-page block',
           parent_id: PARENT_ID,
+          page_id: PARENT_ID,
           position: 0,
         })
       },

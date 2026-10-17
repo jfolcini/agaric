@@ -155,23 +155,25 @@ export function useBlockNavigateToLink({
           return
         }
 
-        // If target's parent differs from our tree's parent, navigate to the parent
-        // page; a page opened elsewhere is opened even when it is this tree's.
-        if (targetBlock.parent_id && (openPage || targetBlock.parent_id !== rootParentId)) {
-          // Fetch the parent to get the actual page title (not the target block's content)
+        // If target's page differs from our tree's page, navigate to that page; a
+        // page opened elsewhere is opened even when it is this tree's. `page_id`,
+        // not `parent_id`: an indented target's parent is a block.
+        const pageId = targetBlock.page_id
+        if (pageId && (openPage || pageId !== rootParentId)) {
+          // Fetch the page to get its title (not the target block's content)
           try {
-            const parentBlock = unwrap(await commands.getBlock(targetBlock.parent_id))
-            open?.(targetBlock.parent_id, parentBlock.content ?? 'Untitled', targetId)
+            const pageBlock = unwrap(await commands.getBlock(pageId))
+            open?.(pageId, pageBlock.content ?? 'Untitled', targetId)
           } catch (err) {
             logger.warn(
               'BlockTree',
-              'Failed to fetch parent block title for navigation',
+              'Failed to fetch page title for navigation',
               {
-                parentId: targetBlock.parent_id,
+                pageId,
               },
               err,
             )
-            open?.(targetBlock.parent_id, 'Untitled', targetId)
+            open?.(pageId, 'Untitled', targetId)
           }
           return
         }

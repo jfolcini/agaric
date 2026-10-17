@@ -181,7 +181,7 @@ describe('useBlockNavigateToLink', () => {
     expect(onNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Target Page')
   })
 
-  it('navigates cross-tree via parent fetch when parent_id differs from rootParentId', async () => {
+  it('navigates cross-tree via a page fetch when page_id differs from rootParentId', async () => {
     const CONTENT_ID = '01TESTCONT0000000000NAVCTX'
     const PARENT_ID = '01TESTPAGE0000000000NAVPRT'
     const onNavigateToPage = vi.fn()
@@ -192,6 +192,7 @@ describe('useBlockNavigateToLink', () => {
           block_type: 'content',
           content: 'inline',
           parent_id: PARENT_ID,
+          page_id: PARENT_ID,
         })
       if (id === PARENT_ID)
         return makeBlock({
@@ -222,6 +223,45 @@ describe('useBlockNavigateToLink', () => {
     expect(onNavigateToPage).toHaveBeenCalledWith(PARENT_ID, 'Parent Page', CONTENT_ID)
   })
 
+  // An indented target's `parent_id` is a block; opening it as a page fails.
+  it.each([
+    [
+      'on another page, opens that page',
+      'OTHER_PAGE',
+      [['OTHER_PAGE', 'Other Page', 'NESTED']],
+      [],
+    ],
+    ['on this tree’s page, focuses it here', 'ROOT_PAGE', [], [['NESTED']]],
+  ])('an indented target %s', async (_case, pageId, opened, focused) => {
+    mockedGetBlock.mockImplementation(async (id: string) => {
+      if (id === 'NESTED')
+        return makeBlock({ id, content: 'nested', parent_id: 'PARENT_BLOCK', page_id: pageId })
+      if (id === 'OTHER_PAGE')
+        return makeBlock({ id, block_type: 'page', content: 'Other Page', page_id: id })
+      throw new Error(`unexpected id ${id}`)
+    })
+    const onNavigateToPage = vi.fn()
+    const setFocused = vi.fn()
+    const { result } = renderHook(() =>
+      useHarness({
+        rovingEditor: null,
+        handleFlush: () => null,
+        load: vi.fn().mockResolvedValue(undefined),
+        setFocused,
+        rootParentId: 'ROOT_PAGE',
+        onNavigateToPage,
+        t: (k) => k,
+      }),
+    )
+
+    await act(async () => {
+      await result.current.handleNavigate('NESTED')
+    })
+
+    expect(onNavigateToPage.mock.calls).toEqual(opened)
+    expect(setFocused.mock.calls).toEqual(focused)
+  })
+
   it('navigates locally — calls load + setFocused + rovingEditorRef.current.mount', async () => {
     const CONTENT_ID = '01TESTCONT0000000000SAMETR'
     const ROOT_ID = '01TESTPAGE0000000000ROOTID'
@@ -234,6 +274,7 @@ describe('useBlockNavigateToLink', () => {
         block_type: 'content',
         content: 'block text',
         parent_id: ROOT_ID,
+        page_id: ROOT_ID,
       }),
     )
 
@@ -284,6 +325,7 @@ describe('useBlockNavigateToLink', () => {
             block_type: blockType,
             content: 'Target Page',
             parent_id: parentId,
+            page_id: parentId,
           })
         if (id === 'ROOT_PAGE')
           return makeBlock({ id, block_type: 'page', content: 'Root Page', parent_id: null })
@@ -327,7 +369,7 @@ describe('useBlockNavigateToLink', () => {
     const setFocused = vi.fn()
     const mount = vi.fn()
     mockedGetBlock.mockResolvedValueOnce(
-      makeBlock({ id: CONTENT_ID, content: 'block text', parent_id: ROOT_ID }),
+      makeBlock({ id: CONTENT_ID, content: 'block text', parent_id: ROOT_ID, page_id: ROOT_ID }),
     )
 
     const { result } = renderHook(() =>

@@ -772,6 +772,60 @@ describe('SearchPanel', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('get_block', expect.anything())
   })
 
+  // An indented result's `parent_id` is a block; only `page_id` names its page.
+  it.each([
+    ['looked up', false],
+    ['cached', true],
+  ])('opens the page of an indented result, its title %s', async (_case, cached) => {
+    const user = userEvent.setup()
+    stubInvoke({
+      search_blocks: () =>
+        searchPage([
+          makeSearchResult({
+            id: 'CHILD1',
+            parent_id: 'PARENT_BLOCK',
+            page_id: 'PAGE1',
+            content: 'nested content',
+          }),
+        ]),
+      get_block: (args) =>
+        args['blockId'] === 'PAGE1'
+          ? makeBlockRow({ id: 'PAGE1', block_type: 'page', content: 'Owning Page' })
+          : Promise.reject(new Error(`unexpected get_block ${String(args['blockId'])}`)),
+      batch_resolve: () => [],
+    })
+    if (cached) useResolveStore.getState().set('PAGE1', 'Owning Page', false)
+
+    render(<SearchPanel />)
+    typeAndSubmit(screen.getByPlaceholderText(t('search.searchPlaceholder')), 'nested')
+    await user.click(await screen.findByText(textContent('nested content')))
+
+    await waitFor(() => {
+      expect(selectPageStack(useTabsStore.getState())).toEqual([
+        { pageId: 'PAGE1', title: 'Owning Page' },
+      ])
+    })
+    expect(useNavigationStore.getState().selectedBlockId).toBe('CHILD1')
+    expect(readRecentPages()).toEqual([{ id: 'PAGE1', title: 'Owning Page' }])
+  })
+
+  it('does not open the parent block of a result on no page', async () => {
+    const user = userEvent.setup()
+    stubInvoke({
+      search_blocks: () =>
+        searchPage([
+          makeSearchResult({ id: 'ORPHAN1', parent_id: 'PARENT_BLOCK', content: 'orphan block' }),
+        ]),
+    })
+
+    render(<SearchPanel />)
+    typeAndSubmit(screen.getByPlaceholderText(t('search.searchPlaceholder')), 'orphan')
+    await user.click(await screen.findByText(textContent('orphan block')))
+
+    expect(toast.error).toHaveBeenCalledWith(t('search.noParentPage'))
+    expect(selectPageStack(useTabsStore.getState())).toHaveLength(0)
+  })
+
   it('navigates directly when clicking a page-type result', async () => {
     const user = userEvent.setup()
 
