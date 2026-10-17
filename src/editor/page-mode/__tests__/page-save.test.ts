@@ -56,9 +56,19 @@ function open(rows: Row[]): Page {
   return { ed, backend, state, save }
 }
 
+/** Cut the selection `from`–`to` through the view, as Ctrl+X does; resolves the clipboard's HTML. */
+function cut(ed: Editor, from: number, to: number): string {
+  ed.commands.setTextSelection({ from, to })
+  const data = new DataTransfer()
+  ed.view.dom.dispatchEvent(
+    new ClipboardEvent('cut', { clipboardData: data, bubbles: true, cancelable: true }),
+  )
+  return data.getData('text/html')
+}
+
 describe('what a save writes', () => {
   it('writes nothing on open, nor for a block that changed only how the serialiser would write it (#711)', async () => {
-    const { ed, backend, save } = open([
+    const { ed, backend, state, save } = open([
       [A, 0, '_em_ and 3. item'],
       [B, 0, 'plain'],
     ])
@@ -72,6 +82,7 @@ describe('what a save writes', () => {
     await save()
 
     expect(backend.calls).toEqual([])
+    expect(state.writes).toBe(0)
     expect(backend.live()).toEqual([
       [A, 0, '_em_ and 3. item'],
       [B, 0, 'plain'],
@@ -106,6 +117,34 @@ describe('what a save writes', () => {
 
     expect(backend.calls).toEqual([`edit ${A}`])
     expect(backend.live()).toEqual([[A, 0, 'foo!']])
+  })
+
+  it('counts its writes, and says whether one changed the page’s shape', async () => {
+    const { ed, backend, state } = open([[A, 0, 'foo']])
+    caret(ed, 0, 3)
+    type(ed, '!')
+    const edit = await savePage(ed.state.doc, state, backend)
+    expect([state.writes, edit.structural]).toEqual([1, false])
+
+    press(ed, 'Enter')
+    type(ed, 'new')
+    const create = await savePage(ed.state.doc, state, backend)
+
+    expect([state.writes, create.structural]).toEqual([2, true])
+  })
+
+  it('deletes a block cut with its child once: the child goes with it', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 'a'],
+      [B, 1, 'b'],
+      [C, 0, 'c'],
+    ])
+    cut(ed, posIn(ed, 0, 0), posIn(ed, 2, 0))
+
+    await save()
+
+    expect(backend.calls).toEqual([`delete ${A}`])
+    expect(backend.live()).toEqual([[C, 0, 'c']])
   })
 
   it('creates a new block only once it holds something', async () => {
@@ -232,6 +271,46 @@ describe('the order of a save', () => {
   })
 })
 
+describe('when the backend refuses', () => {
+  it('holds the deletes back while an edit fails, so a joined block’s text is never lost', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 'foo'],
+      [B, 0, 'bar'],
+    ])
+    caret(ed, 1, 0)
+    press(ed, 'Backspace')
+    backend.failing = (kind) => kind === 'edit'
+
+    expect(await save()).toBeInstanceOf(Error)
+
+    expect(backend.live()).toEqual([
+      [A, 0, 'foo'],
+      [B, 0, 'bar'],
+    ])
+  })
+
+  it('stops with an error when a restore does not bring the block back, and tries it once', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 'foo'],
+      [B, 0, 'bar'],
+    ])
+    caret(ed, 1, 0)
+    press(ed, 'Backspace')
+    await save()
+    backend.reset()
+    backend.restore = (id) => {
+      backend.calls.push(`restore ${id}`)
+      return Promise.resolve()
+    }
+    ed.commands.undo()
+
+    const error = await save()
+
+    expect(String(error)).toContain(`restoring block ${B} did not bring it back`)
+    expect(backend.calls).toEqual([`restore ${B}`, 'tree'])
+  })
+})
+
 describe('structure', () => {
   it('Tab moves a block under the one before it, and Shift+Tab moves it back after it', async () => {
     const { ed, backend, save } = open([
@@ -284,6 +363,98 @@ describe('structure', () => {
       [B, 0, 'b'],
       [NEW_1, 0, 'new'],
       [C, 0, 'c'],
+    ])
+  })
+
+  it('after each save, holds the backend’s tree, so the next save writes nothing', async () => {
+    const D = blockId(4)
+    const { ed, backend, state, save } = open([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+      [C, 0, 'c'],
+      [D, 0, 'd'],
+    ])
+    const mirror = (): Array<[string, number]> => {
+      const rows: Array<[string, number]> = []
+      const walk = (parentId: string, depth: number): void => {
+        for (const id of state.tree.children.get(parentId) ?? []) {
+          rows.push([id, depth])
+          walk(id, depth + 1)
+        }
+      }
+      walk(PAGE, 0)
+      return rows
+    }
+    const backendTree = () => backend.live().map(([id, depth]) => [id, depth])
+    const savedAndHeld = async () => {
+      await save()
+      expect(mirror()).toEqual(backendTree())
+      backend.calls.length = 0
+      await save()
+      expect(backend.calls).toEqual([])
+    }
+
+    caret(ed, 0, 1)
+    press(ed, 'Enter')
+    type(ed, 'new')
+    await savedAndHeld()
+
+    // A cut and pasted after C moves it forward among its siblings.
+    const html = cut(ed, posIn(ed, 0, 0), posIn(ed, 1, 0))
+    caret(ed, 3, 0)
+    ed.view.pasteHTML(html)
+    await savedAndHeld()
+
+    expect(backend.live()).toEqual([
+      [NEW_1, 0, 'new'],
+      [B, 0, 'b'],
+      [C, 0, 'c'],
+      [A, 0, 'a'],
+      [D, 0, 'd'],
+    ])
+  })
+
+  it('creates the blocks a paste of paragraphs brings, in their order', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+    ])
+    caret(ed, 0, 1)
+    ed.view.pasteHTML('<p>x</p><p>y</p><p>z</p>')
+
+    await save()
+
+    expect(backend.calls).toEqual([`create ${NEW_1}`, `create ${NEW_2}`, `edit ${A}`])
+    expect(backend.live()).toEqual([
+      [A, 0, 'ax'],
+      [NEW_1, 0, 'y'],
+      [NEW_2, 0, 'z'],
+      [B, 0, 'b'],
+    ])
+  })
+
+  it('moves two blocks cut and pasted together, in their order', async () => {
+    const D = blockId(4)
+    const E = blockId(5)
+    const { ed, backend, save } = open([
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+      [C, 0, 'c'],
+      [D, 0, 'd'],
+      [E, 0, 'e'],
+    ])
+    const html = cut(ed, posIn(ed, 0, 0), posIn(ed, 2, 0))
+    caret(ed, 2, 0)
+    ed.view.pasteHTML(html)
+
+    await save()
+
+    expect(backend.live()).toEqual([
+      [C, 0, 'c'],
+      [D, 0, 'd'],
+      [A, 0, 'a'],
+      [B, 0, 'b'],
+      [E, 0, 'e'],
     ])
   })
 

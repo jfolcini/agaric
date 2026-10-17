@@ -12,9 +12,10 @@ import { Editor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 
 import { serialize } from '@/editor/markdown-serializer'
-import { blockDocJson, blockIdOf, depthOf, pageDocContent } from '@/editor/page-mode/page-document'
+import { blockDocJson, depthOf, pageDocContent } from '@/editor/page-mode/page-document'
 import { pageModeExtensions } from '@/editor/page-mode/page-mode-extensions'
 import type { PageSaveApi, TreeRow } from '@/editor/page-mode/page-save'
+import { blockIdOf } from '@/editor/token-ids'
 import type { OpRef } from '@/lib/bindings'
 
 export const PAGE = '01PAGE0000000000000000000P'
@@ -27,10 +28,10 @@ export function blockId(n: number): string {
   return `01J${String(n).padStart(23, '0')}`
 }
 
-/** A minter of fresh, ordered ids, distinct from `blockId`'s. */
-export function idMinter(): () => string {
+/** A minter of fresh, ordered ids, distinct from `blockId`'s and from another prefix's. */
+export function idMinter(prefix = '01NEW'): () => string {
   let next = 0
-  return () => `01NEW${String((next += 1)).padStart(21, '0')}`
+  return () => `${prefix}${String((next += 1)).padStart(26 - prefix.length, '0')}`
 }
 
 const noPickerItems = () => Promise.resolve([])
@@ -46,6 +47,9 @@ export function openPage(rows: readonly Row[], mintId: () => string = idMinter()
       searchBlockRefs: noPickerItems,
       onCreatePage: () => Promise.resolve(''),
       onCreateTag: () => Promise.resolve(''),
+      onNavigate: () => {},
+      onTagClick: () => {},
+      placeholder: '',
       mintId,
     }),
     content: pageDocContent(

@@ -17,7 +17,13 @@ import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
 import type { BlockRow, OpRef, PageSourceReport, PasteInput, PasteSplice } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { newBlockId } from '@/lib/block-id'
-import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '@/lib/block-tree-ops'
+import {
+  computeDedentedBlocks,
+  computeIndentedBlocks,
+  findPrevSiblingAt,
+  indentTooDeep,
+  planSplit,
+} from '@/lib/block-tree-ops'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -25,12 +31,7 @@ import { notifyPageAdded, notifyTagAdded } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
 import { requireActiveScope } from '@/lib/space-scope'
-import {
-  buildIndexById,
-  getDragDescendants,
-  MAX_BLOCK_DEPTH,
-  type FlatBlock,
-} from '@/lib/tree-utils'
+import { buildIndexById, type FlatBlock, getDragDescendants } from '@/lib/tree-utils'
 import {
   buildBlocksById,
   cloneBlocksByIdWith,
@@ -80,7 +81,7 @@ import { useUndoStore } from '@/stores/undo'
  * #5160 D4 — `options.merge = false` starts an undo entry of its own (a paste;
  * see `onNewAction`).
  */
-function notifyUndoNewAction(
+export function notifyUndoNewAction(
   rootParentId: string | null,
   opRefs: OpRef[],
   coalesceKey?: string,
@@ -810,15 +811,8 @@ export function createReducers({
         if (!block || !prevSibling) return false
 
         // #928 — prevent (don't just IPC-reject) an indent that would push the
-        // block's deepest descendant past MAX_BLOCK_DEPTH. After indent the
-        // block sits at `prevSibling.depth + 1`; its subtree height carries the
-        // rest. Short-circuit before the backend depth-limit rejection.
-        const descendants = getDragDescendants(blocks, blockId, blocksIndex)
-        let subtreeHeight = 0
-        for (const b of blocks) {
-          if (descendants.has(b.id)) subtreeHeight = Math.max(subtreeHeight, b.depth - block.depth)
-        }
-        if (prevSibling.depth + 1 + subtreeHeight > MAX_BLOCK_DEPTH - 1) {
+        // block's deepest descendant past MAX_BLOCK_DEPTH.
+        if (indentTooDeep(blocks, blockId, prevSibling, blocksIndex)) {
           // #976 f21 — give sighted users feedback that Tab was rejected. The
           // keyboard handler's aria-live `announceMoveResult('moveFailed')`
           // covers AT, but a visual no-op left no explanation; a toast brings
@@ -895,35 +889,9 @@ export function createReducers({
         // UI updates instantly. The moved block keeps its current `position`;
         // the backend's dense rank is healed in on resolve.
         const handle = applyProvisionalMove(set, blockId, (state) => {
-          const cur = state.blocks
-          const descendantIds = getDragDescendants(cur, blockId)
-          const movedSet = new Set([blockId, ...descendantIds])
-
-          const movedItems: FlatBlock[] = cur
-            .filter((b) => movedSet.has(b.id))
-            .map((b) => {
-              const moved = Object.assign({}, b, { depth: b.depth - 1 })
-              if (b.id === blockId) moved.parent_id = newParentId
-              return moved
-            })
-
-          const remaining = cur.filter((b) => !movedSet.has(b.id))
-          // `remaining` is scanned twice for the parent's slot below
-          // (getDragDescendants + the insertion anchor). Build the id→index map
-          // once so both become O(1) lookups (#2041/#2200).
-          const remainingIndex = buildIndexById(remaining)
-          const parentDescendants = getDragDescendants(remaining, parent.id, remainingIndex)
-          let insertAt = (remainingIndex.get(parent.id) ?? -1) + 1
-          while (
-            insertAt < remaining.length &&
-            parentDescendants.has((remaining[insertAt] as FlatBlock).id)
-          ) {
-            insertAt++
-          }
-
-          remaining.splice(insertAt, 0, ...movedItems)
-          // Subtree-touch (perf invariant): only `movedItems` got new references.
-          return { blocks: remaining, touchedIds: movedItems.map((b) => b.id) }
+          const next = computeDedentedBlocks(state.blocks, blockId, parent.id, newParentId)
+          // Subtree-touch (perf invariant): only the moved items got new references.
+          return { blocks: next, touchedIds: [blockId, ...getDragDescendants(next, blockId)] }
         })
 
         try {

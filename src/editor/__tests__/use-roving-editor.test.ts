@@ -509,6 +509,13 @@ describe('custom extension keyboard shortcuts', () => {
     expect(editor.extensionManager.extensions.some((e) => e.name === 'codeBlock')).toBe(true)
   })
 
+  it('CodeBlockWithShortcut installs one highlighter, the one that redoes only touched code', () => {
+    editor = createEditor([CodeBlockWithShortcut.configure({ lowlight: createLowlight(common) })])
+    const keys = editor.state.plugins.map((plugin) => (plugin as unknown as { key: string }).key)
+    expect(keys.filter((key) => key.startsWith('lowlight$'))).toEqual([])
+    expect(keys.filter((key) => key.startsWith('codeHighlight$'))).toHaveLength(1)
+  })
+
   it('CodeBlockWithShortcut renders a plain <pre><code> node view (no React wrapper)', () => {
     editor = createCodeBlockEditor()
     const pre = editor.view.dom.querySelector('pre')

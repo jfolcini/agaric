@@ -6,7 +6,9 @@
 // that edit. Page mode must show it in place without remounting, keep the
 // app's own text, and never write the peer's block back over with the old
 // text when it next saves (the risk in #5691: a save that compares against
-// anything but each block's own last-saved state reverts a peer's edit).
+// anything but each block's own last-saved state reverts a peer's edit). Then
+// the peer creates a block and moves another, and page mode shows both where
+// the peer put them, again without remounting and without writing them back.
 //
 // As in sync-refresh.e2e.ts, the pull is started from the sidebar's Sync
 // button, which leaves the page mounted. The app writes and closes its editor
@@ -45,6 +47,7 @@ const FIRST = runScopedMarker('wdio-pm-first')
 const SECOND = runScopedMarker('wdio-pm-second')
 const THIRD = runScopedMarker('wdio-pm-third')
 const FROM_PEER = runScopedMarker('wdio-pm-from-peer')
+const FOURTH = runScopedMarker('wdio-pm-fourth')
 const SYNC_BUTTON = '[data-slot="sidebar"] button[aria-label="Sync"]'
 
 async function syncIdle(): Promise<boolean> {
@@ -119,7 +122,7 @@ describe('Agaric real-backend page mode while a peer edits (#5691)', () => {
     await waitForToast('Device paired successfully')
     await setPeerAddress(remote.deviceId, remote.address)
 
-    const [, firstId, , thirdId] = await pullPeerWrites(device, async () => {
+    const [pageId, firstId, secondId, thirdId] = await pullPeerWrites(device, async () => {
       const page = await device.createInSpace('page', TITLE)
       return [
         page,
@@ -176,5 +179,30 @@ describe('Agaric real-backend page mode while a peer edits (#5691)', () => {
     await $('[aria-label="Page title"]').click()
     await waitPeerHolds(device, firstId, `${FIRST} app more`)
     expect((await device.getBlock(thirdId)).content).toBe(FROM_PEER)
+
+    // The peer creates a block (last) and moves the third to the top.
+    const fourthId = await pullPeerWrites(device, async () => {
+      const id = await device.createBlock(pageId, FOURTH)
+      await device.moveBlock(thirdId, pageId, 0)
+      return id
+    })
+    let ids: string[] = []
+    await waitInOpenView(
+      async () => {
+        ids = (await pageModeBlocks()).map((block) => block.id)
+        return ids.length === 4 && ids[0] === thirdId
+      },
+      () => `page mode never showed the peer's new and moved blocks: ${JSON.stringify(ids)}`,
+    )
+    expect(ids).toEqual([thirdId, firstId, secondId, fourthId])
+    expect(await $(`${PAGE_MODE}[data-wdio-mounted="once"]`).isExisting()).toBe(true)
+
+    // The app saves again: the peer's block stays where the peer put it.
+    await pageModeCaret(1, 'end')
+    await typeInPageMode(' last', 1, `${FIRST} app more last`)
+    await $('[aria-label="Page title"]').click()
+    await waitPeerHolds(device, firstId, `${FIRST} app more last`)
+    expect((await device.getBlock(fourthId)).content).toBe(FOURTH)
+    expect((await pageModeBlocks()).map((block) => block.id)).toEqual(ids)
   })
 })

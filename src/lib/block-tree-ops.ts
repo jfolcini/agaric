@@ -3,14 +3,20 @@
  *
  * Extracted from `src/stores/page-blocks.ts` per these are
  * referentially-transparent helpers (no IPC, no Zustand state) that
- * operate on `FlatBlock[]` arrays. Keep new pure tree helpers here
- * rather than back in the store factory.
+ * operate on flat-tree arrays: the store's `FlatBlock[]`, and page mode's
+ * blocks (#5691), so Tab and Shift+Tab mean the same in both. Keep new pure
+ * tree helpers here rather than back in the store factory.
  */
 
 import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import type { BlockLevelNode } from '@/editor/types'
-import { buildIndexById, type FlatBlock, getDragDescendants } from '@/lib/tree-utils'
+import {
+  buildIndexById,
+  getDragDescendants,
+  MAX_BLOCK_DEPTH,
+  type TreeItem,
+} from '@/lib/tree-utils'
 
 // ── splitBlock helpers ───────────────────────────────────────────────────
 
@@ -73,7 +79,7 @@ export function planSplit(markdown: string): SplitPlan {
  * testable. The walk short-circuits if a block at a *shallower* depth is
  * encountered first, matching the original semantics.
  */
-export function findPrevSiblingAt(blocks: readonly FlatBlock[], idx: number): FlatBlock | null {
+export function findPrevSiblingAt<T extends TreeItem>(blocks: readonly T[], idx: number): T | null {
   const block = blocks[idx]
   if (!block) return null
   for (let i = idx - 1; i >= 0; i--) {
@@ -104,16 +110,16 @@ export function findPrevSiblingAt(blocks: readonly FlatBlock[], idx: number): Fl
  * Callers are responsible for validating that `prevSibling` is a legal
  * indent target (same depth + parent as `blockId` before the move).
  */
-export function computeIndentedBlocks(
-  blocks: readonly FlatBlock[],
+export function computeIndentedBlocks<T extends TreeItem>(
+  blocks: readonly T[],
   blockId: string,
-  prevSibling: FlatBlock,
-): FlatBlock[] {
+  prevSibling: T,
+): T[] {
   const arr = [...blocks]
   const descendantIds = getDragDescendants(arr, blockId)
   const movedSet = new Set<string>([blockId, ...descendantIds])
 
-  const movedItems: FlatBlock[] = arr
+  const movedItems: T[] = arr
     .filter((b) => movedSet.has(b.id))
     .map((b) =>
       b.id === blockId
@@ -128,10 +134,69 @@ export function computeIndentedBlocks(
   const remainingIndex = buildIndexById(remaining)
   const prevSibDescendants = getDragDescendants(remaining, prevSibling.id, remainingIndex)
   let insertAt = (remainingIndex.get(prevSibling.id) ?? -1) + 1
-  while (
-    insertAt < remaining.length &&
-    prevSibDescendants.has((remaining[insertAt] as FlatBlock).id)
-  ) {
+  while (insertAt < remaining.length && prevSibDescendants.has((remaining[insertAt] as T).id)) {
+    insertAt++
+  }
+
+  remaining.splice(insertAt, 0, ...movedItems)
+  return remaining
+}
+
+/**
+ * #928 — whether indenting `blockId` under `prevSibling` would push its
+ * deepest descendant past `MAX_BLOCK_DEPTH`: after the indent it sits at
+ * `prevSibling.depth + 1`, and its subtree's height carries the rest. Checked
+ * up front rather than left to the backend's rejection.
+ */
+export function indentTooDeep<T extends TreeItem>(
+  blocks: readonly T[],
+  blockId: string,
+  prevSibling: T,
+  indexById?: ReadonlyMap<string, number>,
+): boolean {
+  const block = blocks[(indexById ?? buildIndexById(blocks)).get(blockId) ?? -1]
+  if (block === undefined) return false
+  const descendants = getDragDescendants(blocks, blockId, indexById)
+  let subtreeHeight = 0
+  for (const b of blocks) {
+    if (descendants.has(b.id)) subtreeHeight = Math.max(subtreeHeight, b.depth - block.depth)
+  }
+  return prevSibling.depth + 1 + subtreeHeight > MAX_BLOCK_DEPTH - 1
+}
+
+// ── dedent helpers ───────────────────────────────────────────────────────
+
+/**
+ * Pure computation of the flat-tree state that results from dedenting
+ * `blockId` out of `parentId` (#400): it and its descendants move up a level,
+ * re-parented to `newParentId`, and land right AFTER the parent's remaining
+ * subtree, so the siblings that followed it stay under the parent.
+ */
+export function computeDedentedBlocks<T extends TreeItem>(
+  blocks: readonly T[],
+  blockId: string,
+  parentId: string,
+  newParentId: string | null,
+): T[] {
+  const descendantIds = getDragDescendants(blocks, blockId)
+  const movedSet = new Set([blockId, ...descendantIds])
+
+  const movedItems: T[] = blocks
+    .filter((b) => movedSet.has(b.id))
+    .map((b) => {
+      const moved = Object.assign({}, b, { depth: b.depth - 1 })
+      if (b.id === blockId) moved.parent_id = newParentId
+      return moved
+    })
+
+  const remaining = blocks.filter((b) => !movedSet.has(b.id))
+  // `remaining` is scanned twice for the parent's slot below
+  // (getDragDescendants + the insertion anchor). Build the id→index map
+  // once so both become O(1) lookups (#2041/#2200).
+  const remainingIndex = buildIndexById(remaining)
+  const parentDescendants = getDragDescendants(remaining, parentId, remainingIndex)
+  let insertAt = (remainingIndex.get(parentId) ?? -1) + 1
+  while (insertAt < remaining.length && parentDescendants.has((remaining[insertAt] as T).id)) {
     insertAt++
   }
 

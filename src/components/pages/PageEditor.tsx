@@ -23,7 +23,7 @@ import { PageMetadataBar } from '@/components/pages/PageMetadataBar'
 import { PageSourceEditor } from '@/components/pages/PageSourceEditor'
 import { PagesTreeSection } from '@/components/pages/PagesTreeSection'
 import { TaggedItemsSection } from '@/components/pages/TaggedItemsSection'
-import { PageModeOverCapNotice, PageModeSlot } from '@/editor/page-mode/PageModeSlot'
+import { PageModeSlot } from '@/editor/page-mode/PageModeSlot'
 import { usePageMode } from '@/editor/page-mode/use-page-mode'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -188,11 +188,8 @@ function PageEditorInner({
   // determines it, however many renders that takes.
   useLayoutEffect(() => {
     if (!selectedBlockId || blocks.length === 0) return
-    // Page mode has no rows to reveal or focus: the link lands on the page.
-    if (pageMode.wanted) {
-      clearSelection()
-      return
-    }
+    // Page mode puts the cursor on the block itself.
+    if (pageMode.wanted) return
     const target = blocksById.get(selectedBlockId)
     if (!target) return
     setFocused(selectedBlockId)
@@ -391,8 +388,10 @@ function PageEditorInner({
         onBack={onBack}
         onEditSource={isTagPage === false && !sourceMode ? handleEditSource : undefined}
         kebabRef={kebabRef}
-        editMode={pageModeOffered && pageMode.wanted ? 'page' : 'blocks'}
+        editMode={pageModeOffered ? pageMode.mode : 'blocks'}
         onEditModeChange={pageModeOffered ? pageMode.changeMode : undefined}
+        editModeBlocked={pageMode.blocked}
+        onEditModeIntent={pageMode.checkFit}
       />
 
       {isTagPage === true && (
@@ -407,13 +406,14 @@ function PageEditorInner({
         <PageModeSlot
           pageId={pageId}
           ready={isTagPage === false}
-          onOverCap={pageMode.onOverCap}
+          onBlocked={pageMode.onBlocked}
           editorRef={pageMode.editorRef}
+          cursorBlockId={pageMode.cursorBlockId}
+          onNavigateToPage={onNavigateToPage}
         />
       ) : (
         isTagPage !== true && (
           <>
-            <PageModeOverCapNotice overCap={pageMode.overCap} />
             {/* Block tree — loads children of pageId. */}
             <BlockTree
               parentId={pageId}

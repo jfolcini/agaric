@@ -15,7 +15,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import type { InvokeArgs } from '@tauri-apps/api/core'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -828,6 +828,48 @@ describe('PageHeader editing-mode switch (#5691)', () => {
 
     expect(onEditModeChange).toHaveBeenCalledTimes(1)
     expect(onEditModeChange).toHaveBeenCalledWith('page')
+  })
+
+  it('Ctrl+Shift+M switches the page’s mode, as the switch does', () => {
+    const onEditModeChange = vi.fn()
+    const asBlocks = renderPageHeader(
+      <PageHeader
+        pageId="PAGE_1"
+        title="My Page"
+        editMode="blocks"
+        onEditModeChange={onEditModeChange}
+      />,
+    )
+    fireEvent.keyDown(document, { key: 'M', ctrlKey: true, shiftKey: true })
+    asBlocks.unmount()
+    renderPageHeader(
+      <PageHeader
+        pageId="PAGE_1"
+        title="My Page"
+        editMode="page"
+        onEditModeChange={onEditModeChange}
+      />,
+    )
+    fireEvent.keyDown(document, { key: 'M', ctrlKey: true, shiftKey: true })
+
+    expect(onEditModeChange.mock.calls).toEqual([['page'], ['blocks']])
+  })
+
+  it('passes a blocked page’s reason to the switch', () => {
+    renderPageHeader(
+      <PageHeader
+        pageId="PAGE_1"
+        title="My Page"
+        editMode="blocks"
+        onEditModeChange={() => {}}
+        editModeBlocked="Page mode can’t show tasks yet."
+      />,
+    )
+
+    expect(screen.getByRole('radio', { name: t('pageMode.page') })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
   })
 
   it('has no a11y violations with the switch', async () => {

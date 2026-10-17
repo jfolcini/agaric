@@ -42,6 +42,13 @@ export interface FlatBlock extends BlockRow {
   depth: number
 }
 
+/** What the flat-tree algorithms read of a block: its id, parent and depth. */
+export interface TreeItem {
+  id: string
+  parent_id: string | null
+  depth: number
+}
+
 // ── Build flat tree ──────────────────────────────────────────────────────
 
 /**
@@ -126,7 +133,7 @@ export function buildFlatTree(
  * preserves the original single-call behaviour exactly.
  */
 export function getDragDescendants(
-  items: readonly FlatBlock[],
+  items: readonly TreeItem[],
   activeId: string,
   indexById?: ReadonlyMap<string, number>,
 ): Set<string> {
@@ -138,8 +145,8 @@ export function getDragDescendants(
 
   const activeDepth = items[activeIndex]?.depth as number
   for (let i = activeIndex + 1; i < items.length; i++) {
-    if ((items[i] as FlatBlock).depth <= activeDepth) break
-    descendants.add((items[i] as FlatBlock).id)
+    if ((items[i] as TreeItem).depth <= activeDepth) break
+    descendants.add((items[i] as TreeItem).id)
   }
   return descendants
 }
@@ -152,9 +159,9 @@ export function getDragDescendants(
  * matching `findIndex` (which returns the FIRST match) only when ids are unique —
  * which they are in a well-formed flat tree.
  */
-export function buildIndexById(items: readonly FlatBlock[]): Map<string, number> {
+export function buildIndexById(items: readonly TreeItem[]): Map<string, number> {
   const index = new Map<string, number>()
-  for (let i = 0; i < items.length; i++) index.set((items[i] as FlatBlock).id, i)
+  for (let i = 0; i < items.length; i++) index.set((items[i] as TreeItem).id, i)
   return index
 }
 
@@ -186,7 +193,7 @@ export function buildIndexById(items: readonly FlatBlock[]): Map<string, number>
  * trailing stack of items whose depth strictly decreases as we walk backwards.
  */
 export function computeSelectionRoots(
-  items: readonly FlatBlock[],
+  items: readonly TreeItem[],
   selectedIds: Iterable<string>,
 ): string[] {
   const selected = selectedIds instanceof Set ? selectedIds : new Set(selectedIds)

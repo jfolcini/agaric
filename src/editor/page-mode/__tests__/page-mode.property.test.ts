@@ -1,18 +1,25 @@
 /**
  * Page mode end to end against the mock backend (#5691): a random run of
- * typing, Enter, Backspace, Tab, Shift+Tab, paste and undo, each step perhaps
- * followed by a peer's edit before the save, and perhaps by a save whose
- * commands fail before a clean one. After every clean save:
+ * typing, Enter, Backspace, Tab, Shift+Tab, a copy pasted, blocks cut and
+ * pasted, paragraphs pasted from outside, and undo, each step perhaps followed
+ * by a peer's change (an edit, or a block created, moved or deleted) brought in
+ * as a reload does, and perhaps by a save whose commands fail before a clean
+ * one. After every clean save:
  *
  * - the mock backend's page equals the document: ids, depth, order and text
  *   (an empty block new in the document may be missing: it is created once it
  *   holds something);
  * - an id that survives a step stays on the text it was on: a step that only
- *   types or indents keeps every id, Enter adds one new id beside the block it
- *   splits, a join drops only the joined block's, a paste only adds new ones,
- *   and an undo gives no block holding text an id not seen before;
- * - a peer's edit of a block untouched since its last save shows at once, and
- *   is never written back over until the block is edited here.
+ *   types keeps every id, Enter adds one new id beside the block it splits, a
+ *   join drops only the joined block's, Tab keeps the order and Shift+Tab the
+ *   ids, a copy or a paste from outside only adds new ones, a cut and paste
+ *   keeps every id, and an undo gives no block holding text an id not seen
+ *   before;
+ * - no peer's change is undone: an edit of a block untouched since its last
+ *   save shows at once and is never written back over until the block is
+ *   edited here; a block a peer created stays; a block a peer deleted stays
+ *   deleted (text edited here into it lives on under a new id); a block a peer
+ *   moved, while only text changed here, stays under the parent it was moved to.
  *
  * The backend is `src/lib/tauri-mock`, the conformance-pinned stand-in for the
  * real one, driven through its own command handlers. It accepts a create of an
@@ -31,6 +38,7 @@ import { parse, serialize } from '@/editor/markdown-serializer'
 import {
   blockId,
   caret,
+  idMinter,
   idsOf,
   markdownOf,
   openPage,
@@ -39,14 +47,16 @@ import {
   type Row,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
-import { blockDocJson, blockIdOf, depthOf } from '@/editor/page-mode/page-document'
+import { blockDocJson, depthOf } from '@/editor/page-mode/page-document'
 import {
   createSaveState,
   type PageSaveApi,
+  type PageSaveState,
   savePage,
   type TreeRow,
 } from '@/editor/page-mode/page-save'
-import { adoptPatched, remotePatch } from '@/editor/page-mode/remote-patch'
+import { applyRemote } from '@/editor/page-mode/remote-patch'
+import { blockIdOf } from '@/editor/token-ids'
 import type { BlockRow, OpRef } from '@/lib/bindings'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks as mockBlocks, seedBlocks } from '@/lib/tauri-mock/seed'
@@ -69,7 +79,8 @@ interface MockPage {
   live: () => Row[]
   /** Fail the save's calls whose index (from 0) has its bit set in the mask. */
   failWith: (mask: number | null) => void
-  peerEdit: (id: string, markdown: string) => void
+  /** Run a peer's command: no local command, no event. */
+  peer: (cmd: string, args: Record<string, unknown>) => void
 }
 
 function mockPage(rows: readonly Row[]): MockPage {
@@ -116,8 +127,8 @@ function mockPage(rows: readonly Row[]): MockPage {
       mask = next
       calls = 0
     },
-    peerEdit: (id, markdown) => {
-      dispatch('edit_block', { blockId: id, toText: markdown })
+    peer: (cmd, args) => {
+      dispatch(cmd, cmd === 'create_block' ? { ...args, scope: SCOPE } : args)
     },
     api: {
       create: (id, parentId, index, markdown) =>
@@ -196,60 +207,92 @@ const actionArb = fc.oneof(
     to: fc.nat(),
     at,
   }),
+  fc.record({
+    kind: fc.constant('cutPaste' as const),
+    from: fc.nat(),
+    count: fc.integer({ min: 1, max: 2 }),
+    to: fc.nat(),
+  }),
+  fc.record({
+    kind: fc.constant('pasteOutside' as const),
+    block: fc.nat(),
+    at,
+    html: fc.boolean(),
+  }),
   fc.record({ kind: fc.constant('undo' as const) }),
 )
 type Action = typeof actionArb extends fc.Arbitrary<infer T> ? T : never
 
+const peerText = textArb.map((t) => `peer ${t}`)
+const peerArb = fc.oneof(
+  fc.record({ kind: fc.constant('edit' as const), block: fc.nat(), text: peerText }),
+  fc.record({ kind: fc.constant('create' as const), parent: fc.nat(), at, text: peerText }),
+  fc.record({ kind: fc.constant('move' as const), block: fc.nat(), parent: fc.nat(), at }),
+  fc.record({ kind: fc.constant('delete' as const), block: fc.nat() }),
+)
+type PeerChange = typeof peerArb extends fc.Arbitrary<infer T> ? T : never
+
 const stepArb = fc.record({
   action: actionArb,
-  peer: fc.option(fc.record({ block: fc.nat(), text: textArb.map((t) => `peer ${t}`) }), {
-    freq: 3,
-  }),
+  peer: fc.option(peerArb, { freq: 3 }),
   failures: fc.option(fc.integer({ min: 1, max: 0xffff }), { freq: 4 }),
 })
-
-function nodeById(doc: PMNode, id: string): PMNode {
-  let found: PMNode | null = null
-  doc.forEach((node) => {
-    if (blockIdOf(node) === id) found = node
-  })
-  if (found === null) throw new Error(`no block ${id} in the document`)
-  return found
-}
 
 function firstTextLength(ed: Editor, index: number): number {
   return ed.state.doc.child(index).firstChild?.textContent.length ?? 0
 }
 
-/** Apply `action`; resolves the index of the block it acted on, if any. */
-function apply(ed: Editor, action: Action): { index: number; offset: number } | null {
+/** Select from block `from`'s start to block `last`'s end, or to the next block's start. */
+function selectBlocks(ed: Editor, from: number, last: number, toNextStart: boolean): void {
+  const next = last + 1 < ed.state.doc.childCount && toNextStart
+  ed.commands.setTextSelection({
+    from: posIn(ed, from, 0),
+    to: next ? posIn(ed, last + 1, 0) : posIn(ed, last, firstTextLength(ed, last)),
+  })
+}
+
+function clipboard(ed: Editor, kind: 'copy' | 'cut'): string {
+  const data = new DataTransfer()
+  ed.view.dom.dispatchEvent(
+    new ClipboardEvent(kind, { clipboardData: data, bubbles: true, cancelable: true }),
+  )
+  return data.getData('text/html')
+}
+
+interface Acted {
+  index: number
+  offset: number
+  /** The block a paste went into. */
+  target?: string
+}
+
+/** Apply `action`; resolves the block it acted on, if any. */
+function apply(ed: Editor, action: Action): Acted | null {
   const count = ed.state.doc.childCount
   if (action.kind === 'undo') {
     ed.commands.undo()
     return null
   }
   ed.view.dispatch(closeHistory(ed.state.tr))
-  if (action.kind === 'paste') {
+  if (action.kind === 'paste' || action.kind === 'cutPaste') {
     const from = action.from % count
     const last = Math.min(count - 1, from + action.count - 1)
-    ed.commands.setTextSelection({
-      from: posIn(ed, from, 0),
-      to: posIn(ed, last, firstTextLength(ed, last)),
-    })
-    const data = new DataTransfer()
-    ed.view.dom.dispatchEvent(
-      new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }),
-    )
-    const to = action.to % count
-    const offset = action.at % (firstTextLength(ed, to) + 1)
+    selectBlocks(ed, from, last, action.kind === 'cutPaste')
+    const html = clipboard(ed, action.kind === 'paste' ? 'copy' : 'cut')
+    const to = action.to % ed.state.doc.childCount
+    const offset = action.kind === 'paste' ? action.at % (firstTextLength(ed, to) + 1) : 0
     caret(ed, to, offset)
-    ed.view.pasteHTML(data.getData('text/html'))
-    return { index: to, offset }
+    const target = blockIdOf(ed.state.doc.child(to)) as string
+    ed.view.pasteHTML(html)
+    return { index: to, offset, target }
   }
   const index = action.block % count
   const offset = 'at' in action ? action.at % (firstTextLength(ed, index) + 1) : 0
   caret(ed, index, offset)
-  if (action.kind === 'type') type(ed, action.text)
+  if (action.kind === 'pasteOutside') {
+    if (action.html) ed.view.pasteHTML('<p>from</p><p>outside</p>')
+    else ed.view.pasteText('from\noutside')
+  } else if (action.kind === 'type') type(ed, action.text)
   else if (action.kind === 'enter') press(ed, 'Enter')
   else if (action.kind === 'backspace') press(ed, 'Backspace')
   else press(ed, 'Tab', { shiftKey: action.kind === 'shiftTab' })
@@ -259,7 +302,7 @@ function apply(ed: Editor, action: Action): { index: number; offset: number } | 
 /** Where `action` may have put ids: `before` the step, `after` it, `seen` in every earlier state. */
 function expectIdsKept(
   action: Action,
-  acted: { index: number; offset: number } | null,
+  acted: Acted | null,
   before: string[],
   after: string[],
   seen: ReadonlySet<string>,
@@ -274,7 +317,7 @@ function expectIdsKept(
     expect(fresh.filter((id) => emptyAfter.get(id) !== true)).toEqual([])
     return
   }
-  const { index, offset } = acted as { index: number; offset: number }
+  const { index, offset, target } = acted as Acted
   if (action.kind === 'enter' && after.length === before.length + 1) {
     expect(fresh).toHaveLength(1)
     const added = offset === 0 ? index : index + 1
@@ -284,8 +327,20 @@ function expectIdsKept(
     // only token, its end, is what the join removes, so the joined id stays.
     const dropped = emptyBefore[index - 1] === true ? index - 1 : index
     expect(after).toEqual(before.filter((_, i) => i !== dropped))
-  } else if (action.kind === 'paste') {
+  } else if (action.kind === 'paste' || action.kind === 'pasteOutside') {
     expect(after.filter((id) => seen.has(id))).toEqual(before)
+  } else if (action.kind === 'shiftTab') {
+    // Out to just after the parent's blocks, as block mode: the same ids, reordered.
+    expect(after.toSorted()).toEqual(before.toSorted())
+  } else if (action.kind === 'cutPaste') {
+    // The blocks cut keep their ids where they land. The block pasted into
+    // joins the first of them when pasted where it starts, as a join does,
+    // and an empty block, holding no token to follow, may go.
+    const kept = new Set(after)
+    const lost = before.filter((id) => !kept.has(id))
+    expect(lost.filter((id) => id !== target && emptyBefore[before.indexOf(id)] !== true)).toEqual(
+      [],
+    )
   } else {
     expect(after).toEqual(before)
   }
@@ -308,6 +363,117 @@ function expectBackendHoldsDoc(ed: Editor, live: Row[]): void {
   expect(live.map(([id, depth]) => [id, depth])).toEqual(shown)
 }
 
+/** Each block's parent in `rows`, the page's id for a top-level one. */
+function parents(rows: readonly TreeRow[], pageId: string): Map<string, string> {
+  return new Map(rows.map((row) => [row.id, row.parent_id ?? pageId]))
+}
+
+/** What a peer's change left that no save of page mode's may undo, checked after the save. */
+type PeerMark =
+  | { kind: 'text'; id: string; markdown: string; content: Fragment }
+  | { kind: 'created'; id: string }
+  | { kind: 'deleted'; id: string }
+  | { kind: 'moved'; id: string; parent: string }
+
+/**
+ * Make `change` as a peer, then bring the page in as a reload does; resolves
+ * what the change left, if anything is the peer's to keep.
+ */
+function peerChange(
+  page: MockPage,
+  ed: Editor,
+  save: PageSaveState,
+  change: PeerChange,
+  textOnly: boolean,
+  nextId: () => string,
+  mintKept: () => string,
+): PeerMark | null {
+  const rows = page.rows()
+  const ids = rows.map((row) => row.id)
+  let mark: PeerMark | null = null
+  if (change.kind === 'create') {
+    const parentIds = [page.pageId, ...ids]
+    const parent = parentIds[change.parent % parentIds.length] as string
+    const siblings = rows.filter((row) => (row.parent_id ?? page.pageId) === parent).length
+    const id = nextId()
+    page.peer('create_block', {
+      blockType: 'content',
+      content: change.text,
+      parentId: parent,
+      index: change.at % (siblings + 1),
+      blockId: id,
+    })
+    mark = { kind: 'created', id }
+  } else if (ids.length > 0) {
+    const id = ids[change.block % ids.length] as string
+    if (change.kind === 'edit') {
+      const node = nodeById(ed.state.doc, id)
+      const untouched = node !== null && save.saved.get(id)?.node?.content.eq(node.content) === true
+      page.peer('edit_block', { blockId: id, toText: change.text })
+      if (untouched)
+        mark = { kind: 'text', id, markdown: change.text, content: parse(change.text) as never }
+    } else if (change.kind === 'delete') {
+      page.peer('delete_block', { blockId: id })
+      mark = { kind: 'deleted', id }
+    } else {
+      const inSubtree = new Set([id])
+      for (const row of rows) if (inSubtree.has(row.parent_id ?? '')) inSubtree.add(row.id)
+      const parentIds = [page.pageId, ...ids.filter((other) => !inSubtree.has(other))]
+      const parent = parentIds[change.parent % parentIds.length] as string
+      const siblings = rows.filter(
+        (row) => (row.parent_id ?? page.pageId) === parent && row.id !== id,
+      ).length
+      page.peer('move_block', {
+        blockId: id,
+        newParentId: parent,
+        newIndex: change.at % (siblings + 1),
+      })
+      // Checked only where nothing but text changed here: a move here would win.
+      if (textOnly) mark = { kind: 'moved', id, parent }
+    }
+  }
+  applyRemote(ed.view, save, page.rows(), mintKept)
+  if (mark?.kind === 'text') {
+    const shown = nodeById(ed.state.doc, mark.id)
+    expect(shown === null ? null : markdownOf(shown)).toBe(serialize(parse(mark.markdown)))
+    return shown === null ? null : { ...mark, content: shown.content }
+  }
+  return mark
+}
+
+function nodeById(doc: PMNode, id: string): PMNode | null {
+  let found: PMNode | null = null
+  doc.forEach((node) => {
+    if (blockIdOf(node) === id) found = node
+  })
+  return found
+}
+
+/** No save undid `marks`: the peers' texts, creates, deletes and moves still hold. */
+function expectPeersKept(ed: Editor, page: MockPage, marks: Map<string, PeerMark>): void {
+  const rows = page.rows()
+  const live = new Map(rows.map((row) => [row.id, row.content ?? '']))
+  const parentOf = parents(rows, page.pageId)
+  for (const [key, mark] of marks) {
+    if (mark.kind === 'deleted') {
+      expect(live.has(mark.id)).toBe(false)
+      continue
+    }
+    const node = nodeById(ed.state.doc, mark.id)
+    if (mark.kind === 'text') {
+      // Edited here since, or gone: no longer the peer's text to keep.
+      if (node === null || !node.content.eq(mark.content)) marks.delete(key)
+      else expect(live.get(mark.id)).toBe(mark.markdown)
+    } else if (mark.kind === 'created') {
+      expect(live.has(mark.id)).toBe(true)
+      marks.delete(key)
+    } else {
+      expect(parentOf.get(mark.id)).toBe(mark.parent)
+      marks.delete(key)
+    }
+  }
+}
+
 let editor: Editor | null = null
 
 afterEach(() => {
@@ -316,7 +482,7 @@ afterEach(() => {
 })
 
 describe('page mode against the mock backend', () => {
-  it('keeps the backend equal to the document, ids on their text, and peers’ edits', async () => {
+  it('keeps the backend equal to the document, ids on their text, and peers’ changes', async () => {
     await fc.assert(
       fc.asyncProperty(
         rowsArb,
@@ -328,10 +494,11 @@ describe('page mode against the mock backend', () => {
           editor = ed
           const save = createSaveState(page.pageId, page.rows(), ed.state.doc)
           const seen = new Set(idsOf(ed.state.doc))
-          // A peer's text per block, with the content it was patched in as.
-          const peerText = new Map<string, { markdown: string; content: Fragment }>()
+          const nextPeerId = idMinter('01PEER')
+          const mintKept = idMinter('01KEPT')
+          const marks = new Map<string, PeerMark>()
 
-          for (const { action, peer, failures } of steps) {
+          for (const [stepIndex, { action, peer, failures }] of steps.entries()) {
             const before = idsOf(ed.state.doc)
             const emptyBefore: boolean[] = []
             ed.state.doc.forEach((node) => emptyBefore.push(markdownOf(node) === ''))
@@ -345,25 +512,10 @@ describe('page mode against the mock backend', () => {
             for (const id of after) seen.add(id)
 
             if (peer !== null) {
-              const node = ed.state.doc.child(peer.block % ed.state.doc.childCount)
-              const id = blockIdOf(node) as string
-              if (save.saved.has(id)) {
-                const untouched = save.saved.get(id)?.node?.content.eq(node.content) === true
-                page.peerEdit(id, peer.text)
-                const patch = remotePatch(ed.state, save, await page.api.tree())
-                if (patch !== null) {
-                  ed.view.dispatch(patch.tr)
-                  adoptPatched(ed.state.doc, save, patch.patched)
-                }
-                const shown = nodeById(ed.state.doc, id)
-                if (untouched) {
-                  expect(markdownOf(shown)).toBe(serialize(parse(peer.text)))
-                  peerText.set(id, { markdown: peer.text, content: shown.content })
-                } else {
-                  // Edited here and not saved: the local text wins at the save.
-                  peerText.delete(id)
-                }
-              }
+              const textOnly = action.kind === 'type'
+              const mark = peerChange(page, ed, save, peer, textOnly, nextPeerId, mintKept)
+              if (mark !== null) marks.set(`${stepIndex}:${mark.kind}:${mark.id}`, mark)
+              for (const id of idsOf(ed.state.doc)) seen.add(id)
             }
 
             if (failures !== null) {
@@ -371,24 +523,24 @@ describe('page mode against the mock backend', () => {
               await savePage(ed.state.doc, save, page.api)
               page.failWith(null)
             }
-            const result = await savePage(ed.state.doc, save, page.api)
+            let result = await savePage(ed.state.doc, save, page.api)
+            if (result.error !== undefined) {
+              // As the editor does: read the page again, bring it in, save once more.
+              const { failed } = result
+              const refused = failed?.kind === 'create' || failed?.kind === 'restore'
+              applyRemote(ed.view, save, page.rows(), mintKept, new Set(refused ? [failed.id] : []))
+              result = await savePage(ed.state.doc, save, page.api)
+            }
             expect(result.error).toBeUndefined()
+            // A block the save gave a new id: its old one was refused.
+            for (const id of idsOf(ed.state.doc)) seen.add(id)
 
-            const live = page.live()
-            expectBackendHoldsDoc(ed, live)
-            const held = new Map(live.map(([id, , content]) => [id, content]))
-            ed.state.doc.forEach((node) => {
-              const id = blockIdOf(node) as string
-              const peerEdit = peerText.get(id)
-              if (peerEdit === undefined) return
-              // Edited here since: no longer the peer's text to keep.
-              if (!node.content.eq(peerEdit.content)) peerText.delete(id)
-              else expect(held.get(id)).toBe(peerEdit.markdown)
-            })
+            expectBackendHoldsDoc(ed, page.live())
+            expectPeersKept(ed, page, marks)
           }
         },
       ),
-      { numRuns: 120 },
+      { numRuns: 150 },
     )
   })
 })

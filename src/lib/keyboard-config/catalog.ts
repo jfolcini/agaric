@@ -652,6 +652,14 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.inPageEditor',
   },
   {
+    // #5691 — the page header's Blocks | Page switch.
+    id: 'togglePageMode',
+    keys: 'Ctrl + Shift + M',
+    category: 'keyboard.category.pageEditor',
+    description: 'keyboard.togglePageMode',
+    condition: 'keyboard.condition.inPageEditor',
+  },
+  {
     id: 'savePageSource',
     keys: 'Ctrl + S',
     category: 'keyboard.category.pageEditor',

@@ -31,7 +31,8 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import { computeContentDelta } from '@/editor/content-delta'
 import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
 import { serialize } from '@/editor/markdown-serializer'
-import { blockDocJson, blockIdOf, depthOf } from '@/editor/page-mode/page-document'
+import { blockDocJson, depthOf } from '@/editor/page-mode/page-document'
+import { blockIdOf } from '@/editor/token-ids'
 import type { OpRef } from '@/lib/bindings'
 
 export interface SavedBlock {
@@ -52,6 +53,8 @@ export interface PageSaveState {
   tree: PageTree
   /** The `deleted_at` of each block page mode deleted, which `restore_block` asks for. */
   deletedAt: Map<string, number>
+  /** How many writes reached the backend: a read made while this moved may predate one. */
+  writes: number
 }
 
 /** One live block of the page, as the backend lists it: parents before children, siblings in order. */
@@ -82,8 +85,12 @@ export type SaveOp =
 export interface SaveResult {
   /** The refs of every op this save appended, in order. */
   refs: OpRef[]
+  /** Whether it created, restored, moved or deleted a block, not only edited text. */
+  structural: boolean
   /** The first write that failed; its block keeps its saved state for the next save. */
   error: unknown
+  /** The op of that write. */
+  failed: SaveOp | null
 }
 
 export function treeFromRows(pageId: string, rows: readonly TreeRow[]): PageTree {
@@ -105,7 +112,7 @@ export function createSaveState(
     const markdown = id === null ? undefined : content.get(id)
     if (id !== null && markdown !== undefined) saved.set(id, { node, markdown })
   })
-  return { pageId, saved, tree: treeFromRows(pageId, rows), deletedAt: new Map() }
+  return { pageId, saved, tree: treeFromRows(pageId, rows), deletedAt: new Map(), writes: 0 }
 }
 
 // ── The tree mirror ───────────────────────────────────────────────────────
@@ -158,7 +165,7 @@ function slotAfter(tree: PageTree, parentId: string, id: string, anchor: string 
 }
 
 /** Positions in `sequence` of a longest strictly increasing run of its values. */
-function longestIncreasing(sequence: readonly number[]): Set<number> {
+export function longestIncreasing(sequence: readonly number[]): Set<number> {
   const tails: number[] = []
   const previous: number[] = []
   sequence.forEach((value, i) => {
@@ -343,7 +350,7 @@ async function run(op: SaveOp, state: PageSaveState, api: PageSaveApi): Promise<
     }
     case 'restore': {
       await api.restore(op.id, op.deletedAt)
-      await reread(state, api)
+      await reread(state, api, op.id)
       return []
     }
     case 'move': {
@@ -376,13 +383,26 @@ async function run(op: SaveOp, state: PageSaveState, api: PageSaveApi): Promise<
   }
 }
 
-/** Take the tree the backend now holds, and every block a restore brought back as saved. */
-async function reread(state: PageSaveState, api: PageSaveApi): Promise<void> {
+/**
+ * Take the tree the backend now holds after restoring `restored`, and every
+ * block that restore brought back as saved: the ones page mode deleted, and
+ * any ancestor it did not know (deleted elsewhere), which the save then
+ * deletes again unless the document shows it.
+ */
+async function reread(state: PageSaveState, api: PageSaveApi, restored: string): Promise<void> {
+  const known = state.tree.parentOf
   const rows = await api.tree()
   state.tree = treeFromRows(state.pageId, rows)
+  const content = new Map(rows.map((row) => [row.id, row.content ?? '']))
   for (const row of rows) {
     if (!state.deletedAt.delete(row.id)) continue
     state.saved.set(row.id, { node: null, markdown: row.content ?? '' })
+  }
+  const { parentOf } = state.tree
+  for (let up = parentOf.get(restored); up !== undefined; up = parentOf.get(up)) {
+    if (!known.has(up) && !state.saved.has(up) && content.has(up)) {
+      state.saved.set(up, { node: null, markdown: content.get(up) as string })
+    }
   }
 }
 
@@ -398,9 +418,14 @@ async function runAll(
   for (const op of ops) {
     try {
       result.refs.push(...(await run(op, state, api)))
+      if (op.kind !== 'settle') state.writes += 1
+      if (op.kind !== 'settle' && op.kind !== 'edit') result.structural = true
     } catch (err) {
       ok = false
-      result.error ??= err
+      if (result.failed === null) {
+        result.error = err
+        result.failed = op
+      }
       if (stopOnFailure) return false
     }
   }
@@ -413,7 +438,7 @@ export async function savePage(
   state: PageSaveState,
   api: PageSaveApi,
 ): Promise<SaveResult> {
-  const result: SaveResult = { refs: [], error: undefined }
+  const result: SaveResult = { refs: [], structural: false, error: undefined, failed: null }
   // A restore rereads the tree, which can make other blocks saved; plan again after one.
   const restored = new Set<string>()
   for (;;) {

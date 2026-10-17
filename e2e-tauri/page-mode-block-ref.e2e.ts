@@ -2,7 +2,8 @@
 // Real-backend: a `((ref))` to a block edited in page mode still resolves (#5691).
 //
 // A `((ref))` holds its target's id. Page mode keeps a block's id on its text
-// through every edit (`src/editor/page-mode/page-block-ids.ts`): Enter at the
+// through every edit (`src/editor/token-ids.ts`, shared with Edit as Markdown,
+// and `src/editor/page-mode/page-block-ids.ts`): Enter at the
 // start of the block moves the id down with the text and leaves the new, empty
 // block above it a new one. Had the id stayed on the empty half, or had the
 // save deleted the block and created its text again, the ref would point at

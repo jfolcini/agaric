@@ -1,7 +1,8 @@
 /**
  * EditorTab — editor behaviour settings.
  *
- * Currently hosts the inline `:` emoji-picker toggle (#130). The preference
+ * Hosts *Edit pages as* (#5691: blocks or one page per document, desktop
+ * only) and the inline `:` emoji-picker toggle (#130). The preference
  * is stored in localStorage under `EMOJI_PICKER_ENABLED_KEY` and read live by
  * the editor's emoji extension, so toggling it takes effect on the next
  * keystroke without remounting the editor.
@@ -23,6 +24,7 @@ import {
 import { SettingRow, settingDescriptionId } from '@/components/ui/setting-row'
 import { ToggleRow } from '@/components/ui/toggle-row'
 import { useExternalImageAllowlist, useExternalImagePolicy } from '@/hooks/useExternalImagePolicy'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { EMOJI_PICKER_ENABLED_KEY, TAB_INDENTS_BLOCKS_KEY } from '@/lib/editor-preferences'
 import { type ExternalImagePolicy, isExternalImagePolicy } from '@/lib/external-image-policy'
 import { useLocalStoragePreference } from '@/lib/local-storage-preference'
@@ -43,6 +45,8 @@ export function EditorTab(): React.ReactElement {
   const { policy, setPolicy } = useExternalImagePolicy()
   const [linkPreviewFetch, setLinkPreviewFetch] = usePreference(PREFERENCES.linkPreviewHoverFetch)
   const [revealMarkdown, setRevealMarkdown] = usePreference(PREFERENCES.revealMarkdownSyntax)
+  const [editMode, setEditMode] = usePreference(PREFERENCES.editMode)
+  const isTouch = useIsTouch()
   const { allowlist, removeHost } = useExternalImageAllowlist()
 
   const handlePolicyChange = useCallback(
@@ -61,6 +65,35 @@ export function EditorTab(): React.ReactElement {
   return (
     <Card>
       <CardContent className="space-y-6">
+        {/* #5691 — the mode pages open in, on this device. Touch keeps block mode. */}
+        {!isTouch && (
+          <SettingRow
+            label={t('settings.editor.editModeLabel')}
+            controlId="edit-mode-select"
+            description={t('settings.editor.editModeHelp')}
+          >
+            <Select
+              value={editMode}
+              onValueChange={(value) => {
+                if (value === 'blocks' || value === 'page') setEditMode(value)
+              }}
+            >
+              <SelectTrigger
+                id="edit-mode-select"
+                className="sm:w-72"
+                aria-describedby={settingDescriptionId('edit-mode-select')}
+                data-testid="edit-mode-select"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="blocks">{t('settings.editor.editModeBlocks')}</SelectItem>
+                <SelectItem value="page">{t('settings.editor.editModePage')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingRow>
+        )}
+
         <ToggleRow
           id="emoji-picker-toggle"
           label={t('settings.editor.emojiPickerLabel')}

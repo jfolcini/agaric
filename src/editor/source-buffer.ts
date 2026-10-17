@@ -23,10 +23,17 @@ import Text from '@tiptap/extension-text'
 import type { NodeType, Node as PMNode, Schema } from '@tiptap/pm/model'
 import { Fragment, Slice } from '@tiptap/pm/model'
 import { type Command, Plugin, TextSelection, type Transaction } from '@tiptap/pm/state'
-import { type Mappable, Mapping } from '@tiptap/pm/transform'
 
 import { SourceBufferKeys } from '@/editor/source-buffer-keys'
 import { clampSelectionToTokens, SourceBufferUlids } from '@/editor/source-buffer-ulids'
+import {
+  blockIdOf,
+  idsAfter,
+  pasteKeepingIds,
+  takenIds,
+  type Tokens,
+  withPageIds,
+} from '@/editor/token-ids'
 
 export interface SourceLines {
   text: string
@@ -62,10 +69,6 @@ const SourceLine = Node.create({
     return ['div', { [SOURCE_LINE_ATTR]: '', ...HTMLAttributes }, 0]
   },
 })
-
-function blockIdOf(line: PMNode): string | null {
-  return (line.attrs['blockId'] as string | null | undefined) ?? null
-}
 
 /** `lines` as the buffer's document: a line node per line of the text, under its id. */
 export function linesContent({ text, lineIds }: SourceLines): JSONContent {
@@ -142,31 +145,6 @@ function textLines(schema: Schema, text: string): Slice {
   return new Slice(Fragment.from(lines), 1, 1)
 }
 
-function holdsId(doc: PMNode, id: string): boolean {
-  let held = false
-  doc.forEach((line) => {
-    held ||= blockIdOf(line) === id
-  })
-  return held
-}
-
-/**
- * `slice` with no id but `pageIds`: a line carrying another page's block is a
- * new block, as a copy is (#5160 D15).
- */
-function withPageIds(slice: Slice, pageIds: ReadonlySet<string | null>): Slice {
-  const nodes: PMNode[] = []
-  slice.content.forEach((node) => {
-    const id = blockIdOf(node)
-    nodes.push(
-      id === null || pageIds.has(id)
-        ? node
-        : node.type.create({ ...node.attrs, blockId: null }, node.content),
-    )
-  })
-  return new Slice(Fragment.from(nodes), slice.openStart, slice.openEnd)
-}
-
 /** What a paste or a drop brings in: a buffer's lines, or anything else as its text (D-a). */
 function incoming(
   schema: Schema,
@@ -183,47 +161,19 @@ function incoming(
 /**
  * Paste `slice` over `tr`'s selection as a text editor pastes lines: its first
  * line joins the text before the cursor, its last the text after. Pasted where
- * a line starts, the first line starts that line, under its id when no other
- * line holds it: a cut line pasted there is a move.
+ * a line starts, a cut line pasted there is a move (`pasteKeepingIds`).
  */
 function pasteLines(tr: Transaction, slice: Slice): Transaction {
   const lines =
     slice.content.firstChild?.isTextblock === true ? new Slice(slice.content, 1, 1) : slice
   const { $from } = tr.selection
-  const before = tr.doc
-  const steps = tr.steps.length
-  tr.replaceSelection(lines)
-  const first = lines.openStart > 0 ? lines.content.firstChild : null
-  const id = first === null ? null : blockIdOf(first)
-  if (id !== null && $from.parent.isTextblock && $from.parentOffset === 0 && !holdsId(before, id)) {
-    const start = tr.mapping.slice(steps).map($from.pos, -1)
-    tr.setNodeAttribute(tr.doc.resolve(start).before(), 'blockId', id)
-  }
-  return tr.scrollIntoView()
+  return pasteKeepingIds(tr, lines, $from.parent.isTextblock && $from.parentOffset === 0)
 }
 
-/**
- * Whether the token at `pos`, a character or a line's end, is gone after the
- * change `mapping` maps over: the positions either side of it no longer one apart.
- */
-function goneAt(mapping: Mappable, pos: number): boolean {
-  return mapping.map(pos + 1, -1) - mapping.map(pos, 1) !== 1
-}
-
-/**
- * The ids a cut over `mapping` takes from the lines of `before`: each line's
- * whose start it removed with its line break or the rest of its text, so its
- * first token and its last, a character or, empty, its end, are both gone. A
- * cut that leaves part of a line leaves the line its id, as deleting it does.
- */
-function cutIds(before: PMNode, mapping: Mappable): Set<string> {
-  const taken = new Set<string>()
-  before.forEach((line, offset) => {
-    const id = blockIdOf(line)
-    const last = offset + Math.max(line.content.size, 1)
-    if (id !== null && goneAt(mapping, offset + 1) && goneAt(mapping, last)) taken.add(id)
-  })
-  return taken
+/** A line's first token is its first character, or its end; its last, its last character. */
+const LINE_TOKENS: Tokens = {
+  first: (_line, offset) => offset + 1,
+  last: (line, offset) => offset + Math.max(line.content.size, 1),
 }
 
 /**
@@ -234,53 +184,11 @@ function dragAway(tr: Transaction): void {
   const before = tr.doc
   const steps = tr.steps.length
   tr.deleteSelection()
-  const taken = cutIds(before, tr.mapping.slice(steps))
-  tr.doc.forEach((line, offset) => {
+  const taken = takenIds(before, tr.doc, tr.mapping.slice(steps), LINE_TOKENS)
+  tr.doc.forEach((line, offset, i) => {
     const id = blockIdOf(line)
-    if (id !== null && taken.has(id)) tr.setNodeAttribute(offset, 'blockId', null)
+    if (id !== null && taken.get(i)?.has(id) === true) tr.setNodeAttribute(offset, 'blockId', null)
   })
-}
-
-/**
- * Each line's id after `transactions` turned `before` into `after`: the id of
- * the line whose start it now begins with, else the id it holds, unless another
- * line holds that id or a cut took it (`cutIds`).
- */
-function lineIdsAfter(
-  transactions: readonly Transaction[],
-  before: PMNode,
-  after: PMNode,
-): Array<string | null> {
-  const mapping = new Mapping()
-  for (const tr of transactions) mapping.appendMapping(tr.mapping)
-  const cut = transactions.some((tr) => tr.getMeta('uiEvent') === 'cut')
-  const taken = cut ? cutIds(before, mapping) : new Set<string>()
-  const moved = new Map<number, string>()
-  before.forEach((line, offset) => {
-    const id = blockIdOf(line)
-    // A line whose first token is gone has no start left to follow.
-    if (id === null || goneAt(mapping, offset + 1)) return
-    const start = mapping.map(offset + 1, 1)
-    const $start = after.resolve(start)
-    if ($start.depth === 1 && $start.parentOffset === 0 && !moved.has(start)) {
-      moved.set(start, id)
-    }
-  })
-  const held = new Set([...moved.values(), ...taken])
-  const ids: Array<string | null> = []
-  after.forEach((line, offset) => {
-    const own = moved.get(offset + 1)
-    const kept = blockIdOf(line)
-    if (own !== undefined) {
-      ids.push(own)
-    } else if (kept !== null && !held.has(kept)) {
-      held.add(kept)
-      ids.push(kept)
-    } else {
-      ids.push(null)
-    }
-  })
-  return ids
 }
 
 /** `Shift+Enter`: break the line at the cursor without a list marker (#5160 D3). */
@@ -310,7 +218,7 @@ const SourceBufferBehaviour = Extension.create<SourceBufferOptions>({
       new Plugin({
         appendTransaction(transactions, oldState, newState) {
           if (!transactions.some((tr) => tr.docChanged)) return null
-          const ids = lineIdsAfter(transactions, oldState.doc, newState.doc)
+          const ids = idsAfter(transactions, oldState.doc, newState.doc, LINE_TOKENS)
           const tr = newState.tr
           newState.doc.forEach((line, offset, i) => {
             if (blockIdOf(line) !== ids[i]) tr.setNodeAttribute(offset, 'blockId', ids[i])

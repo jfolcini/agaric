@@ -1,40 +1,53 @@
 /**
- * Page mode's id rules (#5691), the source buffer's (`source-buffer.ts`) moved
- * from lines to blocks: a block's id belongs to its first token, a character
- * or, empty, its end, and follows it through every edit. So Enter keeps the id
- * on the block the text it splits starts in, and a join keeps the first block's
- * id and drops the second's. A block whose first token no edit moved keeps the
- * id it has unless another block already holds it, the way TipTap's UniqueID
- * drops a duplicate. A paste brings in no ids, so a pasted block is new.
+ * Page mode's id rules (#5691): the source buffer's (`token-ids.ts`), for
+ * blocks rather than lines. A block's first token is the first character of
+ * its first textblock or, empty, that textblock's end; its last, the last
+ * character of its last textblock, or its last leaf.
+ *
+ * A paste keeps the ids of this page's blocks, never another page's, so a cut
+ * and paste is a move and a copy beside its original is a new block. Pasted
+ * from outside, paragraphs (and any other blocks) become as many blocks at the
+ * depth of the block pasted into, except inside a list or a table in a block's
+ * content, where they stay that list's or table's.
  *
  * A block left without an id gets a fresh one at once: it exists only in the
  * document until it holds something (`page-save.ts`). Depth is kept a tree:
  * the first block at 0, each other at most one deeper than the block before.
+ * A transaction marked `REMOTE_PATCH` brings in the backend's own ids
+ * (`remote-patch.ts`), which these rules leave as they are.
  */
 
 import { Extension } from '@tiptap/core'
 import { Fragment, type Node as PMNode, type NodeType, Slice } from '@tiptap/pm/model'
-import { Plugin, PluginKey, type Transaction } from '@tiptap/pm/state'
-import { type Mappable, Mapping } from '@tiptap/pm/transform'
+import { type EditorState, Plugin, PluginKey, type Transaction } from '@tiptap/pm/state'
 
-import { blockIdOf, depthOf, firstTokenPos, PAGE_BLOCK } from '@/editor/page-mode/page-document'
+import {
+  depthOf,
+  firstTokenPos,
+  insideListOrTable,
+  lastTokenPos,
+  PAGE_BLOCK,
+  REMOTE_PATCH,
+} from '@/editor/page-mode/page-document'
+import {
+  blockIdOf,
+  idsAfter,
+  pasteKeepingIds,
+  takesIds,
+  type Tokens,
+  withPageIds,
+} from '@/editor/token-ids'
 import { newBlockId } from '@/lib/block-id'
 
 export const pageBlockIdsKey = new PluginKey('pageBlockIds')
 
-/**
- * Whether the token at `pos` is gone after the change `mapping` maps over: the
- * positions either side of it no longer one apart.
- */
-function goneAt(mapping: Mappable, pos: number): boolean {
-  return mapping.map(pos + 1, -1) - mapping.map(pos, 1) !== 1
-}
+export const PAGE_BLOCK_TOKENS: Tokens = { first: firstTokenPos, last: lastTokenPos }
 
+/** Whether `fragment` holds blocks: only ever at its top, as the schema has them only in the document. */
 function holdsPageBlock(fragment: Fragment, type: NodeType): boolean {
   let found = false
-  fragment.descendants((node) => {
+  fragment.forEach((node) => {
     found ||= node.type === type
-    return !found && !node.isTextblock
   })
   return found
 }
@@ -58,66 +71,45 @@ function changesBlocks(tr: Transaction, type: NodeType): boolean {
     }>
     if (attr !== undefined && pos !== undefined) return doc.nodeAt(pos)?.type === type
     if (slice === undefined || from === undefined || to === undefined) return false
-    const $from = doc.resolve(from)
-    const $to = doc.resolve(to)
     return (
-      $from.depth < 1 ||
-      $to.depth < 1 ||
-      $from.index(0) !== $to.index(0) ||
-      holdsPageBlock(slice.content, type)
+      doc.resolve(from).index(0) !== doc.resolve(to).index(0) || holdsPageBlock(slice.content, type)
     )
   })
 }
 
 /**
- * Each block's id after `transactions` turned `before` into `after`: the id of
- * the block whose first token it now starts with, else the id it holds, unless
- * another block holds that id already.
+ * `slice` from outside the page as blocks: each of its top-level blocks in a
+ * block of its own at `depth`, so a paste of paragraphs splits the block it
+ * lands in as Enter does, and one paragraph joins the text at the cursor.
  */
-export function blockIdsAfter(
-  transactions: readonly Transaction[],
-  before: PMNode,
-  after: PMNode,
-): Array<string | null> {
-  const mapping = new Mapping()
-  for (const tr of transactions) mapping.appendMapping(tr.mapping)
-  const startsAt = new Map<number, number>()
-  after.forEach((node, offset, i) => startsAt.set(firstTokenPos(node, offset), i))
-  const moved = new Map<number, string>()
-  before.forEach((node, offset) => {
-    const id = blockIdOf(node)
-    const start = firstTokenPos(node, offset)
-    if (id === null || goneAt(mapping, start)) return
-    const index = startsAt.get(mapping.map(start, 1))
-    if (index !== undefined && !moved.has(index)) moved.set(index, id)
-  })
-  const held = new Set(moved.values())
-  const ids: Array<string | null> = []
-  after.forEach((node, _offset, i) => {
-    const own = moved.get(i)
-    const kept = blockIdOf(node)
-    if (own !== undefined) {
-      ids.push(own)
-    } else if (kept !== null && !held.has(kept)) {
-      held.add(kept)
-      ids.push(kept)
-    } else {
-      ids.push(null)
-    }
-  })
-  return ids
-}
-
-/** `slice` with every block it brings in under no id. */
-function withoutIds(slice: Slice, type: NodeType): Slice {
-  if (!holdsPageBlock(slice.content, type)) return slice
+function asBlocks(slice: Slice, type: NodeType, depth: number): Slice {
   const nodes: PMNode[] = []
   slice.content.forEach((node) => {
-    nodes.push(
-      node.type === type ? type.create({ ...node.attrs, blockId: null }, node.content) : node,
-    )
+    nodes.push(type.create({ blockId: null, depth }, node))
   })
-  return new Slice(Fragment.from(nodes), slice.openStart, slice.openEnd)
+  return new Slice(Fragment.from(nodes), slice.openStart + 1, slice.openEnd + 1)
+}
+
+/**
+ * Pasted over whole blocks (select all), with no block's content to fit into,
+ * the clipboard parser wraps all it brings in one block of its own, with no id:
+ * that block's content.
+ */
+function parserWrapped(slice: Slice, type: NodeType): Slice | null {
+  const only = slice.content.childCount === 1 ? slice.content.firstChild : null
+  if (only?.type !== type || blockIdOf(only) !== null) return null
+  return new Slice(only.content, 0, 0)
+}
+
+/** What a paste or a drop brings in: this page's blocks, or anything else as blocks of its own. */
+function incoming(slice: Slice, state: EditorState, type: NodeType, known: ReadonlySet<string>) {
+  const { $from } = state.selection
+  const wrapped = $from.depth === 0 ? parserWrapped(slice, type) : null
+  if (wrapped !== null) return asBlocks(wrapped, type, 0)
+  if (holdsPageBlock(slice.content, type)) return withPageIds(slice, known)
+  if ($from.depth === 0 || insideListOrTable($from) || !type.validContent(slice.content))
+    return slice
+  return asBlocks(slice, type, depthOf($from.node(1)))
 }
 
 interface PageBlockIdsOptions {
@@ -133,16 +125,30 @@ export const PageBlockIds = Extension.create<PageBlockIdsOptions>({
   addProseMirrorPlugins() {
     const { mintId } = this.options
     const type = this.editor.schema.nodes[PAGE_BLOCK] as NodeType
+    // Every id the document has held: the page's own, which a paste may bring back.
+    const known = new Set<string>()
     return [
       new Plugin({
         key: pageBlockIdsKey,
+        view(view) {
+          view.state.doc.forEach((node) => {
+            const id = blockIdOf(node)
+            if (id !== null) known.add(id)
+          })
+          return {}
+        },
         appendTransaction(transactions, oldState, newState) {
-          if (!transactions.some((tr) => tr.docChanged && changesBlocks(tr, type))) return null
-          const ids = blockIdsAfter(transactions, oldState.doc, newState.doc)
+          const remote = transactions.some((tr) => tr.getMeta(REMOTE_PATCH) === true)
+          const structural = transactions.some((tr) => tr.docChanged && changesBlocks(tr, type))
+          if (!remote && !structural && !takesIds(transactions)) return null
+          const ids = remote
+            ? null
+            : idsAfter(transactions, oldState.doc, newState.doc, PAGE_BLOCK_TOKENS)
           const tr = newState.tr
           let previousDepth = -1
           newState.doc.forEach((node, offset, i) => {
-            const id = ids[i] ?? mintId()
+            const id = (ids === null ? blockIdOf(node) : ids[i]) ?? mintId()
+            known.add(id)
             if (blockIdOf(node) !== id) tr.setNodeAttribute(offset, 'blockId', id)
             const depth = Math.max(0, Math.min(depthOf(node), previousDepth + 1))
             if (depthOf(node) !== depth) tr.setNodeAttribute(offset, 'depth', depth)
@@ -151,7 +157,16 @@ export const PageBlockIds = Extension.create<PageBlockIdsOptions>({
           return tr.docChanged ? tr : null
         },
         props: {
-          transformPasted: (slice) => withoutIds(slice, type),
+          transformPasted: (slice, view) => incoming(slice, view.state, type, known),
+          // A paste of this page's blocks where a block starts is a move (`pasteKeepingIds`).
+          handlePaste(view, _event, slice) {
+            if (!holdsPageBlock(slice.content, type)) return false
+            const { $from } = view.state.selection
+            const atStart = $from.depth === 2 && $from.index(1) === 0 && $from.parentOffset === 0
+            const tr = pasteKeepingIds(view.state.tr, slice, atStart)
+            view.dispatch(tr.setMeta('paste', true).setMeta('uiEvent', 'paste'))
+            return true
+          },
         },
       }),
     ]

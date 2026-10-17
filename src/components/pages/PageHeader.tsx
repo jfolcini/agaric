@@ -13,6 +13,7 @@ import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { EmojiPickerDialog } from '@/components/EmojiPicker'
 import { ViewHeader } from '@/components/layout/ViewHeader'
+import { EditModeSwitch } from '@/components/pages/EditModeSwitch'
 import { PageAliasSection } from '@/components/pages/PageAliasSection'
 import { PageHeaderMenu } from '@/components/pages/PageHeaderMenu'
 import { PageOutline } from '@/components/pages/PageOutline'
@@ -21,7 +22,6 @@ import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { PageTagSection } from '@/components/pages/PageTagSection'
 import { PageTitleEditor } from '@/components/pages/PageTitleEditor'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useBlockTags } from '@/hooks/useBlockTags'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { usePageAliases } from '@/hooks/usePageAliases'
@@ -58,9 +58,13 @@ export interface PageHeaderProps {
   onEditSource?: (() => void) | undefined
   /** The page-actions kebab, so focus can return to it. */
   kebabRef?: React.RefObject<HTMLButtonElement | null> | undefined
-  /** The page's editing mode; the Blocks | Page switch shows only with `onEditModeChange`. */
+  /** The page's editing mode; the Blocks | Page switch and its shortcut need `onEditModeChange`. */
   editMode?: EditMode | undefined
   onEditModeChange?: ((mode: EditMode) => void) | undefined
+  /** Why page mode is not offered for this page. */
+  editModeBlocked?: string | null | undefined
+  /** The switch was reached: find out whether page mode fits the page. */
+  onEditModeIntent?: (() => void) | undefined
 }
 
 export function PageHeader({
@@ -71,6 +75,8 @@ export function PageHeader({
   kebabRef,
   editMode,
   onEditModeChange,
+  editModeBlocked,
+  onEditModeIntent,
 }: PageHeaderProps) {
   const { t } = useTranslation()
   const ownKebabRef = useRef<HTMLButtonElement>(null)
@@ -242,11 +248,14 @@ export function PageHeader({
       } else if (matchesShortcutBinding(e, 'showPageInGraph')) {
         e.preventDefault()
         showPageInGraph()
+      } else if (onEditModeChange && matchesShortcutBinding(e, 'togglePageMode')) {
+        e.preventDefault()
+        onEditModeChange(editMode === 'page' ? 'blocks' : 'page')
       }
     }
     document.addEventListener('keydown', handlePageShortcut)
     return () => document.removeEventListener('keydown', handlePageShortcut)
-  }, [copyPageMarkdownToClipboard])
+  }, [copyPageMarkdownToClipboard, editMode, onEditModeChange])
 
   // The kebab "Delete page" item calls this. `usePageDeleteAction` opens
   // its ConfirmDialog and, on confirm, runs the IPC + emits the success
@@ -556,18 +565,12 @@ export function PageHeader({
               onKeyUp={handleTitleKeyUp}
             />
             {onEditModeChange && (
-              <ToggleGroup
-                type="single"
-                value={editMode ?? 'blocks'}
-                onValueChange={(mode) => {
-                  // Radix reports '' when the pressed item is pressed again.
-                  if (mode === 'blocks' || mode === 'page') onEditModeChange(mode)
-                }}
-                aria-label={t('pageMode.switchLabel')}
-              >
-                <ToggleGroupItem value="blocks">{t('pageMode.blocks')}</ToggleGroupItem>
-                <ToggleGroupItem value="page">{t('pageMode.page')}</ToggleGroupItem>
-              </ToggleGroup>
+              <EditModeSwitch
+                mode={editMode ?? 'blocks'}
+                onChange={onEditModeChange}
+                blocked={editModeBlocked}
+                onIntent={onEditModeIntent}
+              />
             )}
             <PageQuickActions
               pageId={pageId}

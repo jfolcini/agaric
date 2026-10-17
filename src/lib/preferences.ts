@@ -1508,9 +1508,10 @@ const PAGE_SOURCE_DRAFT_PREFERENCE: PreferenceDefinition<PageSourceDraft | null>
 export type EditMode = 'blocks' | 'page'
 
 /**
- * `agaric-edit-mode` — how pages are edited on this device (#5691). Desktop
- * only: touch and the journal's week and stream views always edit blocks.
- * Default `blocks`; anything else on disk reads as it.
+ * `agaric-edit-mode` — Settings › Editor › *Edit pages as*: the mode pages open
+ * in on this device (#5691). A page header's switch changes only the page on
+ * screen. Desktop only: touch and the journal's week and stream views always
+ * edit blocks. Default `blocks`; anything else on disk reads as it.
  */
 const EDIT_MODE_PREFERENCE: PreferenceDefinition<EditMode> = {
   key: 'agaric-edit-mode',

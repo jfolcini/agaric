@@ -11,13 +11,15 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { parse } from '@/editor/markdown-serializer'
 import type { BlockLevelNode } from '@/editor/types'
 import {
+  computeDedentedBlocks,
   computeIndentedBlocks,
   findPrevSiblingAt,
+  indentTooDeep,
   isNonEmptyBlock,
   planSplit,
 } from '@/lib/block-tree-ops'
 import { logger } from '@/lib/logger'
-import type { FlatBlock } from '@/lib/tree-utils'
+import { type FlatBlock, MAX_BLOCK_DEPTH } from '@/lib/tree-utils'
 
 // Wraps the real `parse` in a spy (delegating by default) so ONE test below
 // can force a content-less `{ type: 'doc' }` return — #3274 fixed the only
@@ -473,5 +475,76 @@ describe('computeIndentedBlocks', () => {
     // ['Y', 'X'].
     expect(result.map((b) => b.id)).toEqual(['X', 'Y'])
     expect(result[0]?.parent_id).toBe('GHOST')
+  })
+})
+
+/** A flat tree from `[id, depth]` pairs, parents from depth. */
+function tree(rows: ReadonlyArray<[string, number]>) {
+  const atDepth: string[] = []
+  return rows.map(([id, depth]) => {
+    atDepth[depth] = id
+    return { id, depth, parent_id: depth === 0 ? null : (atDepth[depth - 1] as string) }
+  })
+}
+
+describe('computeDedentedBlocks', () => {
+  it('moves the block and its subtree out to right after its parent’s subtree (#400)', () => {
+    const blocks = tree([
+      ['A', 0],
+      ['B', 1],
+      ['B1', 2],
+      ['C', 1],
+      ['C1', 2],
+      ['D', 0],
+    ])
+
+    const out = computeDedentedBlocks(blocks, 'B', 'A', null)
+
+    expect(out.map((b) => [b.id, b.depth, b.parent_id])).toEqual([
+      ['A', 0, null],
+      ['C', 1, 'A'],
+      ['C1', 2, 'C'],
+      ['B', 0, null],
+      ['B1', 1, 'B'],
+      ['D', 0, null],
+    ])
+  })
+
+  it('leaves a block that is its parent’s last child where it is, a level up', () => {
+    const blocks = tree([
+      ['A', 0],
+      ['B', 1],
+    ])
+
+    expect(computeDedentedBlocks(blocks, 'B', 'A', null).map((b) => [b.id, b.depth])).toEqual([
+      ['A', 0],
+      ['B', 0],
+    ])
+  })
+})
+
+describe('indentTooDeep', () => {
+  it('is true only when the deepest block under the indented one would pass MAX_BLOCK_DEPTH', () => {
+    const chain = tree(
+      Array.from({ length: MAX_BLOCK_DEPTH - 1 }, (_, depth): [string, number] => [
+        `N${depth}`,
+        depth,
+      ]),
+    )
+    const sibling = { id: 'S', depth: 0, parent_id: null }
+    const blocks = [sibling, ...chain]
+
+    expect(indentTooDeep(blocks, 'N0', sibling)).toBe(false)
+    const deeper = [
+      ...blocks,
+      { id: 'X', depth: MAX_BLOCK_DEPTH - 1, parent_id: `N${MAX_BLOCK_DEPTH - 2}` },
+    ]
+    expect(indentTooDeep(deeper, 'N0', sibling)).toBe(true)
+  })
+
+  it('is false for a block it cannot find', () => {
+    expect(indentTooDeep(tree([['A', 0]]), 'missing', { id: 'A', depth: 0, parent_id: null })).toBe(
+      false,
+    )
   })
 })
