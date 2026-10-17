@@ -334,7 +334,7 @@ jobs:
         # session, which is the only one of the two that fires when the app
         # never boots and no test ever runs.
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-tauri-logs
           path: |
@@ -351,7 +351,7 @@ jobs:
         # page-source/testid/URL/sidebar excerpts are logged to stdout (captured
         # in the run log). SHA pinned byte-identical to the logs step above.
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-tauri-diagnostics
           path: e2e-tauri/artifacts/
