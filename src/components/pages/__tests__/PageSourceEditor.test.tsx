@@ -26,6 +26,7 @@ import { PageSourceEditor, refusedLine } from '@/components/pages/PageSourceEdit
 import { readLines, type SourceLines } from '@/editor/source-buffer'
 import type { PageBuffer } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { diffLines } from '@/lib/line-diff'
 import { logger } from '@/lib/logger'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { dispatch } from '@/lib/tauri-mock/handlers'
@@ -36,6 +37,12 @@ import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
+
+// The real diff, counted: the Changes view's laziness is how often it runs.
+vi.mock('@/lib/line-diff', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/line-diff')>()
+  return { ...actual, diffLines: vi.fn(actual.diffLines) }
+})
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -1192,6 +1199,46 @@ describe('PageSourceEditor Edit, Preview and Changes', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
     expect(pageBuffer(PAGE_GETTING_STARTED).text).toBe(
       base.text.replace(WELCOME, '- Welcome to **Agaric**!'),
+    )
+  })
+
+  it('diffs the text once typing pauses, not on each edit of the burst', async () => {
+    renderEditor()
+    const box = await loadedEditor()
+    const diffed = vi.mocked(diffLines).mock.calls.length
+
+    edit(box, 'first', 'first x')
+    edit(box, 'first x', 'first xy')
+    edit(box, 'first xy', 'first xyz')
+    expect(vi.mocked(diffLines)).toHaveBeenCalledTimes(diffed)
+
+    await waitFor(() => expect(saveButton()).toHaveAccessibleName('Save (1 change)'))
+    expect(vi.mocked(diffLines)).toHaveBeenCalledTimes(diffed + 1)
+  })
+
+  it('Changes opened before typing pauses shows the text as it is now', async () => {
+    renderEditor()
+    const box = await loadedEditor()
+    edit(box, 'second', 'second edited')
+
+    fireEvent.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+
+    const changes = screen.getByRole('region', { name: t('pageSource.changes') })
+    expect([...changes.querySelectorAll('mark')].map((mark) => mark.textContent)).toEqual([
+      'edited',
+    ])
+  })
+
+  it('a restored draft counts its hunks and shows them in Changes before anything is typed', async () => {
+    const draft = { base: BUFFER, text: '- first\n- second edited\n', lineIds: BUFFER.line_ids }
+    localStorage.setItem(draftKey(), JSON.stringify(draft))
+    renderEditor()
+    await loadedEditor()
+
+    expect(saveButton()).toHaveAccessibleName('Save (1 change)')
+    fireEvent.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+    expect(screen.getByRole('region', { name: t('pageSource.changes') })).toHaveTextContent(
+      `${t('pageSource.changeAdded')} - second edited`,
     )
   })
 

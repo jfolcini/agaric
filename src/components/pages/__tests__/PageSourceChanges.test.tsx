@@ -39,6 +39,25 @@ describe('PageSourceChanges', () => {
     expect(container.querySelectorAll('mark')[1]).toHaveClass('underline')
   })
 
+  it('shows a Windows page edited line by line, a line break dropped, and a page emptied or filled', () => {
+    const removed = t('pageSource.changeRemoved')
+    const added = t('pageSource.changeAdded')
+    const texts = (before: string, after: string): string[] =>
+      rows(render(<PageSourceChanges diff={diffLines(before, after)} />).container).map(
+        ([, text]) => text,
+      )
+
+    expect(texts('- one\r\n- two\r\n', '- one\r\n- 2\r\n')).toEqual([
+      '- one',
+      `${removed} - two`,
+      `${added} - 2`,
+      '',
+    ])
+    expect(texts('- one\n', '- one')).toEqual(['- one', `${removed} `])
+    expect(texts('- one\n- two\n', '')).toEqual([`${removed} - one`, `${removed} - two`, ''])
+    expect(texts('', '- one')).toEqual([`${removed} `, `${added} - one`])
+  })
+
   it('folds a long unchanged run to the lines either side of each hunk', () => {
     const page = Array.from({ length: 20 }, (_, i) => `- line ${i}`)
     const { container } = render(
