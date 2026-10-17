@@ -6,6 +6,7 @@ import {
   focusBlockById,
   openPage,
   reopenPage,
+  replaceEditorText,
   saveBlock,
   selectEditorRange,
   test,
@@ -28,8 +29,10 @@ function staticBlock(page: Page, blockId: string) {
   return page.locator(`[data-testid="block-static"][data-block-id="${blockId}"]`)
 }
 
-function editorOf(page: Page) {
-  return page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+function editorOf(page: Page, blockId: string) {
+  return page.locator(
+    `[data-testid="block-editor"][data-block-id="${blockId}"] [contenteditable="true"]`,
+  )
 }
 
 test.describe('Editor keyboard chords (#5733)', () => {
@@ -42,8 +45,7 @@ test.describe('Editor keyboard chords (#5733)', () => {
     page,
   }) => {
     const editor = await focusBlockById(page, GS1)
-    await page.keyboard.press('Control+a')
-    await page.keyboard.insertText('one two three')
+    await replaceEditorText(page, 'one two three')
     await expect(editor).toHaveText('one two three')
 
     await selectEditorRange(page, 0, 3)
@@ -51,7 +53,11 @@ test.describe('Editor keyboard chords (#5733)', () => {
     await selectEditorRange(page, 4, 7)
     await page.keyboard.press('Control+Shift+H')
     await selectEditorRange(page, 8, 13)
+    // Chromium underlines on Ctrl+U natively when no handler takes it, so the
+    // <u> checks pin the outcome and its persistence, not the app's binding.
     await page.keyboard.press('Control+u')
+    await expect(editor.locator('s')).toHaveText('one')
+    await expect(editor.locator('mark')).toHaveText('two')
     await expect(editor.locator('u')).toHaveText('three')
 
     await blurEditors(page)
@@ -66,18 +72,19 @@ test.describe('Editor keyboard chords (#5733)', () => {
     const rows = page.locator('[data-testid="sortable-block"]')
     await expect(rows).toHaveCount(5)
     await focusBlockById(page, GS3)
+    // Enter at the end of GS_3 makes an empty sibling below it.
     await saveBlock(page)
     await expect(rows).toHaveCount(6)
-    const editor = editorOf(page)
-    await expect(editor).toBeFocused()
-    await expect(editor).toHaveText('')
+    const empty = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+    await expect(empty).toBeFocused()
+    await expect(empty).toHaveText('')
 
     await page.keyboard.press('Control+Backspace')
 
     await expect(rows).toHaveCount(5)
-    await expect(page.locator(`[data-testid="block-editor"][data-block-id="${GS3}"]`)).toBeVisible()
-    await expect(editor).toBeFocused()
+    await expect(editorOf(page, GS3)).toBeFocused()
 
+    // The removal is optimistic; the reopen shows the backend deleted the row too.
     await blurEditors(page)
     await reopenPage(page, PAGE)
     await expect(rows).toHaveCount(5)
@@ -91,8 +98,7 @@ test.describe('Editor keyboard chords (#5733)', () => {
     const rows = page.locator('[data-testid="sortable-block"]')
     await expect(rows).toHaveCount(5)
     const editor = await focusBlockById(page, GS1)
-    await page.keyboard.press('Control+a')
-    await page.keyboard.press('Delete')
+    await replaceEditorText(page, '')
     await expect(editor).toHaveText('')
     await page.evaluate(() => navigator.clipboard.writeText('# Plan\n- first step'))
     await expect(editor).toBeFocused()
@@ -105,5 +111,6 @@ test.describe('Editor keyboard chords (#5733)', () => {
     await reopenPage(page, PAGE)
     await expect(rows).toHaveCount(5)
     await expect(staticBlock(page, GS1)).toHaveText('# Plan- first step')
+    await expect(staticBlock(page, GS1).locator('br')).toHaveCount(1)
   })
 })
