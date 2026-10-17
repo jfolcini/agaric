@@ -101,6 +101,22 @@ describe('Agaric real-backend block refs to a page-mode edit (#5691)', () => {
     const chip = row(REF).$('[data-testid="block-ref-chip"]')
     await chip.waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await chip.getAttribute('class')).not.toContain('block-ref-deleted')
-    expect(await chip.getText()).toContain(TARGET)
+    // DOM text: WebKitGTK's getText() reads "" from the chip's clipped label.
+    let labels: string[] = []
+    await browser
+      .waitUntil(
+        async () => {
+          labels = await browser.execute(
+            (selector: string) =>
+              [...document.querySelectorAll(selector)].map((el) => el.textContent ?? ''),
+            '[data-testid="sortable-block"] [data-testid="block-ref-chip"]',
+          )
+          return labels.length === 1 && labels[0] === `${TARGET} edited`
+        },
+        { timeout: ACTION_TIMEOUT },
+      )
+      .catch(() => {
+        throw new Error(`the page's ref chips read ${JSON.stringify(labels)}`)
+      })
   })
 })
