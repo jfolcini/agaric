@@ -249,6 +249,7 @@ interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
   onToggleCollapse?: ((blockId: string) => void) | undefined
   onToggleTodo?: ((blockId: string) => void) | undefined
   onTogglePriority?: ((blockId: string) => void) | undefined
+  onShowProperties?: ((blockId: string) => void) | undefined
   onNavigate?: ((id: string) => void) | undefined
   onToggleAttachments: () => void
   onEditProp: (prop: { key: string; value: string }) => void
@@ -289,6 +290,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
     onToggleCollapse,
     onToggleTodo,
     onTogglePriority,
+    onShowProperties,
     onNavigate,
     onToggleAttachments,
     onEditProp,
@@ -434,6 +436,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
           onToggleAttachments={onToggleAttachments}
           onEditProp={onEditProp}
           onEditKey={onEditKey}
+          onShowProperties={onShowProperties}
         />
       </div>
 
@@ -515,6 +518,7 @@ function SortableBlockInner({
     onToggleCollapse,
     onToggleTodo,
     onTogglePriority,
+    onShowProperties,
     onSelect,
   } = actions
   // #1018 — the row no longer subscribes to the whole `selectedBlockIds`
@@ -844,6 +848,7 @@ function SortableBlockInner({
         onToggleCollapse={onToggleCollapse}
         onToggleTodo={onToggleTodo}
         onTogglePriority={onTogglePriority}
+        onShowProperties={onShowProperties}
         onNavigate={onNavigate}
         onToggleAttachments={handleToggleAttachments}
         onEditProp={setEditingProp}

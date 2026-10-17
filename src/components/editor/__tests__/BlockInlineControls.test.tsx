@@ -694,44 +694,40 @@ describe('BlockMetadataRow', () => {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
     })
 
-    it('dispatches OPEN_BLOCK_PROPERTIES event on click', async () => {
+    // The pill keeps focus where it was, so it must name its own block rather
+    // than go through the focus-keyed command bus (#5736).
+    it('opens the properties of its own block on click', async () => {
       const user = userEvent.setup()
-      const handler = vi.fn()
-      document.addEventListener('open-block-properties', handler)
+      const onShowProperties = vi.fn()
 
-      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps, onShowProperties }))
       await user.click(screen.getByTestId('property-overflow'))
 
-      expect(handler).toHaveBeenCalledOnce()
-      document.removeEventListener('open-block-properties', handler)
+      expect(onShowProperties).toHaveBeenCalledExactlyOnceWith('BLOCK_1')
     })
 
-    it('dispatches OPEN_BLOCK_PROPERTIES when activated with Enter', async () => {
+    it('opens the properties of its own block when activated with Enter', async () => {
       const user = userEvent.setup()
-      const handler = vi.fn()
-      document.addEventListener('open-block-properties', handler)
+      const onShowProperties = vi.fn()
 
-      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps, onShowProperties }))
       const overflow = screen.getByTestId('property-overflow')
       overflow.focus()
       await user.keyboard('{Enter}')
 
-      expect(handler).toHaveBeenCalledOnce()
-      document.removeEventListener('open-block-properties', handler)
+      expect(onShowProperties).toHaveBeenCalledExactlyOnceWith('BLOCK_1')
     })
 
-    it('dispatches OPEN_BLOCK_PROPERTIES when activated with Space', async () => {
+    it('opens the properties of its own block when activated with Space', async () => {
       const user = userEvent.setup()
-      const handler = vi.fn()
-      document.addEventListener('open-block-properties', handler)
+      const onShowProperties = vi.fn()
 
-      renderMetadata(makeMetaProps({ filteredProperties: fourProps }))
+      renderMetadata(makeMetaProps({ filteredProperties: fourProps, onShowProperties }))
       const overflow = screen.getByTestId('property-overflow')
       overflow.focus()
       await user.keyboard(' ')
 
-      expect(handler).toHaveBeenCalledOnce()
-      document.removeEventListener('open-block-properties', handler)
+      expect(onShowProperties).toHaveBeenCalledExactlyOnceWith('BLOCK_1')
     })
 
     it('wraps the button in a Tooltip trigger', () => {
@@ -1078,10 +1074,9 @@ describe('BlockInlineControls focus retention (#1498)', () => {
     expect(onToggleAttachments).toHaveBeenCalledOnce()
   })
 
-  it('property-overflow: prevents default on mousedown and still dispatches the open event', async () => {
+  it('property-overflow: prevents default on mousedown and still fires onShowProperties', async () => {
     const user = userEvent.setup()
-    const handler = vi.fn()
-    document.addEventListener('open-block-properties', handler)
+    const onShowProperties = vi.fn()
     renderMetadata(
       makeMetaProps({
         filteredProperties: [
@@ -1090,13 +1085,13 @@ describe('BlockInlineControls focus retention (#1498)', () => {
           { key: 'c', value: 'v3' },
           { key: 'd', value: 'v4' },
         ],
+        onShowProperties,
       }),
     )
     const btn = screen.getByTestId('property-overflow')
     fireMouseDownAndAssertPrevented(btn)
     await user.click(btn)
-    expect(handler).toHaveBeenCalledOnce()
-    document.removeEventListener('open-block-properties', handler)
+    expect(onShowProperties).toHaveBeenCalledWith('BLOCK_1')
   })
 
   it('DateChip: prevents default on mousedown and still dispatches its picker event', async () => {
