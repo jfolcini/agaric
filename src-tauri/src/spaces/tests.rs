@@ -1519,3 +1519,147 @@ async fn a_moved_page_keeps_its_task_dates_on_its_peer_4801() {
     mat_a.shutdown();
     mat_b.shutdown();
 }
+
+/// #5712: move a page with children from one space to another on A, then let
+/// B import the two spaces' docs in the given order. The old doc prunes the
+/// subtree (#2907), so B's import of it sees the blocks purged; whichever doc
+/// lands first, B must end with every block live in the new space and engines
+/// that match A's.
+async fn move_page_across_spaces_then_import(old_space_first: bool) {
+    use crate::commands::{
+        create_block_inner, create_page_in_space_inner, create_space_inner,
+        move_blocks_to_space_inner,
+    };
+    use crate::materializer::Materializer;
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    super::bootstrap::bootstrap_spaces(&pool_a, "device-A", &mat_a)
+        .await
+        .unwrap();
+    let old = create_space_inner(&pool_a, "device-A", &mat_a, "Old".into(), None)
+        .await
+        .unwrap();
+    let new = create_space_inner(&pool_a, "device-A", &mat_a, "New".into(), None)
+        .await
+        .unwrap();
+    let page = create_page_in_space_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        None,
+        "Plan".into(),
+        old.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    let mut expected: Vec<(BlockId, &str, Option<BlockId>)> = vec![(page.clone(), "Plan", None)];
+    for (content, parent) in [("first", 0), ("second", 0), ("nested", 1)] {
+        let parent_id = expected[parent].0.clone();
+        let id = create_block_inner(
+            &pool_a,
+            "device-A",
+            &mat_a,
+            "content".into(),
+            content.into(),
+            Some(parent_id.clone()),
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+        expected.push((id, content, Some(parent_id)));
+    }
+    mat_a.flush_background().await.unwrap();
+
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_b = Materializer::new(pool_b.clone());
+    super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
+        .await
+        .unwrap();
+    for space in [&old, &new] {
+        sync_space_a_to_b(&pool_a, &mat_a, space.as_str(), &pool_b, &mat_b).await;
+    }
+    assert_eq!(
+        space_property(&pool_b, page.as_str()).await,
+        Some(old.as_str().to_owned()),
+        "precondition: B holds the page in the old space"
+    );
+
+    move_blocks_to_space_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        vec![page.clone()],
+        new.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    mat_a.flush_background().await.unwrap();
+
+    let order = if old_space_first {
+        [&old, &new]
+    } else {
+        [&new, &old]
+    };
+    for space in order {
+        sync_space_a_to_b(&pool_a, &mat_a, space.as_str(), &pool_b, &mat_b).await;
+    }
+    mat_b.flush_background().await.unwrap();
+
+    type Row = (String, Option<String>, Option<String>, Option<i64>);
+    for (id, content, parent) in &expected {
+        let row: Option<Row> = sqlx::query_as(
+            "SELECT content, parent_id, space_id, deleted_at FROM blocks WHERE id = ?",
+        )
+        .bind(id.as_str())
+        .fetch_optional(&pool_b)
+        .await
+        .unwrap();
+        assert_eq!(
+            row,
+            Some((
+                (*content).to_owned(),
+                parent.as_ref().map(|p| p.as_str().to_owned()),
+                Some(new.as_str().to_owned()),
+                None,
+            )),
+            "B must hold block {content:?} live in the new space"
+        );
+    }
+    for space in [&old, &new] {
+        let space_id = agaric_store::space::SpaceId::from_trusted(space.as_str());
+        let engine_view = |mat: &Materializer, device: &str| {
+            let mut guard = mat
+                .loro_state()
+                .registry
+                .for_space(&space_id, device)
+                .unwrap();
+            let engine = guard.engine_mut();
+            let mut live = engine.live_block_ids().unwrap();
+            live.sort_unstable();
+            live.iter()
+                .map(|id| engine.read_block(id).unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            engine_view(&mat_b, "device-B"),
+            engine_view(&mat_a, "device-A"),
+            "B's engine for space {space} must match A's"
+        );
+    }
+    mat_a.shutdown();
+    mat_b.shutdown();
+}
+
+/// #5712: B imports the new space's doc, then the old one's prune.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_moved_page_survives_on_its_peer_when_the_new_space_arrives_first_5712() {
+    move_page_across_spaces_then_import(false).await;
+}
+
+/// #5712: B imports the old space's prune, then the new space's doc.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_moved_page_survives_on_its_peer_when_the_old_space_arrives_first_5712() {
+    move_page_across_spaces_then_import(true).await;
+}
