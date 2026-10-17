@@ -7,8 +7,10 @@
 // the backend stores as attachments and rewrites the refs to
 // (`ingest_attachments` in commands/pages/markdown.rs); `.enex` and `.jex` are
 // unpacked in the webview (`parseEnex`, `parseJex`), a Joplin note's title
-// prefixed with its notebook path. The mock stores no bytes and models none of
-// this, so every case asserts what a page shows after a navigation round-trip.
+// prefixed with its notebook path. The mock keeps attachment refs as literal
+// text and models only a subset of the backend's titles and blocks (its
+// `import_markdown` in tauri-mock/handlers/pages.ts), so every case asserts
+// what a page shows after a navigation round-trip.
 //
 // `.enex` and `.jex` are picked as the other import specs pick their files:
 // WebDriver's Element Send Keys on the Data tab's hidden `<input type="file">`.
