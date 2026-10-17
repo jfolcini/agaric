@@ -392,6 +392,36 @@ describe('VoiceNoteDialog', () => {
     })
   })
 
+  describe('where the webview cannot record', () => {
+    beforeEach(() => {
+      vi.stubGlobal('MediaRecorder', { isTypeSupported: () => false })
+    })
+
+    it('says so instead of offering to record', async () => {
+      render(<Harness />)
+      const dialog = await screen.findByTestId('voice-note-dialog')
+      expect(dialog).toHaveTextContent(t('voiceNote.unavailable'))
+      expect(screen.queryByRole('button', { name: t('voiceNote.record') })).not.toBeInTheDocument()
+      expect(getUserMedia).not.toHaveBeenCalled()
+    })
+
+    it('closes from its close button', async () => {
+      const onClose = vi.fn()
+      const user = userEvent.setup()
+      render(<Harness onClose={onClose} />)
+      await user.click(await screen.findByRole('button', { name: t('ui.close') }))
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+
+    it('has no a11y violations', async () => {
+      render(<Harness />)
+      const dialog = await screen.findByTestId('voice-note-dialog')
+      await waitFor(async () => {
+        expect(await axe(dialog)).toHaveNoViolations()
+      })
+    })
+  })
+
   it('has no a11y violations while recording', async () => {
     const user = userEvent.setup()
     render(<Harness />)

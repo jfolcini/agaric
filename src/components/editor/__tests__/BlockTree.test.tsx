@@ -617,7 +617,16 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
+  stubMediaRecorder(true)
 })
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+function stubMediaRecorder(canRecord: boolean): void {
+  vi.stubGlobal('MediaRecorder', { isTypeSupported: () => canRecord })
+}
 
 describe('BlockTree picker wiring', () => {
   it('passes searchTags to useRovingEditor', async () => {
@@ -1556,6 +1565,27 @@ describe('BlockTree slash command wiring', () => {
       'voice',
       'emoji',
     ])
+  })
+
+  it('searchSlashCommands does not offer /voice where the webview cannot record', async () => {
+    stubMediaRecorder(false)
+    addRecentCommand('voice', RECENT_SLASH_PREFIX)
+    try {
+      stubBlockTree({ load_page_subtree: () => emptySubtree })
+      renderBlockTree()
+      await waitFor(() => {
+        expect(capturedSearchSlashCommands).toBeDefined()
+      })
+
+      const empty = await capturedSearchSlashCommands?.('')
+      const typed = await capturedSearchSlashCommands?.('voice')
+
+      expect(empty?.map((r) => r.id)).not.toContain('voice')
+      expect(empty).toHaveLength(34)
+      expect(typed?.map((r) => r.id)).not.toContain('voice')
+    } finally {
+      removePreference(PREFERENCES.recentCommandsSlash, 'SPACE_TEST')
+    }
   })
 
   it('searchSlashCommands leads an empty query with the slash MRU and skips it for a typed query', async () => {

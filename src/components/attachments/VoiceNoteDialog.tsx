@@ -14,6 +14,10 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import {
+  canRecordVoiceNote,
+  supportedRecordingType,
+} from '@/components/attachments/voice-recording'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -33,11 +37,7 @@ import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 
-/**
- * Opus at {@link RECORDING_BITS_PER_SECOND} is about 15 MB an hour. A webview
- * without it (WKWebView records AAC in `audio/mp4`) uses its own default.
- */
-const PREFERRED_RECORDING_TYPE = 'audio/webm;codecs=opus'
+/** Opus at this rate is about 15 MB an hour. */
 const RECORDING_BITS_PER_SECOND = 32_000
 /** How often the recorder hands over a chunk, and so how often the size cap is checked. */
 const CHUNK_INTERVAL_MS = 1000
@@ -103,8 +103,25 @@ export function VoiceNoteDialog({ blockId, onClose }: VoiceNoteDialogProps): Rea
         if (!open) onClose()
       }}
     >
-      <VoiceNoteRecorder blockId={blockId} onClose={onClose} />
+      {canRecordVoiceNote() ? (
+        <VoiceNoteRecorder blockId={blockId} onClose={onClose} />
+      ) : (
+        <VoiceNoteUnavailable />
+      )}
     </Dialog>
+  )
+}
+
+/** Reached by a path other than `/voice`, which is not offered where recording is unsupported. */
+function VoiceNoteUnavailable(): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <DialogContent data-testid="voice-note-dialog" className="sm:max-w-sm">
+      <DialogHeader>
+        <DialogTitle>{t('voiceNote.title')}</DialogTitle>
+        <DialogDescription>{t('voiceNote.unavailable')}</DialogDescription>
+      </DialogHeader>
+    </DialogContent>
   )
 }
 
@@ -178,9 +195,7 @@ function VoiceNoteRecorder({
 
   const beginSession = (stream: MediaStream): Session => {
     const recorder = new MediaRecorder(stream, {
-      ...(MediaRecorder.isTypeSupported(PREFERRED_RECORDING_TYPE)
-        ? { mimeType: PREFERRED_RECORDING_TYPE }
-        : {}),
+      mimeType: supportedRecordingType() ?? '',
       audioBitsPerSecond: RECORDING_BITS_PER_SECOND,
     })
     // oxlint-disable-next-line react/purity -- runs from the Record click, never during render
@@ -201,7 +216,7 @@ function VoiceNoteRecorder({
       releaseMicrophone(stream)
       if (sessionRef.current === session) sessionRef.current = null
       if (session.discarded) return
-      const mimeType = (recorder.mimeType || PREFERRED_RECORDING_TYPE).split(';')[0] ?? ''
+      const mimeType = recorder.mimeType.split(';')[0] ?? ''
       void save({
         blob: new Blob(chunks, { type: mimeType }),
         filename: voiceNoteFilename(startedAt, mimeType),
@@ -219,8 +234,8 @@ function VoiceNoteRecorder({
   }
 
   const startRecording = async () => {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      logger.warn('VoiceNoteDialog', 'getUserMedia or MediaRecorder is unavailable')
+    if (!navigator.mediaDevices?.getUserMedia) {
+      logger.warn('VoiceNoteDialog', 'getUserMedia is unavailable')
       notify.error(t('voiceNote.micUnavailable'))
       return
     }

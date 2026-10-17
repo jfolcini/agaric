@@ -40,6 +40,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
+import { canRecordVoiceNote } from '@/components/attachments/voice-recording'
 import { BlockBatchActionMenu } from '@/components/block-tree/BlockBatchActionMenu'
 import { BlockDndOverlay } from '@/components/block-tree/BlockDndOverlay'
 import { useBlockActionOrchestration } from '@/components/block-tree/use-block-action-orchestration'
@@ -603,7 +604,9 @@ export function BlockTree({
     onCreatePage: resolve.onCreatePage,
     onCreateTag: resolve.onCreateTag,
     searchSlashCommands: (query: string) =>
-      searchSlashCommands(query, getRecentCommands(RECENT_SLASH_PREFIX)),
+      searchSlashCommands(query, getRecentCommands(RECENT_SLASH_PREFIX)).filter(
+        (command) => command.id !== 'voice' || canRecordVoiceNote(),
+      ),
     onSlashCommand: dispatch.thunks.slashCommand,
     onCheckbox: dispatch.thunks.checkbox,
     onListStyle: dispatch.thunks.listStyle,
