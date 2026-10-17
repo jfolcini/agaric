@@ -126,6 +126,17 @@ impl LoroEngine {
     /// v2) and rebuilds the `block_id → TreeID` index — the imported bytes
     /// may have created tree nodes the incremental index never saw.
     pub fn import(&mut self, bytes: &[u8]) -> Result<(), AppError> {
+        if self.import_deferring_index(bytes)? {
+            self.rebuild_index_after_import();
+        }
+        Ok(())
+    }
+    /// The first half of [`Self::import`]: the doc import and its format gates.
+    /// Returns whether the import appended ops, in which case the index is
+    /// stale until [`Self::rebuild_index_after_import`] runs. Boot rehydrate
+    /// runs the halves as separate passes so each is its own boot milestone
+    /// (#5707); nothing may read the engine between them.
+    pub(crate) fn import_deferring_index(&mut self, bytes: &[u8]) -> Result<bool, AppError> {
         // #2036: capture pre-import oplog frontiers for the no-op short-circuit
         // below.
         let before_frontiers = self.doc.oplog_frontiers();
@@ -141,11 +152,14 @@ impl LoroEngine {
         // #2036: no-op short-circuit — if the import appended zero ops (the doc
         // already had everything in `bytes`), the materialised state is
         // unchanged and `self.index` is still current, so the O(N_live)
-        // `rebuild_index` + one-time sibling-order migration scan below are pure
+        // `rebuild_index` + one-time sibling-order migration scan are pure
         // waste. Frontiers compare equal iff nothing was appended to the oplog.
-        if self.doc.oplog_frontiers() == before_frontiers {
-            return Ok(());
-        }
+        Ok(self.doc.oplog_frontiers() != before_frontiers)
+    }
+    /// The second half of [`Self::import`]: rebuild the index and run the
+    /// one-time sibling-order migration. Loro decodes container state lazily,
+    /// so this walk also pays the decode of every live node's meta.
+    pub(crate) fn rebuild_index_after_import(&mut self) {
         self.rebuild_index();
         // A pre-#400 snapshot carries sibling order only in the `position`
         // meta; migrate it onto the fractional index exactly once. The guard (a
@@ -159,7 +173,6 @@ impl LoroEngine {
         // fractional / creation order); the next successful create/move
         // reprojects the affected sibling group (#400, review).
         self.migrate_legacy_sibling_order_best_effort();
-        Ok(())
     }
     /// Import `bytes` into the doc and return the block_ids whose
     /// projected state it changed, in parent-before-child order so the

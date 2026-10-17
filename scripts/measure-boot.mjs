@@ -50,6 +50,8 @@ const MILESTONES = [
   { key: 'logInit', prefix: 'log directory initialized' },
   { key: 'poolsOpen', prefix: 'boot: read pool open' },
   { key: 'identityLoaded', prefix: 'sync endpoint identity loaded' },
+  // The rehydrate in two parts: every snapshot imported, then every block index rebuilt.
+  { key: 'snapshotsImported', prefix: 'loro: imported per-space' },
   { key: 'rehydrated', prefix: 'loro: rehydrated per-space' },
   { key: 'replayEnqueued', prefix: 'replay: enqueuing', optional: true },
   { key: 'replayDone', prefix: 'replay: complete', optional: true },

@@ -188,12 +188,17 @@ pub async fn load_all_space_snapshots(
 /// before any op-apply runs.  Errors per space are logged + continued
 /// — a single corrupt snapshot never blocks the rest of the workspace.
 ///
+/// Every snapshot is imported before any index is rebuilt, and one log line
+/// marks the boundary, so `scripts/measure-boot.mjs` times the two passes
+/// apart (#5707).
+///
 /// Returns the number of engines successfully rehydrated.
 pub async fn rehydrate_registry(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     device_id: &str,
 ) -> usize {
+    let started = std::time::Instant::now();
     let rows = match load_all_space_snapshots(pool).await {
         Ok(r) => r,
         Err(e) => {
@@ -206,7 +211,7 @@ pub async fn rehydrate_registry(
         }
     };
 
-    let mut ok = 0usize;
+    let mut imported = Vec::with_capacity(rows.len());
     for (space_id_str, bytes) in rows {
         let space_id = SpaceId::from_trusted(&space_id_str);
         // #792: derive the engine's PeerID from the registry's current
@@ -224,16 +229,26 @@ pub async fn rehydrate_registry(
                 continue;
             }
         };
-        if let Err(e) = engine.import(&bytes) {
-            tracing::warn!(
+        match engine.import_deferring_index(&bytes) {
+            Ok(needs_index) => imported.push((space_id, engine, needs_index)),
+            Err(e) => tracing::warn!(
                 space_id = %space_id_str,
                 error = %e,
                 "loro:rehydrate_registry: import failed; skipping space",
-            );
-            continue;
+            ),
+        }
+    }
+    tracing::info!(
+        imported_spaces = imported.len(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "loro: imported per-space LoroDoc snapshots from loro_doc_state (index rebuild next)",
+    );
+    let ok = imported.len();
+    for (space_id, mut engine, needs_index) in imported {
+        if needs_index {
+            engine.rebuild_index_after_import();
         }
         registry.install_engine(space_id, engine);
-        ok += 1;
     }
     ok
 }
@@ -899,6 +914,38 @@ mod tests {
         let mut g = registry.for_space(&space_b, "device-1").expect("b");
         let snap = g.engine_mut().read_block("BLOCK_B").unwrap().unwrap();
         assert_eq!(snap.content, "in B");
+    }
+
+    /// #5707: `scripts/measure-boot.mjs` takes the first line with this prefix
+    /// as the end of the import pass, so it is logged once, after every space.
+    #[test]
+    fn rehydrate_registry_logs_the_import_milestone_once_after_every_space_5707() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let (n, logs) = crate::loro::engine::test_log_capture::capture_logs(|| {
+            rt.block_on(async {
+                let (pool, _dir) = fresh_pool().await;
+                for (space, block) in [(SPACE_A, "BLOCK_A"), (SPACE_B, "BLOCK_B")] {
+                    let mut engine = LoroEngine::with_peer_id("device-1").expect("engine");
+                    engine
+                        .apply_create_block(block, "content", "x", None, 0)
+                        .expect("create");
+                    save_snapshot(&pool, &SpaceId::from_trusted(space), &engine)
+                        .await
+                        .expect("save");
+                }
+                rehydrate_registry(&pool, &LoroEngineRegistry::new(), "device-1").await
+            })
+        });
+        assert_eq!(n, 2);
+        let milestones: Vec<&str> = logs
+            .lines()
+            .filter(|l| l.contains("loro: imported per-space"))
+            .collect();
+        assert_eq!(milestones.len(), 1, "{logs}");
+        assert!(milestones[0].contains("imported_spaces=2"), "{logs}");
     }
 
     /// #607 / #779 — `reload_registry_from_db` drops stale engines and
