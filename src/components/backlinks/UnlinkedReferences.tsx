@@ -135,6 +135,9 @@ export function UnlinkedReferences({
   const [sort, setSort] = useState<BacklinkSort | null>(null)
   // The keys only feed the filter builder, which renders while the panel is open.
   const propertyKeys = usePropertyKeysCache(currentSpaceId, !collapsed)
+  // The sort's property definitions load on the first touch of the builder,
+  // not on expand.
+  const [filterBuilderTouched, setFilterBuilderTouched] = useState(false)
   // The page whose panel has neared the viewport. The count is fetched only
   // then, so a page open does not pay for a panel below the fold (#5445).
   const [countRequestedFor, setCountRequestedFor] = useState<string | null>(null)
@@ -496,7 +499,12 @@ export function UnlinkedReferences({
       </div>
 
       {!collapsed && (
-        <div className="unlinked-references-advanced-filters px-2">
+        <div
+          className="unlinked-references-advanced-filters px-2"
+          onFocusCapture={() => setFilterBuilderTouched(true)}
+          // Safari does not focus a button on click, so focus alone misses a mouse press.
+          onPointerDownCapture={() => setFilterBuilderTouched(true)}
+        >
           <BacklinkFilterBuilder
             filters={filters}
             sort={sort}
@@ -505,6 +513,7 @@ export function UnlinkedReferences({
             totalCount={totalCount}
             filteredCount={filteredCount}
             propertyKeys={propertyKeys}
+            loadSortProperties={filterBuilderTouched}
           />
         </div>
       )}

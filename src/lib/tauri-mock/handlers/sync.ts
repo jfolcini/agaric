@@ -391,14 +391,11 @@ export const syncHandlers = {
     const name = validAgentName(a.name)
     const spaceIds = a.spaceIds?.map((id) => id.toUpperCase()) ?? null
     if (spaceIds?.length === 0) {
-      throw agentRejection(
-        'InvalidAgentSpaces',
-        'an agent needs at least one space, or every space',
-      )
+      throw validationRejection('an agent needs at least one space, or every space')
     }
     const dead = spaceIds?.find((id) => !isLiveSpace(id))
     if (dead !== undefined) {
-      throw agentRejection('InvalidAgentSpaces', `space ${dead} does not exist`)
+      throw validationRejection(`space ${dead} does not exist`)
     }
     const folded = foldAsciiUppercase(name)
     if ([...mcpAgents.values()].some((agent) => foldAsciiUppercase(agent.name) === folded)) {

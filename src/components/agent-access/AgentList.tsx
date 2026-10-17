@@ -165,7 +165,7 @@ export function AgentList({ socketPath }: AgentListProps): React.ReactElement {
                   aria-label={t('agentAccess.agents.copyDesktopAria', { name: agent.name })}
                   onClick={() =>
                     void copy(
-                      claudeDesktopConfig(agent.name, agent.token, socketPath),
+                      claudeDesktopConfig(agent, socketPath),
                       'agentAccess.claudeConfigCopied',
                     )
                   }
@@ -178,7 +178,7 @@ export function AgentList({ socketPath }: AgentListProps): React.ReactElement {
                   aria-label={t('agentAccess.agents.copyCodeAria', { name: agent.name })}
                   onClick={() =>
                     void copy(
-                      claudeCodeCommand(agent.name, agent.token, socketPath),
+                      claudeCodeCommand(agent, socketPath),
                       'agentAccess.agents.codeCommandCopied',
                     )
                   }

@@ -50,10 +50,12 @@ vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: () => vi
 const {
   mockEditBlock,
   mockGetPageAliases,
+  mockListPropertyDefs,
   mockListPropertyKeys,
   mockListTagsByPrefix,
   mockListUnlinkedReferences,
 } = vi.hoisted(() => ({
+  mockListPropertyDefs: vi.fn(),
   mockListPropertyKeys: vi.fn(),
   mockListTagsByPrefix: vi.fn(),
   mockListUnlinkedReferences: vi.fn(),
@@ -68,11 +70,14 @@ vi.mock('@/lib/bindings', async () => {
     commands: {
       ...actual.commands,
       listPropertyKeys: mockListPropertyKeys,
-      // The sort's property group; no test here reads it.
-      listPropertyDefs: async () => ({
-        status: 'ok',
-        data: { items: [], next_cursor: null, has_more: false, total_count: null },
-      }),
+      // The sort's property group, counted by the deferred-load test.
+      listPropertyDefs: (...args: unknown[]) => {
+        mockListPropertyDefs(...args)
+        return Promise.resolve({
+          status: 'ok',
+          data: { items: [], next_cursor: null, has_more: false, total_count: null },
+        })
+      },
       listTagsByPrefix: mockListTagsByPrefix,
       listUnlinkedReferences: (...args: unknown[]) =>
         mockListUnlinkedReferences(...args).then((data: unknown) => ({ status: 'ok', data })),
@@ -457,6 +462,23 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
 
       expect(container.querySelector('[data-backlink-item="B3"]')).toHaveClass('border-b-0')
       expect(container.querySelector('[data-backlink-item="B2"]')).not.toHaveClass('border-b-0')
+    })
+  })
+})
+
+describe('UnlinkedReferences — the sort loads property definitions on first touch', () => {
+  it('expanding the panel lists no property definitions until the sort is opened', async () => {
+    const user = userEvent.setup()
+    mockedListUnlinked.mockResolvedValue(makeResponse({ ids: ['B1'], total: 1, filtered: 1 }))
+
+    renderPanel()
+    await expand(user)
+    await screen.findByRole('button', { name: /^Link it:/i })
+    expect(mockListPropertyDefs).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('combobox', { name: 'Sort by' }))
+    await waitFor(() => {
+      expect(mockListPropertyDefs).toHaveBeenCalledTimes(1)
     })
   })
 })

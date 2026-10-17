@@ -1596,8 +1596,8 @@ mod tests {
     // in the args / result envelope.
     //
     // This test iterates over the **live** tool-description
-    // lists exposed by `tools_ro::list_tool_descriptions()` and
-    // `tools_rw::list_tool_descriptions()`, rather than a hand-typed
+    // list exposed by `tools_rw::list_tool_descriptions()` (a superset
+    // of the RO list), rather than a hand-typed
     // sibling list. Adding a new tool to either registry without also
     // adding a `summarise.rs` arm now fails the bare-name fallback
     // assertion below — closing the silent-failure trap where a new
@@ -1730,11 +1730,9 @@ mod tests {
             }
         };
 
-        // Drive iteration from the live registries — the `&self` impls
-        // delegate to these same free fns, so this is the same set of
-        // names served on the wire.
-        let mut all_descriptions = super::super::tools_ro::list_tool_descriptions();
-        all_descriptions.extend(super::super::tools_rw::list_tool_descriptions());
+        // Drive iteration from the live registry. The RW list already
+        // carries every RO tool, so it alone covers both surfaces.
+        let all_descriptions = super::super::tools_rw::list_tool_descriptions();
         assert!(
             !all_descriptions.is_empty(),
             "registry returned zero tools — privacy guard would be vacuous",
