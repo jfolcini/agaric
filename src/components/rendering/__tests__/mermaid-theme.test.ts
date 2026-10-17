@@ -7,19 +7,31 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { mermaidThemeVariables, readDiagramColors } from '@/components/rendering/mermaid-theme'
+import {
+  mermaidThemeCss,
+  mermaidThemeVariables,
+  readDiagramColors,
+} from '@/components/rendering/mermaid-theme'
 
 const TOKENS = {
   '--background': '#fafafa',
   '--muted': '#eeeeee',
   '--foreground': '#111111',
   '--muted-foreground': '#666666',
-  '--accent': '#dddddd',
+  '--border': '#e0e0e0',
+  '--status-pending': '#fff8d0',
+  '--status-pending-foreground': '#806000',
+  '--status-active': '#e0ecff',
+  '--status-active-foreground': '#203070',
+  '--status-done': '#e0f8e8',
+  '--status-done-foreground': '#205030',
+  '--alert-error': '#ffe8e8',
+  '--alert-error-foreground': '#902020',
 }
 
 function fakeContext(): CanvasRenderingContext2D {
   let fill = 'transparent'
-  const pixels = new Uint8ClampedArray(4 * 8)
+  const pixels = new Uint8ClampedArray(4 * 16)
   return {
     get fillStyle() {
       return fill
@@ -59,7 +71,15 @@ describe('readDiagramColors', () => {
       fill: '#eeeeee',
       text: '#111111',
       line: '#666666',
-      note: '#dddddd',
+      grid: '#e0e0e0',
+      note: '#fff8d0',
+      noteLine: '#806000',
+      active: '#e0ecff',
+      activeLine: '#203070',
+      done: '#e0f8e8',
+      doneLine: '#205030',
+      crit: '#ffe8e8',
+      critLine: '#902020',
     })
   })
 
@@ -83,7 +103,15 @@ describe('mermaidThemeVariables', () => {
     fill: '#000002',
     text: '#000003',
     line: '#000004',
-    note: '#000005',
+    grid: '#000005',
+    note: '#000006',
+    noteLine: '#000007',
+    active: '#000008',
+    activeLine: '#000009',
+    done: '#00000a',
+    doneLine: '#00000b',
+    crit: '#00000c',
+    critLine: '#00000d',
   }
 
   it('paints text in the text token on the fill token, and strokes and edges in the line token', () => {
@@ -95,8 +123,66 @@ describe('mermaidThemeVariables', () => {
       primaryTextColor: '#000003',
       primaryBorderColor: '#000004',
       lineColor: '#000004',
-      edgeLabelBackground: '#000001',
-      noteBkgColor: '#000005',
     })
+  })
+
+  it('leaves edge labels and clusters on the canvas, so neither paints a box', () => {
+    const v = mermaidThemeVariables(colors, false, 'Inter')
+    // Mermaid derives `clusterBkg` from `tertiaryColor`.
+    expect(v).toMatchObject({ edgeLabelBackground: '#000001', tertiaryColor: '#000001' })
+  })
+
+  it('gives every filled shape a border of its own stroke token', () => {
+    expect(mermaidThemeVariables(colors, false, 'Inter')).toMatchObject({
+      primaryBorderColor: '#000004',
+      noteBkgColor: '#000006',
+      noteBorderColor: '#000007',
+      taskBkgColor: '#000002',
+      taskBorderColor: '#000004',
+      activeTaskBkgColor: '#000008',
+      activeTaskBorderColor: '#000009',
+      doneTaskBkgColor: '#00000a',
+      doneTaskBorderColor: '#00000b',
+      critBkgColor: '#00000c',
+      critBorderColor: '#00000d',
+    })
+  })
+
+  it('keeps gantt section bands and ER rows on the canvas and fill tokens, never white', () => {
+    expect(mermaidThemeVariables(colors, true, 'Inter')).toMatchObject({
+      sectionBkgColor: '#000002',
+      altSectionBkgColor: '#000001',
+      rowOdd: '#000001',
+      rowEven: '#000002',
+      taskTextColor: '#000003',
+      taskTextLightColor: '#000003',
+    })
+  })
+})
+
+describe('mermaidThemeCss', () => {
+  const css = mermaidThemeCss({
+    background: '#000001',
+    fill: '#000002',
+    text: '#000003',
+    line: '#000004',
+    grid: '#000005',
+    note: '#000006',
+    noteLine: '#000007',
+    active: '#000008',
+    activeLine: '#000009',
+    done: '#00000a',
+    doneLine: '#00000b',
+    crit: '#00000c',
+    critLine: '#00000d',
+  })
+
+  it('puts class-diagram edge labels on the canvas, not the node fill', () => {
+    expect(css).toContain('.labelBkg, .edgeLabel .label span { background-color: #000001; }')
+    expect(css).toContain('.edgeLabel .label rect { fill: #000001; }')
+  })
+
+  it('fills ER zero markers with the canvas, not white', () => {
+    expect(css).toContain('.marker.er circle { fill: #000001; }')
   })
 })

@@ -3,8 +3,9 @@
  * diagram follows every shipped theme instead of only light or dark.
  *
  * Contrast comes from the token pairs the app already relies on: foreground
- * text on the muted node fill, and muted-foreground strokes and edges on the
- * page background.
+ * text on the muted node fill and on the status tints, and muted-foreground or
+ * status-foreground strokes on the page background. Notes and gantt task states
+ * take the status tints, so they read apart from ordinary nodes in every theme.
  */
 
 /** The design tokens a diagram is painted with. */
@@ -13,7 +14,15 @@ const DIAGRAM_TOKENS = {
   fill: '--muted',
   text: '--foreground',
   line: '--muted-foreground',
-  note: '--accent',
+  grid: '--border',
+  note: '--status-pending',
+  noteLine: '--status-pending-foreground',
+  active: '--status-active',
+  activeLine: '--status-active-foreground',
+  done: '--status-done',
+  doneLine: '--status-done-foreground',
+  crit: '--alert-error',
+  critLine: '--alert-error-foreground',
 } as const
 
 export type DiagramColors = Record<keyof typeof DIAGRAM_TOKENS, string>
@@ -84,7 +93,49 @@ export function mermaidThemeVariables(
     tertiaryBorderColor: c.line,
     lineColor: c.line,
     arrowheadColor: c.line,
-    noteBorderColor: c.line,
+    noteBorderColor: c.noteLine,
     activationBorderColor: c.line,
+    // ER attribute rows: the base theme lightens them to plain white.
+    rowOdd: c.background,
+    rowEven: c.fill,
+    ...ganttVariables(c),
   }
+}
+
+/** Gantt hard-codes greys, white and red the base theme never derives from the inputs. */
+function ganttVariables(c: DiagramColors): Record<string, string> {
+  return {
+    // Section bands are drawn at 20% opacity, so these stay a faint stripe.
+    sectionBkgColor: c.fill,
+    sectionBkgColor2: c.fill,
+    altSectionBkgColor: c.background,
+    excludeBkgColor: c.fill,
+    gridColor: c.grid,
+    todayLineColor: c.critLine,
+    taskBkgColor: c.fill,
+    taskBorderColor: c.line,
+    activeTaskBkgColor: c.active,
+    activeTaskBorderColor: c.activeLine,
+    doneTaskBkgColor: c.done,
+    doneTaskBorderColor: c.doneLine,
+    critBkgColor: c.crit,
+    critBorderColor: c.critLine,
+    taskTextColor: c.text,
+    taskTextDarkColor: c.text,
+    taskTextLightColor: c.text,
+    taskTextOutsideColor: c.text,
+    taskTextClickableColor: c.text,
+  }
+}
+
+/**
+ * Rules for what no theme variable reaches. Class diagrams paint edge labels
+ * on the node fill, and ER draws its zero markers with a literal white fill.
+ */
+export function mermaidThemeCss(c: DiagramColors): string {
+  return [
+    `.labelBkg, .edgeLabel .label span { background-color: ${c.background}; }`,
+    `.edgeLabel .label rect { fill: ${c.background}; }`,
+    `.marker.er circle { fill: ${c.background}; }`,
+  ].join('\n')
 }

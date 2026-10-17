@@ -156,7 +156,15 @@ describe('MermaidDiagram', () => {
       fill: '#202020',
       text: '#f0f0f0',
       line: '#a0a0a0',
-      note: '#303030',
+      grid: '#303030',
+      note: '#404030',
+      noteLine: '#e0e0a0',
+      active: '#203040',
+      activeLine: '#a0c0f0',
+      done: '#204030',
+      doneLine: '#a0f0c0',
+      crit: '#402020',
+      critLine: '#f0a0a0',
     })
     mockedRender.mockResolvedValue({
       svg: '<svg><text>X</text></svg>',
@@ -176,6 +184,7 @@ describe('MermaidDiagram', () => {
           primaryTextColor: '#f0f0f0',
           lineColor: '#a0a0a0',
         }),
+        themeCSS: expect.stringContaining('.labelBkg'),
       }),
     )
   })
