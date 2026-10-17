@@ -46,3 +46,11 @@ export const TAB_INDENTS_BLOCKS_KEY = PREFERENCES.tabIndentsBlocks.key
 export function isTabIndentEnabled(): boolean {
   return readPreference(PREFERENCES.tabIndentsBlocks)
 }
+
+/**
+ * Whether the block editor shows Markdown markers around the caret's inline
+ * marks (#5689). Off by default and on any read failure.
+ */
+export function isMarkdownRevealEnabled(): boolean {
+  return readPreference(PREFERENCES.revealMarkdownSyntax)
+}
