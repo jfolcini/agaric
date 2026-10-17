@@ -41,13 +41,15 @@ async function deleteBlockElsewhere(id: string): Promise<void> {
   }, id)
 }
 
-/** Whether block `id` is soft-deleted in the backend. */
-function deletedInBackend(id: string): Promise<boolean> {
+/** `get_block`'s answer for block `id`, which it serves only live: `live`, or its error kind. */
+function getBlockAnswer(id: string): Promise<string> {
   return browser.execute(async (blockId: string) => {
-    const block = (await (window as unknown as Internals).__TAURI_INTERNALS__.invoke('get_block', {
-      blockId,
-    })) as { deleted_at: number | null }
-    return block.deleted_at !== null
+    try {
+      await (window as unknown as Internals).__TAURI_INTERNALS__.invoke('get_block', { blockId })
+      return 'live'
+    } catch (error) {
+      return (error as { kind?: string }).kind ?? String(error)
+    }
   }, id)
 }
 
@@ -90,6 +92,6 @@ describe('Agaric real-backend page mode, a block deleted elsewhere while typed i
       { id: expect.any(String), depth: 0, text: FIRST },
       { id: keptId, depth: 0, text: `${SECOND} ${TYPED}` },
     ])
-    expect(await deletedInBackend(deletedId)).toBe(true)
+    expect(await getBlockAnswer(deletedId)).toBe('not_found')
   })
 })

@@ -31,13 +31,7 @@ import {
   typeMarkerVerified,
   waitForAppReady,
 } from './helpers'
-import {
-  chooseEditMode,
-  pageModeBlocks,
-  pageModeCaret,
-  pageModeIndexOf,
-  typeInPageMode,
-} from './page-mode'
+import { chooseEditMode, pageModeBlocks, pageModeCaret, typeInPageMode } from './page-mode'
 
 const REF = runScopedMarker('wdio-pm-ref')
 const TARGET = runScopedMarker('wdio-pm-target')
@@ -75,13 +69,17 @@ describe('Agaric real-backend block refs to a page-mode edit (#5691)', () => {
     await row(REF).$('[data-testid="block-ref-chip"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
 
     await chooseEditMode('Page')
-    const at = await pageModeIndexOf(TARGET)
+    // By id, not text: the ref's chip shows the target's text in the first block too.
+    const at = (await pageModeBlocks()).findIndex((block) => block.id === targetId)
+    expect(at).toBe(1)
     await pageModeCaret(at, 0)
     await browser.keys(['Enter'])
     await browser.waitUntil(async () => (await pageModeBlocks()).length === at + 2, {
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'Enter never split off a block above the target',
     })
+    // Enter leaves the cursor on the text it moved down; type into the new block above.
+    await pageModeCaret(at, 0)
     await typeInPageMode('x', at, 'x')
     await pageModeCaret(at + 1, 'end')
     await typeInPageMode(' edited', at + 1, `${TARGET} edited`)

@@ -1,4 +1,4 @@
-# Session 2370 — Page mode: one WYSIWYG document per page, saved per block
+# Session 2390 — Page mode: one WYSIWYG document per page, saved per block
 
 #5691, built to the design the maintainer approved on 2026-10-17. Page mode is a per-device setting (Settings › Editor › *Edit pages as*, default Blocks). The page header has a Blocks | Page switch and `Ctrl+Shift+M`. It is hidden on touch.
 
