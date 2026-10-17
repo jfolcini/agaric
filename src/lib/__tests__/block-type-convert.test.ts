@@ -123,6 +123,11 @@ describe('convertBlockContent', () => {
     expect(convertBlockContent('heads up', 'callout')).toBe('> [!INFO] heads up')
   })
 
+  it('converts to the callout variant asked for, and re-types a callout in place', () => {
+    expect(convertBlockContent('heads up', 'callout', 'warning')).toBe('> [!WARNING] heads up')
+    expect(convertBlockContent('> [!INFO] a\n> b', 'callout', 'tip')).toBe('> [!TIP] a\n> b')
+  })
+
   // #4552 slice 2 — `numbered-list` / `bullet-list` no longer add a `1. ` /
   // `- ` markdown marker: list-ness moved to the `listStyle` block property
   // (the caller applies `listStyleForBlockType` + `setListStyle` alongside

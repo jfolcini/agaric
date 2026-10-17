@@ -1,20 +1,16 @@
 /**
- * Tests for CalloutTypeSelector (#215; single-step searchable rework #3001) —
- * the toolbar callout variant picker.
+ * Tests for CalloutTypeSelector (#215, #3001) — the toolbar callout variant list.
  *
- * Covers the single-interaction contract: mouse click selects immediately,
- * typing filters the list (typeahead), ArrowDown+Enter selects by keyboard,
- * Esc closes, and the rendered picker has no a11y violations. Every selection
+ * A short fixed list and no filter box. A pointer press or a keyboard Enter on a row
  * dispatches `insert-callout` with the chosen `{ type }` and calls `onClose`.
  */
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { CalloutTypeSelector } from '@/components/editor-toolbar/CalloutTypeSelector'
-import { t } from '@/lib/i18n'
 
 // #2222: `dispatchBlockCommand` no longer broadcasts a legacy document
 // CustomEvent (the broadcast had zero production listeners; the focus-keyed
@@ -52,16 +48,17 @@ function listenForInsertCallout(): { spy: ReturnType<typeof vi.fn>; cleanup: () 
 describe('CalloutTypeSelector', () => {
   afterEach(() => vi.restoreAllMocks())
 
-  it('renders a button for every callout variant', () => {
+  it('renders a row for every callout variant, in order', () => {
     render(<CalloutTypeSelector onClose={vi.fn()} />)
-    for (const type of TYPES) {
-      expect(screen.getByTestId(`callout-type-${type}`)).toBeInTheDocument()
-    }
+    expect(screen.getAllByRole('button').map((b) => b.dataset['testid'])).toEqual(
+      TYPES.map((type) => `callout-type-${type}`),
+    )
   })
 
-  it('auto-focuses the filter input on open', () => {
+  it('has no search box', () => {
     render(<CalloutTypeSelector onClose={vi.fn()} />)
-    expect(screen.getByRole('textbox', { name: t('toolbar.callout') })).toHaveFocus()
+    expect(screen.getAllByRole('button')).toHaveLength(TYPES.length)
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   })
 
   describe('single-step mouse selection', () => {
@@ -83,75 +80,19 @@ describe('CalloutTypeSelector', () => {
     )
   })
 
-  describe('typeahead filtering', () => {
-    it('narrows the list to matches as the user types', async () => {
-      const user = userEvent.setup()
-      render(<CalloutTypeSelector onClose={vi.fn()} />)
+  it('Enter on a focused row selects it, once', async () => {
+    const user = userEvent.setup()
+    const { spy, cleanup } = listenForInsertCallout()
+    const onClose = vi.fn()
+    render(<CalloutTypeSelector onClose={onClose} />)
 
-      await user.type(screen.getByRole('textbox', { name: t('toolbar.callout') }), 'warn')
+    screen.getByTestId('callout-type-tip').focus()
+    await user.keyboard('{Enter}')
 
-      expect(screen.getByTestId('callout-type-warning')).toBeInTheDocument()
-      expect(screen.queryByTestId('callout-type-info')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('callout-type-note')).not.toBeInTheDocument()
-    })
-
-    it('Enter on a filter that narrows to one row selects it', async () => {
-      const user = userEvent.setup()
-      const { spy, cleanup } = listenForInsertCallout()
-      const onClose = vi.fn()
-      render(<CalloutTypeSelector onClose={onClose} />)
-
-      await user.type(screen.getByRole('textbox', { name: t('toolbar.callout') }), 'error{Enter}')
-
-      expect((spy.mock.calls[0]?.[0] as CustomEvent | undefined)?.detail).toEqual({ type: 'error' })
-      expect(onClose).toHaveBeenCalledOnce()
-      cleanup()
-    })
-  })
-
-  describe('keyboard selection', () => {
-    it('ArrowDown moves the highlight, Enter selects the new focused variant', async () => {
-      const user = userEvent.setup()
-      const { spy, cleanup } = listenForInsertCallout()
-      const onClose = vi.fn()
-      render(<CalloutTypeSelector onClose={onClose} />)
-
-      // Full list order is info, warning, … — index 0 is `info`, ArrowDown → `warning`.
-      await user.type(
-        screen.getByRole('textbox', { name: t('toolbar.callout') }),
-        '{ArrowDown}{Enter}',
-      )
-
-      expect((spy.mock.calls[0]?.[0] as CustomEvent | undefined)?.detail).toEqual({
-        type: 'warning',
-      })
-      expect(onClose).toHaveBeenCalledOnce()
-      cleanup()
-    })
-
-    it('Enter with no navigation selects the first variant', async () => {
-      const user = userEvent.setup()
-      const { spy, cleanup } = listenForInsertCallout()
-      render(<CalloutTypeSelector onClose={vi.fn()} />)
-
-      await user.type(screen.getByRole('textbox', { name: t('toolbar.callout') }), '{Enter}')
-
-      expect((spy.mock.calls[0]?.[0] as CustomEvent | undefined)?.detail).toEqual({ type: 'info' })
-      cleanup()
-    })
-  })
-
-  describe('Esc closing', () => {
-    it('Escape on the filter input closes the picker', () => {
-      const onClose = vi.fn()
-      render(<CalloutTypeSelector onClose={onClose} />)
-
-      fireEvent.keyDown(screen.getByRole('textbox', { name: t('toolbar.callout') }), {
-        key: 'Escape',
-      })
-
-      expect(onClose).toHaveBeenCalledOnce()
-    })
+    expect(spy).toHaveBeenCalledOnce()
+    expect((spy.mock.calls[0]?.[0] as CustomEvent | undefined)?.detail).toEqual({ type: 'tip' })
+    expect(onClose).toHaveBeenCalledOnce()
+    cleanup()
   })
 
   it('has no a11y violations', async () => {

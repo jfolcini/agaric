@@ -1583,6 +1583,95 @@ describe('BlockContextMenu', () => {
     })
   })
 
+  // ── Turn into → Callout → variant ───────────────────────────────────
+  describe('Turn into → Callout variants', () => {
+    const CALLOUT = t('contextMenu.turnIntoType.callout')
+    const VARIANTS = ['info', 'warning', 'tip', 'error', 'note'].map((v) => t(`callout.${v}`))
+
+    function calloutToggle(): HTMLElement {
+      return screen.getByRole('menuitem', { name: CALLOUT })
+    }
+
+    it('Callout is a disclosure whose group lists every variant', () => {
+      renderMenu({ onTurnInto: vi.fn() })
+      fireEvent.click(screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) }))
+
+      const toggle = calloutToggle()
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByRole('group', { name: CALLOUT })).not.toBeInTheDocument()
+
+      fireEvent.click(toggle)
+
+      expect(toggle).toHaveAttribute('aria-expanded', 'true')
+      const group = screen.getByRole('group', { name: CALLOUT })
+      expect(group.id).toBe(toggle.getAttribute('aria-controls'))
+      const rows = within(group).getAllByRole('menuitem')
+      expect(rows.map((r) => r.textContent)).toEqual(VARIANTS)
+      for (const row of rows) expect(row.className).toContain('pl-12')
+    })
+
+    it.each([
+      ['warning', 'paragraph'],
+      ['note', 'callout'],
+    ] as const)(
+      'picking %s converts a %s block to that callout and closes',
+      async (variant, activeBlockType) => {
+        const user = userEvent.setup()
+        const onTurnInto = vi.fn()
+        const { props } = renderMenu({ onTurnInto, activeBlockType })
+        await user.click(
+          screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) }),
+        )
+        await user.click(calloutToggle())
+
+        await user.click(screen.getByRole('menuitem', { name: t(`callout.${variant}`) }))
+
+        expect(onTurnInto).toHaveBeenCalledExactlyOnceWith('BLOCK_01', 'callout', variant)
+        expect(props.onClose).toHaveBeenCalledOnce()
+      },
+    )
+
+    it('on a callout the row stays a toggle, marked current', () => {
+      renderMenu({ onTurnInto: vi.fn(), activeBlockType: 'callout' })
+      fireEvent.click(screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) }))
+
+      const toggle = calloutToggle()
+      expect(toggle.tagName).toBe('BUTTON')
+      expect(toggle).toHaveAttribute('aria-current', 'true')
+      expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    it('Enter on a disclosure keeps focus on it, so ArrowDown walks into what it opened', async () => {
+      const user = userEvent.setup()
+      renderMenu({ onTurnInto: vi.fn() })
+      const turnInto = screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) })
+      async function arrowDownTo(target: () => HTMLElement): Promise<void> {
+        for (let i = 0; i < 30 && document.activeElement !== target(); i++) {
+          await user.keyboard('{ArrowDown}')
+        }
+        expect(target()).toHaveFocus()
+      }
+      await arrowDownTo(() => turnInto)
+
+      await user.keyboard('{Enter}')
+      expect(turnInto).toHaveAttribute('aria-expanded', 'true')
+      expect(turnInto).toHaveFocus()
+
+      await arrowDownTo(calloutToggle)
+      await user.keyboard('{Enter}')
+      expect(calloutToggle()).toHaveFocus()
+      await user.keyboard('{ArrowDown}')
+      expect(screen.getByRole('menuitem', { name: t('callout.info') })).toHaveFocus()
+    })
+
+    it('has no a11y violations with the variants open', async () => {
+      renderMenu({ onTurnInto: vi.fn(), activeBlockType: 'callout' })
+      fireEvent.click(screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) }))
+      fireEvent.click(calloutToggle())
+      expect(await axe(screen.getByRole('menu'))).toHaveNoViolations()
+    })
+  })
+
   // ── "Move & arrange" disclosure (#1109) ─────────────────────────────
   //
   // The low-frequency block-ops (Move up/down, Duplicate, Merge) collapse

@@ -48,8 +48,10 @@ export interface BlockActions {
   onShowProperties?: ((blockId: string) => void) | undefined
   onZoomIn?: ((blockId: string) => void) | undefined
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
-  /** #264 — convert a block to another block type ("Turn into ▸"). */
-  onTurnInto?: ((blockId: string, blockType: BlockTypeToken) => void) | undefined
+  /** #264 — convert a block to another block type ("Turn into ▸"); `calloutType` picks a callout's variant. */
+  onTurnInto?:
+    | ((blockId: string, blockType: BlockTypeToken, calloutType?: string) => void)
+    | undefined
   /**
    * #976 (item 13) — duplicate a block and its subtree, inserting the copy
    * immediately after the original at the same depth. Implemented in BlockTree

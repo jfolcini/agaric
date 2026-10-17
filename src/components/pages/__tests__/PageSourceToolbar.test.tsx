@@ -536,6 +536,27 @@ describe('the block menu', () => {
     ])
   })
 
+  it('Turn into → Callout → Warning writes a warning callout into the buffer', async () => {
+    renderEditor()
+    const ed = await loadedEditor()
+    const user = userEvent.setup()
+    caretAfter(ed, 'Create')
+
+    const menu = await openMenu()
+    await user.click(
+      within(menu).getByRole('menuitem', { name: menuRow(t('contextMenu.turnInto')) }),
+    )
+    await user.click(
+      within(menu).getByRole('menuitem', { name: t('contextMenu.turnIntoType.callout') }),
+    )
+    await user.click(within(menu).getByRole('menuitem', { name: t('callout.warning') }))
+
+    expect(lineOf(ed, 'Create')).toEqual([
+      '- > [!WARNING] Create new blocks by pressing Enter at the end of any block.',
+      GS3,
+    ])
+  })
+
   it('shows none of the rows the buffer leaves out, and no reference to copy for a new block', async () => {
     renderEditor()
     const ed = await loadedEditor()

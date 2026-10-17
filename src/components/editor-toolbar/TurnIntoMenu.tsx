@@ -12,7 +12,7 @@
  *     the popover (one-shot). Divider is appended as the structural INSERT it is
  *     (`INSERT_DIVIDER` — there is no "divider" block type to convert to).
  *  2. Inline variant pickers (#3001) — the `code` and `callout` rows are
- *     DISCLOSURES, not one-shot buttons. Activating one expands its searchable
+ *     DISCLOSURES, not one-shot buttons. Activating one expands its variant
  *     picker in place (`CodeLanguageSelector` / `CalloutTypeSelector`) so the user
  *     picks the block type AND its variant (language / callout kind) in a single
  *     interaction. This replaces the old two-step flow, where turning into a code
@@ -163,8 +163,8 @@ export function TurnIntoMenu({ editor, blockId, onClose }: TurnIntoMenuProps): R
               <Button
                 key={opt.id}
                 role="menuitem"
-                // The panel this opens is a labelled `role="dialog"` (a filter
-                // input + selectable option rows), NOT a `role="menu"` — so it
+                // The panel this opens is a labelled `role="dialog"` (option
+                // rows, plus a filter input for code), NOT a `role="menu"` — so it
                 // advertises `aria-haspopup="dialog"`, matching the real panel
                 // semantics instead of claiming a menu it does not render.
                 aria-haspopup="dialog"

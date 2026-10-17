@@ -32,6 +32,7 @@ export function renderTrailing(item: MenuItem): React.ReactNode {
     return (
       <>
         {hint}
+        {item.active && <Check aria-hidden="true" className="h-3.5 w-3.5 text-accent-foreground" />}
         <Chevron aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
       </>
     )
@@ -69,7 +70,7 @@ export function renderItem(item: MenuItem, ctx: MenuRowContext): React.ReactElem
           // text-align:center, which the flex-1 label span inherits and
           // centers the label text. Force left so labels align under the icons.
           'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm font-medium text-accent-foreground bg-accent/60',
-          item.indented && 'pl-7',
+          item.indented && (item.nested ? 'pl-12' : 'pl-7'),
         )}
       >
         {item.icon}
@@ -97,6 +98,7 @@ export function renderItem(item: MenuItem, ctx: MenuRowContext): React.ReactElem
       {...(item.expanded !== undefined
         ? { 'aria-expanded': item.expanded, 'aria-controls': item.disclosureId }
         : {})}
+      aria-current={item.active ? 'true' : undefined}
       className={cn(
         // #1000 — `focus-ring-visible` is the app-wide keyboard-focus signal
         // (ring, not just bg). `ring-inset` keeps the 3px ring from clipping
@@ -105,7 +107,7 @@ export function renderItem(item: MenuItem, ctx: MenuRowContext): React.ReactElem
         // #1232 — `text-left`: <button> defaults to text-align:center, which
         // the flex-1 label span inherits; force left so labels align left.
         'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-popover-foreground hover:bg-accent hover:text-accent-foreground focus-ring-visible [&:focus-visible]:ring-inset transition-colors touch-target',
-        item.indented && 'pl-7',
+        item.indented && (item.nested ? 'pl-12' : 'pl-7'),
         item.className,
       )}
       onClick={item.action}

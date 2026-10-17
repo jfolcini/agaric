@@ -214,7 +214,11 @@ let capturedOnSelect: ((blockId: string, mode: 'toggle' | 'range') => void) | un
 // (Turn into / Duplicate) exactly as SortableBlock's menu would.
 let capturedBlockActions:
   | {
-      onTurnInto?: (blockId: string, blockType: string) => void | Promise<void>
+      onTurnInto?: (
+        blockId: string,
+        blockType: string,
+        calloutType?: string,
+      ) => void | Promise<void>
       onDuplicate?: (blockId: string) => void
     }
   | undefined
@@ -4132,6 +4136,25 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'b1', toText: 'hello' })
     })
     expect(vi.mocked(setListStyle)).toHaveBeenCalledWith('b1', 'ordered')
+  })
+
+  it('Turn into → Callout → Warning writes a warning callout', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'b1', content: 'hello' })], loading: false })
+    useBlockStore.setState({ focusedBlockId: 'b2' })
+    mockActiveBlockId = 'b2'
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockActions?.onTurnInto).toBeDefined()
+    })
+
+    await act(async () => {
+      await capturedBlockActions?.onTurnInto?.('b1', 'callout', 'warning')
+    })
+
+    await waitFor(() => {
+      expect(pageStore.getState().blocksById.get('b1')?.content).toBe('> [!WARNING] hello')
+    })
   })
 
   it('Turn into a non-list type (h1) clears listStyle (setListStyle none)', async () => {

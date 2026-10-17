@@ -16,7 +16,7 @@
  *    picker starts expanded so re-picking the variant stays one interaction.
  *  - Disclosure rows expose `aria-haspopup="dialog"` / `aria-expanded` /
  *    `aria-controls`, and the panel they open is a labelled `role="dialog"`
- *    (matching the real filter-input + option-list panel — not a `role="menu"`).
+ *    (matching the real option-list panel — not a `role="menu"`).
  *
  * The child pickers are replaced with prop-capturing doubles: this suite is the
  * unit boundary for the menu's own state machine, not the pickers' internals.
@@ -198,8 +198,8 @@ describe('TurnIntoMenu — single-step disclosures (#3001)', () => {
       render(<TurnIntoMenu editor={makeEditor()} onClose={vi.fn()} />)
 
       const row = calloutRow()
-      // The disclosure opens a labelled role="dialog" panel (filter input +
-      // option rows), NOT a menu — so it must advertise haspopup="dialog".
+      // The disclosure opens a labelled role="dialog" panel of option rows,
+      // NOT a menu — so it must advertise haspopup="dialog".
       expect(row).toHaveAttribute('aria-haspopup', 'dialog')
       expect(row).toHaveAttribute('aria-expanded', 'false')
       expect(row).not.toHaveAttribute('aria-controls')

@@ -209,6 +209,14 @@ describe('Turn into', () => {
     ])
   })
 
+  it('writes the callout variant the block menu picked', () => {
+    const ed = build([['- a', A]])
+
+    run(ed, turnInto(block(ed, 0), 'callout', 'note'))
+
+    expect(lines(ed)).toEqual([['- > [!NOTE] a', A]])
+  })
+
   it('escapes a first line out of a fence that would read as a list marker', () => {
     const ed = build([
       ['- ```', A],

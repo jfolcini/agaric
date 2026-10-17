@@ -83,3 +83,6 @@ export const CALLOUT_CONFIG: Record<
     label: 'Note',
   },
 }
+
+/** Every callout variant, in menu order: the toolbar picker and the block menu list these. */
+export const CALLOUT_TYPES: readonly string[] = Object.keys(CALLOUT_CONFIG)

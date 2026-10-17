@@ -803,7 +803,7 @@ export function BlockTree({
   // `convertBlockContent` helper — the same conversion the `/turn` slash
   // command runs, so the logic is not duplicated.
   const handleTurnInto = useCallback(
-    async (blockId: string, blockType: BlockTypeToken) => {
+    async (blockId: string, blockType: BlockTypeToken, calloutType?: string) => {
       // The context menu opens without flushing (its data-editor-portal
       // suppresses the blur persist), so the STORE content of a focused block
       // can lag live typing. Flush the mounted editor first so the conversion
@@ -816,7 +816,7 @@ export function BlockTree({
       if (isLive) handleFlush()
       const current = pageStore.getState().blocksById.get(blockId)
       if (!current) return
-      const newContent = convertBlockContent(current.content ?? '', blockType)
+      const newContent = convertBlockContent(current.content ?? '', blockType, calloutType)
       // #2662 — route through `pageStore.edit()` (same as this hook's own
       // `handleQuerySave` above) instead of a raw `editBlock` IPC call.
       // `edit()` owns the undo-store contract: it resets the redo stack via

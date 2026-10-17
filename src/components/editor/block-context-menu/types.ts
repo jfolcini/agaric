@@ -126,6 +126,11 @@ export interface MenuItem {
    */
   indented?: boolean
   /**
+   * A second indent level: a disclosure inside a disclosure (Turn into → Callout
+   * → its variants). The rows render in their own labelled group.
+   */
+  nested?: boolean
+  /**
    * #1003 — marks a disclosure toggle ("Turn into", #1109 "Move & arrange").
    * When set, the row renders a trailing chevron (right when collapsed, down
    * when expanded) in place of a shortcut hint, and carries `aria-expanded` +
