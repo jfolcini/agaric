@@ -22,6 +22,35 @@ async fn fresh_pool() -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 
+/// #5712: the ids `sync_deferred_purges` holds, sorted.
+async fn deferred_purge_ids(pool: &SqlitePool) -> Vec<String> {
+    sqlx::query_scalar("SELECT block_id FROM sync_deferred_purges ORDER BY block_id")
+        .fetch_all(pool)
+        .await
+        .expect("read sync_deferred_purges")
+}
+
+/// #5712: how many `blocks` rows each of `ids` has.
+async fn block_counts(pool: &SqlitePool, ids: &[&str]) -> Vec<i64> {
+    let mut counts = Vec::with_capacity(ids.len());
+    for id in ids {
+        counts.push(
+            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(pool)
+                .await
+                .expect("count blocks"),
+        );
+    }
+    counts
+}
+
+fn sorted_ids(ids: &[&str]) -> Vec<String> {
+    let mut v: Vec<String> = ids.iter().map(|id| (*id).to_owned()).collect();
+    v.sort();
+    v
+}
+
 /// `prepare_outgoing(None)` → Snapshot variant carrying the full
 /// engine state.  Initial-sync invariant.
 #[tokio::test]
@@ -1332,7 +1361,7 @@ async fn replay_inbox_row_drops_forked_slot_792() {
             .expect("post");
     }
 
-    let (changed, _purged) = replay_inbox_row(
+    let changed = replay_inbox_row(
         &pool,
         &registry_forked,
         "device-F",
@@ -1736,7 +1765,7 @@ async fn replay_inbox_row_drops_unreachable_update_slot_1054() {
     // its oplog_vv has no entry for peer A, so the update's base is
     // unreachable.
     let registry_b = LoroEngineRegistry::new();
-    let (changed, _purged) = replay_inbox_row(
+    let changed = replay_inbox_row(
         &pool,
         &registry_b,
         "device-B",
@@ -1835,7 +1864,7 @@ async fn replay_inbox_row_replays_reachable_update_slot_1054() {
     .await
     .expect("seed slot");
 
-    let (changed, _purged) = replay_inbox_row(
+    let changed = replay_inbox_row(
         &pool,
         &registry_b,
         "device-B",
@@ -1911,7 +1940,7 @@ async fn replay_inbox_row_replays_snapshot_slot_1054() {
 
     // A FRESH replaying engine — a snapshot must import regardless.
     let registry_b = LoroEngineRegistry::new();
-    let (changed, _purged) = replay_inbox_row(
+    let changed = replay_inbox_row(
         &pool,
         &registry_b,
         "device-B",
@@ -2558,15 +2587,18 @@ async fn replay_sync_inbox_is_idempotent_across_two_replays() {
 
 /// #2292 gate: a purge whose SQL Pass-D sweep never committed — the engine
 /// already shows the subtree gone, but the stale SQL child rows survive —
-/// is re-swept on boot from the durable `purged_ids` tombstone. This pins
+/// is re-swept from the durable `purged_ids` tombstone. This pins
 /// the exact gap the pre-#2292 additive fallback misses: on re-import the
 /// engine delta is EMPTY (nothing left to purge), so the purged set can
 /// come ONLY from the tombstone — never from a FORBIDDEN (#779) "SQL minus
 /// engine" reconcile. The post-crash state is constructed directly (no real
 /// crash): full tree in SQL+engine, purge applied to the ENGINE only, an
 /// inbox slot carrying the (no-op-on-replay) bytes + the tombstone.
+///
+/// #5712: boot replay defers the tombstone's ids, and the next completed
+/// pull's sweep purges them.
 #[tokio::test]
-async fn replay_sync_inbox_resweeps_purge_from_tombstone_2292() {
+async fn replay_defers_the_tombstone_to_the_next_pulls_sweep_2292() {
     let (pool, _dir) = fresh_pool().await;
     let space = SpaceId::from_trusted(SPACE_A);
     let page = BLOCK_A;
@@ -2666,10 +2698,22 @@ async fn replay_sync_inbox_resweeps_purge_from_tombstone_2292() {
         .await
         .expect("replay");
     assert_eq!(replayed, 1, "the crashed purge slot must replay");
+    assert_eq!(
+        (
+            block_counts(&pool, &[page, c1, c2]).await,
+            deferred_purge_ids(&pool).await
+        ),
+        (vec![1, 1, 1], sorted_ids(&[page, c1, c2])),
+        "#5712: replay defers the tombstone's ids and deletes nothing"
+    );
 
-    // The stale SQL rows for the whole purged subtree are now swept —
-    // across `blocks` AND the seeded derived table — driven solely by the
-    // tombstone (the re-import's engine delta was empty).
+    // The next completed pull sweeps the stale SQL rows for the whole purged
+    // subtree — across `blocks` AND the seeded derived table — driven solely
+    // by the tombstone (the re-import's engine delta was empty).
+    let swept = sweep_deferred_purges(&pool, &registry_b)
+        .await
+        .expect("sweep");
+    assert_eq!(swept.len(), 3, "the sweep reports the purged subtree");
     for id in [page, c1, c2] {
         let blk: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
             .bind(id)
@@ -2690,6 +2734,11 @@ async fn replay_sync_inbox_resweeps_purge_from_tombstone_2292() {
             "#2292: stale fts row {id} must be swept via the tombstone"
         );
     }
+    assert_eq!(
+        deferred_purge_ids(&pool).await,
+        Vec::<String>::new(),
+        "the sweep clears every deferred row"
+    );
     // The slot is cleared iff the projection committed.
     let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
         .fetch_one(&pool)
@@ -2771,13 +2820,355 @@ async fn replay_keeps_rows_another_space_holds_despite_the_tombstone_5712() {
             .expect("count blocks");
         assert_eq!(n, 1, "{id}'s row must survive: the new space holds it");
     }
+    assert_eq!(
+        deferred_purge_ids(&pool).await,
+        Vec::<String>::new(),
+        "an id another space holds is not deferred"
+    );
 }
 
-/// #2292 happy path: a normal inbound purge apply (Live) sweeps the SQL
-/// subtree AND clears the write-ahead slot on commit. The tombstone written
-/// mid-apply (before the projection tx) is transparent to the success path
-/// — the in-tx slot DELETE clears it for free — so the observable end-state
-/// is identical to the pre-#2292 purge apply (additive).
+// #5712: `P` is a page with child `C`, `T` a tag, and `Q` another page with
+// child `QC` that points at both and outlives them.
+const P_5712: &str = "01HZ5712000000000000000P01";
+const C_5712: &str = "01HZ5712000000000000000C01";
+const T_5712: &str = "01HZ5712000000000000000T01";
+const Q_5712: &str = "01HZ5712000000000000000Q01";
+const QC_5712: &str = "01HZ571200000000000000QC01";
+const SPACE2_5712: &str = "01HZ5712000000000000SPACE2";
+
+/// The rows each table holds that name any of `ids` in a column the purge
+/// DELETE set or a `blocks` cascade keys on, in a fixed table order.
+async fn rows_naming(pool: &SqlitePool, ids: &[&str]) -> Vec<(&'static str, i64)> {
+    const TABLES: [(&str, &str); 11] = [
+        (
+            "blocks",
+            "SELECT COUNT(*) FROM blocks WHERE id IN (SELECT value FROM json_each(?1))",
+        ),
+        (
+            "block_drafts",
+            "SELECT COUNT(*) FROM block_drafts WHERE block_id IN (SELECT value FROM json_each(?1))",
+        ),
+        (
+            "attachments",
+            "SELECT COUNT(*) FROM attachments WHERE block_id IN (SELECT value FROM json_each(?1))",
+        ),
+        (
+            "page_opens",
+            "SELECT COUNT(*) FROM page_opens WHERE page_id IN (SELECT value FROM json_each(?1))",
+        ),
+        (
+            "pages_cache",
+            "SELECT COUNT(*) FROM pages_cache WHERE page_id IN (SELECT value FROM json_each(?1))",
+        ),
+        (
+            "block_properties.value_ref",
+            "SELECT COUNT(*) FROM block_properties WHERE value_ref IN (SELECT value FROM json_each(?1))",
+        ),
+        (
+            "block_links",
+            "SELECT COUNT(*) FROM block_links WHERE target_id IN (SELECT value FROM json_each(?1))",
+        ),
+        (
+            "block_tags",
+            "SELECT COUNT(*) FROM block_tags WHERE tag_id IN (SELECT value FROM json_each(?1))",
+        ),
+        (
+            "block_tag_inherited",
+            "SELECT COUNT(*) FROM block_tag_inherited WHERE tag_id IN (SELECT value FROM json_each(?1))",
+        ),
+        (
+            "block_tag_refs",
+            "SELECT COUNT(*) FROM block_tag_refs WHERE tag_id IN (SELECT value FROM json_each(?1))",
+        ),
+        (
+            "page_link_cache",
+            "SELECT COUNT(*) FROM page_link_cache \
+             WHERE target_page_id IN (SELECT value FROM json_each(?1))",
+        ),
+    ];
+    let ids_json = serde_json::to_string(ids).expect("ids json");
+    let mut counts = Vec::with_capacity(TABLES.len());
+    for (table, sql) in TABLES {
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            .bind(&ids_json)
+            .fetch_one(pool)
+            .await
+            .expect("count rows naming the ids");
+        counts.push((table, n));
+    }
+    counts
+}
+
+/// B holds `P`, `C`, `T`, `Q` and `QC` from A's doc for `SPACE_A`, plus a row
+/// in each of the eleven tables that names `P`, `C` or `T`; then B imports
+/// A's purge of `P` and `T`. Returns B's registry, the engine and SQL that
+/// import left.
+async fn import_a_purge_of_p_and_t(pool: &SqlitePool) -> LoroEngineRegistry {
+    let space = SpaceId::from_trusted(SPACE_A);
+    let mut engine_a = LoroEngine::with_peer_id("device-A").expect("engine");
+    for (id, block_type, content, parent) in [
+        (P_5712, "page", "Plan", None),
+        (C_5712, "content", "step", Some(P_5712)),
+        (T_5712, "tag", "urgent", None),
+        (Q_5712, "page", "Notes", None),
+        (QC_5712, "content", "see the plan", Some(Q_5712)),
+    ] {
+        engine_a
+            .apply_create_block(id, block_type, content, parent, 0)
+            .expect("create");
+    }
+    let vv_before = engine_a.version_vector();
+    let registry_b = LoroEngineRegistry::new();
+    apply_remote(
+        pool,
+        &registry_b,
+        "device-B",
+        LoroSyncMessage::Snapshot {
+            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+            space_id: space.clone(),
+            bytes: engine_a.export_snapshot().expect("snapshot"),
+        },
+    )
+    .await
+    .expect("apply snapshot");
+    for sql in [
+        "INSERT INTO block_drafts (block_id, content, updated_at) VALUES ('01HZ5712000000000000000C01', 'draft', 1)",
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES ('01HZ571200000000000ATTACH1', '01HZ5712000000000000000C01', 'text/plain', 'a.txt', 1, \
+                 'attachments/01HZ571200000000000ATTACH1', 1)",
+        "INSERT INTO page_opens (page_id, opened_ms) VALUES ('01HZ5712000000000000000P01', 7)",
+        "INSERT OR REPLACE INTO pages_cache (page_id, title, updated_at, last_edited_ms) \
+         VALUES ('01HZ5712000000000000000P01', 'Plan', 1, 9)",
+        "INSERT INTO block_properties (block_id, key, value_ref) \
+         VALUES ('01HZ571200000000000000QC01', 'related', '01HZ5712000000000000000P01')",
+        "INSERT INTO block_links (source_id, target_id) \
+         VALUES ('01HZ571200000000000000QC01', '01HZ5712000000000000000P01')",
+        "INSERT INTO block_tags (block_id, tag_id) VALUES ('01HZ5712000000000000000Q01', '01HZ5712000000000000000T01')",
+        "INSERT OR IGNORE INTO block_tag_inherited (block_id, tag_id, inherited_from) \
+         VALUES ('01HZ571200000000000000QC01', '01HZ5712000000000000000T01', '01HZ5712000000000000000Q01')",
+        "INSERT INTO block_tag_refs (source_id, tag_id) \
+         VALUES ('01HZ571200000000000000QC01', '01HZ5712000000000000000T01')",
+        "INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+         VALUES ('01HZ5712000000000000000Q01', '01HZ5712000000000000000P01', 1)",
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| panic!("seed {sql}: {e}"));
+    }
+    assert_eq!(
+        rows_naming(pool, &[P_5712, C_5712, T_5712]).await,
+        ROWS_BEFORE_THE_PURGE_5712,
+        "precondition: every table holds a row naming the purged blocks"
+    );
+
+    engine_a.apply_purge_block(P_5712).expect("purge P");
+    engine_a.apply_purge_block(T_5712).expect("purge T");
+    apply_remote(
+        pool,
+        &registry_b,
+        "device-B",
+        LoroSyncMessage::Update {
+            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+            space_id: space,
+            from_vv: vv_before.clone(),
+            bytes: engine_a
+                .export_update_since(&vv_before)
+                .expect("export purge"),
+        },
+    )
+    .await
+    .expect("apply purge");
+    registry_b
+}
+
+const ROWS_BEFORE_THE_PURGE_5712: [(&str, i64); 11] = [
+    ("blocks", 3),
+    ("block_drafts", 1),
+    ("attachments", 1),
+    ("page_opens", 1),
+    ("pages_cache", 1),
+    ("block_properties.value_ref", 1),
+    ("block_links", 1),
+    ("block_tags", 1),
+    ("block_tag_inherited", 1),
+    ("block_tag_refs", 1),
+    ("page_link_cache", 1),
+];
+
+/// #5712: Pass D records the ids the import purged that no engine holds,
+/// and deletes nothing from any table.
+#[tokio::test]
+async fn pass_d_records_the_unheld_purged_ids_and_deletes_nothing_5712() {
+    let (pool, _dir) = fresh_pool().await;
+    import_a_purge_of_p_and_t(&pool).await;
+    assert_eq!(
+        rows_naming(&pool, &[P_5712, C_5712, T_5712]).await,
+        ROWS_BEFORE_THE_PURGE_5712,
+        "the import deletes no row naming a purged block"
+    );
+    assert_eq!(
+        deferred_purge_ids(&pool).await,
+        sorted_ids(&[P_5712, C_5712, T_5712]),
+        "the import records every purged id"
+    );
+}
+
+/// #5712: the sweep purges the deferred ids no engine holds from every
+/// table, keeps the rows of an id another space's doc claimed in the
+/// meantime, and clears the table.
+#[tokio::test]
+async fn the_sweep_purges_unheld_ids_everywhere_and_keeps_claimed_ones_5712() {
+    let (pool, _dir) = fresh_pool().await;
+    let registry_b = import_a_purge_of_p_and_t(&pool).await;
+    // `T`'s new space's doc lands: its engine holds `T` again.
+    {
+        let mut g = registry_b
+            .for_space(&SpaceId::from_trusted(SPACE2_5712), "device-B")
+            .expect("space 2");
+        g.engine_mut()
+            .apply_create_block(T_5712, "tag", "urgent", None, 0)
+            .expect("claim T");
+    }
+
+    let swept = sweep_deferred_purges(&pool, &registry_b)
+        .await
+        .expect("sweep");
+
+    assert_eq!(
+        swept
+            .iter()
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>(),
+        sorted_ids(&[P_5712, C_5712]),
+        "the sweep purges exactly the unheld ids"
+    );
+    assert_eq!(
+        rows_naming(&pool, &[P_5712, C_5712]).await,
+        ROWS_BEFORE_THE_PURGE_5712.map(|(table, _)| (table, 0)),
+        "no table keeps a row naming a purged block"
+    );
+    assert_eq!(
+        rows_naming(&pool, &[T_5712]).await,
+        [
+            ("blocks", 1),
+            ("block_drafts", 0),
+            ("attachments", 0),
+            ("page_opens", 0),
+            ("pages_cache", 0),
+            ("block_properties.value_ref", 0),
+            ("block_links", 0),
+            ("block_tags", 1),
+            ("block_tag_inherited", 1),
+            ("block_tag_refs", 1),
+            ("page_link_cache", 0),
+        ],
+        "every row naming the claimed tag survives"
+    );
+    assert_eq!(
+        deferred_purge_ids(&pool).await,
+        Vec::<String>::new(),
+        "the sweep clears every row, claimed or purged"
+    );
+}
+
+/// #5712: a sweep with nothing deferred deletes nothing, not even a row no
+/// engine holds (only an import's purge is a reason to delete, #779). A second
+/// sweep finds nothing left to decide, even once the first one's claim lapses:
+/// a later purge of a claimed block reaches SQL through its own import.
+#[tokio::test]
+async fn an_empty_sweep_is_a_no_op_and_a_second_sweep_finds_nothing_5712() {
+    let (pool, _dir) = fresh_pool().await;
+    let orphan = "01HZ5712000000000000ORPHAN";
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'sql only')")
+        .bind(orphan)
+        .execute(&pool)
+        .await
+        .expect("seed a row no engine holds");
+    assert_eq!(
+        sweep_deferred_purges(&pool, &LoroEngineRegistry::new())
+            .await
+            .expect("sweep"),
+        Vec::<agaric_core::ulid::BlockId>::new(),
+        "an empty table sweeps nothing"
+    );
+    assert_eq!(
+        block_counts(&pool, &[orphan]).await,
+        vec![1],
+        "a sweep deletes only what an import deferred"
+    );
+
+    let registry_b = import_a_purge_of_p_and_t(&pool).await;
+    let space2 = SpaceId::from_trusted(SPACE2_5712);
+    registry_b
+        .for_space(&space2, "device-B")
+        .expect("space 2")
+        .engine_mut()
+        .apply_create_block(T_5712, "tag", "urgent", None, 0)
+        .expect("claim T");
+    sweep_deferred_purges(&pool, &registry_b)
+        .await
+        .expect("first sweep");
+    registry_b
+        .for_space(&space2, "device-B")
+        .expect("space 2")
+        .engine_mut()
+        .apply_purge_block(T_5712)
+        .expect("the claim lapses");
+    let after_first = rows_naming(&pool, &[T_5712, Q_5712, QC_5712, orphan]).await;
+    assert_eq!(
+        sweep_deferred_purges(&pool, &registry_b)
+            .await
+            .expect("second sweep"),
+        Vec::<agaric_core::ulid::BlockId>::new(),
+        "the second sweep purges nothing"
+    );
+    assert_eq!(
+        rows_naming(&pool, &[T_5712, Q_5712, QC_5712, orphan]).await,
+        after_first,
+        "the second sweep deletes nothing"
+    );
+}
+
+/// #5712: a local purge of a deferred block takes its row with it, so the
+/// next sweep does not report it.
+#[tokio::test]
+async fn a_local_purge_cascades_the_deferred_row_away_5712() {
+    let (pool, _dir) = fresh_pool().await;
+    let registry_b = import_a_purge_of_p_and_t(&pool).await;
+    {
+        let mut conn = pool.acquire().await.expect("acquire");
+        agaric_engine::materializer::purge_block_sql_cascade(
+            &mut conn,
+            &agaric_store::op::PurgeBlockPayload {
+                block_id: agaric_core::ulid::BlockId::from_trusted(P_5712),
+            },
+        )
+        .await
+        .expect("local purge of P");
+    }
+    assert_eq!(
+        deferred_purge_ids(&pool).await,
+        sorted_ids(&[T_5712]),
+        "the local purge took P's and C's rows"
+    );
+    assert_eq!(
+        sweep_deferred_purges(&pool, &registry_b)
+            .await
+            .expect("sweep")
+            .iter()
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>(),
+        sorted_ids(&[T_5712]),
+        "the sweep reports only what it purged"
+    );
+}
+
+/// #2292 happy path: a normal inbound purge apply (Live) defers the SQL
+/// subtree to the session's sweep (#5712) AND clears the write-ahead slot on
+/// commit. The tombstone written mid-apply (before the projection tx) is
+/// transparent to the success path — the in-tx slot DELETE clears it for
+/// free.
 #[tokio::test]
 async fn apply_remote_purge_clears_slot_and_tombstone_on_commit_2292() {
     let (pool, _dir) = fresh_pool().await;
@@ -2840,7 +3231,20 @@ async fn apply_remote_purge_clears_slot_and_tombstone_on_commit_2292() {
         "purge apply must report Imported, got {outcome:?}"
     );
 
-    // Additive end-state: SQL subtree swept, slot (with its tombstone) gone.
+    // #5712: the import defers the subtree to the session's end.
+    assert_eq!(
+        (
+            block_counts(&pool, &[page, c1, c2]).await,
+            deferred_purge_ids(&pool).await
+        ),
+        (vec![1, 1, 1], sorted_ids(&[page, c1, c2])),
+        "the live import records the purged subtree and deletes nothing"
+    );
+    sweep_deferred_purges(&pool, &registry_b)
+        .await
+        .expect("sweep");
+
+    // End-state: SQL subtree swept, slot (with its tombstone) gone.
     for id in [page, c1, c2] {
         let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
             .bind(id)
@@ -3018,13 +3422,22 @@ async fn apply_remote_purge_writes_tombstone_before_failed_projection_2292() {
         .await
         .expect("drop failure trigger");
 
-    // Boot replay re-sweeps the stale rows FROM THE WRITTEN TOMBSTONE (the
-    // re-import's engine delta is empty) and clears the slot.
+    // Boot replay defers the stale rows FROM THE WRITTEN TOMBSTONE (the
+    // re-import's engine delta is empty) and clears the slot; the next
+    // completed pull sweeps them (#5712).
     let mat = agaric_engine::materializer::Materializer::new(pool.clone());
     let replayed = crate::recovery::replay_sync_inbox(&pool, &registry_b, "device-B", &mat)
         .await
         .expect("replay");
     assert_eq!(replayed, 1, "the crashed purge slot must replay");
+    assert_eq!(
+        deferred_purge_ids(&pool).await,
+        sorted_ids(&[page, c1, c2]),
+        "replay defers the written tombstone's ids"
+    );
+    sweep_deferred_purges(&pool, &registry_b)
+        .await
+        .expect("sweep");
     for id in [page, c1, c2] {
         let blk: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
             .bind(id)
@@ -3422,11 +3835,7 @@ async fn inbound_small_delta_changed_set_bounded_to_touched_block_2264() {
     }
     let outcome = round_trip_update(&pool, &registry_a, &registry_b, &space).await;
     match outcome {
-        ApplyOutcome::Imported {
-            changed_blocks,
-            purged_blocks,
-            ..
-        } => {
+        ApplyOutcome::Imported { changed_blocks, .. } => {
             let changed: Vec<&str> = changed_blocks
                 .iter()
                 .map(agaric_core::ulid::BlockId::as_str)
@@ -3437,7 +3846,6 @@ async fn inbound_small_delta_changed_set_bounded_to_touched_block_2264() {
                 "a one-block content delta must report exactly that block \
                      as changed, not the whole vault (#2264)"
             );
-            assert!(purged_blocks.is_empty(), "content edit purges nothing");
         }
         other => panic!("expected Imported, got {other:?}"),
     }
@@ -3493,12 +3901,10 @@ async fn redelivered_update_is_complete_noop_2264() {
     match second {
         ApplyOutcome::Imported {
             changed_blocks,
-            purged_blocks,
             changed_page_ids,
             ..
         } => {
             assert!(changed_blocks.is_empty(), "redelivery changes nothing");
-            assert!(purged_blocks.is_empty(), "redelivery purges nothing");
             assert!(changed_page_ids.is_empty(), "no page invalidation on no-op");
         }
         other => panic!("expected Imported, got {other:?}"),
@@ -3745,7 +4151,7 @@ async fn replay_projects_slot_even_when_engine_already_has_ops_2264() {
     .await
     .expect("seed surviving slot");
 
-    let (changed, _purged) = replay_inbox_row(
+    let changed = replay_inbox_row(
         &pool,
         &registry_b,
         "device-B",
@@ -4579,7 +4985,7 @@ async fn replay_inbox_row_keeps_the_slot_whose_end_frontier_the_import_never_rea
     let slot_id = seed_slot(&pool, space.as_str(), &blob_b).await;
     let registry = LoroEngineRegistry::new();
 
-    let (changed, purged) = replay_inbox_row(
+    let changed = replay_inbox_row(
         &pool,
         &registry,
         "device-R",
@@ -4591,9 +4997,9 @@ async fn replay_inbox_row_keeps_the_slot_whose_end_frontier_the_import_never_rea
     .await
     .expect("the per-row replay must not fail — poison isolation depends on it");
     assert!(
-        changed.is_empty() && purged.is_empty(),
+        changed.is_empty(),
         "precondition: the orphaned child never settled, so the replay projected \
-         nothing; got changed={changed:?} purged={purged:?}"
+         nothing; got changed={changed:?}"
     );
     assert_eq!(
         block_count_3213(&pool, BLOCK_B).await,

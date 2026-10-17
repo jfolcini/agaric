@@ -15,8 +15,9 @@ use agaric_engine::materializer::Materializer;
 pub trait ApplyHost: Send + Sync + std::fmt::Debug {
     /// The per-space Loro registry the session syncs against.
     fn loro_state(&self) -> Arc<LoroState>;
-    /// Fan out the debounced inbound-sync cache rebuilds for the changed /
-    /// purged blocks of an inbound import.
+    /// Fan out the debounced inbound-sync cache rebuilds for the changed
+    /// blocks of an inbound import, or the blocks a pull session's sweep
+    /// purged.
     async fn enqueue_inbound_sync_rebuilds(
         &self,
         changed_blocks: &[BlockId],

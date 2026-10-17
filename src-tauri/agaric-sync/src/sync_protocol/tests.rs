@@ -3320,8 +3320,9 @@ async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
 ///
 /// A remote `PurgeBlock` removes the seed + its whole subtree from the
 /// sender's engine; the receiver's `import_with_changed_and_purged_blocks`
-/// surfaces those ids as the purged delta so Pass D of `import_and_project`
-/// hard-deletes them from EVERY derived SQL table. Before the #2128 fix the
+/// surfaces those ids as the purged delta, Pass D of `import_and_project`
+/// defers them, and the sweep that ends the pull session (#5712) hard-deletes
+/// them from EVERY derived SQL table. Before the #2128 fix the
 /// purged rows were invisible to the projection loop (it enumerates only the
 /// LIVE tree) and lingered in SQL forever → silent divergence.
 ///
@@ -3552,7 +3553,8 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
         .expect("project purge to A SQL");
     }
 
-    // ── Sync #2 (A → B): the purge, as an incremental Update against B's vv.
+    // ── Sync #2 (A → B): the purge, as an incremental Update against B's vv,
+    // in a session that then ends with its sweep.
     sync_a_to_target(
         &pool_a,
         &registry_a,
@@ -3563,6 +3565,16 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
         "device-B",
     )
     .await;
+    let swept = loro_sync::sweep_deferred_purges(&pool_b, &registry_b)
+        .await
+        .expect("sweep");
+    let mut expected_swept = vec![page, c1, c2];
+    expected_swept.sort_unstable();
+    assert_eq!(
+        swept.iter().map(BlockId::as_str).collect::<Vec<_>>(),
+        expected_swept,
+        "the session's sweep purges exactly the subtree no engine holds"
+    );
 
     // ── ASSERT: B's engine no longer holds the purged subtree; tagblk lives.
     {

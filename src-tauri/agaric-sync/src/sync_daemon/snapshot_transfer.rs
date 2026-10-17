@@ -411,7 +411,6 @@ async fn merge_one_snapshot(
     match loro_sync::apply_remote(pool, engine.registry, engine.device_id, loro_msg).await? {
         ApplyOutcome::Imported {
             changed_blocks,
-            purged_blocks,
             changed_page_ids,
             ..
         } => {
@@ -419,7 +418,7 @@ async fn merge_one_snapshot(
             // queue-closed error must not unwind the catch-up (mirrors the
             // orchestrator's LoroSync arm).
             if let Err(e) = materializer
-                .enqueue_inbound_sync_rebuilds(&changed_blocks, &purged_blocks)
+                .enqueue_inbound_sync_rebuilds(&changed_blocks, &[])
                 .await
             {
                 tracing::warn!(
@@ -439,6 +438,30 @@ async fn merge_one_snapshot(
             )))
         }
     }
+}
+
+/// #5712: the catch-up carried every space's snapshot, so it ends the pull the
+/// way `complete_pull_session` does: the blocks its imports, or the main
+/// loop's before the reset, took out of a doc that no engine holds now are
+/// purged.
+async fn sweep_after_catchup(
+    pool: &SqlitePool,
+    engine: &EngineReloadCtx<'_>,
+    materializer: &dyn ApplyHost,
+    remote_device_id: &str,
+) -> Result<(), AppError> {
+    let swept = loro_sync::sweep_deferred_purges(pool, engine.registry).await?;
+    if let Err(e) = materializer
+        .enqueue_inbound_sync_rebuilds(&[], &swept)
+        .await
+    {
+        tracing::warn!(
+            peer_id = %remote_device_id,
+            error = %e,
+            "loro-snapshot catch-up: failed to enqueue the cache rebuilds for the swept purges"
+        );
+    }
+    Ok(())
 }
 
 /// Await the next snapshot frame of the catch-up.
@@ -539,6 +562,7 @@ async fn receive_loro_snapshot_catchup(
         }
         (loro_msg, is_last) = next_snapshot_frame(recv).await?;
     }
+    sweep_after_catchup(pool, &engine, materializer, remote_device_id).await?;
 
     // #4097: the caller already resolved the identity (session id, else the
     // daemon's authenticated peer identity, logged there). Empty at this point

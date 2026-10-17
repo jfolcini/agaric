@@ -128,8 +128,11 @@ setup = "iroh-no-proxy-windows"
 #   * `conformance_fixtures_match_backend` (#5071) — one test that replays every
 #     conformance fixture through the backend. Its TRY 1 was terminated at the
 #     default 60s window while other builds shared the box, and passed on TRY 2.
+#   * `spaces::move_sync_proptest` (#5712) — each case builds two vaults and
+#     runs several pull sessions between them, and full-suite contention
+#     stretches it toward the default window.
 [[profile.default.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/mock_matches_backend_on_generated_op_chains_4669/) | test(/conformance_fixtures_match_backend/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/mock_matches_backend_on_generated_op_chains_4669/) | test(/conformance_fixtures_match_backend/) | test(/move_sync_proptest::/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 # The weekly deep-checks lane (#4282). `scheduled-deep-checks.yml`'s `bench-slo`
@@ -211,12 +214,13 @@ leak-timeout = "30s"
 # first attempt and lose its coverage: apply_reproject_proptest,
 # replay_streams_all_rows…_1574,
 # issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path,
-# find_lca_terminates_on_any_graph, and
-# n_way_concurrent_mixed_streams_all_to_all_converges (#4474).
+# find_lca_terminates_on_any_graph,
+# n_way_concurrent_mixed_streams_all_to_all_converges (#4474), and
+# move_sync_proptest (#5712).
 # (perf26_draft_recovery dropped in #3612 — see the default-profile note above:
 # it runs in ~0.7s now, so even a 3× coverage build stays far under 30s.)
 [[profile.ci.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/move_sync_proptest::/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 # The SQL-only-fallback / reproject / recompute observability counters

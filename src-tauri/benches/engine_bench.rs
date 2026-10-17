@@ -23,6 +23,8 @@ mod history_bench;
 mod op_log_bench;
 #[path = "groups/soft_delete_bench.rs"]
 mod soft_delete_bench;
+#[path = "groups/sync_import_bench.rs"]
+mod sync_import_bench;
 #[path = "groups/undo_redo.rs"]
 mod undo_redo;
 
@@ -42,4 +44,5 @@ criterion_main!(
     compaction_bench::compact_benches,
     op_log_bench::benches,
     soft_delete_bench::benches,
+    sync_import_bench::benches,
 );

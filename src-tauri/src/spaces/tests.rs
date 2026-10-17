@@ -1520,19 +1520,199 @@ async fn a_moved_page_keeps_its_task_dates_on_its_peer_4801() {
     mat_b.shutdown();
 }
 
-/// #5712: move a page with children from one space to another on A, then let
-/// B import the two spaces' docs in the given order. The old doc prunes the
-/// subtree (#2907), so B's import of it sees the blocks purged; whichever doc
-/// lands first, B must end with every block live in the new space and engines
-/// that match A's.
-async fn move_page_across_spaces_then_import(old_space_first: bool) {
+// ---------------------------------------------------------------------------
+// #5712 — a page moved to another space keeps every row on its peer, whatever
+// order the two spaces' docs arrive in
+// ---------------------------------------------------------------------------
+
+/// Two vaults holding the same content. On A, the page `page` (with `first`
+/// and `second` under it and `nested` under `first`) and the tag `tag` live
+/// in space `old`. The page `notes` stays there and points at both: its block
+/// `note` links to the page, refers to it through the ref property
+/// `related`, mentions the tag inline and carries it, and `note`'s child
+/// inherits the tag. `first` holds an attachment. B also holds rows only B
+/// has on the page: a draft on `first`, an open, and a Last-edited time its
+/// own op log cannot reproduce.
+struct MoveFixture {
+    pool_a: SqlitePool,
+    mat_a: crate::materializer::Materializer,
+    pool_b: SqlitePool,
+    mat_b: crate::materializer::Materializer,
+    old: BlockId,
+    new: BlockId,
+    page: BlockId,
+    first: BlockId,
+    tag: BlockId,
+    note: BlockId,
+    /// The rows only B has, as the fixture left them.
+    b_only: BOnlyRows,
+    _dir_a: TempDir,
+    _dir_b: TempDir,
+}
+
+/// A `blocks` row: id, type, content, parent, space, `deleted_at`.
+type BlockRow = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+);
+
+/// Every row of the tables a purge of a moved block would touch that A and
+/// B must agree on. Positions and timestamps are left out: each device
+/// stamps its own.
+#[derive(Debug, PartialEq)]
+pub(super) struct SharedRows {
+    blocks: Vec<BlockRow>,
+    attachments: Vec<(String, String, String)>,
+    value_refs: Vec<(String, String, String)>,
+    links: Vec<(String, String)>,
+    tags: Vec<(String, String)>,
+    inherited: Vec<(String, String, String)>,
+    tag_refs: Vec<(String, String)>,
+    page_links: Vec<(String, String, i64)>,
+}
+
+/// B's device-local rows: no doc holds them, so nothing brings them back.
+#[derive(Debug, Clone, PartialEq)]
+struct BOnlyRows {
+    drafts: Vec<(String, String)>,
+    opens: Vec<(String, i64)>,
+    last_edited: Vec<(String, i64)>,
+}
+
+impl BOnlyRows {
+    const NONE: Self = Self {
+        drafts: Vec::new(),
+        opens: Vec::new(),
+        last_edited: Vec::new(),
+    };
+}
+
+pub(super) async fn shared_rows(pool: &SqlitePool) -> SharedRows {
+    async fn rows<T>(pool: &SqlitePool, sql: &'static str) -> Vec<T>
+    where
+        T: Send + Unpin + for<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow>,
+    {
+        sqlx::query_as(sql).fetch_all(pool).await.unwrap()
+    }
+    SharedRows {
+        blocks: rows(
+            pool,
+            "SELECT id, block_type, content, parent_id, space_id, deleted_at FROM blocks ORDER BY id",
+        )
+        .await,
+        attachments: rows(
+            pool,
+            "SELECT id, block_id, filename FROM attachments ORDER BY id",
+        )
+        .await,
+        value_refs: rows(
+            pool,
+            "SELECT block_id, key, value_ref FROM block_properties \
+             WHERE value_ref IS NOT NULL ORDER BY block_id, key",
+        )
+        .await,
+        links: rows(
+            pool,
+            "SELECT source_id, target_id FROM block_links ORDER BY source_id, target_id",
+        )
+        .await,
+        tags: rows(
+            pool,
+            "SELECT block_id, tag_id FROM block_tags ORDER BY block_id, tag_id",
+        )
+        .await,
+        inherited: rows(
+            pool,
+            "SELECT block_id, tag_id, inherited_from FROM block_tag_inherited \
+             ORDER BY block_id, tag_id",
+        )
+        .await,
+        tag_refs: rows(
+            pool,
+            "SELECT source_id, tag_id FROM block_tag_refs ORDER BY source_id, tag_id",
+        )
+        .await,
+        page_links: rows(
+            pool,
+            "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache \
+             ORDER BY source_page_id, target_page_id",
+        )
+        .await,
+    }
+}
+
+/// B's device-local rows on the fixture's page and its blocks.
+async fn b_only_rows(pool: &SqlitePool, page: &BlockId) -> BOnlyRows {
+    BOnlyRows {
+        drafts: sqlx::query_as("SELECT block_id, content FROM block_drafts ORDER BY block_id")
+            .fetch_all(pool)
+            .await
+            .unwrap(),
+        opens: sqlx::query_as("SELECT page_id, opened_ms FROM page_opens ORDER BY page_id")
+            .fetch_all(pool)
+            .await
+            .unwrap(),
+        last_edited: sqlx::query_as(
+            "SELECT page_id, last_edited_ms FROM pages_cache WHERE page_id = ?",
+        )
+        .bind(page.as_str())
+        .fetch_all(pool)
+        .await
+        .unwrap(),
+    }
+}
+
+/// The ids B's `sync_deferred_purges` holds, sorted.
+pub(super) async fn deferred_purges(pool: &SqlitePool) -> Vec<String> {
+    sqlx::query_scalar("SELECT block_id FROM sync_deferred_purges ORDER BY block_id")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// Each live block of `space`'s engine, sorted by id.
+fn engine_view(
+    mat: &crate::materializer::Materializer,
+    device: &str,
+    space: &BlockId,
+) -> Vec<Option<agaric_engine::loro::engine::BlockSnapshot>> {
+    let space_id = agaric_store::space::SpaceId::from_trusted(space.as_str());
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space_id, device)
+        .unwrap();
+    let engine = guard.engine_mut();
+    let mut live = engine.live_block_ids().unwrap();
+    live.sort_unstable();
+    live.iter()
+        .map(|id| engine.read_block(id).unwrap())
+        .collect()
+}
+
+/// How a pull session ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionEnd {
+    /// Every doc landed and the session swept, as `complete_pull_session` does.
+    Completed,
+    /// The session stopped before its end: nothing is swept.
+    Interrupted,
+}
+
+async fn move_fixture() -> MoveFixture {
+    use crate::commands::pages::record_page_open_inner;
     use crate::commands::{
-        create_block_inner, create_page_in_space_inner, create_space_inner,
-        move_blocks_to_space_inner,
+        add_attachment_with_bytes_inner, add_tag_inner, create_block_inner,
+        create_block_inner_with_space, create_page_in_space_inner, create_property_def_inner,
+        create_space_inner, set_property_inner,
     };
     use crate::materializer::Materializer;
 
-    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_a, dir_a) = test_pool().await;
     let mat_a = Materializer::new(pool_a.clone());
     super::bootstrap::bootstrap_spaces(&pool_a, "device-A", &mat_a)
         .await
@@ -1543,123 +1723,569 @@ async fn move_page_across_spaces_then_import(old_space_first: bool) {
     let new = create_space_inner(&pool_a, "device-A", &mat_a, "New".into(), None)
         .await
         .unwrap();
-    let page = create_page_in_space_inner(
-        &pool_a,
-        "device-A",
-        &mat_a,
-        None,
-        "Plan".into(),
-        old.as_str().to_owned(),
-    )
-    .await
-    .unwrap();
-    let mut expected: Vec<(BlockId, &str, Option<BlockId>)> = vec![(page.clone(), "Plan", None)];
-    for (content, parent) in [("first", 0), ("second", 0), ("nested", 1)] {
-        let parent_id = expected[parent].0.clone();
-        let id = create_block_inner(
+    let in_old = |content: &str| {
+        create_page_in_space_inner(
+            &pool_a,
+            "device-A",
+            &mat_a,
+            None,
+            content.into(),
+            old.as_str().to_owned(),
+        )
+    };
+    let page = in_old("Plan").await.unwrap();
+    let notes = in_old("Notes").await.unwrap();
+    let child = |parent: &BlockId, content: String| {
+        create_block_inner(
             &pool_a,
             "device-A",
             &mat_a,
             "content".into(),
-            content.into(),
-            Some(parent_id.clone()),
+            content,
+            Some(parent.clone()),
             None,
         )
-        .await
-        .unwrap()
-        .id;
-        expected.push((id, content, Some(parent_id)));
-    }
-    mat_a.flush_background().await.unwrap();
-
-    let (pool_b, _dir_b) = test_pool().await;
-    let mat_b = Materializer::new(pool_b.clone());
-    super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
-        .await
-        .unwrap();
-    for space in [&old, &new] {
-        sync_space_a_to_b(&pool_a, &mat_a, space.as_str(), &pool_b, &mat_b).await;
-    }
-    assert_eq!(
-        space_property(&pool_b, page.as_str()).await,
-        Some(old.as_str().to_owned()),
-        "precondition: B holds the page in the old space"
-    );
-
-    move_blocks_to_space_inner(
+    };
+    let first = child(&page, "first".into()).await.unwrap().id;
+    child(&page, "second".into()).await.unwrap();
+    child(&first, "nested".into()).await.unwrap();
+    let tag = create_block_inner_with_space(
         &pool_a,
         "device-A",
         &mat_a,
-        vec![page.clone()],
-        new.as_str().to_owned(),
+        "tag".into(),
+        "urgent".into(),
+        None,
+        None,
+        &agaric_store::space::SpaceScope::Active(agaric_store::space::SpaceId::from_trusted(
+            old.as_str(),
+        )),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let note = child(&notes, format!("see [[{page}]] #[{tag}]"))
+        .await
+        .unwrap()
+        .id;
+    child(&note, "detail".into()).await.unwrap();
+    add_tag_inner(&pool_a, "device-A", &mat_a, note.clone(), tag.clone())
+        .await
+        .unwrap();
+    create_property_def_inner(&pool_a, "related".into(), "ref".into(), None)
+        .await
+        .unwrap();
+    set_property_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        note.as_str().into(),
+        "related".into(),
+        None,
+        None,
+        None,
+        Some(page.as_str().to_owned()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    add_attachment_with_bytes_inner(
+        &pool_a,
+        "device-A",
+        &mat_a,
+        dir_a.path(),
+        first.clone(),
+        "photo.png".into(),
+        "image/png".into(),
+        b"png bytes".to_vec(),
     )
     .await
     .unwrap();
     mat_a.flush_background().await.unwrap();
 
-    let order = if old_space_first {
-        [&old, &new]
-    } else {
-        [&new, &old]
-    };
-    for space in order {
-        sync_space_a_to_b(&pool_a, &mat_a, space.as_str(), &pool_b, &mat_b).await;
-    }
-    mat_b.flush_background().await.unwrap();
-
-    type Row = (String, Option<String>, Option<String>, Option<i64>);
-    for (id, content, parent) in &expected {
-        let row: Option<Row> = sqlx::query_as(
-            "SELECT content, parent_id, space_id, deleted_at FROM blocks WHERE id = ?",
-        )
-        .bind(id.as_str())
-        .fetch_optional(&pool_b)
+    let (pool_b, dir_b) = test_pool().await;
+    let mat_b = Materializer::new(pool_b.clone());
+    super::bootstrap::bootstrap_spaces(&pool_b, "device-B", &mat_b)
         .await
         .unwrap();
-        assert_eq!(
-            row,
-            Some((
-                (*content).to_owned(),
-                parent.as_ref().map(|p| p.as_str().to_owned()),
-                Some(new.as_str().to_owned()),
-                None,
-            )),
-            "B must hold block {content:?} live in the new space"
-        );
-    }
-    for space in [&old, &new] {
-        let space_id = agaric_store::space::SpaceId::from_trusted(space.as_str());
-        let engine_view = |mat: &Materializer, device: &str| {
-            let mut guard = mat
-                .loro_state()
-                .registry
-                .for_space(&space_id, device)
-                .unwrap();
-            let engine = guard.engine_mut();
-            let mut live = engine.live_block_ids().unwrap();
-            live.sort_unstable();
-            live.iter()
-                .map(|id| engine.read_block(id).unwrap())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            engine_view(&mat_b, "device-B"),
-            engine_view(&mat_a, "device-A"),
-            "B's engine for space {space} must match A's"
-        );
-    }
-    mat_a.shutdown();
-    mat_b.shutdown();
+    create_property_def_inner(&pool_b, "related".into(), "ref".into(), None)
+        .await
+        .unwrap();
+    let mut fx = MoveFixture {
+        pool_a,
+        mat_a,
+        pool_b,
+        mat_b,
+        old,
+        new,
+        page,
+        first,
+        tag,
+        note,
+        b_only: BOnlyRows::NONE,
+        _dir_a: dir_a,
+        _dir_b: dir_b,
+    };
+    let (old, new) = (fx.old.clone(), fx.new.clone());
+    fx.pull(&[&old, &new], SessionEnd::Completed).await;
+    assert_eq!(
+        shared_rows(&fx.pool_b).await,
+        shared_rows(&fx.pool_a).await,
+        "precondition: B holds every row A holds"
+    );
+
+    agaric_engine::draft::save_draft(&fx.pool_b, "device-B", fx.first.as_str(), "unsaved words")
+        .await
+        .unwrap();
+    record_page_open_inner(&fx.pool_b, fx.page.clone())
+        .await
+        .unwrap();
+    // A Last-edited time B's own op log cannot reproduce: the op that set it
+    // came from a peer, or compaction has since taken it.
+    let mut conn = fx.pool_b.acquire().await.unwrap();
+    agaric_store::cache::raise_pages_last_edited_ms(
+        &mut conn,
+        &[(fx.page.as_str(), 4_102_444_800_000)],
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    fx.b_only = b_only_rows(&fx.pool_b, &fx.page).await;
+    assert_eq!(
+        (
+            fx.b_only.drafts.len(),
+            fx.b_only.opens.len(),
+            fx.b_only.last_edited.clone()
+        ),
+        (1, 1, vec![(fx.page.as_str().to_owned(), 4_102_444_800_000)]),
+        "precondition: B holds a draft, an open and a Last-edited time on the page"
+    );
+    fx
 }
 
-/// #5712: B imports the new space's doc, then the old one's prune.
+impl MoveFixture {
+    /// B pulls `spaces`' docs from A in that order, with the cache fan-out
+    /// the session runs after each import, then ends the session.
+    async fn pull(&self, spaces: &[&BlockId], end: SessionEnd) {
+        use agaric_sync::sync_protocol::loro_sync::{ApplyOutcome, apply_remote};
+        for space in spaces {
+            let msg = agaric_sync::sync_protocol::loro_sync::prepare_outgoing_for_pool(
+                &self.pool_a,
+                &self.mat_a.loro_state().registry,
+                &agaric_store::space::SpaceId::from_trusted(space.as_str()),
+                "device-A",
+                None,
+            )
+            .await
+            .unwrap()
+            .expect("#1257 freshness gate must not refuse a consistent engine");
+            let outcome = apply_remote(
+                &self.pool_b,
+                &self.mat_b.loro_state().registry,
+                "device-B",
+                msg,
+            )
+            .await
+            .unwrap();
+            let ApplyOutcome::Imported { changed_blocks, .. } = outcome else {
+                panic!("a snapshot imports, got {outcome:?}");
+            };
+            self.mat_b
+                .enqueue_inbound_sync_rebuilds(&changed_blocks, &[])
+                .await
+                .unwrap();
+        }
+        if end == SessionEnd::Completed {
+            let swept = agaric_sync::sync_protocol::loro_sync::sweep_deferred_purges(
+                &self.pool_b,
+                &self.mat_b.loro_state().registry,
+            )
+            .await
+            .unwrap();
+            self.mat_b
+                .enqueue_inbound_sync_rebuilds(&[], &swept)
+                .await
+                .unwrap();
+        }
+        self.mat_b.flush_inbound_rebuilds().await.unwrap();
+    }
+
+    /// A moves `blocks` to `space`.
+    async fn move_on_a(&self, blocks: &[&BlockId], space: &BlockId) {
+        crate::commands::move_blocks_to_space_inner(
+            &self.pool_a,
+            "device-A",
+            &self.mat_a,
+            blocks.iter().map(|id| (*id).clone()).collect(),
+            space.as_str().to_owned(),
+        )
+        .await
+        .unwrap();
+        self.mat_a.flush_background().await.unwrap();
+    }
+
+    /// A deletes, then purges, `block`.
+    async fn purge_on_a(&self, block: &BlockId) {
+        crate::commands::delete_block_inner(&self.pool_a, "device-A", &self.mat_a, block.clone())
+            .await
+            .unwrap();
+        crate::commands::purge_block_inner(&self.pool_a, "device-A", &self.mat_a, block.clone())
+            .await
+            .unwrap();
+        self.mat_a.flush_background().await.unwrap();
+    }
+
+    /// The fixture's two spaces, `first` first.
+    fn spaces_with_first<'a>(&'a self, first: &'a BlockId) -> [&'a BlockId; 2] {
+        if *first == self.old {
+            [&self.old, &self.new]
+        } else {
+            [&self.new, &self.old]
+        }
+    }
+
+    /// B's rows equal A's, its engines match A's, and nothing waits to be
+    /// swept.
+    async fn assert_b_matches_a(&self, label: &str) {
+        assert_eq!(
+            shared_rows(&self.pool_b).await,
+            shared_rows(&self.pool_a).await,
+            "{label}: B's rows must equal A's"
+        );
+        for space in [&self.old, &self.new] {
+            assert_eq!(
+                engine_view(&self.mat_b, "device-B", space),
+                engine_view(&self.mat_a, "device-A", space),
+                "{label}: B's engine for space {space} must match A's"
+            );
+        }
+        assert_eq!(
+            deferred_purges(&self.pool_b).await,
+            Vec::<String>::new(),
+            "{label}: nothing waits to be swept"
+        );
+    }
+
+    fn shutdown(&self) {
+        self.mat_a.shutdown();
+        self.mat_b.shutdown();
+    }
+}
+
+/// #5712: A moves the page and the tag from `old` to `new`; B pulls both
+/// docs in one session, in the given order. Whichever lands first, B ends
+/// with A's rows and keeps its own.
+async fn a_move_reaches_b_whole(old_space_first: bool) {
+    let fx = move_fixture().await;
+    fx.move_on_a(&[&fx.page, &fx.tag], &fx.new).await;
+    let first = if old_space_first { &fx.old } else { &fx.new };
+    fx.pull(&fx.spaces_with_first(first), SessionEnd::Completed)
+        .await;
+    fx.assert_b_matches_a("move").await;
+    assert_eq!(
+        b_only_rows(&fx.pool_b, &fx.page).await,
+        fx.b_only,
+        "B keeps its own rows on the moved page"
+    );
+    fx.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_moved_page_survives_on_its_peer_when_the_new_space_arrives_first_5712() {
-    move_page_across_spaces_then_import(false).await;
+    a_move_reaches_b_whole(false).await;
 }
 
-/// #5712: B imports the old space's prune, then the new space's doc.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_moved_page_survives_on_its_peer_when_the_old_space_arrives_first_5712() {
-    move_page_across_spaces_then_import(true).await;
+    a_move_reaches_b_whole(true).await;
+}
+
+/// #5712: A moves the page to `new` and back. B pulls in between or not,
+/// and in either order each time; it ends with A's rows and its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_moved_there_and_back_survives_on_its_peer_in_every_order_5712() {
+    for between in [None, Some(true), Some(false)] {
+        for back_departed_first in [true, false] {
+            let label = format!("between {between:?}, back departed-first {back_departed_first}");
+            let fx = move_fixture().await;
+            fx.move_on_a(&[&fx.page], &fx.new).await;
+            if let Some(departed_first) = between {
+                let order = if departed_first {
+                    fx.spaces_with_first(&fx.old)
+                } else {
+                    fx.spaces_with_first(&fx.new)
+                };
+                fx.pull(&order, SessionEnd::Completed).await;
+            }
+            fx.move_on_a(&[&fx.page], &fx.old).await;
+            let order = if back_departed_first {
+                fx.spaces_with_first(&fx.new)
+            } else {
+                fx.spaces_with_first(&fx.old)
+            };
+            fx.pull(&order, SessionEnd::Completed).await;
+            fx.assert_b_matches_a(&label).await;
+            assert_eq!(
+                b_only_rows(&fx.pool_b, &fx.page).await,
+                fx.b_only,
+                "{label}: B keeps its own rows on the page"
+            );
+            fx.shutdown();
+        }
+    }
+}
+
+/// #5712: A moves the page and then purges it, or purges it where it is.
+/// Either way the session that brings B the docs purges it there too, with
+/// B's own rows on it, in both orders. The tag stays put: A's purge rebuilds
+/// A's `block_tag_refs` whole, which drops a tag ref across spaces, while an
+/// inbound import never rebuilds that cache whole (#2667).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_purge_reaches_the_peer_after_a_move_or_without_one_5712() {
+    for move_first in [true, false] {
+        for old_space_first in [true, false] {
+            let label = format!("move first {move_first}, old space first {old_space_first}");
+            let fx = move_fixture().await;
+            if move_first {
+                fx.move_on_a(&[&fx.page], &fx.new).await;
+            }
+            fx.purge_on_a(&fx.page).await;
+            let first = if old_space_first { &fx.old } else { &fx.new };
+            fx.pull(&fx.spaces_with_first(first), SessionEnd::Completed)
+                .await;
+            fx.assert_b_matches_a(&label).await;
+            assert_eq!(
+                b_only_rows(&fx.pool_b, &fx.page).await,
+                BOnlyRows::NONE,
+                "{label}: B's own rows go with the purged page"
+            );
+            fx.shutdown();
+        }
+    }
+}
+
+/// #5712: a session that brings only the old space's doc and stops before
+/// its end deletes nothing; the next one brings the new doc, which claims
+/// every deferred block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_interrupted_session_keeps_the_rows_for_the_next_one_5712() {
+    let fx = move_fixture().await;
+    let before = shared_rows(&fx.pool_b).await;
+    fx.move_on_a(&[&fx.page, &fx.tag], &fx.new).await;
+    fx.pull(&[&fx.old], SessionEnd::Interrupted).await;
+    assert_eq!(
+        (
+            shared_rows(&fx.pool_b).await,
+            b_only_rows(&fx.pool_b, &fx.page).await
+        ),
+        (before, fx.b_only.clone()),
+        "the interrupted session deletes nothing"
+    );
+    assert_eq!(
+        deferred_purges(&fx.pool_b).await.len(),
+        5,
+        "the page, its three blocks and the tag wait for the session's end"
+    );
+    fx.pull(&[&fx.new, &fx.old], SessionEnd::Completed).await;
+    fx.assert_b_matches_a("next session").await;
+    assert_eq!(
+        b_only_rows(&fx.pool_b, &fx.page).await,
+        fx.b_only,
+        "B keeps its own rows on the moved page"
+    );
+    fx.shutdown();
+}
+
+/// #5712, the documented gap: a session that completes with the old space's
+/// doc but not the new one sweeps the moved blocks, as a purge. The new doc
+/// brings the blocks back next time, but not the rows no doc holds: B's own,
+/// and the ones on `notes` that point at the page and the tag.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_without_the_new_doc_sweeps_the_moved_page_5712() {
+    let fx = move_fixture().await;
+    fx.move_on_a(&[&fx.page, &fx.tag], &fx.new).await;
+    fx.pull(&[&fx.old], SessionEnd::Completed).await;
+    let page_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+        .bind(fx.page.as_str())
+        .fetch_one(&fx.pool_b)
+        .await
+        .unwrap();
+    assert_eq!(page_rows, 0, "the sweep took the page");
+
+    fx.pull(&[&fx.new], SessionEnd::Completed).await;
+    let (a, b) = (shared_rows(&fx.pool_a).await, shared_rows(&fx.pool_b).await);
+    assert_eq!(b.blocks, a.blocks, "the new doc brings every block back");
+    let note = fx.note.as_str().to_owned();
+    let (page, tag) = (fx.page.as_str().to_owned(), fx.tag.as_str().to_owned());
+    assert_eq!(
+        (
+            a.value_refs
+                .contains(&(note.clone(), "related".into(), page.clone())),
+            a.links.contains(&(note.clone(), page.clone())),
+            a.tags.contains(&(note.clone(), tag.clone())),
+        ),
+        (true, true, true),
+        "A keeps the rows that point at the page and the tag"
+    );
+    assert_eq!(
+        (
+            b.value_refs
+                .contains(&(note.clone(), "related".into(), page.clone())),
+            b.links.contains(&(note.clone(), page)),
+            b.tags.contains(&(note, tag)),
+        ),
+        (false, false, false),
+        "B lost them: no doc it imported holds them"
+    );
+    assert_eq!(
+        b_only_rows(&fx.pool_b, &fx.page).await.drafts,
+        Vec::<(String, String)>::new(),
+        "B lost its draft"
+    );
+    fx.shutdown();
+}
+
+/// One real QUIC session in which B pulls from A, each side running the
+/// production session code: `run_sync_session` against `handle_incoming_sync`.
+/// Returns B's terminal state.
+async fn pull_over_quic(fx: &MoveFixture) -> agaric_sync::sync_protocol::SyncState {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    use agaric_sync::sync_events::{RecordingEventSink, SyncEventSink};
+
+    let timeout = std::time::Duration::from_secs(30);
+    let harness = agaric_sync::transport::test_support::ServiceHarness::new().await;
+    // A resolves B from the key the QUIC handshake authenticated.
+    agaric_store::peer_refs::upsert_peer_ref(&fx.pool_a, "device-B")
+        .await
+        .unwrap();
+    agaric_store::peer_refs::bind_endpoint_id(
+        &fx.pool_a,
+        "device-B",
+        &harness.client_endpoint.id().to_string(),
+    )
+    .await
+    .unwrap();
+    let service = Arc::clone(&harness.service);
+    let (pool_a, mat_a) = (fx.pool_a.clone(), fx.mat_a.clone());
+    let responder = tokio::spawn(async move {
+        let session = service
+            .accept()
+            .await
+            .expect("the accept loop does not error")
+            .expect("B is admitted")
+            .establish()
+            .await
+            .expect("B opens its stream");
+        agaric_sync::sync_daemon::handle_incoming_sync(
+            session,
+            pool_a,
+            "device-A".into(),
+            Arc::new(mat_a),
+            Arc::new(agaric_sync::sync_scheduler::SyncScheduler::new()),
+            Arc::new(RecordingEventSink::new()),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+    });
+
+    let mut client = harness.dial().await;
+    let mut orch = agaric_sync::sync_protocol::SyncOrchestrator::new(
+        fx.pool_b.clone(),
+        "device-B".into(),
+        Arc::new(fx.mat_b.clone()),
+    )
+    .with_expected_remote_id("device-A".into());
+    let host: Arc<dyn agaric_sync::apply_host::ApplyHost> = Arc::new(fx.mat_b.clone());
+    let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    tokio::time::timeout(
+        timeout,
+        agaric_sync::sync_daemon::run_sync_session(
+            &mut orch,
+            &mut client.send,
+            &mut client.recv,
+            &client.conn,
+            &AtomicBool::new(false),
+            &fx.pool_b,
+            &host,
+            &sink,
+        ),
+    )
+    .await
+    .expect("B's session timed out")
+    .expect("B's session");
+    tokio::time::timeout(timeout, responder)
+        .await
+        .expect("A's session timed out")
+        .expect("A's session panicked")
+        .expect("A's session");
+    orch.session().state.clone()
+}
+
+/// #5712 over a real QUIC session: A moves `page` from `old` to `new` and
+/// `away` from `new` to `old`, and B pulls both moves in one session. A sends
+/// its spaces in `HashMap` order, and whichever comes first is one page's old
+/// doc, so each run puts an old-doc-first import under test.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn crossing_moves_reach_the_peer_whole_over_quic_5712() {
+    use crate::commands::pages::record_page_open_inner;
+    use crate::commands::{create_block_inner, create_page_in_space_inner};
+
+    let fx = move_fixture().await;
+    let away = create_page_in_space_inner(
+        &fx.pool_a,
+        "device-A",
+        &fx.mat_a,
+        None,
+        "Away".into(),
+        fx.new.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    let away_child = create_block_inner(
+        &fx.pool_a,
+        "device-A",
+        &fx.mat_a,
+        "content".into(),
+        "far".into(),
+        Some(away.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    fx.mat_a.flush_background().await.unwrap();
+    fx.pull(&[&fx.new], SessionEnd::Completed).await;
+    agaric_engine::draft::save_draft(&fx.pool_b, "device-B", away_child.as_str(), "far words")
+        .await
+        .unwrap();
+    record_page_open_inner(&fx.pool_b, away.clone())
+        .await
+        .unwrap();
+    let b_only = b_only_rows(&fx.pool_b, &fx.page).await;
+    assert_eq!(
+        (b_only.drafts.len(), b_only.opens.len()),
+        (2, 2),
+        "precondition: B holds a draft and an open on each page"
+    );
+
+    fx.move_on_a(&[&fx.page], &fx.new).await;
+    fx.move_on_a(&[&away], &fx.old).await;
+    assert_eq!(
+        pull_over_quic(&fx).await,
+        agaric_sync::sync_protocol::SyncState::Complete,
+        "B's pull completes"
+    );
+    fx.mat_b.flush_inbound_rebuilds().await.unwrap();
+
+    fx.assert_b_matches_a("crossing moves over QUIC").await;
+    assert_eq!(
+        b_only_rows(&fx.pool_b, &fx.page).await,
+        b_only,
+        "B keeps its own rows on both pages"
+    );
+    fx.shutdown();
 }

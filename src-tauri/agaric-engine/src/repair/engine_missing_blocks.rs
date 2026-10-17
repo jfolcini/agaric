@@ -27,6 +27,10 @@ use crate::loro::shared::LoroState;
 /// A block's space is `resolve_block_space`'s; a space with no engine is
 /// skipped, as no doc is expected to hold its blocks. Returns how many
 /// blocks were missing.
+///
+/// A block in `sync_deferred_purges` is skipped: a sync import took it out
+/// of its doc and the next pull's sweep decides it (#5712). Boot replays the
+/// sync inbox before this runs, so a crashed import's tombstone can be there.
 pub async fn hydrate_engine_missing_blocks(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &LoroState,
@@ -39,7 +43,8 @@ pub async fn hydrate_engine_missing_blocks(
            FROM blocks b
            LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL
            WHERE b.deleted_at IS NULL
-             AND COALESCE(b.space_id, p.space_id) IS NOT NULL"#,
+             AND COALESCE(b.space_id, p.space_id) IS NOT NULL
+             AND b.id NOT IN (SELECT block_id FROM sync_deferred_purges)"#,
     )
     .fetch_all(&mut **tx)
     .await?;

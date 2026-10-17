@@ -7355,3 +7355,44 @@ async fn mcp_agents_0125_round_trips_an_agent_5667() {
         .unwrap();
     assert_eq!(count, 1, "only the first agent was stored");
 }
+
+/// #5712 — `sync_deferred_purges` is STRICT, takes only an id `blocks` holds,
+/// and goes with its block on a hard delete.
+#[tokio::test]
+async fn sync_deferred_purges_0126_is_strict_and_cascades_with_its_block_5712() {
+    let (pool, _dir) = test_pool().await;
+    let strict: i64 = sqlx::query_scalar(
+        "SELECT strict FROM pragma_table_list WHERE name = 'sync_deferred_purges'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(strict, 1, "sync_deferred_purges is STRICT");
+    let block = "01J00000000000000000BK5712";
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'x')")
+        .bind(block)
+        .execute(&pool)
+        .await
+        .expect("seed block");
+    sqlx::query(
+        "INSERT INTO sync_deferred_purges (block_id) VALUES ('01J0000000000000000NOBLOCK')",
+    )
+    .execute(&pool)
+    .await
+    .expect_err("an id blocks does not hold is refused");
+    sqlx::query("INSERT INTO sync_deferred_purges (block_id) VALUES (?)")
+        .bind(block)
+        .execute(&pool)
+        .await
+        .expect("defer the block");
+    sqlx::query("DELETE FROM blocks WHERE id = ?")
+        .bind(block)
+        .execute(&pool)
+        .await
+        .expect("hard-delete the block");
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_deferred_purges")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "the row goes with its block (ON DELETE CASCADE)");
+}

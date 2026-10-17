@@ -110,15 +110,9 @@ pub enum ApplyOutcome {
         /// Per-space scope of the imported message.
         space_id: SpaceId,
         /// Block ids the import changed (may be empty for a no-op import).
+        /// A block the import took out of the doc is not among them: its
+        /// rows wait for [`sweep_deferred_purges`] (#5712).
         changed_blocks: Vec<agaric_core::ulid::BlockId>,
-        /// #2264: block ids the import hard-purged (`PurgeBlock`), disjoint
-        /// from `changed_blocks` (which enumerates live blocks only — #2128).
-        /// Surfaced so the orchestrator can distinguish a complete no-op
-        /// import (both sets empty → skip the derived-cache fan-out
-        /// entirely) from a purge-only import (aggregate caches like
-        /// `tags_cache.usage_count` / `pages_cache` counts still need a
-        /// refresh even though no live block changed).
-        purged_blocks: Vec<agaric_core::ulid::BlockId>,
         /// #1071: the deduped set of owning *page* ids (page-root block ids)
         /// the changed blocks belong to. Resolved from the committed
         /// `parent_id`/`block_type` chain right after the projection tx (a
@@ -590,7 +584,7 @@ pub async fn apply_remote(
     // below is conditional on the op-log actually having reached it.
     let require_covered = [(inbox_id, screen.declared_end_vv)];
 
-    let (changed_blocks, purged_blocks) = import_and_project(
+    let changed_blocks = import_and_project(
         pool,
         registry,
         device_id,
@@ -632,7 +626,6 @@ pub async fn apply_remote(
     Ok(ApplyOutcome::Imported {
         space_id,
         changed_blocks,
-        purged_blocks,
         changed_page_ids,
     })
 }
@@ -1116,53 +1109,87 @@ async fn project_pass_c(
     Ok(swept_tombstones)
 }
 
-/// Pass D — hard-purge (#2128). Mirrors a remote `PurgeBlock` by deleting
-/// the purged seed + every descendant from ALL derived tables (the same
-/// table set as the local SQL cascade). Runs LAST and in the SAME tx so it
-/// removes any rows the earlier passes may have upserted for a block that is
-/// net-purged in this import: Pass A's `project_block_full_to_sql(None)`
-/// already skips a purged id (the engine returns no live snapshot for it),
-/// but a block that was changed earlier in the same import and then purged
-/// could still have a stale row — Pass D guarantees it is gone. The engine
-/// handed us the COMPLETE purged set, so no descendant CTE is needed.
-/// Atomic with the rest of the projection: a rollback leaves SQL untouched.
-/// #2292: sweep the UNION of the engine's purged set and the durable
-/// tombstone recovered from the inbox row. On a live apply the tombstone is
-/// empty and this is exactly the engine set; on a crash-recovery replay the
-/// engine set is empty (subtree already gone) and the tombstone carries the
-/// ids. `project_purge_blocks_to_sql` is idempotent (INSERT OR IGNORE into a
-/// keyed temp table, then joined DELETEs), so re-sweeping already-gone ids is
-/// a no-op and the dedup below is a courtesy, not a correctness requirement.
+/// Pass D — a remote `PurgeBlock` (#2128). The engine handed us the complete
+/// purged set (seed + every descendant), unioned here with the durable
+/// tombstone a crashed apply left on its inbox row (#2292): on a live apply
+/// the tombstone is empty, on a replay the engine set is.
 ///
-/// Only the ids no engine holds are swept. #2292: a later move can resurrect
-/// an id a stale tombstone names. #5712: a page moved to another space leaves
-/// this doc as a prune (#2907), which reads here as a purge, but its rows now
-/// belong to the doc that holds it, whose import projects them whether it ran
-/// before this one or runs after.
+/// The ids are recorded in `sync_deferred_purges`, not purged:
+/// [`sweep_deferred_purges`] purges them when the pull session ends. #5712: a
+/// page moved to another space leaves this doc exactly as a purged one does
+/// (#2907), and the new space's doc may be the next one this session imports.
+/// Deleting now would take the rows nothing else holds (drafts, opens) and
+/// those on untouched blocks that point at the page (links, refs, tags),
+/// which that import does not recreate. Ids an engine already holds are not
+/// recorded: their doc owns their rows.
 async fn project_pass_d(
     tx: &mut sqlx::SqliteConnection,
     registry: &LoroEngineRegistry,
     purged_blocks: &[agaric_core::ulid::BlockId],
     tombstone_purged: &[agaric_core::ulid::BlockId],
 ) -> Result<(), AppError> {
-    use agaric_engine::loro::projection::project_purge_blocks_to_sql;
-
-    let mut purge_union: Vec<&str> = purged_blocks
+    let mut unheld: Vec<&str> = purged_blocks
         .iter()
+        .chain(tombstone_purged)
         .map(agaric_core::ulid::BlockId::as_str)
         .collect();
-    purge_union.extend(
-        tombstone_purged
-            .iter()
-            .map(agaric_core::ulid::BlockId::as_str),
-    );
-    purge_union.sort_unstable();
-    purge_union.dedup();
-    purge_union.retain(|id| registry.spaces_containing(id).is_empty());
-    if !purge_union.is_empty() {
-        project_purge_blocks_to_sql(&mut *tx, &purge_union).await?;
+    unheld.sort_unstable();
+    unheld.dedup();
+    unheld.retain(|id| registry.spaces_containing(id).is_empty());
+    if unheld.is_empty() {
+        return Ok(());
     }
+    let unheld_json = serde_json::to_string(&unheld)?;
+    sqlx::query!(
+        "INSERT OR IGNORE INTO sync_deferred_purges (block_id) \
+         SELECT id FROM blocks WHERE id IN (SELECT value FROM json_each(?))",
+        unheld_json,
+    )
+    .execute(&mut *tx)
+    .await?;
     Ok(())
+}
+
+/// #5712: end a pull session by purging the blocks its imports took out of a
+/// doc ([`project_pass_d`]) that no engine holds now that every space's doc
+/// has landed. Every recorded row is cleared: an id an engine holds was
+/// claimed by its new doc's import, which owns its rows. Returns the purged
+/// ids, for the caller's cache fan-out.
+///
+/// Only a completed pull calls this. A failed or interrupted one leaves its
+/// rows for the next, whose docs usually claim them; until then a real
+/// purge's rows stay visible, and nothing is deleted early.
+pub async fn sweep_deferred_purges(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
+    // Most pulls defer nothing; they need not wait for the writer lock.
+    let any: Option<i64> =
+        sqlx::query_scalar!(r#"SELECT 1 AS "one!: i64" FROM sync_deferred_purges LIMIT 1"#)
+            .fetch_optional(pool)
+            .await?;
+    if any.is_none() {
+        return Ok(Vec::new());
+    }
+    let mut tx = agaric_store::db::begin_immediate_logged(pool, "sweep_deferred_purges").await?;
+    let deferred: Vec<String> =
+        sqlx::query_scalar!("SELECT block_id FROM sync_deferred_purges ORDER BY block_id")
+            .fetch_all(&mut *tx)
+            .await?;
+    let unheld: Vec<&str> = deferred
+        .iter()
+        .map(String::as_str)
+        .filter(|id| registry.spaces_containing(id).is_empty())
+        .collect();
+    agaric_engine::loro::projection::project_purge_blocks_to_sql(&mut tx, &unheld).await?;
+    sqlx::query!("DELETE FROM sync_deferred_purges")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(unheld
+        .into_iter()
+        .map(agaric_core::ulid::BlockId::from_trusted)
+        .collect())
 }
 
 /// #4775: the space's own block travels in its own doc, and its `is_space`
@@ -1901,10 +1928,9 @@ fn import_payload_into_engine(
 /// Loro import is idempotent and every SQL projection here is an upsert —
 /// which is exactly what makes boot replay (and a double replay) safe.
 ///
-/// Returns `(changed_blocks, purged_blocks)` — the live blocks the import
-/// changed (projected in Passes A–C) and the blocks it hard-purged (Pass D).
-/// #2264: both are surfaced so callers can tell a complete no-op import
-/// apart from a purge-only one and skip downstream work accordingly.
+/// Returns the live blocks the import changed (projected in Passes A–C). The
+/// blocks it took out of the doc are recorded for [`sweep_deferred_purges`]
+/// (Pass D, #5712), which reports them when the session ends.
 ///
 /// ## Kept slots are retained, and now terminate in quarantine (#3226)
 ///
@@ -2061,13 +2087,7 @@ pub(crate) async fn import_and_project(
     // nothing or whose metadata would not decode.
     require_covered: &[(i64, Vec<(PeerID, Counter)>)],
     delivery: InboundDeliveryKind,
-) -> Result<
-    (
-        Vec<agaric_core::ulid::BlockId>,
-        Vec<agaric_core::ulid::BlockId>,
-    ),
-    AppError,
-> {
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
     // Phase 1 — import bytes into the engine, capture changed AND purged
     // blocks. #2128: a remote `PurgeBlock` removes the seed + its whole
     // subtree from the engine index and so never appears in `changed_blocks`
@@ -2135,7 +2155,7 @@ pub(crate) async fn import_and_project(
                     .execute(pool)
                     .await?;
             }
-            return Ok((changed_blocks, purged_blocks));
+            return Ok(changed_blocks);
         }
         healing_fallback_delta(registry, device_id, space_id)?
     } else {
@@ -2198,7 +2218,7 @@ pub(crate) async fn import_and_project(
 
     refresh_tag_inheritance(pool, tag_scope).await;
 
-    Ok((changed_blocks, purged_blocks))
+    Ok(changed_blocks)
 }
 
 /// Boot-recovery entry point: re-run `import_and_project` for a single
@@ -2206,7 +2226,7 @@ pub(crate) async fn import_and_project(
 ///
 /// #535: thin `pub(crate)` wrapper so the recovery module doesn't need to
 /// reconstruct a [`SpaceId`] or know the projection internals. Returns the
-/// `(changed, purged)` block-id sets so the caller can fan out the SAME
+/// changed block ids so the caller can fan out the SAME
 /// inbound cache/FTS rebuilds the live path fires after `apply_remote`
 /// (`Materializer::enqueue_inbound_sync_rebuilds` (app-side, via the `ApplyHost` trait)) —
 /// the per-block projection here does NOT refresh the derived caches or the
@@ -2252,16 +2272,10 @@ pub async fn replay_inbox_row(
     inbox_id: i64,
     // #2292: purged ids decoded from this row's durable `purged_ids` tombstone
     // (empty for a non-purge slot). Forwarded into `import_and_project` so
-    // Pass D re-sweeps the stale SQL rows even though the re-imported engine
-    // delta is now empty.
+    // Pass D defers the stale SQL rows to the next completed pull's sweep even
+    // though the re-imported engine delta is now empty.
     tombstone_purged: &[agaric_core::ulid::BlockId],
-) -> Result<
-    (
-        Vec<agaric_core::ulid::BlockId>,
-        Vec<agaric_core::ulid::BlockId>,
-    ),
-    AppError,
-> {
+) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
     let space = SpaceId::from_trusted(space_id);
 
     // #792: mirror `apply_remote`'s own-peer fork guard. `apply_remote`
@@ -2295,7 +2309,7 @@ pub async fn replay_inbox_row(
         sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
             .execute(pool)
             .await?;
-        return Ok((Vec::new(), Vec::new()));
+        return Ok(Vec::new());
     }
 
     // #1054: mirror `apply_remote`'s live reachability gate.
@@ -2334,11 +2348,11 @@ pub async fn replay_inbox_row(
         sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
             .execute(pool)
             .await?;
-        return Ok((Vec::new(), Vec::new()));
+        return Ok(Vec::new());
     }
 
-    // Both sets are returned to the caller: `replay_sync_inbox` accumulates
-    // them across all replayed slots and fires ONE
+    // The changed set is returned to the caller: `replay_sync_inbox`
+    // accumulates it across all replayed slots and fires ONE
     // `enqueue_inbound_sync_rebuilds` fan-out — the same load-bearing
     // cache/FTS reconciliation the live path runs after every import
     // (session_state_machine.rs); the per-block projection alone leaves the
@@ -2432,7 +2446,7 @@ async fn replay_accepted_slots_individually(
         )
         .await
         {
-            Ok((changed, purged)) => {
+            Ok(changed) => {
                 // #3213: `Ok` no longer implies "slot cleared" — the
                 // per-row path now keeps a slot whose blob the op-log
                 // did not reach, exactly as the batch path does. Ask
@@ -2480,7 +2494,6 @@ async fn replay_accepted_slots_individually(
                     }
                 }
                 out.changed.extend(changed);
-                out.purged.extend(purged);
             }
             Err(e) => {
                 // Poison slot: left in place by `replay_inbox_row`, so
@@ -2733,7 +2746,7 @@ pub async fn replay_inbox_batch(
     )
     .await
     {
-        Ok((changed, purged)) => {
+        Ok(changed) => {
             // The tx committed ⇒ every projection landed AND every slot whose
             // blob the op-log demonstrably reached is gone. Both halves of #535,
             // together.
@@ -2754,7 +2767,6 @@ pub async fn replay_inbox_batch(
             )
             .await?;
             out.changed.extend(changed);
-            out.purged.extend(purged);
             Ok(out)
         }
         Err(batch_err) => {
@@ -2845,8 +2857,6 @@ pub struct BatchReplayOutcome {
     pub replayed: u64,
     /// Blocks the import changed — for the caller's #2541 cache/FTS fan-out.
     pub changed: Vec<agaric_core::ulid::BlockId>,
-    /// Blocks the import hard-purged — same fan-out.
-    pub purged: Vec<agaric_core::ulid::BlockId>,
     /// One message per slot left in place for a later boot.
     pub errors: Vec<String>,
     /// #3226: slots this call MOVED to `loro_sync_quarantine` after exhausting

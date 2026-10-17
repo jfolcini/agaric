@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO sync_deferred_purges (block_id) SELECT id FROM blocks WHERE id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "8fa5b2b352f5bf467138fede9a6c0675447f07838d0a368481ecdd6f817c7297"
+}
