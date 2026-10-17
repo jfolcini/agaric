@@ -23,6 +23,7 @@ import {
   blockStaticByMarker,
   enterBlankSibling,
   expectAbsent,
+  expectImageRendered,
   navigateTo,
   openNewPage,
   openPageSource,
@@ -41,7 +42,7 @@ const IMAGE_BLOCK = runScopedMarker('wdio-img-holder')
 const BELOW = runScopedMarker('wdio-img-below')
 const BELOW_EDITED = runScopedMarker('wdio-img-edited')
 const FILENAME = 'wdio-image.png'
-// A 1x1 transparent PNG (68 bytes).
+// A 1x1 transparent PNG.
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 
@@ -50,42 +51,6 @@ async function reopenTheNewPage(marker: string): Promise<void> {
   await navigateTo('Journal')
   await reopenPageByTitle('Untitled')
   await blockStaticByMarker(marker).waitForDisplayed({ timeout: NAV_TIMEOUT })
-}
-
-/** Wait until block `id` renders exactly one image, decoded from a `blob:` URL. */
-async function expectImageRendered(id: string, when: string): Promise<void> {
-  await $(`[data-block-id="${id}"]`).scrollIntoView()
-  let seen: Array<{ src: string; complete: boolean; width: number }> = []
-  await browser
-    .waitUntil(
-      async () => {
-        seen = await browser.execute(
-          (blockId: string) =>
-            [...document.querySelectorAll<HTMLImageElement>('[data-testid="image-rendered"]')]
-              .filter(
-                (img) => img.closest('[data-block-id]')?.getAttribute('data-block-id') === blockId,
-              )
-              .map((img) => ({
-                src: img.getAttribute('src') ?? '',
-                complete: img.complete,
-                width: img.naturalWidth,
-              })),
-          id,
-        )
-        const [only] = seen
-        return (
-          seen.length === 1 &&
-          only !== undefined &&
-          only.src.startsWith('blob:') &&
-          only.complete &&
-          only.width > 0
-        )
-      },
-      { timeout: NAV_TIMEOUT },
-    )
-    .catch(() => {
-      throw new Error(`${when}: the image block renders ${JSON.stringify(seen)}`)
-    })
 }
 
 /** The buffer line of the image block, which carries its `attachment:` ref. */

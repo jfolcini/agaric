@@ -11,13 +11,15 @@
 //! phone's camera hands the joiner), `create_block_inner`,
 //! `create_block_inner_with_space`, `edit_block_inner`, `set_property_inner`,
 //! `set_todo_state_inner`, `set_due_date_inner`, `add_tag_inner`,
-//! `move_block_inner`, `get_active_block_inner`, `get_property_inner` and
-//! `list_peer_refs_inner`. `sync` wakes the daemon as
-//! `start_sync` does; it never runs a session itself.
+//! `move_block_inner`, `add_attachment_with_bytes_inner`,
+//! `get_active_block_inner`, `get_property_inner`, `list_attachments_inner`,
+//! `read_attachment_inner` and `list_peer_refs_inner`. `sync` wakes the daemon
+//! as `start_sync` does; it never runs a session itself.
 //!
 //! A session is a pull by the device that dials (#610), so each direction has
 //! its own wait: `sync` for this vault's pull from the app (`synced_at`), and
-//! `wait_pulled` for the app's pull from this vault (`streamed_at`).
+//! `wait_pulled` for the app's pull from this vault (`streamed_at`). Both mark
+//! the end of the op phase; attachment bytes travel in the file phase after it.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -31,9 +33,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{
-    add_tag_inner, confirm_pairing_inner, create_block_inner, create_block_inner_with_space,
-    edit_block_inner, get_active_block_inner, get_property_inner, list_peer_refs_inner,
-    move_block_inner, set_due_date_inner, set_property_inner, set_todo_state_inner,
+    add_attachment_with_bytes_inner, add_tag_inner, confirm_pairing_inner, create_block_inner,
+    create_block_inner_with_space, edit_block_inner, get_active_block_inner, get_property_inner,
+    list_attachments_inner, list_peer_refs_inner, move_block_inner, read_attachment_inner,
+    set_due_date_inner, set_property_inner, set_todo_state_inner,
 };
 use agaric_lib::db::{DbPools, init_pools, now_ms};
 use agaric_lib::materializer::Materializer;
@@ -122,6 +125,21 @@ enum Command {
         id: String,
         key: String,
     },
+    /// Attach `bytes` to block `id` as file `filename` of type `mime_type`.
+    AddAttachment {
+        id: String,
+        filename: String,
+        mime_type: String,
+        bytes: Vec<u8>,
+    },
+    /// The attachment rows of block `id`.
+    ListAttachments {
+        id: String,
+    },
+    /// The bytes of attachment `id`, read from this vault's disk.
+    ReadAttachment {
+        id: String,
+    },
     /// Wait for an app pull that ends after this vault's last write. Only a
     /// pull already running at the write can answer early, without it. Before
     /// the spec types this vault's address into the app, none can run unless
@@ -167,9 +185,24 @@ enum Reply {
     Peers {
         peer_ids: Vec<String>,
     },
+    Attachments {
+        attachments: Vec<Attachment>,
+    },
+    Bytes {
+        bytes: Vec<u8>,
+    },
     Error {
         message: String,
     },
+}
+
+/// An attachment row as `list_attachments` reads it.
+#[derive(Serialize)]
+struct Attachment {
+    id: String,
+    filename: String,
+    mime_type: String,
+    size_bytes: i64,
 }
 
 fn parse_command(line: &str) -> Result<Command, String> {
@@ -196,6 +229,8 @@ impl SyncEventSink for SyncErrors {
 }
 
 struct Peer {
+    /// The app data dir: `notes.db` and the attachment files.
+    vault: PathBuf,
     pools: DbPools,
     device_id: String,
     materializer: Materializer,
@@ -237,6 +272,7 @@ impl Peer {
         })
         .await?;
         Ok(Self {
+            vault: vault.to_path_buf(),
             pools,
             device_id,
             materializer,
@@ -285,6 +321,14 @@ impl Peer {
                 index,
             } => self.move_block(id, parent_id, index).await,
             Command::GetProperty { id, key } => self.get_property(id, key).await,
+            Command::AddAttachment {
+                id,
+                filename,
+                mime_type,
+                bytes,
+            } => self.add_attachment(id, filename, mime_type, bytes).await,
+            Command::ListAttachments { id } => self.list_attachments(id).await,
+            Command::ReadAttachment { id } => self.read_attachment(id).await,
             Command::WaitPulled => self.wait_pulled().await,
             Command::ListPeers => self.list_peers().await,
         };
@@ -521,6 +565,51 @@ impl Peer {
         Ok(Reply::Property {
             value_text: row.and_then(|row| row.value_text),
         })
+    }
+
+    async fn add_attachment(
+        &mut self,
+        id: String,
+        filename: String,
+        mime_type: String,
+        bytes: Vec<u8>,
+    ) -> Result<Reply, AppError> {
+        let row = add_attachment_with_bytes_inner(
+            &self.pools.write,
+            &self.device_id,
+            &self.materializer,
+            &self.vault,
+            BlockId::from_string(id)?,
+            filename,
+            mime_type,
+            bytes,
+        )
+        .await?;
+        self.last_write_ms = now_ms();
+        Ok(Reply::Created {
+            id: row.id.into_string(),
+        })
+    }
+
+    async fn list_attachments(&self, id: String) -> Result<Reply, AppError> {
+        let rows = list_attachments_inner(&self.pools.read, BlockId::from_string(id)?).await?;
+        Ok(Reply::Attachments {
+            attachments: rows
+                .into_iter()
+                .map(|row| Attachment {
+                    id: row.id.into_string(),
+                    filename: row.filename,
+                    mime_type: row.mime_type,
+                    size_bytes: row.size_bytes,
+                })
+                .collect(),
+        })
+    }
+
+    async fn read_attachment(&self, id: String) -> Result<Reply, AppError> {
+        let bytes =
+            read_attachment_inner(&self.pools.read, &self.vault, BlockId::from_string(id)?).await?;
+        Ok(Reply::Bytes { bytes })
     }
 
     async fn wait_pulled(&self) -> Result<Reply, AppError> {
@@ -760,6 +849,22 @@ mod tests {
                 key: "k".into(),
             }),
             "sync-peer.ts asks for a property by block id and key"
+        );
+    }
+
+    #[test]
+    fn add_attachment_takes_its_bytes_as_numbers() {
+        assert_eq!(
+            parse_command(
+                r#"{"cmd":"add_attachment","id":"B1","filename":"a.png","mime_type":"image/png","bytes":[137,80,78,71]}"#
+            ),
+            Ok(Command::AddAttachment {
+                id: "B1".into(),
+                filename: "a.png".into(),
+                mime_type: "image/png".into(),
+                bytes: vec![137, 80, 78, 71],
+            }),
+            "sync-peer.ts sends a file's bytes as a JSON array of byte values"
         );
     }
 
