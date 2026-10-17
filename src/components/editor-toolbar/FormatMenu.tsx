@@ -42,6 +42,7 @@ import {
   createMarkToggles,
   MARK_TOGGLE_SHORTCUT_IDS,
   toolbarActiveClass,
+  toolbarIconClass,
   withShortcutHint,
 } from '@/components/FormattingToolbar/toolbar-config'
 import { Button } from '@/components/ui/button'
@@ -107,7 +108,7 @@ export function FormatMenu({ editor }: FormatMenuProps): React.ReactElement {
                 className={cn(active && toolbarActiveClass)}
                 {...toolbarPressHandlers(btn.action)}
               >
-                <btn.icon className="h-3.5 w-3.5" />
+                <btn.icon className={toolbarIconClass} />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={6}>
