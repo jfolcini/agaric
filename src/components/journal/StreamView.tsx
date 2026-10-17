@@ -54,6 +54,8 @@ import { formatDate, formatJournalTitle } from '@/lib/date-utils'
 
 interface StreamViewProps {
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
+  /** JournalPage's `addPage`: the journal's page map and the calendar cache outlive this view. */
+  onPageCreated: (dateStr: string, pageId: string) => void
 }
 
 /**
@@ -69,14 +71,17 @@ function canEvictDay(dateStr: string): boolean {
   return !(el && document.activeElement && el.contains(document.activeElement))
 }
 
-export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactElement {
+export function StreamView({
+  onNavigateToPage,
+  onPageCreated,
+}: StreamViewProps): React.ReactElement {
   const { t } = useTranslation()
   const { journalDateFormat } = useJournalDateFormat()
-  const { dates, pageMap, loading, loadingOlder, reachedEnd, loadOlder, addPage } = useStreamDates()
+  const { dates, pageMap, loading, loadingOlder, reachedEnd, loadOlder } = useStreamDates()
 
   const { createdPages, handleAddBlock, forgetCreatedPage } = useJournalBlockCreation({
     pageMap,
-    onPageCreated: addPage,
+    onPageCreated,
   })
 
   // Bounds the mounted-day set to STREAM_MOUNT_WINDOW nearest the current

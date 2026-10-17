@@ -34,7 +34,6 @@ const mockStream = vi.hoisted(() => ({
   loadingOlder: false,
   reachedEnd: false,
   loadOlder: vi.fn(),
-  addPage: vi.fn(),
 }))
 
 vi.mock('@/hooks/useStreamDates', async (importOriginal) => {
@@ -177,7 +176,7 @@ afterEach(() => {
 
 describe('StreamView', () => {
   it('renders today first (top-anchored) then older days descending', () => {
-    render(<StreamView />)
+    render(<StreamView onPageCreated={vi.fn()} />)
     const sections = screen.getAllByTestId(/^day-section-/)
     expect(sections.map((s) => s.getAttribute('data-testid'))).toEqual([
       'day-section-2026-06-20',
@@ -187,7 +186,7 @@ describe('StreamView', () => {
   })
 
   it('marks today h2 and older days h3, all stream/compact/lazyMount', () => {
-    render(<StreamView />)
+    render(<StreamView onPageCreated={vi.fn()} />)
     const today = screen.getByTestId('day-section-2026-06-20')
     expect(today).toHaveAttribute('data-heading-level', 'h2')
     const older = screen.getByTestId('day-section-2026-06-19')
@@ -201,28 +200,28 @@ describe('StreamView', () => {
   })
 
   it('renders an empty day (no page) as a DaySection without a page', () => {
-    render(<StreamView />)
+    render(<StreamView onPageCreated={vi.fn()} />)
     const emptyDay = screen.getByTestId('day-section-2026-06-18')
     expect(emptyDay).toHaveAttribute('data-has-page', 'false')
     expect(screen.getByTestId('day-section-2026-06-20')).toHaveAttribute('data-has-page', 'true')
   })
 
   it('separates days by spacing, not by divider rules', () => {
-    const { container } = render(<StreamView />)
+    const { container } = render(<StreamView onPageCreated={vi.fn()} />)
 
     expect(container.querySelectorAll('.border-t')).toHaveLength(0)
     expect(screen.getByTestId('journal-stream')).toHaveClass('space-y-6')
   })
 
   it('calls loadOlder when the sentinel intersects (scroll loads older days)', () => {
-    render(<StreamView />)
+    render(<StreamView onPageCreated={vi.fn()} />)
     expect(mockStream.loadOlder).not.toHaveBeenCalled()
     fireIntersection(true)
     expect(mockStream.loadOlder).toHaveBeenCalledTimes(1)
   })
 
   it('does not call loadOlder when the sentinel is not intersecting', () => {
-    render(<StreamView />)
+    render(<StreamView onPageCreated={vi.fn()} />)
     fireIntersection(false)
     expect(mockStream.loadOlder).not.toHaveBeenCalled()
   })
@@ -238,7 +237,7 @@ describe('StreamView', () => {
     const loadOlderAfterRerender = vi.fn()
     try {
       mockStream.loadOlder = loadOlderAtMount
-      const { rerender } = render(<StreamView />)
+      const { rerender } = render(<StreamView onPageCreated={vi.fn()} />)
       const observerAtMount = lastObserverCallback
       expect(observerAtMount).not.toBeNull()
 
@@ -246,7 +245,7 @@ describe('StreamView', () => {
       // on every window/page-map change). The already-registered observer must
       // call the NEW one.
       mockStream.loadOlder = loadOlderAfterRerender
-      rerender(<StreamView />)
+      rerender(<StreamView onPageCreated={vi.fn()} />)
       // No re-subscribe: same observer instance is still the live one.
       expect(lastObserverCallback).toBe(observerAtMount)
 
@@ -258,7 +257,7 @@ describe('StreamView', () => {
       // The same observer must see the new value and skip, or a scroll that
       // keeps the sentinel in view stacks duplicate batch loads.
       mockStream.loadingOlder = true
-      rerender(<StreamView />)
+      rerender(<StreamView onPageCreated={vi.fn()} />)
       expect(lastObserverCallback).toBe(observerAtMount)
 
       fireIntersection(true)
@@ -272,20 +271,20 @@ describe('StreamView', () => {
   it('shows a loading skeleton (no day sections) on first load', () => {
     mockStream.loading = true
     mockStream.dates = []
-    render(<StreamView />)
+    render(<StreamView onPageCreated={vi.fn()} />)
     expect(screen.getByTestId('stream-loading')).toBeInTheDocument()
     expect(screen.queryByTestId(/^day-section-/)).not.toBeInTheDocument()
   })
 
   it('shows the reached-start footer and no sentinel at the horizon', () => {
     mockStream.reachedEnd = true
-    render(<StreamView />)
+    render(<StreamView onPageCreated={vi.fn()} />)
     expect(screen.getByTestId('stream-end')).toBeInTheDocument()
     expect(screen.queryByTestId('stream-sentinel')).not.toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {
-    const { container } = render(<StreamView />)
+    const { container } = render(<StreamView onPageCreated={vi.fn()} />)
     expect(await axe(container)).toHaveNoViolations()
   })
 
@@ -324,7 +323,7 @@ describe('StreamView', () => {
     // single day entering the viewport re-rendered every rendered day.
     it('re-renders only the day whose mounted flag changed', () => {
       const dates = setupDays(20)
-      render(<StreamView />)
+      render(<StreamView onPageCreated={vi.fn()} />)
 
       const before = new Map(renderCounts)
       const [entered, ...untouched] = dates
@@ -342,7 +341,7 @@ describe('StreamView', () => {
 
     it('passes a mount-window controller to every DaySection', () => {
       setupDays(3)
-      render(<StreamView />)
+      render(<StreamView onPageCreated={vi.fn()} />)
       for (const dt of mockStream.dates) {
         expect(screen.getByTestId(`enter-${formatDate(dt)}`)).toBeInTheDocument()
       }
@@ -350,7 +349,7 @@ describe('StreamView', () => {
 
     it('bounds the mounted day count at STREAM_MOUNT_WINDOW after scrolling past many more days', () => {
       const dates = setupDays(STREAM_MOUNT_WINDOW + 5)
-      render(<StreamView />)
+      render(<StreamView onPageCreated={vi.fn()} />)
 
       enterAll(dates)
 
@@ -360,7 +359,7 @@ describe('StreamView', () => {
 
     it('evicts the oldest-visited days first, keeping the most-recently-visited window mounted', () => {
       const dates = setupDays(STREAM_MOUNT_WINDOW + 5)
-      render(<StreamView />)
+      render(<StreamView onPageCreated={vi.fn()} />)
 
       enterAll(dates)
 
@@ -372,7 +371,7 @@ describe('StreamView', () => {
 
     it('re-mounts a previously-evicted day when scrolled back to', () => {
       const dates = setupDays(STREAM_MOUNT_WINDOW + 2)
-      render(<StreamView />)
+      render(<StreamView onPageCreated={vi.fn()} />)
 
       enterAll(dates)
       const firstDay = dates[0]
@@ -390,7 +389,7 @@ describe('StreamView', () => {
 
     it('protects a day with focus inside it from eviction', () => {
       const dates = setupDays(STREAM_MOUNT_WINDOW + 2)
-      render(<StreamView />)
+      render(<StreamView onPageCreated={vi.fn()} />)
 
       const firstDay = dates[0]
       expect(firstDay).toBeDefined()
