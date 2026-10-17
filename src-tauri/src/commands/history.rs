@@ -3965,6 +3965,7 @@ mod tests {
             filename: "g.png".into(),
             size_bytes: 1,
             fs_path: "attachments/p_g.png".into(),
+            content_hash: None,
         });
         append_local_op_at(&pool, DEV, add, FIXED_TS + 2)
             .await
@@ -4205,6 +4206,7 @@ mod tests {
             filename: "f.png".into(),
             size_bytes: 1,
             fs_path: "attachments/p_f.png".into(),
+            content_hash: None,
         });
         append_local_op_at(pool, DEV, add, FIXED_TS + 1)
             .await
@@ -4579,6 +4581,7 @@ mod tests {
             filename: "f.png".into(),
             size_bytes: 1,
             fs_path: "attachments/p_f.png".into(),
+            content_hash: None,
         });
         append_local_op_at(&pool, DEV, add, FIXED_TS + 2000)
             .await
@@ -4958,6 +4961,7 @@ mod tests {
             filename: HOSTILE.into(),
             size_bytes: 4,
             fs_path: format!("attachments/{}", id.as_str()),
+            content_hash: None,
         };
 
         // FORWARD apply — the reference behaviour (#3029).
@@ -5102,6 +5106,7 @@ mod tests {
                 filename: SAFE_ADD.into(),
                 size_bytes: 4,
                 fs_path: format!("attachments/{}", added_att.as_str()),
+                content_hash: None,
             }),
             FIXED_TS,
             None,
@@ -5208,6 +5213,7 @@ mod tests {
                 filename: "f.png".into(),
                 size_bytes: 1,
                 fs_path: format!("attachments/{att}.png"),
+                content_hash: None,
             });
             append_local_op_at(&pool, DEV, add, ts).await.unwrap();
         }

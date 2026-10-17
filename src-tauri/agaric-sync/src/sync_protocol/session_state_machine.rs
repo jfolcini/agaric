@@ -630,6 +630,7 @@ impl SyncOrchestrator {
         self.emit(crate::sync_events::SyncEvent::Error {
             message: msg_str.into(),
             remote_device_id: self.session.remote_device_id.clone(),
+            code: None,
         });
         AppError::InvalidOperation(msg_str.into())
     }
@@ -732,8 +733,12 @@ impl SyncOrchestrator {
     ) -> Result<Option<SyncMessage>, AppError> {
         // Gate raw-byte Loro merges by engine format before doing any
         // import work (#2130). An incompatible peer is rejected up
-        // front with a clear `SyncEvent::Error` rather than failing
-        // mid-session on a raw-byte merge.
+        // front with a `SyncEvent::Error` coded `EngineFormatMismatch`,
+        // which the frontend words as "update both devices" (#5728),
+        // rather than failing mid-session on a raw-byte merge.
+        //
+        // Only this side, the responder, learns why: the error ends the
+        // session without a frame, so the initiator sees the stream end.
         //
         // `engine_format_version == 0` means a legacy peer predating
         // this field — fall through to the existing import-time
@@ -753,6 +758,7 @@ impl SyncOrchestrator {
             self.emit(crate::sync_events::SyncEvent::Error {
                 message: msg.clone(),
                 remote_device_id: self.session.remote_device_id.clone(),
+                code: Some(crate::sync_events::SyncErrorCode::EngineFormatMismatch),
             });
             return Err(AppError::InvalidOperation(msg));
         }
@@ -1086,6 +1092,7 @@ impl SyncOrchestrator {
             self.emit(crate::sync_events::SyncEvent::Error {
                 message: msg.clone(),
                 remote_device_id: self.session.remote_device_id.clone(),
+                code: None,
             });
             return Err(AppError::InvalidOperation(msg));
         };
@@ -1184,6 +1191,7 @@ impl SyncOrchestrator {
             self.emit(crate::sync_events::SyncEvent::Error {
                 message: msg.into(),
                 remote_device_id: self.session.remote_device_id.clone(),
+                code: None,
             });
             return Err(AppError::InvalidOperation(msg.into()));
         }
@@ -1288,6 +1296,7 @@ impl SyncOrchestrator {
                 self.emit(crate::sync_events::SyncEvent::Error {
                     message,
                     remote_device_id: self.session.remote_device_id.clone(),
+                    code: None,
                 });
                 Ok(None)
             }

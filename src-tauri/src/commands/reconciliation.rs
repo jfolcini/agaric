@@ -483,6 +483,126 @@ mod tests {
         mat.shutdown();
     }
 
+    /// #5608 — `attachments` against the engine on a vault the commands built:
+    /// it agrees as built, then a row deleted, a row written and a row edited
+    /// behind the engine, and an entry deleted in the engine alone, each report
+    /// on their own attachment. A row repointed at other bytes' path with no
+    /// hash, as a dedup link and a legacy row leave it, reports nothing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn attachment_rows_behind_the_engine_are_reported_5608() {
+        const SQL_ONLY: &str = "01SQLONLYATTACHMENT5608000";
+        let (pool, dir, mat, ids) = vault_in_a_space().await;
+        let [space, _page, first, ..] = ids.as_slice() else {
+            panic!("the fixture returns six ids");
+        };
+        let mut att = Vec::new();
+        for (name, bytes) in [
+            ("one.txt", "one"),
+            ("two.txt", "two"),
+            ("three.txt", "three"),
+            ("four.txt", "four"),
+        ] {
+            let row = crate::commands::attachments::add_attachment_with_bytes_inner(
+                &pool,
+                DEV,
+                &mat,
+                dir.path(),
+                BlockId::from_trusted(first),
+                name.to_owned(),
+                "text/plain".to_owned(),
+                bytes.as_bytes().to_vec(),
+            )
+            .await
+            .expect("add attachment");
+            att.push(row.id.to_string());
+        }
+        mat.flush_background().await.expect("flush_background");
+
+        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
+            .await
+            .expect("report");
+        assert_eq!(
+            report.artefacts,
+            Vec::new(),
+            "attachments added through the commands agree with the engine"
+        );
+
+        // dynamic-sql: test-only writes behind the engine's back.
+        for (sql, binds) in [
+            (
+                "DELETE FROM attachments WHERE id = ?",
+                vec![att[0].as_str()],
+            ),
+            (
+                "UPDATE attachments SET filename = 'edited.txt', size_bytes = 99 WHERE id = ?",
+                vec![att[1].as_str()],
+            ),
+            (
+                "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, \
+                 created_at) VALUES (?, ?, 'text/plain', 'sql.txt', 1, 'attachments/sql', 1)",
+                vec![SQL_ONLY, first.as_str()],
+            ),
+            (
+                "UPDATE attachments SET fs_path = 'attachments/linked', content_hash = NULL \
+                 WHERE id = ?",
+                vec![att[3].as_str()],
+            ),
+        ] {
+            let mut query = sqlx::query(sql);
+            for bind in binds {
+                query = query.bind(bind);
+            }
+            query.execute(&pool).await.expect("write behind the engine");
+        }
+        {
+            let space_id = agaric_store::space::SpaceId::from_trusted(space);
+            let mut guard = mat
+                .loro_state()
+                .registry
+                .for_space(&space_id, DEV)
+                .expect("the space's engine");
+            guard
+                .engine_mut()
+                .apply_delete_attachment(first, &att[2], 1)
+                .expect("delete in the engine alone");
+        }
+
+        let report = compute_reconciliation_report_inner(&pool, mat.loro_state(), pinned_today())
+            .await
+            .expect("report");
+        let mut found: Vec<(String, Vec<String>)> = report
+            .artefacts
+            .into_iter()
+            .filter(|a| a.artefact.starts_with("engine."))
+            .map(|a| {
+                let mut keys = a.sample_keys;
+                keys.sort();
+                (a.artefact, keys)
+            })
+            .collect();
+        found.sort();
+        let at = |ids: &[&str]| {
+            let mut keys: Vec<String> = ids.iter().map(|id| format!("{space} / {id}")).collect();
+            keys.sort();
+            keys
+        };
+        assert_eq!(
+            found,
+            vec![
+                ("engine.attachments.deleted_at".to_owned(), at(&[&att[2]])),
+                ("engine.attachments.filename".to_owned(), at(&[&att[1]])),
+                (
+                    "engine.attachments.row".to_owned(),
+                    at(&[&att[0], SQL_ONLY])
+                ),
+                ("engine.attachments.size_bytes".to_owned(), at(&[&att[1]])),
+            ],
+            "a missing row, an extra row, each edited field and a delete SQL never saw \
+             name their attachment, and no other engine artefact diverges"
+        );
+        mat.shutdown();
+    }
+
     #[tokio::test]
     async fn a_read_failure_propagates_instead_of_reporting_a_clean_vault() {
         let dir = TempDir::new().expect("tempdir");

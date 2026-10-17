@@ -5506,6 +5506,7 @@ async fn apply_attachment_sanitizes_peer_traversal_filename_3029() {
         filename: "../../evil.sh".into(),
         size_bytes: 4,
         fs_path: "attachments/01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+        content_hash: None,
     };
     agaric_engine::apply::attachments::apply_add_attachment_tx(
         &mut conn,

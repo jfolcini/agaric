@@ -80,10 +80,31 @@ export interface SyncCompletePayload {
   changed_blocks?: number | null
 }
 
+/**
+ * #5728 — a sync failure the backend codes so this side can word it in the
+ * user's language (Rust `SyncErrorCode`, `sync_events.rs`). Hand-written like
+ * the payload: `SyncEvent` rides a Tauri event, not specta.
+ */
+export type SyncErrorCode = 'engine_format_mismatch'
+
 export interface SyncErrorPayload {
   type: 'error'
+  /** English, for logs; shown as is only when `code` is absent. */
   message: string
   remote_device_id: string
+  code?: SyncErrorCode
+}
+
+/**
+ * #5728 — the sentence for a coded sync error, naming the peer when this
+ * device knows its name; `null` for an uncoded error, which shows `message`.
+ */
+export function codedSyncErrorMessage(payload: SyncErrorPayload): string | null {
+  if (payload.code !== 'engine_format_mismatch') return null
+  const peer = useSyncStore.getState().peers.find((p) => p.peerId === payload.remote_device_id)
+  return peer?.name
+    ? i18n.t('sync.versionMismatch', { peer: peer.name })
+    : i18n.t('sync.versionMismatchUnnamed')
 }
 
 /**
@@ -297,7 +318,7 @@ export function useSyncEvents(): void {
     'sync:error',
     (event) => {
       try {
-        const { message } = event.payload
+        const message = codedSyncErrorMessage(event.payload) ?? event.payload.message
         // The store update is unconditional: it is the signal `PairingDialog`
         // reads to turn a waiting joiner into an immediate "wrong code", and
         // it is also what the status panel reflects. Only the *toast* is

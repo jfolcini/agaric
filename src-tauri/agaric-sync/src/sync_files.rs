@@ -409,27 +409,32 @@ pub struct AttachmentReceiveMeta {
     /// Authoritative size from the local DB; an inbound `FileOffer` whose
     /// `size_bytes` disagrees with this value must be rejected.
     pub size_bytes: i64,
+    /// The hash the attachment was added with (#5608 step 6); an inbound
+    /// `FileOffer` naming other bytes must be rejected. `None` for a row that
+    /// predates the field, which accepts the offer's own hash as before.
+    pub content_hash: Option<String>,
 }
 
-/// Look up the `fs_path` and `size_bytes` for a given attachment ID.
-///
-/// Combines what `get_attachment_fs_path` returns with the DB-side
-/// `size_bytes` so the receiver can cross-check `FileOffer.size_bytes`
-/// Against the row before allocating any buffer.
+/// Look up the `fs_path`, `size_bytes` and `content_hash` for a given
+/// attachment ID, so the receiver can cross-check a `FileOffer` against the
+/// row before allocating any buffer.
 pub async fn get_attachment_receive_meta(
     pool: &SqlitePool,
     attachment_id: &str,
 ) -> Result<Option<AttachmentReceiveMeta>, AppError> {
-    let row: Option<(String, i64)> =
+    let row: Option<(String, i64, Option<String>)> =
         // dynamic-sql: static SQL; runtime form matches this sync module's style.
-        sqlx::query_as("SELECT fs_path, size_bytes FROM attachments WHERE id = ?")
+        sqlx::query_as("SELECT fs_path, size_bytes, content_hash FROM attachments WHERE id = ?")
             .bind(attachment_id)
             .fetch_optional(pool)
             .await?;
-    Ok(row.map(|(fs_path, size_bytes)| AttachmentReceiveMeta {
-        fs_path,
-        size_bytes,
-    }))
+    Ok(row.map(
+        |(fs_path, size_bytes, content_hash)| AttachmentReceiveMeta {
+            fs_path,
+            size_bytes,
+            content_hash,
+        },
+    ))
 }
 
 /// #2200 (Tier-2) — pre-tally `bytes_total` for a progress-enabled send in
@@ -1817,6 +1822,39 @@ fn cross_check_offer_size(
     Ok(expected_size_u64)
 }
 
+/// Refuse an offer whose hash is not the one the attachment was added with
+/// (#5608 step 6).
+///
+/// The commit checks the bytes against the offer's own `blake3_hash`, which
+/// only proves the sender hashed what it sent. This ties them to the row: a
+/// sender whose copy changed since the add (a same-size corruption hashed
+/// fresh because its row had no hash yet) is refused before a byte is read or
+/// a blob is linked under the wrong hash. Same contract as the size check: no
+/// ACK, and `Err` ends the file phase so the next sync asks again, possibly
+/// of a peer holding the right bytes.
+fn refuse_offer_of_other_bytes(
+    attachment_id: &str,
+    offered_hash: &str,
+    meta: &AttachmentReceiveMeta,
+) -> Result<(), AppError> {
+    match meta.content_hash.as_deref() {
+        Some(added) if added != offered_hash => {
+            tracing::error!(
+                attachment_id,
+                added_hash = added,
+                offered_hash,
+                "FileOffer hash disagrees with the hash the attachment was added with, \
+                 rejecting without ACK"
+            );
+            Err(AppError::InvalidOperation(format!(
+                "file_offer.hash_mismatch: attachment {attachment_id} was added with \
+                 content hash {added}, peer offered {offered_hash}"
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Decline an offer for an attachment this device has no row for: drain the
 /// bytes, then ACK.
 ///
@@ -1954,15 +1992,17 @@ async fn receive_offered_file(
     progress: Option<(&FileTransferProgress<'_>, u64, u64)>,
 ) -> Result<(), AppError> {
     let (attachment_id, size_bytes, blake3_hash, content_hash) = offer;
+    let meta = get_attachment_receive_meta(pool, &attachment_id).await?;
+    if let Some(meta) = &meta {
+        refuse_offer_of_other_bytes(&attachment_id, &blake3_hash, meta)?;
+    }
     // `content_hash` falls back to `blake3_hash` so an old peer's offer (no
     // `content_hash`) still benefits.
     let offered_hash = content_hash.as_deref().unwrap_or(blake3_hash.as_str());
     if link_row_to_local_blob(pool, app_data_dir, &attachment_id, offered_hash).await {
         // Drain the offered bytes (alignment) then ACK. The cap
         // inside `consume_binary_data` is `size_bytes` itself,
-        // i.e. degenerate — there is no DB row size to check the
-        // offer against on a drain path (we never looked one up;
-        // the blob matched by hash). That is sound because these
+        // i.e. degenerate. That is sound because these
         // bytes are discarded rather than stored, so what needs
         // bounding is memory, and `recv_bulk` bounds that with a
         // fixed copy buffer whatever `total_size` says.
@@ -1971,8 +2011,7 @@ async fn receive_offered_file(
         return Ok(());
     }
 
-    // Look up fs_path + DB size_bytes for this attachment
-    let Some(meta) = get_attachment_receive_meta(pool, &attachment_id).await? else {
+    let Some(meta) = meta else {
         return decline_unknown_offer(send, recv, attachment_id, size_bytes).await;
     };
 

@@ -1163,6 +1163,7 @@ fn add_attachment_op(attachment_id: &str) -> OpPayload {
         filename: format!("{attachment_id}.png"),
         size_bytes: 4,
         fs_path: format!("attachments/{attachment_id}"),
+        content_hash: None,
     })
 }
 

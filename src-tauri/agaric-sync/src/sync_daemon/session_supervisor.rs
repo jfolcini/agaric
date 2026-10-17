@@ -1723,6 +1723,7 @@ fn record_initiator_failure(
     event_sink.on_sync_event(SyncEvent::Error {
         message,
         remote_device_id: peer_id.to_string(),
+        code: None,
     });
 }
 
@@ -2094,6 +2095,7 @@ async fn record_session_failure(
         ctx.event_sink.on_sync_event(SyncEvent::Error {
             message: format!("Sync cancelled: {e}"),
             remote_device_id: peer_id.to_owned(),
+            code: None,
         });
         tracing::info!(peer_id, error = %e, "sync session cancelled by user");
     } else if let Some(rejection) = peer_rejection_during_pairing_window(ctx.pool, orch).await {

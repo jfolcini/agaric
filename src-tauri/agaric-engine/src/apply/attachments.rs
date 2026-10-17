@@ -52,8 +52,8 @@ pub async fn apply_add_attachment_tx(
     }
     sqlx::query!(
         "INSERT OR IGNORE INTO attachments \
-             (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+             (id, block_id, filename, fs_path, mime_type, size_bytes, created_at, content_hash) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         attachment_id_str,
         block_id_str,
         filename,
@@ -61,6 +61,7 @@ pub async fn apply_add_attachment_tx(
         p.mime_type,
         p.size_bytes,
         created_at,
+        p.content_hash,
     )
     .execute(&mut *conn)
     .await?;

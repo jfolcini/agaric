@@ -490,6 +490,7 @@ async fn dispatch_op_add_attachment() {
             filename: "photo.png".into(),
             size_bytes: 1024,
             fs_path: "attachments/photo.png".into(),
+            content_hash: None,
         }),
     )
     .await;

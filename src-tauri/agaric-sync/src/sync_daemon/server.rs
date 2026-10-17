@@ -350,6 +350,7 @@ async fn reject(
         event_sink.on_sync_event(SyncEvent::Error {
             message: message.to_owned(),
             remote_device_id: remote_device_id.to_owned(),
+            code: None,
         });
     }
     send_sync_message(

@@ -1094,7 +1094,7 @@ describe('App', () => {
       it('renders the dot with the active color while syncing with peers', async () => {
         useSyncStore.setState({
           state: 'syncing',
-          peers: [{ peerId: 'P1', lastSyncedAt: null, resetCount: 0 }],
+          peers: [{ peerId: 'P1', lastSyncedAt: null, resetCount: 0, name: null }],
         })
         render(<App />)
         const dot = await screen.findByTestId('sync-button-status-dot')
@@ -1106,7 +1106,7 @@ describe('App', () => {
         useSyncStore.setState({
           state: 'error',
           error: 'connection lost',
-          peers: [{ peerId: 'P1', lastSyncedAt: null, resetCount: 0 }],
+          peers: [{ peerId: 'P1', lastSyncedAt: null, resetCount: 0, name: null }],
         })
         render(<App />)
         const dot = await screen.findByTestId('sync-button-status-dot')

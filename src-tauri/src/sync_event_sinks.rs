@@ -173,8 +173,7 @@ impl<R: tauri::Runtime> SyncEventSink for ChannelEventSink<R> {
                 });
             }
             SyncEvent::Error {
-                message: _,
-                remote_device_id,
+                remote_device_id, ..
             } => {
                 self.channel.send(SyncProgressUpdate::Sync {
                     state: "error".to_string(),
@@ -506,6 +505,7 @@ mod tests {
         sink.on_sync_event(SyncEvent::Error {
             message: "kapow".into(),
             remote_device_id: "DEV_PEER".into(),
+            code: None,
         });
 
         assert_eq!(inner.events().len(), 1);

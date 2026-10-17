@@ -754,6 +754,7 @@ impl ChainModel {
                     filename: name.into(),
                     size_bytes: 1,
                     fs_path,
+                    content_hash: None,
                 }))
             }
             OpKind::DeleteAttachment { attachment_index } => {

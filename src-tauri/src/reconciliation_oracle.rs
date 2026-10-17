@@ -84,6 +84,7 @@
 //! | `pages_cache.{title_sort_key,last_edited_ms,space_id}` (the Pages sort keys, #5371) | the cached `pages_cache.title`; `op_log` and `blocks.page_id` for a floor; the page's `blocks.space_id` | the page-row rebuild, its restore insert (`insert_missing_pages_cache_rows`) and the page-create INSERT (key, space) / `raise_pages_last_edited_ms` on every op-landing path (last edited) / `sync_pages_cache_space_ids` in a `space` op's projection (space) — audited by [`reconcile_pages_cache_sort_keys`], NOT by [`reconcile`] |
 //! | `block_tag_inherited` (tag inheritance, #5628) | `blocks` — `parent_id`, `deleted_at` — **and** `block_tags` | the in-transaction arms of `tag_inheritance::apply_op_tag_inheritance`, the purge cascades, `loro_sync`'s post-import refresh / `rebuild_all` (the `RebuildTagInheritanceCache` task) — row membership in [`reconcile`], `inherited_from` in [`diff_block_tag_inherited_provenance`] only |
 //! | SQL `blocks` ITSELF against the Loro engine (#5628) | the live engine docs — not a SQL table | the per-op projections in `loro::projection` (`project_*_to_sql`) after every engine apply / the SQL-only fallbacks, which write SQL without the engine — audited by [`reconcile_engine`], NOT by [`reconcile`] |
+//! | SQL `attachments` against the Loro engine (#5608) | the attachment entries the live engine docs' nodes hold | `apply::attachments` (the op path) / `reproject_attachments_from_engine` (imports and recovery) / `repair::attachments` (the boot backfill) — audited by [`reconcile_engine`], NOT by [`reconcile`] |
 //!
 //! # `page_link_cache` has NO synchronous arm at all (#3296)
 //!
@@ -247,10 +248,16 @@ pub struct BaseBlock {
     position: Option<i64>,
 }
 
-/// One `attachments` row, reduced to the columns the blob store depends on.
+/// One `attachments` row: the columns the blob store depends on, and the ones
+/// the engine owns.
 #[derive(Debug, Clone)]
-struct BaseAttachment {
+pub struct BaseAttachment {
     id: String,
+    block_id: String,
+    filename: String,
+    mime_type: String,
+    size_bytes: i64,
+    created_at: i64,
     fs_path: String,
     content_hash: Option<String>,
     /// `None` = live. `attachments.deleted_at` is still TEXT (out of #109 scope).
@@ -299,13 +306,21 @@ async fn dump_block_links(pool: &SqlitePool) -> Result<Vec<(String, String)>, Ap
 }
 
 async fn dump_attachments(pool: &SqlitePool) -> Result<Vec<BaseAttachment>, AppError> {
-    let rows = sqlx::query!("SELECT id, fs_path, content_hash, deleted_at FROM attachments")
-        .fetch_all(pool)
-        .await?;
+    let rows = sqlx::query!(
+        "SELECT id, block_id, filename, mime_type, size_bytes, created_at, fs_path, \
+         content_hash, deleted_at FROM attachments"
+    )
+    .fetch_all(pool)
+    .await?;
     Ok(rows
         .into_iter()
         .map(|r| BaseAttachment {
             id: r.id,
+            block_id: r.block_id,
+            filename: r.filename,
+            mime_type: r.mime_type,
+            size_bytes: r.size_bytes,
+            created_at: r.created_at,
             fs_path: r.fs_path,
             content_hash: r.content_hash,
             deleted_at: r.deleted_at,
@@ -1801,6 +1816,13 @@ struct EngineBlock {
     live: bool,
 }
 
+/// One engine attachment entry and the node that holds it.
+struct EngineAttachmentEntry {
+    space_id: String,
+    block_id: String,
+    entry: agaric_engine::loro::engine::EngineAttachment,
+}
+
 /// Every engine the registry holds, read without writing anything.
 #[derive(Default)]
 struct EngineView {
@@ -1809,19 +1831,32 @@ struct EngineView {
     /// Every space with an engine, including empty ones: a block SQL places
     /// in one of these must be in it.
     spaces: BTreeSet<String>,
+    /// Keyed by attachment id: the entries the docs' nodes hold, tombstones
+    /// included (#5608).
+    attachments: BTreeMap<String, EngineAttachmentEntry>,
 }
+
+/// One exported doc's nodes, and the attachment entries they hold.
+type EngineSpace = (
+    Vec<(String, EngineBlock)>,
+    Vec<(String, agaric_engine::loro::engine::EngineAttachment)>,
+);
 
 /// Every node of one exported doc: the import-then-read that
 /// `db::recovery::reproject_space_from_engine` runs on a persisted snapshot,
 /// without its SQL writes.
-fn read_engine_space(bytes: &[u8]) -> Result<Vec<(String, EngineBlock)>, AppError> {
+fn read_engine_space(bytes: &[u8]) -> Result<EngineSpace, AppError> {
     let mut engine = agaric_engine::loro::engine::LoroEngine::new();
     engine.import(bytes)?;
     let ids = engine.live_blocks_preorder();
     let id_refs: Vec<&str> = ids.iter().map(agaric_core::ulid::BlockId::as_str).collect();
     let cores = engine.read_blocks_bulk(&id_refs)?;
     let mut out = Vec::with_capacity(id_refs.len());
+    let mut attachments = Vec::new();
     for (block_id, core) in id_refs.into_iter().zip(cores) {
+        for entry in engine.read_attachments(block_id)?.unwrap_or_default() {
+            attachments.push((block_id.to_owned(), entry));
+        }
         let core = core.ok_or_else(|| {
             AppError::validation(format!("engine enumerates {block_id} but cannot read it"))
         })?;
@@ -1844,7 +1879,7 @@ fn read_engine_space(bytes: &[u8]) -> Result<Vec<(String, EngineBlock)>, AppErro
             },
         ));
     }
-    Ok(out)
+    Ok((out, attachments))
 }
 
 /// Read every engine the registry holds.
@@ -1860,8 +1895,19 @@ fn read_engine_view(
     let mut view = EngineView::default();
     for (space_id, bytes) in state.registry.snapshot_all_engines() {
         let space_id = space_id.as_str().to_owned();
-        for (block_id, block) in read_engine_space(&bytes?)? {
+        let (blocks, attachments) = read_engine_space(&bytes?)?;
+        for (block_id, block) in blocks {
             view.blocks.insert((space_id.clone(), block_id), block);
+        }
+        for (block_id, entry) in attachments {
+            view.attachments.insert(
+                entry.attachment_id.clone(),
+                EngineAttachmentEntry {
+                    space_id: space_id.clone(),
+                    block_id,
+                    entry,
+                },
+            );
         }
         view.spaces.insert(space_id);
     }
@@ -2063,13 +2109,144 @@ fn diff_engine_columns(
     }
 }
 
+const ENGINE_ATTACHMENT_ROW_MISSING_OWNER: &str = "a delete or purge that removed the row \
+     without the engine (the SQL-only fallback), or an import whose projection never committed: \
+     peers still show the attachment, and an engine-first recovery brings the row back";
+
+const ENGINE_ATTACHMENT_ROW_EXTRA_OWNER: &str = "the add took the SQL-only fallback and the \
+     boot backfill (repair::attachments) has not run since, or a delete reached the engine but \
+     not SQL: peers do not show this attachment, and an engine-first recovery drops the row";
+
+const ENGINE_ATTACHMENT_FIELD_OWNER: &str = "the attachment writers in agaric-engine's \
+     apply::attachments and loro::projection::reproject_attachments_from_engine, which write the \
+     row from the op or the engine: SQL shows one value while peers and an engine-first recovery \
+     use the engine's";
+
+/// `attachments` against the engine entries the docs' nodes hold (#5608), in
+/// both directions: a live entry SQL has no row for, a row the engine holds
+/// deleted, and a row whose block resolves to a space with an engine that
+/// holds no entry for it. Each field the projection writes from the engine is
+/// compared, the filename as the projection sanitises it.
+///
+/// Not compared: `fs_path` and an absent `content_hash` on either side,
+/// which belong to the device once its row exists (dedup repoints the path;
+/// a row older than the op's hash gets one from the boot hash backfill).
+fn diff_engine_attachments(
+    view: &EngineView,
+    by_id: &BTreeMap<&str, &BaseBlock>,
+    attachments: &[BaseAttachment],
+    out: &mut Vec<Divergence>,
+) {
+    let rows: BTreeMap<&str, &BaseAttachment> =
+        attachments.iter().map(|a| (a.id.as_str(), a)).collect();
+    for (id, held) in &view.attachments {
+        let key = format!("{} / {id}", held.space_id);
+        let row = rows.get(id.as_str());
+        let (row, deleted) = match (row, held.entry.deleted_at) {
+            (None, None) => {
+                out.push(Divergence {
+                    artefact: "engine.attachments.row",
+                    key,
+                    expected: format!("a row on block {}", held.block_id),
+                    actual: "no row in attachments".to_owned(),
+                    owner: ENGINE_ATTACHMENT_ROW_MISSING_OWNER,
+                });
+                continue;
+            }
+            (None, Some(_)) => continue,
+            (Some(row), deleted) => (row, deleted),
+        };
+        if let Some(deleted_at) = deleted {
+            out.push(Divergence {
+                artefact: "engine.attachments.deleted_at",
+                key,
+                expected: format!("no row (the engine deleted it at {deleted_at})"),
+                actual: "a row in attachments".to_owned(),
+                owner: ENGINE_ATTACHMENT_ROW_EXTRA_OWNER,
+            });
+            continue;
+        }
+        diff_attachment_fields(&key, held, row, out);
+    }
+    for row in attachments {
+        let Some(space_id) = fold_block_space(by_id, &row.block_id) else {
+            continue;
+        };
+        if view.attachments.contains_key(&row.id) || !view.spaces.contains(&space_id) {
+            continue;
+        }
+        out.push(Divergence {
+            artefact: "engine.attachments.row",
+            key: format!("{space_id} / {}", row.id),
+            expected: "no row (the engine holds no entry)".to_owned(),
+            actual: format!("a row on block {}", row.block_id),
+            owner: ENGINE_ATTACHMENT_ROW_EXTRA_OWNER,
+        });
+    }
+}
+
+/// The row fields the projection writes from a live engine entry, the
+/// filename as the projection sanitises it, and the hash only when both sides
+/// hold one.
+fn diff_attachment_fields(
+    key: &str,
+    held: &EngineAttachmentEntry,
+    row: &BaseAttachment,
+    out: &mut Vec<Divergence>,
+) {
+    let f = &held.entry.fields;
+    let hashes = match (&f.content_hash, &row.content_hash) {
+        (Some(engine), Some(sql)) => (engine.clone(), sql.clone()),
+        _ => (String::new(), String::new()),
+    };
+    for (artefact, expected, actual) in [
+        (
+            "engine.attachments.block_id",
+            held.block_id.clone(),
+            row.block_id.clone(),
+        ),
+        (
+            "engine.attachments.filename",
+            agaric_core::attachment_filename::sanitize_attachment_filename(&f.filename),
+            row.filename.clone(),
+        ),
+        (
+            "engine.attachments.mime_type",
+            f.mime_type.clone(),
+            row.mime_type.clone(),
+        ),
+        (
+            "engine.attachments.size_bytes",
+            f.size_bytes.to_string(),
+            row.size_bytes.to_string(),
+        ),
+        (
+            "engine.attachments.created_at",
+            f.created_at.to_string(),
+            row.created_at.to_string(),
+        ),
+        ("engine.attachments.content_hash", hashes.0, hashes.1),
+    ] {
+        if expected != actual {
+            out.push(Divergence {
+                artefact,
+                key: key.to_owned(),
+                expected,
+                actual,
+                owner: ENGINE_ATTACHMENT_FIELD_OWNER,
+            });
+        }
+    }
+}
+
 /// SQL `blocks` against the Loro engine — the merge truth for text, the tree
 /// and typed scalar properties (AGENTS.md invariant 2). Every other artefact
 /// audits a cache against SQL base tables; this one audits the base table.
 ///
 /// Compared: row membership, `block_type`, `content`, `parent_id`, sibling
 /// order (see [`sibling_places`]) and the four promoted property columns,
-/// plus "live in the engine, deleted in SQL". Not compared, each because a correct vault
+/// plus "live in the engine, deleted in SQL", and the `attachments` rows (see
+/// [`diff_engine_attachments`]). Not compared, each because a correct vault
 /// legitimately differs: the other `block_properties` rows (typed by
 /// `property_definitions`, and a dangling `value_ref` is dropped on purpose),
 /// `block_tags` (a purged tag's id stays in the engine's tag map), the
@@ -2079,16 +2256,18 @@ fn diff_engine_columns(
 /// The engine side is read through the engine's own read API, the calls
 /// `db::recovery::reproject_space_from_engine` makes; none of the projection
 /// writers it audits runs. Divergences come back membership first, then
-/// columns, in a stable order.
+/// columns, then attachments, in a stable order.
 pub fn reconcile_engine(
     state: &agaric_engine::loro::shared::LoroState,
     blocks: &[BaseBlock],
+    attachments: &[BaseAttachment],
 ) -> Result<Vec<Divergence>, AppError> {
     let view = read_engine_view(state)?;
     let by_id: BTreeMap<&str, &BaseBlock> = blocks.iter().map(|b| (b.id.as_str(), b)).collect();
     let mut out = Vec::new();
     diff_engine_membership(&view, &by_id, &mut out);
     diff_engine_columns(&view, &by_id, &mut out);
+    diff_engine_attachments(&view, &by_id, attachments, &mut out);
     Ok(out)
 }
 
@@ -3587,7 +3766,11 @@ pub async fn reconcile_all(
         &expected_inherited,
         &stored_inherited,
     ));
-    out.extend(reconcile_engine(engines, &blocks)?);
+    out.extend(reconcile_engine(
+        engines,
+        &blocks,
+        &dump_attachments(pool).await?,
+    )?);
     Ok(out)
 }
 

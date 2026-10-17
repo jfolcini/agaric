@@ -1302,6 +1302,256 @@ async fn protocol_size_mismatch_no_ack_returns_err() {
     );
 }
 
+// ── #5608 step 6: an offer is held to the hash the attachment was added with ──
+
+/// A row naming the hash of `bytes`, as a peer's row does once the add op
+/// carries it. Its own file is absent, so the receive loop requests it.
+async fn insert_attachment_added_with(
+    pool: &SqlitePool,
+    att_id: &str,
+    fs_path: &str,
+    bytes: &[u8],
+) {
+    insert_test_attachment(pool, att_id, fs_path, i64::try_from(bytes.len()).unwrap()).await;
+    sqlx::query("UPDATE attachments SET content_hash = ? WHERE id = ?")
+        .bind(blake3::hash(bytes).to_hex().to_string())
+        .bind(att_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// Offer `bytes`, hashed truthfully, for `attachment_id` through the
+/// production receive loop. Returns the receiver's result and whether it ACKed.
+async fn offer_file_5608(
+    pool: &SqlitePool,
+    app_data_dir: &std::path::Path,
+    attachment_id: &str,
+    bytes: &[u8],
+) -> (Result<FileTransferStats, AppError>, bool) {
+    let mut pair = quic_pair().await;
+    let size = u64::try_from(bytes.len()).unwrap();
+    let hash = blake3::hash(bytes).to_hex().to_string();
+    let (client, server) = (&mut pair.client, &mut pair.server);
+    let att = attachment_id.to_owned();
+    let payload = bytes.to_vec();
+    let sender = async move {
+        let request = recv_sync_message(&mut server.recv).await.unwrap();
+        assert!(
+            matches!(&request, SyncMessage::FileRequest { attachment_ids } if attachment_ids == std::slice::from_ref(&att)),
+            "the receiver asks for the row's bytes first, got {request:?}"
+        );
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
+                attachment_id: att,
+                size_bytes: size,
+                blake3_hash: hash.clone(),
+                content_hash: Some(hash),
+            },
+        )
+        .await
+        .unwrap();
+        send_bulk(
+            &mut server.send,
+            std::io::Cursor::new(payload),
+            size,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        let reply = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            recv_sync_message(&mut server.recv),
+        )
+        .await;
+        let acked = matches!(reply, Ok(Ok(SyncMessage::FileReceived { .. })));
+        if acked {
+            send_sync_message(&mut server.send, &SyncMessage::FileTransferComplete)
+                .await
+                .unwrap();
+        }
+        acked
+    };
+    let cancel = AtomicBool::new(false);
+    let (acked, result) = tokio::join!(
+        sender,
+        request_and_receive_files(
+            &mut client.send,
+            &mut client.recv,
+            pool,
+            app_data_dir,
+            &cancel,
+            None,
+        ),
+    );
+    (result, acked)
+}
+
+/// Bytes the sender hashed fresh but that are not the bytes the attachment was
+/// added with (a same-size corruption on a sender whose row had no hash yet)
+/// are refused before anything is written, and not ACKed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_offer_of_other_bytes_than_the_add_is_refused_5608() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+    insert_attachment_added_with(
+        &pool,
+        "ATT_H",
+        "attachments/h.bin",
+        b"the bytes that were added!",
+    )
+    .await;
+
+    let (result, acked) =
+        offer_file_5608(&pool, dir.path(), "ATT_H", b"other bytes of that length").await;
+
+    let err = result.expect_err("bytes other than the added ones must be refused");
+    assert!(
+        err.to_string().contains("file_offer.hash_mismatch"),
+        "the refusal names the hash mismatch, got {err}"
+    );
+    assert!(!acked, "a refused offer is not ACKed");
+    assert!(
+        !dir.path().join("attachments/h.bin").exists(),
+        "nothing is written for a refused offer"
+    );
+}
+
+/// The refusal comes before the content-addressed link: a blob this device
+/// holds under the OFFERED hash is not linked to a row added with other bytes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_offer_of_other_bytes_is_not_linked_to_a_blob_held_under_its_hash_5608() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+    let other = b"other bytes of that length";
+    std::fs::create_dir_all(dir.path().join("attachments")).unwrap();
+    std::fs::write(dir.path().join("attachments/other.bin"), other).unwrap();
+    insert_blob_row(
+        &pool,
+        &blake3::hash(other).to_hex(),
+        "attachments/other.bin",
+        i64::try_from(other.len()).unwrap(),
+    )
+    .await;
+    insert_attachment_added_with(
+        &pool,
+        "ATT_H",
+        "attachments/h.bin",
+        b"the bytes that were added!",
+    )
+    .await;
+
+    let (result, acked) = offer_file_5608(&pool, dir.path(), "ATT_H", other).await;
+
+    assert!(result.is_err(), "the mismatch is refused, got {result:?}");
+    assert!(!acked, "a refused offer is not ACKed");
+    let fs_path: String = sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = 'ATT_H'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        fs_path, "attachments/h.bin",
+        "the row is not linked to the other bytes"
+    );
+}
+
+/// The added bytes themselves are accepted, written and ACKed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_offer_of_the_added_bytes_is_accepted_5608() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+    let added = b"the bytes that were added!";
+    insert_attachment_added_with(&pool, "ATT_H", "attachments/h.bin", added).await;
+
+    let (result, acked) = offer_file_5608(&pool, dir.path(), "ATT_H", added).await;
+
+    assert_eq!(
+        result.expect("the added bytes are accepted").files_received,
+        1
+    );
+    assert!(acked, "an accepted offer is ACKed");
+    assert_eq!(
+        std::fs::read(dir.path().join("attachments/h.bin")).unwrap(),
+        added
+    );
+}
+
+/// #5728 — what the receive path's hash costs on a 50 MB attachment: the
+/// production writer (`write_attachment_streaming` + `commit`, hashing as it
+/// writes, fsyncing before and after the rename) against the same writes,
+/// fsyncs and rename with no hash, and the hash alone, interleaved. The hash
+/// check against the row compares two strings and adds no hashing. A timing,
+/// not an assertion: run by hand with `cargo nextest run -p agaric-sync
+/// --run-ignored only --no-capture -E 'test(receive_hash_timing_5728)'` and
+/// read the `receive_hash_timing_5728:` lines.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "timing only (#5728); run by hand"]
+async fn receive_hash_timing_5728() {
+    use std::time::{Duration, Instant};
+    const SIZE: usize = 50 * 1024 * 1024;
+    const ROUNDS: usize = 9;
+    let chunk = crate::transport::bulk::BULK_COPY_BYTES;
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join("attachments")).unwrap();
+    let bytes: Vec<u8> = (0..SIZE)
+        .map(|i| u8::try_from(i * 31 % 251).unwrap())
+        .collect();
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    let mut times: [Vec<Duration>; 3] = Default::default();
+    for round in 0..ROUNDS {
+        let started = Instant::now();
+        let mut writer = write_attachment_streaming(dir.path(), &format!("attachments/h{round}"))
+            .await
+            .unwrap();
+        for part in bytes.chunks(chunk) {
+            writer.write_all(part).await.unwrap();
+        }
+        writer.commit(&hash).await.unwrap();
+        times[0].push(started.elapsed());
+
+        let started = Instant::now();
+        let temp = dir.path().join(format!("attachments/p{round}.tmp"));
+        let mut file = tokio::fs::File::create(&temp).await.unwrap();
+        for part in bytes.chunks(chunk) {
+            file.write_all(part).await.unwrap();
+        }
+        file.flush().await.unwrap();
+        file.sync_all().await.unwrap();
+        drop(file);
+        tokio::fs::rename(&temp, dir.path().join(format!("attachments/p{round}")))
+            .await
+            .unwrap();
+        tokio::fs::File::open(dir.path().join("attachments"))
+            .await
+            .unwrap()
+            .sync_all()
+            .await
+            .unwrap();
+        times[1].push(started.elapsed());
+
+        let started = Instant::now();
+        let mut hasher = blake3::Hasher::new();
+        for part in bytes.chunks(chunk) {
+            hasher.update(part);
+        }
+        assert_eq!(hasher.finalize().to_hex().as_str(), hash);
+        times[2].push(started.elapsed());
+    }
+    for (name, mut run) in ["writer_with_hash", "write_without_hash", "hash_alone"]
+        .into_iter()
+        .zip(times)
+    {
+        run.sort();
+        eprintln!(
+            "receive_hash_timing_5728: {name} min={:?} median={:?} max={:?}",
+            run[0],
+            run[ROUNDS / 2],
+            run[ROUNDS - 1]
+        );
+    }
+}
+
 /// #638: an offer for an attachment with no local DB row must NOT stall
 /// the sender. The receiver drains the offered bytes and ALWAYS sends a
 /// `FileReceived` ACK on the skip path; the sender then unblocks and the

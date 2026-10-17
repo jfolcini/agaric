@@ -49,7 +49,7 @@ impl AttachmentFields {
             fs_path: p.fs_path.clone(),
             size_bytes: p.size_bytes,
             created_at,
-            content_hash: None,
+            content_hash: p.content_hash.clone(),
         }
     }
 }

@@ -182,17 +182,10 @@ async fn persist_attachment(
         filename: filename.clone(),
         size_bytes,
         fs_path: row_fs_path.clone(),
+        content_hash: Some(content_hash.clone()),
     });
     let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
     crate::materializer::apply_op_projected(&mut tx, &op_record, state, false).await?;
-    // The op does not carry the hash yet; the row keeps this device's.
-    sqlx::query!(
-        "UPDATE attachments SET content_hash = ? WHERE id = ?",
-        content_hash,
-        attachment_id
-    )
-    .execute(&mut **tx)
-    .await?;
 
     // Commit + fire-and-forget background cache dispatch.
     tx.enqueue_background(op_record);

@@ -685,6 +685,7 @@ async fn reverse_add_attachment_produces_delete_attachment() {
             filename: "photo.png".into(),
             size_bytes: 1024,
             fs_path: "/tmp/photo.png".into(),
+            content_hash: None,
         }),
         FIXED_TS,
     )
@@ -753,6 +754,7 @@ async fn reverse_add_attachment_describes_the_live_row_and_falls_back_when_it_is
             filename: ORIGINAL_NAME.into(),
             size_bytes: 1024,
             fs_path: ORIGINAL_PATH.into(),
+            content_hash: None,
         }),
         FIXED_TS,
     )
@@ -1400,6 +1402,7 @@ async fn reverse_delete_attachment_returns_add_attachment_with_metadata() {
             filename: "photo.png".into(),
             size_bytes: 2048,
             fs_path: "/data/photo.png".into(),
+            content_hash: None,
         }),
         FIXED_TS,
     )
@@ -1449,6 +1452,7 @@ async fn reverse_delete_attachment_restores_the_post_rename_filename_4262() {
             filename: "photo.png".into(),
             size_bytes: 2048,
             fs_path: "attachments/photo.png".into(),
+            content_hash: None,
         }),
         FIXED_TS,
     )
@@ -1527,6 +1531,7 @@ async fn reverse_delete_attachment_legacy_payload_without_filename_falls_back_to
             filename: "photo.png".into(),
             size_bytes: 2048,
             fs_path: "attachments/photo.png".into(),
+            content_hash: None,
         }),
         FIXED_TS,
     )
@@ -1590,6 +1595,7 @@ async fn reverse_delete_attachment_pre_c3_payload_without_fs_path_keeps_the_add_
             filename: "photo.png".into(),
             size_bytes: 2048,
             fs_path: "attachments/photo.png".into(),
+            content_hash: None,
         }),
         FIXED_TS,
     )
@@ -1666,6 +1672,7 @@ async fn reverse_delete_attachment_roundtrip() {
             filename: "doc.pdf".into(),
             size_bytes: 4096,
             fs_path: "/data/doc.pdf".into(),
+            content_hash: None,
         }),
         FIXED_TS,
     )
@@ -2147,6 +2154,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 filename: format!("{att_id}.png"),
                 size_bytes: 1024,
                 fs_path: format!("/tmp/{att_id}.png"),
+                content_hash: None,
             }),
             next_ts(&mut ts),
         )
@@ -2200,6 +2208,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             filename: format!("redone_{dup_att_id}.png"),
             size_bytes: 1024,
             fs_path: format!("/tmp/redone_{dup_att_id}.png"),
+            content_hash: None,
         }),
         next_ts(&mut ts),
     )
@@ -3546,6 +3555,7 @@ async fn reverse_delete_attachment_tie_breaks_on_device_id_3646() {
                     filename: format!("from-{dev}.png"),
                     size_bytes: size_marker(dev),
                     fs_path: format!("/tmp/from-{dev}.png"),
+                    content_hash: None,
                 }),
                 FIXED_TS,
             )
@@ -3779,6 +3789,7 @@ async fn compute_reverse_batch_attachment_group_stays_aligned_across_chunks_4656
                 filename: format!("a{i}.png"),
                 size_bytes: size,
                 fs_path: format!("/tmp/a{i}.png"),
+                content_hash: None,
             }),
             next_ts(&mut ts),
         )

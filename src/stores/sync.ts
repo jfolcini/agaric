@@ -20,6 +20,8 @@ export interface PeerInfo {
   peerId: string
   lastSyncedAt: string | null
   resetCount: number
+  /** What the user calls the device (`peerName`), or `null` when unnamed. */
+  name: string | null
 }
 
 /**

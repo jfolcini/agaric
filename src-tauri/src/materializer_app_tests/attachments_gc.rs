@@ -890,6 +890,7 @@ async fn apply_peer_add_attachment(
             filename: "photo.png".into(),
             size_bytes: 5,
             fs_path: fs_path.to_owned(),
+            content_hash: None,
         },
         FIXED_TS,
     )
