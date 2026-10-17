@@ -3164,6 +3164,132 @@ async fn a_local_purge_cascades_the_deferred_row_away_5712() {
     );
 }
 
+/// #5712: pulls from different peers share the table. One that ends while
+/// others still import leaves it alone, whether it holds a claim or not, and
+/// the last to end sweeps what every one of them deferred.
+#[tokio::test]
+async fn only_the_last_inbound_sync_to_end_sweeps_5712() {
+    let (pool, _dir) = fresh_pool().await;
+    let registry_b = import_a_purge_of_p_and_t(&pool).await;
+    let (first, second, third) = (
+        registry_b.begin_inbound_sync(),
+        registry_b.begin_inbound_sync(),
+        registry_b.begin_inbound_sync(),
+    );
+    let ids = |swept: Vec<agaric_core::ulid::BlockId>| {
+        swept
+            .iter()
+            .map(|id| id.as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        ids(
+            sweep_deferred_purges_if_last(&pool, &registry_b, Some(first))
+                .await
+                .expect("first ends")
+        ),
+        Vec::<String>::new(),
+        "two others are still importing"
+    );
+    assert_eq!(
+        ids(sweep_deferred_purges(&pool, &registry_b)
+            .await
+            .expect("a sweep with no claim")),
+        Vec::<String>::new(),
+        "a sweep that holds no claim defers to the sessions in flight"
+    );
+    assert_eq!(
+        (
+            deferred_purge_ids(&pool).await,
+            rows_naming(&pool, &[P_5712, C_5712, T_5712]).await
+        ),
+        (
+            sorted_ids(&[P_5712, C_5712, T_5712]),
+            ROWS_BEFORE_THE_PURGE_5712.to_vec()
+        ),
+        "neither deleted anything"
+    );
+
+    drop(second);
+    assert_eq!(
+        ids(
+            sweep_deferred_purges_if_last(&pool, &registry_b, Some(third))
+                .await
+                .expect("last ends")
+        ),
+        sorted_ids(&[P_5712, C_5712, T_5712]),
+        "the last session to end sweeps what all of them deferred, one that failed included"
+    );
+    assert_eq!(
+        (
+            deferred_purge_ids(&pool).await,
+            registry_b.inbound_syncs_in_flight()
+        ),
+        (Vec::<String>::new(), 0),
+        "nothing waits, and nobody is in flight"
+    );
+}
+
+/// #5712: a session leaves the in-flight set holding the writer lock, which
+/// an import needs to record a deferral. So a session that starts while the
+/// sweep waits for that lock, and records its deferral the moment the lock is
+/// free, is in flight when the sweep decides, and its ids are not swept.
+/// Leaving before the lock would let the sweep read them as an ended
+/// session's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_starting_while_a_sweep_waits_for_the_lock_is_not_swept_5712() {
+    const NEWCOMER: &str = "01HZ5712000000000000NEWCOM";
+    let (pool, _dir) = fresh_pool().await;
+    let registry = std::sync::Arc::new(import_a_purge_of_p_and_t(&pool).await);
+    let ending = registry.begin_inbound_sync();
+
+    // Another writer holds the lock the sweep needs.
+    let mut writer = pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .expect("hold the writer lock");
+    let sweep = tokio::spawn({
+        let (pool, registry) = (pool.clone(), std::sync::Arc::clone(&registry));
+        async move { sweep_deferred_purges_if_last(&pool, &registry, Some(ending)).await }
+    });
+    // Nothing reports a task waiting on SQLite's lock; it shows as a second
+    // connection in use, and the pause lets it get from there to the wait.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while usize::try_from(pool.size()).expect("size") - pool.num_idle() < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the sweep takes a connection to wait with");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // A session starts and records its deferral as soon as it can write.
+    let newcomer = registry.begin_inbound_sync();
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'content', 'new')")
+        .bind(NEWCOMER)
+        .execute(&mut *writer)
+        .await
+        .expect("seed the newcomer's block");
+    sqlx::query("INSERT INTO sync_deferred_purges (block_id) VALUES (?)")
+        .bind(NEWCOMER)
+        .execute(&mut *writer)
+        .await
+        .expect("the newcomer defers it");
+    writer.commit().await.expect("release the lock");
+
+    assert!(
+        sweep.await.expect("join").expect("sweep").is_empty(),
+        "the newcomer is in flight, so the session that ended is not the last"
+    );
+    assert_eq!(
+        deferred_purge_ids(&pool).await,
+        sorted_ids(&[P_5712, C_5712, T_5712, NEWCOMER]),
+        "nothing was swept"
+    );
+    drop(newcomer);
+}
+
 /// #2292 happy path: a normal inbound purge apply (Live) defers the SQL
 /// subtree to the session's sweep (#5712) AND clears the write-ahead slot on
 /// commit. The tombstone written mid-apply (before the projection tx) is

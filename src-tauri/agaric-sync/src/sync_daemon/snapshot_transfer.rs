@@ -51,7 +51,7 @@ use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
 use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
 use crate::transport::session::{RECV_TIMEOUT, recv_sync_message_within, send_sync_message};
 use agaric_core::error::AppError;
-use agaric_engine::loro::registry::LoroEngineRegistry;
+use agaric_engine::loro::registry::{InboundSync, LoroEngineRegistry};
 use agaric_store::peer_refs;
 
 // ---------------------------------------------------------------------------
@@ -210,6 +210,11 @@ pub struct EngineReloadCtx<'a> {
     pub registry: &'a agaric_engine::loro::registry::LoroEngineRegistry,
     /// This device's stable id, threaded into the rehydrate path.
     pub device_id: &'a str,
+    /// #5712: the claim the session's main loop took on the registry's
+    /// in-flight inbound syncs when it imported before the reset, which this
+    /// catch-up's sweep ends. `None` when it imported nothing, and the
+    /// catch-up claims for itself.
+    pub inbound: Option<InboundSync>,
 }
 
 /// Resolve the peer identity a catch-up should be attributed to, preferring
@@ -443,14 +448,16 @@ async fn merge_one_snapshot(
 /// #5712: the catch-up carried every space's snapshot, so it ends the pull the
 /// way `complete_pull_session` does: the blocks its imports, or the main
 /// loop's before the reset, took out of a doc that no engine holds now are
-/// purged.
+/// purged, unless another pull is still importing.
 async fn sweep_after_catchup(
     pool: &SqlitePool,
     engine: &EngineReloadCtx<'_>,
     materializer: &dyn ApplyHost,
     remote_device_id: &str,
+    inbound: InboundSync,
 ) -> Result<(), AppError> {
-    let swept = loro_sync::sweep_deferred_purges(pool, engine.registry).await?;
+    let swept =
+        loro_sync::sweep_deferred_purges_if_last(pool, engine.registry, Some(inbound)).await?;
     if let Err(e) = materializer
         .enqueue_inbound_sync_rebuilds(&[], &swept)
         .await
@@ -529,13 +536,19 @@ async fn receive_loro_snapshot_catchup(
     first_msg: LoroSyncMessage,
     first_is_last: bool,
 ) -> Result<(), AppError> {
-    let engine = engine_reload.ok_or_else(|| {
+    let mut engine = engine_reload.ok_or_else(|| {
         AppError::InvalidOperation(
             "loro-snapshot catch-up requires a live engine registry to merge into; \
              none was provided"
                 .into(),
         )
     })?;
+    // Claimed before the first merge, and carried through the sweep, so a pull
+    // that ends meanwhile leaves what this catch-up defers.
+    let inbound = engine
+        .inbound
+        .take()
+        .unwrap_or_else(|| engine.registry.begin_inbound_sync());
 
     event_sink.on_sync_event(SyncEvent::Progress {
         state: "loro_snapshot_merging".into(),
@@ -562,7 +575,7 @@ async fn receive_loro_snapshot_catchup(
         }
         (loro_msg, is_last) = next_snapshot_frame(recv).await?;
     }
-    sweep_after_catchup(pool, &engine, materializer, remote_device_id).await?;
+    sweep_after_catchup(pool, &engine, materializer, remote_device_id, inbound).await?;
 
     // #4097: the caller already resolved the identity (session id, else the
     // daemon's authenticated peer identity, logged there). Empty at this point

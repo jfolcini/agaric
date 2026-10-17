@@ -228,6 +228,13 @@ pub struct SyncOrchestrator {
     /// materializer flush settles that rebuild, so the audit write runs
     /// uncontended.
     pending_ingest_records: Vec<OpTransfer>,
+    /// #5712: this session's claim on the registry's in-flight inbound syncs,
+    /// taken before its first import and given up by the sweep that ends it
+    /// ([`complete_pull_session`](Self::complete_pull_session)), or by the
+    /// snapshot catch-up it hands off to. Pulls from different peers run at
+    /// once and share the deferred purges, so a sweep waits for the last of
+    /// them.
+    inbound: Option<agaric_engine::loro::registry::InboundSync>,
     event_sink: Option<Box<dyn crate::sync_events::SyncEventSink>>,
 }
 
@@ -262,6 +269,7 @@ impl SyncOrchestrator {
             peer_advertised_heads: Vec::new(),
             pending_op_batches: VecDeque::new(),
             pending_ingest_records: Vec::new(),
+            inbound: None,
             event_sink: None,
         }
     }
@@ -996,6 +1004,8 @@ impl SyncOrchestrator {
         // The registry is always present now (#2249 removed the
         // process-global-`None` defensive branch), so an
         // unimportable/corrupt payload is the sole failure here.
+        self.inbound
+            .get_or_insert_with(|| loro_state.registry.begin_inbound_sync());
         let outcome =
             match loro_sync::apply_remote(&self.pool, &loro_state.registry, &self.device_id, msg)
                 .await
@@ -1976,11 +1986,13 @@ impl SyncOrchestrator {
 
         // #5712: every space's doc this session carried has landed, so a block
         // its imports took out of a doc that no engine holds now was purged,
-        // not moved. Before the bookkeeping, so a failed sweep leaves the peer
+        // not moved, unless another pull is still importing: the last one to
+        // end sweeps. Before the bookkeeping, so a failed sweep leaves the peer
         // due and the next pull retries it.
-        let swept = crate::sync_protocol::loro_sync::sweep_deferred_purges(
+        let swept = crate::sync_protocol::loro_sync::sweep_deferred_purges_if_last(
             &self.pool,
             &self.loro_state().registry,
+            self.inbound.take(),
         )
         .await?;
         self.session.changed_blocks = self.session.changed_blocks.saturating_add(swept.len());
@@ -2103,6 +2115,16 @@ impl SyncOrchestrator {
     pub fn expected_remote_id(&self) -> Option<&str> {
         self.expected_remote_id.as_deref()
     }
+
+    /// #5712: hand this session's claim on the in-flight inbound syncs to the
+    /// snapshot catch-up that continues it. The catch-up's sweep ends the
+    /// session, so the claim must not stay behind here and keep it from being
+    /// the last.
+    pub(crate) fn take_inbound_sync(
+        &mut self,
+    ) -> Option<agaric_engine::loro::registry::InboundSync> {
+        self.inbound.take()
+    }
 }
 
 #[cfg(test)]
@@ -2188,32 +2210,61 @@ mod tests {
         }
     }
 
-    /// Drive one pull session against a peer engine and return the terminal
-    /// `Complete` event's `(ops_received, changed_blocks)`.
-    ///
-    /// This is a real session over the real state machine: we `start()` as the
-    /// puller, the peer answers with one `LoroSync` per registered space built
-    /// against the version vectors we just advertised, and the last of them
-    /// completes the session. Exactly the wire traffic of one resync tick.
-    async fn pull_from(
-        pool: &SqlitePool,
-        local_state: &Arc<agaric_engine::loro::shared::LoroState>,
-        peer_state: &agaric_engine::loro::shared::LoroState,
-    ) -> (usize, Option<usize>) {
-        pull_from_recording(pool, local_state, peer_state).await.0
+    /// A pull session against a peer engine whose per-space payloads have not
+    /// been delivered yet: a real session over the real state machine. We
+    /// `start()` as the puller, and the peer answers with one `LoroSync` per
+    /// registered space built against the version vectors we just advertised.
+    /// Delivering the last of them completes the session, exactly the wire
+    /// traffic of one resync tick.
+    struct OpenPull {
+        orch: SyncOrchestrator,
+        sink: Arc<crate::sync_events::RecordingEventSink>,
+        host: Arc<crate::apply_host::test_support::RecordingApplyHost>,
+        payloads: VecDeque<crate::sync_protocol::loro_sync_types::LoroSyncMessage>,
     }
 
-    /// [`pull_from`], also returning every cache fan-out the session asked
-    /// its host for, in order.
-    async fn pull_from_recording(
+    impl OpenPull {
+        /// Import the peer's next per-space payload.
+        async fn deliver_next(&mut self) {
+            let is_last = self.payloads.len() == 1;
+            let msg = self.payloads.pop_front().expect("a payload left");
+            self.orch
+                .handle_message(SyncMessage::LoroSync { msg, is_last })
+                .await
+                .expect("import the peer's per-space payload");
+        }
+
+        /// Import every payload still owed; the session completes.
+        async fn deliver_rest(&mut self) {
+            while !self.payloads.is_empty() {
+                self.deliver_next().await;
+            }
+        }
+
+        /// The terminal `Complete` event's `(ops_received, changed_blocks)`.
+        fn complete(&self) -> (usize, Option<usize>) {
+            use crate::sync_events::SyncEvent;
+            self.sink
+                .events()
+                .into_iter()
+                .find_map(|e| match e {
+                    SyncEvent::Complete {
+                        ops_received,
+                        changed_blocks,
+                        ..
+                    } => Some((ops_received, changed_blocks)),
+                    _ => None,
+                })
+                .expect("the session must reach Complete")
+        }
+    }
+
+    async fn open_pull(
         pool: &SqlitePool,
         local_state: &Arc<agaric_engine::loro::shared::LoroState>,
         peer_state: &agaric_engine::loro::shared::LoroState,
-    ) -> (
-        (usize, Option<usize>),
-        Vec<crate::apply_host::test_support::InboundRebuild>,
-    ) {
-        use crate::sync_events::{RecordingEventSink, SyncEvent};
+    ) -> OpenPull {
+        use crate::sync_events::RecordingEventSink;
         use crate::sync_protocol::loro_sync;
 
         let sink = Arc::new(RecordingEventSink::new());
@@ -2234,14 +2285,14 @@ mod tests {
         };
 
         let sql_deleted = std::collections::HashSet::new();
-        let mut payloads = Vec::new();
+        let mut payloads = VecDeque::new();
         for sid in TWO_SPACES {
             let space = agaric_store::space::SpaceId::from_trusted(sid);
             let peer_vv = loro_vvs
                 .iter()
                 .find(|v| v.space_id == space)
                 .map(|v| v.vv.as_slice());
-            payloads.push(
+            payloads.push_back(
                 loro_sync::prepare_outgoing(
                     &peer_state.registry,
                     &space,
@@ -2254,30 +2305,37 @@ mod tests {
                 .expect("a registered space always yields a payload"),
             );
         }
-
-        let last = payloads.len() - 1;
-        for (i, msg) in payloads.into_iter().enumerate() {
-            orch.handle_message(SyncMessage::LoroSync {
-                msg,
-                is_last: i == last,
-            })
-            .await
-            .expect("import the peer's per-space payload");
+        OpenPull {
+            orch,
+            sink,
+            host: recording,
+            payloads,
         }
+    }
 
-        let complete = sink
-            .events()
-            .into_iter()
-            .find_map(|e| match e {
-                SyncEvent::Complete {
-                    ops_received,
-                    changed_blocks,
-                    ..
-                } => Some((ops_received, changed_blocks)),
-                _ => None,
-            })
-            .expect("the session must reach Complete");
-        (complete, recording.inbound_rebuilds())
+    /// Drive one pull session against a peer engine and return the terminal
+    /// `Complete` event's `(ops_received, changed_blocks)`.
+    async fn pull_from(
+        pool: &SqlitePool,
+        local_state: &Arc<agaric_engine::loro::shared::LoroState>,
+        peer_state: &agaric_engine::loro::shared::LoroState,
+    ) -> (usize, Option<usize>) {
+        pull_from_recording(pool, local_state, peer_state).await.0
+    }
+
+    /// [`pull_from`], also returning every cache fan-out the session asked
+    /// its host for, in order.
+    async fn pull_from_recording(
+        pool: &SqlitePool,
+        local_state: &Arc<agaric_engine::loro::shared::LoroState>,
+        peer_state: &agaric_engine::loro::shared::LoroState,
+    ) -> (
+        (usize, Option<usize>),
+        Vec<crate::apply_host::test_support::InboundRebuild>,
+    ) {
+        let mut pull = open_pull(pool, local_state, peer_state).await;
+        pull.deliver_rest().await;
+        (pull.complete(), pull.host.inbound_rebuilds())
     }
 
     /// #4305: a converged, idle pair still exchanges one `LoroSync` per space
@@ -2407,5 +2465,167 @@ mod tests {
             .await
             .expect("count rows");
         assert_eq!(rows, 0, "the purge reached SQL by the session's end");
+    }
+
+    /// #5712: pulls from two peers run at the same time. The one that ends
+    /// first must not purge what the other deferred and is about to claim,
+    /// and the one that ends last purges whatever nobody claimed.
+    ///
+    /// Peer one moves `moved` from space 0 to space 1 and purges `gone`.
+    /// Local pulls peer one's space 0 doc, the old doc of the move, and is
+    /// still importing when a pull from peer two, which knows of neither,
+    /// completes.
+    #[tokio::test]
+    async fn a_pull_ending_while_another_still_imports_leaves_its_deferred_purges_5712() {
+        use agaric_engine::loro::shared::LoroState;
+        use agaric_store::space::SpaceId;
+
+        let (moved, moved_kid) = ("01HZ0000000000000000MOVED5", "01HZ000000000000MOVEDKID57");
+        let (gone, gone_kid) = ("01HZ00000000000000000GONE5", "01HZ0000000000000GONEKID57");
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        let local_state = Arc::new(LoroState::new());
+        let (peer_one, peer_two) = (LoroState::new(), LoroState::new());
+        seed_spaces(&local_state, "DEV_LOCAL");
+        seed_spaces(&peer_one, "DEV_PEER");
+        seed_spaces(&peer_two, "DEV_PEER2");
+        let (space0, space1) = (
+            SpaceId::from_trusted(TWO_SPACES[0]),
+            SpaceId::from_trusted(TWO_SPACES[1]),
+        );
+        {
+            let mut guard = peer_one
+                .registry
+                .for_space(&space0, "DEV_PEER")
+                .expect("peer engine");
+            for (id, block_type, content, parent) in [
+                (moved, "page", "Plan", None),
+                (moved_kid, "content", "step", Some(moved)),
+                (gone, "page", "Old", None),
+                (gone_kid, "content", "dust", Some(gone)),
+            ] {
+                guard
+                    .engine_mut()
+                    .apply_create_block(id, block_type, content, parent, 0)
+                    .expect("create");
+            }
+        }
+        // Peer two has peer one's history so far, and nothing since.
+        for space in [&space0, &space1] {
+            let snapshot = peer_one
+                .registry
+                .for_space(space, "DEV_PEER")
+                .expect("peer one")
+                .engine_mut()
+                .export_snapshot()
+                .expect("snapshot");
+            peer_two
+                .registry
+                .for_space(space, "DEV_PEER2")
+                .expect("peer two")
+                .engine_mut()
+                .import(&snapshot)
+                .expect("import");
+        }
+        pull_from(&pool, &local_state, &peer_one).await;
+        for sql in [
+            "INSERT INTO block_drafts (block_id, content, updated_at) VALUES ('01HZ000000000000MOVEDKID57', 'unsaved', 1)",
+            "INSERT INTO page_opens (page_id, opened_ms) VALUES ('01HZ0000000000000000MOVED5', 7)",
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&pool)
+                .await
+                .expect("seed a row only local has");
+        }
+
+        // Peer one moves `moved` to space 1 and purges `gone`.
+        {
+            let mut guard = peer_one
+                .registry
+                .for_space(&space0, "DEV_PEER")
+                .expect("peer engine");
+            guard.engine_mut().apply_purge_block(moved).expect("prune");
+            guard.engine_mut().apply_purge_block(gone).expect("purge");
+        }
+        {
+            let mut guard = peer_one
+                .registry
+                .for_space(&space1, "DEV_PEER")
+                .expect("peer engine");
+            let engine = guard.engine_mut();
+            engine
+                .apply_create_block(moved, "page", "Plan", None, 0)
+                .expect("hydrate the page");
+            engine
+                .apply_create_block(moved_kid, "content", "step", Some(moved), 0)
+                .expect("hydrate its block");
+        }
+
+        /// The four blocks' rows, the two device-local rows and the deferred ids.
+        async fn local_rows(pool: &SqlitePool) -> (Vec<String>, i64, i64, Vec<String>) {
+            let blocks = sqlx::query_scalar(
+                "SELECT id FROM blocks WHERE id LIKE '01HZ%MOVED%' OR id LIKE '01HZ%GONE%' \
+                 ORDER BY id",
+            )
+            .fetch_all(pool)
+            .await
+            .expect("read blocks");
+            let drafts = sqlx::query_scalar("SELECT COUNT(*) FROM block_drafts")
+                .fetch_one(pool)
+                .await
+                .expect("count drafts");
+            let opens = sqlx::query_scalar("SELECT COUNT(*) FROM page_opens")
+                .fetch_one(pool)
+                .await
+                .expect("count opens");
+            let deferred =
+                sqlx::query_scalar("SELECT block_id FROM sync_deferred_purges ORDER BY block_id")
+                    .fetch_all(pool)
+                    .await
+                    .expect("read deferred");
+            (blocks, drafts, opens, deferred)
+        }
+        let mut all_four: Vec<String> = [moved, moved_kid, gone, gone_kid]
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect();
+        all_four.sort_unstable();
+
+        let mut pull_one = open_pull(&pool, &local_state, &peer_one).await;
+        pull_one.deliver_next().await;
+        assert_eq!(
+            local_rows(&pool).await,
+            (all_four.clone(), 1, 1, all_four.clone()),
+            "the old doc's import defers the move and the purge, and deletes nothing"
+        );
+
+        let (_, changed_blocks) = pull_from(&pool, &local_state, &peer_two).await;
+        assert_eq!(
+            (changed_blocks, local_rows(&pool).await),
+            (Some(0), (all_four.clone(), 1, 1, all_four.clone())),
+            "a pull that ends while pull one still imports purges nothing"
+        );
+
+        pull_one.deliver_rest().await;
+        let mut kept = vec![moved.to_owned(), moved_kid.to_owned()];
+        kept.sort_unstable();
+        assert_eq!(
+            local_rows(&pool).await,
+            (kept, 1, 1, Vec::new()),
+            "the new doc claims the move; the last pull to end purges the rest, \
+             and local keeps its own rows on the moved page"
+        );
+        let mut purged = vec![gone.to_owned(), gone_kid.to_owned()];
+        purged.sort_unstable();
+        assert_eq!(
+            pull_one.host.inbound_rebuilds().last().map(|r| (
+                r.changed_blocks.is_empty(),
+                r.purged_blocks
+                    .iter()
+                    .map(|id| id.as_str().to_owned())
+                    .collect::<Vec<_>>()
+            )),
+            Some((true, purged)),
+            "pull one's last fan-out hands the host what it purged"
+        );
     }
 }

@@ -2469,6 +2469,7 @@ async fn run_snapshot_catchup(
     let engine_reload = Some(snapshot_transfer::EngineReloadCtx {
         registry: &loro_state.registry,
         device_id: &local_device_id,
+        inbound: orch.take_inbound_sync(),
     });
     match snapshot_transfer::try_receive_snapshot_catchup(
         send,
@@ -4591,5 +4592,139 @@ mod tests {
                 "{other:?} must not be mistaken for the dead-pairing refusal"
             );
         }
+    }
+
+    /// #5712: a session that imported a doc before the responder sent it to the
+    /// snapshot catch-up hands the catch-up its claim on the in-flight inbound
+    /// syncs. A claim left behind with the orchestrator would keep the
+    /// catch-up's sweep from being the last, and the block the first doc
+    /// dropped would stay in SQL.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn the_catchup_inherits_the_claim_its_session_took_5712() {
+        use crate::apply_host::test_support::RecordingApplyHost;
+        use crate::sync_protocol::SyncMessage;
+        use crate::sync_protocol::loro_sync::apply_remote;
+        use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
+        use crate::transport::test_support::quic_pair;
+        use agaric_engine::loro::registry::LoroEngineRegistry;
+        use agaric_store::space::SpaceId;
+
+        const LOCAL: &str = "DEV_LOCAL";
+        const REMOTE: &str = "DEV_PEER";
+        let space = SpaceId::from_trusted("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        let (page, gone) = ("01HZ0000000000000000PAGE57", "01HZ00000000000000000GONE57");
+
+        let resp_registry = LoroEngineRegistry::new();
+        let (first, vv_before) = {
+            let mut g = resp_registry.for_space(&space, REMOTE).unwrap();
+            let e = g.engine_mut();
+            e.apply_create_block(page, "page", "Plan", None, 0).unwrap();
+            e.apply_create_block(gone, "content", "doomed", Some(page), 0)
+                .unwrap();
+            (e.export_snapshot().unwrap(), e.version_vector())
+        };
+        let (pool, _dir) = agaric_store::test_support::test_pool().await;
+        let host = Arc::new(RecordingApplyHost::new());
+        let local_registry = host.loro_state();
+        apply_remote(
+            &pool,
+            &local_registry.registry,
+            LOCAL,
+            LoroSyncMessage::Snapshot {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: space.clone(),
+                bytes: first,
+            },
+        )
+        .await
+        .unwrap();
+        let purge = {
+            let mut g = resp_registry.for_space(&space, REMOTE).unwrap();
+            let e = g.engine_mut();
+            e.apply_purge_block(gone).unwrap();
+            e.export_update_since(&vv_before).unwrap()
+        };
+
+        // The session imports the update, then the peer sends it to the catch-up.
+        let materializer: Arc<dyn ApplyHost> = host.clone();
+        let mut orch = SyncOrchestrator::new(pool.clone(), LOCAL.to_owned(), materializer.clone())
+            .with_expected_remote_id(REMOTE.to_owned());
+        orch.start().await.unwrap();
+        orch.handle_message(SyncMessage::LoroSync {
+            msg: LoroSyncMessage::Update {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: space.clone(),
+                from_vv: vv_before,
+                bytes: purge,
+            },
+            is_last: false,
+        })
+        .await
+        .unwrap();
+        orch.handle_message(SyncMessage::ResetRequired {
+            reason: "test".into(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            local_registry.registry.inbound_syncs_in_flight(),
+            1,
+            "precondition: the session claimed before its first import"
+        );
+
+        let (resp_pool, _resp_dir) = agaric_store::test_support::test_pool().await;
+        let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+        let mut pair = quic_pair().await;
+        let (client, server) = (&mut pair.client, &mut pair.server);
+        let (offered, caught_up) = tokio::join!(
+            async {
+                snapshot_transfer::try_offer_loro_snapshot_catchup(
+                    &mut server.send,
+                    &mut server.recv,
+                    &resp_pool,
+                    &resp_registry,
+                    &sink,
+                    REMOTE,
+                    LOCAL,
+                )
+                .await?;
+                finish_session(
+                    true,
+                    &mut server.send,
+                    &server.conn,
+                    SessionLimits::default(),
+                )
+                .await
+            },
+            run_snapshot_catchup(
+                &mut orch,
+                &mut client.send,
+                &mut client.recv,
+                &client.conn,
+                &pool,
+                &materializer,
+                &sink,
+            ),
+        );
+        offered.expect("responder offer");
+        caught_up.expect("initiator catch-up");
+
+        let rows: Vec<String> = sqlx::query_scalar("SELECT id FROM blocks ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let deferred: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_deferred_purges")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            (
+                rows,
+                deferred,
+                local_registry.registry.inbound_syncs_in_flight()
+            ),
+            (vec![page.to_owned()], 0, 0),
+            "the catch-up swept what the session deferred, and nothing is left in flight"
+        );
     }
 }
