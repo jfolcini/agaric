@@ -7,6 +7,8 @@ import {
   installIpcRecorder,
   navigateToView,
   openPage,
+  replaceEditorText,
+  saveBlock,
   test,
   waitForBoot,
 } from './helpers'
@@ -21,19 +23,7 @@ test.describe.configure({ mode: 'serial' })
  *
  * history-revert.spec.ts covers only multi-select batch revert. This file
  * extends coverage to 'Restore to here', the word-level diff toggle, the
- * op-type filter, and the op-log compaction card —
- * to the extent the tauri-mock supports each.
- *
- * Mock-blocked flows (documented here, NOT faked as passing coverage):
- *
- *  - `list_page_history` (handlers.ts ~2554-2595) reads `args.scope` (space
- *    scoping) but never reads `args.opTypeFilter` — op-type filtering is
- *    NOT applied mock-side, only real-backend-side
- *    (src-tauri/agaric-store/src/pagination/history.rs). The filter-bar test below
- *    asserts the Select's WIRING (the chosen op type reaches the
- *    `list_page_history` IPC call), not that the rendered list narrows,
- *    since the mock always returns the full unfiltered set regardless of
- *    the filter value.
+ * op-type filter, and the op-log compaction card.
  *
  *  - Compaction is modelled on both halves now (`handlers/history.ts`):
  *    `eligible_ops` counts the ops past the retention window and
@@ -155,41 +145,33 @@ test.describe('HistoryView — diff toggle', () => {
 test.describe('HistoryView — filter bar', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
-    await installIpcRecorder(page)
   })
 
-  test('op type Select fires list_page_history with the chosen opTypeFilter', async ({ page }) => {
+  test('op type filter narrows the list to edit rows; clearing it brings create rows back', async ({
+    page,
+  }) => {
     await openPage(page, 'Getting Started')
+    await focusBlock(page, 0)
+    await replaceEditorText(page, 'Filtered edit marker')
+    await saveBlock(page, 'Escape')
     await page.getByRole('button', { name: 'Add block' }).click()
     await expect(page.locator('[data-testid="sortable-block"]').last()).toBeVisible()
 
     await navigateToView(page, 'History')
-    await expect(page.locator('[data-history-item]').first()).toBeVisible({ timeout: 5000 })
+    const badges = page.locator('[data-history-item] [data-testid="history-type-badge"]')
+    const createBadges = badges.filter({ hasText: 'create_block' })
+    await expect(createBadges.first()).toBeVisible()
 
-    await clearInvokeCalls(page)
     await page.getByRole('combobox', { name: 'Filter by operation type' }).click()
-    await page.getByRole('option', { name: 'Create' }).click()
+    await page.getByRole('option', { name: 'Edit', exact: true }).click()
+    await expect(createBadges).toHaveCount(0)
+    await expect(badges.filter({ hasNotText: 'edit_block' })).toHaveCount(0)
+    await expect(
+      page.locator('[data-history-item]', { hasText: 'Filtered edit marker' }),
+    ).toBeVisible()
 
-    // Wiring: the correct opTypeFilter reaches the IPC. (The mock ignores
-    // it — see spec header — so the rendered list is NOT asserted to
-    // narrow here.)
-    await expect
-      .poll(async () => {
-        const calls = await getInvokeCalls(page, 'list_page_history')
-        return calls.at(-1)?.['opTypeFilter'] ?? null
-      })
-      .toBe('create_block')
-
-    // The ✕ clear-filter control resets the Select and the IPC arg.
-    await expect(page.getByTestId('history-filter-clear')).toBeVisible()
-    await clearInvokeCalls(page)
     await page.getByTestId('history-filter-clear').click()
-    await expect
-      .poll(async () => {
-        const calls = await getInvokeCalls(page, 'list_page_history')
-        return calls.length > 0 ? (calls.at(-1)?.['opTypeFilter'] ?? null) : undefined
-      })
-      .toBe(null)
+    await expect(createBadges.first()).toBeVisible()
   })
 })
 
