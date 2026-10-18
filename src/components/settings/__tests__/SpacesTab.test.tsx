@@ -2,11 +2,7 @@
  * Tests for SpacesTab (Settings › Spaces, #5362).
  *
  * IPC runs through the in-memory tauri mock, so a mutation is asserted on
- * what `list_spaces` returns afterwards, not on the call that made it. The
- * one command stubbed instead is the emptiness probe: the mock's
- * `list_blocks` ignores the space scope, so it answers here the way the
- * backend does for the seed (Personal holds the seeded pages, a new space
- * holds nothing).
+ * what `list_spaces` returns afterwards, not on the call that made it.
  *
  * Coverage: render, open-on-launch choice (persisted, used by the next
  * launch, reset when its space is deleted), create, rename, recolour,
@@ -53,17 +49,10 @@ const nonEmptyPage = {
   total_count: null,
 }
 
-/** The emptiness probe's answer for the seed: only Personal holds pages. */
-function probe(args: InvokeArgs | undefined) {
-  const { scope } = args as { scope: { space_id: string } }
-  return scope.space_id === PERSONAL ? nonEmptyPage : emptyPage
-}
-
 function backend(overrides: Record<string, (args: InvokeArgs | undefined) => unknown> = {}) {
   return async (cmd: string, args?: InvokeArgs) => {
     const override = overrides[cmd]
     if (override) return override(args)
-    if (cmd === 'list_blocks') return probe(args)
     return dispatch(cmd, args)
   }
 }

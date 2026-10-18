@@ -54,10 +54,8 @@ test('Open on launch keeps the chosen space, and falls back to Last used once a 
   await openSpacesSettings(page)
   await expect(openOnLaunch).toHaveText('Work')
 
-  // The mock keeps Settings' Delete disabled for every space (its `list_blocks`
-  // ignores the space scope, so the emptiness probe never sees an empty one),
-  // so the space is deleted on another device instead: the mock store loses the
-  // space block, then `sync:complete` refreshes the list.
+  // Work is deleted on another device: the mock store loses the space block,
+  // then `sync:complete` refreshes the list.
   await page.evaluate(async () => {
     const w = window as unknown as {
       __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }

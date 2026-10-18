@@ -370,6 +370,15 @@ export const propertiesHandlers = {
     // #2656 — mirror the real backend's op-log value validation so contract
     // drift fails e2e/unit instead of storing an invalid value silently.
     assertValidSetPropertyValue(key, valueText)
+    // `validate_set_property`: one value, or none to clear a reserved column.
+    const valueCount = [valueText, valueNum, valueDate, valueRef, valueBool].filter(
+      (v) => v !== null,
+    ).length
+    if (valueCount > 1 || (valueCount === 0 && RESERVED_PROPERTY_COLUMN[key] === undefined)) {
+      throw validationRejection(
+        `SetProperty must have exactly 1 non-null value field, found ${valueCount}`,
+      )
+    }
     // #5160 D11 — `read_typed_ref`: text under a `ref` definition is the block
     // it names in the block's space.
     if (

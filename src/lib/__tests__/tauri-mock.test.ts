@@ -91,17 +91,17 @@ describe('seed data', () => {
     const result = invoke('list_blocks', { blockType: 'page' }) as {
       items: Record<string, unknown>[]
     }
-    expect(result.items).toHaveLength(7)
+    expect(result.items).toHaveLength(6)
     const titles = result.items.map((b) => b['content'])
     expect(titles).toContain('Getting Started')
     expect(titles).toContain('Quick Notes')
     expect(titles).toContain('Projects')
     expect(titles).toContain('Meetings')
     expect(titles).toContain('Meeting Notes Template')
-    // #5057 — the canonical space is an ordinary page block now, not a row
-    // `list_spaces` invented, so it is one of the pages `list_blocks` serves.
-    expect(titles).toContain('Personal')
-    // The 7th seed page is the dynamic daily page (YYYY-MM-DD).
+    // #5057 — the canonical space is an ordinary page block, but not a member
+    // of its own space, so its scoped listing leaves it out.
+    expect(titles).not.toContain('Personal')
+    // One seed page is the dynamic daily page (YYYY-MM-DD).
     expect(titles.some((t) => /^\d{4}-\d{2}-\d{2}$/.test(t as string))).toBe(true)
   })
 
@@ -2871,7 +2871,7 @@ describe('export_page_markdown', () => {
       parentId: SEED_IDS.PAGE_GETTING_STARTED,
     })
     const md = invoke('export_page_markdown', { pageId: SEED_IDS.PAGE_GETTING_STARTED }) as string
-    invoke('import_markdown', { content: md, filename: 'reimported.md' })
+    invoke('import_markdown', { content: md, filename: 'reimported.md', spaceId: 'SPACE_PERSONAL' })
     const pageId = (
       (
         invoke('list_blocks', { blockType: 'page' }) as { items: Record<string, unknown>[] }
@@ -3426,6 +3426,7 @@ describe('import_markdown', () => {
     const result = invoke('import_markdown', {
       content: '# titled \r\n\r\nBody',
       filename: 'titled.md',
+      spaceId: 'SPACE_PERSONAL',
     }) as Record<string, unknown>
     expect(result['page_title']).toBe('titled')
     expect(result['blocks_created']).toBe(1)
@@ -3470,6 +3471,7 @@ describe('import_markdown', () => {
     const result = invoke('import_markdown', {
       content: '- Item one\n- Item two\n* Item three\n+ Item four\n1. Item five',
       filename: 'list.md',
+      spaceId: 'SPACE_PERSONAL',
     }) as Record<string, unknown>
     expect(result['blocks_created']).toBe(5)
 
@@ -3490,6 +3492,7 @@ describe('import_markdown', () => {
     invoke('import_markdown', {
       content: '- [ ] open\n- [/] wip\n* [x] done\n- [X] loud\n1. [-] gone\n- [?] kept',
       filename: 'tasks.md',
+      spaceId: 'SPACE_PERSONAL',
     })
     const pageId = (
       (
@@ -3521,6 +3524,7 @@ describe('import_markdown', () => {
     invoke('import_markdown', {
       content: 'Test block content',
       filename: 'Unique Import Test.md',
+      spaceId: 'SPACE_PERSONAL',
     })
     const pages = invoke('list_blocks', { blockType: 'page' }) as {
       items: Record<string, unknown>[]
@@ -3981,10 +3985,13 @@ describe('scope-filter parity', () => {
   }): { pageId: string; blockId: string } {
     seedForeignPage()
     // Find the just-created foreign page (it carries `space = SPACE_OTHER`).
-    const allPages = invoke('list_blocks', { blockType: 'page' }) as {
+    const foreignPages = invoke('list_blocks', {
+      blockType: 'page',
+      scope: { kind: 'active', space_id: SPACE_OTHER },
+    }) as {
       items: Record<string, unknown>[]
     }
-    const foreignPage = allPages.items.find((p) => p['content'] === 'Foreign Page')
+    const foreignPage = foreignPages.items.find((p) => p['content'] === 'Foreign Page')
     if (!foreignPage) throw new Error('foreign page seed failed')
     const pageId = foreignPage['id'] as string
     // Build content — embed the link target if requested so `get_backlinks` /
