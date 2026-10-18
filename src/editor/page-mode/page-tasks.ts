@@ -251,7 +251,7 @@ class PageBlockView implements NodeView {
     attributes: Record<string, unknown>,
     editor: Editor,
     tasks: PageTaskSource,
-    lists: PageLists | null,
+    lists: PageLists,
   ) {
     this.node = node
     this.editor = editor
@@ -264,7 +264,7 @@ class PageBlockView implements NodeView {
     this.show()
     this.unsubscribe = tasks.subscribe(() => this.show())
     const id = blockIdOf(node)
-    if (lists === null || id === null) this.unsubscribeMarker = () => {}
+    if (id === null) this.unsubscribeMarker = () => {}
     else {
       this.showMarker(lists.markerOf(id))
       this.unsubscribeMarker = lists.subscribe(id, () => this.showMarker(lists.markerOf(id)))
@@ -492,7 +492,7 @@ const PageTaskKeys = Extension.create<{ tasks: PageTaskSource | null }>({
  * Page mode's block, drawn with its task, priority, dates, properties and
  * `lists`' marker, and the keys that set them.
  */
-export function pageTasks(tasks: PageTaskSource, lists: PageLists | null) {
+export function pageTasks(tasks: PageTaskSource, lists: PageLists) {
   return [
     PageBlock.extend({
       addNodeView:

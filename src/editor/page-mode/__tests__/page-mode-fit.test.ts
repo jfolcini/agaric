@@ -13,7 +13,6 @@ import {
   blockerIn,
   blockerMessage,
   PAGE_MODE_BLOCK_CAP,
-  pageModeBlocker,
   readPageFit,
 } from '@/editor/page-mode/page-mode-fit'
 import { t } from '@/lib/i18n'
@@ -86,7 +85,7 @@ describe('blockerIn', () => {
   })
 })
 
-describe('pageModeBlocker', () => {
+describe('readPageFit', () => {
   it('reads the properties and attachments of every block, once each', async () => {
     const getBatchProperties = vi.fn(() => ({}))
     const listAttachmentsBatch = vi.fn(() => ({}))
@@ -97,7 +96,7 @@ describe('pageModeBlocker', () => {
       }),
     )
 
-    expect(await pageModeBlocker([row(), row({ id: 'B2' })], 2)).toBeNull()
+    expect((await readPageFit([row(), row({ id: 'B2' })], 2)).blocker).toBeNull()
     expect(getBatchProperties).toHaveBeenCalledWith({ blockIds: ['B1', 'B2'] })
     expect(listAttachmentsBatch).toHaveBeenCalledWith({ blockIds: ['B1', 'B2'] })
   })
@@ -116,7 +115,7 @@ describe('pageModeBlocker', () => {
       }),
     )
 
-    expect(await pageModeBlocker([row({ todo_state: 'DONE' })], 1)).toBeNull()
+    expect((await readPageFit([row({ todo_state: 'DONE' })], 1)).blocker).toBeNull()
   })
 
   it('lets in the user’s properties and a repeating task’s rule, and hands them over (#5743)', async () => {
@@ -171,15 +170,16 @@ describe('pageModeBlocker', () => {
         }),
       }),
     )
-    expect(await pageModeBlocker([row()], 1)).toEqual({ kind: 'attachments' })
+    expect((await readPageFit([row()], 1)).blocker).toEqual({ kind: 'attachments' })
   })
 
   it('asks nothing of an empty page, or of one its rows already keep out', async () => {
     vi.mocked(invoke).mockImplementation(mockInvokeCommands({}))
 
-    expect(await pageModeBlocker([], 0)).toBeNull()
-    expect(await pageModeBlocker([row({ content: '{{query todo:TODO}}' })], 1)).toEqual({
-      kind: 'queries',
+    expect(await readPageFit([], 0)).toEqual({ blocker: null, properties: {} })
+    expect(await readPageFit([row({ content: '{{query todo:TODO}}' })], 1)).toEqual({
+      blocker: { kind: 'queries' },
+      properties: {},
     })
   })
 
@@ -193,7 +193,7 @@ describe('pageModeBlocker', () => {
       }),
     )
 
-    await expect(pageModeBlocker([row()], 1)).rejects.toThrow()
+    await expect(readPageFit([row()], 1)).rejects.toThrow()
   })
 })
 

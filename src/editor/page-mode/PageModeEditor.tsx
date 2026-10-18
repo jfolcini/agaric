@@ -560,10 +560,12 @@ function PageModeDocument({
       setListStyle: (id, style) => {
         if (lists.styleOf(id) === style) return
         const seq = lists.want(id, style)
+        // Refused, or not run as the block was not saved: it shows the style last read.
+        let written: ListStyle | null = null
         void afterSave(id, async () => {
           try {
             await setListStyle(id, style)
-            lists.settle(id, seq, style)
+            written = style
           } catch (err) {
             logger.error('PageModeEditor', 'Failed to write a list style', { id, style }, err)
             notify.error(
@@ -574,9 +576,7 @@ function PageModeDocument({
               ),
             )
           }
-        })
-          // Refused, or not run as the block was not saved: it shows the style last read.
-          .then(() => lists.settle(id, seq, null))
+        }).then(() => lists.settle(id, seq, written))
       },
     }
 

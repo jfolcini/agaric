@@ -4,9 +4,9 @@
  * and its list marker (`page-lists.ts`); what else block mode draws around the
  * text it does not draw yet, so a page holding any of it stays in block mode
  * rather than hide it: attachments, and the `{{query …}}` and `{{embed …}}`
- * blocks block mode renders as results. A page
- * longer than `PAGE_MODE_BLOCK_CAP` stays too: ProseMirror renders the whole
- * document. Showing these in page mode is #5743.
+ * blocks block mode renders as results. A page longer than
+ * `PAGE_MODE_BLOCK_CAP` stays too: ProseMirror renders the whole document.
+ * Showing these in page mode is #5743.
  *
  * Collapse is block mode's view of the tree, not something blocks hold: page
  * mode shows every block, and the collapse state is there again in block mode.
@@ -69,14 +69,6 @@ export async function readPageFit(blocks: readonly FlatBlock[], count: number): 
     return { blocker: { kind: 'attachments' }, properties }
   }
   return { blocker: null, properties }
-}
-
-/** What keeps the page out of page mode, read as `readPageFit` reads it. */
-export async function pageModeBlocker(
-  blocks: readonly FlatBlock[],
-  count: number,
-): Promise<PageModeBlocker | null> {
-  return (await readPageFit(blocks, count)).blocker
 }
 
 /** Why page mode is not offered, in a sentence. */
