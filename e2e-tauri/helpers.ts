@@ -84,13 +84,19 @@
 //   - Settings › Data › "Open edit history" (`openEditHistory`):
 //     `#settings-tab-data`, `[data-testid="settings-panel-data"]`, and the
 //     History view's `[role="grid"][aria-label="History entries"]`.
+//   - Settings › Data's markdown import (`importMarkdownPage`):
+//     `[data-testid="import-file-input"]` and `[data-testid="import-result"]`
+//     (ImportSection.tsx), whose summary reads `Imported “<title>”: N blocks`.
 //   - A property chip's accessible name, `<Key>: <value>`
 //     (`property.selectValue`, PropertyChip.tsx), the slash item
 //     "LOCATION Office — Office" (slash-commands.ts) and its toast "Set
 //     location to Office" (`blockTree.setLocationMessage`).
 // ---------------------------------------------------------------------------
 
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { type Socket, createConnection } from 'node:net'
+import os from 'node:os'
+import path from 'node:path'
 
 // Boot of a real WebKitWebView + first live-backend IPC round-trip is slower
 // than a headless-chrome mock, so keep every wait generous and never race.
@@ -980,6 +986,39 @@ export async function openEditHistory(): Promise<void> {
   await open.waitForClickable({ timeout: ACTION_TIMEOUT })
   await open.click()
   await $('[role="grid"][aria-label="History entries"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+}
+
+/**
+ * Import `markdown` as the page `title` (the file name minus `.md`) through
+ * Settings › Data's hidden `<input type="file">`, and resolve to the import
+ * summary once it names the page. WebDriver's Element Send Keys sets a file
+ * input's FileList from a path, so no native dialog opens; the `hidden` class
+ * comes off first because WebKitWebDriver applies the keyboard-interactability
+ * check to file inputs.
+ */
+export async function importMarkdownPage(title: string, markdown: string): Promise<string> {
+  await navigateTo('Settings')
+  const dataTab = $('#settings-tab-data')
+  await dataTab.waitForClickable({ timeout: NAV_TIMEOUT })
+  await dataTab.click()
+  await $('[data-testid="settings-panel-data"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+
+  const file = path.join(mkdtempSync(path.join(os.tmpdir(), 'wdio-import-')), `${title}.md`)
+  writeFileSync(file, markdown)
+  const input = $('[data-testid="import-file-input"]')
+  await input.waitForExist({ timeout: ACTION_TIMEOUT })
+  await browser.execute(() => {
+    document.querySelector('[data-testid="import-file-input"]')?.classList.remove('hidden')
+  })
+  await input.addValue(file)
+
+  const result = $('[data-testid="import-result"]')
+  await result.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  await browser.waitUntil(async () => (await result.getText()).includes(`Imported “${title}”`), {
+    timeout: ACTION_TIMEOUT,
+    timeoutMsg: `the import result never named ${title}`,
+  })
+  return result.getText()
 }
 
 /**
