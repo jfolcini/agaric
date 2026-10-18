@@ -13,11 +13,13 @@ import { useTranslation } from 'react-i18next'
 import { EditorSurfaceContext } from '@/components/editor/editor-surface-context'
 import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { StaticBlock } from '@/components/editor/StaticBlock'
+import { latestUndoEntry } from '@/components/pages/PageSourceSaveReport'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useDebouncedContentCommit } from '@/hooks/useDebouncedContentCommit'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
 import { useScrollCaretAboveKeyboard } from '@/hooks/useScrollCaretAboveKeyboard'
+import { performPageUndo } from '@/hooks/useUndoShortcuts'
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
 import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import { attachmentRef } from '@/lib/attachment-ref'
@@ -175,6 +177,15 @@ const ATTACH_PROGRESS_THRESHOLD_BYTES = 1_048_576 // 1 MB
 /** Whether a file's resolved MIME type is an image (drives inline insertion). */
 function isImageMime(mimeType: string): boolean {
   return mimeType.startsWith('image/')
+}
+
+/** Undo a broken link's removal while it is still the page's latest undo entry. */
+async function undoBrokenLinkRemoval(pageId: string, entry: unknown, t: TFunction): Promise<void> {
+  if (latestUndoEntry(pageId) !== entry) {
+    notify(t('editor.brokenLinkUndoStale'))
+    return
+  }
+  await performPageUndo(pageId)
 }
 
 export async function processFileAttachments(
@@ -456,6 +467,31 @@ function EditableBlockInner({
   const { t } = useTranslation()
   const [isDragOver, setIsDragOver] = useState(false)
 
+  // The edit any other change writes, so page-level undo restores the link: the
+  // toast's Undo reaches it where Ctrl+Z cannot (touch, the journal). Its own
+  // undo entry, so undoing it leaves the block's earlier typing in place.
+  const removeBrokenLink = useCallback(
+    async (contentWithoutLink: string) => {
+      // The chip goes with the link; focus stays on this block's row, as
+      // `BlockContextMenu` keeps it there when its trigger goes.
+      document
+        .querySelector<HTMLElement>(`[data-block-id="${blockId}"] [data-context-trigger="true"]`)
+        ?.focus()
+      if (!(await editRef.current(blockId, contentWithoutLink, { merge: false }))) return
+      const entry = rootParentId === null ? undefined : latestUndoEntry(rootParentId)
+      notify.success(t('editor.brokenLinkRemoved'), {
+        ...(rootParentId !== null &&
+          entry !== undefined && {
+            action: {
+              label: t('action.undo'),
+              onClick: () => void undoBrokenLinkRemoval(rootParentId, entry, t),
+            },
+          }),
+      })
+    },
+    [blockId, rootParentId, t],
+  )
+
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (e.dataTransfer.types.includes('Files')) {
       e.preventDefault()
@@ -516,6 +552,7 @@ function EditableBlockInner({
         isSelected={isSelected}
         onSelect={onSelect}
         onMouseDown={keepEditorUntilClick}
+        onRemoveBrokenLink={removeBrokenLink}
       />
     )
   }

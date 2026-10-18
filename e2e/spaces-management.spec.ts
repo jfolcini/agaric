@@ -48,22 +48,6 @@
  *      is a wide-blast-radius change that belongs in its own PR. The test
  *      below asserts the CURRENT (limited) mock behaviour honestly,
  *      labelled as such.
- *   2. **Cross-space `[[link]]` broken-link chip** (docs/features/spaces.md:47,
- *      "renders as a broken-link chip … click removes it, Ctrl+Z
- *      restores") has no locatable implementation to exercise. The two
- *      i18n strings the doc's behaviour implies —
- *      `editor.brokenLinkTooltip` / `editor.brokenLinkRemoved`
- *      (src/lib/i18n/editor.ts) — are defined but never referenced
- *      anywhere else in `src/` (grepped `brokenLink` repo-wide); the
- *      editable `block_link` TipTap extension's `resolveStatus` option is
- *      explicitly commented "Phase 4 — no-op; kept for test backward
- *      compat" (src/editor/extensions/block-link.ts). A foreign-space
- *      `[[link]]` currently resolves through the same "deleted" cache
- *      placeholder path as any missing target
- *      (src/hooks/useBlockLinkResolve.ts) with no distinct undo-friendly
- *      removal UI found. This looks like a pre-existing product-doc /
- *      code mismatch, independent of this e2e task's scope — not
- *      attempted here.
  */
 
 import {

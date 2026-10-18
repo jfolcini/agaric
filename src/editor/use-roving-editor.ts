@@ -547,6 +547,8 @@ export const PriorityShortcuts = Extension.create({
 export interface ContentExtensionOptions {
   resolveTagName: (id: string) => string
   resolveBlockTitle: (id: string) => string
+  /** A `'deleted'` page link is broken, and clicking it removes it. */
+  resolveBlockStatus: (id: string) => 'active' | 'deleted'
   onNavigate: (id: string) => void
   onTagClick: (id: string) => void
   searchTags: (query: string) => PickerItem[] | Promise<PickerItem[]>
@@ -613,7 +615,11 @@ export function contentExtensions(o: ContentExtensionOptions) {
   ]
   const chips: Extensions = [
     TagRef.configure({ resolveName: o.resolveTagName, onClick: o.onTagClick }),
-    BlockLink.configure({ resolveTitle: o.resolveBlockTitle, onNavigate: o.onNavigate }),
+    BlockLink.configure({
+      resolveTitle: o.resolveBlockTitle,
+      resolveStatus: o.resolveBlockStatus,
+      onNavigate: o.onNavigate,
+    }),
     BlockRef.configure({
       // #4551 — `resolveBlockTitle` is the SAME resolver `BlockLink` gets, so a
       // miss comes back `unresolvedBlockLabel`-shaped (`[[id…]]`, PAGE-link
@@ -667,7 +673,7 @@ export interface RovingEditorOptions {
   onPropertySelect?: (item: PickerItem) => void
   /** Return blocks matching query (for (( picker). */
   searchBlockRefs?: (query: string) => PickerItem[] | Promise<PickerItem[]>
-  /** Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  /** Whether a linked block is active or deleted; a deleted `[[link]]` is broken. */
   resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
@@ -794,6 +800,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     // now the same helper every real resolver's own miss-fallback calls, so
     // this default and the app's resolvers can't drift on the shape.
     resolveBlockTitle = (id: string) => unresolvedBlockLabel(id),
+    resolveBlockStatus = () => 'active',
     // / #544: callers own the placeholder text and pass the
     // i18n-keyed translation (e.g. BlockTree → t('block.emptyPlaceholder')).
     // The default is empty rather than a hardcoded English string so a caller
@@ -833,6 +840,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // form so the decoration reflects the CURRENT placeholder on every commit.
   const placeholderRef = useRef(placeholder)
   const resolveBlockTitleRef = useRef(resolveBlockTitle)
+  const resolveBlockStatusRef = useRef(resolveBlockStatus)
   const onNavigateRef = useRef(onNavigate)
   const onTagClickRef = useRef(onTagClick)
   const onCreatePageRef = useRef(onCreatePage)
@@ -853,6 +861,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     resolveTagNameRef.current = resolveTagName
     placeholderRef.current = placeholder
     resolveBlockTitleRef.current = resolveBlockTitle
+    resolveBlockStatusRef.current = resolveBlockStatus
     onNavigateRef.current = onNavigate
     onTagClickRef.current = onTagClick
     onCreatePageRef.current = onCreatePage
@@ -885,6 +894,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     const content = contentExtensions({
       resolveTagName: (id: string) => resolveTagNameRef.current(id),
       resolveBlockTitle: (id: string) => resolveBlockTitleRef.current(id),
+      resolveBlockStatus: (id: string) => resolveBlockStatusRef.current(id),
       onNavigate: (id: string) => onNavigateRef.current?.(id),
       onTagClick: (id: string) => onTagClickRef.current?.(id),
       searchTags: (query: string) => searchTagsRef.current(query),

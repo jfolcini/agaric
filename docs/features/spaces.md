@@ -46,7 +46,7 @@ When you switch spaces, you re-scope:
 
 ## Cross-space links
 
-A `[[link]]` whose target lives in a different space **does not navigate** — it renders as a broken-link chip with the tooltip *"Broken link or in another space — click to remove"*. The chip is undo-friendly: clicking removes the reference; `Ctrl+Z` restores it. This is enforced at write time too, so a future cross-space link cannot be added by accident.
+A `[[link]]` whose target lives in a different space **does not navigate** — it renders as a broken-link chip (struck through) with the tooltip *"Broken link or in another space — click to remove"*. A link to a deleted or unknown target renders the same way. Clicking the chip, or pressing Enter on it, removes the reference from the block and says so in a toast; `Ctrl+Z` restores it. A labelled link (`[[target|label]]`) leaves its label behind as plain text; an unlabelled one leaves nothing, so a block that held only the link is left empty. The removal is an ordinary edit of the block: in the block's editor or in page mode, the editor's undo (`Ctrl+Z`; the block editor's toolbar has Undo too) reverts it; from the read-only view it is page-level undo, which the toast's **Undo** also runs, in the journal and on touch too, while the removal is still the page's latest change. This is enforced at write time too, so a future cross-space link cannot be added by accident.
 
 ## Seeded spaces
 

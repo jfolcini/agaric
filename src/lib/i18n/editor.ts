@@ -127,7 +127,10 @@ export const editor: Record<string, string> = {
   'editor.unknownNodeType':
     "Some content (type: {{type}}) couldn't be saved as Markdown and was dropped.",
   'editor.brokenLinkTooltip': 'Broken link or in another space — click to remove',
-  'editor.brokenLinkRemoved': 'Broken link removed (undo with Ctrl+Z)',
+  'editor.brokenLinkRemoved': 'Broken link removed',
+  'editor.brokenLinkRemoveAction': '(remove broken link)',
+  'editor.brokenLinkUndoStale':
+    'The page changed after the removal, so it can no longer be undone here',
   'editor.brokenRefTooltip': 'Broken ref — target block deleted',
   'attachments.loadFailed': 'Failed to load attachments',
   'attachments.deleteFailed': 'Failed to delete attachment',

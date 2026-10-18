@@ -8,22 +8,43 @@
  * Atomic inline node. Attrs: id (ULID), label (#5160 D9; null when none, and
  * never the target's own title, which `setBlockLinkLabel` drops).
  *
- * Uses a NodeView (addNodeView) so we can attach a click handler for
- * navigation. renderHTML is kept for copy-paste / serialization.
+ * Uses a NodeView (addNodeView) so we can attach a click handler: it
+ * navigates, or removes a broken link (`resolveStatus` says `'deleted'`).
+ * renderHTML is kept for copy-paste / serialization.
  */
 
-import { mergeAttributes, Node } from '@tiptap/core'
+import { type Editor, mergeAttributes, Node } from '@tiptap/core'
+import { closeHistory } from '@tiptap/pm/history'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 
 import { storableLinkLabel } from '@/editor/markdown-common'
+import { t } from '@/lib/i18n'
+import { notify } from '@/lib/notify'
 
 export interface BlockLinkOptions {
   /** Resolve a block/page ULID to its display title. Falls back to truncated ULID. */
   resolveTitle: (id: string) => string
   /** Called when the user clicks a block link chip. Navigates to the target page/block. */
   onNavigate?: ((id: string) => void) | undefined
-  /** Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  /** A `'deleted'` link is broken: clicking it removes it instead of navigating. */
   resolveStatus?: ((id: string) => 'active' | 'deleted') | undefined
+}
+
+/**
+ * Replace the chip at `pos` with its label as plain text, or drop it when it
+ * has none: the label is the block's own text, the title the target's. One
+ * transaction, a history step of its own even right after typing, so the
+ * editor's undo restores the link and only the link.
+ */
+function removeBrokenLink(editor: Editor, pos: number): void {
+  const chip = editor.state.doc.nodeAt(pos)
+  if (chip?.type.name !== 'block_link') return
+  const label = chip.attrs['label'] as string | null
+  const tr = editor.state.tr
+  if (label === null) tr.delete(pos, pos + chip.nodeSize)
+  else tr.replaceWith(pos, pos + chip.nodeSize, editor.schema.text(label, chip.marks))
+  editor.view.dispatch(closeHistory(tr))
+  notify.success(t('editor.brokenLinkRemoved'))
 }
 
 declare module '@tiptap/core' {
@@ -91,28 +112,39 @@ export const BlockLink = Node.create<BlockLinkOptions>({
 
   addNodeView() {
     const { options } = this
-    return ({ node }) => {
+    return ({ node, editor, getPos }) => {
       const dom = document.createElement('span')
       let currentId = node.attrs['id'] as string
+      const isBroken = (id: string) => options.resolveStatus?.(id) === 'deleted'
 
       function render(blockId: string, label: string | null) {
         currentId = blockId
         const title = options.resolveTitle(blockId)
+        const broken = isBroken(blockId)
 
         // A label stands in for the title (#5160 D9), which the tooltip
         // then keeps reachable.
         dom.textContent = label ?? title
-        dom.className = 'block-link-chip cursor-pointer'
+        dom.className = broken
+          ? 'block-link-chip block-link-deleted cursor-pointer'
+          : 'block-link-chip cursor-pointer'
         dom.setAttribute('data-type', 'block-link')
         dom.setAttribute('data-id', blockId)
         dom.setAttribute('data-testid', 'block-link-chip')
         dom.setAttribute('contenteditable', 'false')
-        if (label === null) {
-          dom.removeAttribute('title')
-          dom.removeAttribute('data-label')
+        if (label === null) dom.removeAttribute('data-label')
+        else dom.setAttribute('data-label', label)
+        if (broken) dom.setAttribute('title', t('editor.brokenLinkTooltip'))
+        else if (label === null) dom.removeAttribute('title')
+        else dom.setAttribute('title', title)
+        // The static chip's name: what it shows, then what a click does. A click
+        // removes it, so it is a button; ARIA allows no aria-label on a bare span.
+        if (broken) {
+          dom.setAttribute('role', 'button')
+          dom.setAttribute('aria-label', `${label ?? title} ${t('editor.brokenLinkRemoveAction')}`)
         } else {
-          dom.setAttribute('title', title)
-          dom.setAttribute('data-label', label)
+          dom.removeAttribute('role')
+          dom.removeAttribute('aria-label')
         }
       }
 
@@ -121,7 +153,9 @@ export const BlockLink = Node.create<BlockLinkOptions>({
       const clickHandler = (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        options.onNavigate?.(currentId)
+        const pos = getPos()
+        if (isBroken(currentId) && typeof pos === 'number') removeBrokenLink(editor, pos)
+        else options.onNavigate?.(currentId)
       }
       dom.addEventListener('click', clickHandler)
 

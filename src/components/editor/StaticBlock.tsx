@@ -52,6 +52,8 @@ export interface StaticBlockProps {
   onMouseDown?: React.MouseEventHandler<HTMLDivElement> | undefined
   /** Write a query block's expression from the query builder; the page store's `edit` when absent. */
   onSaveQuery?: ((blockId: string, expression: string) => Promise<boolean>) | undefined
+  /** Called with the content without a broken-link chip the user clicked. */
+  onRemoveBrokenLink?: ((contentWithoutLink: string) => void) | undefined
 }
 
 function StaticBlockInner({
@@ -67,6 +69,7 @@ function StaticBlockInner({
   onSelect,
   onMouseDown,
   onSaveQuery,
+  onRemoveBrokenLink,
 }: StaticBlockProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -86,6 +89,7 @@ function StaticBlockInner({
     resolveTagName,
     resolveBlockStatus,
     resolveTagStatus,
+    onRemoveBrokenLink,
   })
 
   // StaticBlock half: read from the BatchAttachmentsProvider

@@ -606,6 +606,7 @@ export function BlockTree({
   // module + `Editor` instance load off the cold-start path via `editorHost`.
   const { rovingEditor, editorHost, editorSurface } = useLazyRovingEditor({
     resolveBlockTitle: resolve.resolveBlockTitle,
+    resolveBlockStatus: resolve.resolveBlockStatus,
     resolveTagName: resolve.resolveTagName,
     onNavigate: (id: string) => handleNavigateRef.current(id),
     onTagClick,

@@ -7,6 +7,8 @@
 import { AlertTriangle, Info, Lightbulb, StickyNote, XCircle } from 'lucide-react'
 import type React from 'react'
 
+import type { BlockLinkNode } from '@/editor/types'
+
 /** Render-time context shared across block and inline sub-renderers. */
 export interface RenderContext {
   readonly onNavigate?: ((id: string) => void) | undefined
@@ -16,6 +18,8 @@ export interface RenderContext {
   readonly resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
   readonly resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
   readonly interactive?: boolean | undefined
+  /** Set where the rendered content can be edited: a broken `[[link]]` chip then removes itself. */
+  readonly removeBrokenLink?: ((link: BlockLinkNode) => void) | undefined
   /**
    * #4551 — the block this content is being rendered *about*. A `[[ULID]]` or
    * `((ULID))` chip naming it is the one that earned the row its place in a

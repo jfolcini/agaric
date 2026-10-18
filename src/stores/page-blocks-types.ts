@@ -81,8 +81,10 @@ export interface PageBlockState {
   /** Edit a block's content. Resolves `true` on success, `false` if the
    * write failed (the optimistic update is rolled back and a generic
    * save-failed toast is shown). Callers that need a context-specific error
-   * (e.g. the query builder) can branch on the returned boolean. */
-  edit: (blockId: string, content: string) => Promise<boolean>
+   * (e.g. the query builder) can branch on the returned boolean.
+   * `merge: false` makes the edit an undo entry of its own, as a paste is,
+   * instead of joining the block's typing session. */
+  edit: (blockId: string, content: string, options?: { merge?: boolean }) => Promise<boolean>
   /**
    * Delete a block (and its descendants from the flat tree).
    *

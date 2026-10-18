@@ -12,11 +12,12 @@
  * space-switch preload lands (otherwise inline page-link chips stay stuck on
  * the `[[ULID]]` fallback after a switch).
  *
- * `onNavigate` is the only callback that ALSO affects the produced output (it
- * gates a `undefined` vs wrapper-fn branch), so it's listed as an explicit
- * memo dep. The other resolve callbacks feed unconditional wrappers and are
- * intentionally captured via refs — listing them would invalidate the memo on
- * every parent render and defeat the optimization.
+ * `onNavigate` and `onRemoveBrokenLink` are the only callbacks that ALSO
+ * affect the produced output (each gates a `undefined` vs wrapper-fn branch),
+ * so they are explicit memo deps. The other resolve callbacks feed
+ * unconditional wrappers and are intentionally captured via refs — listing
+ * them would invalidate the memo on every parent render and defeat the
+ * optimization.
  */
 
 import type React from 'react'
@@ -37,6 +38,8 @@ export interface UseRichContentCallbacks {
   resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
   /** Check whether a referenced tag is active or deleted. */
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
+  /** Called with the content without a broken-link chip the user clicked. */
+  onRemoveBrokenLink?: ((contentWithoutLink: string) => void) | undefined
 }
 
 export function useRichContent(
@@ -47,6 +50,7 @@ export function useRichContent(
     resolveTagName,
     resolveBlockStatus,
     resolveTagStatus,
+    onRemoveBrokenLink,
   }: UseRichContentCallbacks,
 ): React.ReactNode {
   // Keep callback refs so the expensive useMemo only re-runs when `content` changes.
@@ -62,6 +66,8 @@ export function useRichContent(
   resolveBlockStatusRef.current = resolveBlockStatus
   const resolveTagStatusRef = useRef(resolveTagStatus)
   resolveTagStatusRef.current = resolveTagStatus
+  const onRemoveBrokenLinkRef = useRef(onRemoveBrokenLink)
+  onRemoveBrokenLinkRef.current = onRemoveBrokenLink
   const onTagClick = useTagClickHandler()
   const onTagClickRef = useRef(onTagClick)
   onTagClickRef.current = onTagClick
@@ -73,12 +79,14 @@ export function useRichContent(
   // once the space-switch preload lands — otherwise inline page-link
   // chips stay stuck on the `[[ULID]]` fallback after a switch.
   //
-  // `onNavigate` is the only prop that ALSO affects the produced output
-  // (it gates a `undefined` vs wrapper-fn branch), so it's listed
-  // explicitly. The other resolve props feed unconditional wrappers and
-  // are intentionally captured via refs — listing them would invalidate
-  // the memo on every parent render and defeat the optimization.
+  // `onNavigate` and `onRemoveBrokenLink` are the only props that ALSO
+  // affect the produced output (each gates a `undefined` vs wrapper-fn
+  // branch), so they are listed explicitly. The other resolve props feed
+  // unconditional wrappers and are intentionally captured via refs — listing
+  // them would invalidate the memo on every parent render and defeat the
+  // optimization.
   const resolveVersion = useResolveStore((s) => s.version)
+  const canRemoveBrokenLink = onRemoveBrokenLink !== undefined
   return useMemo(
     () =>
       content
@@ -90,9 +98,12 @@ export function useRichContent(
             resolveTagName: (id) => resolveTagNameRef.current?.(id),
             resolveBlockStatus: (id) => resolveBlockStatusRef.current?.(id) ?? 'active',
             resolveTagStatus: (id) => resolveTagStatusRef.current?.(id) ?? 'active',
+            onRemoveBrokenLink: canRemoveBrokenLink
+              ? (next: string) => onRemoveBrokenLinkRef.current?.(next)
+              : undefined,
           })
         : null,
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolve* callbacks captured via refs (intentional perf optimization — see comment above); resolveVersion drives recomputation on cache updates
-    [content, onNavigate, resolveVersion],
+    [content, onNavigate, canRemoveBrokenLink, resolveVersion],
   )
 }
