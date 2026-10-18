@@ -12,7 +12,9 @@ whose `expected` the backend authored:
 - `list_blocks` by type keeps only the space's own blocks. The mock listed every space's, so a
   fresh space always looked non-empty and Settings never offered to delete it.
   `spaces-management.spec.ts` drops its "documented mock limitation" and now deletes an empty
-  space; `SpacesTab.test.tsx` no longer stubs the emptiness probe. The tag, agenda and
+  space; `SpacesTab.test.tsx` no longer stubs the emptiness probe. `import-export.spec.ts`'s direct
+  `import_markdown` call now passes the `spaceId` the backend requires; it found its page only
+  through the unscoped listing. The tag, agenda and
   children branches of the same handler are still unscoped in the mock; nothing found depends
   on them.
 - Two more divergences turned out to be backend defects, so the mock keeps the safer

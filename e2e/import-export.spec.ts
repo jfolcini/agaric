@@ -503,7 +503,11 @@ test.describe('Round-trip fidelity @markdown', () => {
           }
         }
       ).__TAURI_INTERNALS__.invoke
-      return invoke('import_markdown', { content, filename: 'round-trip.md' })
+      return invoke('import_markdown', {
+        content,
+        filename: 'round-trip.md',
+        spaceId: 'SPACE_PERSONAL',
+      })
     }, originalContent)) as { page_title: string; blocks_created: number }
 
     // Title is filename-derived (#1919): 'round-trip.md' -> 'round-trip'.
