@@ -130,12 +130,12 @@ describe('resolveLegacyQueryToFilterExpr — structural mapping', () => {
     expect(filterExpr?.type === 'And' && filterExpr.children).toHaveLength(2)
   })
 
-  it('backlinks → ChildOf (direct children of the target)', async () => {
+  it('backlinks → LinksTo (the blocks that link to the target)', async () => {
     const { filterExpr, reasons } = await resolve('type:backlinks target:01ABC')
     expect(reasons).toEqual([])
     expect(filterExpr).toEqual({
       type: 'And',
-      children: [{ type: 'Leaf', primitive: { type: 'ChildOf', parent: '01ABC' } }],
+      children: [{ type: 'Leaf', primitive: { type: 'LinksTo', target: '01ABC' } }],
     })
   })
 })

@@ -247,6 +247,14 @@
       "name": "backlink_counts_per_page",
       "rows": ["B1#count=3", "B9#count=1"],
       "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "advanced_links_to_lists_referrers",
+      "rows": ["B7", "B4", "B3"],
+      "total_count": 3
     }
   ],
   "name": "query_backlinks",
@@ -379,6 +387,24 @@
       "command": "count_backlinks_batch",
       "comment": "The badge counts beside the listing above, over the SAME edges (#3830). Three per key, and each is a different decision: S1 counts THREE (S3, S4, S7) — S5 unlinked and S8's edge survives its tombstone in `page_links` but its source is dropped by `b.deleted_at IS NULL`, so a mock counting the raw edge set answers four; S9 counts ONE even though S9 itself is deleted, because the filter is on the SOURCE block and not the target (#4853); and S6 is ABSENT rather than zero — the map is a `GROUP BY`, so a key nobody links to never appears. A mock that seeds every requested id with 0 projects a third token here.",
       "name": "backlink_counts_per_page"
+    },
+    {
+      "args": {
+        "request": {
+          "filter": {
+            "primitive": {
+              "target": "S1",
+              "type": "LinksTo"
+            },
+            "type": "Leaf"
+          },
+          "limit": 100,
+          "spaceId": "$SPACE"
+        }
+      },
+      "command": "run_advanced_query",
+      "comment": "The inline `{{query type:backlinks target:S1}}` compiles to this `LinksTo` leaf: the blocks with a live `block_links` edge to S1, the same set `get_backlinks` serves above. B5's dropped edge and soft-deleted B8 are refused here too, so a mock `LinksTo` that rescans stale content or skips the deleted filter serves a fourth row.",
+      "name": "advanced_links_to_lists_referrers"
     }
   ],
   "seed": {

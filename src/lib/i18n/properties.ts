@@ -195,7 +195,7 @@ export const properties: Record<string, string> = {
   'queryBuilder.readable.tag': 'Pages tagged with {{expr}}',
   'queryBuilder.readable.propertyKeyOnly': 'Pages with property "{{key}}" set to anything',
   'queryBuilder.readable.propertyKeyValue': 'Pages where property "{{key}}" {{op}} "{{value}}"',
-  'queryBuilder.readable.backlinks': 'Pages that link to {{target}}',
+  'queryBuilder.readable.backlinks': 'Blocks that link to {{target}}',
   'queryBuilder.readable.table': 'Display as a table.',
   'queryBuilder.readable.op.eq': 'is',
   'queryBuilder.readable.op.neq': 'is not',

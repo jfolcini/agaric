@@ -16,7 +16,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { dispatchQuery, fetchRichInlineQuery } from '@/hooks/useQueryExecution'
+import { dispatchQuery, fetchRichInlineQuery, resolveInlineQuery } from '@/hooks/useQueryExecution'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import {
@@ -171,8 +171,6 @@ describe('legacy ↔ rich inline-query equivalence', () => {
     // Custom `!=`: present-and-not-equal (B2 has context=@office), excluding
     // both the matching-value block (B8: context=beta) and absent-key blocks.
     'property:context!=beta',
-    // Backlinks: the direct children of PAGE (all of B1..B8).
-    `type:backlinks target:${PAGE}`,
   ]
 
   for (const expr of TRANSLATABLE) {
@@ -202,6 +200,20 @@ describe('legacy ↔ rich inline-query equivalence', () => {
       expect(await richIds(expr)).not.toContain(BX)
       expect(await legacyIds(expr)).not.toContain(BX)
     }
+  })
+
+  it('a backlinks query lists the blocks linking to the target, not its children', async () => {
+    const pageRef = id('PAGEREF')
+    const referrer = id('BREF')
+    blocks.set(pageRef, makeBlock(pageRef, 'page', 'Referrer page', null, 2))
+    setProp(pageRef, 'space', { value_ref: SPACE })
+    const ref = makeBlock(referrer, 'text', `see [[${PAGE}]]`, pageRef, 0)
+    ref['page_id'] = pageRef
+    blocks.set(referrer, ref)
+
+    const res = await resolveInlineQuery(`type:backlinks target:${PAGE}`, undefined, SPACE)
+
+    expect(res.items.map((b) => b.id)).toEqual([referrer])
   })
 
   it('keeps genuinely non-translatable shapes on the legacy path (fallback)', async () => {

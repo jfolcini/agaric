@@ -363,7 +363,7 @@ describe('QueryResult', () => {
     expect(await screen.findByText(/empty/i)).toBeInTheDocument()
   })
 
-  it('renders backlinks query results (reroutes to ChildOf via run_advanced_query)', async () => {
+  it('renders backlinks query results (reroutes to LinksTo via run_advanced_query)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'run_advanced_query') {
         return {
@@ -371,15 +371,15 @@ describe('QueryResult', () => {
             {
               id: 'B1',
               block_type: 'content',
-              content: 'Child block',
-              parent_id: 'TARGET1',
+              content: 'Referrer block',
+              parent_id: 'OTHER_PAGE',
               position: 1,
               deleted_at: null,
               todo_state: null,
               priority: null,
               due_date: null,
               scheduled_date: null,
-              page_id: 'TARGET1',
+              page_id: 'OTHER_PAGE',
             },
           ],
           nextCursor: null,
@@ -392,7 +392,7 @@ describe('QueryResult', () => {
     })
 
     render(<QueryResult expression="type:backlinks target:TARGET1" />)
-    expect(await screen.findByText(/Child block/)).toBeInTheDocument()
+    expect(await screen.findByText(/Referrer block/)).toBeInTheDocument()
   })
 
   it('has no a11y violations', async () => {

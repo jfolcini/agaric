@@ -14,7 +14,7 @@ import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { queryClient } from '@/lib/query-client'
 import { type PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
-import { listBlocksLimit, paginationLimit } from '@/lib/safe-limit'
+import { paginationLimit } from '@/lib/safe-limit'
 import { requireActiveScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
@@ -114,35 +114,6 @@ export async function fetchPropertyQuery(
   return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
 }
 
-/** Fetch blocks that are descendants of a target (backlinks query). */
-export async function fetchBacklinksQuery(
-  params: Record<string, string>,
-  pageCursor?: string,
-  spaceId?: string | null,
-): Promise<QueryFetchResult> {
-  if (!params['target']) {
-    throw new QueryValidationError(t('query.backlinksRequiresTarget'))
-  }
-  if (!spaceId) return EMPTY_FETCH_RESULT
-  const resp = unwrap(
-    await commands.listBlocks(
-      {
-        parentId: params['target'],
-        blockType: null,
-        tagId: null,
-        date: null,
-        dateRange: null,
-        source: null,
-        excludeTodoStates: null,
-        cursor: pageCursor ?? null,
-        limit: listBlocksLimit(PAGE_SIZE),
-      },
-      requireActiveScope(spaceId),
-    ),
-  )
-  return { items: resp.items, nextCursor: resp.next_cursor, hasMore: resp.has_more }
-}
-
 /** AND-intersect property + tag predicates in SQL.
  *
  *  Single IPC into `filtered_blocks_query` which composes one
@@ -227,7 +198,8 @@ export async function dispatchQuery(
       )
     }
     case 'backlinks': {
-      return await fetchBacklinksQuery(parsed.params, pageCursor, spaceId)
+      // With a target the resolver compiles it to `LinksTo`; only a missing one lands here.
+      throw new QueryValidationError(t('query.backlinksRequiresTarget'))
     }
     default: {
       throw new QueryValidationError(t('query.unknownType', { type: parsed.type }))
@@ -358,8 +330,9 @@ export function useQueryExecution(options: UseQueryExecutionOptions): UseQueryEx
       //   1. A structured (`v2:`) payload runs through the rich engine.
       //   2. A legacy text query is translated to a `FilterExpr` and ALSO run
       //      through the rich engine when faithfully expressible.
-      //   3. Anything the translator refuses (backlinks, non-eq reserved
-      //      filters, key-only, unknown) keeps the original legacy dispatch.
+      //   3. Anything the translator refuses (a backlinks query without a
+      //      target, non-eq reserved filters, key-only, unknown) keeps the
+      //      original legacy dispatch.
       // Page-title resolution is folded IN so each page carries its own titles.
       queryFn: async ({ pageParam }): Promise<QueryPage> => {
         // #5415 — no active space: nothing runs.

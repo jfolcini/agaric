@@ -778,9 +778,9 @@ export function metaRowMatchesFilter(
       // Ref-inclusive: attached `block_tags` ∪ inline `block_tag_refs`.
       return refInclusiveTags(r.id).has(f['tag'] as string)
     }
-    case 'ChildOf': {
-      // Direct children of a block (`b.parent_id = ?`) — the legacy backlinks set.
-      return r.parentId === (f['parent'] as string)
+    case 'LinksTo': {
+      // An outbound `block_links` edge to `target` (`compile_links_to`).
+      return contentLinksTo(r.content, f['target'] as string)
     }
     case 'Priority': {
       // Multi-value membership over `blocks.priority`, mirroring the REAL

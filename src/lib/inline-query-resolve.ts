@@ -29,8 +29,10 @@
  *     `filtered_blocks_query` marshals them; explicit `type:property` is an exact
  *     text match (no date inference), mirroring `query_by_property`.
  *
- *   - `type:backlinks target:X` → `ChildOf { parent: X }` (`b.parent_id = X`),
- *     the direct children the legacy `list_blocks(parent_id=…)` path returns.
+ *   - `type:backlinks target:X` → `LinksTo { target: X }`: the blocks with an
+ *     outbound `block_links` edge to X (`[[X]]` or `((X))`), the set `get_backlinks`
+ *     returns. Unlike the References panel it keeps referrers on X's own page.
+ *     It has no legacy path, so the equivalence harness does not cover it.
  *   - custom-key `!=` → `And[HasProperty{Exists}, HasProperty{Ne}]` (presence +
  *     inequality), matching legacy `EXISTS(value != ?)`.
  *
@@ -209,12 +211,10 @@ export async function resolveLegacyQueryToFilterExpr(
   const reasons: string[] = []
   const children: FilterExpr[] = []
 
-  // Backlinks = the DIRECT CHILDREN of the target block (legacy
-  // `list_blocks(parent_id=target)`), expressed by the `ChildOf` primitive.
   if (parsed.type === 'backlinks') {
     const target = parsed.params['target']
     if (target != null && target !== '') {
-      children.push(leaf({ type: 'ChildOf', parent: target }))
+      children.push(leaf({ type: 'LinksTo', target }))
     } else {
       reasons.push('backlinks-missing-target')
     }

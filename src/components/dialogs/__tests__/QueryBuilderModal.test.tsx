@@ -457,7 +457,7 @@ describe('QueryBuilderModal', () => {
     await user.type(screen.getByLabelText(/target page id/i), '01ABC123')
 
     const readable = screen.getByTestId('readable-preview')
-    expect(readable).toHaveTextContent('Pages that link to 01ABC123')
+    expect(readable).toHaveTextContent('Blocks that link to 01ABC123')
   })
 
   it('adds "Display as a table." line when showAsTable is checked', async () => {
