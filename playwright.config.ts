@@ -13,10 +13,9 @@ export default defineConfig({
   // No retries, in CI or locally: a retry turns a flake into a green run and
   // hides it, so a flaky test must fail and get fixed.
   retries: 0,
-  // #1458: hard per-test ceiling. Healthy shards finished ~1/3 of the suite in
-  // ~7.5 min, so any single test taking a full minute is already pathological;
-  // 60s fails such a test fast instead of letting it drift toward the job
-  // cap. Generous enough for the heaviest legitimate spec.
+  // #1458: hard per-test ceiling. A single test taking a full minute is
+  // already pathological; 60s fails it fast instead of letting it drift toward
+  // the job cap, and is generous enough for the heaviest legitimate spec.
   timeout: 60_000,
   // #1458: global ceiling BELOW the CI job cap (`_validate.yml` playwright
   // `timeout-minutes`). At the ceiling Playwright aborts itself and still runs

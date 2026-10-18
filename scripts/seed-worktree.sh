@@ -8,11 +8,11 @@
 # one. Three gaps each cost a full failed verify/push cycle before the real
 # cause is visible:
 #
-#   1. node_modules must be symlinked to the main checkout's BEFORE anything
-#      can run `tsc -b`. If a real node_modules directory gets created first
-#      (e.g. by `npm install`/`tsc -b`), a later `ln -s` nests the symlink
-#      INSIDE that directory instead of replacing it, producing confusing
-#      TS2688 `vite/client` + `node` failures that `ls` doesn't make obvious.
+#   1. node_modules must be symlinked to the main checkout's BEFORE an
+#      `npm install` creates a real directory there: a later `ln -s` then
+#      nests the symlink INSIDE that directory instead of replacing it,
+#      producing confusing TS2688 `vite/client` + `node` failures that `ls`
+#      doesn't make obvious.
 #   2. push.sh Phase E (`cargo sqlx prepare --check`) reads `DATABASE_URL`
 #      from `src-tauri/.env` — NOT a repo-root `.env` (no such file exists
 #      at the repo root at all) — and needs a migrated `dev.db` alongside
@@ -47,8 +47,8 @@ Usage: scripts/seed-worktree.sh [--mcp] [-h|--help]
 Idempotently seed a freshly-created git worktree so it can build, commit,
 and push without the friction documented in issue #3171:
 
-  - symlinks node_modules to the main checkout's, before anything could
-    run `tsc -b` and create a real directory in its place
+  - symlinks node_modules to the main checkout's, before an `npm install`
+    could create a real directory in its place
   - copies src-tauri/.env from the main checkout and provisions a freshly
     migrated dev.db (via scripts/setup-dev-db.sh), so push.sh Phase E's
     `sqlx prepare --check` passes
@@ -106,7 +106,7 @@ SKIPPED=()
 PROBLEMS=()
 
 # ── 1. node_modules symlink — do this FIRST, before anything else could ────
-#      invoke npm/tsc and create a real directory in its place.
+#      invoke npm and create a real directory in its place.
 echo
 echo "▶ [1/4] node_modules"
 if [ "$IS_MAIN_CHECKOUT" -eq 1 ]; then
@@ -126,19 +126,12 @@ elif [ -L node_modules ]; then
   fi
 elif [ -d node_modules ]; then
   echo "  ERROR: a REAL node_modules directory already exists here." >&2
-  echo "  This is the ordering bug from issue #3171: once something (tsc -b," >&2
-  echo "  npm install, ...) has created a real directory, a symlink can no" >&2
-  echo "  longer replace it -- 'ln -s' would nest INSIDE it instead, which" >&2
-  echo "  produces confusing TS2688 vite/client + node failures later." >&2
+  echo "  This is the ordering bug from issue #3171: once \`npm install\` has" >&2
+  echo "  created a real directory, a symlink can no longer replace it --" >&2
+  echo "  'ln -s' would nest INSIDE it instead, which produces confusing" >&2
+  echo "  TS2688 vite/client + node failures later." >&2
   echo "  Not touching it automatically. To fix:" >&2
   echo "    rm -rf node_modules && bash scripts/seed-worktree.sh" >&2
-  # #4169 (follow-up 5): scripts/pr-merge-result-check.sh's provision_node_modules
-  # deliberately builds exactly the shape this branch refuses -- a REAL
-  # node_modules directory, with only its top-level ENTRIES symlinked in, not
-  # this whole-tree symlink. That is not the same bug: its worktree is
-  # disposable and a tool that writes under node_modules/ (.vite, .vitest-cache)
-  # must not write into the BORROWED install. Two different contexts, two different
-  # shapes; if you are reconciling them, read that function's own header first.
   PROBLEMS+=("node_modules is a real directory, not a symlink -- see message above")
 else
   ln -s "$MAIN_ROOT/node_modules" node_modules

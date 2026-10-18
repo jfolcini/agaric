@@ -44,7 +44,7 @@
 #
 # Explicitly NOT here (vs the prior CI-equivalent verifier):
 #
-#   * **Playwright e2e.** CI still runs the full suite on every PR — local
+#   * **Playwright e2e.** CI runs it when the diff can affect it — local
 #     skip trades a delayed safety signal for a much faster push (Playwright
 #     dominated the prior pre-push wall clock). If you've touched anything
 #     interaction-heavy, run `npx playwright test` manually before pushing.
@@ -230,7 +230,7 @@ node_deps_remedy() {
         printf '    bash scripts/seed-worktree.sh\n'
         printf '  or, node_modules alone:\n'
         printf '    ln -s %s/node_modules %s/node_modules\n' "$main_root" "$root"
-        printf '  (create the symlink BEFORE anything runs tsc/npm here — once a\n'
+        printf '  (create the symlink BEFORE any `npm install` here — once a\n'
         printf '  REAL node_modules directory exists, `ln -s` nests inside it.)\n'
     else
         printf 'Install dependencies in this checkout:\n'
@@ -2583,5 +2583,5 @@ if [ "$NOT_CI_EQUIVALENT" = "1" ]; then
     echo "  ⚠ NOT CI-equivalent: caller SKIP omitted these Phase A hooks: $CALLER_SKIP_EXTRA"
 fi
 [ "$HAS_MCP" = "0" ] && echo "  (MCP build skipped — no MCP paths in range; CI will run the full check)"
-echo "  (Playwright skipped — runs in CI on every PR; run \`npx playwright test\` locally if needed)"
+echo "  (Playwright skipped — CI runs it when the diff can affect it; run \`npx playwright test\` locally if needed)"
 echo "  (release bundle build: run scripts/verify-release-build.sh manually before tagging)"

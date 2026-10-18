@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    /* Never put the buildinfo under node_modules: worktrees symlink it, and with `incremental` one worktree's buildinfo makes another's edited tree look up to date (#5848). */
+    /* Never put the buildinfo under node_modules: worktrees symlink it, and with `incremental` one worktree's buildinfo makes another's edited tree look up to date (#5848). After any tsconfig change, or a file copied in with an old mtime (`cp -p`, `tar`), run `npm run typecheck -- --force`: the incremental build keeps stale diagnostics across a `module` change and skips a new file older than the build info. */
     "incremental": true,
     "tsBuildInfoFile": "./.tsbuildinfo/tsconfig.app.tsbuildinfo",
     "target": "ES2023",

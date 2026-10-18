@@ -25,7 +25,7 @@ There are no other roles today (no "committers", no "reviewers" group, no "relea
 
 ## Branch protection / merge rights
 
-Asymmetric by design (see [`docs/architecture/ci-and-tooling.md` § Asymmetric branch-protection convention](docs/architecture/ci-and-tooling.md#asymmetric-branch-protection-convention)): the BDFL can push directly to `main` via an admin bypass on the ruleset. All other contributors go through PRs that require `validate-all` green + code-owner review + last-push approval + thread-resolution. Cryptographic signature is required on every commit on `main` regardless of who pushes — the bypass does not cover that rule.
+Asymmetric by design (see [`docs/architecture/ci-and-tooling.md` § Asymmetric branch-protection convention](docs/architecture/ci-and-tooling.md#asymmetric-branch-protection-convention)): the BDFL can push directly to `main` via an admin bypass on the ruleset. All other contributors go through PRs that require `validate / validate-all` green + code-owner review + last-push approval + thread-resolution. Cryptographic signature is required on every commit on `main` regardless of who pushes — the bypass does not cover that rule.
 
 ## Licensing
 

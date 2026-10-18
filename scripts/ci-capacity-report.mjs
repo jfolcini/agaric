@@ -110,7 +110,8 @@ export function keyFamily(key) {
  * `Restored from cache key "…" full match: true|false.` or `No cache found.`
  * actions/cache echoes its `key:` input, then `Cache restored from key: …` or
  * `Cache not found for input keys: …`; setup-node prints the restore line with
- * no `key:` input, so its restores count as hits.
+ * no `key:` input (it passes restore keys only for yarn berry, so its restores
+ * are hits) and logs a miss as `npm cache is not found`, with no key.
  */
 export function parseCacheRestores(log) {
   const restores = []
@@ -132,6 +133,12 @@ export function parseCacheRestores(log) {
     if (line.startsWith('##[group]Run ')) {
       requestedKey = undefined
       sizeMb = undefined
+      continue
+    }
+    // setup-node logs no key on a miss; every cached setup-node job runs on ubuntu-24.04 (x64)
+    // and release.yml opts out of the cache, so the family is the Linux x64 one.
+    if (line === 'npm cache is not found') {
+      restores.push({ family: 'node-cache-Linux-x64-npm', outcome: 'miss', sizeMb: undefined })
       continue
     }
     let m = /^ {2}key: (\S+)$/.exec(line)

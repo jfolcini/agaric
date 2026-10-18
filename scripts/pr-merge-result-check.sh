@@ -72,8 +72,7 @@
 #     7-8 s (`vitest-node22` step, two sampled runs: 8 s, 7 s). Locally on
 #     a developer machine: 3.1-3.4 s.
 #   * borrowing that install into the merged worktree (see
-#     `provision_node_modules`): 0.03 s — ONE `ln -s` for ~710 top-level
-#     entries, not one `ln` per entry.
+#     `provision_node_modules`): one `ln -s`.
 #
 # The `merge-result` job measured 23-25 s before this (two sampled
 # `pr-overlap.yml` runs), so the whole typecheck stage roughly doubles a
@@ -84,15 +83,15 @@
 # `node_modules` is BORROWED, not installed here. The workflow runs `npm ci`
 # once in its own checkout — which for a `pull_request` event is
 # `refs/pull/N/merge`, i.e. very nearly the tree this script computes — and
-# `provision_node_modules` symlinks that install's top-level entries into
-# the merged worktree. It is only "very nearly": if the merged tree's
-# `package-lock.json` does NOT match the one the borrowed install came
-# from, the borrowed tree is the wrong dependency set and a typecheck
-# against it proves nothing about the merge. That case re-installs with
-# `npm ci` IN the merged worktree rather than borrowing (rare: it needs
-# `main`'s lockfile to move in the seconds between the job's checkout and
-# this script's fetch), and if that cannot be done, it is exit 3 — verified
-# nothing — never a quiet pass against the wrong deps.
+# `provision_node_modules` symlinks that install into the merged worktree.
+# It is only "very nearly": if the merged tree's `package-lock.json` does NOT
+# match the one the borrowed install came from, the borrowed tree is the
+# wrong dependency set and a typecheck against it proves nothing about the
+# merge. That case re-installs with `npm ci` IN the merged worktree rather
+# than borrowing (rare: it needs `main`'s lockfile to move in the seconds
+# between the job's checkout and this script's fetch), and if that cannot be
+# done, it is exit 3 — verified nothing — never a quiet pass against the
+# wrong deps.
 #
 # `CRATE_ROOTS` (the five-crate-root set the guard trio scans) used to be
 # hand-duplicated here as a bash array, kept in sync by hand with the SAME
@@ -544,61 +543,18 @@ resolve_node_modules_source() {
   ( cd "$src" && pwd -P )
 }
 
-# Give the merged worktree a `node_modules` without paying for an install.
-#
-# Symlinks every TOP-LEVEL entry of the borrowed install (packages, scoped
-# `@scope` directories, and `.bin`) into a REAL directory in the worktree.
-# Real directory, not a symlink to the whole tree, so build state a tool
-# writes under `node_modules/` (`.vite`, `.vitest-cache`) lands in the
-# disposable worktree and dies with it, not in the borrowed install. tsc's
-# buildinfo is out of `node_modules/` already (`./.tsbuildinfo/`, gitignored).
-#
-# ONE `ln -s` for the whole set, not one `ln` per entry: measured 0.03 s
-# vs 1.28 s for ~710 entries, and this runs inside a prek hook.
-#
-# Node resolves symlinks by default, so each borrowed package finds its own
-# dependencies back in the borrowed install — the same mechanism npm
-# workspaces rely on.
-#
-# #4169 (follow-up 5): this deliberately diverges from scripts/seed-worktree.sh
-# (its node_modules step, ~line 108 on), which gives a worktree a whole-TREE
-# symlink and hard-errors on a REAL node_modules directory (issue #3171 --
-# `ln -s` nesting inside it produces confusing TS2688 vite/client + node
-# failures). That divergence is intentional, for the reason above
-# (build state under node_modules/), not something to reconcile by copying
-# either shape into the other.
+# Give the merged worktree a `node_modules` without paying for an install:
+# one symlink to the borrowed install, the shape scripts/seed-worktree.sh
+# gives a worktree. The only thing run against it here is `tsc -b`, whose
+# build info lands in the worktree's own `./.tsbuildinfo/`, so nothing is
+# written into the borrowed install.
 provision_node_modules() {
   local workdir="$1" src="$2"
-  # `src/*/` expands to package and @scope directories; `.bin` is named
-  # explicitly because it is a dotfile. The dot-directories deliberately NOT
-  # borrowed are build state, not resolution input: `.tmp`, `.cache`, `.vite`,
-  # `.vite-temp`.
-  #
-  # Each candidate is `[ -e ]`-tested — a shell builtin, so this stays a
-  # single process for the whole set — because `ln -s` creates DANGLING
-  # links without complaint. An unmatched glob would otherwise arrive here
-  # as the literal pattern and become a symlink named `*`, and an empty
-  # borrow source would then look successfully provisioned.
-  local -a entries=()
-  local e
-  for e in "$src"/*/ "$src/.bin"; do
-    [ -e "$e" ] || continue
-    entries+=("${e%/}")
-  done
-  # A borrowed install with nothing in it is not an install. Without this, an
-  # empty `src` would send an un-resolvable tree to tsc and every import in
-  # the repo would come back as a type error — a full-red "this merge does
-  # not compile" that is nothing of the sort.
-  [ "${#entries[@]}" -gt 0 ] || return 1
-  mkdir -p "$workdir/node_modules" || return 1
-  # `ln -s -t DIR -- srcs` is a GNU coreutils extension; BSD/macOS `ln` has no
-  # -t and errors "illegal option -- t", which would make provision_node_modules
-  # fail and run_typecheck return 3 on macOS (a supported dev platform,
-  # docs/BUILD.md). The
-  # multi-source-into-directory form below is in both GNU and BSD ln, and is
-  # still ONE process.
-  ln -s -- "${entries[@]}" "$workdir/node_modules" || return 1
-  return 0
+  # An empty install would send tsc an unresolvable tree, and every import
+  # would come back as a type error: a "this merge does not compile" verdict
+  # that is nothing of the sort.
+  [ -d "$src/.bin" ] || return 1
+  ln -s -- "$src" "$workdir/node_modules"
 }
 
 # Do the merged tree's dependencies match the install we are about to
@@ -1003,11 +959,12 @@ run_merge_check() {
   done
 
   # #4078 — type-check the merged tree. LAST, and deliberately so: it is the
-  # only stage that writes into the worktree (`node_modules/`), and the
-  # guards above walk that tree. Nothing they scan lives under a root
-  # `node_modules/`, so the order is belt-and-braces rather than load-bearing
-  # — but "the cheap read-only checks all ran before anything mutated the
-  # tree" is a property worth not having to re-derive later.
+  # only stage that writes into the worktree (`node_modules`,
+  # `.tsbuildinfo/`), and the guards above walk that tree. Nothing they scan
+  # lives under a root `node_modules/`, so the order is belt-and-braces rather
+  # than load-bearing — but "the cheap read-only checks all ran before
+  # anything mutated the tree" is a property worth not having to re-derive
+  # later.
   #
   # #4169 follow-up 4: gated on the two verdicts below that ALREADY return
   # before `typecheck_rc` is ever consulted (`missing` at 3, `failures` at 1,
