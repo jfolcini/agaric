@@ -24,7 +24,7 @@ async function openTurnInto(page: import('@playwright/test').Page) {
     .click()
 }
 
-test.describe('Structural transforms via Turn into (#253, #1960)', () => {
+test.describe('Structural transforms via Turn into (#253, #1960) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

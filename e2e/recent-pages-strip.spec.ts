@@ -24,7 +24,7 @@ function tabs(page: Page): Locator {
 
 const pageTitle = (page: Page) => page.locator('[aria-label="Page title"]')
 
-test('lists visited pages newest first; click reopens, middle and Ctrl click open background tabs', async ({
+test('lists visited pages newest first; click reopens, middle and Ctrl click open background tabs @pages', async ({
   page,
 }) => {
   await waitForBoot(page)

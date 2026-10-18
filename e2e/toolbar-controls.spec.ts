@@ -59,7 +59,7 @@ async function insertTableViaPicker(page: Page): Promise<void> {
 // 1. Always-visible toolbar buttons (FormattingToolbar)
 // ===========================================================================
 
-test.describe('Always-visible toolbar buttons (#1170)', () => {
+test.describe('Always-visible toolbar buttons (#1170) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -138,7 +138,7 @@ test.describe('Always-visible toolbar buttons (#1170)', () => {
 // 2. Secondary selector popovers
 // ===========================================================================
 
-test.describe('Secondary selector popovers (#1170)', () => {
+test.describe('Secondary selector popovers (#1170) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -246,7 +246,7 @@ test.describe('Secondary selector popovers (#1170)', () => {
 // 3. Table ops (TableOpsSelector — contextual "Table" trigger)
 // ===========================================================================
 
-test.describe('Table ops selector (#1170)', () => {
+test.describe('Table ops selector (#1170) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -315,7 +315,7 @@ test.describe('Table ops selector (#1170)', () => {
 // 4. Inline controls (BlockInlineControls gutter)
 // ===========================================================================
 
-test.describe('Inline controls — gutter (#1170)', () => {
+test.describe('Inline controls — gutter (#1170) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -409,7 +409,7 @@ test.describe('Inline controls — gutter (#1170)', () => {
 // the wrapper should mount. If this group proves flaky in a real run it can be
 // skipped; it is the most harness-dependent of the five.
 
-test.describe('Image resize / align toolbar (#1170)', () => {
+test.describe('Image resize / align toolbar (#1170) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await page.evaluate((blockId) => {

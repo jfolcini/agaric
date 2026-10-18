@@ -25,7 +25,7 @@ async function topRow(page: Page) {
  * lands on the row the user left only if those placeholders keep the heights
  * measured on the first visit; at the estimate it landed some 80 rows lower.
  */
-test('coming back to a long page restores the row the user left', async ({ page }) => {
+test('coming back to a long page restores the row the user left @pages', async ({ page }) => {
   await page.goto('/')
   await page.locator('[data-testid="block-static"]').first().waitFor()
   const pageId = await page.evaluate(async (title) => {

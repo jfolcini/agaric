@@ -557,6 +557,7 @@ jobs:
           scripts/check-baseline-paths.test.mjs
           scripts/ci-capacity-report.test.mjs
           scripts/session-log-guards.test.mjs
+          scripts/e2e-related.test.mjs
 
       - name: Verify npm package provenance signatures
         # Requires Node 22.5+; fails on a package whose registry signature or

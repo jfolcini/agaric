@@ -21,7 +21,7 @@ import {
 
 const MARK = 'quokka'
 
-test('Enter runs the search without waiting for the debounce', async ({ page }) => {
+test('Enter runs the search without waiting for the debounce @search', async ({ page }) => {
   await page.clock.install()
   const input = await openSearchView(page)
   const [id] = await seedSearchBlocks(page, [{ content: `${MARK} on enter` }])
@@ -40,7 +40,9 @@ test('Enter runs the search without waiting for the debounce', async ({ page }) 
     .toEqual([id])
 })
 
-test('clicking a result opens its page with the block in view and focused', async ({ page }) => {
+test('clicking a result opens its page with the block in view and focused @search', async ({
+  page,
+}) => {
   await openSearchView(page)
   // Far past the tree's initial render window, so the row starts below the fold.
   const ids = await seedSearchBlocks(page, [
@@ -58,7 +60,7 @@ test('clicking a result opens its page with the block in view and focused', asyn
   await expect(row.locator('[data-testid="block-editor"] [contenteditable="true"]')).toBeFocused()
 })
 
-test.describe('Command palette actions', () => {
+test.describe('Command palette actions @search', () => {
   async function runPaletteCommand(page: Page, name: string): Promise<void> {
     await page.getByTestId('header-search-button').click()
     await page.getByTestId('command-palette-input').fill(`>${name}`)

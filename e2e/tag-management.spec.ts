@@ -31,7 +31,7 @@ async function navigateToTags(page: import('@playwright/test').Page) {
 // 1. Tags view shows seed tags
 // ===========================================================================
 
-test.describe('Tags view — seed tags', () => {
+test.describe('Tags view — seed tags @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -60,7 +60,7 @@ test.describe('Tags view — seed tags', () => {
 // 2. Tag creation via TagList
 // ===========================================================================
 
-test.describe('Tag creation', () => {
+test.describe('Tag creation @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await navigateToTags(page)
@@ -81,7 +81,7 @@ test.describe('Tag creation', () => {
 // 3. Tag deletion with confirmation
 // ===========================================================================
 
-test.describe('Tag deletion', () => {
+test.describe('Tag deletion @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await navigateToTags(page)
@@ -150,7 +150,7 @@ test.describe('Tag deletion', () => {
 // 4. Tag filter panel
 // ===========================================================================
 
-test.describe('Tag filter panel', () => {
+test.describe('Tag filter panel @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await navigateToTags(page)
@@ -211,7 +211,7 @@ test.describe('Tag filter panel', () => {
 // 5. Tag insertion via @ picker
 // ===========================================================================
 
-test.describe('Tag insertion via @ picker', () => {
+test.describe('Tag insertion via @ picker @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -294,7 +294,7 @@ test.describe('Tag insertion via @ picker', () => {
 // 6. @ picker — create new tag & Tab autocomplete
 // ===========================================================================
 
-test.describe('@ picker — create new tag & Tab autocomplete', () => {
+test.describe('@ picker — create new tag & Tab autocomplete @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

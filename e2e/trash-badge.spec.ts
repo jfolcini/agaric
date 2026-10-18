@@ -21,7 +21,7 @@ test.beforeEach(async ({ page }) => {
   await waitForBoot(page)
 })
 
-test('Trash badge counts deleted blocks, rows name their page, restoring one lowers it', async ({
+test('Trash badge counts deleted blocks, rows name their page, restoring one lowers it @pages', async ({
   page,
 }) => {
   await openPage(page, 'Getting Started')

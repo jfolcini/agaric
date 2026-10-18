@@ -13,7 +13,7 @@ for (const view of [
   { tab: 'Continuous stream view', panel: '[data-testid="journal-stream"]' },
   { tab: 'Agenda view', panel: '#journal-panel-agenda' },
 ]) {
-  test(`Alt+T in ${view.tab} lands on today's daily page`, async ({ page }) => {
+  test(`Alt+T in ${view.tab} lands on today's daily page @journal`, async ({ page }) => {
     await waitForBoot(page)
     const dateDisplay = page.locator(DATE_DISPLAY)
     await expect(dateDisplay).toBeVisible()

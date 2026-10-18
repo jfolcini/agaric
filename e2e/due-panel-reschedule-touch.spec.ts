@@ -28,7 +28,7 @@ async function dueDate(page: Page): Promise<string | null> {
   }, FIX_LOGIN_BUG)
 }
 
-test.describe('Due panel reschedule popover (touch)', () => {
+test.describe('Due panel reschedule popover (touch) @journal @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,

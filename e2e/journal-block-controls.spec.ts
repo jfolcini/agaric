@@ -31,7 +31,7 @@ const dragHandleOpacity = (block: import('@playwright/test').Locator) =>
     .locator('[data-testid="drag-handle"]')
     .evaluate((el) => Number.parseFloat(getComputedStyle(el as HTMLElement).opacity))
 
-test.describe('Journal gutter controls reveal per-block (#1243)', () => {
+test.describe('Journal gutter controls reveal per-block (#1243) @editor @journal', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()

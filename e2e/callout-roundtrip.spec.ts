@@ -6,7 +6,7 @@
  */
 import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
-test.describe('Callout round-trip (#258)', () => {
+test.describe('Callout round-trip (#258) @editor @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

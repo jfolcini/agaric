@@ -11,7 +11,9 @@ import { expect, navigateToView, seedSearchBlocks, test, waitForBoot } from './h
 /** `create_block` logs one op each, so the list outgrows the mounted window. */
 const SEEDED_BLOCKS = 14
 
-test('j / k / Home / End / PageUp / PageDown keep the cursor row in view', async ({ page }) => {
+test('j / k / Home / End / PageUp / PageDown keep the cursor row in view @pages', async ({
+  page,
+}) => {
   await waitForBoot(page)
   await seedSearchBlocks(
     page,
@@ -66,7 +68,7 @@ test('j / k / Home / End / PageUp / PageDown keep the cursor row in view', async
   await expectCursorAt(0)
 })
 
-test('Load more leaves the list where the wheel scrolled it', async ({ page }) => {
+test('Load more leaves the list where the wheel scrolled it @pages', async ({ page }) => {
   await waitForBoot(page)
   // Past one 50-entry page, so Load more has a second page to append.
   await seedSearchBlocks(

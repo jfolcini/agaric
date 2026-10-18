@@ -80,7 +80,7 @@ async function createTagInList(page: Page, name: string): Promise<void> {
   await expect(page.getByTestId(`tag-item-${name}`)).toBeVisible()
 }
 
-test.describe('Tags view follows the active space (#5257)', () => {
+test.describe('Tags view follows the active space (#5257) @pages @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -114,7 +114,7 @@ test.describe('Tags view follows the active space (#5257)', () => {
   })
 })
 
-test.describe('Filter panel follows the Tags list (#5254)', () => {
+test.describe('Filter panel follows the Tags list (#5254) @pages @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await navigateToView(page, 'Tags')
@@ -149,7 +149,7 @@ test.describe('Filter panel follows the Tags list (#5254)', () => {
   })
 })
 
-test.describe('Page-header tags (#5236, #5244)', () => {
+test.describe('Page-header tags (#5236, #5244) @pages @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

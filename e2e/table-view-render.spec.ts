@@ -11,7 +11,7 @@
  */
 import { expect, focusBlock, openPage, test, typeSlashCommand, waitForBoot } from './helpers'
 
-test.describe('Table view-mode rendering (#215)', () => {
+test.describe('Table view-mode rendering (#215) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

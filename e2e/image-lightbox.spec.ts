@@ -67,7 +67,7 @@ function parseTransform(transform: string): { x: number; y: number; scale: numbe
   }
 }
 
-test.describe('ImageLightbox (zoom/pan viewer)', () => {
+test.describe('ImageLightbox (zoom/pan viewer) @attachments', () => {
   test('clicking an inline attachment image opens the lightbox with the same src', async ({
     page,
   }) => {

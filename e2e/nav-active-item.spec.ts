@@ -23,7 +23,7 @@ async function expectHoverDiffersFromActive(page: Page, active: Locator, other: 
 }
 
 for (const theme of ['light', 'dark'] as const) {
-  test.describe(`active nav item vs hover (${theme})`, () => {
+  test.describe(`active nav item vs hover (${theme}) @settings`, () => {
     test.use({ viewport: { width: 1440, height: 900 } })
 
     test.beforeEach(async ({ page }) => {

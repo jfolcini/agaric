@@ -22,7 +22,7 @@ import {
 const MARKER = runScopedMarker('wdio-journal-delete-page')
 const MARKED_BLOCK = `[data-testid="block-static"]*=${MARKER}`
 
-describe('Agaric real-backend journal Delete page (#5358)', () => {
+describe('Agaric real-backend journal Delete page (#5358) @pages @journal', () => {
   it('empties today as soon as its page is deleted', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

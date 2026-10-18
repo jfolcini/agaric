@@ -43,7 +43,7 @@ async function reopenTheNewPage(): Promise<void> {
   await $(`[data-testid="sortable-block"]*=${MARKER}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
-describe('Agaric real-backend labelled link (#5160 D9)', () => {
+describe('Agaric real-backend labelled link (#5160 D9) @editor @markdown', () => {
   it('stores the label, shows it, and round-trips it through Edit as Markdown', async () => {
     await waitForAppReady()
     await openNewPage()

@@ -84,7 +84,7 @@ async function listAttachmentRows(
 // 1. Empty state — no attachments
 // ===========================================================================
 
-test.describe('Attachment empty state', () => {
+test.describe('Attachment empty state @attachments', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -100,7 +100,7 @@ test.describe('Attachment empty state', () => {
 // 2. Attachment section exists — badge, list, details
 // ===========================================================================
 
-test.describe('Attachment section exists', () => {
+test.describe('Attachment section exists @attachments', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -165,7 +165,7 @@ test.describe('Attachment section exists', () => {
 // 3. Delete attachment
 // ===========================================================================
 
-test.describe('Delete attachment', () => {
+test.describe('Delete attachment @attachments', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -216,7 +216,7 @@ test.describe('Delete attachment', () => {
 // 4. Rename attachment
 // ===========================================================================
 
-test.describe('Rename attachment', () => {
+test.describe('Rename attachment @attachments', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -300,7 +300,7 @@ async function expectOnlyALaterAllowedAttachLands(page: Page) {
   expect(rows.map((row) => row.filename)).toEqual(['hello.txt'])
 }
 
-test.describe('/attach through the file chooser', () => {
+test.describe('/attach through the file chooser @attachments', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

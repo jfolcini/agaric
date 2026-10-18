@@ -38,7 +38,7 @@ import {
 // 1. Creating a query block via /query slash command
 // ===========================================================================
 
-test.describe('Query block creation', () => {
+test.describe('Query block creation @editor @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -133,7 +133,7 @@ test.describe('Query block creation', () => {
 // 2. Tag-based query (tag:work)
 // ===========================================================================
 
-test.describe('Tag-based query blocks', () => {
+test.describe('Tag-based query blocks @editor @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -217,7 +217,7 @@ test.describe('Tag-based query blocks', () => {
 // 3. Property-based query (property:key=value)
 // ===========================================================================
 
-test.describe('Property-based query blocks', () => {
+test.describe('Property-based query blocks @editor @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -270,7 +270,7 @@ test.describe('Property-based query blocks', () => {
 // 4. Legacy query syntax (type:tag expr:prefix)
 // ===========================================================================
 
-test.describe('Legacy query syntax', () => {
+test.describe('Legacy query syntax @editor @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -339,7 +339,7 @@ test.describe('Legacy query syntax', () => {
 // 4b. Backlinks query in table mode: column sort and Load more
 // ===========================================================================
 
-test.describe('Backlinks query sort and pagination', () => {
+test.describe('Backlinks query sort and pagination @editor @search', () => {
   // Meetings (`SEED_IDS.PAGE_MEETINGS`, src/lib/tauri-mock/seed.ts) has no
   // referrers in the seed, so the seeded blocks below are the whole set.
   const PAGE_MEETINGS = '00000000000000000000PAGE05'
@@ -415,7 +415,7 @@ test.describe('Backlinks query sort and pagination', () => {
 // 5. QueryResult collapse/expand interaction
 // ===========================================================================
 
-test.describe('Query result interactions', () => {
+test.describe('Query result interactions @editor @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -474,7 +474,7 @@ test.describe('Query result interactions', () => {
 // 6. Query results update when matching blocks change
 // ===========================================================================
 
-test.describe('Query result reactivity', () => {
+test.describe('Query result reactivity @editor @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

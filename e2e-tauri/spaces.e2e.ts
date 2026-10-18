@@ -213,7 +213,7 @@ async function waitForWindowTitle(expected: string): Promise<void> {
     })
 }
 
-describe('Agaric real-backend spaces (#5739)', () => {
+describe('Agaric real-backend spaces (#5739) @spaces', () => {
   before(async () => {
     await waitForAppReady()
   })

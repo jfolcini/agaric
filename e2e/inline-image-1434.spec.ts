@@ -32,7 +32,7 @@ interface InvokeWindow extends Window {
   __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> }
 }
 
-test.describe('inline image attachment-ref (#1434)', () => {
+test.describe('inline image attachment-ref (#1434) @attachments @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

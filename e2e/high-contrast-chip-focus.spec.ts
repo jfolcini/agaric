@@ -77,7 +77,7 @@ async function tabTo(
   throw new Error('Tab never reached the chip')
 }
 
-test.describe('High-contrast focus on reference chips', () => {
+test.describe('High-contrast focus on reference chips @editor @settings', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

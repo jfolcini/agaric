@@ -58,7 +58,7 @@ async function openSlashPicker(page: import('@playwright/test').Page) {
 // 1. Enter selects suggestion item (not create new block)
 // ===========================================================================
 
-test.describe('Enter key with suggestion popup', () => {
+test.describe('Enter key with suggestion popup @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -121,7 +121,7 @@ test.describe('Enter key with suggestion popup', () => {
 // 2. Tab autocompletes with highlighted item
 // ===========================================================================
 
-test.describe('Tab key with suggestion popup', () => {
+test.describe('Tab key with suggestion popup @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -168,7 +168,7 @@ test.describe('Tab key with suggestion popup', () => {
 // 3. Escape dismisses popup (not close editor)
 // ===========================================================================
 
-test.describe('Escape key with suggestion popup', () => {
+test.describe('Escape key with suggestion popup @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -210,7 +210,7 @@ test.describe('Escape key with suggestion popup', () => {
 // 4. Backspace edits query (not merge blocks)
 // ===========================================================================
 
-test.describe('Backspace key with suggestion popup', () => {
+test.describe('Backspace key with suggestion popup @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -241,7 +241,7 @@ test.describe('Backspace key with suggestion popup', () => {
 // 5. Arrow keys navigate within popup
 // ===========================================================================
 
-test.describe('Arrow key navigation in popup', () => {
+test.describe('Arrow key navigation in popup @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

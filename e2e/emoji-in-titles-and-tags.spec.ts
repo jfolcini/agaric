@@ -12,7 +12,7 @@ import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 const PARTY = '\u{1F389}' // 🎉
 const ROCKET = '\u{1F680}' // 🚀
 
-test.describe('Emoji in titles & tags (#130)', () => {
+test.describe('Emoji in titles & tags (#130) @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

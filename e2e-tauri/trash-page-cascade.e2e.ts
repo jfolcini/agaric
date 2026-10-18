@@ -141,7 +141,7 @@ async function restoreFromTrash(title: string): Promise<void> {
   await row.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
 }
 
-describe('Agaric real-backend Trash: page cascade, restore, purge (#5737)', () => {
+describe('Agaric real-backend Trash: page cascade, restore, purge (#5737) @pages', () => {
   before(async () => {
     await waitForAppReady()
     await openNewPage(KEPT)

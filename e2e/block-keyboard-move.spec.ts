@@ -44,7 +44,7 @@ async function lastMove(
   return (calls.at(-1) as never) ?? null
 }
 
-test.describe('Keyboard block movement', () => {
+test.describe('Keyboard block movement @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)

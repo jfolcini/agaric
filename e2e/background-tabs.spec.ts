@@ -73,7 +73,7 @@ async function expectOnlyOpenInNewTabMenu(page: Page) {
   await expect(page.locator('[role="menu"]')).toHaveCount(1)
 }
 
-test.describe('Background tabs', () => {
+test.describe('Background tabs @pages @mobile', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -136,7 +136,7 @@ test.describe('Background tabs', () => {
   })
 })
 
-test.describe('Background tabs on a touch tablet', () => {
+test.describe('Background tabs on a touch tablet @pages @mobile', () => {
   const tablet = devices['iPad Pro 11 landscape']
   test.use({ viewport: tablet.viewport, hasTouch: true, isMobile: tablet.isMobile })
 

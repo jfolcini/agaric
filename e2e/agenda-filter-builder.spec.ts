@@ -95,7 +95,7 @@ async function clearAllFilters(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Clear all filters', exact: true }).click()
 }
 
-test.describe('Agenda filter builder narrows the rendered list (#5366)', () => {
+test.describe('Agenda filter builder narrows the rendered list (#5366) @journal @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await seedErrandTag(page)
@@ -164,7 +164,7 @@ test.describe('Agenda filter builder narrows the rendered list (#5366)', () => {
  * `context = @office` goes on one task due next week, so neither filter alone
  * yields the combined result.
  */
-test.describe('Agenda date preset and property filter (#5735)', () => {
+test.describe('Agenda date preset and property filter (#5735) @journal @search', () => {
   // SEED_IDS (src/lib/tauri-mock/seed.ts): BLOCK_PROJ_1, BLOCK_PROJ_2, BLOCK_PROJ_4.
   const OFFICE_TASKS = [
     '0000000000000000000BLOCK13',

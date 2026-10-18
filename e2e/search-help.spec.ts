@@ -8,7 +8,7 @@
 
 import { activeDialog, expect, openSearchView, test } from './helpers'
 
-test.describe('Search help dialog (E2E-7)', () => {
+test.describe('Search help dialog (E2E-7) @search', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })

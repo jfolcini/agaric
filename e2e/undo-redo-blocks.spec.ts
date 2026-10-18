@@ -26,7 +26,7 @@ test.describe.configure({ mode: 'serial' })
  * Seed data: see tauri-mock.ts SEED_IDS.
  */
 
-test.describe('Block-level undo/redo', () => {
+test.describe('Block-level undo/redo @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

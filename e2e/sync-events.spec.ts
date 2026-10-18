@@ -17,7 +17,7 @@ import { emitMockEvent, expect, navigateToView, openSettingsTab, test } from './
  * `emit()` would.
  */
 
-test.describe('sync events (#2683)', () => {
+test.describe('sync events (#2683) @sync', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()

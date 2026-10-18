@@ -30,7 +30,9 @@ test.beforeEach(async ({ page }) => {
   await openPage(page, PAGE)
 })
 
-test('Ctrl+Shift+E copies the page as Markdown under its title', async ({ page }) => {
+test('Ctrl+Shift+E copies the page as Markdown under its title @editor @pages', async ({
+  page,
+}) => {
   await page.keyboard.press('Control+Shift+E')
 
   await expect
@@ -42,7 +44,7 @@ test('Ctrl+Shift+E copies the page as Markdown under its title', async ({ page }
     ])
 })
 
-test('Ctrl+Shift+G opens the graph in local mode on the page', async ({ page }) => {
+test('Ctrl+Shift+G opens the graph in local mode on the page @editor @pages', async ({ page }) => {
   await page.keyboard.press('Control+Shift+G')
 
   await expect(page.getByTestId('local-graph-seed-label')).toHaveText(
@@ -50,7 +52,7 @@ test('Ctrl+Shift+G opens the graph in local mode on the page', async ({ page }) 
   )
 })
 
-test('F3 and Shift+F3 step the active find match', async ({ page }) => {
+test('F3 and Shift+F3 step the active find match @editor @pages', async ({ page }) => {
   await page.keyboard.press('Control+f')
   await page.getByRole('textbox', { name: 'Find in page' }).fill('block')
   const counter = page.getByTestId('in-page-find-counter')
@@ -62,7 +64,7 @@ test('F3 and Shift+F3 step the active find match', async ({ page }) => {
   await expect(counter).toHaveText(/^1 of /)
 })
 
-test('the Tab indents blocks switch decides whether Tab indents or moves focus', async ({
+test('the Tab indents blocks switch decides whether Tab indents or moves focus @editor @pages', async ({
   page,
 }) => {
   const row = page.locator(`li[data-block-id="${GS_3}"]`)

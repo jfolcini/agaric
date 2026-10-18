@@ -94,7 +94,7 @@ async function addTodoStateLeaf(): Promise<void> {
   await $(STATE_LEAF).waitForDisplayed({ timeout: ACTION_TIMEOUT })
 }
 
-describe('Agaric real-backend Advanced Query saved views (#5738)', () => {
+describe('Agaric real-backend Advanced Query saved views (#5738) @search', () => {
   before(async () => {
     await waitForAppReady()
     // A page with one TODO block and one plain block: the State leaf keeps the

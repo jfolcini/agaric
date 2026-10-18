@@ -188,7 +188,7 @@ async function emptyWeekDay(except: string): Promise<string> {
   return found
 }
 
-describe('Agaric real-backend refresh of open views after a sync (#5365)', () => {
+describe('Agaric real-backend refresh of open views after a sync (#5365) @sync', () => {
   let peer: SyncPeer | undefined
   let paired = false
 

@@ -39,7 +39,7 @@ import {
 // read below and turn a regression in `create_block` into a green pass.
 const MARKER = runScopedMarker('wdio-block-persist-reload')
 
-describe('Agaric real-backend block durability (#3085)', () => {
+describe('Agaric real-backend block durability (#3085) @editor', () => {
   it('re-renders a committed block after a full Journal teardown and remount', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

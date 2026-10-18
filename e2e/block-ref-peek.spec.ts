@@ -24,7 +24,7 @@ import {
 
 const PEEK = '[data-testid="ref-peek"]'
 
-test.describe('Block-reference peek', () => {
+test.describe('Block-reference peek @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

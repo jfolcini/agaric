@@ -82,7 +82,7 @@ const MARK_CASES: MarkCase[] = [
   { name: 'Underline', button: 'Underline', tag: 'u' },
 ]
 
-test.describe('Selection bubble menu — mark toggles persist through reopen (#1170 #5)', () => {
+test.describe('Selection bubble menu — mark toggles persist through reopen (#1170 #5) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

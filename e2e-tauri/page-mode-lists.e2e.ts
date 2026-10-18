@@ -103,7 +103,7 @@ async function reopenInPageMode(): Promise<void> {
   await chooseEditMode('Page')
 }
 
-describe('Agaric real-backend lists in page mode (#5743)', () => {
+describe('Agaric real-backend lists in page mode (#5743) @editor @pages', () => {
   it('a bullet opens in page mode; `1. `, Enter and Enter again make and leave a numbered list, and the styles stay', async () => {
     await waitForAppReady()
     await openNewPage()

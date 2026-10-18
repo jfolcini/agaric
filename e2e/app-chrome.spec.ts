@@ -18,7 +18,7 @@ async function box(locator: Locator): Promise<{ x: number; y: number; w: number;
   return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) }
 }
 
-test.describe('desktop chrome', () => {
+test.describe('desktop chrome @mobile', () => {
   test('the app header is 48px tall on every sidebar view and on a page', async ({ page }) => {
     await waitForBoot(page)
     for (const view of ['Journal', 'Pages', 'Search', 'Tags', 'Settings']) {
@@ -57,7 +57,7 @@ test.describe('desktop chrome', () => {
 
 const iPhone13 = devices['iPhone 13']
 
-test.describe('phone chrome', () => {
+test.describe('phone chrome @mobile', () => {
   test.use({
     viewport: { width: 390, height: 844 },
     hasTouch: iPhone13.hasTouch,

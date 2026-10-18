@@ -114,7 +114,7 @@ async function clickIn(blockId: string, selector: string): Promise<void> {
   }, `${PAGE_MODE} [data-page-block-id="${blockId}"] ${selector}`)
 }
 
-describe('Agaric real-backend priorities and dates in page mode (#5743)', () => {
+describe('Agaric real-backend priorities and dates in page mode (#5743) @editor @pages', () => {
   it('a priority key, the badge and the date picker set them, which stay and reach the Due panel', async () => {
     await waitForAppReady()
     const today = await dayFromToday(0)

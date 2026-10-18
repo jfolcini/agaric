@@ -50,7 +50,7 @@ function releaseStartSync(page: Page): Promise<void> {
   return page.evaluate(() => (window as unknown as MockWindow).__releaseStartSync?.())
 }
 
-test('the sidebar Sync icon shows idle, syncing, failed and offline, and when it last synced', async ({
+test('the sidebar Sync icon shows idle, syncing, failed and offline, and when it last synced @sync', async ({
   page,
 }) => {
   await page.clock.install()
@@ -119,7 +119,7 @@ function relayEnabled(page: Page): Promise<boolean> {
   })
 }
 
-test('the internet fallback switch starts off, turns on for the next launch, and stays on', async ({
+test('the internet fallback switch starts off, turns on for the next launch, and stays on @sync', async ({
   page,
 }) => {
   await waitForBoot(page)

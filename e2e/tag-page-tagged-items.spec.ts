@@ -69,7 +69,7 @@ async function openTag(page: Page, name: string): Promise<void> {
   await expect(page.locator('[aria-label="Page title"]')).toHaveText(name)
 }
 
-test.describe('A tag page lists what the tag is on', () => {
+test.describe('A tag page lists what the tag is on @pages', () => {
   test('pages and directly tagged blocks, not blocks that inherit the tag', async ({ page }) => {
     await waitForBoot(page)
     const taggedPage = await createPage(page, 'Tagged Page')

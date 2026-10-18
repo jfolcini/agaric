@@ -43,7 +43,7 @@ async function textOf(locator: Locator): Promise<string> {
 // 1. Formatting shortcuts (in focused editor)
 // ===========================================================================
 
-test.describe('Formatting shortcuts', () => {
+test.describe('Formatting shortcuts @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -103,7 +103,7 @@ test.describe('Formatting shortcuts', () => {
 // 2. Block navigation
 // ===========================================================================
 
-test.describe('Block navigation', () => {
+test.describe('Block navigation @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -164,7 +164,7 @@ test.describe('Block navigation', () => {
 // 3. Block organization
 // ===========================================================================
 
-test.describe('Block organization', () => {
+test.describe('Block organization @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -287,7 +287,7 @@ test.describe('Block organization', () => {
 // 4. Task/Priority shortcuts
 // ===========================================================================
 
-test.describe('Task and priority shortcuts', () => {
+test.describe('Task and priority shortcuts @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -479,7 +479,7 @@ test.describe('Task and priority shortcuts', () => {
 // 5. Global shortcuts
 // ===========================================================================
 
-test.describe('Global shortcuts', () => {
+test.describe('Global shortcuts @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -632,7 +632,7 @@ test.describe('Global shortcuts', () => {
 // 6. Link shortcuts
 // ===========================================================================
 
-test.describe('Link shortcuts', () => {
+test.describe('Link shortcuts @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

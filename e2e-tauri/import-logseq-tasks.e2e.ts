@@ -40,7 +40,7 @@ const MARKDOWN = [
   '',
 ].join('\n')
 
-describe('Agaric real-backend Logseq task import (#5160 D7)', () => {
+describe('Agaric real-backend Logseq task import (#5160 D7) @markdown', () => {
   it('imports `TODO [#A]` with a SCHEDULED line as a TODO with a priority and a scheduled date', async () => {
     await waitForAppReady()
     await navigateTo('Settings')

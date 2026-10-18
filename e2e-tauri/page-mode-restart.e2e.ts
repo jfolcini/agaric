@@ -31,7 +31,7 @@ import {
 const FIRST = runScopedMarker('wdio-page-mode-first')
 const SECOND = runScopedMarker('wdio-page-mode-second')
 
-describe('Agaric real-backend page mode across a restart (#5691)', () => {
+describe('Agaric real-backend page mode across a restart (#5691) @editor @pages @boot', () => {
   it('keeps the text, depth and ids of blocks edited in page mode', async () => {
     await waitForAppReady()
     await openNewPage()

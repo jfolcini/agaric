@@ -22,7 +22,7 @@ interface AxeResult {
   incomplete: Array<{ id: string; nodes: AxeNode[] }>
 }
 
-test.describe('closed tasks in block mode', () => {
+test.describe('closed tasks in block mode @editor @journal', () => {
   test('done and cancelled text clears 4.5:1, and axe measured it', async ({ page }) => {
     // axe reads colours, which a fade in progress makes wrong.
     await page.emulateMedia({ reducedMotion: 'reduce' })

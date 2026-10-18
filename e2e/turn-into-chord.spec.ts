@@ -20,7 +20,7 @@ import {
 const GS_3 = '0000000000000000000BLOCK03'
 const GS_3_TEXT = 'Create new blocks by pressing Enter at the end of any block.'
 
-test.describe('Turn into by the Ctrl+Shift+T chord', () => {
+test.describe('Turn into by the Ctrl+Shift+T chord @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

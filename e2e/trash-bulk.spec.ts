@@ -33,7 +33,7 @@ import {
  * or staying gone on their origin page), not just dialog wiring.
  */
 
-test.describe('Trash bulk restore/purge', () => {
+test.describe('Trash bulk restore/purge @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)
@@ -154,7 +154,7 @@ test.describe('Trash bulk restore/purge', () => {
   })
 })
 
-test.describe('Trash — Restore all / Empty trash', () => {
+test.describe('Trash — Restore all / Empty trash @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)
@@ -246,7 +246,7 @@ test.describe('Trash — Restore all / Empty trash', () => {
   })
 })
 
-test.describe('Trash search', () => {
+test.describe('Trash search @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

@@ -33,7 +33,7 @@ async function openTableGrid(page: Page) {
   return { editor, grid }
 }
 
-test.describe('Slash table grid', () => {
+test.describe('Slash table grid @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

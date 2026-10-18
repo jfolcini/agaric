@@ -44,7 +44,7 @@ import {
 // 1. Ctrl+K — link popover (editor) vs command palette (outside)
 // ===========================================================================
 
-test.describe('Ctrl+K collision routing', () => {
+test.describe('Ctrl+K collision routing @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -91,7 +91,7 @@ test.describe('Ctrl+K collision routing', () => {
 // 2. Ctrl+B — bold (editor; sidebar stays) vs sidebar toggle (outside)
 // ===========================================================================
 
-test.describe('Ctrl+B collision routing', () => {
+test.describe('Ctrl+B collision routing @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -171,7 +171,7 @@ test.describe('Ctrl+B collision routing', () => {
 // bare Ctrl+1/2 chord is now harmless everywhere — including a focused block.
 // ===========================================================================
 
-test.describe('Ctrl+1 / Ctrl+2 vs Ctrl+Alt+1 / Ctrl+Alt+2 routing (#2679)', () => {
+test.describe('Ctrl+1 / Ctrl+2 vs Ctrl+Alt+1 / Ctrl+Alt+2 routing (#2679) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -262,7 +262,7 @@ test.describe('Ctrl+1 / Ctrl+2 vs Ctrl+Alt+1 / Ctrl+Alt+2 routing (#2679)', () =
 // 4. List-view keyboard selection (Trash) — arrow / Space / Ctrl+A / Escape
 // ===========================================================================
 
-test.describe('Trash list-view keyboard selection', () => {
+test.describe('Trash list-view keyboard selection @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

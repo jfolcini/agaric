@@ -73,7 +73,7 @@ async function reopenTheNewPage(): Promise<void> {
   await $('[data-testid="block-editor"]').waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
 }
 
-describe('Agaric real-backend alias undo (#5387)', () => {
+describe('Agaric real-backend alias undo (#5387) @editor @pages', () => {
   it('removes the alias Ctrl+Z reversed, durably', async () => {
     await waitForAppReady()
     // The marker gives the page a block that survives losing focus; the

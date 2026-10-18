@@ -107,7 +107,7 @@ async function clipboardText(): Promise<string> {
   })
 }
 
-describe('Agaric real-backend block clipboard (#5140 Phase 3b)', () => {
+describe('Agaric real-backend block clipboard (#5140 Phase 3b) @editor', () => {
   it('copies and pastes a TODO parent with its child and a code block, durably', async () => {
     await waitForAppReady()
     await openNewPage()

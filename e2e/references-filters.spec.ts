@@ -46,7 +46,7 @@ async function addFilter(page: Page, references: Locator, category: string, valu
   await references.getByRole('button', { name: 'Apply filter' }).click()
 }
 
-test.describe('References filters', () => {
+test.describe('References filters @pages @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await seedTasks(page)
@@ -107,7 +107,7 @@ test.describe('References filters', () => {
   })
 })
 
-test.describe('References tag and property filters', () => {
+test.describe('References tag and property filters @pages @search', () => {
   test('Has Tag and a Property filter narrow the references, each on its own', async ({ page }) => {
     await waitForBoot(page)
     const link = `[[${GETTING_STARTED}]]`

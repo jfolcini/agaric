@@ -46,7 +46,9 @@ test.beforeEach(async ({ page }) => {
   await waitForBoot(page)
 })
 
-test('[[ offers a page by an alias its title lacks, and links the page', async ({ page }) => {
+test('[[ offers a page by an alias its title lacks, and links the page @editor', async ({
+  page,
+}) => {
   // Not the seeded `proj`: "Projects" matches that by title, so its alias row
   // is dropped as a duplicate. An alias no title holds is found only by alias.
   await openPage(page, 'Meetings')
@@ -74,7 +76,7 @@ test('[[ offers a page by an alias its title lacks, and links the page', async (
   await expect(staticBlock(page, GS_1).getByTestId('block-link-chip')).toHaveText('Meetings')
 })
 
-test.describe('slash reference commands open their picker', () => {
+test.describe('slash reference commands open their picker @editor', () => {
   test.beforeEach(async ({ page }) => {
     await openPage(page, GETTING_STARTED)
     await focusBlockById(page, GS_1)

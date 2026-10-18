@@ -13,6 +13,8 @@ Authoritative values are in [`playwright.config.ts`](../playwright.config.ts).
 npm run test:e2e                              # whole suite
 npx playwright test e2e/pages-view.spec.ts    # one spec
 npx playwright test -g 'edits a block'        # one test by title
+npx playwright test --grep @editor            # one area (title tags)
+just e2e-related                              # the specs your change can affect
 npm run test:e2e:ui                           # Playwright UI mode
 npm run typecheck:e2e                         # tsc for this directory only
 ```

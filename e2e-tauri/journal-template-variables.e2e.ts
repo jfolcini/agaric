@@ -44,7 +44,7 @@ function daysFrom(d: Date, days: number): Date {
   return at
 }
 
-describe('Agaric real-backend journal template variables (#5735)', () => {
+describe('Agaric real-backend journal template variables (#5735) @editor @journal', () => {
   it('a past day from the date picker expands the template variables for that day', async () => {
     await waitForAppReady()
     const today = new Date()

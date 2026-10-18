@@ -51,7 +51,7 @@ test.beforeEach(async ({ page }) => {
   await openPagesView(page)
 })
 
-test('the + on a namespace folder creates a page inside it through the New page dialog', async ({
+test('the + on a namespace folder creates a page inside it through the New page dialog @pages', async ({
   page,
 }) => {
   // The seed has no namespaced page, so make the `Work` folder first.
@@ -77,7 +77,7 @@ test('the + on a namespace folder creates a page inside it through the New page 
   await expect(folder.locator('span[title^="Work/"]')).toHaveText(['Alpha', 'Beta'])
 })
 
-test('Ctrl+Click and Shift+Click select three pages, and batch Trash moves them to Trash', async ({
+test('Ctrl+Click and Shift+Click select three pages, and batch Trash moves them to Trash @pages', async ({
   page,
 }) => {
   await expect(flatPageTitles(page)).toHaveText([
@@ -111,7 +111,7 @@ test('Ctrl+Click and Shift+Click select three pages, and batch Trash moves them 
   await expect(flatPageTitles(page)).toHaveText(['Getting Started', 'Quick Notes'])
 })
 
-test('a saved view restores its sort and filter chips', async ({ page }) => {
+test('a saved view restores its sort and filter chips @pages', async ({ page }) => {
   const sort = page.getByRole('combobox', { name: 'Sort order' })
   const orphanChip = page.getByRole('group', { name: 'Filter: Orphan', exact: true })
   const journalChip = page.getByRole('group', { name: 'Filter: Exclude journal pages' })
@@ -153,7 +153,7 @@ test('a saved view restores its sort and filter chips', async ({ page }) => {
 })
 
 // A rename onto a free title is covered by `rename-invalidation.spec.ts` (#5250).
-test('renaming a page in its header onto an existing title is refused and keeps the old title', async ({
+test('renaming a page in its header onto an existing title is refused and keeps the old title @pages', async ({
   page,
 }) => {
   const title = page.locator('[aria-label="Page title"]')

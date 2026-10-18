@@ -25,7 +25,7 @@ const BY_STATE = [
   /Design new dashboard/,
 ]
 
-test('Sort by and Group by choices are kept across a trip to Pages', async ({ page }) => {
+test('Sort by and Group by choices are kept across a trip to Pages @journal', async ({ page }) => {
   await waitForBoot(page)
   await page.getByRole('tab', { name: 'Agenda view' }).click()
   const sortBy = page.getByRole('button', { name: 'Sort by', exact: true })

@@ -9,7 +9,7 @@
  */
 import { expect, focusBlock, openPage, test, typeSlashCommand, waitForBoot } from './helpers'
 
-test.describe('Table ops toolbar (#215)', () => {
+test.describe('Table ops toolbar (#215) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

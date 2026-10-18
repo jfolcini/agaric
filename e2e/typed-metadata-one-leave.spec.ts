@@ -40,7 +40,7 @@ async function pasteText(page: Page, text: string): Promise<void> {
     }, text)
 }
 
-test('a task marker, a property line and a tag typed in a block all commit on one leave', async ({
+test('a task marker, a property line and a tag typed in a block all commit on one leave @editor', async ({
   page,
 }) => {
   await waitForBoot(page)

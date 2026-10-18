@@ -45,7 +45,7 @@ import {
   waitForBoot,
 } from './helpers'
 
-test.describe('Breadcrumb navigation — BlockZoomBar zoom trail', () => {
+test.describe('Breadcrumb navigation — BlockZoomBar zoom trail @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -186,7 +186,7 @@ test.describe('Breadcrumb navigation — BlockZoomBar zoom trail', () => {
   })
 })
 
-test.describe('Breadcrumb navigation — PageHeader namespace path', () => {
+test.describe('Breadcrumb navigation — PageHeader namespace path @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

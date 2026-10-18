@@ -31,7 +31,7 @@ import {
 // there. #3334 fixed the vault; scoping the name removes the assumption too.
 const TAG_NAME = runScopedMarker('wdio-tag-roundtrip')
 
-describe('Agaric real-backend tag round-trip (#3085 / #3081)', () => {
+describe('Agaric real-backend tag round-trip (#3085 / #3081) @pages', () => {
   it('keeps a UI-created tag listed after navigating away to Journal and back', async () => {
     await waitForAppReady()
 

@@ -59,7 +59,7 @@ async function waitForState(blockId: string, state: string, when: string): Promi
     })
 }
 
-describe('Agaric real-backend tasks in page mode (#5743)', () => {
+describe('Agaric real-backend tasks in page mode (#5743) @editor @pages', () => {
   it('a typed marker and a click set the task, which stays and reaches the Agenda', async () => {
     await waitForAppReady()
     await openNewPage()

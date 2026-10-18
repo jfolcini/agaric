@@ -13,7 +13,7 @@
  */
 import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
-test.describe('KaTeX math round-trip (#1437)', () => {
+test.describe('KaTeX math round-trip (#1437) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

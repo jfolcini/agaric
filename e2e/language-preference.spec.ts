@@ -26,7 +26,7 @@ async function openGeneral(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="settings-panel-general"]')).toBeVisible()
 }
 
-test.describe('Language preference', () => {
+test.describe('Language preference @settings', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

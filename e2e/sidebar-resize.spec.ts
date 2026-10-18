@@ -18,7 +18,9 @@ const DRAG_PX = 120
 const sidebarWidth = async (page: Page) =>
   (await page.locator('[data-slot="sidebar-container"]').boundingBox())?.width
 
-test('a dragged sidebar width is the width the next launch opens at', async ({ page }) => {
+test('a dragged sidebar width is the width the next launch opens at @settings', async ({
+  page,
+}) => {
   await waitForBoot(page)
   const startWidth = await sidebarWidth(page)
   if (startWidth === undefined) throw new Error('the sidebar has no layout box')

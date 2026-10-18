@@ -77,7 +77,7 @@ async function clearFocused(): Promise<void> {
   await browser.keys(['Delete'])
 }
 
-describe('Agaric real-backend page rename (#5365)', () => {
+describe('Agaric real-backend page rename (#5365) @pages', () => {
   it('the Pages filter and the [[ picker find a renamed page by its new title only', async () => {
     await waitForAppReady()
     await openNewPageDialog()

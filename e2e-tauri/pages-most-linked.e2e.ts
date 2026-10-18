@@ -76,7 +76,7 @@ function topTwo(): Promise<ListedPage[]> {
   })
 }
 
-describe('Agaric real-backend Most linked sort (#5366)', () => {
+describe('Agaric real-backend Most linked sort (#5366) @pages', () => {
   it('puts a page linked from two others at the top of Most linked', async () => {
     await waitForAppReady()
     await createPage(RIVAL)

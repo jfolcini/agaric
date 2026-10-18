@@ -52,7 +52,7 @@ async function addBlock(page: import('@playwright/test').Page, text: string) {
   await expect(page.getByText(text)).toBeVisible()
 }
 
-test.describe('Unlinked references — link this occurrence', () => {
+test.describe('Unlinked references — link this occurrence @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -136,7 +136,7 @@ test.describe('Unlinked references — link this occurrence', () => {
  * would reopen the panel the user left open. The final expand keeps the
  * assertion honest — the rows are there to be shown, the panel is shut.
  */
-test.describe('Unlinked references — page-scoped panel reset', () => {
+test.describe('Unlinked references — page-scoped panel reset @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

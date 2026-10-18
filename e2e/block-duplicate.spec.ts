@@ -54,7 +54,7 @@ async function addChild(page: Page, parentId: string, content: string): Promise<
   return row.id
 }
 
-test.describe('Duplicate block (#5140 Phase 3a)', () => {
+test.describe('Duplicate block (#5140 Phase 3a) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

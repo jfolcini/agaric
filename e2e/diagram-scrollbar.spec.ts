@@ -42,7 +42,7 @@ function bars(content: Locator) {
 }
 
 for (const width of ['desktop', 'phone'] as const) {
-  test(`at ${width} width, diagrams and equations that fit show no scrollbar; wide ones scroll`, async ({
+  test(`at ${width} width, diagrams and equations that fit show no scrollbar; wide ones scroll @editor`, async ({
     page,
   }) => {
     await page.setViewportSize(VIEWPORTS[width])

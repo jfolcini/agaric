@@ -40,7 +40,7 @@ async function selectBlocks(page: Page, ids: string[]): Promise<void> {
   await expect(page.getByTestId('batch-toolbar')).toContainText(`${ids.length} selected`)
 }
 
-test.describe('Batch actions beyond TODO', () => {
+test.describe('Batch actions beyond TODO @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)

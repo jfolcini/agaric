@@ -4,7 +4,7 @@ import { expect, navigateToView, seedSearchBlocks, test, waitForBoot } from './h
  * Load more in the virtualised Trash list leaves both the list's scroll and
  * the keyboard cursor where they were.
  */
-test('Load more leaves the Trash list where the wheel scrolled it', async ({ page }) => {
+test('Load more leaves the Trash list where the wheel scrolled it @pages', async ({ page }) => {
   await waitForBoot(page)
   // Past one 50-root page, so Load more has a second page to append.
   const ids = await seedSearchBlocks(

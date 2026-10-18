@@ -53,7 +53,7 @@ async function seedPdf(page: import('@playwright/test').Page, blockId: string, f
   )
 }
 
-test.describe('PDF annotation viewer (#1452)', () => {
+test.describe('PDF annotation viewer (#1452) @attachments', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

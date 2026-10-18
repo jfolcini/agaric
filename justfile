@@ -90,6 +90,12 @@ test-be *ARGS:
 test-be-related *ARGS:
     bash scripts/test-related-rust.sh --worktree "$@"
 
+# The e2e specs your uncommitted work can affect, by area tag: prints one command per lane (Playwright, WebdriverIO) and runs neither; `--range main...HEAD` checks a branch.
+[group('test')]
+[positional-arguments]
+e2e-related *ARGS:
+    bash scripts/e2e-related.sh --worktree "$@"
+
 # Rust doc-tests, which nextest does not run. Needs the sqlx dev DB, same as `test-be`.
 [group('test')]
 test-doc:

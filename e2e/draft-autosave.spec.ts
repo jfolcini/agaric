@@ -175,7 +175,7 @@ async function navigateAwayWithoutBlur(
     .toBe(true)
 }
 
-test.describe('Draft autosave', () => {
+test.describe('Draft autosave @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)

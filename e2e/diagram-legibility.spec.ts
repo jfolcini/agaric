@@ -50,7 +50,7 @@ async function openSeeded(page: Page, width: keyof typeof VIEWPORTS, seeds: stri
   await (width === 'phone' ? openPageMobile : openPage)(page, 'Projects')
 }
 
-test.describe('display math overflow (#5638)', () => {
+test.describe('display math overflow (#5638) @editor @mobile', () => {
   test('a wide equation at 390 px scrolls far enough to reach its last glyph', async ({ page }) => {
     await openSeeded(page, 'phone', [WIDE_MATH])
     const block = page.getByTestId('katex-block')
@@ -141,7 +141,7 @@ function measureLegibility(page: Page) {
 }
 
 for (const width of ['phone', 'desktop'] as const) {
-  test(`a wide flowchart keeps every label legible at ${width} width, scrolling instead of shrinking`, async ({
+  test(`a wide flowchart keeps every label legible at ${width} width, scrolling instead of shrinking @editor @mobile`, async ({
     page,
   }) => {
     await openSeeded(page, width, [WIDE_FLOWCHART])
@@ -155,7 +155,7 @@ for (const width of ['phone', 'desktop'] as const) {
   })
 }
 
-test('a tall diagram is capped inline and shows the fade', async ({ page }) => {
+test('a tall diagram is capped inline and shows the fade @editor @mobile', async ({ page }) => {
   await openSeeded(page, 'desktop', [TALL_FLOWCHART])
   await expect(page.locator('[data-testid="mermaid-diagram"] svg')).toBeVisible()
   const box = await page
@@ -277,7 +277,7 @@ function measureShapesAndLabels(page: Page) {
 }
 
 for (const theme of ['light', 'dark']) {
-  test(`every node has a border and edge labels sit on the page background (${theme})`, async ({
+  test(`every node has a border and edge labels sit on the page background (${theme}) @editor @mobile`, async ({
     page,
   }) => {
     await page.addInitScript((t) => localStorage.setItem('theme-preference', t), theme)
@@ -293,7 +293,7 @@ for (const theme of ['light', 'dark']) {
 }
 
 for (const theme of THEMES) {
-  test(`mermaid follows the tokens and meets the contrast targets in the ${theme} theme`, async ({
+  test(`mermaid follows the tokens and meets the contrast targets in the ${theme} theme @editor @mobile`, async ({
     page,
   }) => {
     await page.addInitScript((t) => localStorage.setItem('theme-preference', t), theme)
@@ -353,7 +353,7 @@ for (const [label, touch] of [
   ['desktop', false],
   ['phone', true],
 ] as const) {
-  test.describe(`diagram viewer (${label})`, () => {
+  test.describe(`diagram viewer (${label}) @editor @mobile`, () => {
     test.use(
       touch
         ? {
@@ -478,7 +478,7 @@ for (const [label, touch] of [
 
 // The fitted diagram can be a thin strip, so gestures belong to the whole
 // viewer, not to the diagram's own box.
-test.describe('diagram viewer gestures outside the diagram (phone)', () => {
+test.describe('diagram viewer gestures outside the diagram (phone) @editor @mobile', () => {
   test.use({ viewport: iPhone13.viewport, hasTouch: true, isMobile: true })
 
   test('two fingers that start above and below the fitted strip zoom in', async ({ page }) => {
@@ -510,7 +510,7 @@ test.describe('diagram viewer gestures outside the diagram (phone)', () => {
   })
 })
 
-test.describe('diagram viewer gestures outside the diagram (desktop)', () => {
+test.describe('diagram viewer gestures outside the diagram (desktop) @editor @mobile', () => {
   test.use({ viewport: VIEWPORTS.desktop })
 
   test('Ctrl + wheel zooms and a drag pans from outside the diagram box', async ({ page }) => {
@@ -543,7 +543,9 @@ test.describe('diagram viewer gestures outside the diagram (desktop)', () => {
   })
 })
 
-test('the viewer opened from the editor keeps the block in edit mode', async ({ page }) => {
+test('the viewer opened from the editor keeps the block in edit mode @editor @mobile', async ({
+  page,
+}) => {
   await page.setViewportSize(VIEWPORTS.desktop)
   await waitForBoot(page)
   const [id] = await seedSearchBlocks(page, [{ content: FLOWCHART }])

@@ -23,7 +23,7 @@ async function runSearch(page: import('@playwright/test').Page, query: string) {
   return region
 }
 
-test.describe('Search results — grouping + interaction (E2E-8)', () => {
+test.describe('Search results — grouping + interaction (E2E-8) @search', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })
@@ -136,7 +136,7 @@ test.describe('Search results — grouping + interaction (E2E-8)', () => {
 // unreachable. The fix reserves totalSize with an in-flow `::before` spacer
 // (height fed by the `--vrl-total-size` custom property). jsdom has no
 // scroll geometry, so this is the only layer that can verify it for real.
-test.describe('Tall search group — scroll geometry via ::before spacer (#737)', () => {
+test.describe('Tall search group — scroll geometry via ::before spacer (#737) @search', () => {
   // MUST stay at or below one search page (`PAGINATION_LIMIT` = 50, what
   // `useSearchResults` sends as `search_blocks`' `limit`), because this spec
   // never clicks "Load more": it asserts that EVERY seeded row is reachable by
@@ -212,7 +212,7 @@ test.describe('Tall search group — scroll geometry via ::before spacer (#737)'
   })
 })
 
-test.describe('Search alias-match card (E2E-9)', () => {
+test.describe('Search alias-match card (E2E-9) @search', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })

@@ -86,7 +86,7 @@ async function continueListFrom(page: Page, index: number, writesSoFar: number):
   await expect.poll(() => listStyleWrites(page)).toHaveLength(writesSoFar + 1)
 }
 
-test.describe('listStyle keyboard grain (#4552 slice 3)', () => {
+test.describe('listStyle keyboard grain (#4552 slice 3) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

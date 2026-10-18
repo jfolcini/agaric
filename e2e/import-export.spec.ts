@@ -68,7 +68,7 @@ async function navigateToDataSettings(page: import('@playwright/test').Page) {
 // 1. Export page as markdown
 // ===========================================================================
 
-test.describe('Export page as markdown', () => {
+test.describe('Export page as markdown @markdown', () => {
   test.beforeEach(async ({ context, page }) => {
     // `handleExport` awaits `exportPageMarkdown(pageId)` before calling
     // `navigator.clipboard.writeText(...)`. That awaited promise resolution
@@ -131,7 +131,7 @@ test.describe('Export page as markdown', () => {
 // intercept with `page.waitForEvent('download')` and unzip for real (using the
 // same `jszip` package, imported directly into this Node-side spec).
 
-test.describe('Export all pages as ZIP', () => {
+test.describe('Export all pages as ZIP @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -201,7 +201,7 @@ test.describe('Export all pages as ZIP', () => {
 // 2. Import markdown
 // ===========================================================================
 
-test.describe('Import markdown', () => {
+test.describe('Import markdown @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -335,7 +335,7 @@ test.describe('Import markdown', () => {
 // 3. Export preserves block structure
 // ===========================================================================
 
-test.describe('Export preserves block structure', () => {
+test.describe('Export preserves block structure @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -396,7 +396,7 @@ test.describe('Export preserves block structure', () => {
 // 4. Export includes tags and links
 // ===========================================================================
 
-test.describe('Export includes tags and links', () => {
+test.describe('Export includes tags and links @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -456,7 +456,7 @@ test.describe('Export includes tags and links', () => {
 // 5. Round-trip fidelity
 // ===========================================================================
 
-test.describe('Round-trip fidelity', () => {
+test.describe('Round-trip fidelity @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

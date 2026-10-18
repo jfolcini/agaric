@@ -178,7 +178,7 @@ async function expectAudioPlays(id: string, seconds: number): Promise<void> {
     })
 }
 
-describe('Agaric real-backend editor durability (#5733)', () => {
+describe('Agaric real-backend editor durability (#5733) @editor', () => {
   before(async () => {
     await waitForAppReady()
   })

@@ -34,7 +34,7 @@ const SPARSE = 'zap of ink'
 const DENSE = 'zap fig zap owl zap bun zap kit zap hen jam pod ivy'
 const QUERY = 'zap'
 
-describe('Agaric real-backend search ranking (#4671)', () => {
+describe('Agaric real-backend search ranking (#4671) @search', () => {
   it('orders results by bm25, not by term density', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

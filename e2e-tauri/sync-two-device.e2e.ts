@@ -261,7 +261,7 @@ interface Paired {
   peerBlockId: string
 }
 
-describe('Agaric real-backend two-device sync (#5365)', () => {
+describe('Agaric real-backend two-device sync (#5365) @sync', () => {
   let peer: SyncPeer | undefined
   let paired: Paired | undefined
 

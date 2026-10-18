@@ -49,7 +49,7 @@ const firstStatic = (page: import('@playwright/test').Page) =>
 // 1. Heading commands 3–6 (slash menu) — h1/h2 live in slash-commands.spec.ts
 // ===========================================================================
 
-test.describe('Slash headings 3–6', () => {
+test.describe('Slash headings 3–6 @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -87,7 +87,7 @@ test.describe('Slash headings 3–6', () => {
 // 2. Structural inserts via the slash menu
 // ===========================================================================
 
-test.describe('Slash structural inserts', () => {
+test.describe('Slash structural inserts @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -239,7 +239,7 @@ test.describe('Slash structural inserts', () => {
 // is a no-op label, so each test picks the concrete target by its label text.
 // Each conversion runs on an EXISTING block's content.
 
-test.describe('Slash turn-into conversions', () => {
+test.describe('Slash turn-into conversions @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

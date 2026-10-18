@@ -28,7 +28,7 @@ interface ExportedSpan {
   name: string
 }
 
-test.describe('frontend OTel tracing (#2110)', () => {
+test.describe('frontend OTel tracing (#2110) @search', () => {
   test.beforeEach(async ({ page }) => {
     // Opt in before any app script runs (off by default).
     await page.addInitScript(() => {

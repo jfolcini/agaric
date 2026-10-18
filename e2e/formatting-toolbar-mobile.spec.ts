@@ -34,7 +34,7 @@ const iPhone13 = devices['iPhone 13']
 const TOUCH_FLOOR = 44
 const SLACK = 1
 
-test.describe('FormattingToolbar (iPhone 13 viewport)', () => {
+test.describe('FormattingToolbar (iPhone 13 viewport) @editor @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,
