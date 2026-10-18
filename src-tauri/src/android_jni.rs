@@ -5,8 +5,8 @@
 //! The work is `agaric_sync::android_context`'s (that crate owns the `jni`
 //! dependency); only the exported **symbol** lives here. The
 //! `.so` Android loads is `libagaric_lib.so` — the `cdylib` produced by *this*
-//! crate (`[lib] name = "agaric_lib"`, `crate-type = ["lib", "cdylib",
-//! "staticlib"]`), loaded by `WryActivity`'s
+//! crate (`[lib] name = "agaric_lib"`, `crate-type = ["lib", "cdylib"]`),
+//! loaded by `WryActivity`'s
 //! `companion object { init { System.loadLibrary("agaric_lib") } }`.
 //!
 //! A `#[unsafe(no_mangle)]` symbol defined in a dependency rlib is exported
