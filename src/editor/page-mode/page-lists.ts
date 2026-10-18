@@ -200,6 +200,7 @@ const PageListKeys = Extension.create<{ source: PageListSource | null }>({
     if (source === null) return []
     // Block mode's `- ` and `1. ` (the stock list rules), then the character
     // its `ListStyleInputRule` waits for: a bullet's not `[`, a checkbox's start.
+    // Not `\n` either: TipTap runs the rules on Enter with that text.
     const rule = (find: RegExp, style: ListStyle) =>
       new InputRule({
         find,
@@ -216,7 +217,7 @@ const PageListKeys = Extension.create<{ source: PageListSource | null }>({
           return undefined
         },
       })
-    return [rule(/^\s*[-+*]\s([^[])$/, 'bullet'), rule(/^\d+\.\s(.)$/, 'ordered')]
+    return [rule(/^\s*[-+*]\s([^[\n])$/, 'bullet'), rule(/^\d+\.\s(.)$/, 'ordered')]
   },
   addProseMirrorPlugins() {
     const { source } = this.options

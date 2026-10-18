@@ -573,17 +573,17 @@ export async function enterBlankSibling(): Promise<string> {
  * round-trip re-queried the backend. A reverse `waitForExist` alone would pass
  * on a page that has not finished rendering yet, so callers put it AFTER the
  * positive readiness signal of the view (`navigateTo`'s `aria-current`, a
- * sibling row that must be present) and this re-checks with a fresh query
- * once the wait resolves.
+ * sibling row that must be present). Each poll is a fresh find inside
+ * `waitUntil`, which retries a poll that throws: WebKitWebDriver fails a find
+ * whose match leaves the DOM mid-find ("Stale element found when trying to
+ * create the node handle"), and a `$()` resolved outside the wait threw that
+ * straight out.
  */
 export async function expectAbsent(selector: string, what: string): Promise<void> {
-  await $(selector).waitForExist({
-    reverse: true,
+  await browser.waitUntil(async () => (await $$(selector).getElements()).length === 0, {
     timeout: NAV_TIMEOUT,
     timeoutMsg: `${what} is still present after the round-trip (${selector})`,
   })
-  const survivors = await $$(selector).getElements()
-  expect(survivors.length).toBe(0)
 }
 
 /**

@@ -17,7 +17,7 @@ import {
   blockerIn,
   blockerMessage,
   type PageModeBlocker,
-  pageModeBlocker,
+  readPageFit,
 } from '@/editor/page-mode/page-mode-fit'
 import type { PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -93,8 +93,8 @@ export function usePageMode(pageId: string): PageModeState {
     if (inRows !== null) return
     const { blocks: rows, truncatedTotal } = pageStore.getState()
     // Whatever was found before is looked for again: a property may be gone.
-    pageModeBlocker(rows, truncatedTotal ?? rows.length).then(
-      (next) => setFound(next === null ? null : { pageId, blocker: next }),
+    readPageFit(rows, truncatedTotal ?? rows.length).then(
+      (fit) => setFound(fit.blocker === null ? null : { pageId, blocker: fit.blocker }),
       (err: unknown) => {
         logger.warn('usePageMode', 'Failed to check the page for page mode', { pageId }, err)
       },

@@ -20,10 +20,10 @@
  *   by the todo-state command, and none other;
  * - each block holds the priority and dates last given it by their commands,
  *   and none other: no save writes over them;
- * - each block holds the properties last given it, by a `key:: value` line
- *   typed into it (`commitPageProperties`, which also takes the line out of
- *   its text) unless the block held that key as text before it was changed,
- *   or by the property commands, and none other;
+ * - each block holds the properties last given it, by a `key:: value` line it
+ *   held when the caret left it (`commitPageProperties`, which also takes the
+ *   line out of its text) unless it held that key as text before it was
+ *   changed, or by the property commands, and none other;
  * - each block holds the list style its marker shows (`page-lists.ts`): the
  *   one a prefix gave it, taken out of its text, the one Enter carried on to
  *   the block it made, or none once Enter on it empty or Backspace at its
@@ -334,6 +334,65 @@ const stepArb = fc.record({
   peer: fc.option(peerArb, { freq: 3 }),
   failures: fc.option(fc.integer({ min: 1, max: 0xffff }), { freq: 4 }),
 })
+type Step = typeof stepArb extends fc.Arbitrary<infer T> ? T : never
+
+const B1 = blockId(1)
+const B2 = blockId(2)
+/**
+ * Found once each: a `key:: value` line typed into a block a peer deletes
+ * before the save, so the block is kept under a new id and the line stays
+ * text, then moved by Enter or a cut into a block that did not hold it, which
+ * the caret then leaves.
+ */
+const EXAMPLES: Array<[Row[], Step[]]> = [
+  [
+    [
+      [B1, 0, ''],
+      [B2, 0, ''],
+    ],
+    [
+      {
+        action: { kind: 'tag', block: 0, name: 'newtag', to: 0 },
+        peer: { kind: 'edit', block: 0, text: 'peer ' },
+        failures: null,
+      },
+      {
+        action: { kind: 'propertyLine', block: 0, key: 'assignee', value: 'Ana', to: 0 },
+        peer: { kind: 'delete', block: 0 },
+        failures: null,
+      },
+      { action: { kind: 'enter', block: 0, at: 177 }, peer: null, failures: null },
+      {
+        action: { kind: 'tag', block: 28554937, name: 'newtag', to: 0 },
+        peer: null,
+        failures: null,
+      },
+    ],
+  ],
+  [
+    [
+      [B1, 0, ''],
+      [B2, 0, ''],
+    ],
+    [
+      {
+        action: { kind: 'propertyLine', block: 39169023, key: 'assignee', value: 'Ana', to: 0 },
+        peer: { kind: 'delete', block: 432947423 },
+        failures: null,
+      },
+      {
+        action: { kind: 'cutPaste', from: 561348579, count: 1, to: 0 },
+        peer: null,
+        failures: null,
+      },
+      {
+        action: { kind: 'taskMarker', block: 0, marker: ['[ ] ', 'TODO'], to: 0 },
+        peer: null,
+        failures: null,
+      },
+    ],
+  ],
+]
 
 function firstTextLength(ed: Editor, index: number): number {
   return ed.state.doc.child(index).firstChild?.textContent.length ?? 0
@@ -854,15 +913,22 @@ async function commitAndCycle(
     const typed = held ? null : leadingTask(left)
     if (typed !== null) states.set(tagged, typed.todoState)
     const task = await commitPageTask(tagged, unchanged, save, page.api, noStore)
+    // Each line whose key the block did not hold before it was changed: typed
+    // now, or typed into a block kept as new and since moved here.
+    const heldKeys = new Set(
+      parseInlineProperties(unchanged === null ? '' : markdownOf(unchanged)).map(({ key }) => key),
+    )
+    for (const { key, value } of parseInlineProperties(task.markdown ?? '')) {
+      const read = (PROPERTY_KEYS as readonly string[]).includes(key)
+      if (read && !heldKeys.has(key)) props.set(`${tagged}:${key}`, value)
+    }
     const lines = await commitPageProperties(tagged, unchanged, save, page.api, task.markdown)
     await commitPageTags(tagged, save, page.api, lines.markdown)
     applyRemote(ed.view, save, page.rows(), mintKept)
     if (acted?.line !== undefined && save.saved.has(tagged)) {
       // A key the block held as a line before it was changed stays text.
       const { key, value } = acted.line
-      const before = unchanged === null ? '' : markdownOf(unchanged)
-      const heldLine = parseInlineProperties(before).some((prop) => prop.key === key)
-      if (!heldLine) props.set(`${tagged}:${key}`, value)
+      const heldLine = heldKeys.has(key)
       const shown = page.live().find(([id]) => id === tagged)?.[2] ?? ''
       const lineLeft = parseInlineProperties(shown).some(
         (prop) => prop.key === key && prop.value === value,
@@ -1024,7 +1090,7 @@ describe('page mode against the mock backend', () => {
           }
         },
       ),
-      { numRuns: 150 },
+      { numRuns: 150, examples: EXAMPLES },
     )
   })
 })

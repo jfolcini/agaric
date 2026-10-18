@@ -27,7 +27,7 @@ export interface PageModeExtensionOptions extends Omit<ContentExtensionOptions, 
   placeholder: string
   /** Mints a new block's id; a test passes a deterministic one. */
   mintId?: () => string
-  /** The blocks' task states, drawn as block mode's checkbox; none draws no checkbox. */
+  /** The blocks' task states, drawn as block mode's checkbox; none, or no `lists`, draws none. */
   tasks?: PageTaskSource
   /** The blocks' list styles, drawn as block mode's marker, with its list keys; none draws none. */
   lists?: PageListSource
@@ -37,9 +37,9 @@ export function pageModeExtensions(options: PageModeExtensionOptions): Extension
   const content = contentExtensions({ ...options, listInputRules: false })
   return [
     PageDocument,
-    ...(options.tasks === undefined
+    ...(options.tasks === undefined || options.lists === undefined
       ? [PageBlock]
-      : pageTasks(options.tasks, options.lists?.lists ?? null)),
+      : pageTasks(options.tasks, options.lists.lists)),
     ...content.text,
     ...content.lists,
     ...content.blocks,

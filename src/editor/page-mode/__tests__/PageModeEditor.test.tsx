@@ -2264,6 +2264,49 @@ describe('PageModeEditor lists (#5743)', () => {
     expect(backendStyle(ids[0] as string)).toBeNull()
   })
 
+  it('Tab and Shift+Tab number a block again at its new depth', async () => {
+    const { pageId } = seedList([
+      ['one', 'ordered'],
+      ['two', 'ordered'],
+    ])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 1, 0))
+    })
+
+    press(editor, 'Tab')
+    expect(markers(container)).toEqual(['1.', '1.'])
+
+    press(editor, 'Tab', { shiftKey: true })
+    expect(markers(container)).toEqual(['1.', '2.'])
+  })
+
+  it('`- ` then Enter splits the block: the Enter is no character for the bullet rule', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 5))
+    })
+    press(editor, 'Enter')
+    typeKeys(editor, '- ')
+    expect(press(editor, 'Enter')).toBe(true)
+
+    expect(docTexts(editor)).toEqual(['first', '\\- ', ''])
+    expect(markers(container)).toEqual(['', '', ''])
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    const made = blockIdOf(editor.state.doc.child(1)) as string
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'first'],
+      [made, '\\- '],
+    ])
+    expect(backendStyle(made)).toBeNull()
+  })
+
   it('Enter continues the list into a new block, and Enter on that empty block leaves it', async () => {
     const { pageId, ids } = seedList([
       ['one', 'ordered'],
