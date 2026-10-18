@@ -2061,10 +2061,7 @@ export type FilterPrimitive =
  *  `Tag` is attached-only.
  */
 { type: "TagOrRef"; tag: string } | 
-/**
- *  Shared — block's `parent_id` equals `parent` (its direct children).
- *  Mirrors the legacy `list_blocks(parent_id=…)` backlinks path.
- */
+/**  Shared — block's `parent_id` equals `parent` (its direct children). */
 { type: "ChildOf"; parent: string } | 
 /**
  *  Shared — page name matches the GLOB pattern. `exclude=true`

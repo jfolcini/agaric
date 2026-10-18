@@ -310,6 +310,27 @@ test.describe('Legacy query syntax', () => {
     // Seed data: BLOCK_MTG_2 has context=@remote
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
   })
+
+  test('type:backlinks lists the blocks linking to the target, not its children', async ({
+    page,
+  }) => {
+    await focusBlock(page)
+
+    // Getting Started (PAGE01) has child blocks; the one block linking to it
+    // sits on Quick Notes.
+    await page.keyboard.press('ControlOrMeta+a')
+    await page.keyboard.type('{{query type:backlinks target:00000000000000000000PAGE01}}', {
+      delay: 20,
+    })
+    await saveBlock(page)
+
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    const queryResult = firstBlock.locator('[data-testid="query-result"]')
+    const items = queryResult.locator('[data-testid="query-result-item"]')
+    await expect(queryResult).toContainText('1 result', { timeout: 5000 })
+    await expect(items).toHaveCount(1)
+    await expect(items.first()).toContainText('These notes complement the')
+  })
 })
 
 // ===========================================================================

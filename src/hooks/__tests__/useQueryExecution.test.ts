@@ -6,7 +6,6 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import {
   dispatchQuery,
-  fetchBacklinksQuery,
   fetchFilteredQuery,
   fetchPropertyQuery,
   fetchRichInlineQuery,
@@ -147,15 +146,15 @@ describe('useQueryExecution', () => {
     expect(tagCalls).toHaveLength(0)
   })
 
-  it('fetches backlinks query results (reroutes to ChildOf via run_advanced_query)', async () => {
+  it('fetches backlinks query results (reroutes to LinksTo via run_advanced_query)', async () => {
     const seen = stubInvokeRecording({
       run_advanced_query: () =>
         advancedPage([
           makeBlock({
             id: 'B1',
-            content: 'Child block',
-            parent_id: 'TARGET1',
-            page_id: 'TARGET1',
+            content: 'See [[TARGET1]]',
+            parent_id: 'OTHER_PAGE',
+            page_id: 'OTHER_PAGE',
           }),
         ]),
       batch_resolve: () => [],
@@ -170,11 +169,9 @@ describe('useQueryExecution', () => {
     })
 
     expect(result.current.results).toHaveLength(1)
-    expect(result.current.results[0]?.content).toBe('Child block')
+    expect(result.current.results[0]?.content).toBe('See [[TARGET1]]')
     expect(result.current.error).toBeNull()
-    // Backlinks-with-target reroutes through the rich engine, not legacy list_blocks.
     expect(seen).toContain('run_advanced_query')
-    expect(seen).not.toContain('list_blocks')
   })
 
   it('sets error for unknown query type', async () => {
@@ -556,50 +553,6 @@ describe('fetchPropertyQuery', () => {
   })
 })
 
-describe('fetchBacklinksQuery', () => {
-  it('returns items for a target parentId', async () => {
-    stubInvoke({ list_blocks: () => page([makeBlock({ id: 'B1', parent_id: 'TARGET1' })]) })
-
-    // #2248 — a backlinks fetch requires an active space; pass one so it dispatches.
-    const result = await fetchBacklinksQuery({ target: 'TARGET1' }, undefined, 'SPACE_1')
-
-    expect(result.items).toHaveLength(1)
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'list_blocks',
-      // #2277 item 7 — query params nest under `request`; `scope` stays separate.
-      expect.objectContaining({
-        request: expect.objectContaining({ parentId: 'TARGET1' }),
-        scope: { kind: 'active', space_id: 'SPACE_1' },
-      }),
-    )
-  })
-
-  it('throws QueryValidationError when target is missing', async () => {
-    await expect(fetchBacklinksQuery({})).rejects.toBeInstanceOf(QueryValidationError)
-    await expect(fetchBacklinksQuery({})).rejects.toThrow(
-      /Backlinks query requires target:ULID parameter/,
-    )
-    expect(mockedInvoke).not.toHaveBeenCalled()
-  })
-
-  it('short-circuits to an empty result without dispatching when there is no active space (#2248)', async () => {
-    // `listBlocks` has no cross-space form, so a backlinks fetch with no active
-    // space must return empty rather than invoking (which would throw).
-    const result = await fetchBacklinksQuery({ target: 'TARGET1' })
-
-    expect(result).toEqual({ items: [], nextCursor: null, hasMore: false })
-    expect(mockedInvoke).not.toHaveBeenCalled()
-  })
-
-  it('propagates backend rejection', async () => {
-    stubInvoke({ list_blocks: () => Promise.reject(new Error('list_blocks failed')) })
-
-    await expect(fetchBacklinksQuery({ target: 'T1' }, undefined, 'SPACE_1')).rejects.toThrow(
-      'list_blocks failed',
-    )
-  })
-})
-
 // `fetchFilteredQuery` no longer fans out one
 // IPC per sub-filter and intersects in JS; it delegates to the new
 // `filtered_blocks_query` IPC which composes the AND in SQL via
@@ -761,30 +714,6 @@ describe('dispatchQuery', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', expect.anything())
   })
 
-  it('routes backlinks queries to list_blocks', async () => {
-    stubInvoke({ list_blocks: () => page([]) })
-
-    await dispatchQuery(
-      {
-        type: 'backlinks',
-        params: { target: 'T1' },
-        propertyFilters: [],
-        tagFilters: [],
-      },
-      // #2248 — backlinks routing requires an active space to dispatch.
-      undefined,
-      'SPACE_1',
-    )
-
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'list_blocks',
-      expect.objectContaining({
-        request: expect.objectContaining({ parentId: 'T1' }),
-        scope: { kind: 'active', space_id: 'SPACE_1' },
-      }),
-    )
-  })
-
   it('routes filtered queries to a single filtered_blocks_query IPC (Tier 2.10b)', async () => {
     stubInvoke({ filtered_blocks_query: () => page([]) })
 
@@ -929,7 +858,6 @@ describe('fetch helpers — no active space', () => {
     expect(
       await fetchFilteredQuery([{ key: 'priority', value: '1', operator: 'eq' }], [], null),
     ).toEqual(empty)
-    expect(await fetchBacklinksQuery({ target: 'T1' }, undefined, null)).toEqual(empty)
     expect(mockedInvoke).not.toHaveBeenCalled()
   })
 })

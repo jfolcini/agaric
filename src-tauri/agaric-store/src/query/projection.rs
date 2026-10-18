@@ -68,8 +68,7 @@ pub static QUERY_ALLOWED_KEYS: std::sync::LazyLock<HashSet<&'static str>> =
             "links-to",
             "linked-from",
             "has-parent-matching",
-            // Direct-children structural leaf — the legacy backlinks reroute
-            // target (`b.parent_id = ?`).
+            // Direct-children structural leaf (`b.parent_id = ?`).
             "child-of",
         ])
     });

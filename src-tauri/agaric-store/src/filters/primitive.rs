@@ -45,7 +45,6 @@ pub enum FilterPrimitive {
     /// `Tag` is attached-only.
     TagOrRef { tag: String },
     /// Shared — block's `parent_id` equals `parent` (its direct children).
-    /// Mirrors the legacy `list_blocks(parent_id=…)` backlinks path.
     ChildOf { parent: String },
     /// Shared — page name matches the GLOB pattern. `exclude=true`
     /// becomes a `NOT IN (...)` sub-select; otherwise an `IN (...)`.
@@ -839,7 +838,7 @@ impl FilterPrimitive {
             // Ref-inclusive tag leaf — shares the `tag` allowed-key with `Tag`.
             FilterPrimitive::TagOrRef { .. } => "tag",
             // Direct-children structural leaf — advanced-query-only key
-            // (see `QUERY_ALLOWED_KEYS`), the legacy backlinks reroute target.
+            // (see `QUERY_ALLOWED_KEYS`).
             FilterPrimitive::ChildOf { .. } => "child-of",
             FilterPrimitive::PathGlob { .. } => "path",
             FilterPrimitive::HasProperty { .. } => "has-property",
@@ -2217,8 +2216,7 @@ mod tests {
     #[test]
     fn child_of_emits_parent_id_equality() {
         // `ChildOf` is the direct-children structural leaf: it compiles to a
-        // plain `b.parent_id = ?` equality (one Text bind), mirroring the
-        // legacy `list_blocks(parent_id=…)` backlinks path, identical across
+        // plain `b.parent_id = ?` equality (one Text bind), identical across
         // every surface (`parent_id` is a column on the block row).
         let prim = FilterPrimitive::ChildOf {
             parent: "01PARENT0000000000000000P1".into(),
