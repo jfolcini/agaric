@@ -117,6 +117,26 @@ void test('suffixing a number only one log holds fails both guards', () =>
     assert.match(numbering.out, /session-102a-solo\.md — a letter after the session number/)
   }))
 
+void test('two splits to the same letter fail the numbering guard', () =>
+  withFixture((fx) => {
+    fx.rename('session-101-first.md', 'session-101a-first.md', '# Session 101a — first')
+    fx.rename('session-101-second.md', 'session-101a-second.md', '# Session 101a — second')
+    const r = fx.run(NUMBERING)
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /session-101a-second\.md — session 101a is already taken/)
+  }))
+
+void test('a split into a letter already merged fails the numbering guard', () =>
+  withFixture((fx) => {
+    fx.rename('session-101-first.md', 'session-101a-first.md', '# Session 101a — first')
+    fx.git('commit', '-qm', 'first split merged')
+    fx.git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    fx.rename('session-101-second.md', 'session-101a-second.md', '# Session 101a — second')
+    const r = fx.run(NUMBERING)
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /session-101a-second\.md — session 101a is already taken/)
+  }))
+
 void test('the PR-collision check reads a suffixed log as its number', () => {
   assert.equal(sessionNumberOf(`${LOG}/session-2569b-fe-loop-quick-wins.md`), 2569)
   const merged = [`${LOG}/session-101-first.md`, `${LOG}/session-101-second.md`]
