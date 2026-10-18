@@ -42,14 +42,14 @@ export interface PageModeBlock {
   text: string
 }
 
-/** The page-mode document as shown. */
+/** The page-mode document as shown: each block's text, without its badge or chips. */
 export function pageModeBlocks(): Promise<PageModeBlock[]> {
   return browser.execute(
     (selector: string) =>
       [...document.querySelectorAll(`${selector} [data-page-block]`)].map((el) => ({
         id: el.getAttribute('data-page-block-id') ?? '',
         depth: Number(el.getAttribute('data-depth')),
-        text: el.textContent ?? '',
+        text: el.querySelector('.page-block-content')?.textContent ?? '',
       })),
     PAGE_MODE,
   )

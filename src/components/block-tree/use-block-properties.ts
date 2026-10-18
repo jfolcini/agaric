@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useRef } from 'react'
+import type { StoreApi } from 'zustand'
 
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
@@ -22,7 +23,7 @@ import { notify } from '@/lib/notify'
 import { getPriorityCycle } from '@/lib/priority-levels'
 import { reloadIfRepeating } from '@/lib/repeat-utils'
 import { nextTaskState, type TodoState } from '@/lib/task-states'
-import { usePageBlockStoreApi } from '@/stores/page-blocks'
+import { type PageBlockState, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
 /**
@@ -109,6 +110,28 @@ function warnIfBlocked(blockId: string): void {
     .catch((err) => {
       logger.warn('useBlockProperties', 'F-37 dependency check failed', undefined, err)
     })
+}
+
+/**
+ * Set block `blockId`'s priority to `level`, as the priority keys
+ * (Ctrl+Shift+1/2/3) do in block mode and page mode.
+ */
+export async function setBlockPriority(
+  pageStore: StoreApi<PageBlockState>,
+  rootParentId: string | null,
+  blockId: string,
+  level: string,
+): Promise<void> {
+  try {
+    unwrap(await commands.setPriority(blockId, level))
+    if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
+    pageStore.setState((s) => ({
+      blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority: level } : b)),
+    }))
+  } catch (err) {
+    logger.error('BlockTree', 'Failed to set priority', { blockId, priority: level }, err)
+    notify.error(i18n.t('blockTree.setPriorityFailed'))
+  }
 }
 
 export function useBlockProperties(): UseBlockPropertiesReturn {

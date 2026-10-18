@@ -1,11 +1,11 @@
 /**
  * What keeps a page out of page mode (#5691). Page mode shows a block's text,
- * its structure and its task (`page-tasks.ts`); what else block mode draws
- * around the text it does not draw yet, so a page holding any of it stays in
- * block mode rather than hide it: priorities, dates, properties and
- * attachments, and the `{{query …}}` and `{{embed …}}` blocks block mode
- * renders as results. A page longer than `PAGE_MODE_BLOCK_CAP` stays too:
- * ProseMirror renders the whole document.
+ * its structure, and its task, priority and dates (`page-tasks.ts`); what else
+ * block mode draws around the text it does not draw yet, so a page holding any
+ * of it stays in block mode rather than hide it: properties, a repeating
+ * task's rule among them, and attachments, and the `{{query …}}` and
+ * `{{embed …}}` blocks block mode renders as results. A page longer than
+ * `PAGE_MODE_BLOCK_CAP` stays too: ProseMirror renders the whole document.
  * Showing these in page mode is #5743.
  *
  * Collapse is block mode's view of the tree, not something blocks hold: page
@@ -24,9 +24,7 @@ export const PAGE_MODE_BLOCK_CAP = 500
 
 export type PageModeBlocker =
   | { kind: 'overCap'; count: number }
-  | {
-      kind: 'priorities' | 'dates' | 'properties' | 'attachments' | 'queries' | 'embeds'
-    }
+  | { kind: 'properties' | 'attachments' | 'queries' | 'embeds' }
 
 /** The cap, which only the perf harness's e2e build may raise (`e2e/perf.spec.ts`, `-g 'page mode'`). */
 function blockCap(): number {
@@ -41,8 +39,6 @@ function blockCap(): number {
 export function blockerIn(blocks: readonly FlatBlock[], count: number): PageModeBlocker | null {
   if (count > blockCap()) return { kind: 'overCap', count }
   for (const block of blocks) {
-    if (block.priority !== null) return { kind: 'priorities' }
-    if (block.due_date !== null || block.scheduled_date !== null) return { kind: 'dates' }
     const content = block.content ?? ''
     // `StaticBlock`'s own sniff for the blocks it renders as query results.
     if (content.startsWith('{{query ') && content.endsWith('}}')) return { kind: 'queries' }
@@ -56,7 +52,9 @@ export function blockerIn(blocks: readonly FlatBlock[], count: number): PageMode
  * attachments included: one read of each for the whole page. The stamps a
  * task's state writes (`created_at`, `completed_at`) are not the user's and
  * block mode's property row hides them (`INTERNAL_PROPERTY_KEYS`; only its
- * drawer lists them, read-only), so they keep nothing out.
+ * drawer lists them, read-only), so they keep nothing out. A repeating task's
+ * `repeat` rule does: block mode draws it as a chip from the block's
+ * properties, which page mode does not read yet.
  */
 export async function pageModeBlocker(
   blocks: readonly FlatBlock[],

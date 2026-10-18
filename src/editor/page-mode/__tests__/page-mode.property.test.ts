@@ -2,9 +2,9 @@
  * Page mode end to end against the mock backend (#5691): a random run of
  * typing, Enter, Backspace, Tab, Shift+Tab, a copy pasted, blocks cut and
  * pasted, paragraphs pasted from outside, a `#name` or a task marker typed and
- * the caret moved to another block, a task's state cycled (#5743), and undo,
- * each step perhaps followed
- * by a peer's change (an edit, or a block created, moved or deleted) brought in
+ * the caret moved to another block, a task's state cycled, a priority or a due
+ * or scheduled date set or cleared (#5743), and undo, each step perhaps
+ * followed by a peer's change (an edit, or a block created, moved or deleted) brought in
  * as a reload does, and perhaps by a save whose commands fail before a clean
  * one. After every clean save:
  *
@@ -16,6 +16,8 @@
  * - each block holds the task state last given it, by a marker typed at its
  *   start (`commitPageTask`, which also takes the marker out of its text) or
  *   by the todo-state command, and none other;
+ * - each block holds the priority and dates last given it by their commands,
+ *   and none other: no save writes over them;
  * - an id that survives a step stays on the text it was on: a step that only
  *   types keeps every id, Enter adds one new id beside the block it splits, a
  *   join drops only the joined block's, Tab keeps the order and Shift+Tab the
@@ -256,6 +258,17 @@ const actionArb = fc.oneof(
     to: fc.nat(),
   }),
   fc.record({ kind: fc.constant('cycleTask' as const), block: fc.nat() }),
+  fc.record({
+    kind: fc.constant('setPriority' as const),
+    block: fc.nat(),
+    level: fc.constantFrom('1', '2', '3', null),
+  }),
+  fc.record({
+    kind: fc.constant('setDate' as const),
+    block: fc.nat(),
+    field: fc.constantFrom('due_date' as const, 'scheduled_date' as const),
+    date: fc.constantFrom('2026-10-20', '2026-11-01', null),
+  }),
   fc.record({ kind: fc.constant('undo' as const) }),
 )
 type Action = typeof actionArb extends fc.Arbitrary<infer T> ? T : never
@@ -307,7 +320,12 @@ interface Acted {
   task?: { marker: string; state: TodoState; before: string }
   /** The block whose task state to cycle. */
   cycled?: string
+  /** A priority or a date to give a block through its command; null clears it. */
+  field?: { id: string; key: Field; value: string | null }
 }
+
+const FIELDS = ['priority', 'due_date', 'scheduled_date'] as const
+type Field = (typeof FIELDS)[number]
 
 /** Apply `action`; resolves the block it acted on, if any. */
 function apply(ed: Editor, action: Action): Acted | null {
@@ -334,6 +352,14 @@ function apply(ed: Editor, action: Action): Acted | null {
   caret(ed, index, offset)
   if (action.kind === 'cycleTask')
     return { index, offset, cycled: blockIdOf(ed.state.doc.child(index)) as string }
+  if (action.kind === 'setPriority' || action.kind === 'setDate') {
+    const id = blockIdOf(ed.state.doc.child(index)) as string
+    const field =
+      action.kind === 'setPriority'
+        ? { id, key: 'priority' as const, value: action.level }
+        : { id, key: action.field, value: action.date }
+    return { index, offset, field }
+  }
   if (action.kind === 'tag' || action.kind === 'taskMarker') {
     const tagged = blockIdOf(ed.state.doc.child(index)) as string
     const before = ed.state.doc.child(index).firstChild?.textContent ?? ''
@@ -557,6 +583,19 @@ function backendStates(page: MockPage): Map<string, string> {
   return states
 }
 
+/** Each live block's priority and dates in the mock backend, where it has one: `id:field`. */
+function backendFields(page: MockPage): Map<string, string> {
+  const held = new Map<string, string>()
+  for (const [id] of page.live()) {
+    const row = dispatch('get_block', { blockId: id }) as BlockRow
+    for (const key of FIELDS) {
+      const value = row[key]
+      if (value !== null) held.set(`${id}:${key}`, value)
+    }
+  }
+  return held
+}
+
 /** The `#` rule's create: a tag in the mock backend. */
 function createTag(name: string): Promise<string> {
   const tag = dispatch('create_block', {
@@ -600,8 +639,9 @@ function trackLoaded(ed: Editor): Map<string, PMNode | null> {
 /**
  * As the editor does after a save: a block the caret left after typing in it
  * has its task marker and its tags committed, then the page is brought in; a
- * task cycled goes through the checkbox's command. `states` records the state
- * each block was given.
+ * task cycled goes through the checkbox's command, and a priority or a date
+ * through its own. `states` records the state each block was given, and
+ * `fields` its priority and dates, by `id:field`.
  */
 async function commitAndCycle(
   ed: Editor,
@@ -609,6 +649,7 @@ async function commitAndCycle(
   page: MockPage,
   acted: Acted | null,
   states: Map<string, string>,
+  fields: Map<string, string>,
   loaded: Map<string, PMNode | null>,
   mintKept: () => string,
 ): Promise<void> {
@@ -642,6 +683,19 @@ async function commitAndCycle(
     if (next === null) states.delete(cycled)
     else states.set(cycled, next)
   }
+  await setField(acted, save, fields)
+}
+
+/** Give a block a priority or a date through its command, as the badge, the keys and the picker do. */
+async function setField(acted: Acted | null, save: PageSaveState, fields: Map<string, string>) {
+  const field = acted?.field
+  if (field === undefined || !save.saved.has(field.id)) return
+  const { id, key, value } = field
+  if (key === 'priority') await commands.setPriority(id, value)
+  else if (key === 'due_date') await commands.setDueDate(id, value)
+  else await commands.setScheduledDate(id, value)
+  if (value === null) fields.delete(`${id}:${key}`)
+  else fields.set(`${id}:${key}`, value)
 }
 
 describe('page mode against the mock backend', () => {
@@ -662,6 +716,8 @@ describe('page mode against the mock backend', () => {
           const marks = new Map<string, PeerMark>()
           // The task state each block was last given, by id.
           const states = new Map<string, string>()
+          // The priority and dates each block was last given, by `id:field`.
+          const fields = new Map<string, string>()
           const loaded = trackLoaded(ed)
 
           for (const [stepIndex, { action, peer, failures }] of steps.entries()) {
@@ -703,12 +759,15 @@ describe('page mode against the mock backend', () => {
             // A block the save gave a new id: its old one was refused.
             for (const id of idsOf(ed.state.doc)) seen.add(id)
 
-            await commitAndCycle(ed, save, page, acted, states, loaded, mintKept)
+            await commitAndCycle(ed, save, page, acted, states, fields, loaded, mintKept)
 
             expectBackendHoldsDoc(ed, page.live())
             expectPeersKept(ed, page, marks)
             const live = new Set(page.live().map(([id]) => id))
             expect(backendStates(page)).toEqual(new Map([...states].filter(([id]) => live.has(id))))
+            expect(backendFields(page)).toEqual(
+              new Map([...fields].filter(([key]) => live.has(key.split(':')[0] as string))),
+            )
           }
         },
       ),

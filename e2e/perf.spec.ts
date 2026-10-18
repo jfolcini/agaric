@@ -378,7 +378,10 @@ async function seedBigPage(
   linkTargets: string[],
   count = BIG_BLOCKS,
   title = BIG_TITLE,
-  /** Every block a task: TODO and DONE in turn. */
+  /**
+   * Every block a task, TODO and DONE in turn, with a priority (1, 2, 3 in
+   * turn) and a due date, and every third a scheduled date too.
+   */
   tasks = false,
 ): Promise<void> {
   await page.evaluate(
@@ -415,6 +418,17 @@ async function seedBigPage(
         const ids = created.blocks.filter((_, i) => i % 2 === parity).map((b) => b.id)
         await invoke('set_todo_state_batch', { blockIds: ids, state })
       }
+      for (const level of ['1', '2', '3']) {
+        const ids = created.blocks.filter((_, i) => i % 3 === Number(level) - 1).map((b) => b.id)
+        await invoke('set_property_batch', { blockIds: ids, key: 'priority', value: level })
+      }
+      const all = created.blocks.map((b) => b.id)
+      await invoke('set_property_batch', { blockIds: all, key: 'due_date', value: '2026-10-20' })
+      await invoke('set_property_batch', {
+        blockIds: all.filter((_, i) => i % 3 === 0),
+        key: 'scheduled_date',
+        value: '2026-11-01',
+      })
     },
     { bigBlocks: count, bigTitle: title, linkTargets, tasks },
   )
@@ -1454,7 +1468,8 @@ interface ModeSample {
 /**
  * #5691 — page mode against block mode on the same page, at 500, 2,000 and
  * 5,000 blocks (page mode's 500-block cap is lifted for the run), every block
- * a task, so each carries its checkbox in both modes (#5743). Each size
+ * a task with a priority and a due date, a third with a scheduled date too, so
+ * each carries its checkbox, badge and chips in both modes (#5743). Each size
  * runs `AGARIC_PERF_REPEATS` times (default 3) on a fresh vault, alternating
  * which mode opens the page first; each cell is the median with the band the
  * repeats fell in. Per mode: the open (block mode to its first block, page

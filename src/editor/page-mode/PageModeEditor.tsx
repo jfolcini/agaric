@@ -16,8 +16,10 @@
  *
  * A task marker or a `#name` left as text in a block becomes the block's task
  * state or the tag once the caret leaves that block or page mode closes
- * (`page-tasks.ts`, `page-tags.ts`); the checkbox shows the state the page
- * store holds, and cycles it through the todo-state command.
+ * (`page-tasks.ts`, `page-tags.ts`). The checkbox, the priority badge and the
+ * date chips show what the page store holds, and change it through block
+ * mode's commands, after the save, on the same chain; a chip opens block
+ * mode's date picker.
  *
  * Chips go where block mode's go (`useBlockNavigateToLink`, a block of this
  * page by moving the cursor to it), and each save's ops reach `UndoStore`
@@ -29,15 +31,24 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Transaction } from '@tiptap/pm/state'
 import { type Editor, EditorContent, useEditor } from '@tiptap/react'
 import type React from 'react'
-import { useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useEffectEvent,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useBlockDatePicker } from '@/components/block-tree/use-block-date-picker'
 import {
   collectUncachedLinkIds,
   fetchAndCacheLinks,
 } from '@/components/block-tree/use-block-link-resolve'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
-import { useBlockProperties } from '@/components/block-tree/use-block-properties'
+import { setBlockPriority, useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { SelectionBubbleMenu } from '@/components/editor-toolbar/SelectionBubbleMenu'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
@@ -57,7 +68,7 @@ import {
   type TreeRow,
 } from '@/editor/page-mode/page-save'
 import { commitPageTags } from '@/editor/page-mode/page-tags'
-import { commitPageTask } from '@/editor/page-mode/page-tasks'
+import { commitPageTask, type PageTaskActions } from '@/editor/page-mode/page-tasks'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import { blockIdOf } from '@/editor/token-ids'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -77,6 +88,10 @@ import { useNavigationStore } from '@/stores/navigation'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { notifyUndoNewAction } from '@/stores/page-blocks-reducers'
 import { useSpaceStore } from '@/stores/space'
+
+const BlockDatePicker = lazy(() =>
+  import('@/components/block-tree/BlockDatePicker').then((m) => ({ default: m.BlockDatePicker })),
+)
 
 /** The User Timing measure each save leaves, the latest only: the perf harness reads it. */
 export const SAVE_MEASURE = 'page-mode-save'
@@ -238,10 +253,18 @@ function PageModeDocument({
   const resolve = useBlockResolve()
   const pageStore = usePageBlockStoreApi()
   const onTagClick = useTagClickHandler()
-  const { handleToggleTodo } = useBlockProperties()
+  const { handleToggleTodo, handleTogglePriority } = useBlockProperties()
   const editorRef = useRef<Editor | null>(null)
   const flushRef = useRef<() => Promise<void>>(() => Promise.resolve())
-  const cycleRef = useRef<(id: string) => void>(() => {})
+  // What the checkbox, the badge, the chips and the task keys do, once the session runs.
+  const actions = useRef<PageTaskActions & { pick: (step: () => Promise<void>) => void }>({
+    cycle: () => {},
+    cyclePriority: () => {},
+    setPriority: () => {},
+    openDatePicker: () => {},
+    openDateLinkPicker: () => {},
+    pick: () => {},
+  })
   // Block mode's chip navigation: another page opens; a block of this page takes the cursor.
   const noRovingEditor = useRef<RovingEditorHandle | null>(null)
   const handleFlushRef = useRef(() => {
@@ -270,9 +293,14 @@ function PageModeDocument({
       onTagClick,
       placeholder: t('pageMode.placeholder'),
       tasks: {
-        stateOf: (id: string) => pageStore.getState().blocksById.get(id)?.todo_state ?? null,
+        blockOf: (id: string) => pageStore.getState().blocksById.get(id),
         subscribe: (listener: () => void) => pageStore.subscribe(listener),
-        cycle: (id: string) => cycleRef.current(id),
+        cycle: (id: string) => actions.current.cycle(id),
+        cyclePriority: (id: string) => actions.current.cyclePriority(id),
+        setPriority: (id: string, level: '1' | '2' | '3') => actions.current.setPriority(id, level),
+        openDatePicker: (id: string, mode: 'due' | 'schedule') =>
+          actions.current.openDatePicker(id, mode),
+        openDateLinkPicker: () => actions.current.openDateLinkPicker(),
       },
     }),
     content: pageDocContent(blocks, newBlockId),
@@ -293,10 +321,33 @@ function PageModeDocument({
   useEffect(() => {
     editorRef.current = editor
   }, [editor])
+  // Block mode's date picker: a chip's date, or a date's page linked at the caret.
+  const {
+    datePickerOpen,
+    setDatePickerOpen,
+    setDatePickerMode,
+    openDatePickerFor,
+    handleDatePick,
+  } = useBlockDatePicker({
+    focusedBlockId: null,
+    rootParentId: pageId,
+    pageStore,
+    rovingEditor: { editor },
+    registerCreatedPage: resolve.registerCreatedPage,
+    t: translate,
+  })
   // The session reads these as they are when it needs them, not as it was built with.
   const blocked = useEffectEvent((blocker: PageModeBlocker) => onBlocked(blocker))
   const openingCursor = useEffectEvent(() => cursorBlockId)
   const cycleTask = useEffectEvent((id: string) => handleToggleTodo(id))
+  const cyclePriority = useEffectEvent((id: string) => handleTogglePriority(id))
+  const openDatePicker = useEffectEvent((id: string, mode: 'due' | 'schedule') =>
+    openDatePickerFor(id, mode),
+  )
+  const openDateLinkPicker = useEffectEvent(() => {
+    setDatePickerMode('date')
+    setDatePickerOpen(true)
+  })
 
   // Once per editor: the save state is built from the page as the document opened on it.
   useEffect(() => {
@@ -409,7 +460,7 @@ function PageModeDocument({
     // Its callers close page mode: the mode switch, source mode, a blocker, a link away.
     flushRef.current = () => flush(true)
     // After the save, so the block exists: an empty one is created for it (`keep`).
-    cycleRef.current = (id) => {
+    const afterSave = (id: string, change: () => Promise<void>): void => {
       clearTimeout(timer)
       void enqueue(async () => {
         save.keep.add(id)
@@ -419,10 +470,20 @@ function PageModeDocument({
           save.keep.delete(id)
         }
         if (editor.isDestroyed || !save.saved.has(id)) return
-        // A block created here since the store last loaded: the cycle reads its state there.
+        // A block created here since the store last loaded: the change reads its row there.
         if (!pageStore.getState().blocksById.has(id)) await read()
-        await cycleTask(id)
+        await change()
       })
+    }
+    actions.current = {
+      cycle: (id) => afterSave(id, () => cycleTask(id)),
+      cyclePriority: (id) => afterSave(id, () => cyclePriority(id)),
+      setPriority: (id, level) =>
+        afterSave(id, () => setBlockPriority(pageStore, pageId, id, level)),
+      openDatePicker,
+      openDateLinkPicker,
+      // A date picked: written in turn with the saves, so no read of a save's overtakes it.
+      pick: (step) => void enqueue(step),
     }
 
     const onTransaction = ({
@@ -499,6 +560,17 @@ function PageModeDocument({
     }
   }, [editor, pageId, blocks, pageStore])
 
+  // The picker closed: the caret goes back where it was. The dialog's own
+  // restore aims at its date field, which its autofocus took first.
+  const pickerWasOpen = useRef(false)
+  useEffect(() => {
+    if (datePickerOpen) pickerWasOpen.current = true
+    else if (pickerWasOpen.current && editor !== null && !editor.isDestroyed) {
+      pickerWasOpen.current = false
+      editor.view.focus()
+    }
+  }, [datePickerOpen, editor])
+
   // A link from elsewhere to a block of this page lands the cursor on it.
   const selectedBlockId = useNavigationStore((s) => s.selectedBlockId)
   useEffect(() => {
@@ -524,6 +596,18 @@ function PageModeDocument({
       <EditorContent editor={editor} />
       {/* Block mode's own: the marks and the link on a selection, and Ctrl+K. */}
       {editor !== null && <SelectionBubbleMenu editor={editor} />}
+      {datePickerOpen && (
+        <Suspense fallback={null}>
+          <BlockDatePicker
+            onSelect={(day) => {
+              if (day === undefined) return
+              setDatePickerOpen(false)
+              actions.current.pick(() => handleDatePick(day))
+            }}
+            onClose={() => setDatePickerOpen(false)}
+          />
+        </Suspense>
+      )}
     </>
   )
 }
