@@ -1449,6 +1449,32 @@ describe('PageEditor page mode (#5691)', () => {
     expect(capturedPageHeaderProps?.editModeBlocked).toBe(overCap)
   })
 
+  it('page mode back by itself once deletes in block mode fit the page opens on the block being edited', async () => {
+    const user = userEvent.setup()
+    let page = overCapPage()
+    stubInvoke({ load_page_subtree: () => page })
+    useBlockStore.setState({ focusedBlockId: 'B0' })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    const switchMode = await modeSwitch()
+    page = { blocks: page.blocks.slice(0, 2), truncated: false, total: 2 }
+    await loadPage()
+    act(() => switchMode('page'))
+    expect(screen.getByTestId('page-mode')).toHaveAttribute('data-cursor', 'B0')
+
+    // The page grows past the cap: block mode, where B0 and others are deleted, B1 being edited.
+    page = overCapPage()
+    await user.click(screen.getByRole('button', { name: 'over the cap' }))
+    await waitFor(() => {
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+    })
+    useBlockStore.setState({ focusedBlockId: 'B1' })
+    page = { blocks: page.blocks.slice(1, 3), truncated: false, total: 2 }
+    await loadPage()
+
+    expect(await screen.findByTestId('page-mode')).toHaveAttribute('data-cursor', 'B1')
+    expect(useBlockStore.getState().focusedBlockId).toBeNull()
+  })
+
   it('saves page mode’s text before Edit as Markdown loads the page', async () => {
     writePreference(PREFERENCES.editMode, 'page')
     render(<PageEditor pageId="PAGE_1" title="My Page" />)

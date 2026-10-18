@@ -10,7 +10,7 @@ import type { Editor } from '@tiptap/core'
 import { ReactRenderer } from '@tiptap/react'
 import { createRef } from 'react'
 import { toast } from 'sonner'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import {
@@ -2368,6 +2368,77 @@ describe('PageModeEditor attachments (#5743)', () => {
     expect(editor.can().undo()).toBe(false)
     expect(onBlocked).not.toHaveBeenCalled()
   })
+
+  it('an image’s size, alignment and caption set here are read back: a block drawn anew shows them', async () => {
+    const { pageId, ids } = seedPage(['first', 'photo'])
+    const photo = ids[1] as string
+    dispatch('add_attachment_with_bytes', {
+      blockId: photo,
+      filename: 'photo.png',
+      mimeType: 'image/png',
+      bytes: [137, 80, 78, 71],
+    })
+    const blob = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:photo')
+    onTestFinished(() => blob.mockRestore())
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const image = (selector: string): HTMLElement => {
+      const found = inBlock(container, photo, selector)
+      if (!(found instanceof HTMLElement)) throw new Error(`no ${selector} in the photo block`)
+      return found
+    }
+    const written = (key: string): string | null | undefined => {
+      const rows = dispatch('get_properties', { blockId: photo }) as PropertyRow[]
+      return rows.find((row) => row.key === key)?.value_text
+    }
+    /** Tab or Shift+Tab: the block's view is drawn anew at its new depth, from what page mode holds. */
+    const redraw = (shiftKey: boolean): void => {
+      caretTo(editor, 1)
+      expect(press(editor, 'Tab', { shiftKey })).toBe(true)
+    }
+    const showToolbar = async (): Promise<void> => {
+      fireEvent.focus(await waitFor(() => image('[data-testid="image-resize-wrapper"]')))
+    }
+
+    await showToolbar()
+    await act(async () => {
+      fireEvent.click(image('[data-testid="image-resize-50"]'))
+    })
+    await waitFor(() => {
+      expect(written('image_width')).toBe('50')
+    })
+    redraw(false)
+    await waitFor(() => {
+      expect(image('[data-testid="image-resize-wrapper"]').style.maxWidth).toBe('50%')
+    })
+
+    await showToolbar()
+    await act(async () => {
+      fireEvent.click(image('[data-testid="image-align-right"]'))
+    })
+    await waitFor(() => {
+      expect(written('image_alignment')).toBe('right')
+    })
+    redraw(true)
+    await waitFor(() => {
+      expect(image('[data-testid="attachment-section"]')).toHaveAttribute('data-alignment', 'right')
+    })
+
+    const caption = image('[data-testid="image-caption-input"]')
+    fireEvent.focus(caption)
+    fireEvent.change(caption, { target: { value: 'A photo' } })
+    await act(async () => {
+      fireEvent.blur(caption)
+    })
+    await waitFor(() => {
+      expect(written('image_caption')).toBe('A photo')
+    })
+    redraw(false)
+    await waitFor(() => {
+      expect(image('[data-testid="image-caption-input"]')).toHaveValue('A photo')
+    })
+    expect(image('[data-testid="image-resize-wrapper"]').style.maxWidth).toBe('50%')
+  })
 })
 
 describe('PageModeEditor mounts a block’s controls as it nears the viewport (#5743)', () => {
@@ -3753,6 +3824,63 @@ describe('PageModeEditor slash menu and pickers (#5743)', () => {
       [backendPage(pageId)[0]?.[0], 'first'],
       [added, ''],
     ])
+  })
+
+  it('a builder Save on a block gone before its save says so, as a refused one does, and the builder stays', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    typeIn(editor, 1, 6, ' {{')
+    await pick(/Insert query/)
+    const save = await screen.findByRole('button', { name: 'save query' })
+    act(() => {
+      const from = editor.state.doc.child(0).nodeSize
+      editor.view.dispatch(editor.state.tr.delete(from, from + editor.state.doc.child(1).nodeSize))
+    })
+
+    await act(async () => {
+      fireEvent.click(save)
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('error.saveFailed'))
+    })
+    expect(screen.getByRole('button', { name: 'save query' })).toBeInTheDocument()
+    expect(backendPage(pageId)).toEqual([[ids[0], 'first']])
+  })
+
+  it('/attach of an image attaches it and leaves the text alone, as block mode’s /attach does', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const opened: HTMLInputElement[] = []
+    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (
+      this: HTMLInputElement,
+    ) {
+      opened.push(this)
+    })
+
+    typeIn(editor, 0, 5, ' /attach')
+    await pick(/ATTACH — Attach file to block/)
+    click.mockRestore()
+    const file = new File([new Uint8Array([1, 2, 3])], 'shot.png', { type: 'image/png' })
+    Object.defineProperty(opened[0], 'files', { value: [file] })
+    act(() => {
+      opened[0]?.dispatchEvent(new Event('change'))
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+        t('blockTree.attachedFileMessage', { filename: 'shot.png' }),
+      )
+    })
+    const rows = dispatch('list_attachments', { blockId: ids[0] }) as Array<{ filename: string }>
+    expect(rows.map((row) => row.filename)).toEqual(['shot.png'])
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(docTexts(editor)).toEqual(['first '])
+    expect(backendText(ids[0] as string)).toBe('first ')
   })
 
   it('a command after typing saves the typing first, with the editor’s own flush registered', async () => {
