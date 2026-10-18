@@ -1013,3 +1013,8 @@ export const useUndoStore = create<UndoStore>((set, get) => {
       undoDeleteOfImpl(pageId, blockId, reloadPage),
   }
 })
+
+/** The page's latest undo entry, compared by identity. */
+export function latestUndoEntry(pageId: string): UndoStackEntry | undefined {
+  return useUndoStore.getState().pages.get(pageId)?.undoStack[0]
+}

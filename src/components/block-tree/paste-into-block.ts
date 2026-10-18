@@ -34,7 +34,7 @@ import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
 import { useBlockStore } from '@/stores/blocks'
 import type { PageBlockState } from '@/stores/page-blocks'
-import { useUndoStore } from '@/stores/undo'
+import { latestUndoEntry } from '@/stores/undo'
 
 export interface PasteIntoBlockTarget {
   /** The focused block the paste lands in. */
@@ -98,10 +98,6 @@ function caretAtJoin(target: PasteIntoBlockTarget, ids: readonly string[], after
   if (pos !== null) editor.commands.setTextSelection(pos)
 }
 
-function topUndoEntry(pageId: string): unknown {
-  return useUndoStore.getState().pages.get(pageId)?.undoStack[0]
-}
-
 /**
  * Revert the paste, if it is still the page's latest undo entry, and with
  * `asText` put the text into the block as literal lines.
@@ -113,7 +109,7 @@ async function takeBack(
   pasted: readonly string[],
   asText?: string,
 ): Promise<void> {
-  if (topUndoEntry(pageId) !== entry) {
+  if (latestUndoEntry(pageId) !== entry) {
     notify(t('block.pasteUndoStale'))
     return
   }
@@ -139,7 +135,7 @@ export async function pasteIntoBlock(
   if (splice) caretAtJoin(target, ids, splice.after)
   const pageId = target.rootParentId
   if (ids.length < 2 || pageId == null) return
-  const entry = topUndoEntry(pageId)
+  const entry = latestUndoEntry(pageId)
   notify(t('block.pastedBlocks', { count: ids.length }), {
     action: { label: t('action.undo'), onClick: () => void takeBack(target, pageId, entry, ids) },
     ...(asText !== undefined && {
