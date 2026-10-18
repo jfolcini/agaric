@@ -994,7 +994,8 @@ export async function reopenPage(page: Page, title: string) {
  * reading width (#5332) narrows the box, and a chip click navigates instead.
  * The browser places the caret from the click point as the editor mounts, so
  * this corner leaves it at the end of the text, as a click past the end of a
- * short line always did.
+ * short line always did. The corner is measured once, so the block must have
+ * finished rendering: one that shrinks before the click is missed.
  */
 async function clickIntoStaticBlock(block: Locator): Promise<void> {
   const box = await block.boundingBox()

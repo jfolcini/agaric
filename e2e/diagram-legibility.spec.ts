@@ -95,6 +95,9 @@ test.describe('display math overflow (#5638)', () => {
     await waitForBoot(page)
     const [id] = await seedSearchBlocks(page, [{ content: WIDE_MATH }])
     await openPageMobile(page, 'Projects')
+    // Tap the equation, not the wrapped source shown while KaTeX loads: that is
+    // taller, so a corner measured on it lands on the row below once it renders.
+    await expect(page.getByTestId('katex-block').locator('.katex')).toBeVisible()
     await focusBlockById(page, id ?? '')
     const view = page.getByTestId('math-block-node-view')
     await expect(view.locator('.katex')).toBeVisible()
