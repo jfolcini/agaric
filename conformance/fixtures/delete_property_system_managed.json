@@ -44,7 +44,7 @@
       }
     ],
     "op_log_digest": {
-      "count": 8,
+      "count": 7,
       "ops": [
         {
           "key": "repeat",
@@ -61,9 +61,6 @@
         {
           "key": "repeat-seq",
           "op_type": "set_property"
-        },
-        {
-          "op_type": "delete_property"
         },
         {
           "op_type": "delete_property"
@@ -182,7 +179,7 @@
         "key": "repeat-count"
       },
       "command": "delete_property",
-      "comment": "`/repeat-limit remove` is accepted; the limit is already gone with the rule, and the command appends its op anyway, as for any absent key.",
+      "comment": "`/repeat-limit remove` is accepted; the limit is already gone with the rule, so it appends nothing, as for any absent key (#5898).",
       "name": "remove_the_repeat_limit",
       "via": "command"
     },

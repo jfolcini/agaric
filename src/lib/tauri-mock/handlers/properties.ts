@@ -456,6 +456,8 @@ export const propertiesHandlers = {
     if (RESERVED_PROPERTY_COLUMN[key] !== undefined) {
       const b = blocks.get(blockId)
       const fromValue = (b?.[key] as string | null | undefined) ?? null
+      // #5898 — a key the block does not hold appends nothing.
+      if (fromValue === null) return { block_id: blockId, key, op_refs: [] }
       if (b) b[key] = null
       const op = pushOp('delete_property', { block_id: blockId, key, from_value: null })
       // #5378 — `delete_property_core` clears the task stamps with the state.
@@ -466,13 +468,10 @@ export const propertiesHandlers = {
         op_refs: [{ device_id: op.device_id, seq: op.seq }],
       }
     }
-    // #2468 — previously returned `null`; now echoes `(block_id, key)` plus
-    // `op_refs` (`WithOps<DeletePropertyResponse>`). Backend parity: the real
-    // `delete_property_core` ALWAYS appends the op — even when the property
-    // does not exist — so the ref is always surfaced. Undoing a no-prior
-    // delete then fails (`resolveUndoTarget` mirrors the backend's "no prior
-    // set_property" NotFound from `build_reverse_delete_property`).
-    const opRefs = [deletePropertyRow(blockId, key)]
+    // #2468 — echoes `(block_id, key)` plus `op_refs`
+    // (`WithOps<DeletePropertyResponse>`). #5898 — like `delete_property_core`,
+    // a key the block does not hold appends nothing.
+    const opRefs = properties.get(blockId)?.has(key) ? [deletePropertyRow(blockId, key)] : []
     if (key === 'repeat') {
       for (const bound of REPEAT_RULE_BOUNDS) {
         if (properties.get(blockId)?.has(bound)) opRefs.push(deletePropertyRow(blockId, bound))

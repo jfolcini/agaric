@@ -4656,12 +4656,10 @@ export type VaultImport = {
  *  keep type-checking unchanged while migrated ones read `op_refs`.
  * 
  *  `op_refs` preserves append order. Single-op commands carry exactly one
- *  entry. The contract also admits an empty Vec ("appended nothing —
- *  nothing to undo"), which the frontend must handle by skipping the
- *  undo-stack push; note that NO currently-migrated command produces it
- *  (the tag no-ops are rejected with errors by `add_tag_inner` /
- *  `remove_tag_inner`, and `delete_property` appends its op even when the
- *  key is absent) — only the tauri-mock's lenient conformance paths do.
+ *  entry. An empty Vec means "appended nothing — nothing to undo", which the
+ *  frontend must handle by skipping the undo-stack push: `delete_property` of
+ *  a key the block does not hold answers it (#5898). The tag no-ops are
+ *  rejected with errors by `add_tag_inner` / `remove_tag_inner` instead.
  */
 export type WithOps<T> = {
 	/**  The op-log refs appended by this command, in append order. */

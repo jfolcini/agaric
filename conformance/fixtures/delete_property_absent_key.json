@@ -1,0 +1,150 @@
+{
+  "description": "#5898 — `delete_property` of a key the block does not hold appends nothing, for a freeform key (no `block_properties` row) and a column-backed one (`due_date` NULL) alike. Such an op had no prior value to restore, so its reverse was NotFound and `undo_page_group` failed over the whole group, leaving every later Ctrl+Z on the page stuck. Here the group undo reverts the one real op beside the two deletes, the create, so the block it made ends a tombstone and the op log holds only that create and its undo.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "created then undone",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 2,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_freeform_key_the_block_lacks",
+      "returns": ["delete_property"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "a_column_key_the_block_lacks",
+      "returns": ["delete_property"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "the_group_undo_reverts_the_create",
+      "returns": [
+        "undo_page_group#reversed_op_type=create_block#new_op_type=delete_block#is_redo=false"
+      ]
+    }
+  ],
+  "name": "delete_property_absent_key",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "created then undone",
+        "index": 1,
+        "parentId": "S1",
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "create_block",
+      "comment": "The real op in the group: the undo below must tombstone the block it makes."
+    },
+    {
+      "args": {
+        "blockId": "C1",
+        "key": "effort"
+      },
+      "command": "delete_property",
+      "comment": "A freeform key C1 never had.",
+      "name": "a_freeform_key_the_block_lacks",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "C1",
+        "key": "due_date"
+      },
+      "command": "delete_property",
+      "comment": "A column-backed key whose column is NULL.",
+      "name": "a_column_key_the_block_lacks",
+      "via": "command"
+    },
+    {
+      "args": {
+        "depth": 0,
+        "pageId": "S1",
+        "windowMs": 60000
+      },
+      "command": "undo_page_group",
+      "comment": "A window wide enough to take every op above. Had either delete appended an op, this would be NotFound.",
+      "name": "the_group_undo_reverts_the_create",
+      "via": "command"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

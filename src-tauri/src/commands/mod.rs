@@ -411,12 +411,10 @@ pub struct QueryByPropertyRequest {
 /// keep type-checking unchanged while migrated ones read `op_refs`.
 ///
 /// `op_refs` preserves append order. Single-op commands carry exactly one
-/// entry. The contract also admits an empty Vec ("appended nothing —
-/// nothing to undo"), which the frontend must handle by skipping the
-/// undo-stack push; note that NO currently-migrated command produces it
-/// (the tag no-ops are rejected with errors by `add_tag_inner` /
-/// `remove_tag_inner`, and `delete_property` appends its op even when the
-/// key is absent) — only the tauri-mock's lenient conformance paths do.
+/// entry. An empty Vec means "appended nothing — nothing to undo", which the
+/// frontend must handle by skipping the undo-stack push: `delete_property` of
+/// a key the block does not hold answers it (#5898). The tag no-ops are
+/// rejected with errors by `add_tag_inner` / `remove_tag_inner` instead.
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct WithOps<T> {
     #[serde(flatten)]
@@ -808,11 +806,39 @@ pub async fn get_block_history_inner(
     pagination::list_block_history(pool, &block_id, op_type_filter.as_deref(), &page).await
 }
 
+/// Whether `block_id` holds `key`: a non-NULL `blocks` column for a
+/// column-backed key, a `block_properties` row for any other.
+async fn property_is_held(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    key: &str,
+) -> Result<bool, AppError> {
+    let held = match crate::db::reserved_key_blocks_column(key) {
+        Some(col) => {
+            // dynamic-sql: `col` is a fixed literal from the helper's allowlist.
+            sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(format!(
+                "SELECT {col} IS NOT NULL FROM blocks WHERE id = ?"
+            )))
+            .bind(block_id)
+            .fetch_one(conn)
+            .await?
+        }
+        None => properties::get_property_inner(conn, &BlockId::from_trusted(block_id), key)
+            .await?
+            .is_some(),
+    };
+    Ok(held)
+}
+
 /// Standalone deletion path that owns and commits its transaction.
 ///
 /// Its sole production caller is `delete_property_inner`, which applies the
 /// lifecycle-key guard before delegating here. Callers that already hold a
 /// transaction must use `delete_property_in_tx` instead.
+///
+/// A key the block does not hold appends no op (#5898): its reverse would
+/// have no prior value to restore, and that failure aborts the page's whole
+/// undo group.
 async fn delete_property_core(
     pool: &SqlitePool,
     device_id: &str,
@@ -852,40 +878,48 @@ async fn delete_property_core(
         None
     };
 
-    // 3. Append DeleteProperty op
-    let del_payload = DeletePropertyPayload {
-        block_id: BlockId::from_trusted(&block_id),
-        key: key.clone(),
-    };
-    let op_record = op_log::append_local_op_in_tx(
-        &mut tx,
-        device_id,
-        OpPayload::DeleteProperty(del_payload.clone()),
-        crate::db::now_ms(),
-    )
-    .await?;
-
-    // 4. #1257 route the clear/delete through the SAME engine-apply +
-    // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
-    // INSTEAD of the inline reserved-column / `space` fan-out / `block_properties`
-    // DELETE branches. `apply_delete_property_via_loro` resolves the block's
-    // space, removes the key from the per-space Loro engine (sync guard, dropped
-    // before any `.await`), then `project_delete_property_to_sql` runs the
-    // IDENTICAL per-key SQL (reserved → column NULL; `space` → the `space_id`
-    // page-group clear; non-reserved → `DELETE FROM block_properties`). We do NOT
-    // call `apply_op_tx` / `advance_apply_cursor`: the snapshot pass, not the
-    // command, moves the apply cursor past LOCAL ops (#5418; see
-    // `apply_op_projected`). If the block's space can't be resolved (#2250:
-    // `SpaceUnresolved`, the only remaining sql_only trigger), the helper FALLS
-    // BACK to `apply_delete_property_sql_only`, which runs the SAME projection —
-    // so the clear is never skipped and we never crash.
-    // #2325/#2250: route through the collapsed single-entry-point projection
-    // (`advance_cursor = false`, #1257). It re-derives the
-    // `DeletePropertyPayload` from `op_record.payload` and runs the SAME
-    // `apply_delete_property_via_loro` (DeleteProperty is `PreOpState::None`, so
-    // `apply_op_tx`'s count maintenance is a no-op and the effects are empty).
-    crate::materializer::apply_op_projected(&mut tx, &op_record, materializer.loro_state(), false)
+    // 3. Append DeleteProperty op, unless there is nothing to delete.
+    let held = property_is_held(&mut tx, &block_id, &key).await?;
+    if held {
+        let op_record = op_log::append_local_op_in_tx(
+            &mut tx,
+            device_id,
+            OpPayload::DeleteProperty(DeletePropertyPayload {
+                block_id: BlockId::from_trusted(&block_id),
+                key: key.clone(),
+            }),
+            crate::db::now_ms(),
+        )
         .await?;
+
+        // 4. #1257 route the clear/delete through the SAME engine-apply +
+        // projection the boot-replay / sync `ApplyOp` path uses, IN this CommandTx,
+        // INSTEAD of the inline reserved-column / `space` fan-out / `block_properties`
+        // DELETE branches. `apply_delete_property_via_loro` resolves the block's
+        // space, removes the key from the per-space Loro engine (sync guard, dropped
+        // before any `.await`), then `project_delete_property_to_sql` runs the
+        // IDENTICAL per-key SQL (reserved → column NULL; `space` → the `space_id`
+        // page-group clear; non-reserved → `DELETE FROM block_properties`). We do NOT
+        // call `apply_op_tx` / `advance_apply_cursor`: the snapshot pass, not the
+        // command, moves the apply cursor past LOCAL ops (#5418; see
+        // `apply_op_projected`). If the block's space can't be resolved (#2250:
+        // `SpaceUnresolved`, the only remaining sql_only trigger), the helper FALLS
+        // BACK to `apply_delete_property_sql_only`, which runs the SAME projection —
+        // so the clear is never skipped and we never crash.
+        // #2325/#2250: route through the collapsed single-entry-point projection
+        // (`advance_cursor = false`, #1257). It re-derives the
+        // `DeletePropertyPayload` from `op_record.payload` and runs the SAME
+        // `apply_delete_property_via_loro` (DeleteProperty is `PreOpState::None`, so
+        // `apply_op_tx`'s count maintenance is a no-op and the effects are empty).
+        crate::materializer::apply_op_projected(
+            &mut tx,
+            &op_record,
+            materializer.loro_state(),
+            false,
+        )
+        .await?;
+        tx.enqueue_background(Arc::new(op_record));
+    }
     if let Some(prior) = prior_task {
         properties::write_todo_timestamp_transitions_in_tx(
             &mut tx,
@@ -910,10 +944,11 @@ async fn delete_property_core(
     };
 
     // 5. Dispatch background cache tasks after commit (fire-and-forget).
-    tx.enqueue_background(Arc::new(op_record));
     tx.commit_and_dispatch(materializer).await?;
 
-    Ok(std::iter::once(key)
+    Ok(held
+        .then_some(key)
+        .into_iter()
         .chain(bounds.into_iter().map(String::from))
         .collect())
 }

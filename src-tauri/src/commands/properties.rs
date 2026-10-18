@@ -1259,11 +1259,12 @@ const SYSTEM_MANAGED_PROPERTY_KEYS: [&str; 4] =
 
 /// Delete a property from a block.
 ///
-/// Appends a `DeleteProperty` op and removes the row from `block_properties`.
-/// Deleting `repeat` also deletes the `repeat-until`, `repeat-count` and
-/// `repeat-seq` the block holds, in the same transaction; deleting
-/// `todo_state` clears the task's `created_at` / `completed_at` stamps, as the
-/// app's clear does. Returns `key` and the repeat bounds deleted with it.
+/// Appends a `DeleteProperty` op and removes the row from `block_properties`;
+/// a key the block does not hold appends nothing. Deleting `repeat` also
+/// deletes the `repeat-until`, `repeat-count` and `repeat-seq` the block
+/// holds, in the same transaction; deleting `todo_state` clears the task's
+/// `created_at` / `completed_at` stamps, as the app's clear does. Returns `key`
+/// when it was held, and the repeat bounds deleted with it.
 ///
 /// # Errors
 ///
@@ -1357,9 +1358,9 @@ pub async fn get_properties_inner<'e>(
 /// The column projection mirrors `get_properties_inner` so the FE
 /// `PropertyRow` shape is byte-identical between the bulk and single-key
 /// paths.
-#[instrument(skip(pool), err)]
-pub async fn get_property_inner(
-    pool: &SqlitePool,
+#[instrument(skip(executor), err)]
+pub async fn get_property_inner<'e>(
+    executor: impl sqlx::SqliteExecutor<'e>,
     block_id: &BlockId,
     key: &str,
 ) -> Result<Option<PropertyRow>, AppError> {
@@ -1374,7 +1375,7 @@ pub async fn get_property_inner(
         block_id,
         key,
     )
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?;
 
     Ok(row)
