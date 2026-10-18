@@ -4,10 +4,8 @@
  * says (`PREFERENCES.editMode`); the switch changes the mode of the page on
  * screen only. Desktop only. A page over page mode's cap (`page-mode-fit.ts`)
  * stays in block mode, the switch saying why, as the page store's rows show
- * it, or as page mode found it while open until the switch, pointed at, finds
- * the rows no longer over it. No TipTap here: `PageEditor`
- * imports this statically, and the editor loads through `PageModeSlot`'s
- * dynamic import.
+ * it. No TipTap here: `PageEditor` imports this statically, and the editor
+ * loads through `PageModeSlot`'s dynamic import.
  */
 
 import type React from 'react'
@@ -36,8 +34,6 @@ export interface PageModeState {
   cursorBlockId: string | null
   onBlocked: (blocker: PageModeBlocker) => void
   changeMode: (mode: EditMode) => void
-  /** Look again at what keeps the page out of page mode, before it is chosen. */
-  checkFit: () => void
   /** Run `then` once page mode's unsaved text is saved; at once outside page mode. */
   afterFlush: (then: () => void) => void
 }
@@ -51,9 +47,7 @@ export function usePageMode(pageId: string): PageModeState {
   const mode = chosen?.pageId === pageId ? chosen.mode : setting
   const blocks = usePageBlockStore((s) => s.blocks)
   const total = usePageBlockStore((s) => s.truncatedTotal)
-  const inRows = useMemo(() => blockerIn(total ?? blocks.length), [blocks.length, total])
-  const [found, setFound] = useState<ForPage<{ blocker: PageModeBlocker }> | null>(null)
-  const blocker = inRows ?? (found?.pageId === pageId ? found.blocker : null)
+  const blocker = useMemo(() => blockerIn(total ?? blocks.length), [blocks.length, total])
   const [cursor, setCursor] = useState<ForPage<{ blockId: string }> | null>(null)
   const editorRef = useRef<PageModeEditorHandle>(null)
   const switching = useRef(false)
@@ -68,35 +62,25 @@ export function usePageMode(pageId: string): PageModeState {
 
   const onBlocked = useCallback(
     (next: PageModeBlocker) => {
-      const open = editorRef.current !== null
       // Said where page mode was open, or asked for on this page: the switch, the shortcut.
-      if (open) notify.info(t('pageMode.switchedToBlocks', { reason: blockerMessage(next) }))
-      else if (chosen?.pageId === pageId && chosen.mode === 'page')
+      if (editorRef.current !== null) {
+        notify.info(t('pageMode.switchedToBlocks', { reason: blockerMessage(next) }))
+        // Page mode's text first, then the store the block tree reads, fresh after it.
+        afterFlush(() => void pageStore.getState().load())
+      } else if (chosen?.pageId === pageId && chosen.mode === 'page') {
         notify.info(blockerMessage(next))
-      // Page mode's text first, then the store the block tree reads, fresh after it.
-      afterFlush(() => {
-        const settle = () => setFound({ pageId, blocker: next })
-        if (open) void pageStore.getState().load().finally(settle)
-        else settle()
-      })
+      }
     },
     [afterFlush, chosen, pageId, pageStore],
   )
 
-  // The blocker is in the rows: one page mode found that they no longer hold is gone.
-  const checkFit = useCallback(() => {
-    if (inRows === null) setFound(null)
-  }, [inRows])
-
   const changeMode = useCallback(
     (next: EditMode) => {
       if (next === 'page') {
-        if (inRows !== null) {
-          notify.info(blockerMessage(inRows))
+        if (blocker !== null) {
+          notify.info(blockerMessage(blocker))
           return
         }
-        // Opening looks again at what was found before, and says if it still holds.
-        setFound(null)
         // As for source mode: the block being edited commits as it loses focus.
         const focused = useBlockStore.getState().focusedBlockId
         setCursor(focused === null ? null : { pageId, blockId: focused })
@@ -119,7 +103,7 @@ export function usePageMode(pageId: string): PageModeState {
           })
       })
     },
-    [afterFlush, inRows, pageId, pageStore, setFocused],
+    [afterFlush, blocker, pageId, pageStore, setFocused],
   )
 
   return {
@@ -131,7 +115,6 @@ export function usePageMode(pageId: string): PageModeState {
     cursorBlockId: cursor?.pageId === pageId ? cursor.blockId : null,
     onBlocked,
     changeMode,
-    checkFit,
     afterFlush,
   }
 }

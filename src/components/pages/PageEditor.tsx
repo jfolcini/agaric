@@ -378,7 +378,6 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
         editMode={pageModeOffered ? pageMode.mode : 'blocks'}
         onEditModeChange={pageModeOffered ? pageMode.changeMode : undefined}
         editModeBlocked={pageMode.blocked}
-        onEditModeIntent={pageMode.checkFit}
       />
 
       {isTagPage === true && (

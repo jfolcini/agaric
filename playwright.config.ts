@@ -99,8 +99,10 @@ export default defineConfig({
     // out. `preview:e2e` serves `dist/` with `--strictPort` so the
     // baseURL/storageState origin stay unchanged; the trailing `--port` is
     // `PW_PORT`. The build skips `tsc -b` (`build:e2e` has it): the lint job's
-    // `tsc` hook already type-checks `e2e/` on every frontend change.
-    command: `VITE_E2E=1 vite build && npm run preview:e2e -- --port ${PORT}`,
+    // `tsc` hook already type-checks `e2e/` on every frontend change. `npx`
+    // finds vite where `node_modules/.bin` is not on PATH: a bare
+    // `playwright test`, or an editor's test runner.
+    command: `VITE_E2E=1 npx vite build && npm run preview:e2e -- --port ${PORT}`,
     url: ORIGIN,
     // #1458: bound server readiness. The build (~30-60s) + preview boot must
     // finish well within this; 180s absorbs a cold CI build + a slow mirror
