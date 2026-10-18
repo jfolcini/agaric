@@ -13,6 +13,5 @@ API; `rules/branches/main` reads them back). `branch-protection-assert.yml`
 pins the same pair in `EXPECTED_CONTEXTS`, so its next run passes and
 later drift still fails it.
 
-**Left:** `.github/AGENTS.md` still calls the match unresolved and root
-`AGENTS.md` names the bare context; both need the maintainer's approval
-to edit.
+**Docs:** with the maintainer's approval, `.github/AGENTS.md` no longer
+calls the match unresolved, and root `AGENTS.md` names the full context.
