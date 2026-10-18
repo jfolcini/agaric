@@ -34,8 +34,8 @@ export function AddBlockButton({
       className={className ?? 'text-muted-foreground'}
       // Keeps the edited block focused through a tap. A tap's blur runs before
       // its click, unlike a mouse press's, which `useEditorBlur` holds until the
-      // release. The page's `onClick` reads that focus (`unfocusedBlankTail`), so
-      // without this it reopens the blank block just left instead of adding one.
+      // release. On a tap, that blur drops an empty block being edited, and the
+      // click then adds no block and leaves no editor.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
     >

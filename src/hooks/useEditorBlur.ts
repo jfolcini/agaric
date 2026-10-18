@@ -59,7 +59,8 @@ window.addEventListener(
 )
 // A press ends in a release (outside the window too: the browser delivers it to
 // the page that took the press), a cancel, a native drag, a context menu that
-// swallows the release, or the window losing focus.
+// swallows the release, or the window losing focus. `dragstart` because
+// WebKitGTK ends a native drag with neither `pointercancel` nor `pointerup`.
 for (const type of ['pointerup', 'pointercancel', 'dragstart', 'contextmenu']) {
   window.addEventListener(type, endPress, true)
 }
@@ -231,13 +232,17 @@ export function useEditorBlur(params: {
       // A mouse press keeps the block in edit mode until it ends (#5807):
       // leaving it now drops the formatting toolbar from the flow, everything
       // below moves up before the release, and the click lands elsewhere.
-      // `unmount()` would empty the doc on screen, so the save reads it live
-      // and rebases the baseline, and the deferred unmount finds nothing new.
+      // `unmount()` would empty the doc on screen, so the save reads it live,
+      // compared as `unmount()` compares it: against the stored text, then
+      // against `loaded` for a block read as typed. It then rebases both
+      // baselines, and the deferred unmount finds nothing new.
       const re = rovingEditorRef.current
       const keptEditor = primaryPressDown ? re.editor : null
       let changed: string | null
       if (keptEditor) {
-        const delta = computeContentDelta(loaded, keptEditor.getJSON() as DocNode)
+        const doc = keptEditor.getJSON() as DocNode
+        let delta = computeContentDelta(re.storedMarkdown, doc)
+        if (!delta.changed && loaded !== re.storedMarkdown) delta = computeContentDelta(loaded, doc)
         changed = delta.changed ? delta.newMarkdown : null
         if (changed !== null) re.markCommitted(changed)
       } else {
@@ -292,8 +297,6 @@ export function useEditorBlur(params: {
           stopWatchingFocus()
           if (pendingSwapRef.current !== swap) return
           pendingSwapRef.current = null
-          const refocused = wrapper.contains(document.activeElement)
-          if (refocused) return
           // Its edit was saved on the blur.
           if (rovingEditorRef.current.activeBlockId === blockId) rovingEditorRef.current.unmount()
           if (pressEnded) setFocused(null)

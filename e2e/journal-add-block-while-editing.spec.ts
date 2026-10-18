@@ -1,16 +1,19 @@
+import { devices } from '@playwright/test'
+
 import { expect, navigateToView, test, waitForBoot } from './helpers'
 
 /**
- * "Add block" clicked while the roving editor sits on a fresh empty block.
+ * "Add block" pressed while the roving editor sits on a fresh empty block, by a
+ * mouse and by a tap: the press adds a block, which takes the editor, and the
+ * blur cleanup drops the abandoned empty one.
  *
- * The real-backend lane hit this in `e2e-tauri/search-bm25-order.e2e.ts`: Enter
- * creates a sibling and focuses it, and the next "Add block" click blurs its
- * editor. The blur swapped the editor row for the shorter static row, the
- * button moved up under the pointer, mouseup landed off it and `onClick` never
- * ran: no new block, and the empty one was dropped by the blur cleanup. The
- * mock answers synchronously, so the IPC latency that opens that window is
- * injected here, test-side, and the click is driven as mousedown / mouseup
- * with a human-sized gap.
+ * The mouse case comes from `e2e-tauri/search-bm25-order.e2e.ts`, where Enter
+ * creates a sibling and focuses it before the next "Add block" press. The
+ * button keeps the editor focused through the press. A tap needs that: its blur
+ * is not held until the release the way a mouse press's is (`useEditorBlur`).
+ * The mock answers synchronously, so the desktop test injects the backend's IPC
+ * latency test-side and drives the click as mousedown / mouseup with a
+ * human-sized gap.
  */
 
 const IPC_LATENCY_MS = 120
@@ -87,4 +90,49 @@ test('adds a block when the button is clicked while an empty block is being edit
   await navigateToView(page, 'Pages')
   await navigateToView(page, 'Journal')
   await expect(committed).toBeVisible()
+})
+
+const iPhone13 = devices['iPhone 13']
+
+test.describe('on touch', () => {
+  test.use({
+    viewport: iPhone13.viewport,
+    userAgent: iPhone13.userAgent,
+    isMobile: true,
+    hasTouch: true,
+  })
+
+  // A tap's blur runs before its click, not held as a mouse press's is; the
+  // button keeps the empty block focused through the tap.
+  test('a tap on Add block while an empty block is being edited adds a block, which takes the editor', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const addBlock = page.getByRole('button', { name: /add block/i }).first()
+    const editor = page.getByRole('textbox', { name: 'Block editor' })
+    const editorRow = page.locator('[data-testid="block-editor"]')
+
+    await addBlock.tap()
+    await expect(editor).toBeVisible()
+    await editor.pressSequentially('zap of ink', { delay: 10 })
+    await page.keyboard.press('Enter')
+    await expect(
+      page.locator('[data-testid="block-static"]', { hasText: 'zap of ink' }),
+    ).toBeVisible()
+    await expect(editor).toBeVisible()
+    const emptyBlockId = await editorRow.getAttribute('data-block-id')
+    if (emptyBlockId === null) throw new Error('the empty block has no id')
+
+    await addBlock.tap()
+
+    await expect(editorRow).toHaveCount(1)
+    await expect(editorRow).not.toHaveAttribute('data-block-id', emptyBlockId)
+    await editor.pressSequentially('bun kit', { delay: 10 })
+    await page.keyboard.press('Enter')
+    const committed = page.locator('[data-testid="block-static"]', { hasText: 'bun kit' })
+    await expect(committed).toBeVisible()
+    await navigateToView(page, 'Pages')
+    await navigateToView(page, 'Journal')
+    await expect(committed).toBeVisible()
+  })
 })

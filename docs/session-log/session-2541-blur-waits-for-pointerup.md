@@ -21,8 +21,7 @@ because it empties the doc on screen.
 - **Stale guards:** the hold also ends as soon as focus leaves the block. From
   then on, whatever moved the focus owns it, even when it gives the focus back
   to this block with a new editor. On that early end, the hold unmounts an
-  editor still on its block and leaves the focus alone. The swap does nothing
-  if focus came back into that editor in place. A block that unmounts
+  editor still on its block and leaves the focus alone. A block that unmounts
   mid-press swaps at once, and only once.
 - **Unchanged:** keys (Tab, Escape) and touch. A tap blurs only after its
   release, so it never holds.
@@ -99,8 +98,8 @@ a real pointer. It already held through the #966 snapshot before this change.
   gone. It existed only to dodge the lost *Add filter* click. That spec was
   type-checked only.
 - The `AddBlockButton` comment gives its remaining reason: a tap's blur is not
-  held, and `handleAddBlock` reads the focus (`unfocusedBlankTail`). A probe
-  without the guard reopened the blank block just added instead of adding one.
+  held. Without the guard, a tap while an empty block is edited drops that
+  block, adds none, and leaves no editor.
 - The `keepEditorUntilClick` comment says what it still does. The click lands
   without it: the desktop and touch move tests passed 3 of 3 without its
   `preventDefault`.
@@ -108,3 +107,24 @@ a real pointer. It already held through the #966 snapshot before this change.
   `BlockGutterControls.tsx`: the live editor now names the focus at
   `handleDragStart`, and the snapshot covers a press whose blur already
   cleared it.
+
+**Review (requested changes):**
+- **B1:** the held save compared the doc only with `originalMarkdown`. A block
+  read as typed (#5834, the line an Enter split off) classifies against a
+  placeholder, so a doc equal to it was dropped. The deferred `unmount()`
+  found the change, and the release ignored it. The held save now compares as
+  `unmount()` does: the stored text first, then `originalMarkdown`. A vitest
+  and a `block-line-break.spec.ts` case (a press on the References header)
+  are red without the fix.
+- The in-place refocus check in the release had no flow that reaches it, and
+  is deleted.
+- `dragstart` stays. A WebKitGTK 2.52 probe (XTest under Xvfb) saw a native
+  link drag end with `dragstart` and `dragend` only, with no `pointercancel`
+  or `pointerup`. A plain click there fired `pointerup`, `mouseup` and
+  `click`.
+- A vitest pins that the focus watch stops when the hold ends.
+- A touch test in `journal-add-block-while-editing.spec.ts` pins the
+  *Add block* guard: without it, the tap leaves no editor.
+- The `#1498` comments on the inline controls and property chips say their
+  purpose: they keep the editor and its caret focused. The spec's docstring
+  is true again.

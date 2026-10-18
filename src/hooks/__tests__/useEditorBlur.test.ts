@@ -1923,7 +1923,7 @@ describe('useEditorBlur', () => {
       )
     }
 
-    function setup(wrapper: HTMLElement = document.createElement('section')) {
+    function setup() {
       const unmount = vi.fn<() => string | null>(() => null)
       const markCommitted = vi.fn<(markdown: string) => void>()
       const roving = makeRovingEditor({
@@ -1945,7 +1945,7 @@ describe('useEditorBlur', () => {
           discardDraft,
         }),
       )
-      const blur = () => act(() => hook.result.current.handleBlur(makeFocusEvent(null, wrapper)))
+      const blur = () => act(() => hook.result.current.handleBlur(makeFocusEvent()))
       return { roving, unmount, markCommitted, edit, setFocused, discardDraft, hook, blur }
     }
 
@@ -1991,6 +1991,7 @@ describe('useEditorBlur', () => {
     it('saves nothing when the doc is unchanged, and still swaps after the release', () => {
       const { roving, markCommitted, edit, setFocused, blur } = setup()
       roving.originalMarkdown = 'typed text'
+      roving.storedMarkdown = 'typed text'
 
       press('pointerdown')
       blur()
@@ -2002,6 +2003,45 @@ describe('useEditorBlur', () => {
         vi.runAllTimers()
       })
       expect(setFocused).toHaveBeenCalledExactlyOnceWith(null)
+    })
+
+    // A block read as typed (`readAsTyped`, the line an Enter split off)
+    // classifies against a placeholder: a doc equal to it still differs from
+    // the stored text, and `unmount()` saves it.
+    it('saves a block read as typed whose doc equals its placeholder', () => {
+      const { roving, markCommitted, edit, blur } = setup()
+      roving.originalMarkdown = 'typed text'
+      roving.storedMarkdown = 'status:: done'
+
+      press('pointerdown')
+      blur()
+
+      expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed text')
+      expect(markCommitted).toHaveBeenCalledExactlyOnceWith('typed text')
+    })
+
+    it('stops watching the focus once the hold ends', () => {
+      const subscribe = useBlockStore.subscribe
+      const watcherCalls = vi.fn()
+      const spy = vi.spyOn(useBlockStore, 'subscribe').mockImplementation((listener) =>
+        subscribe((state, prev) => {
+          watcherCalls()
+          listener(state, prev)
+        }),
+      )
+      const { blur } = setup()
+      press('pointerdown')
+      blur()
+      press('pointerup')
+      act(() => {
+        vi.runAllTimers()
+      })
+      watcherCalls.mockClear()
+
+      useBlockStore.setState({ focusedBlockId: 'B2' })
+
+      expect(watcherCalls).not.toHaveBeenCalled()
+      spy.mockRestore()
     })
 
     it.each(['pointercancel', 'dragstart', 'contextmenu'])(
@@ -2106,27 +2146,6 @@ describe('useEditorBlur', () => {
 
       expect(unmount).not.toHaveBeenCalled()
       expect(setFocused).not.toHaveBeenCalled()
-    })
-
-    it('keeps the editor when the click put focus back in it', () => {
-      const wrapper = document.createElement('section')
-      const text = document.createElement('div')
-      text.tabIndex = 0
-      wrapper.append(text)
-      document.body.append(wrapper)
-      const { unmount, setFocused, blur } = setup(wrapper)
-      press('pointerdown')
-      blur()
-
-      text.focus()
-      press('pointerup')
-      act(() => {
-        vi.runAllTimers()
-      })
-
-      expect(unmount).not.toHaveBeenCalled()
-      expect(setFocused).not.toHaveBeenCalled()
-      wrapper.remove()
     })
 
     it('swaps when the block unmounts mid-press, and not again on the release', () => {

@@ -1,6 +1,15 @@
 import { devices } from '@playwright/test'
 
-import { expect, focusBlock, openPage, reopenPage, saveBlock, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlock,
+  openPage,
+  reopenPage,
+  replaceEditorText,
+  saveBlock,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E for #5160 D2 — a line break inside a block.
@@ -223,6 +232,27 @@ test.describe('A line break inside a block (#5160 D2)', () => {
       expect(await blockContent(page, BLOCK_GS_1)).not.toContain('status::')
     })
   }
+
+  // A mouse press keeps the block in edit mode until the release (#5807), and
+  // its save still compares the text with what the block holds: `.` is also
+  // the placeholder the split-off line is read against.
+  test('a split-off line replaced by `.` is saved `.` when a press on a control leaves it', async ({
+    page,
+  }) => {
+    const { splitId } = await splitOffStatusLine(page)
+    await replaceEditorText(page, '.')
+    const header = page
+      .getByTestId('linked-references')
+      .getByRole('button', { name: /\d+ References?$/ })
+    await expect(header).toHaveAttribute('aria-expanded', 'true')
+
+    await header.click()
+
+    await expect(header).toHaveAttribute('aria-expanded', 'false')
+    await expect.poll(() => blockState(page, splitId)).toBe('.')
+    await reopenPage(page, 'Getting Started')
+    expect(await blockState(page, splitId)).toBe('.')
+  })
 })
 
 const iPhone13 = devices['iPhone 13']
