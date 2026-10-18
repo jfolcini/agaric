@@ -640,6 +640,32 @@ export function contentExtensions(o: ContentExtensionOptions) {
   return { text, lists, blocks, inline, chips }
 }
 
+type Search = (query: string) => PickerItem[] | Promise<PickerItem[]>
+
+/**
+ * The `{{embed ` picker's targets (#4550), for both editors: one list covers
+ * both kinds, since a page IS a block in this data model, so
+ * `{{embed ((ULID))}}` addresses either. Pages lead because "embed this page"
+ * is the coarser, more common intent; block hits follow.
+ */
+export async function embedTargets(
+  query: string,
+  searchPages: Search,
+  searchBlockRefs: Search,
+): Promise<PickerItem[]> {
+  const [pages, blocks] = await Promise.all([searchPages(query), searchBlockRefs(query)])
+  const seen = new Set<string>()
+  const merged: PickerItem[] = []
+  for (const item of [...pages, ...blocks]) {
+    // `isCreate` rows offer to CREATE a page — meaningless for an
+    // embed, whose whole point is pointing at something that exists.
+    if (item.isCreate || seen.has(item.id)) continue
+    seen.add(item.id)
+    merged.push(item)
+  }
+  return merged
+}
+
 export interface RovingEditorOptions {
   /** Resolve tag ULID → display name */
   resolveTagName?: (id: string) => string
@@ -956,26 +982,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `onSlashCommandRef` here hands the `{{query` picker off to the same slash-command dispatch as above, and `searchPagesRef`/`searchBlockRefsRef` power the `{{embed ` target list; see #4406
       QueryPicker.configure({
         onCommand: (item: PickerItem) => onSlashCommandRef.current?.(item),
-        // #4550 — one list covers both embed target kinds: a page IS a block
-        // in this data model, so `{{embed ((ULID))}}` addresses either. Pages
-        // lead because "embed this page" is the coarser, more common intent;
-        // block hits follow.
-        embedItems: async (query: string) => {
-          const [pages, blocks] = await Promise.all([
-            searchPagesRef.current(query),
-            searchBlockRefsRef.current(query),
-          ])
-          const seen = new Set<string>()
-          const merged: PickerItem[] = []
-          for (const item of [...pages, ...blocks]) {
-            // `isCreate` rows offer to CREATE a page — meaningless for an
-            // embed, whose whole point is pointing at something that exists.
-            if (item.isCreate || seen.has(item.id)) continue
-            seen.add(item.id)
-            merged.push(item)
-          }
-          return merged
-        },
+        embedItems: (query: string) =>
+          embedTargets(query, searchPagesRef.current, searchBlockRefsRef.current),
       }),
       // oxlint-disable-next-line react/refs -- the ref is read inside a TipTap `.configure` closure that TipTap invokes at edit/paste/render time, never during this render; handing a ref to a consumer that defers the read is the intended use — `onCheckboxRef` fires when a typed markdown checkbox pattern (`[ ]`, `[/]`, `[x]`, `[-]`) completes; see #4406
       CheckboxInputRule.configure({

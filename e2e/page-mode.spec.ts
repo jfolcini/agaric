@@ -6,7 +6,7 @@
  * moved or deleted, one deleted while typed in), cut and paste as a move,
  * paragraphs pasted from outside, Shift+Tab as block mode's, and the text saved
  * before an export and before leaving. Then what behaves as block mode: chips,
- * the `[[`, `#` and `((` pickers, and `/` and `::` as plain text.
+ * the `[[`, `#` and `((` pickers, and the slash menu and `::` and `{{` pickers.
  */
 
 import { createRequire } from 'node:module'
@@ -1450,34 +1450,238 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     expect((await cursor(page)).index).toBe(3)
   })
 
-  test('/ and :: are plain text: no menu or picker takes Enter, which splits the block', async ({
+  test('the slash menu sets a task and gives an undated block its date, the drawer clears one, Escape writes nothing, and they stay', async ({
     page,
   }) => {
-    const { pageId } = await seedRows(page, 'Plain triggers', [[0, 'one']])
-    await openInPageMode(page, 'Plain triggers', 1)
+    // axe reads colours, which a fade in progress makes wrong.
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const { pageId, ids } = await seedRows(page, 'Page slash', [
+      [0, 'pay rent'],
+      [0, 'plan trip'],
+      [0, 'plain'],
+    ])
+    await ipc(page, 'set_due_date', { blockId: ids[1], date: '2026-11-01' })
+    await openInPageMode(page, 'Page slash', 3)
+    const inBlock = (id: string | undefined, selector: string) =>
+      page.locator(`${EDITOR} [data-page-block-id="${id}"] ${selector}`)
+    const marker = (id: string | undefined) => inBlock(id, '[data-testid="task-marker"]')
+    const menu = activeSuggestionPopup(page)
+    const row = (id: string | undefined) =>
+      ipc<{ todo_state: string | null; due_date: string | null }>(page, 'get_block', {
+        blockId: id,
+      })
+
+    // Escape closes the menu and leaves the caret, writing nothing but the text.
+    await caret(page, 2, 'end')
+    await page.keyboard.type(' /to')
+    await expect(menu.locator('#suggestion-todo')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(menu).toHaveCount(0)
+    await expect(page.locator(EDITOR)).toBeFocused()
+    await expect.poll(async () => (await backend(page, pageId))[2]?.text).toBe('plain /to')
+    expect(await row(ids[2])).toMatchObject({ todo_state: null, due_date: null })
+    for (let i = 0; i < ' /to'.length; i += 1) await page.keyboard.press('Backspace')
+
+    // Enter picks from the open menu: the task is the caret's block's, and no block splits.
     await caret(page, 0, 'end')
-    // Whether a suggestion popup ever opens while typing, not only at the end.
-    await page.evaluate(() => {
-      const seen = { popup: false }
-      Object.assign(window, { __popupSeen__: seen })
-      new MutationObserver(() => {
-        seen.popup ||= document.querySelector('[data-testid="suggestion-popup"]') !== null
-      }).observe(document.body, { childList: true, subtree: true })
+    await page.keyboard.type(' /todo')
+    await expect(menu.locator('#suggestion-todo')).toHaveAttribute('aria-selected', 'true')
+    await page.addScriptTag({ path: axePath })
+    const menuViolations = await page.evaluate(async () => {
+      const { axe } = window as unknown as {
+        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
+      }
+      const popup = document.querySelector('[data-testid="suggestion-popup"]') as Element
+      return (await axe.run(popup)).violations.map((v) => v.id)
     })
-
-    await page.keyboard.type(' /x')
+    expect(menuViolations).toEqual([])
     await page.keyboard.press('Enter')
-    await page.keyboard.type('two key::')
-    await page.keyboard.press('Enter')
-    await page.keyboard.type('three')
+    await expect(menu).toHaveCount(0)
+    await expect(marker(ids[0])).toHaveAttribute('aria-label', 'Task: TODO. Click to cycle.')
+    await expect.poll(async () => (await row(ids[0])).todo_state).toBe('TODO')
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
 
+    // /due on a block with no date: block mode's picker, and the date is the block's.
+    await caret(page, 2, 'end')
+    await page.keyboard.type(' /due')
+    await menu.locator('#suggestion-due').click()
+    const picker = page.getByTestId('date-picker-popup')
+    await picker.getByRole('textbox', { name: 'Type a date' }).fill('2026-12-24')
+    await page.keyboard.press('Enter')
+    await expect(picker).toHaveCount(0)
+    await expect(inBlock(ids[2], '.due-date-chip')).toHaveText('Dec 24')
+    await expect.poll(async () => (await row(ids[2])).due_date).toBe('2026-12-24')
+
+    // /attach opens the file dialog as it is picked; the file is the block's.
+    await caret(page, 1, 'end')
+    await page.keyboard.type(' /attach')
+    const chooser = page.waitForEvent('filechooser')
+    await menu.locator('#suggestion-attach').click()
+    await (
+      await chooser
+    ).setFiles({
+      name: 'trip.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('trip notes'),
+    })
     await expect
-      .poll(async () => (await backend(page, pageId)).map((b) => b.text))
-      .toEqual(['one /x', 'two key::', 'three'])
-    expect(
-      await page.evaluate(
-        () => (window as unknown as { __popupSeen__: { popup: boolean } }).__popupSeen__.popup,
-      ),
-    ).toBe(false)
+      .poll(async () =>
+        (await ipc<Array<{ filename: string }>>(page, 'list_attachments', { blockId: ids[1] })).map(
+          (attachment) => attachment.filename,
+        ),
+      )
+      .toEqual(['trip.txt'])
+
+    // The drawer clears a date.
+    await caret(page, 1, 'end')
+    await page.keyboard.press('Control+Shift+P')
+    const drawer = page.getByRole('dialog', { name: 'Block Properties' })
+    await drawer.getByRole('button', { name: 'Clear due date' }).click()
+    await expect.poll(async () => (await row(ids[1])).due_date).toBeNull()
+    await page.keyboard.press('Escape')
+    await expect(drawer).toHaveCount(0)
+    await expect(inBlock(ids[1], '.due-date-chip')).toHaveCount(0)
+
+    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    await page.keyboard.press('Escape')
+    await expect(page.locator(EDITOR)).not.toBeFocused()
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Page slash')
+    // The switch is the page on screen's: choose Page again.
+    await modeSwitch(page, 'Page').click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
+    await expect(marker(ids[0])).toHaveAttribute('aria-label', 'Task: TODO. Click to cycle.')
+    await expect(inBlock(ids[2], '.due-date-chip')).toHaveText('Dec 24')
+    await expect(inBlock(ids[1], '.due-date-chip')).toHaveCount(0)
+    expect(await row(ids[1])).toMatchObject({ todo_state: null, due_date: null })
+    expect(await row(ids[2])).toMatchObject({ todo_state: null, due_date: '2026-12-24' })
+    expect((await backend(page, pageId)).map((b) => b.text)).toEqual([
+      'pay rent ',
+      'plan trip ',
+      'plain ',
+    ])
+  })
+
+  test('the :: picker gives a property, and the {{ picker a query whose results show once left, and they stay', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Page pickers', [
+      [0, 'first'],
+      [0, 'call mom'],
+      [0, 'last'],
+    ])
+    await ipc(page, 'set_property', {
+      blockId: ids[0],
+      key: 'assignee',
+      value: {
+        value_text: 'Bo',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    await openInPageMode(page, 'Page pickers', 3)
+    const inBlock = (id: string | undefined, selector: string) =>
+      page.locator(`${EDITOR} [data-page-block-id="${id}"] ${selector}`)
+    const menu = activeSuggestionPopup(page)
+
+    // `::` lists the keys; the pick is a `key:: ` line, the property once the caret leaves.
+    await caret(page, 1, 'end')
+    await page.keyboard.press('Shift+Enter')
+    await page.keyboard.type('::assi')
+    await menu.locator('#suggestion-assignee').click()
+    await page.keyboard.type('Ana')
+    await expect.poll(async () => (await shown(page))[1]?.text).toBe('call momassignee:: Ana')
+    await page.keyboard.press('ArrowDown')
+    await expect(inBlock(ids[1], '[data-testid="property-chip"]')).toHaveAttribute(
+      'aria-label',
+      'Assignee: Ana',
+    )
+    await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('call mom')
+
+    // `{{` then Insert query: block mode's builder, whose query is the block's.
+    await caret(page, 2, 'end')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('{{')
+    await expect(menu.locator('#suggestion-query')).toBeVisible()
+    await page.keyboard.press('Enter')
+    await page.getByLabel('Tag prefix').fill('work')
+    await page.getByRole('button', { name: 'Insert Query' }).click()
+    const added = (await shown(page))[3]?.id
+    await expect
+      .poll(async () => (await backend(page, pageId))[3]?.text)
+      .toBe('{{query type:tag expr:work}}')
+    await caret(page, 0, 'end')
+    await expect(inBlock(added, '[data-testid="query-result"]')).toContainText('4 results')
+
+    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    await page.keyboard.press('Escape')
+    await expect(page.locator(EDITOR)).not.toBeFocused()
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Page pickers')
+    await modeSwitch(page, 'Page').click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(4)
+    await expect(inBlock(ids[1], '[data-testid="property-chip"]')).toHaveAttribute(
+      'aria-label',
+      'Assignee: Ana',
+    )
+    await expect(inBlock(added, '[data-testid="query-result"]')).toContainText('4 results')
+    expect((await backend(page, pageId)).map((b) => b.text)).toEqual([
+      'first',
+      'call mom',
+      'last',
+      '{{query type:tag expr:work}}',
+    ])
+  })
+
+  test('a slash command leaves the backend as block mode’s does', async ({ page }) => {
+    const pages = {
+      blocks: await seedRows(page, 'Slash in blocks', [
+        [0, 'buy milk'],
+        [0, 'call mom'],
+      ]),
+      page: await seedRows(page, 'Slash in page', [
+        [0, 'buy milk'],
+        [0, 'call mom'],
+      ]),
+    }
+    const menu = activeSuggestionPopup(page)
+    const rows = (seeded: Seeded) =>
+      Promise.all(
+        seeded.ids.map(async (id) => {
+          const row = await ipc<{ content: string; todo_state: string | null }>(page, 'get_block', {
+            blockId: id,
+          })
+          return [row.content, row.todo_state]
+        }),
+      )
+
+    await openViaPalette(page, 'Slash in blocks')
+    for (const [i, command] of ['todo', 'h2'].entries()) {
+      await focusBlockById(page, pages.blocks.ids[i] as string)
+      await page.keyboard.press('End')
+      await page.keyboard.type(` /${command}`)
+      await menu.locator(`#suggestion-${command}`).click()
+      await expect(menu).toHaveCount(0)
+      await page.keyboard.press('Escape')
+    }
+
+    await openViaPalette(page, 'Slash in page')
+    await modeSwitch(page, 'Page').click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(2)
+    for (const [i, command] of ['todo', 'h2'].entries()) {
+      await caret(page, i, 'end')
+      await page.keyboard.type(` /${command}`)
+      await menu.locator(`#suggestion-${command}`).click()
+      await expect(menu).toHaveCount(0)
+    }
+    await page.keyboard.press('Escape')
+
+    await expect.poll(() => rows(pages.page)).toEqual(await rows(pages.blocks))
+    expect(await rows(pages.blocks)).toEqual([
+      ['buy milk ', 'TODO'],
+      ['## call mom ', null],
+    ])
   })
 })

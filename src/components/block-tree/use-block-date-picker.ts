@@ -45,8 +45,8 @@ export interface UseBlockDatePickerReturn {
   datePickerCursorPos: RefObject<number | undefined>
   setDatePickerOpen: (open: boolean) => void
   setDatePickerMode: (mode: DatePickerMode) => void
-  /** Open the picker for `blockId` instead of the focused block (a date chip). */
-  openDatePickerFor: (blockId: string, mode: 'due' | 'schedule') => void
+  /** Open the picker for `blockId` instead of the focused block (a date chip, page mode's `/due`). */
+  openDatePickerFor: (blockId: string, mode: DatePickerMode) => void
   handleDatePick: (d: Date) => Promise<void>
 }
 
@@ -231,9 +231,9 @@ export function useBlockDatePicker({
 }: UseBlockDatePickerParams): UseBlockDatePickerReturn {
   const [datePickerOpen, setOpen] = useState(false)
   const [datePickerMode, setDatePickerMode] = useState<DatePickerMode>('date')
-  // The block a date chip opened the picker for, which need not be the focused
-  // one (#5736). Every other opener acts on the focused block, so any other
-  // open or close drops it.
+  // The block a date chip, or a page-mode command (#5743), opened the picker
+  // for, which need not be the focused one (#5736). Every other opener acts on
+  // the focused block, so any other open or close drops it.
   const [chipBlockId, setChipBlockId] = useState<string | null>(null)
   const datePickerCursorPos = useRef<number | undefined>(undefined)
 
@@ -242,7 +242,7 @@ export function useBlockDatePicker({
     setOpen(open)
   }, [])
 
-  const openDatePickerFor = useCallback((blockId: string, mode: 'due' | 'schedule') => {
+  const openDatePickerFor = useCallback((blockId: string, mode: DatePickerMode) => {
     setChipBlockId(blockId)
     setDatePickerMode(mode)
     setOpen(true)

@@ -44,6 +44,8 @@ Typing `/` opens the slash menu. Commands are fuzzy-matched as you type — the 
 
 The repeat-rule mode semantics (`+` vs `.+` vs `++`) are explained in [journal-and-agenda.md](journal-and-agenda.md) → *Projected entries*.
 
+In page mode the same menu, and the `::` and `{{` pickers, act on the block the cursor is in, less `duplicate` and `template` (see [editor.md](editor.md) → *Page mode*).
+
 ## How to add a slash command
 
 The command catalog (visibility + category metadata) lives in `src/lib/slash-commands.ts`; the `useBlockSlashCommands` hook (`src/components/block-tree/use-block-slash-commands.ts`) just re-exports those arrays and `searchSlashCommands`, then drives dispatch. To add a command:
@@ -51,6 +53,7 @@ The command catalog (visibility + category metadata) lives in `src/lib/slash-com
 1. Add a `PickerItem` to the right array in `src/lib/slash-commands.ts` — the top-level `SLASH_COMMANDS` array, or a category sub-array (e.g. `HEADING_COMMANDS`, `CALLOUT_COMMANDS`) for sub-menu entries. Set its `category` to the matching `slashCommand.categories.*` i18n key.
 2. Wire it into `searchSlashCommands` (`src/lib/slash-commands.ts`), which is what the picker queries — top-level `SLASH_COMMANDS` entries are matched directly; sub-menu arrays must be `matchSorter`-ed and spread into the merged `results` (gate on a prefix where appropriate, as `/turn` does for `TURN_INTO_COMMANDS`).
 3. If the command performs a novel operation (not just a turn-into / property set already handled), add its handler in the matching `useBlockSlashCommands/useSlashCommand*` sub-hook (`useSlashCommandDate`, `useSlashCommandProperty`, `useSlashCommandStructural`, `useSlashCommandMarks`, or `useSlashCommandTemplate`) by extending the `SlashHandlerTables` slice (`exact` or `prefix`) it returns. `useBlockSlashCommands` merges the slices and dispatches by `id`.
+4. Page mode runs the same handler on the block the cursor is in (`src/editor/page-mode/page-slash-commands.tsx`), once a save has created the block. A command that changes only the editor's document, or opens what needs the pick's own key or click (a file dialog), belongs in its `runsAtOnce` set instead, so it runs as it is picked; one that adds blocks through the block store belongs in `NOT_IN_PAGE_MODE`.
 
 ## Pitfalls to know
 

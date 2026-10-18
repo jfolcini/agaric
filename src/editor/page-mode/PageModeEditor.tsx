@@ -34,6 +34,11 @@
  * rows, as block mode's does, so a save that wrote reads them again; the query
  * builder's write goes on the same chain.
  *
+ * Block mode's slash menu and `::` and `{{` pickers act on the caret's block
+ * through block mode's own handlers (`page-slash-commands.tsx`): a command that
+ * writes to the block runs after the save, on the same chain, and the page is
+ * read again after it.
+ *
  * Chips go where block mode's go (`useBlockNavigateToLink`, a block of this
  * page by moving the cursor to it), and each save's ops reach `UndoStore`
  * as block mode records them. `PageEditor` reaches this module only through a
@@ -87,9 +92,15 @@ import {
   savePage,
   type TreeRow,
 } from '@/editor/page-mode/page-save'
+import {
+  runsAtOnce,
+  searchPageSlashCommands,
+  usePageSlashCommands,
+} from '@/editor/page-mode/page-slash-commands'
 import { commitPageTags } from '@/editor/page-mode/page-tags'
 import { commitPageTask, type PageTaskActions } from '@/editor/page-mode/page-tasks'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
+import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
@@ -106,6 +117,7 @@ import { createBlock } from '@/lib/ipc-helpers'
 import { type ListStyle, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { searchPropertyKeys } from '@/lib/slash-commands'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -314,8 +326,9 @@ function PageModeDocument({
   // What the checkbox, the badge, the chips and the keys do, once the session runs.
   const actions = useRef<
     PageTaskActions & {
-      pick: (step: () => Promise<void>) => void
+      pick: (step: () => Promise<void>, readAgain: boolean) => void
       setListStyle: (id: string, style: ListStyle) => void
+      command: (item: PickerItem) => void
     }
   >({
     cycle: () => {},
@@ -331,6 +344,7 @@ function PageModeDocument({
     saveQuery: () => Promise.resolve(false),
     pick: () => {},
     setListStyle: () => {},
+    command: () => {},
   })
   const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)
   // Block mode's chip navigation: another page opens; a block of this page takes the cursor.
@@ -393,6 +407,11 @@ function PageModeDocument({
         lists,
         setStyle: (id: string, style: ListStyle) => actions.current.setListStyle(id, style),
       },
+      commands: {
+        searchSlashCommands: searchPageSlashCommands,
+        onSlashCommand: (item: PickerItem) => actions.current.command(item),
+        searchPropertyKeys,
+      },
     }),
     content: pageDocContent(blocks, newBlockId),
     // Built in an effect: a lazily loaded editor built during render can be
@@ -418,20 +437,32 @@ function PageModeDocument({
     () => ({ resolveBlockTitle, resolveTagName, resolveBlockStatus, resolveTagStatus }),
     [resolveBlockTitle, resolveTagName, resolveBlockStatus, resolveTagStatus],
   )
-  // Block mode's date picker: a chip's date, or a date's page linked at the caret.
-  const {
-    datePickerOpen,
-    setDatePickerOpen,
-    setDatePickerMode,
-    openDatePickerFor,
-    handleDatePick,
-  } = useBlockDatePicker({
+  // Block mode's date picker: a chip's or a command's date, or a date's page linked at the caret.
+  const datePicker = useBlockDatePicker({
     focusedBlockId: null,
     rootParentId: pageId,
     pageStore,
     rovingEditor: { editor },
     registerCreatedPage: resolve.registerCreatedPage,
     t: translate,
+  })
+  const {
+    datePickerOpen,
+    datePickerMode,
+    setDatePickerOpen,
+    setDatePickerMode,
+    openDatePickerFor,
+    handleDatePick,
+  } = datePicker
+  const slash = usePageSlashCommands({
+    pageId,
+    editor,
+    pageStore,
+    t: translate,
+    datePicker,
+    openPropertyDrawer: setDrawerBlockId,
+    saveQuery: (id, expression) => actions.current.saveQuery(id, expression),
+    attach: (id, files) => actions.current.attach(id, files),
   })
   // The session reads these as they are when it needs them, not as it was built with.
   const blocked = useEffectEvent((blocker: PageModeBlocker) => onBlocked(blocker))
@@ -445,6 +476,7 @@ function PageModeDocument({
     setDatePickerMode('date')
     setDatePickerOpen(true)
   })
+  const runCommand = useEffectEvent((id: string, item: PickerItem) => slash.run(id, item))
 
   // Once per editor: the save state is built from the page as the document opened on it.
   useEffect(() => {
@@ -582,6 +614,9 @@ function PageModeDocument({
         await change()
       })
     }
+    // While a command runs after its save: the flush its handler asks for first
+    // (`flushActiveDraft`) is that save, and one queued behind it would wait forever.
+    let running = false
     const readAgain = (): void => {
       void enqueue(async () => {
         if (!editor.isDestroyed) await bringIn(await read())
@@ -644,7 +679,11 @@ function PageModeDocument({
         }).then(() => saved)
       },
       // A date picked: written in turn with the saves, so no read of a save's overtakes it.
-      pick: (step) => void enqueue(step),
+      // An until date is a property, which page mode shows from its own read.
+      pick: (step, again) => {
+        void enqueue(step)
+        if (again) readAgain()
+      },
       // Shown at once, so the next key reads it; written once the block exists, as block mode writes it.
       setListStyle: (id, style) => {
         if (lists.styleOf(id) === style) return
@@ -666,6 +705,23 @@ function PageModeDocument({
             )
           }
         }).then(() => lists.settle(id, seq, written))
+      },
+      // Block mode's handler on the caret's block: a command that writes to it after the save.
+      command: (item) => {
+        const id = cursorBlock()
+        if (id === null) return
+        if (runsAtOnce(item.id)) {
+          void runCommand(id, item)
+          return
+        }
+        void afterSave(id, async () => {
+          running = true
+          try {
+            await runCommand(id, item)
+          } finally {
+            running = false
+          }
+        }).then(readAgain)
       },
     }
 
@@ -694,7 +750,9 @@ function PageModeDocument({
     const onFocus = (): void => {
       setActiveEditor(editor)
       unregisterDraft()
-      unregisterDraft = registerActiveDraftFlush(pageId, () => flush())
+      unregisterDraft = registerActiveDraftFlush(pageId, () =>
+        running ? Promise.resolve() : flush(),
+      )
     }
     const onBlur = (): void => void flush()
     // As block mode's draft autosave: the window hidden or closing saves now.
@@ -792,7 +850,7 @@ function PageModeDocument({
               // Closes now: the pick waits its turn behind the saves, and
               // `handleDatePick` closes the picker only when it runs.
               setDatePickerOpen(false)
-              actions.current.pick(() => handleDatePick(day))
+              actions.current.pick(() => handleDatePick(day), datePickerMode === 'repeat-until')
             }}
             onClose={() => setDatePickerOpen(false)}
           />
@@ -811,6 +869,7 @@ function PageModeDocument({
           />
         </Suspense>
       )}
+      {slash.dialogs}
     </>
   )
 }
