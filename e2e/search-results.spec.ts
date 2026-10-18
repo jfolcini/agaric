@@ -39,6 +39,19 @@ test.describe('Search results — grouping + interaction (E2E-8)', () => {
     await expect(region).toContainText(/3 matches in 2 pages/)
   })
 
+  test('collapsing page groups leaves the result-count summary unchanged', async ({ page }) => {
+    const region = await runSearch(page, 'Review')
+    const summary = region.getByTestId('search-result-count-summary')
+    const expanded = region.locator('button[aria-expanded="true"]')
+    await expect(expanded).toHaveCount(2)
+    await expanded.first().click()
+    await expect(expanded).toHaveCount(1)
+    await expect(summary).toHaveText('3 matches in 2 pages')
+    await expanded.first().click()
+    await expect(expanded).toHaveCount(0)
+    await expect(summary).toHaveText('3 matches in 2 pages')
+  })
+
   test('clicking a result row navigates to its page', async ({ page }) => {
     const region = await runSearch(page, 'Welcome')
     // "Welcome to Agaric!..." lives under "Getting Started".

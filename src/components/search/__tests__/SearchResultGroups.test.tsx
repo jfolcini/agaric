@@ -256,6 +256,26 @@ describe('SearchResultGroups (virtualized)', () => {
     expect(screen.getByTestId('search-result-group-PAGE_B')).toBeInTheDocument()
   })
 
+  it('keeps the summary count when a group is collapsed', () => {
+    setup({
+      groups: [
+        {
+          pageId: 'PAGE_A',
+          title: 'Alpha',
+          rows: [
+            makeRow({ id: 'A1', page_id: 'PAGE_A' }),
+            makeRow({ id: 'A2', page_id: 'PAGE_A' }),
+          ],
+        },
+        { pageId: 'PAGE_B', title: 'Beta', rows: [makeRow({ id: 'B1', page_id: 'PAGE_B' })] },
+      ],
+      expanded: { PAGE_A: false },
+    })
+    expect(screen.getByTestId('search-result-count-summary').textContent).toBe(
+      '3 matches in 2 pages',
+    )
+  })
+
   it('renders null for an empty group set', () => {
     const { container } = render(
       <SearchResultGroups
