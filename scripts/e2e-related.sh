@@ -128,10 +128,9 @@ for f in "${CHANGED[@]}"; do
       PW_FULL="$f" ;;
     e2e-tauri/*.ts|wdio.conf.ts|tsconfig.wdio.json|src-tauri/migrations/*)
       WD_FULL="$f" ;;
-    package.json|package-lock.json|tsconfig*.json|vite.config.ts|index.html)
+    # `src-tauri/tauri.conf.json`: e2e/interface-zoom.spec.ts sizes its viewport from it.
+    package.json|package-lock.json|tsconfig*.json|vite.config.ts|index.html|src-tauri/tauri.conf.json)
       PW_FULL="$f"; WD_FULL="$f" ;;
-    src-tauri/tauri.conf.json)
-      PW_FULL="$f"; WD_FULL="$f" ;; # e2e/interface-zoom.spec.ts sizes its viewport from it
     src/*|public/*)
       areas_of "$f"
       if [ ${#AREAS_OF[@]} -eq 0 ]; then
