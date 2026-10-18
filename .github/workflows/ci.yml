@@ -145,24 +145,6 @@ jobs:
           bundle-deps: 'true'
           rust-shared-key: rust-release
 
-      - name: Install Tauri CLI
-        # Reuse the cached binary only when it matches the exact npm CLI pin.
-        # The cache is populated by main (`save-if` above), so a dependency
-        # bump can otherwise leave feature branches running a stale Rust CLI.
-        shell: bash
-        run: |
-          set -euo pipefail
-          want="$(node -p "require('./package.json').devDependencies['@tauri-apps/cli']")"
-          if [[ ! "$want" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::@tauri-apps/cli must be an exact stable version, got '$want'"
-            exit 1
-          fi
-          have="$(cargo tauri --version 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
-          if [ "$have" != "$want" ]; then
-            cargo install tauri-cli --version "$want" --locked --force
-          fi
-          cargo tauri --version
-
       - name: Build Tauri app
         # `-v` raises tauri-bundler's log level so the real stdout/stderr
         # of linuxdeploy / candle / light / codesign is captured in CI
@@ -175,10 +157,14 @@ jobs:
         # is dropped from the live log, kept in
         # `tauri-build.log`, and printed in full by the next step when the
         # build fails.
+        #
+        # The CLI is the prebuilt `@tauri-apps/cli` that `npm ci` installed,
+        # not a `cargo install tauri-cli` compile on every Rust-cache miss
+        # (#5853).
         id: tauri-build
         shell: bash
         run: |
-          cargo tauri build -v 2>&1 | tee tauri-build.log \
+          npm run tauri -- build -v 2>&1 | tee tauri-build.log \
             | grep -vE '^\[(gstreamer|gtk|appimage)/stdout\]|^(Deploying|Copying|Calling|Setting|Skipping) '
 
       - name: Full bundler log (build failed)
@@ -295,11 +281,6 @@ jobs:
           # (used by validate + Linux desktop build for the host triple)
           # would defeat both caches.
           shared-key: rust-android
-          # Persist `~/.cargo/bin/` so the cargo-installed `tauri-cli`
-          # below survives across runs (main writes, feature branches
-          # read). Same pattern as the Linux `build` job; saves the
-          # ~5-6 min source compile of tauri-cli on every warm run.
-          cache-bin: 'true'
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up JDK 17
@@ -331,26 +312,9 @@ jobs:
         # tauri-build validates `externalBin` paths on every cargo
         # invocation. Android builds don't ship the sidecar (see
         # tauri.android.conf.json override), but the host-triple
-        # placeholder must exist so `cargo tauri android init` /
+        # placeholder must exist so `tauri android init` /
         # `build` can proceed past validation.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
-
-      - name: Install Tauri CLI
-        # Reuse the cached binary only when it matches the exact npm CLI pin
-        # (see `cache-bin: 'true'` on the Rust cache step above).
-        shell: bash
-        run: |
-          set -euo pipefail
-          want="$(node -p "require('./package.json').devDependencies['@tauri-apps/cli']")"
-          if [[ ! "$want" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::@tauri-apps/cli must be an exact stable version, got '$want'"
-            exit 1
-          fi
-          have="$(cargo tauri --version 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
-          if [ "$have" != "$want" ]; then
-            cargo install tauri-cli --version "$want" --locked --force
-          fi
-          cargo tauri --version
 
       - name: Initialize Tauri Android project
         # `src-tauri/gen/android/` is gitignored EXCEPT for a handful of
@@ -384,7 +348,10 @@ jobs:
             rm -rf src-tauri/gen/android
           fi
 
-          cargo tauri android init
+          # The prebuilt npm CLI, not a compiled `cargo-tauri` (#5853). Init
+          # records its runner in the generated Gradle build, so the APK
+          # builds below call back into the same CLI.
+          npm run tauri -- android init
 
           # Restore the tracked overrides on top of the regenerated scaffold.
           if find "$OVERRIDES" -mindepth 1 -print -quit | grep -q .; then
@@ -398,7 +365,7 @@ jobs:
         run: bash scripts/patch-android-build.sh
 
       - name: Build Android APK (x86_64 debug)
-        run: cargo tauri android build --target x86_64 --debug
+        run: npm run tauri -- android build --target x86_64 --debug
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
 
@@ -444,7 +411,7 @@ jobs:
           esac
 
       - name: Build Android APK (aarch64 release, unsigned)
-        run: cargo tauri android build --target aarch64
+        run: npm run tauri -- android build --target aarch64
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
 

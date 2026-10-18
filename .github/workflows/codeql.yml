@@ -115,6 +115,10 @@ jobs:
           # file's selection (only a `+` prefix merges), which would silently
           # strip the filters that file exists to apply.
           config-file: ./.github/codeql/codeql-config.yml
+          # A TRAP-cache hit made no measurable difference to analysis time,
+          # and each main commit saved a new entry into the shared cache
+          # quota (#5853).
+          trap-caching: false
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
