@@ -130,8 +130,12 @@ cargo tauri android dev --target x86_64   # Android emulator
 | Loop | Wall time / edit | Use it for |
 | --- | --- | --- |
 | `npm run dev` (Vite HMR) | ~50 ms | Pure UI work: component layout, styles, copy, interactions wired through `tauri-mock`. |
-| `cargo tauri dev` | ~10-20 s (Rust edit), ~50 ms (frontend edit) | Anything that hits real backend behaviour: sync, search, materializer, command handlers, sqlx queries, capability permissions. |
+| `cargo tauri dev` | Rust relink per Rust edit, ~50 ms (frontend edit) | Anything that hits real backend behaviour: sync, search, materializer, command handlers, sqlx queries, capability permissions. |
 | `cargo tauri android dev --target x86_64` | minutes (cold), ~20 s (incremental) | Mobile-specific layout, touch gestures, Android-only IPC paths, keystore-signed builds. |
+
+`cargo tauri dev` opens the real vault, because nothing sets `AGARIC_DATA_DIR`; export it to a scratch directory first when the session writes data you want to keep out of the vault. Its `beforeDevCommand` typechecks on every launch, so a type error stops the window from opening.
+
+To iterate a frontend change against the real backend without a Rust relink, run the debug binary (plain cargo does not enable `tauri/custom-protocol`, so it loads `devUrl`, `http://localhost:5173`) against `npm run build && npx vite preview --port 5173 --strictPort`. The origin differs from the embedded build, which changes the CSP and the image, camera and attachment behaviour, so the final run uses the embedded binary.
 
 The browser fallback covers most frontend work — every Tauri IPC is mocked via `src/lib/tauri-mock/`. Some space-scoping and live sync flows are stubbed there; for those, run the full app. The Rust loop on every UI tweak is otherwise the long pole of the dev cycle and worth avoiding.
 
@@ -406,7 +410,7 @@ Run after touching any `sqlx::query!` / `sqlx::query_as!` call. Commit the regen
 ## TypeScript bindings (specta)
 
 ```bash
-cd src-tauri && cargo test -- specta_tests --ignored
+cd src-tauri && cargo test --lib -- specta_tests --ignored
 ```
 
 Run after touching any `#[tauri::command]` signature or any `specta::Type` derive. Commit the regenerated `src/lib/bindings.ts` alongside the Rust change. CI fails on drift via the `ts_bindings_up_to_date` Rust test, part of the `cargo nextest run` suite (not a standalone prek hook).
@@ -416,6 +420,6 @@ Run after touching any `#[tauri::command]` signature or any `specta::Type` deriv
 - **Android: stale database crashes on launch.** Wipe and re-install: `adb shell pm clear com.agaric.app`.
 - **Android: release APK won't install.** Likely a signing mismatch — uninstall the previous build first (signatures from different keystores conflict).
 - **Rust compilation errors after SQL changes.** Run `just gen-sqlx` and commit the cache.
-- **TypeScript errors after Rust type changes.** Run `cargo test -- specta_tests --ignored` and commit `src/lib/bindings.ts`.
+- **TypeScript errors after Rust type changes.** Run `just gen-bindings` and commit `src/lib/bindings.ts`.
 - **WebView not found (Linux).** `libwebkit2gtk-4.1-dev` must be installed; older `4.0` won't work. Missing WebKit/GTK development headers block compiling and testing the Rust workspace, not only launching the Tauri app. On a disposable Debian/Ubuntu VM, run `bash scripts/setup.sh --install-system-deps`; local setup intentionally leaves privileged package installation to you.
 - **Slow first build.** Cold compile of the Tauri + sqlx + Loro stack takes minutes. Subsequent incremental builds are seconds.

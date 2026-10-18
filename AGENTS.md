@@ -175,7 +175,7 @@ Components past ~500 lines: extract hooks first, then presentational sub-compone
 `src/lib/bindings.ts` is generated from the Rust command surface. New code imports from `@/lib/bindings`; the few hand-written helpers live in `@/lib/ipc-helpers`. Regenerate after any command signature, arg/return type, or command-list change (the `ts_bindings_up_to_date` test fails on drift), including doc-comment-only changes:
 
 ```bash
-cd src-tauri && cargo test -- specta_tests --ignored     # or: just gen-bindings
+cd src-tauri && cargo test --lib -- specta_tests --ignored     # or: just gen-bindings
 ```
 
 ## Pre-commit & CI
@@ -230,7 +230,7 @@ The same applies to prose: a comment or issue body that claims something was che
 The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained second implementation of the backend. These rules keep it, and the e2e estate built on it, honest:
 
 1. **Assert durable, re-queried effect, never call shape.** `expect(invoke).toHaveBeenCalledWith(…)` proves the frontend asked, not that anything persisted. Persist, re-query, assert the state.
-2. **The mock is a contract pinned by conformance fixtures.** Every state-mutating handler is driven by a `conformance/fixtures/*.json` fixture whose `expected` is authored by the backend (`CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'`) and asserted by both sides. Read commands are pinned through `queries` steps the same way; `conformance-coverage.test.ts` fails a new command without a fixture or a reasoned waiver. Wiring: `conformance_query.rs` + the `WIRE` table in `conformance-query.ts`.
+2. **The mock is a contract pinned by conformance fixtures.** Every state-mutating handler is driven by a `conformance/fixtures/*.json` fixture whose `expected` is authored by the backend (`CONFORMANCE_UPDATE=1 cargo nextest run --workspace --test command_integration -E 'test(conformance_fixtures_match_backend)'`) and asserted by both sides. Read commands are pinned through `queries` steps the same way; `conformance-coverage.test.ts` fails a new command without a fixture or a reasoned waiver. Wiring: `conformance_query.rs` + the `WIRE` table in `conformance-query.ts`.
 3. **A migration that touches a table the mock references updates the mock in the same PR.**
 4. **A bug that reached a user lands a spec in `e2e-tauri/`.** That lane runs the real backend, the only frontend surface with no second implementation between the test and the truth, and a bug that shipped is one the mock-backed estate missed. It runs on pull requests but is not a required context (#4671), so pair the spec with one in a lane that blocks.
 5. **Every user-facing feature lands with an end-to-end spec of at least its happy path, in the lane that can show its failure.** A scenario goes to `e2e-tauri/` only when the mock cannot show it failing: a sequence of several IPC calls, a view the materializer keeps up to date (`agenda_cache`, `pages_cache`, `tags_cache`, FTS), bytes on disk, or a path the mock does not model. Everything else goes to `e2e/`. Persistence is checked by navigating away and back and re-querying, never by reloading; the spec is shown red once by breaking the code it covers. #5365 is the reference sweep.

@@ -150,7 +150,7 @@ Named snapshots in loops: `insta::assert_yaml_snapshot!(format!("op_payload_json
 `conformance/fixtures/*.json` pin every mutating command (and read commands via a `queries` array) against both the Rust backend and the TS mock (`src/lib/tauri-mock/__tests__/conformance.test.ts`). An op with `"via": "command"` runs its `*_inner` instead of the payload replay and records its return value or refusal in `expected_ops` (#4670). Never hand-write `expected` / `expected_queries` / `expected_ops`; the backend authors them:
 
 ```bash
-cd src-tauri && CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'
+cd src-tauri && CONFORMANCE_UPDATE=1 cargo nextest run --workspace --test command_integration -E 'test(conformance_fixtures_match_backend)'
 npx vitest run src/lib/tauri-mock     # from the repo root; red means the mock diverges — fix the mock, not the backend
 npx oxfmt --write conformance/fixtures/   # from the repo root
 ```
