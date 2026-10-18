@@ -32,6 +32,7 @@ import {
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { SearchPanel } from '@/components/SearchPanel'
 import { t } from '@/lib/i18n'
+import { consumePrefetchedPageSubtree } from '@/lib/prefetch-page-subtree'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 import { queryClient } from '@/lib/query-client'
 import { useNavigationStore } from '@/stores/navigation'
@@ -1615,10 +1616,23 @@ describe('SearchPanel', () => {
 
   it('clicking page title in breadcrumb navigates to the page', async () => {
     const user = userEvent.setup()
+    const parentSubtree: CommandReturns['load_page_subtree'] = {
+      blocks: [
+        makeBlockRow({
+          id: 'CHILD1',
+          parent_id: 'PARENT1',
+          page_id: 'PARENT1',
+          content: 'child with breadcrumb',
+        }),
+      ],
+      truncated: false,
+      total: 1,
+    }
 
     // search_blocks returns a block with parent_id; batch_resolve returns the
     // parent page title.
     stubInvoke({
+      load_page_subtree: () => parentSubtree,
       search_blocks: () =>
         searchPage([
           makeSearchResult({
@@ -1651,6 +1665,20 @@ describe('SearchPanel', () => {
     expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'batch_resolve')).toEqual([
       ['batch_resolve', { ids: ['PARENT1'], scope: { kind: 'active', space_id: 'SPACE_TEST' } }],
     ])
+    // The click hovered and focused the title, whose dwell timer warms the page
+    // being opened (#2850). Wait for it: left pending, it lands inside this test
+    // only on a machine slow enough to outlast the dwell.
+    await waitFor(() => {
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'load_page_subtree')).toEqual([
+        [
+          'load_page_subtree',
+          { rootBlockId: 'PARENT1', scope: { kind: 'active', space_id: 'SPACE_TEST' } },
+        ],
+      ])
+    })
+    await expect(consumePrefetchedPageSubtree('SPACE_TEST', 'PARENT1')).resolves.toEqual(
+      parentSubtree,
+    )
   })
 
   it('shows a breadcrumb title the resolve store holds without batch_resolve (#5439)', async () => {
