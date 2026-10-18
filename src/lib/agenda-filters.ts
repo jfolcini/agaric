@@ -88,9 +88,13 @@ function encodeUnfilteredCursor(state: UnfilteredCursorState): string | null {
   return UNFILTERED_CURSOR_PREFIX + JSON.stringify(state)
 }
 
-/** `undefined` (absent → source exhausted), `null`, or a backend keyset cursor string. */
-function isValidCursorField(value: unknown): value is string | null | undefined {
-  return value === undefined || value === null || typeof value === 'string'
+/**
+ * `undefined` (absent → source exhausted) or a backend keyset cursor string.
+ * `encodeUnfilteredCursor` never writes a `null` field: only page 1 starts
+ * from one.
+ */
+function isValidCursorField(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === 'string'
 }
 
 /**
