@@ -5,8 +5,10 @@ import {
   deleteBlockViaContextMenu,
   expect,
   focusBlockById,
+  ipc,
   navigateToView,
   openPage,
+  reopenPage,
   showJournalPages,
   test,
   waitForBoot,
@@ -23,6 +25,9 @@ import {
  * Seed (src/lib/tauri-mock/seed.ts): Getting Started's GS_2 links
  * `[[Quick Notes]]`; Quick Notes' QN_1 links `[[Getting Started]]`; today's
  * journal page holds "Morning standup notes go here".
+ *
+ * A broken chip removes itself when clicked (#5736), from a static block, the
+ * block's editor and page mode; the mock shows each write failing to land.
  */
 
 const PAGE_GETTING_STARTED = '00000000000000000000PAGE01'
@@ -34,6 +39,11 @@ const BLOCK_QN_2 = '0000000000000000000BLOCK09'
 const BLOCK_PROJ_1 = '0000000000000000000BLOCK13'
 const PAGE_QUICK_NOTES = '00000000000000000000PAGE02'
 const GS_1_TEXT = 'Welcome to Agaric! This is your personal knowledge base.'
+const QN_1_TEXT = `These notes complement the [[${PAGE_GETTING_STARTED}]] guide.`
+const QN_1_UNLINKED = 'These notes complement the  guide.'
+/** A broken chip's name: its label, then what activating it does. */
+const brokenName = (label: string) => `${label} (remove broken link)`
+const MOVED_LABEL = `[[${PAGE_GETTING_STARTED.slice(0, 8)}...]]`
 
 type Page = import('@playwright/test').Page
 
@@ -74,6 +84,38 @@ async function openFromPageList(page: Page, title: string): Promise<void> {
   await openPagesView(page)
   await page.locator('[data-page-item]').getByText(title, { exact: true }).click()
   await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
+}
+
+/** A second space, named `name`, to move pages into. */
+async function createSpace(page: Page, name: string): Promise<void> {
+  await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
+  await page.mouse.move(0, 0)
+  await page.getByRole('option', { name: 'Manage spaces…', exact: true }).click()
+  const spaces = page.getByTestId('settings-panel-spaces')
+  await spaces.getByRole('button', { name: 'Create new space', exact: true }).click()
+  await spaces.getByPlaceholder('New space name').fill(name)
+  await spaces.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(spaces.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue(name)
+}
+
+/** From Quick Notes: follow QN_1's chip to Getting Started and move it to `space`; the tab pops back. */
+async function moveGettingStartedTo(page: Page, space: string): Promise<void> {
+  await chipIn(page, BLOCK_QN_1, 'block-link-chip').click()
+  await expect(page.locator('[aria-label="Page title"]')).toHaveText('Getting Started')
+  await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Move to space', exact: true }).click()
+  await page.getByRole('menuitem', { name: space, exact: true }).click()
+  await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
+}
+
+/** The newest "Broken link removed" toast. */
+function removedToast(page: Page) {
+  return page.locator('[data-sonner-toast]').filter({ hasText: 'Broken link removed' }).last()
+}
+
+/** QN_1's content as the backend holds it. */
+async function qn1Content(page: Page): Promise<string | null> {
+  return (await ipc<{ content: string | null }>(page, 'get_block', { blockId: BLOCK_QN_1 })).content
 }
 
 async function restoreAllFromTrash(page: Page): Promise<void> {
@@ -159,7 +201,7 @@ test.describe('link chips follow their target', () => {
     await openFromPageList(page, 'Projects')
     await expect(refChip()).toContainText('(deleted)')
     await openFromPageList(page, 'Getting Started')
-    await expect(linkChip()).toHaveAttribute('aria-label', 'Quick Notes (deleted)')
+    await expect(linkChip()).toHaveAccessibleName(brokenName('Quick Notes'))
     // Computed, not class presence: the live chip's underline rule ties on
     // specificity with the deleted rule, so only source order keeps the strike.
     await expect(linkChip()).toHaveCSS('text-decoration-line', 'line-through')
@@ -213,15 +255,7 @@ test.describe('link chips follow their target', () => {
   test('a page moved to another space leaves the origin’s [[ picker and its chips break (#5248)', async ({
     page,
   }) => {
-    // A second space to move into.
-    await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
-    await page.mouse.move(0, 0)
-    await page.getByRole('option', { name: 'Manage spaces…', exact: true }).click()
-    const spaces = page.getByTestId('settings-panel-spaces')
-    await spaces.getByRole('button', { name: 'Create new space', exact: true }).click()
-    await spaces.getByPlaceholder('New space name').fill('Work')
-    await spaces.getByRole('button', { name: 'Create', exact: true }).click()
-    await expect(spaces.getByRole('textbox', { name: 'Rename space' }).last()).toHaveValue('Work')
+    await createSpace(page, 'Work')
 
     // Warm the origin's `[[` picker, then put the text back. The tree (and the
     // picker cache it owns) stays mounted across in-editor link navigation.
@@ -236,25 +270,104 @@ test.describe('link chips follow their target', () => {
     for (let i = 0; i < 3; i++) await page.keyboard.press('Backspace')
     await blurEditors(page)
 
-    // Follow the link to Getting Started and move it out; the tab pops back.
-    await chipIn(page, BLOCK_QN_1, 'block-link-chip').click()
-    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Getting Started')
-    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Move to space', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Work', exact: true }).click()
-    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
+    await moveGettingStartedTo(page, 'Work')
 
     // Broken as in a fresh session: the unresolved label, not the title marked deleted.
     const movedChip = chipIn(page, BLOCK_QN_1, 'block-link-chip')
-    await expect(movedChip).toHaveAttribute(
-      'aria-label',
-      `[[${PAGE_GETTING_STARTED.slice(0, 8)}...]] (deleted)`,
-    )
+    await expect(movedChip).toHaveAccessibleName(brokenName(MOVED_LABEL))
     await expect(movedChip).not.toContainText('Getting Started')
     await focusBlockById(page, BLOCK_QN_2)
     await page.keyboard.press('End')
     await page.keyboard.type(' [[', { delay: 30 })
     await expect(pickerItem('Quick Notes')).toBeVisible()
     await expect(pickerItem('Getting Started')).toHaveCount(0)
+  })
+})
+
+test.describe('a broken chip removes itself when clicked (#5736)', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    await createSpace(page, 'Work')
+    await openPage(page, 'Quick Notes')
+    await moveGettingStartedTo(page, 'Work')
+  })
+
+  test('from a static block: the link goes, and page-level Ctrl+Z or the toast’s Undo brings it back', async ({
+    page,
+  }) => {
+    const block = page.locator(`[data-testid="block-static"][data-block-id="${BLOCK_QN_1}"]`)
+    const chip = chipIn(page, BLOCK_QN_1, 'block-link-chip')
+    await chip.hover()
+    await expect(
+      page.getByRole('tooltip', { name: 'Broken link or in another space — click to remove' }),
+    ).toBeVisible()
+    await page.getByRole('button', { name: brokenName(MOVED_LABEL), exact: true }).click()
+    await expect(removedToast(page)).toBeVisible()
+    await expect(chip).toHaveCount(0)
+    await expect(
+      page.locator(`[data-block-id="${BLOCK_QN_1}"] [data-context-trigger="true"]`),
+    ).toBeFocused()
+
+    await reopenPage(page, 'Quick Notes')
+    await expect(block).toHaveText(QN_1_UNLINKED)
+    await expect(chip).toHaveCount(0)
+    expect(await qn1Content(page)).toBe(QN_1_UNLINKED)
+
+    await blurEditors(page)
+    await page.keyboard.press('Control+z')
+    await expect(chip).toHaveCount(1)
+    await reopenPage(page, 'Quick Notes')
+    await expect(chip).toHaveAccessibleName(brokenName(MOVED_LABEL))
+    expect(await qn1Content(page)).toBe(QN_1_TEXT)
+
+    await chip.click()
+    await expect(chip).toHaveCount(0)
+    await removedToast(page).getByRole('button', { name: 'Undo', exact: true }).click()
+    await expect(chip).toHaveCount(1)
+    await reopenPage(page, 'Quick Notes')
+    await expect(chip).toHaveAccessibleName(brokenName(MOVED_LABEL))
+    expect(await qn1Content(page)).toBe(QN_1_TEXT)
+  })
+
+  test('from the block’s editor: the link goes, Ctrl+Z there brings it back, and a removal saves', async ({
+    page,
+  }) => {
+    await focusBlockById(page, BLOCK_QN_1)
+    const editorChip = page.locator('[data-testid="block-editor"] [data-testid="block-link-chip"]')
+    // An atomic NodeView gets no DOM click from headless Chromium (e2e/AGENTS.md).
+    await editorChip.dispatchEvent('click')
+    await expect(removedToast(page)).toBeVisible()
+    await expect(editorChip).toHaveCount(0)
+    await page.keyboard.press('Control+z')
+    await expect(editorChip).toHaveCount(1)
+
+    await editorChip.dispatchEvent('click')
+    await expect(editorChip).toHaveCount(0)
+    await blurEditors(page)
+    await reopenPage(page, 'Quick Notes')
+    await expect(chipIn(page, BLOCK_QN_1, 'block-link-chip')).toHaveCount(0)
+    expect(await qn1Content(page)).toBe(QN_1_UNLINKED)
+  })
+
+  test('from page mode: the link goes, Ctrl+Z brings it back, and a removal saves', async ({
+    page,
+  }) => {
+    await page
+      .getByRole('radiogroup', { name: 'Editing mode' })
+      .getByRole('radio', { name: 'Page' })
+      .click()
+    const pageDocument = page.locator('[data-testid="page-mode-editor"]')
+    const pageChip = pageDocument.locator('[data-testid="block-link-chip"]')
+    await pageDocument.focus()
+    await expect(pageDocument).toBeFocused()
+    await pageChip.dispatchEvent('click')
+    await expect(removedToast(page)).toBeVisible()
+    await expect(pageChip).toHaveCount(0)
+    await page.keyboard.press('Control+z')
+    await expect(pageChip).toHaveCount(1)
+
+    await pageChip.dispatchEvent('click')
+    await expect(pageChip).toHaveCount(0)
+    await expect.poll(() => qn1Content(page)).toBe(QN_1_UNLINKED)
   })
 })

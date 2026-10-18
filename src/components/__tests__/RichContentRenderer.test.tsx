@@ -22,6 +22,7 @@ import {
   renderRichContent,
 } from '@/components/RichContentRenderer'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { t } from '@/lib/i18n'
 import { setTagColor } from '@/lib/tag-colors'
 
 const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
@@ -384,6 +385,84 @@ describe('RichContentRenderer', () => {
     const chip = screen.getByTestId('block-link-chip')
     expect(chip.classList.contains('block-link-deleted')).toBe(true)
     expect(chip).toHaveAttribute('aria-label', 'Dead Page (deleted)')
+  })
+
+  describe('broken block_link where the content can be edited (#5736)', () => {
+    const OTHER_ID = '01BRZ3NDEKTSV4RRFFQ69G5FAV'
+
+    function renderEditable(
+      content: string,
+      onRemoveBrokenLink: (next: string) => void,
+      status: (id: string) => 'active' | 'deleted' = () => 'deleted',
+      onNavigate: (id: string) => void = vi.fn(),
+    ) {
+      return render(
+        renderRichContent(content, {
+          interactive: true,
+          onNavigate,
+          onRemoveBrokenLink,
+          resolveBlockTitle: (id) => (id === BLOCK_ID ? 'Dead Page' : 'Other Page'),
+          resolveBlockStatus: status,
+        }),
+      )
+    }
+
+    it('is a button named for what it does, with the broken-link tooltip', async () => {
+      const user = userEvent.setup()
+      renderEditable(`[[${BLOCK_ID}]]`, vi.fn())
+      const chip = screen.getByRole('button', {
+        name: `Dead Page ${t('editor.brokenLinkRemoveAction')}`,
+      })
+      expect(chip).toHaveAttribute('data-testid', 'block-link-chip')
+      expect(chip.classList.contains('block-link-deleted')).toBe(true)
+      await user.hover(chip)
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(t('editor.brokenLinkTooltip'))
+    })
+
+    it('a click hands back the content without exactly that link', async () => {
+      const onRemoveBrokenLink = vi.fn()
+      const user = userEvent.setup()
+      renderEditable(`a [[${BLOCK_ID}]] b [[${OTHER_ID}]] c`, onRemoveBrokenLink)
+      await user.click(screen.getAllByTestId('block-link-chip')[1] as HTMLElement)
+      expect(onRemoveBrokenLink).toHaveBeenCalledExactlyOnceWith(`a [[${BLOCK_ID}]] b  c`)
+    })
+
+    it('keeps a labelled link’s label as text, and empties a block that held only the link', async () => {
+      const onRemoveBrokenLink = vi.fn()
+      const user = userEvent.setup()
+      const { unmount } = renderEditable(`see [[${BLOCK_ID}|the plan]] here`, onRemoveBrokenLink)
+      await user.click(screen.getByTestId('block-link-chip'))
+      expect(onRemoveBrokenLink).toHaveBeenLastCalledWith('see the plan here')
+      unmount()
+      renderEditable(`[[${BLOCK_ID}]]`, onRemoveBrokenLink)
+      await user.click(screen.getByTestId('block-link-chip'))
+      expect(onRemoveBrokenLink).toHaveBeenLastCalledWith('')
+    })
+
+    it('Enter on the focused chip removes it', async () => {
+      const onRemoveBrokenLink = vi.fn()
+      const user = userEvent.setup()
+      renderEditable(`x [[${BLOCK_ID}]]`, onRemoveBrokenLink)
+      await user.tab()
+      expect(screen.getByTestId('block-link-chip')).toHaveFocus()
+      await user.keyboard('{Enter}')
+      expect(onRemoveBrokenLink).toHaveBeenCalledExactlyOnceWith('x ')
+    })
+
+    it('a resolvable chip still navigates and removes nothing', async () => {
+      const onRemoveBrokenLink = vi.fn()
+      const onNavigate = vi.fn()
+      const user = userEvent.setup()
+      renderEditable(`[[${BLOCK_ID}]]`, onRemoveBrokenLink, () => 'active', onNavigate)
+      await user.click(screen.getByRole('link', { name: 'Dead Page' }))
+      expect(onNavigate).toHaveBeenCalledExactlyOnceWith(BLOCK_ID)
+      expect(onRemoveBrokenLink).not.toHaveBeenCalled()
+    })
+
+    it('has no a11y violations', async () => {
+      const { container } = renderEditable(`see [[${BLOCK_ID}]] here`, vi.fn())
+      expect(await axe(container)).toHaveNoViolations()
+    })
   })
 
   // -- Inline tokens: block_ref -----------------------------------------------

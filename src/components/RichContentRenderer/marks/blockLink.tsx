@@ -1,7 +1,9 @@
 import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { BlockLinkNode } from '@/editor/types'
+import { i18n } from '@/lib/i18n'
 import { getPageDisplayName } from '@/lib/page-display'
 import { cn } from '@/lib/utils'
 
@@ -45,6 +47,31 @@ export function renderBlockLink(
   // flowing text where a full namespaced path overflows the line. A stored
   // label is shown in the leaf's place (#5160 D9).
   const label = node.attrs.label ?? getPageDisplayName(title, 'leaf').label
+  if (status === 'deleted' && ctx.interactive === true && ctx.removeBrokenLink !== undefined) {
+    const remove = ctx.removeBrokenLink
+    return (
+      <Tooltip key={key}>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              'block-link-chip block-link-deleted inline cursor-pointer',
+              linkId === ctx.anchorRefId && 'ref-chip-anchor',
+            )}
+            data-testid="block-link-chip"
+            onClick={(e) => {
+              e.stopPropagation()
+              remove(node)
+            }}
+          >
+            {label}
+            <span className="sr-only"> {i18n.t('editor.brokenLinkRemoveAction')}</span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{i18n.t('editor.brokenLinkTooltip')}</TooltipContent>
+      </Tooltip>
+    )
+  }
   const deletedProps = status === 'deleted' ? { 'aria-label': `${title} (deleted)` } : {}
   // Unified chip interactivity policy (matches tagRef / blockRef):
   // - clickable (handler AND interactive) → full affordances: role=link,

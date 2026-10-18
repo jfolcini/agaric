@@ -2,8 +2,8 @@ import type React from 'react'
 
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import { renderBlock, renderBlockInline } from '@/components/RichContentRenderer/marks/block'
-import { parse } from '@/editor/markdown-serializer'
-import type { BlockLevelNode, DocNode } from '@/editor/types'
+import { parse, serialize } from '@/editor/markdown-serializer'
+import type { BlockLevelNode, BlockLinkNode, DocNode } from '@/editor/types'
 
 // Re-export `CALLOUT_CONFIG` so existing imports keep working.
 // (`{ CALLOUT_CONFIG, renderRichContent } from '@/components/RichContentRenderer'`)
@@ -59,6 +59,19 @@ export function clearRichContentParseCache(): void {
 }
 
 /**
+ * `node` without `link`: its label stays as plain text, since the label is this
+ * block's own text and the title is the target's (#5736).
+ */
+function withoutLink<T extends object>(node: T, link: BlockLinkNode): T {
+  if (!('content' in node) || !Array.isArray(node.content)) return node
+  const content = (node.content as object[]).flatMap((child) => {
+    if (child !== link) return [withoutLink(child, link)]
+    return link.attrs.label === undefined ? [] : [{ type: 'text', text: link.attrs.label }]
+  })
+  return { ...node, content }
+}
+
+/**
  * Render markdown content as rich React nodes for the static view.
  * Inline tokens (block_link, tag_ref) become styled/clickable spans.
  *
@@ -91,6 +104,11 @@ export function renderRichContent(
      * rendering byte-identical for the editor/static-view callers.
      */
     inline?: boolean | undefined
+    /**
+     * Where the content can be edited: clicking a broken `[[link]]` chip hands
+     * this the content without that link, as the editor would serialize it.
+     */
+    onRemoveBrokenLink?: ((contentWithoutLink: string) => void) | undefined
   },
 ): React.ReactNode {
   if (!markdown) return null
@@ -99,7 +117,14 @@ export function renderRichContent(
 
   const inline = options.inline ?? false
   const elements: React.ReactNode[] = []
-  const ctx: RenderContext = options
+  const { onRemoveBrokenLink } = options
+  const ctx: RenderContext =
+    onRemoveBrokenLink === undefined
+      ? options
+      : {
+          ...options,
+          removeBrokenLink: (link) => onRemoveBrokenLink(serialize(withoutLink(doc, link))),
+        }
   for (let bIdx = 0; bIdx < doc.content.length; bIdx++) {
     const block = doc.content[bIdx] as BlockLevelNode
     if (inline) {

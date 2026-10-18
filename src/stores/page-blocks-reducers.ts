@@ -295,7 +295,7 @@ export function createReducers({
       }
     },
 
-    edit: async (blockId: string, content: string) => {
+    edit: async (blockId: string, content: string, { merge = true } = {}) => {
       const { rootParentId, blocksById } = get()
       const previousContent = blocksById.get(blockId)?.content
       // Single-block-edit hot path (perf-review Tier 1 #2, #2200): re-allocating
@@ -345,7 +345,10 @@ export function createReducers({
         // #2600 — coalesce a block's debounced mid-typing commits + its final
         // blur commit into ONE undo entry (key is per-block) so Ctrl+Z reverts
         // a block edit as a single action despite the finer commit cadence.
-        notifyUndoNewAction(rootParentId, resp.op_refs, `edit:${blockId}`)
+        // Without the key, a `merge: false` entry is not joined by the typing
+        // that follows it either.
+        if (merge) notifyUndoNewAction(rootParentId, resp.op_refs, `edit:${blockId}`)
+        else notifyUndoNewAction(rootParentId, resp.op_refs, undefined, { merge: false })
         return true
       } catch (err) {
         // Rollback optimistic update — also a single-block touch.

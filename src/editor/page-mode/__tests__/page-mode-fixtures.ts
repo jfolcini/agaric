@@ -48,6 +48,7 @@ export function openPage(
     extensions: pageModeExtensions({
       resolveTagName: (id) => `#${id}`,
       resolveBlockTitle: (id) => id,
+      resolveBlockStatus: () => 'active',
       searchTags: noPickerItems,
       searchPages: noPickerItems,
       searchBlockRefs: noPickerItems,

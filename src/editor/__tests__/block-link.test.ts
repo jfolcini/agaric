@@ -4,13 +4,16 @@
 
 import { Editor, type JSONContent } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
+import History from '@tiptap/extension-history'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
-import { afterEach, describe, expect, it } from 'vitest'
+import { toast } from 'sonner'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { BlockLink } from '@/editor/extensions/block-link'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
+import { t } from '@/lib/i18n'
 
 describe('BlockLink', () => {
   it('creates an extension with the correct name', () => {
@@ -122,37 +125,109 @@ describe('BlockLink Backspace deletes the chip cleanly (#1739)', () => {
   })
 })
 
-describe('BlockLink broken link recovery', () => {
-  /** Helper: invoke the NodeView factory and return the DOM + view object. */
-  function createNodeView(options: {
-    id: string
-    resolveStatus?: (id: string) => 'active' | 'deleted'
-    editor?: unknown
-    getPos?: () => number
-  }) {
-    const ext = BlockLink.configure({
-      resolveTitle: (id) => `Title:${id}`,
-      resolveStatus: options.resolveStatus,
-    })
+describe('BlockLink broken link removal (#5736)', () => {
+  const DEAD = '01DEAD00000000000000000000'
+  const LIVE = '01L1VE00000000000000000000'
+  let editor: Editor
+  const onNavigate = vi.fn()
 
-    // The addNodeView config is a function that returns the NodeView factory.
-    const factory = (ext.config.addNodeView as (...args: unknown[]) => unknown)?.call(ext)
-    const fakeNode = { type: { name: 'block_link' }, attrs: { id: options.id }, nodeSize: 1 }
-    const view = (factory as (...args: unknown[]) => { dom: unknown })({
-      node: fakeNode,
-      editor: options.editor ?? {},
-      getPos: options.getPos ?? (() => 0),
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    editor.destroy()
+  })
+
+  function build(content: JSONContent[]): Editor {
+    editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [
+        Document,
+        Paragraph,
+        Text,
+        History,
+        BlockLink.configure({
+          resolveTitle: (id) => `Title:${id}`,
+          resolveStatus: (id) => (id === DEAD ? 'deleted' : 'active'),
+          onNavigate,
+        }),
+      ],
+      content: { type: 'doc', content: [{ type: 'paragraph', content }] },
     })
-    return { dom: view.dom as HTMLSpanElement, view }
+    return editor
   }
-  it('does not set title tooltip on active links', () => {
-    const { dom } = createNodeView({
-      id: 'ACTIVE01',
-      resolveStatus: () => 'active',
-    })
 
-    expect(dom.getAttribute('title')).toBeNull()
-    expect(dom.classList.contains('block-link-deleted')).toBe(false)
+  const chip = (id: string) => editor.view.dom.querySelector(`[data-id="${id}"]`) as HTMLElement
+
+  const markdown = () => serialize(editor.getJSON() as DocNode)
+
+  it('a broken chip is struck through and carries the removal tooltip and name; a live one does not', () => {
+    build([
+      { type: 'block_link', attrs: { id: DEAD } },
+      { type: 'block_link', attrs: { id: LIVE } },
+    ])
+    expect(chip(DEAD).classList.contains('block-link-deleted')).toBe(true)
+    expect(chip(DEAD).getAttribute('title')).toBe(t('editor.brokenLinkTooltip'))
+    expect(chip(DEAD).getAttribute('role')).toBe('button')
+    expect(chip(DEAD).getAttribute('aria-label')).toBe(
+      `Title:${DEAD} ${t('editor.brokenLinkRemoveAction')}`,
+    )
+    expect(chip(LIVE).classList.contains('block-link-deleted')).toBe(false)
+    expect(chip(LIVE).getAttribute('title')).toBeNull()
+    expect(chip(LIVE).hasAttribute('role')).toBe(false)
+    expect(chip(LIVE).hasAttribute('aria-label')).toBe(false)
+  })
+
+  it('a labelled broken chip is named by its label', () => {
+    build([{ type: 'block_link', attrs: { id: DEAD, label: 'the plan' } }])
+    expect(chip(DEAD).getAttribute('aria-label')).toBe(
+      `the plan ${t('editor.brokenLinkRemoveAction')}`,
+    )
+  })
+
+  it('a removal right after typing beside the chip is an undo step of its own', () => {
+    build([
+      { type: 'text', text: 'a ' },
+      { type: 'block_link', attrs: { id: DEAD } },
+    ])
+    editor.view.dispatch(editor.state.tr.insertText('x', 3))
+    chip(DEAD).click()
+    expect(markdown()).toBe('a x')
+    editor.commands.undo()
+    expect(markdown()).toBe(`a x[[${DEAD}]]`)
+  })
+
+  it('a click removes exactly that chip, toasts, and undo puts it back', () => {
+    build([
+      { type: 'text', text: 'a ' },
+      { type: 'block_link', attrs: { id: DEAD } },
+      { type: 'text', text: ' b ' },
+      { type: 'block_link', attrs: { id: LIVE } },
+    ])
+    chip(DEAD).click()
+    expect(markdown()).toBe(`a  b [[${LIVE}]]`)
+    expect(toast.success).toHaveBeenCalledExactlyOnceWith(t('editor.brokenLinkRemoved'))
+    expect(onNavigate).not.toHaveBeenCalled()
+    editor.commands.undo()
+    expect(markdown()).toBe(`a [[${DEAD}]] b [[${LIVE}]]`)
+  })
+
+  it('a labelled broken chip leaves its label as text', () => {
+    build([
+      { type: 'text', text: 'see ' },
+      { type: 'block_link', attrs: { id: DEAD, label: 'the plan' } },
+    ])
+    chip(DEAD).click()
+    expect(markdown()).toBe('see the plan')
+  })
+
+  it('a live chip still navigates and leaves the content alone', () => {
+    build([{ type: 'block_link', attrs: { id: LIVE } }])
+    chip(LIVE).click()
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith(LIVE)
+    expect(markdown()).toBe(`[[${LIVE}]]`)
+    expect(toast.success).not.toHaveBeenCalled()
   })
 })
 

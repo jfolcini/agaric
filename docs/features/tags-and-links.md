@@ -68,7 +68,7 @@ An **embed** is transclusion: one source of truth rendered in many places. Where
 
 ## Cross-space links
 
-A link whose target is in a different space **does not navigate** — it renders as a broken-link chip you can click to remove. To follow such a target, **switch space** first. See [spaces.md](spaces.md) → *Cross-space links* for the full rule.
+A link whose target is in a different space **does not navigate** — it renders as a broken-link chip you can click to remove (`Ctrl+Z` restores it; a labelled link keeps its label as text). To follow such a target, **switch space** first. See [spaces.md](spaces.md) → *Cross-space links* for the full rule.
 
 ## Backlinks
 
