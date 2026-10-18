@@ -486,6 +486,34 @@ describe('what the property found', () => {
     ])
   })
 
+  it('undoing a cut pasted where a block starts, after a peer created a block before it, gives each text its id back', async () => {
+    const { ed, backend, save, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+    ])
+    // Pasted where A starts, B's text joins A's under B's id, and A's id goes.
+    ed.commands.setTextSelection({ from: posIn(ed, 1, 0), to: posIn(ed, 1, 4) })
+    const data = new DataTransfer()
+    ed.view.dom.dispatchEvent(
+      new ClipboardEvent('cut', { clipboardData: data, bubbles: true, cancelable: true }),
+    )
+    caret(ed, 0, 0)
+    ed.view.pasteHTML(data.getData('text/html'))
+    await save()
+
+    await remote((b) => b.create(X, PAGE, 0, 'from a peer'))
+    ed.commands.undo()
+    ed.commands.undo()
+    await save()
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [X, 0, 'from a peer'],
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+    ])
+    expect(backend.live()).toEqual(rowsOf(ed.state.doc))
+  })
+
   it('an undo restoring a block whose parent a peer deleted leaves that parent deleted', async () => {
     const { ed, backend, save, remote } = open([
       [A, 0, 'alpha'],
