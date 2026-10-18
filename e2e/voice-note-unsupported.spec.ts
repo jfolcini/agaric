@@ -4,7 +4,9 @@ import { expect, focusBlock, openPage, test, typeSlashCommand, waitForBoot } fro
 
 /**
  * `/voice` is offered only where the webview's `MediaRecorder` supports a
- * recording format; WebKitGTK supports none (#5730).
+ * recording format, or failing that, where it can encode Ogg Opus itself with
+ * `AudioEncoder` (#5730, `voice-note-record.spec.ts`). Chromium has an
+ * `AudioEncoder`, so it is removed here to leave `MediaRecorder` deciding.
  */
 
 async function stubMediaRecorder(page: Page, canRecord: boolean) {
@@ -17,6 +19,7 @@ async function stubMediaRecorder(page: Page, canRecord: boolean) {
         }
       },
     })
+    Object.defineProperty(window, 'AudioEncoder', { configurable: true, value: undefined })
   }, canRecord)
   await waitForBoot(page)
   await openPage(page, 'Getting Started')
@@ -24,7 +27,9 @@ async function stubMediaRecorder(page: Page, canRecord: boolean) {
 }
 
 test.describe('/voice feature detection', () => {
-  test('is not offered where MediaRecorder supports no recording format', async ({ page }) => {
+  test('is not offered where MediaRecorder supports no format and AudioEncoder is missing', async ({
+    page,
+  }) => {
     await stubMediaRecorder(page, false)
     const list = await typeSlashCommand(page, '')
     // The sibling command is there, so the menu is open and populated.

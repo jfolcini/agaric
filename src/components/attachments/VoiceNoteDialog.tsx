@@ -1,11 +1,11 @@
 /**
  * VoiceNoteDialog — the `/voice` recorder (#5364, slice 1).
  *
- * Records the microphone with the webview's `getUserMedia` + `MediaRecorder`,
- * the capture route the pairing QR scanner already uses, and saves the audio
- * as an attachment on the block the command ran in. The microphone is released
- * on stop, on cancel and on unmount: a track left running keeps recording and
- * keeps the OS microphone indicator lit.
+ * Records the microphone through `getUserMedia`, the capture route the pairing
+ * QR scanner already uses, and a `VoiceRecorder` (`voice-recorder.ts`), and
+ * saves the audio as an attachment on the block the command ran in. The
+ * microphone is released on stop, on cancel and on unmount: a track left
+ * running keeps recording and keeps the OS microphone indicator lit.
  */
 
 import { format } from 'date-fns'
@@ -14,7 +14,11 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { supportedRecordingType } from '@/components/attachments/voice-recording'
+import {
+  releaseMicrophone,
+  startVoiceRecorder,
+  type VoiceRecorder,
+} from '@/components/attachments/voice-recorder'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -34,10 +38,6 @@ import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 
-/** Opus at this rate is about 15 MB an hour. */
-const RECORDING_BITS_PER_SECOND = 32_000
-/** How often the recorder hands over a chunk, and so how often the size cap is checked. */
-const CHUNK_INTERVAL_MS = 1000
 /**
  * Stop this far below the attachment cap: the chunk still in flight when the
  * recorder stops must not push the file over the cap, or the save is refused
@@ -53,18 +53,14 @@ interface Recording {
 }
 
 interface Session {
-  recorder: MediaRecorder
+  recorder: VoiceRecorder
   timer: ReturnType<typeof setInterval>
   /**
    * Set by Cancel and by unmount. Every other way a recording ends saves it:
    * Stop, the size cap, and the recorder stopping itself when the microphone
-   * goes away.
+   * goes away or the encoder fails.
    */
   discarded: boolean
-}
-
-function releaseMicrophone(stream: MediaStream): void {
-  for (const track of stream.getTracks()) track.stop()
 }
 
 /** `getUserMedia` rejects with a `DOMException` whose `name` says why. */
@@ -129,7 +125,6 @@ function VoiceNoteRecorder({
       if (!session) return
       sessionRef.current = null
       session.discarded = true
-      // `onstop` releases the microphone.
       session.recorder.stop()
     }
   }, [])
@@ -169,48 +164,29 @@ function VoiceNoteRecorder({
     if (!session) return
     sessionRef.current = null
     setPhase('saving')
-    // `onstop` releases the microphone and saves, after the last chunk lands.
+    // The recording settles, and `awaitRecording` saves it, once the last audio is in.
     session.recorder.stop()
   }
 
-  const beginSession = (stream: MediaStream): Session => {
-    const recorder = new MediaRecorder(stream, {
-      mimeType: supportedRecordingType() ?? '',
-      audioBitsPerSecond: RECORDING_BITS_PER_SECOND,
-    })
-    // oxlint-disable-next-line react/purity -- runs from the Record click, never during render
-    const startedAt = new Date()
-    const chunks: Blob[] = []
-    let recordedBytes = 0
-    recorder.ondataavailable = (event) => {
-      if (event.data.size === 0) return
-      chunks.push(event.data)
-      recordedBytes += event.data.size
-      if (recordedBytes >= AUTO_STOP_BYTES && sessionRef.current === session) {
-        notify.info(t('voiceNote.sizeLimitReached'))
-        stopRecording()
-      }
-    }
-    recorder.onstop = () => {
+  const awaitRecording = (session: Session, startedAt: Date) => {
+    const end = () => {
       clearInterval(session.timer)
-      releaseMicrophone(stream)
       if (sessionRef.current === session) sessionRef.current = null
-      if (session.discarded) return
-      const mimeType = recorder.mimeType.split(';')[0] ?? ''
-      void save({
-        blob: new Blob(chunks, { type: mimeType }),
-        filename: voiceNoteFilename(startedAt, mimeType),
-      })
     }
-    recorder.start(CHUNK_INTERVAL_MS)
-    const session: Session = {
-      recorder,
-      discarded: false,
-      timer: setInterval(() => {
-        setElapsedSeconds(Math.floor((Date.now() - startedAt.getTime()) / 1000))
-      }, 1000),
-    }
-    return session
+    void session.recorder.recording.then(
+      (blob) => {
+        end()
+        if (session.discarded) return
+        void save({ blob, filename: voiceNoteFilename(startedAt, blob.type) })
+      },
+      (err: unknown) => {
+        end()
+        if (session.discarded) return
+        logger.error('VoiceNoteDialog', 'the recording failed', undefined, err)
+        notify.error(t('voiceNote.micError'))
+        setPhase('idle')
+      },
+    )
   }
 
   const startRecording = async () => {
@@ -234,15 +210,39 @@ function VoiceNoteRecorder({
       releaseMicrophone(stream)
       return
     }
+    // oxlint-disable-next-line react/purity -- runs from the Record click, never during render
+    const startedAt = new Date()
+    let session: Session | null = null
+    let recorder: VoiceRecorder
     try {
-      sessionRef.current = beginSession(stream)
+      recorder = await startVoiceRecorder(stream, (bytes) => {
+        if (bytes >= AUTO_STOP_BYTES && session !== null && sessionRef.current === session) {
+          notify.info(t('voiceNote.sizeLimitReached'))
+          stopRecording()
+        }
+      })
     } catch (err) {
       releaseMicrophone(stream)
-      logger.warn('VoiceNoteDialog', 'MediaRecorder failed to start', undefined, err)
+      logger.warn('VoiceNoteDialog', 'the recorder failed to start', undefined, err)
       notify.error(t('voiceNote.micError'))
       setPhase('idle')
       return
     }
+    session = {
+      recorder,
+      discarded: false,
+      timer: setInterval(() => {
+        setElapsedSeconds(Math.floor((Date.now() - startedAt.getTime()) / 1000))
+      }, 1000),
+    }
+    awaitRecording(session, startedAt)
+    // The dialog was closed while the recorder was starting.
+    if (!mountedRef.current) {
+      session.discarded = true
+      recorder.stop()
+      return
+    }
+    sessionRef.current = session
     setElapsedSeconds(0)
     setPhase('recording')
   }

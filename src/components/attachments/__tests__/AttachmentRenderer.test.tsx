@@ -564,6 +564,8 @@ describe('AttachmentRenderer', () => {
 
       const player = await findPlayer(container)
       expect(player).toHaveAttribute('controls')
+      // WebKitGTK reads an Ogg note's duration wrong under `metadata` (#5730).
+      expect(player).toHaveAttribute('preload', 'auto')
       expect(player.getAttribute('src')).toBe('blob:mock/1')
       expect(player).toHaveAttribute(
         'aria-label',
