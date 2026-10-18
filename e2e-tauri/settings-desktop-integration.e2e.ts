@@ -21,7 +21,6 @@
 // helpers.ts.
 // ---------------------------------------------------------------------------
 
-import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -31,6 +30,7 @@ import {
   NAV_TIMEOUT,
   navigateTo,
   openSettingsTab,
+  pressChord,
   typeInputVerified,
   waitForAppReady,
 } from './helpers'
@@ -49,17 +49,6 @@ const NEW_CHORD = 'Ctrl+Alt+J'
 // How long a chord press is given to open the dialog; the new chord is held
 // to the same window, so the old chord's silence within it means something.
 const CHORD_WINDOW_MS = 5_000
-
-/** Press `chord` (xdotool's spelling) at the X server, where the plugin grabs it. */
-function pressChord(chord: string): void {
-  try {
-    execFileSync('xdotool', ['key', chord])
-  } catch (err) {
-    throw new Error(
-      `xdotool key ${chord} failed; the lane needs xdotool to press OS chords: ${String(err)}`,
-    )
-  }
-}
 
 /** Whether the Quick Capture dialog opens within `CHORD_WINDOW_MS` of pressing `chord`. */
 async function chordOpensDialog(chord: string): Promise<boolean> {

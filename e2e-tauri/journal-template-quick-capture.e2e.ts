@@ -10,12 +10,18 @@
 // with the capture when the journal is opened.
 //
 // Quick Capture's desktop trigger is an OS-level chord the WebDriver cannot
-// press, so the capture goes through the phone-width FAB
+// press, so that capture goes through the phone-width FAB
 // (`QuickCaptureFab`, shown below 768px): the window is narrowed for the
 // capture and widened back before the journal is read.
 //
+// The second case presses the default chord at the X server (`pressChord`)
+// with the window minimized, the way it is pressed from another app, and
+// asserts the capture lands on today.
+//
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
+
+import { execFileSync } from 'node:child_process'
 
 import {
   ACTION_TIMEOUT,
@@ -24,7 +30,9 @@ import {
   expectAbsent,
   navigateTo,
   openNewPage,
+  pressChord,
   runScopedMarker,
+  typeInputVerified,
   typeMarkerVerified,
   waitForAppReady,
   waitForToast,
@@ -33,8 +41,23 @@ import {
 const TEMPLATE = runScopedMarker('wdio-jtpl-template')
 const CAPTURE = runScopedMarker('wdio-jtpl-capture')
 const TEMPLATE_BLOCK = `[data-testid="block-static"]*=${TEMPLATE}`
+const HOTKEY_NOTE = runScopedMarker('wdio-jtpl-hotkey')
 
-describe('Agaric real-backend journal template on a Quick Capture day (#5395)', () => {
+/** Today as the local `YYYY-MM-DD` the journal names a day by. */
+function todayIso(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+async function waitForWindowFocus(focused: boolean, why: string): Promise<void> {
+  await browser.waitUntil(
+    async () => (await browser.execute(() => document.hasFocus())) === focused,
+    { timeout: ACTION_TIMEOUT, timeoutMsg: why },
+  )
+}
+
+describe('Agaric real-backend Quick Capture and the journal template (#5395, #5735)', () => {
   it('a day Quick Capture creates carries the journal template', async () => {
     await waitForAppReady()
 
@@ -101,5 +124,29 @@ describe('Agaric real-backend journal template on a Quick Capture day (#5395)', 
     const [templateAt = -1, captureAt = -1] = order
     expect(templateAt).toBeGreaterThanOrEqual(0)
     expect(captureAt).toBeGreaterThan(templateAt)
+  })
+
+  it('the OS hotkey captures onto today from a minimized window', async () => {
+    await waitForAppReady()
+    execFileSync('xdotool', ['getactivewindow', 'windowminimize'])
+    await waitForWindowFocus(false, 'the app window still has focus after minimizing it')
+
+    pressChord('ctrl+alt+n')
+    await $('[data-testid="quick-capture-dialog"]').waitForExist({ timeout: ACTION_TIMEOUT })
+    await waitForWindowFocus(true, 'the hotkey opened Quick Capture without raising the window')
+    const textarea = '[data-testid="quick-capture-textarea"]'
+    await $(textarea).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    await typeInputVerified(textarea, HOTKEY_NOTE)
+    const save = $('[data-testid="quick-capture-save"]')
+    await save.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await save.click()
+    await $(textarea).waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+
+    await navigateTo('Pages')
+    await navigateTo('Journal')
+    const today = $(`section[id="journal-${todayIso()}"]`)
+    await today.$(`[data-testid="block-static"]*=${HOTKEY_NOTE}`).waitForDisplayed({
+      timeout: NAV_TIMEOUT,
+    })
   })
 })
