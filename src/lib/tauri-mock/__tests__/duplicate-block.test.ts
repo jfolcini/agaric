@@ -14,6 +14,7 @@ import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks, makeBlock, opLog, properties, seedBlocks } from '@/lib/tauri-mock/seed'
 
 const id = (label: string): string => label.padStart(26, '0')
+const SPACE = 'SPACE_PERSONAL'
 const PAGE = id('PAGE')
 const A = id('A')
 const SRC = id('SRC')
@@ -46,6 +47,10 @@ function put(
   const row = makeBlock(blockId, type, content, parent, position)
   row['page_id'] = pageId
   blocks.set(blockId, row)
+  // `childrenOf` lists the asked space only, and a page carries its blocks' space.
+  if (type === 'page') {
+    properties.set(blockId, new Map([['space', { key: 'space', value_ref: SPACE }]]))
+  }
   return row
 }
 
@@ -65,7 +70,7 @@ function setProp(blockId: string, key: string, value: Partial<PropertyRow>): voi
 function childrenOf(parentId: string): Row[] {
   const page = dispatch('list_blocks', {
     request: { parentId, limit: 100 },
-    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    scope: { kind: 'active', space_id: SPACE },
   }) as { items: Row[] }
   return page.items
 }

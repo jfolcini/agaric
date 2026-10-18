@@ -1042,6 +1042,7 @@ export const blocksHandlers = {
       // `list_agenda_range` — `ORDER BY ac.date ASC, b.id ASC`.
       const dateOf = new Map<Record<string, unknown>, string>()
       const items = active.filter((b) => {
+        if (ownerSpaceOf(b) !== spaceId) return false
         const date = agendaRangeDate(b, range, source)
         if (date === null) return false
         dateOf.set(b, date)
@@ -1065,6 +1066,7 @@ export const blocksHandlers = {
     if (date != null) {
       // `list_agenda` — `ORDER BY b.id ASC`.
       const items = active.filter((b) => {
+        if (ownerSpaceOf(b) !== spaceId) return false
         const onDate =
           source === 'column:due_date'
             ? b['due_date'] === date
@@ -1085,7 +1087,10 @@ export const blocksHandlers = {
     if (tagId != null) {
       // `list_by_tag` — `ORDER BY bt.block_id ASC`, and `bt.block_id` is the
       // join key, so it is `b.id` under another name.
-      const items = active.filter((b) => blockTags.get(b['id'] as string)?.has(tagId) ?? false)
+      const items = active.filter(
+        (b) =>
+          ownerSpaceOf(b) === spaceId && (blockTags.get(b['id'] as string)?.has(tagId) ?? false),
+      )
       // `list_by_tag` mints `Cursor::for_id`.
       return paginateKeyset(items, idKey, limit, cursor, null, [])
     }
@@ -1119,7 +1124,10 @@ export const blocksHandlers = {
     // the mock answered a wrong TRUNCATED superset. `?? null` is the whole fix:
     // the branch always filters, on `null` when no parent was named.
     const parentId = (req['parentId'] as string | null | undefined) ?? null
-    const items = active.filter((b) => ((b['parent_id'] as string | null) ?? null) === parentId)
+    const items = active.filter(
+      (b) =>
+        ((b['parent_id'] as string | null) ?? null) === parentId && ownerSpaceOf(b) === spaceId,
+    )
     // `list_children` mints `Cursor::for_id_and_position` — the ONE branch
     // whose keyset leads on a column other than the id.
     return paginateKeyset(items, positionThenIdKey, limit, cursor, null, ['position'])

@@ -19,16 +19,25 @@ import type { Mock } from 'vitest'
 
 import type { BlockRow } from '@/lib/bindings'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { blocks, seedBlocks } from '@/lib/tauri-mock/seed'
+import { blocks, properties, seedBlocks } from '@/lib/tauri-mock/seed'
 
-export function seedAgendaListBlocks(listBlocksSpy: Mock, rows: readonly BlockRow[]): void {
+/** Seed `rows` into `spaceId`: the mock, like the backend, lists the asked space only. */
+export function seedAgendaListBlocks(
+  listBlocksSpy: Mock,
+  spaceId: string,
+  rows: readonly BlockRow[],
+): void {
   // `seedBlocks` resets every store (block tags, properties, links) to the
   // canonical fixture; clearing `blocks` afterwards leaves exactly the rows
   // this test seeds, the shape the mock's own suites use.
   seedBlocks()
   blocks.clear()
   for (const row of rows) {
-    blocks.set(row.id, { ...row, space_id: null })
+    blocks.set(row.id, { ...row, space_id: spaceId })
+    properties.set(
+      row.page_id ?? row.id,
+      new Map([['space', { key: 'space', value_ref: spaceId }]]),
+    )
   }
   listBlocksSpy.mockImplementation(async (request: unknown, scope: unknown) =>
     dispatch('list_blocks', { request, scope }),

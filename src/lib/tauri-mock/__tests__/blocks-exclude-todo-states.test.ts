@@ -23,9 +23,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { blocks, makeBlock, seedBlocks } from '@/lib/tauri-mock/seed'
+import { blocks, makeBlock, properties, seedBlocks } from '@/lib/tauri-mock/seed'
 
 const DATE = '2026-03-04'
+const SPACE = id('SP')
 
 /** Deterministic 26-char block id from a short label. */
 function id(label: string): string {
@@ -42,7 +43,7 @@ interface ListBlocksPage {
 function listBlocks(request: Record<string, unknown>): ListBlocksPage {
   return dispatch('list_blocks', {
     request,
-    scope: { kind: 'active', space_id: id('SP') },
+    scope: { kind: 'active', space_id: SPACE },
   }) as ListBlocksPage
 }
 
@@ -54,6 +55,8 @@ function seedDue(label: string, todoState: string | null): string {
     due_date: DATE,
     todo_state: todoState,
   })
+  // `list_agenda` reads the asked space only.
+  properties.set(blockId, new Map([['space', { key: 'space', value_ref: SPACE }]]))
   return blockId
 }
 

@@ -30,7 +30,15 @@ import type { McpAgent } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
 import { deriveLinkEdges } from '@/lib/tauri-mock/link-scan'
-import { blocks, makeBlock, opLog, pageAliases, peerRefs, todayDate } from '@/lib/tauri-mock/seed'
+import {
+  blocks,
+  makeBlock,
+  opLog,
+  pageAliases,
+  peerRefs,
+  properties,
+  todayDate,
+} from '@/lib/tauri-mock/seed'
 
 /**
  * Helper — call the captured IPC handler as if invoke() were called.
@@ -3367,6 +3375,7 @@ describe('import_markdown', () => {
         ...makeBlock(id, 'page', title, null, blocks.size),
         space_id: 'SPACE_PERSONAL',
       })
+      properties.set(id, new Map([['space', { key: 'space', value_ref: 'SPACE_PERSONAL' }]]))
     }
     emptyPage('PAGE_ROADMAP', 'Roadmap')
     pageAliases.set('PAGE_ROADMAP', ['Plan'])
