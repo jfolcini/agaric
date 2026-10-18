@@ -1222,8 +1222,8 @@ mod tests {
     /// Short reads are gathered until the buffer is full, so the callback fires
     /// once per buffer rather than once per `poll_read`.
     ///
-    /// The cadence is not cosmetic: `sync_files` and `snapshot_transfer` emit a
-    /// Tauri event from this callback, and a QUIC stream delivering 64 KB at a
+    /// The cadence is not cosmetic: `sync_files` emits a Tauri event
+    /// from this callback, and a QUIC stream delivering 64 KB at a
     /// time would turn one 5 MB buffer into ~80 events.
     ///
     /// Falsified by ticking inside the fill loop (`on_progress(moved +

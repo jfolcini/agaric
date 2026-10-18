@@ -374,4 +374,18 @@ describe('one leave commits every kind the edit typed, as page mode does', () =>
     expect(calls).toEqual([])
     expect(edit).not.toHaveBeenCalled()
   })
+
+  // Overtaken during its property step, it writes no text: the tag step would
+  // write the raw text, property line included, over the newer save.
+  it('stops after the property step once a newer save of the block has started', async () => {
+    mockCommands({
+      set_property: () => {
+        bumpFlushSeq('BLOCK')
+        return undefined
+      },
+    })
+    const { result, edit } = run('', 'call mom #work\\\nstatus:: done')
+    await expect(result.outcome).resolves.toBe(true)
+    expect(edit).not.toHaveBeenCalled()
+  })
 })

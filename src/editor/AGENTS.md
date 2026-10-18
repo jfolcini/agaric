@@ -9,6 +9,7 @@ Embeds, zoom, dialogs and anything that blurs on purpose race the focus-leave cl
 - List every callback bound to the host block (save, split, Enter, Escape, cleanup, undo) and decide for each where it lands while the editor is elsewhere.
 - Keep the editor mounted with `data-editor-portal` on the overlay root, or, when the blur is wanted, exempt the block in `preserveEmptyBlockIds` (`useBlockDialogs.ts`). Register synchronously at the point of intent, before the first `await` or `startTransition`: a flag committed later lets the cleanup run first and delete the block.
 - Define the Escape exit up front, and check it does not swallow an open picker's own Escape.
+- A primary mouse press that blurs the editor holds it (`useEditorBlur`, #5807): the save runs at once, but the editor stays on the block, and `activeBlockId` and the focused block still name it, until one task after the press ends (pointerup, pointercancel, dragstart, contextmenu, window blur) or focus moves to another block. A handler that runs during the press (mousedown, pointerdown, a drag start) still sees that block as the one being edited; act on the click instead.
 
 ## The empty-block cleanup
 

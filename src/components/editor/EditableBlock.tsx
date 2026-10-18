@@ -435,10 +435,12 @@ function EditableBlockInner({
 
   // A press on this block's text while the editor sits on another block of this
   // tree keeps that editor focused, so the click's handleFocus saves that block
-  // and moves the editor here with no blur in between. The click lands without
-  // it too: a mouse press's blur keeps the other block in edit mode until the
-  // release (`useEditorBlur`), and on touch the blur moves nothing. A press on a
-  // chip or button inside the block still moves focus, so its blur saves.
+  // and moves the editor here with no blur in between. A mouse press's blur
+  // would keep the other block in edit mode until the release (`useEditorBlur`),
+  // but a tap's compat mousedown is not held: the blur would render that block
+  // static at another height before the click, and the tap would land on another
+  // row. A press on a chip or button inside the block still moves focus, so its
+  // blur saves.
   const keepEditorUntilClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const active = rovingEditorRef.current.activeBlockId
