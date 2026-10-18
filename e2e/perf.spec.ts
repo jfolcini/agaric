@@ -389,12 +389,14 @@ async function seedBigPage(
    * Every block a task, TODO and DONE in turn, with a priority (1, 2, 3 in
    * turn), a due date, a property, a list style (runs of seven numbered
    * blocks, then three bullets) and a text attachment, every third a
-   * scheduled date too, and every tenth an image attachment.
+   * scheduled date too, and every tenth an image attachment. One block in
+   * 25 is a `{{query …}}` of the mock's `work` tag and another an embed of a
+   * block on another page (#5743).
    */
   tasks = false,
 ): Promise<void> {
   await page.evaluate(
-    async ({ bigBlocks, bigTitle, linkTargets: targets, tasks: allTasks, png }) => {
+    async ({ bigBlocks, bigTitle, linkTargets: targets, tasks: allTasks, png, embedded }) => {
       const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
         invoke: (cmd: string, args: unknown) => Promise<unknown>
       }
@@ -420,6 +422,12 @@ async function seedBigPage(
         }),
       })) as { blocks: Array<{ id: string }> }
       if (!allTasks) return
+      for (const [i, { id }] of created.blocks.entries()) {
+        if (i % 25 === 12) await invoke('edit_block', { blockId: id, toText: '{{query tag:work}}' })
+        if (i % 25 === 24) {
+          await invoke('edit_block', { blockId: id, toText: `{{embed ((${embedded}))}}` })
+        }
+      }
       for (const [state, parity] of [
         ['TODO', 0],
         ['DONE', 1],
@@ -469,7 +477,15 @@ async function seedBigPage(
         }
       }
     },
-    { bigBlocks: count, bigTitle: title, linkTargets, tasks, png: PNG_1X1 },
+    {
+      bigBlocks: count,
+      bigTitle: title,
+      linkTargets,
+      tasks,
+      png: PNG_1X1,
+      // The mock's first block of Getting Started (`src/lib/tauri-mock/seed.ts`).
+      embedded: '0000000000000000000BLOCK01',
+    },
   )
 }
 
@@ -1509,8 +1525,8 @@ interface ModeSample {
  * 5,000 blocks (page mode's 500-block cap is lifted for the run), every block
  * a task with a priority, a due date, a property, a list style and an
  * attachment, a third with a scheduled date too and a tenth an image, so each
- * carries its checkbox, list marker, badge, chips and previews in both modes
- * (#5743). Each size
+ * carries its checkbox, list marker, badge, chips and previews in both modes,
+ * and one in 25 a query and another an embed (#5743). Each size
  * runs `AGARIC_PERF_REPEATS` times (default 3) on a fresh vault, alternating
  * which mode opens the page first; each cell is the median with the band the
  * repeats fell in. Per mode: the open (block mode to its first block, page

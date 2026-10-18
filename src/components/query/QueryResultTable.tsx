@@ -152,7 +152,7 @@ export function QueryResultTable({
                     )}
                   </td>
                 ))}
-                <td className="px-3 py-1.5 [@media(pointer:coarse)]:py-3 text-muted-foreground/60 truncate max-w-[120px]">
+                <td className="px-3 py-1.5 [@media(pointer:coarse)]:py-3 text-muted-foreground truncate max-w-[120px]">
                   {pageTitle && block.parent_id && block.page_id ? (
                     <PageLink pageId={block.page_id} title={pageTitle} />
                   ) : (

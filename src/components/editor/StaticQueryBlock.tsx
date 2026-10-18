@@ -22,6 +22,8 @@ export interface StaticQueryBlockProps {
   onNavigate?: ((id: string) => void) | undefined
   resolveBlockTitle?: ((id: string) => string) | undefined
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
+  /** Write the expression the query builder saved; the page store's `edit` when absent. */
+  onSave?: ((blockId: string, expression: string) => Promise<boolean>) | undefined
 }
 
 export function StaticQueryBlock({
@@ -31,6 +33,7 @@ export function StaticQueryBlock({
   onNavigate,
   resolveBlockTitle,
   onSelect,
+  onSave,
 }: StaticQueryBlockProps): React.ReactElement {
   // Capture-phase handler used for query blocks. QueryResult's inner
   // subtree is densely interactive (chevron toggle, edit-pencil, result
@@ -77,6 +80,7 @@ export function StaticQueryBlock({
         blockId={blockId}
         onNavigate={onNavigate ? (pageId) => onNavigate(pageId) : undefined}
         resolveBlockTitle={resolveBlockTitle}
+        onSave={onSave === undefined ? undefined : (saved) => onSave(blockId, saved)}
       />
     </div>
   )

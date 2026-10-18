@@ -1,8 +1,8 @@
 /**
  * PageModeEditor — the page edited as one document (#5691), in place of the
  * block tree, the way source mode replaces it (`PageEditor`). Desktop only,
- * and only for a page whose blocks hold nothing it cannot show yet
- * (`page-mode-fit.ts`): ProseMirror renders the whole document.
+ * and only for a page within its cap (`page-mode-fit.ts`): ProseMirror renders
+ * the whole document.
  *
  * It saves continuously through the block commands (`page-save.ts`): 700 ms
  * after typing stops, on blur, on `flush` (the mode switch, an export through
@@ -28,7 +28,11 @@
  * mode's own upload attaches after the save, read them again.
  * A bullet or numbered block's marker shows its `listStyle` from the same
  * read; the list keys and input rules give a block its style at once, written
- * after the save on the same chain (`page-lists.ts`).
+ * after the save on the same chain (`page-lists.ts`). A query or embed block
+ * shows block mode's results or embed while the caret is not in it
+ * (`page-rendered.ts`). An embed of a block of this page shows the page store's
+ * rows, as block mode's does, so a save that wrote reads them again; the query
+ * builder's write goes on the same chain.
  *
  * Chips go where block mode's go (`useBlockNavigateToLink`, a block of this
  * page by moving the cursor to it), and each save's ops reach `UndoStore`
@@ -46,6 +50,7 @@ import {
   useEffect,
   useEffectEvent,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -59,6 +64,7 @@ import {
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
 import { setBlockPriority, useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
+import { BlockResolversProvider } from '@/components/block-tree/use-block-resolvers'
 import { SelectionBubbleMenu } from '@/components/editor-toolbar/SelectionBubbleMenu'
 import { processFileAttachments } from '@/components/editor/EditableBlock'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
@@ -77,6 +83,7 @@ import { commitPageProperties, PageProperties } from '@/editor/page-mode/page-pr
 import {
   createSaveState,
   type PageSaveApi,
+  type PageSaveState,
   savePage,
   type TreeRow,
 } from '@/editor/page-mode/page-save'
@@ -93,6 +100,7 @@ import { subscribeToAttachmentInvalidation } from '@/lib/attachment-invalidation
 import { type AttachmentRow, commands, type OpRef, type PropertyRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { newBlockId } from '@/lib/block-id'
+import { parseEmbedToken } from '@/lib/embed-token'
 import { t } from '@/lib/i18n'
 import { createBlock } from '@/lib/ipc-helpers'
 import { type ListStyle, setListStyle } from '@/lib/list-style'
@@ -128,7 +136,7 @@ export interface PageModeEditorHandle {
 
 export interface PageModeEditorProps {
   pageId: string
-  /** Called instead of opening, or while open, when the page holds what page mode cannot show. */
+  /** Called instead of opening, or while open, when the page is over page mode's cap. */
   onBlocked: (blocker: PageModeBlocker) => void
   onNavigateToPage?: NavigateToPageFn | undefined
   /** The block to put the cursor in once open: the one block mode was editing. */
@@ -240,6 +248,15 @@ function commandsApi(read: () => Promise<TreeRow[]>): PageSaveApi {
   }
 }
 
+/** Whether a block of the page embeds the page or one of its blocks: that embed shows the page store's rows. */
+function embedsOwnBlock(save: PageSaveState): boolean {
+  for (const { markdown } of save.saved.values()) {
+    const target = parseEmbedToken(markdown)?.targetId
+    if (target !== undefined && (target === save.pageId || save.saved.has(target))) return true
+  }
+  return false
+}
+
 /** The block `id` of `doc`, or null. */
 function blockById(doc: PMNode, id: string): PMNode | null {
   let found: PMNode | null = null
@@ -310,6 +327,8 @@ function PageModeDocument({
     propertiesEdited: () => {},
     attachmentsChanged: () => {},
     attach: () => {},
+    edit: () => {},
+    saveQuery: () => Promise.resolve(false),
     pick: () => {},
     setListStyle: () => {},
   })
@@ -365,6 +384,10 @@ function PageModeDocument({
         propertiesEdited: () => actions.current.propertiesEdited(),
         attachmentsChanged: () => actions.current.attachmentsChanged(),
         attach: (id: string, files: File[]) => actions.current.attach(id, files),
+        edit: (id: string) => actions.current.edit(id),
+        saveQuery: (id: string, expression: string) => actions.current.saveQuery(id, expression),
+        navigate: (id: string) => handleNavigateRef.current(id),
+        resolveBlockTitle: resolve.resolveBlockTitle,
       },
       lists: {
         lists,
@@ -389,6 +412,12 @@ function PageModeDocument({
   useEffect(() => {
     editorRef.current = editor
   }, [editor])
+  // Block mode's tree publishes them: an embed's rows resolve their chips with them.
+  const { resolveBlockTitle, resolveTagName, resolveBlockStatus, resolveTagStatus } = resolve
+  const resolvers = useMemo(
+    () => ({ resolveBlockTitle, resolveTagName, resolveBlockStatus, resolveTagStatus }),
+    [resolveBlockTitle, resolveTagName, resolveBlockStatus, resolveTagStatus],
+  )
   // Block mode's date picker: a chip's date, or a date's page linked at the caret.
   const {
     datePickerOpen,
@@ -444,7 +473,7 @@ function PageModeDocument({
     const typedIn = new Map<string, PMNode | null>()
     let caretIn = cursorBlock()
 
-    /** Bring the page as the store holds it into the document, unless it holds what page mode cannot show. */
+    /** Bring the page as the store holds it into the document, unless it is over the cap. */
     const bringIn = async (
       fresh: readonly FlatBlock[],
       refused?: ReadonlySet<string>,
@@ -514,6 +543,9 @@ function PageModeDocument({
         result.refs.push(...typedRefs)
         // The text the commits wrote comes back as a change from elsewhere does.
         if (!editor.isDestroyed) await bringIn(await read())
+      } else if (result.refs.length > 0 && !editor.isDestroyed && embedsOwnBlock(save)) {
+        // Block mode's save writes the store, which an embed of this page mirrors (`mirrorToSiblings`).
+        await read()
       }
       const coalesce = result.structural ? undefined : `edit:${cursorBlock() ?? pageId}`
       if (result.refs.length > 0) notifyUndoNewAction(pageId, result.refs, coalesce)
@@ -599,6 +631,17 @@ function PageModeDocument({
           // The block was gone, or its save failed: say so rather than drop the files.
           if (!attached) notify.error(t('blockTree.attachFileFailed'))
         })
+      },
+      // As a click on block mode's static block, which takes it into editing.
+      edit: (id) => {
+        cursorInto(editor, id)
+      },
+      // Written in turn with the saves: the read its change to the store asks for comes after it.
+      saveQuery: (id, expression) => {
+        let saved = false
+        return afterSave(id, async () => {
+          saved = await pageStore.getState().edit(id, `{{query ${expression}}}`)
+        }).then(() => saved)
       },
       // A date picked: written in turn with the saves, so no read of a save's overtakes it.
       pick: (step) => void enqueue(step),
@@ -736,7 +779,9 @@ function PageModeDocument({
 
   return (
     <>
-      <EditorContent editor={editor} />
+      <BlockResolversProvider value={resolvers}>
+        <EditorContent editor={editor} />
+      </BlockResolversProvider>
       {/* Block mode's own: the marks and the link on a selection, and Ctrl+K. */}
       {editor !== null && <SelectionBubbleMenu editor={editor} />}
       {datePickerOpen && (

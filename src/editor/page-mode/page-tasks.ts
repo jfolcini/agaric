@@ -10,7 +10,9 @@
  * property chips and the attachment badge (`BlockMetadataRow`, in
  * `PageBlockMetadata`). A bullet or numbered block's
  * marker (`page-lists.ts`) leads its first line, plain DOM as block mode's
- * `ListMarkerDecoration` draws it, redrawn only when it changes. The checkbox
+ * `ListMarkerDecoration` draws it, redrawn only when it changes. A query or
+ * embed block draws block mode's `StaticBlock` after its text, the one or the
+ * other shown as the caret is out of it or in it (`page-rendered.ts`). The checkbox
  * and the `cycleTaskState` key (Ctrl+Enter) cycle the state; the badge cycles the
  * priority and the `priority1`–`priority3` keys (Ctrl+Shift+1–3) set it; a
  * date chip opens block mode's date picker, and `openDatePicker`
@@ -40,7 +42,7 @@
 import { type Editor, Extension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { type EditorState, Plugin } from '@tiptap/pm/state'
-import type { EditorView, NodeView } from '@tiptap/pm/view'
+import type { Decoration, EditorView, NodeView } from '@tiptap/pm/view'
 import { ReactRenderer } from '@tiptap/react'
 import type React from 'react'
 
@@ -48,10 +50,13 @@ import {
   BlockInlineControls,
   type BlockInlineControlsProps,
 } from '@/components/editor/BlockInlineControls'
+import { StaticBlock, type StaticBlockProps } from '@/components/editor/StaticBlock'
 import { serialize } from '@/editor/markdown-serializer'
+import { isCurrentBlock } from '@/editor/page-mode/page-block-focus'
 import { blockDocJson, PageBlock } from '@/editor/page-mode/page-document'
 import type { PageLists } from '@/editor/page-mode/page-lists'
 import type { ShownProperty } from '@/editor/page-mode/page-properties'
+import { RENDERED, renderedText } from '@/editor/page-mode/page-rendered'
 import type { PageSaveApi, PageSaveState } from '@/editor/page-mode/page-save'
 import {
   PageBlockMetadata,
@@ -94,6 +99,10 @@ export interface PageTaskActions {
   attachmentsChanged: () => void
   /** Attach `files` to block `id`, as block mode's paste and drop do. */
   attach: (id: string, files: File[]) => void
+  /** Put the caret in block `id`'s text, as a click on block mode's static block edits it. */
+  edit: (id: string) => void
+  /** Write the expression block mode's query builder saved for block `id`; resolves whether it did. */
+  saveQuery: (id: string, expression: string) => Promise<boolean>
 }
 
 /** Where page mode reads block tasks, and what it does to them. */
@@ -106,6 +115,10 @@ export interface PageTaskSource extends PageTaskActions {
   attachmentsOf: (id: string) => AttachmentRow[]
   /** Call `listener` on every change of the page store, the properties or the attachments. */
   subscribe: (listener: () => void) => () => void
+  /** Where a query result, or an embed's open-source, goes: block mode's chip navigation. */
+  navigate: (id: string) => void
+  /** Block mode's title for a block, as a query's results name it. */
+  resolveBlockTitle: (id: string) => string
 }
 
 /**
@@ -181,7 +194,7 @@ function gateOf(editor: Editor): ControlsGate {
  * Block mode's component, outside the block's editable text: its box at
  * once, the component in it from `mount` on.
  */
-class Control<P extends BlockInlineControlsProps | PageBlockMetadataProps> {
+class Control<P extends BlockInlineControlsProps | PageBlockMetadataProps | StaticBlockProps> {
   readonly element = document.createElement('div')
   private renderer: ReactRenderer<unknown, P> | null = null
   private props: P
@@ -240,14 +253,16 @@ const sameMetadata = (a: Metadata | null, b: Metadata): boolean =>
 
 /**
  * A block as a node view: its text; before it, outside the editable text,
- * block mode's checkbox while the block holds a task state; and under it the
- * attachments, priority badge, date chips, repeat rule and property chips
+ * block mode's checkbox while the block holds a task state; after it a query's
+ * results or an embed while its text is one (`page-rendered.ts`); and under it
+ * the attachments, priority badge, date chips, repeat rule and property chips
  * while it holds any.
  */
 class PageBlockView implements NodeView {
   readonly dom = document.createElement('div')
   readonly contentDOM = document.createElement('div')
   private checkbox: Control<BlockInlineControlsProps> | null = null
+  private rendered: Control<StaticBlockProps> | null = null
   private metadata: Control<PageBlockMetadataProps> | null = null
   private marker: HTMLElement | null = null
   private shownState: string | null = null
@@ -276,6 +291,7 @@ class PageBlockView implements NodeView {
     this.contentDOM.className = 'page-block-content'
     this.dom.append(this.contentDOM)
     this.show()
+    this.showRendered(renderedText(node))
     this.unsubscribe = tasks.subscribe(() => this.show())
     const id = blockIdOf(node)
     if (id === null) this.unsubscribeMarker = () => {}
@@ -308,6 +324,7 @@ class PageBlockView implements NodeView {
   private reveal(): void {
     this.revealed = true
     this.checkbox?.mount()
+    this.rendered?.mount()
     this.metadata?.mount()
   }
 
@@ -350,6 +367,35 @@ class PageBlockView implements NodeView {
       checkbox.update(props)
     }
     checkbox.label(t('block.todoCycleTip', { state }))
+  }
+
+  /** Block mode's static block for `text`, a query or an embed, after the editable text; none for null. */
+  private showRendered(text: string | null): void {
+    const id = blockIdOf(this.node)
+    if (id === null || text === null) {
+      this.rendered?.destroy()
+      this.rendered = null
+      this.dom.removeAttribute(RENDERED)
+      return
+    }
+    const props: StaticBlockProps = {
+      blockId: id,
+      content: text,
+      onFocus: this.tasks.edit,
+      onNavigate: this.tasks.navigate,
+      resolveBlockTitle: this.tasks.resolveBlockTitle,
+      onSaveQuery: this.tasks.saveQuery,
+    }
+    let rendered = this.rendered
+    if (rendered === null) {
+      rendered = new Control(StaticBlock, props, this.editor, 'page-block-rendered')
+      this.rendered = rendered
+      this.contentDOM.after(rendered.element)
+      if (this.revealed) rendered.mount()
+    } else {
+      rendered.update(props)
+    }
+    this.dom.setAttribute(RENDERED, '')
   }
 
   private showMetadata(id: string | null, metadata: Metadata): void {
@@ -400,8 +446,12 @@ class PageBlockView implements NodeView {
     row.element.toggleAttribute('data-properties', filteredProperties.length > 0)
   }
 
-  /** A new id or depth draws the block anew: its attributes, and the controls of that id. */
-  update(node: PMNode): boolean {
+  /**
+   * A new id or depth draws the block anew: its attributes, and the controls of
+   * that id. A query's results or an embed follow the text only while the caret
+   * is out of the block: while it is in, the text shows instead.
+   */
+  update(node: PMNode, decorations: readonly Decoration[]): boolean {
     if (
       node.type !== this.node.type ||
       blockIdOf(node) !== blockIdOf(this.node) ||
@@ -410,6 +460,7 @@ class PageBlockView implements NodeView {
       return false
     }
     this.node = node
+    if (!isCurrentBlock(decorations)) this.showRendered(renderedText(node))
     return true
   }
 
@@ -421,7 +472,9 @@ class PageBlockView implements NodeView {
   /** The controls' own clicks and keys are their buttons', not the editor's. */
   stopEvent(event: Event): boolean {
     const target = event.target as Node | null
-    return [this.checkbox, this.metadata].some((control) => control?.element.contains(target))
+    return [this.checkbox, this.rendered, this.metadata].some((control) =>
+      control?.element.contains(target),
+    )
   }
 
   destroy(): void {
@@ -429,6 +482,7 @@ class PageBlockView implements NodeView {
     this.unsubscribeMarker()
     this.gate.unwatch(this.dom)
     this.checkbox?.destroy()
+    this.rendered?.destroy()
     this.metadata?.destroy()
   }
 }

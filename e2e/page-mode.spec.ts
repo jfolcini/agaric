@@ -39,6 +39,8 @@ const PNG_1X1 = [
 ]
 /** The mock's seeded `work` tag (`src/lib/tauri-mock/seed.ts`). */
 const SEED_TAG_WORK = '000000000000000000000TAG01'
+/** The mock's seeded first block of Getting Started. */
+const SEED_BLOCK_GS_1 = '0000000000000000000BLOCK01'
 
 interface MockWindow {
   __TAURI_INTERNALS__: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
@@ -1316,6 +1318,95 @@ test.describe('page mode behaves as block mode (#5691)', () => {
       return found.map((v) => v.id)
     })
     expect(violations).toEqual([])
+  })
+
+  test('a page with a query and an embed opens in page mode; the caret reveals their text, an edited query shows its results, and they stay', async ({
+    page,
+  }) => {
+    const welcome = 'Welcome to Agaric! This is your personal knowledge base.'
+    const embed = `{{embed ((${SEED_BLOCK_GS_1}))}}`
+    const { pageId, ids } = await seedRows(page, 'Page queries', [
+      [0, 'first'],
+      [0, '{{query tag:work}}'],
+      [0, embed],
+      [0, 'last'],
+    ])
+    /** Where the query's results and the embed are drawn, to the pixel. */
+    const boxes = () =>
+      page.evaluate(() =>
+        ['query-result', 'embed-container'].map((id) => {
+          const box = document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect()
+          return [box?.x, box?.y, box?.width, box?.height].map((v) => Math.round(v ?? -1))
+        }),
+      )
+    await openViaPalette(page, 'Page queries')
+    await expect(page.getByTestId('query-result')).toContainText('4 results')
+    await expect(page.getByTestId('embed-container')).toContainText(welcome)
+    const inBlockMode = await boxes()
+    await modeSwitch(page, 'Page').click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(4)
+    const inBlock = (id: string | undefined, selector: string) =>
+      page.locator(`${EDITOR} [data-page-block-id="${id}"] ${selector}`)
+    const query = inBlock(ids[1], '[data-testid="query-result"]')
+    const results = inBlock(ids[1], '[data-testid="query-result-item"]')
+    const axeViolations = async (): Promise<string[]> => {
+      await page.addScriptTag({ path: axePath })
+      return page.evaluate(async () => {
+        const { axe } = window as unknown as {
+          axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
+        }
+        const { violations } = await axe.run(document.querySelector('.page-editor') as Element)
+        return violations.map((v) => v.id)
+      })
+    }
+
+    // Block mode's static view: the results and the embedded block, in place of the text.
+    await expect(query).toContainText('4 results')
+    await expect(results).toHaveCount(4)
+    await expect(inBlock(ids[2], '[data-testid="embed-container"]')).toContainText(welcome)
+    await expect(inBlock(ids[1], '.page-block-content')).toBeHidden()
+    await expect(inBlock(ids[2], '.page-block-content')).toBeHidden()
+    expect(await boxes()).toEqual(inBlockMode)
+    expect(await axeViolations()).toEqual([])
+
+    // The arrows step into the text, which shows in place of the results while the caret is in it.
+    await caret(page, 0, 'end')
+    await page.keyboard.press('ArrowDown')
+    await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 0 })
+    await expect(inBlock(ids[1], '.page-block-content')).toHaveText('{{query tag:work}}')
+    await expect(query).toBeHidden()
+    await page.keyboard.press('ArrowDown')
+    await expect.poll(async () => (await cursor(page)).index).toBe(2)
+    await expect(inBlock(ids[2], '.page-block-content')).toBeVisible()
+    await expect(query).toBeVisible()
+    await page.keyboard.press('ArrowUp')
+    await expect.poll(async () => (await cursor(page)).index).toBe(1)
+
+    // An edit of the query shows in its results once the caret leaves it.
+    await caret(page, 1, 16)
+    for (let i = 0; i < 'work'.length; i += 1) await page.keyboard.press('Backspace')
+    await page.keyboard.type('personal')
+    await expect(inBlock(ids[1], '.page-block-content')).toHaveText('{{query tag:personal}}')
+    await caret(page, 3, 'end')
+    await expect(query).toContainText('2 results')
+    await expect(results.filter({ hasText: 'Buy groceries' })).toHaveCount(1)
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((b) => b.text))
+      .toEqual(['first', '{{query tag:personal}}', embed, 'last'])
+
+    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    await page.keyboard.press('Escape')
+    await expect(page.locator(EDITOR)).not.toBeFocused()
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Page queries')
+    // The switch is the page on screen's: choose Page again.
+    await modeSwitch(page, 'Page').click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(4)
+    await expect(query).toContainText('2 results')
+    await expect(results.filter({ hasText: 'Buy groceries' })).toHaveCount(1)
+    await expect(inBlock(ids[2], '[data-testid="embed-container"]')).toContainText(welcome)
+    await expect(inBlock(ids[1], '.page-block-content')).toHaveText('{{query tag:personal}}')
+    expect(await axeViolations()).toEqual([])
   })
 
   test('/ and :: are plain text: no menu or picker takes Enter, which splits the block', async ({

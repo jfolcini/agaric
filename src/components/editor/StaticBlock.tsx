@@ -50,6 +50,8 @@ export interface StaticBlockProps {
   /** Ctrl+Click / Shift+Click selection callback. */
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
   onMouseDown?: React.MouseEventHandler<HTMLDivElement> | undefined
+  /** Write a query block's expression from the query builder; the page store's `edit` when absent. */
+  onSaveQuery?: ((blockId: string, expression: string) => Promise<boolean>) | undefined
 }
 
 function StaticBlockInner({
@@ -64,6 +66,7 @@ function StaticBlockInner({
   isSelected,
   onSelect,
   onMouseDown,
+  onSaveQuery,
 }: StaticBlockProps): React.ReactElement {
   const { t } = useTranslation()
 
@@ -145,6 +148,7 @@ function StaticBlockInner({
         onNavigate={onNavigate}
         resolveBlockTitle={resolveBlockTitle}
         onSelect={onSelect}
+        onSave={onSaveQuery}
       />
     )
   }

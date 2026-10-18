@@ -19,6 +19,7 @@ import { PageBlockIds } from '@/editor/page-mode/page-block-ids'
 import { PageBlock, PageDocument } from '@/editor/page-mode/page-document'
 import { PageKeys } from '@/editor/page-mode/page-keys'
 import { type PageListSource, pageListKeys } from '@/editor/page-mode/page-lists'
+import { PageRenderedKeys } from '@/editor/page-mode/page-rendered'
 import { type PageTaskSource, pageTasks } from '@/editor/page-mode/page-tasks'
 import { type ContentExtensionOptions, contentExtensions } from '@/editor/use-roving-editor'
 
@@ -47,6 +48,7 @@ export function pageModeExtensions(options: PageModeExtensionOptions): Extension
     ...content.chips,
     PageBlockIds.configure(options.mintId === undefined ? {} : { mintId: options.mintId }),
     PageKeys,
+    PageRenderedKeys,
     ...(options.lists === undefined ? [] : [pageListKeys(options.lists)]),
     PageBlockFocus,
     // Block mode's placeholder, on the empty paragraph the cursor is in.

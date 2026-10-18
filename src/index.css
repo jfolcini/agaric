@@ -1207,6 +1207,30 @@
 .page-mode-editor .page-block-current {
   @apply ring-1 ring-border bg-accent/[0.06] shadow-(--shadow-resting);
 }
+/* A query or embed block (`page-rendered.ts`) reads as block mode's: its
+   results or the embedded block in place of its text, and its text in place of
+   them while the cursor is in it. */
+.page-mode-editor [data-page-block][data-rendered]:not(.page-block-current) > .page-block-content,
+.page-mode-editor .page-block-current > .page-block-rendered {
+  display: none;
+}
+/* Block mode draws them without the text's inset. */
+.page-mode-editor [data-page-block][data-rendered]:not(.page-block-current) {
+  padding-block: 0;
+}
+.page-mode-editor .page-block-rendered {
+  margin-inline: -0.75rem;
+}
+/* The editor's own list and table rules (`.ProseMirror ul`, `.ProseMirror table`)
+   are not block mode's static ones, which an embed's rows and a query's table
+   carry. */
+.page-mode-editor .page-block-rendered :is(ul, ol) {
+  padding-left: 0;
+  list-style-position: inside;
+}
+.page-mode-editor .page-block-rendered :is(table, th, td) {
+  all: revert-layer;
+}
 /* The placeholder shows where the cursor is, and on an empty page without it. */
 .page-mode-editor:not(.ProseMirror-focused)
   > [data-page-block]:not(:only-child)

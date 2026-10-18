@@ -2,10 +2,10 @@
  * usePageMode — whether `PageEditor` shows a page in page mode (#5691), and
  * its Blocks | Page switch. Pages open as the device's *Edit pages as* setting
  * says (`PREFERENCES.editMode`); the switch changes the mode of the page on
- * screen only. Desktop only. A page holding what page mode cannot show yet
- * (`page-mode-fit.ts`) stays in block mode, the switch saying why, as the page
- * store's rows show it, or as page mode found it while open until the switch,
- * pointed at, finds the rows no longer hold it. No TipTap here: `PageEditor`
+ * screen only. Desktop only. A page over page mode's cap (`page-mode-fit.ts`)
+ * stays in block mode, the switch saying why, as the page store's rows show
+ * it, or as page mode found it while open until the switch, pointed at, finds
+ * the rows no longer over it. No TipTap here: `PageEditor`
  * imports this statically, and the editor loads through `PageModeSlot`'s
  * dynamic import.
  */
@@ -51,7 +51,7 @@ export function usePageMode(pageId: string): PageModeState {
   const mode = chosen?.pageId === pageId ? chosen.mode : setting
   const blocks = usePageBlockStore((s) => s.blocks)
   const total = usePageBlockStore((s) => s.truncatedTotal)
-  const inRows = useMemo(() => blockerIn(blocks, total ?? blocks.length), [blocks, total])
+  const inRows = useMemo(() => blockerIn(total ?? blocks.length), [blocks.length, total])
   const [found, setFound] = useState<ForPage<{ blocker: PageModeBlocker }> | null>(null)
   const blocker = inRows ?? (found?.pageId === pageId ? found.blocker : null)
   const [cursor, setCursor] = useState<ForPage<{ blockId: string }> | null>(null)
@@ -83,7 +83,7 @@ export function usePageMode(pageId: string): PageModeState {
     [afterFlush, chosen, pageId, pageStore],
   )
 
-  // Every blocker is in the rows: one page mode found that they no longer hold is gone.
+  // The blocker is in the rows: one page mode found that they no longer hold is gone.
   const checkFit = useCallback(() => {
     if (inRows === null) setFound(null)
   }, [inRows])

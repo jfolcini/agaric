@@ -99,7 +99,10 @@ const pageModeCursor = vi.fn((): string | null => null)
 vi.mock('@/editor/page-mode/PageModeSlot', async () => {
   const { useImperativeHandle } = await import('react')
   const { PAGE_MODE_BLOCK_CAP } = await import('@/editor/page-mode/page-mode-fit')
-  type Blocker = { kind: 'overCap'; count: number } | { kind: 'queries' }
+  interface Blocker {
+    kind: 'overCap'
+    count: number
+  }
   return {
     PageModeSlot: (props: {
       pageId: string
@@ -125,9 +128,6 @@ vi.mock('@/editor/page-mode/PageModeSlot', async () => {
             onClick={() => props.onBlocked({ kind: 'overCap', count: PAGE_MODE_BLOCK_CAP + 1 })}
           >
             over the cap
-          </button>
-          <button type="button" onClick={() => props.onBlocked({ kind: 'queries' })}>
-            a query arrives
           </button>
         </div>
       )
@@ -1394,31 +1394,38 @@ describe('PageEditor page mode (#5691)', () => {
     expect(readPreference(PREFERENCES.editMode)).toBe('page')
   })
 
-  it('a page whose blocks hold a query: Page is blocked with the reason, and choosing it says why', async () => {
+  const overCap = t('pageMode.blocked.overCap', {
+    cap: PAGE_MODE_BLOCK_CAP,
+    blocks: PAGE_MODE_BLOCK_CAP + 1,
+  })
+
+  it('a page over the cap: Page is blocked with the reason, and choosing it says why', async () => {
     stubInvoke({
       load_page_subtree: () => ({
-        blocks: [makeBlock({ id: 'B1', content: '{{query todo:TODO}}', parent_id: 'PAGE_1' })],
+        blocks: Array.from({ length: PAGE_MODE_BLOCK_CAP + 1 }, (_, i) =>
+          makeBlock({ id: `B${i}`, content: `block ${i}`, parent_id: 'PAGE_1', position: i }),
+        ),
         truncated: false,
-        total: 1,
+        total: PAGE_MODE_BLOCK_CAP + 1,
       }),
     })
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
     await modeSwitch()
     await loadPage()
     await waitFor(() => {
-      expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.queries'))
+      expect(capturedPageHeaderProps?.editModeBlocked).toBe(overCap)
     })
 
     act(() => capturedPageHeaderProps?.onEditModeChange?.('page'))
 
-    expect(vi.mocked(toast.info)).toHaveBeenCalledWith(t('pageMode.blocked.queries'))
+    expect(vi.mocked(toast.info)).toHaveBeenCalledWith(overCap)
     expect(screen.getByTestId('block-tree')).toBeInTheDocument()
     expect(capturedPageHeaderProps?.editMode).toBe('blocks')
   })
 
-  describe('a query page mode found, gone from the page since', () => {
-    /** Page mode open on a page of plain text, then a query found by it, back in block mode. */
-    async function blockedByQuery(): Promise<void> {
+  describe('a page found over the cap while open, back under it since', () => {
+    /** Page mode open on a page of one block, found over the cap by it, back in block mode. */
+    async function blockedOverCap(): Promise<void> {
       const user = userEvent.setup()
       writePreference(PREFERENCES.editMode, 'page')
       stubInvoke({
@@ -1430,15 +1437,15 @@ describe('PageEditor page mode (#5691)', () => {
       })
       render(<PageEditor pageId="PAGE_1" title="My Page" />)
       await modeSwitch()
-      await user.click(await screen.findByRole('button', { name: 'a query arrives' }))
+      await user.click(await screen.findByRole('button', { name: 'over the cap' }))
       await waitFor(() => {
-        expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.queries'))
+        expect(capturedPageHeaderProps?.editModeBlocked).toBe(overCap)
       })
       expect(screen.getByTestId('block-tree')).toBeInTheDocument()
     }
 
     it('pointing at the switch looks again, and Page is offered, with no read', async () => {
-      await blockedByQuery()
+      await blockedOverCap()
       mockedInvoke.mockClear()
 
       act(() => capturedPageHeaderProps?.onEditModeIntent?.())
@@ -1448,7 +1455,7 @@ describe('PageEditor page mode (#5691)', () => {
     })
 
     it('choosing Page looks again, and opens page mode', async () => {
-      await blockedByQuery()
+      await blockedOverCap()
       vi.mocked(toast.info).mockClear()
 
       act(() => capturedPageHeaderProps?.onEditModeChange?.('page'))
@@ -1469,9 +1476,7 @@ describe('PageEditor page mode (#5691)', () => {
 
     expect(screen.getByTestId('block-tree')).toBeInTheDocument()
     expect(capturedPageHeaderProps?.editMode).toBe('blocks')
-    expect(capturedPageHeaderProps?.editModeBlocked).toBe(
-      t('pageMode.blocked.overCap', { cap: PAGE_MODE_BLOCK_CAP, blocks: PAGE_MODE_BLOCK_CAP + 1 }),
-    )
+    expect(capturedPageHeaderProps?.editModeBlocked).toBe(overCap)
   })
 
   it('leaving page mode for what it cannot show saves, reloads, and says so', async () => {
@@ -1491,14 +1496,14 @@ describe('PageEditor page mode (#5691)', () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
     await modeSwitch()
 
-    await user.click(await screen.findByRole('button', { name: 'a query arrives' }))
+    await user.click(await screen.findByRole('button', { name: 'over the cap' }))
 
     await waitFor(() => {
       expect(screen.getByTestId('block-tree')).toBeInTheDocument()
     })
     expect(order).toEqual(['flush', 'load'])
     expect(vi.mocked(toast.info)).toHaveBeenCalledWith(
-      t('pageMode.switchedToBlocks', { reason: t('pageMode.blocked.queries') }),
+      t('pageMode.switchedToBlocks', { reason: overCap }),
     )
   })
 
