@@ -242,6 +242,32 @@ export const MODULES = {
       'src/editor/page-mode/__tests__/remote-patch.test.ts',
     ],
   },
+  // Page mode's gate and its leave-time commits (#5743): a survivor is a page
+  // let in that page mode cannot show, or a typed property or tag committed
+  // wrong. `page-mode.property.test.ts` is left out, as each mutant would run
+  // all of it.
+  'page-mode-fit': {
+    setup: true,
+    src: 'src/editor/page-mode/page-mode-fit.ts',
+    tests: ['src/editor/page-mode/__tests__/page-mode-fit.test.ts'],
+  },
+  'page-properties': {
+    setup: true,
+    src: 'src/editor/page-mode/page-properties.ts',
+    tests: [
+      'src/editor/page-mode/__tests__/page-properties.test.ts',
+      'src/editor/page-mode/__tests__/PageModeEditor.test.tsx',
+      'src/editor/page-mode/__tests__/page-mode-parity.test.ts',
+    ],
+  },
+  'page-tags': {
+    setup: true,
+    src: 'src/editor/page-mode/page-tags.ts',
+    tests: [
+      'src/editor/page-mode/__tests__/PageModeEditor.test.tsx',
+      'src/editor/page-mode/__tests__/page-mode-parity.test.ts',
+    ],
+  },
 }
 
 /**
@@ -261,6 +287,12 @@ export const MODULES = {
  * - `jaro-winkler` (100 mutants, 32 survivors, 16s). Cheap, but it ranks
  *   fuzzy-search suggestions; a survivor means "results ordered slightly
  *   differently", which is not the defect class this lane is for.
+ *
+ * - `page-tasks` (502 mutants, unfinished after 590s on a loaded machine), and
+ *   with it page mode's other node-view modules `page-lists`, `page-rendered`
+ *   and `page-attachments`, not yet measured: none has a test file of its own,
+ *   so each is tested through `PageModeEditor.test.tsx`, whose first full run
+ *   takes about 13s.
  */
 
 export const MODULE_NAMES = Object.keys(MODULES)
