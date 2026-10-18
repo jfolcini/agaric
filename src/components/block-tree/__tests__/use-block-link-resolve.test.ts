@@ -1,5 +1,5 @@
 /**
- * Tests for useBlockLinkResolve — scans loaded blocks for `[[ULID]]`
+ * Tests for useBlockLinkResolve — scans loaded blocks for `[[ULID]]`, `((ULID))` and `#[ULID]`
  * tokens not yet in the resolve cache and batch-fetches them via the
  * `batchResolve` IPC. Covers cache-membership filtering, space scoping,
  * answers that land after the rows moved on (#5443), and graceful error
@@ -105,6 +105,12 @@ describe('collectUncachedLinkIds', () => {
     const ids = collectUncachedLinkIds(blocks, TEST_SPACE_ID)
     expect(ids).toEqual(new Set([ULID_A, ULID_B]))
   })
+
+  it('extracts the ids of `#[…]` tag refs, which the preload can miss', () => {
+    const blocks = [{ content: `tagged #[${ULID_A}] and [[${ULID_B}]]` }]
+    const ids = collectUncachedLinkIds(blocks, TEST_SPACE_ID)
+    expect(ids).toEqual(new Set([ULID_A, ULID_B]))
+  })
 })
 
 // Block ids for the hook fixtures (the hook now keys its memo on
@@ -172,6 +178,24 @@ describe('useBlockLinkResolve', () => {
     await waitFor(() => {
       expect(useResolveStore.getState().has(ULID_A)).toBe(true)
     })
+  })
+
+  // A tag the preload's `tags_cache` read did not list yet (an import's new tag, before the
+  // materializer fills the cache) must still get its name from the block itself.
+  it('resolves a `#[ULID]` tag ref the store has no name for', async () => {
+    expect(useResolveStore.getState().cache.size).toBe(0)
+    mockedBatchResolve.mockResolvedValueOnce([
+      { id: ULID_A, title: 'project', block_type: 'tag', deleted: false },
+    ])
+
+    renderHook(() =>
+      useBlockLinkResolve([{ id: BLOCK_1, block_type: 'content', content: `plan #[${ULID_A}]` }]),
+    )
+
+    await waitFor(() => {
+      expect(useResolveStore.getState().resolveTitle(ULID_A)).toBe('project')
+    })
+    expect(useResolveStore.getState().resolveStatus(ULID_A)).toBe('active')
   })
 
   it('caches ids the backend did not return as deleted placeholders', async () => {
