@@ -15,7 +15,7 @@ import { clearConsoleErrors, expect, getInvokeCalls, installIpcRecorder, test } 
  * renders here.
  */
 
-test.describe('Agent access settings tab', () => {
+test.describe('Agent access settings tab @mcp @settings', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()

@@ -28,7 +28,9 @@ async function pickPageAction(page: Page, action: string) {
   await expect(activePopover(page)).toHaveCount(0)
 }
 
-test('lists a journal template with its first block and the journal badge', async ({ page }) => {
+test('lists a journal template with its first block and the journal badge @editor @pages', async ({
+  page,
+}) => {
   await waitForBoot(page)
   await openPage(page, 'Getting Started')
   await pickPageAction(page, 'Save as template')

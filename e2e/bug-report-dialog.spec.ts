@@ -16,7 +16,7 @@
 
 import { expect, test } from './helpers'
 
-test.describe('Report-a-bug dialog', () => {
+test.describe('Report-a-bug dialog @settings', () => {
   test('body scrolls when content overflows a short window', async ({ page }) => {
     // A short window guarantees the dialog content exceeds the available
     // height regardless of how much of the form is expanded.

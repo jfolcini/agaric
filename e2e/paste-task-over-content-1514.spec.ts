@@ -44,7 +44,7 @@ async function freshBlock(page: import('@playwright/test').Page): Promise<Editor
   return live
 }
 
-test.describe('Paste GFM task line over non-empty block (#1514)', () => {
+test.describe('Paste GFM task line over non-empty block (#1514) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

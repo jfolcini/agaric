@@ -15,7 +15,9 @@ import { expect, test, waitForBoot } from './helpers'
 const NOW = new Date('2026-10-14T10:00:00')
 const YESTERDAY = '2026-10-13'
 
-test('a page created in Stream shows in Day mode and in the date picker', async ({ page }) => {
+test('a page created in Stream shows in Day mode and in the date picker @pages @journal', async ({
+  page,
+}) => {
   await page.clock.setFixedTime(NOW)
   await waitForBoot(page)
 

@@ -31,7 +31,7 @@ async function openReferences(page: Page) {
   return references
 }
 
-test.describe('References sort', () => {
+test.describe('References sort @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await seedNotes(page)

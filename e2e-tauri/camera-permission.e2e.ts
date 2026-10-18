@@ -12,7 +12,7 @@
 
 import { waitForAppReady } from './helpers'
 
-describe('Agaric real-webview camera (#5386)', () => {
+describe('Agaric real-webview camera (#5386) @sync', () => {
   it('resolves getUserMedia({ video: true }) with a live video track', async () => {
     await waitForAppReady()
 

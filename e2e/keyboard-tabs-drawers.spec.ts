@@ -35,7 +35,7 @@ import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 // is exactly what surfaces the bar from a fresh single-tab boot.
 // ===========================================================================
 
-test.describe('Tab management shortcuts', () => {
+test.describe('Tab management shortcuts @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -166,7 +166,7 @@ test.describe('Tab management shortcuts', () => {
 // first, then asserts the corresponding surface becomes visible.
 // ===========================================================================
 
-test.describe('Block drawer shortcuts', () => {
+test.describe('Block drawer shortcuts @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

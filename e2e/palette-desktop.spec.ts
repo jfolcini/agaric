@@ -15,7 +15,7 @@
 
 import { expect, openPage, test, waitForBoot } from './helpers'
 
-test.describe('desktop palette (Phase 5.T2)', () => {
+test.describe('desktop palette (Phase 5.T2) @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

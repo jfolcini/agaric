@@ -43,7 +43,7 @@ async function lastCall(
   return (calls.at(-1) as Record<string, unknown>) ?? null
 }
 
-test.describe('Keyboard fundamentals', () => {
+test.describe('Keyboard fundamentals @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)

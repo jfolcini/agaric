@@ -32,7 +32,7 @@ async function openGeneral(page: Page): Promise<void> {
   await expect(page.getByTestId('settings-panel-general')).toBeVisible()
 }
 
-test.describe('Settings › General journal preferences', () => {
+test.describe('Settings › General journal preferences @settings @journal', () => {
   test.beforeEach(async ({ page }) => {
     await page.clock.install({ time: NOW })
     await waitForBoot(page)

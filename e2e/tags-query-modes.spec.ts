@@ -82,7 +82,7 @@ function results(page: Page) {
   return page.locator('[data-result-item]')
 }
 
-test.describe('Tag filter modes return the matching blocks (#5366)', () => {
+test.describe('Tag filter modes return the matching blocks (#5366) @pages @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await seedTaggedBlocks(page)

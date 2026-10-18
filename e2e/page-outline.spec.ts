@@ -8,7 +8,7 @@ const TITLE = 'Outline long page'
  * smooth-scrolled to the center of an unvisited heading hydrated every row on
  * the way, each grew past its estimate, and the heading ended screens below.
  */
-test('the outline brings a heading far down a long page into view', async ({ page }) => {
+test('the outline brings a heading far down a long page into view @pages', async ({ page }) => {
   await page.goto('/')
   await page.locator('[data-testid="block-static"]').first().waitFor()
   await page.evaluate(async (title) => {

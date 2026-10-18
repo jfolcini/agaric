@@ -245,7 +245,7 @@ async function drawerValues(keys: string[]): Promise<Record<string, string>> {
   return values
 }
 
-describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736)', () => {
+describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736) @journal', () => {
   before(waitForAppReady)
 
   it('lists a weekly TODO due today as projected in the Due panel a week out', async () => {

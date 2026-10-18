@@ -56,7 +56,7 @@ const MD_SOURCE = [
   '',
 ].join('\n')
 
-test.describe('Markdown attachment inline preview (#1451)', () => {
+test.describe('Markdown attachment inline preview (#1451) @markdown @attachments', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

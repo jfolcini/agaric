@@ -67,7 +67,7 @@ function expectLoggedThenClear(page: Page, line: string): void {
 // An inline `key:: value` the backend refuses
 // ===========================================================================
 
-test.describe('Inline property refused by the backend', () => {
+test.describe('Inline property refused by the backend @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -169,7 +169,7 @@ test.describe('Inline property refused by the backend', () => {
 // The page header's Properties table
 // ===========================================================================
 
-test.describe('Page Properties table', () => {
+test.describe('Page Properties table @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Quick Notes')
@@ -248,7 +248,7 @@ test.describe('Page Properties table', () => {
 // Editing and deleting a select definition
 // ===========================================================================
 
-test.describe('Select definition options and in-use delete', () => {
+test.describe('Select definition options and in-use delete @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await navigateToView(page, 'Settings')

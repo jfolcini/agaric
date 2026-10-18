@@ -5,7 +5,7 @@
  */
 import { expect, focusBlock, openPage, test, typeSlashCommand, waitForBoot } from './helpers'
 
-test.describe('Editor table styling', () => {
+test.describe('Editor table styling @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

@@ -106,7 +106,9 @@ async function expectLengthBeforePlay(page: Page) {
   expect(state.timeUpdates.filter((time) => time !== 0)).toEqual([])
 }
 
-test('records a voice note as Ogg Opus where MediaRecorder cannot record', async ({ page }) => {
+test('records a voice note as Ogg Opus where MediaRecorder cannot record @attachments', async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: undefined })
   })
@@ -121,7 +123,7 @@ test('records a voice note as Ogg Opus where MediaRecorder cannot record', async
  * element, so `<audio>` reports `Infinity` until it has played the note to the
  * end, unless the player has the element find the length on load.
  */
-test('a WebM voice note shows its length before it is played', async ({ page }) => {
+test('a WebM voice note shows its length before it is played @attachments', async ({ page }) => {
   const row = await recordVoiceNote(page)
   expect(row?.mime_type).toBe('audio/webm')
   expect(row?.filename).toMatch(/^voice-note-.*\.webm$/)

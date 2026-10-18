@@ -37,7 +37,7 @@ async function typeAndAdd(page: Page, alias: string): Promise<void> {
   await expect(page.locator('[data-slot="badge"]').filter({ hasText: alias })).toBeVisible()
 }
 
-test.describe('Page actions → Add alias', () => {
+test.describe('Page actions → Add alias @pages @mobile', () => {
   test('by mouse, focus lands in the new-alias input', async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)
@@ -69,7 +69,7 @@ test.describe('Page actions → Add alias', () => {
   })
 })
 
-test.describe('Page actions → Add alias on a 390 px phone', () => {
+test.describe('Page actions → Add alias on a 390 px phone @pages @mobile', () => {
   const iPhone13 = devices['iPhone 13']
   test.use({
     viewport: { width: 390, height: 844 },

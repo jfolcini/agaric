@@ -38,7 +38,7 @@ async function leftEdge(locator: Locator): Promise<number> {
   return box.x
 }
 
-test.describe('Pages view — namespace indentation', () => {
+test.describe('Pages view — namespace indentation @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

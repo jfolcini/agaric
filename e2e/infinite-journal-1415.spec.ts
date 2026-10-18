@@ -39,7 +39,7 @@ async function scrollStreamToBottom(page: import('@playwright/test').Page): Prom
   })
 }
 
-test.describe('Continuous infinite-scroll journal (#1415)', () => {
+test.describe('Continuous infinite-scroll journal (#1415) @journal', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await waitForBoot(page)

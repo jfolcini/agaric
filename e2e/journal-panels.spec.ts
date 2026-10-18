@@ -51,7 +51,7 @@ const RESCHEDULE_DRAG_TYPE = 'application/x-block-reschedule'
 // 1. Done panel
 // ===========================================================================
 
-test.describe('Done panel', () => {
+test.describe('Done panel @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -78,7 +78,7 @@ test.describe('Done panel', () => {
 // 2. Unfinished-task rollover
 // ===========================================================================
 
-test.describe('Unfinished tasks rollover', () => {
+test.describe('Unfinished tasks rollover @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -127,7 +127,7 @@ test.describe('Unfinished tasks rollover', () => {
 // supports constructing `DataTransfer` directly), exercising the exact same
 // `handleDrop` -> `useBlockReschedule` -> `setDueDate` IPC path a real drag
 // would, without fabricating the result.
-test.describe('Reschedule drop zone', () => {
+test.describe('Reschedule drop zone @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -205,7 +205,7 @@ test.describe('Reschedule drop zone', () => {
 // e2e "could not catch a #2196-style Rust cache regression anyway". This test
 // documents the current, real behavior (the FE does call the IPC; the mock
 // returns nothing) rather than fabricating a projected entry.
-test.describe('Projected repeat occurrences', () => {
+test.describe('Projected repeat occurrences @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -237,7 +237,9 @@ test.describe('Projected repeat occurrences', () => {
 // Seed id — BLOCK_DAILY_1 "Morning standup notes", the first block of today.
 const BLOCK_DAILY_1 = '0000000000000000000BLOCK06'
 
-test('one click on the Due panel header lands while a block above is edited', async ({ page }) => {
+test('one click on the Due panel header lands while a block above is edited @journal', async ({
+  page,
+}) => {
   await waitForBoot(page)
   const header = page.getByTestId('due-panel-header')
   await expect(header).toHaveAttribute('aria-expanded', 'true')

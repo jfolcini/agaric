@@ -21,7 +21,7 @@ import {
  * what records the last-synced time.
  */
 
-test('the last synced time counts up in the sidebar and in Settings', async ({ page }) => {
+test('the last synced time counts up in the sidebar and in Settings @sync', async ({ page }) => {
   await page.clock.install()
   await waitForBoot(page)
   await pairOnePeer(page)

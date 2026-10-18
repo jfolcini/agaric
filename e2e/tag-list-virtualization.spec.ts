@@ -8,7 +8,7 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
 
 const TAGS = 200
 
-test('Tab walks the tag list past its initial window', async ({ page }) => {
+test('Tab walks the tag list past its initial window @pages', async ({ page }) => {
   await waitForBoot(page)
   await page.evaluate(async (count) => {
     const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {

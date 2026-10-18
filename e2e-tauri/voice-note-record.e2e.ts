@@ -34,7 +34,7 @@ interface AttachmentRow {
   size_bytes: number
 }
 
-describe('Agaric real-webview voice note (#5730)', () => {
+describe('Agaric real-webview voice note (#5730) @attachments', () => {
   it('records Ogg Opus from the microphone, and the note plays after a round trip', async () => {
     await waitForAppReady()
     await openNewPage(PAGE)

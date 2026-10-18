@@ -30,7 +30,7 @@ function persistedTabTitles(page: Page): Promise<string[]> {
   })
 }
 
-test.describe('deleting a page open in several tabs', () => {
+test.describe('deleting a page open in several tabs @pages @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -89,7 +89,7 @@ test.describe('deleting a page open in several tabs', () => {
   })
 })
 
-test.describe('moving a page open in several tabs to another space', () => {
+test.describe('moving a page open in several tabs to another space @pages @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

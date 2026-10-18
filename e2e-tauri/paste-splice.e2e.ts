@@ -86,7 +86,7 @@ async function row(marker: string): Promise<{ level: string | null; text: string
   }
 }
 
-describe('Agaric real-backend spliced paste (#5160 D4)', () => {
+describe('Agaric real-backend spliced paste (#5160 D4) @editor', () => {
   it('splices an answer into a block, undoes it in one step, and keeps the splice durably', async () => {
     await waitForAppReady()
     await openNewPage()

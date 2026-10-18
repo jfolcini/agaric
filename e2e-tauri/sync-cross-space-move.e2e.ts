@@ -146,7 +146,7 @@ async function openPage(space: string, title: string): Promise<void> {
   await reopenPageByTitle(title)
 }
 
-describe('Agaric real-backend cross-space moves keep what the app holds (#5712)', () => {
+describe('Agaric real-backend cross-space moves keep what the app holds (#5712) @sync @spaces', () => {
   let peer: SyncPeer | undefined
   let paired = false
 

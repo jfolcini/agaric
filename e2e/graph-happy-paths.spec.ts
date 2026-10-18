@@ -114,7 +114,7 @@ function focusedLabel(page: Page): Promise<string | null> {
   return page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? null)
 }
 
-test.describe('Graph view happy paths', () => {
+test.describe('Graph view happy paths @graph', () => {
   // The first render goes through the d3 worker (see graph-view.spec.ts).
   test.slow()
 

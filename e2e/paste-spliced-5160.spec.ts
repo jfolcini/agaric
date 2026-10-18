@@ -68,7 +68,7 @@ async function caretMidBlock(page: Page): Promise<Locator> {
   return editor
 }
 
-test.describe('Pasting text into a block splices blocks (#5160 D4)', () => {
+test.describe('Pasting text into a block splices blocks (#5160 D4) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

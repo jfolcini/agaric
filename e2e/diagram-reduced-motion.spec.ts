@@ -31,7 +31,7 @@ for (const [label, reduce] of [
     (page: Page) => page.addInitScript(() => localStorage.setItem('agaric-motion', 'off')),
   ],
 ] as const) {
-  test(`a flowchart renders at the same size with reduced motion from ${label}`, async ({
+  test(`a flowchart renders at the same size with reduced motion from ${label} @editor`, async ({
     page,
   }) => {
     const normal = await renderedSize(page)

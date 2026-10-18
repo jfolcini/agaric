@@ -198,7 +198,7 @@ function cursor(page: Page): Promise<{ index: number; offset: number }> {
   }, EDITOR)
 }
 
-test.describe('page mode (#5691)', () => {
+test.describe('page mode (#5691) @editor @pages', () => {
   let seeded: Seeded
 
   test.beforeEach(async ({ page }) => {
@@ -438,7 +438,7 @@ async function pasteFromOutside(page: Page, text: string): Promise<void> {
   }, text)
 }
 
-test.describe('page mode keeps the page whole (#5691)', () => {
+test.describe('page mode keeps the page whole (#5691) @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -611,7 +611,7 @@ test.describe('page mode keeps the page whole (#5691)', () => {
   })
 })
 
-test.describe('page mode behaves as block mode (#5691)', () => {
+test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

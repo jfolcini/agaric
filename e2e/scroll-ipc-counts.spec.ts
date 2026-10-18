@@ -98,7 +98,9 @@ async function settle(page: Page): Promise<Record<string, number>> {
 // sends one of each and the scroll none. Headroom over that one.
 const SCROLLED_MAX = 3
 
-test('opening and scrolling a 300-row page fetches its rows once (#5443)', async ({ page }) => {
+test('opening and scrolling a 300-row page fetches its rows once (#5443) @pages', async ({
+  page,
+}) => {
   await waitForBoot(page)
   await seedPage(page)
   await deferRowFetches(page)

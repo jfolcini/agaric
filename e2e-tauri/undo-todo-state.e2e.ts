@@ -78,7 +78,7 @@ async function reopenTheNewPage(): Promise<void> {
   await $('[data-testid="block-editor"]').waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
 }
 
-describe('Agaric real-backend undo (#4671)', () => {
+describe('Agaric real-backend undo (#4671) @editor', () => {
   it('clears the todo state Ctrl+Z reversed, durably', async () => {
     await waitForAppReady()
     // A fresh page auto-creates and focuses its first block; the sidebar

@@ -99,7 +99,7 @@ async function pickCodeLanguage(page: Page, language: string): Promise<void> {
   await expect(filter).toHaveCount(0)
 }
 
-test.describe('Mermaid diagram round-trip (#1438)', () => {
+test.describe('Mermaid diagram round-trip (#1438) @editor @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

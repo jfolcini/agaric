@@ -98,7 +98,7 @@ async function waitForHit(holderId: string, when: string, reopen: boolean): Prom
     })
 }
 
-describe('Agaric real-backend queries in page mode (#5743)', () => {
+describe('Agaric real-backend queries in page mode (#5743) @editor @pages', () => {
   it('a query over a tag typed in page mode, and an embed, show the tagged block, and again after navigating back', async () => {
     await waitForAppReady()
     await openNewPage()

@@ -13,7 +13,7 @@ test.beforeEach(async ({ page }) => {
   await waitForBoot(page)
 })
 
-test('group by a property key and by a date bucket from the picker', async ({ page }) => {
+test('group by a property key and by a date bucket from the picker @search', async ({ page }) => {
   await navigateToView(page, 'Advanced Query')
   const groupBy = page.getByRole('combobox', { name: 'Group by' })
   await groupBy.click()

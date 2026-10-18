@@ -35,7 +35,7 @@ async function renderedItemIndices(page: import('@playwright/test').Page): Promi
   )
 }
 
-test.describe('Agenda list virtualization (#548)', () => {
+test.describe('Agenda list virtualization (#548) @journal', () => {
   test('renders only a windowed slice of a long list, not every item', async ({ page }) => {
     await openAgendaWithItems(page)
 

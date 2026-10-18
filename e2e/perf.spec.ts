@@ -499,7 +499,7 @@ async function openViaPalette(page: Page, title: string): Promise<void> {
   await page.locator('[aria-label="Page title"]').waitFor()
 }
 
-test('perf: core journeys on a seeded vault', async ({ page }) => {
+test('perf: core journeys on a seeded vault @editor @pages @journal @search', async ({ page }) => {
   test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
   test.setTimeout(15 * 60_000)
 
@@ -598,7 +598,9 @@ test('perf: core journeys on a seeded vault', async ({ page }) => {
  * Each value is one round's median of 50; the table gives the median round
  * and the spread across rounds, the noise band.
  */
-test('perf: caret moves in a block of 1,000 bold runs (#5689)', async ({ page }) => {
+test('perf: caret moves in a block of 1,000 bold runs (#5689) @editor @pages @journal @search', async ({
+  page,
+}) => {
   test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
   test.setTimeout(5 * 60_000)
   const rounds = Number(process.env['AGARIC_PERF_ROUNDS'] ?? 7)
@@ -715,7 +717,9 @@ async function timeToReady(
  * suspending. Times are in-page: Playwright's `waitFor` polls on a backoff
  * that rounds a 300 ms wait up to about 800 ms of wall time.
  */
-test('perf: first and second visit to each view', async ({ page }) => {
+test('perf: first and second visit to each view @editor @pages @journal @search', async ({
+  page,
+}) => {
   test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
   const blocks = page.locator('[data-testid="block-static"]')
   const visits: Array<[view: string, ready: string, open: () => Promise<void>]> = [
@@ -776,7 +780,7 @@ function coveredBytes(
   return { executed: covered, total }
 }
 
-test('coveredBytes: the innermost range wins and bytes are UTF-8', () => {
+test('coveredBytes: the innermost range wins and bytes are UTF-8 @editor @pages @journal @search', () => {
   test.skip(!process.env['AGARIC_PERF'], 'opt-in: checks the coverage harness, AGARIC_PERF=1')
   //            0         1         2
   //            0123456789012345678901234
@@ -811,7 +815,7 @@ test('coveredBytes: the innermost range wins and bytes are UTF-8', () => {
  * `modulepreload` fetched but V8 never compiled have no coverage entry and
  * count as fully unexecuted.
  */
-test('perf: boot JS executed share (#5441)', async ({ page }) => {
+test('perf: boot JS executed share (#5441) @editor @pages @journal @search', async ({ page }) => {
   test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
   const WINDOW_MS = 2000
   await page.addInitScript((): void => {
@@ -1117,7 +1121,9 @@ function layoutMetrics(boot: BootCapture, add: (metric: string, ms: number) => v
  *
  *   VITE_E2E=1 npx vite build --sourcemap && npm run preview:e2e
  */
-test('perf: boot main-thread profile (#5440)', async ({ browser }) => {
+test('perf: boot main-thread profile (#5440) @editor @pages @journal @search', async ({
+  browser,
+}) => {
   test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
   test.setTimeout(10 * 60_000)
   const boots: Array<Map<string, number>> = []
@@ -1159,7 +1165,7 @@ test('perf: boot main-thread profile (#5440)', async ({ browser }) => {
  */
 const PEAK_RENDERED_BLOCKS_BOUND = 60
 
-test('opening a 500-block page renders only the initial window in full (#5329)', async ({
+test('opening a 500-block page renders only the initial window in full (#5329) @editor @pages @journal @search', async ({
   page,
 }) => {
   const blocks = page.locator('[data-testid="block-static"]')
@@ -1318,7 +1324,7 @@ async function settle(page: Page, rows: string): Promise<void> {
 }
 
 for (const view of LIST_VIEWS) {
-  test(`opening ${view.name} on ${SEEDED_ROWS} rows renders a window and pins its IPC (#5366)`, async ({
+  test(`opening ${view.name} on ${SEEDED_ROWS} rows renders a window and pins its IPC (#5366) @editor @pages @journal @search`, async ({
     page,
   }) => {
     await page.addInitScript(installProbes)
@@ -1401,7 +1407,9 @@ const LINK_CLICK_IPC = [
   'record_page_open',
 ]
 
-test('opening a page and following a link chip pin their IPC (#5445)', async ({ page }) => {
+test('opening a page and following a link chip pin their IPC (#5445) @editor @pages @journal @search', async ({
+  page,
+}) => {
   const blocks = '[data-testid="block-static"]'
   await page.addInitScript(installProbes)
   await page.goto('/')
@@ -1538,7 +1546,9 @@ interface ModeSample {
  *   AGARIC_PERF=1 npx playwright test e2e/perf.spec.ts -g 'page mode'
  *   AGARIC_PERF=1 AGARIC_PERF_CPU=4 npx playwright test e2e/perf.spec.ts -g 'page mode'
  */
-test('perf: page mode next to block mode (#5691)', async ({ page }) => {
+test('perf: page mode next to block mode (#5691) @editor @pages @journal @search', async ({
+  page,
+}) => {
   test.skip(!process.env['AGARIC_PERF'], 'opt-in: AGARIC_PERF=1')
   test.setTimeout(60 * 60_000)
 

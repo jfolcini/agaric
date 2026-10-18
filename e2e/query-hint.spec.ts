@@ -13,7 +13,7 @@ import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './he
  * assertions).
  */
 
-test.describe('Query syntax hint', () => {
+test.describe('Query syntax hint @editor @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

@@ -9,7 +9,7 @@
 
 import { expect, openPage, test, waitForBoot } from './helpers'
 
-test.describe('Back / Forward history', () => {
+test.describe('Back / Forward history @pages', () => {
   test('steps back and forward through views and pages', async ({ page }) => {
     await waitForBoot(page)
     const header = page.locator('header').first()

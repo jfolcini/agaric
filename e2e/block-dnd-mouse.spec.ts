@@ -46,7 +46,7 @@ async function handleFor(page: import('@playwright/test').Page, index: number) {
   return handle
 }
 
-test.describe('Block drag-and-drop (mouse)', () => {
+test.describe('Block drag-and-drop (mouse) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)
@@ -160,7 +160,7 @@ test.describe('Block drag-and-drop (mouse)', () => {
  * restored). They drive the pointer manually and DELIBERATELY do not release
  * mid-drag, so they cannot reuse `dragBlock` (which always ends with mouse-up).
  */
-test.describe('Drag visual layer (#923 f2)', () => {
+test.describe('Drag visual layer (#923 f2) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)

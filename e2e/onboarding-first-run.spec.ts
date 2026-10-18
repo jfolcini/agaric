@@ -29,7 +29,7 @@ test.use({
   storageState: { cookies: [], origins: [] },
 })
 
-test('Welcome modal shows on first run, dismisses, and stays dismissed on the next launch', async ({
+test('Welcome modal shows on first run, dismisses, and stays dismissed on the next launch @boot @mobile', async ({
   page,
 }) => {
   await waitForBoot(page)

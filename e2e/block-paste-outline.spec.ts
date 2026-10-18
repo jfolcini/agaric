@@ -96,7 +96,7 @@ async function ctrlSelectById(page: import('@playwright/test').Page, blockId: st
     .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
 }
 
-test.describe('Copy/paste block outline (keyboard + system clipboard, #913)', () => {
+test.describe('Copy/paste block outline (keyboard + system clipboard, #913) @editor', () => {
   test.beforeEach(async ({ context, page }) => {
     // The chords use the real clipboard (writeText / readText). Chromium
     // rejects those without explicit permission.
@@ -289,7 +289,7 @@ test.describe('Copy/paste block outline (keyboard + system clipboard, #913)', ()
 // multi-line block stays one block and a copied subtree stays nested wherever
 // it is pasted. Every assertion reads the mock backend back.
 
-test.describe('Copy/paste through the source grammar (#5140 Phase 3b)', () => {
+test.describe('Copy/paste through the source grammar (#5140 Phase 3b) @editor', () => {
   test.beforeEach(async ({ context, page }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     await waitForBoot(page)

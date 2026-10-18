@@ -35,7 +35,7 @@ import {
 const EXTERNAL_URL = 'https://images.example.com/cat.png'
 const EXTERNAL_HOST = 'images.example.com'
 
-test.describe('external image policy — default click (#1492)', () => {
+test.describe('external image policy — default click (#1492) @attachments @settings', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -84,7 +84,7 @@ async function setImagePolicy(page: Page, option: string): Promise<void> {
   await chooseSelectOption(page, 'External images', option)
 }
 
-test.describe('external image policy — Settings › Editor select (#5733)', () => {
+test.describe('external image policy — Settings › Editor select (#5733) @attachments @settings', () => {
   test.beforeEach(async ({ page }) => {
     await page.route(EXTERNAL_URL, (route) =>
       route.fulfill({ status: 200, contentType: 'image/png', body: PIXEL_PNG }),

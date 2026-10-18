@@ -32,7 +32,7 @@ async function seedDay(page: Page, day: string): Promise<void> {
   ])
 }
 
-test('Monthly mode dots each source on a day, none on an empty day, and a click opens Daily', async ({
+test('Monthly mode dots each source on a day, none on an empty day, and a click opens Daily @journal', async ({
   page,
 }) => {
   await page.clock.setFixedTime(NOW)
@@ -67,7 +67,9 @@ test('Monthly mode dots each source on a day, none on an empty day, and a click 
   await expect(duePanel.getByText('Scheduled on 2026-11-26')).toBeVisible()
 })
 
-test('the date picker dots each source on a day and none on an empty day', async ({ page }) => {
+test('the date picker dots each source on a day and none on an empty day @journal', async ({
+  page,
+}) => {
   await page.clock.setFixedTime(NOW)
   await waitForBoot(page)
   for (const day of DOTTED_DAYS) await seedDay(page, day)

@@ -93,7 +93,7 @@ async function assertOneTargetHoldingItsBlockAndLinked(
   })
 }
 
-describe('Agaric real-backend two-file import adopts the page a link created (#5160 D12)', () => {
+describe('Agaric real-backend two-file import adopts the page a link created (#5160 D12) @markdown', () => {
   for (const order of ['linker-first', 'target-first'] as const) {
     it(`leaves one target page holding its block, linked from the other file (${order})`, async () => {
       await waitForAppReady()

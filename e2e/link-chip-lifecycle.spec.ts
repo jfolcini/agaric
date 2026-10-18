@@ -131,7 +131,7 @@ async function restoreAllFromTrash(page: Page): Promise<void> {
   await expect(page.getByText('Nothing in trash. Deleted items will appear here.')).toBeVisible()
 }
 
-test.describe('link chips follow their target', () => {
+test.describe('link chips follow their target @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -288,7 +288,7 @@ test.describe('link chips follow their target', () => {
   })
 })
 
-test.describe('a broken chip removes itself when clicked (#5736)', () => {
+test.describe('a broken chip removes itself when clicked (#5736) @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await createSpace(page, 'Work')

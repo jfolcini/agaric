@@ -40,7 +40,7 @@ function pageRow(title: string) {
   )
 }
 
-describe('Agaric real-backend batch add-tag (#4671)', () => {
+describe('Agaric real-backend batch add-tag (#4671) @editor @pages', () => {
   it('tags every selected page in one batch, durably', async () => {
     await waitForAppReady()
 

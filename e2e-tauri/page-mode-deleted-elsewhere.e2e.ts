@@ -53,7 +53,7 @@ function getBlockAnswer(id: string): Promise<string> {
   }, id)
 }
 
-describe('Agaric real-backend page mode, a block deleted elsewhere while typed in (#5691)', () => {
+describe('Agaric real-backend page mode, a block deleted elsewhere while typed in (#5691) @editor @pages', () => {
   it('keeps the text as a new block, says so, and leaves the deleted block deleted', async () => {
     await waitForAppReady()
     await openNewPage()

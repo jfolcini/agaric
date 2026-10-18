@@ -55,7 +55,7 @@ async function currentSpaceName(): Promise<string> {
   return name
 }
 
-describe('Agaric real-backend space-scoped tag (#4671 / #3081)', () => {
+describe('Agaric real-backend space-scoped tag (#4671 / #3081) @pages @spaces', () => {
   it('lists an inline-created tag only in the space it was created in, across switches', async () => {
     await waitForAppReady()
     const spaceA = await currentSpaceName()

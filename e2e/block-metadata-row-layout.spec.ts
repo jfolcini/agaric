@@ -94,7 +94,7 @@ async function expectCheckboxUnderHeading(page: Page, heading: Locator) {
 
 const taskRow = (page: Page) => page.locator('[data-testid="sortable-block"]', { hasText: TASK })
 
-test.describe('Block metadata row layout, desktop (#5332)', () => {
+test.describe('Block metadata row layout, desktop (#5332) @editor @mobile', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 
   test.beforeEach(async ({ page }) => {
@@ -132,7 +132,7 @@ test.describe('Block metadata row layout, desktop (#5332)', () => {
   })
 })
 
-test.describe('Block metadata row layout, phone (#5332)', () => {
+test.describe('Block metadata row layout, phone (#5332) @editor @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,
@@ -200,7 +200,7 @@ async function setSidebar(page: Page, state: 'open' | 'collapsed') {
   await expect.poll(() => gap.evaluate((el) => el.getAnimations().length)).toBe(0)
 }
 
-test.describe('Reading width, desktop (#5332, #5354)', () => {
+test.describe('Reading width, desktop (#5332, #5354) @editor @mobile', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 
   test.beforeEach(async ({ page }) => {
@@ -254,7 +254,7 @@ test.describe('Reading width, desktop (#5332, #5354)', () => {
   }
 })
 
-test.describe('Control lane hangs in the margin, desktop (#5332)', () => {
+test.describe('Control lane hangs in the margin, desktop (#5332) @editor @mobile', () => {
   test.use({ viewport: { width: 1440, height: 900 } })
 
   test.beforeEach(async ({ page }) => {

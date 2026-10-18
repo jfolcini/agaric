@@ -32,7 +32,7 @@ async function expectCursorOn(page: Page, id: string, previous: string): Promise
   await expect(row(page, previous)).toHaveCSS('box-shadow', 'none')
 }
 
-test.describe('Block-select cursor (#5734)', () => {
+test.describe('Block-select cursor (#5734) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)

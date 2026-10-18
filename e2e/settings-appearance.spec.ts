@@ -32,7 +32,7 @@ function bodyBackground(page: Page): Promise<string> {
   return page.evaluate(() => getComputedStyle(document.body).backgroundColor)
 }
 
-test.describe('Settings › Appearance', () => {
+test.describe('Settings › Appearance @settings', () => {
   test.beforeEach(async ({ page }) => {
     // `auto` resolves to light, so picking Dark is a visible change.
     await page.emulateMedia({ colorScheme: 'light' })

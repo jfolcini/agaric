@@ -10,7 +10,7 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
  * block" then stranded it above the one the user types into, and no later
  * focus change ever revisits it.
  */
-test('Add block focuses the empty seed block of a fresh day', async ({ page }) => {
+test('Add block focuses the empty seed block of a fresh day @editor @journal', async ({ page }) => {
   await waitForBoot(page)
   await navigateToView(page, 'Journal')
   await page.getByRole('button', { name: 'Next day' }).click()

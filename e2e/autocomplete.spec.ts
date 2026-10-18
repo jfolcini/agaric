@@ -11,7 +11,7 @@
 
 import { expect, test, waitForBoot } from './helpers'
 
-test.describe('Autocomplete', () => {
+test.describe('Autocomplete @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await page

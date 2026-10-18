@@ -162,7 +162,7 @@ async function clearFilters(): Promise<void> {
   await waitForListed(ALL, '', 'after Clear all')
 }
 
-describe('Agaric real-backend References Status / Priority / Created Date filters (#5736)', () => {
+describe('Agaric real-backend References Status / Priority / Created Date filters (#5736) @pages @search', () => {
   it('lists exactly the sources each Status, Priority and none filter selects', async () => {
     await waitForAppReady()
     const markdown = Object.values(SOURCES)

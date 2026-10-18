@@ -39,7 +39,7 @@ import { expect, test, waitForBoot } from './helpers'
 // 1. Due date filtering
 // ===========================================================================
 
-test.describe('Due date filtering', () => {
+test.describe('Due date filtering @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -104,7 +104,7 @@ test.describe('Due date filtering', () => {
 // 2. Scheduled date filtering
 // ===========================================================================
 
-test.describe('Scheduled date filtering', () => {
+test.describe('Scheduled date filtering @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -168,7 +168,7 @@ test.describe('Scheduled date filtering', () => {
 // 3. Task state changes in agenda
 // ===========================================================================
 
-test.describe('Task state changes in agenda', () => {
+test.describe('Task state changes in agenda @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -225,7 +225,7 @@ test.describe('Task state changes in agenda', () => {
 // 4. Overdue tasks
 // ===========================================================================
 
-test.describe('Overdue tasks', () => {
+test.describe('Overdue tasks @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -271,7 +271,7 @@ test.describe('Overdue tasks', () => {
 // 5. Date navigation
 // ===========================================================================
 
-test.describe('Date navigation', () => {
+test.describe('Date navigation @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -367,7 +367,7 @@ test.describe('Date navigation', () => {
 // 6. View mode interactions
 // ===========================================================================
 
-test.describe('View mode interactions', () => {
+test.describe('View mode interactions @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -516,7 +516,7 @@ test.describe('View mode interactions', () => {
 // 7. Page-centric agenda + undated tasks
 // ===========================================================================
 
-test.describe('Page-centric agenda defaults', () => {
+test.describe('Page-centric agenda defaults @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

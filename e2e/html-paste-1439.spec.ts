@@ -84,7 +84,7 @@ async function persistedRow(
   }, blockId)
 }
 
-test.describe('HTML paste → markdown blocks (#1439)', () => {
+test.describe('HTML paste → markdown blocks (#1439) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)

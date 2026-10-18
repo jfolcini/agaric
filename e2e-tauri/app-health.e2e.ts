@@ -115,7 +115,7 @@ async function runIntegrityCheck(): Promise<{ blocks: number; date: string }> {
   return { blocks: Number(match[1]), date: match[2] ?? '' }
 }
 
-describe('Agaric real-backend App health and bug report (#5741, #5740)', () => {
+describe('Agaric real-backend App health and bug report (#5741, #5740) @boot @settings', () => {
   it('counts the ops an edit burst dispatched, and the queues drain to 0', async () => {
     await waitForAppReady()
     await openAppHealth()

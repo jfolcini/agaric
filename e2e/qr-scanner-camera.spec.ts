@@ -114,11 +114,13 @@ async function expectFillsViewfinder(page: Page) {
   expectInside(m.frame, m.video)
 }
 
-test('the camera image fills the square viewfinder at desktop width', async ({ page }) => {
+test('the camera image fills the square viewfinder at desktop width @sync @mobile', async ({
+  page,
+}) => {
   await expectFillsViewfinder(page)
 })
 
-test('closing the dialog while the camera is still starting leaves no camera on', async ({
+test('closing the dialog while the camera is still starting leaves no camera on @sync @mobile', async ({
   page,
 }) => {
   // Hold getUserMedia open until the dialog is gone, so start() is still pending at the close.
@@ -169,7 +171,7 @@ test('closing the dialog while the camera is still starting leaves no camera on'
   clearConsoleErrors(page)
 })
 
-test.describe('at phone width', () => {
+test.describe('at phone width @sync @mobile', () => {
   test.use(pixel7)
 
   test('the camera image fills the square viewfinder', async ({ page }) => {

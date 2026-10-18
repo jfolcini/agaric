@@ -10,7 +10,7 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
  * armed before the day had a page to mount.
  */
 for (const reducedMotion of ['no-preference', 'reduce'] as const) {
-  test(`one "Add block" click on an empty week day creates one focused block there (${reducedMotion})`, async ({
+  test(`one "Add block" click on an empty week day creates one focused block there (${reducedMotion}) @editor @journal`, async ({
     page,
   }) => {
     await page.emulateMedia({ reducedMotion })

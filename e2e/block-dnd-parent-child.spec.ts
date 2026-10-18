@@ -57,7 +57,7 @@ async function ctrlSelectById(page: import('@playwright/test').Page, blockId: st
     .click({ modifiers: ['Control'], position: { x: 6, y: 6 } })
 }
 
-test.describe('Block drag-and-drop (parent + child multi-select, #914)', () => {
+test.describe('Block drag-and-drop (parent + child multi-select, #914) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)

@@ -59,7 +59,7 @@ async function addBlock(page: import('@playwright/test').Page, text: string) {
   }
 }
 
-test.describe('Editor lifecycle', () => {
+test.describe('Editor lifecycle @editor @mobile', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
@@ -281,7 +281,7 @@ test.describe('Editor lifecycle', () => {
 // A mouse press that blurs the editor keeps its block in edit mode until the
 // press ends, so the click lands where it was pressed (#5807); a key leaves at
 // once.
-test.describe('Editor blur by a press or a key', () => {
+test.describe('Editor blur by a press or a key @editor @mobile', () => {
   const editorRow = (page: import('@playwright/test').Page) =>
     page.locator('[data-testid="block-editor"]')
   const staticRow = (page: import('@playwright/test').Page, blockId: string) =>
@@ -391,7 +391,7 @@ test.describe('Editor blur by a press or a key', () => {
 
 const { defaultBrowserType: _, ...pixel7 } = devices['Pixel 7']
 
-test.describe('Editor lifecycle on touch', () => {
+test.describe('Editor lifecycle on touch @editor @mobile', () => {
   test.use(pixel7)
 
   // A one-line edit, so the edited block is as short as the editor makes it:

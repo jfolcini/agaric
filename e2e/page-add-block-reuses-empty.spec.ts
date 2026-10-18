@@ -10,7 +10,7 @@ import { createPageFromPagesView, expect, navigateToView, test, waitForBoot } fr
  * block" then stranded it above the one the user types into, and no later
  * focus change ever revisits it.
  */
-test('Add block focuses the empty seed block of a fresh page', async ({ page }) => {
+test('Add block focuses the empty seed block of a fresh page @editor @pages', async ({ page }) => {
   await waitForBoot(page)
   await navigateToView(page, 'Pages')
   await createPageFromPagesView(page, 'Seeded Page')

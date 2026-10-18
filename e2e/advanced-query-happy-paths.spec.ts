@@ -44,7 +44,9 @@ function resultRows(page: Page): Locator {
   return page.getByRole('listbox', { name: 'Query results' }).getByRole('option')
 }
 
-test('a nested AND / OR / NOT tree returns exactly the blocks it selects', async ({ page }) => {
+test('a nested AND / OR / NOT tree returns exactly the blocks it selects @search', async ({
+  page,
+}) => {
   // Tagged `work` but DONE: only the NOT leaf can drop it.
   await seedSearchBlocks(page, [
     { content: 'Archived work task', todo: 'DONE', tagIds: [TAG_WORK] },
@@ -88,7 +90,9 @@ test('a nested AND / OR / NOT tree returns exactly the blocks it selects', async
   ])
 })
 
-test('a full-text term narrows the results and a sort key orders them', async ({ page }) => {
+test('a full-text term narrows the results and a sort key orders them @search', async ({
+  page,
+}) => {
   // The sort picker offers no due-date column (`SORT_COLUMNS` in
   // QueryControlsBar.tsx), so priority is the order under test. Equal-length
   // texts tie on relevance, so neither the unsorted order (id descending) nor

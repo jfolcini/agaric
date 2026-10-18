@@ -34,7 +34,7 @@ async function addBlock(page: import('@playwright/test').Page, text: string) {
   await expect(page.getByText(text)).toBeVisible()
 }
 
-test.describe('Error scenarios', () => {
+test.describe('Error scenarios @boot', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     // Wait for BootGate to resolve and Journal view to load

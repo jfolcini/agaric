@@ -54,7 +54,7 @@ async function ariaLevelOf(marker: string): Promise<string | null> {
   return $(`li[data-block-id="${id}"]`).getAttribute('aria-level')
 }
 
-describe('Agaric real-backend markdown import (#4671)', () => {
+describe('Agaric real-backend markdown import (#4671) @markdown', () => {
   it('imports an indented list with a [[link]] and keeps the depth and the resolved link', async () => {
     await waitForAppReady()
     await navigateTo('Settings')

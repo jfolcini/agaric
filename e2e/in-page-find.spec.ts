@@ -51,7 +51,7 @@ async function openFind(page: import('@playwright/test').Page) {
   return toolbar
 }
 
-test.describe('In-page find (Ctrl+F)', () => {
+test.describe('In-page find (Ctrl+F) @pages @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

@@ -121,7 +121,7 @@ async function blockId(marker: string): Promise<string> {
   return id
 }
 
-describe('Agaric real-backend Obsidian vault import (#5740)', () => {
+describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
   it('imports a vault with its wikilink, tag, front matter and embedded image', async () => {
     await waitForAppReady()
     const marker = runScopedMarker('wdio-obs')

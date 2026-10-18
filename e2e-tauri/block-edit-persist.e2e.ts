@@ -30,7 +30,7 @@ import {
 const BASE = runScopedMarker('wdio-edit-base')
 const SUFFIX = '-edited'
 
-describe('Agaric real-backend edit persistence (#3085)', () => {
+describe('Agaric real-backend edit persistence (#3085) @editor', () => {
   it('persists an in-place text edit across a navigation round-trip', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

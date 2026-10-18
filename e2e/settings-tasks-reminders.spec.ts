@@ -63,7 +63,7 @@ async function upcomingRows(page: Page) {
   return section.locator('[data-slot="alert-list-row"]')
 }
 
-test.describe('Settings › Tasks & reminders: deadline warning', () => {
+test.describe('Settings › Tasks & reminders: deadline warning @settings @journal', () => {
   test.beforeEach(async ({ page }) => {
     // A Wednesday morning, so no window crosses midnight mid-test.
     await page.clock.install({ time: new Date('2026-03-11T09:00:00') })

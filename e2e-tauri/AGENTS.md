@@ -24,6 +24,8 @@ The CLI builds every bin of the packages after `--`, so the one compile also emi
 
 A failed job's log: [`.github/AGENTS.md`](../.github/AGENTS.md) § Reading a run. `gh run download <run_id> -p 'e2e-tauri-diagnostics-*'` fetches each shard's diagnostics (screenshots, app log, sync peer logs, the visibility verdict). The harness sets `AGARIC_STDERR_LOG=warn` for the app and the sync peer, so the console carries only their warnings and errors and the full `info` log is in that artifact; `AGARIC_STDERR_LOG=info` brings the stream back.
 
+`just e2e-related` prints the `--spec` list for the specs your change can affect, picked by the area tags each top-level `describe` title ends with (`… @editor @pages`).
+
 Show a spec red here, not on a scratch branch: apply the break, rebuild, and run that spec alone (`npm run test:e2e-tauri -- --spec e2e-tauri/<file>.e2e.ts`). A branch pushed only to show red costs a full CI run and leaves a remote branch behind.
 
 ## Rules

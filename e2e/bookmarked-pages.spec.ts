@@ -70,7 +70,7 @@ async function openPagesView(page: import('@playwright/test').Page) {
   await expect(page.getByRole('grid')).toBeVisible()
 }
 
-test.describe(' + PageBrowser unified Bookmarks + Pages model', () => {
+test.describe(' + PageBrowser unified Bookmarks + Pages model @pages @mobile', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     // Reset starred-pages so each test starts from a clean slate even
@@ -233,7 +233,7 @@ test.describe(' + PageBrowser unified Bookmarks + Pages model', () => {
  * and dragging a row rewrites it. A drag is not a click: the page it moved
  * must not open.
  */
-test.describe('Sidebar bookmark reorder', () => {
+test.describe('Sidebar bookmark reorder @pages @mobile', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await bookmarkSeedPages(page)
@@ -254,7 +254,7 @@ test.describe('Sidebar bookmark reorder', () => {
   })
 })
 
-test.describe('Sidebar bookmark reorder on touch (iPhone viewport)', () => {
+test.describe('Sidebar bookmark reorder on touch (iPhone viewport) @pages @mobile', () => {
   const iPhone13 = devices['iPhone 13']
   test.use({
     viewport: iPhone13.viewport,

@@ -77,7 +77,7 @@ async function openTemplatePicker(page: import('@playwright/test').Page) {
 // 1. Save a page as template
 // ===========================================================================
 
-test.describe('Save page as template', () => {
+test.describe('Save page as template @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -120,7 +120,7 @@ test.describe('Save page as template', () => {
 // 2. Remove template status
 // ===========================================================================
 
-test.describe('Remove template status', () => {
+test.describe('Remove template status @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -159,7 +159,7 @@ test.describe('Remove template status', () => {
 // 3. Template list via /template slash command
 // ===========================================================================
 
-test.describe('Template picker via slash command', () => {
+test.describe('Template picker via slash command @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -200,7 +200,7 @@ test.describe('Template picker via slash command', () => {
 // 4. Apply template to a page
 // ===========================================================================
 
-test.describe('Apply template', () => {
+test.describe('Apply template @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -239,7 +239,7 @@ test.describe('Apply template', () => {
 // 5. Template variable expansion
 // ===========================================================================
 
-test.describe('Template variable expansion', () => {
+test.describe('Template variable expansion @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -284,7 +284,7 @@ test.describe('Template variable expansion', () => {
 // 6. Journal template toggle
 // ===========================================================================
 
-test.describe('Journal template toggle', () => {
+test.describe('Journal template toggle @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -333,7 +333,7 @@ test.describe('Journal template toggle', () => {
 // 7. Journal template from the journal (#5373)
 // ===========================================================================
 
-test.describe('Journal template button', () => {
+test.describe('Journal template button @editor @pages', () => {
   const SPACE_SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
   const BLOCK_TMPL_ATTENDEES = '0000000000000000000BLOCK20'
   const NESTED = 'Nested under attendees'

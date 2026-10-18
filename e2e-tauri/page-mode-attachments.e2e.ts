@@ -92,7 +92,7 @@ async function reopenInPageMode(): Promise<void> {
   await chooseEditMode('Page')
 }
 
-describe('Agaric real-backend attachments in page mode (#5743)', () => {
+describe('Agaric real-backend attachments in page mode (#5743) @editor @pages @attachments', () => {
   it('a page with a task, a property and an attachment opens in page mode, and a toggled task stays', async () => {
     await waitForAppReady()
     await openNewPage()

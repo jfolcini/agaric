@@ -41,7 +41,7 @@ async function installFixture(
   `)
 }
 
-test('unmarked hard clip remains an overflow failure when root widths look safe', async ({
+test('unmarked hard clip remains an overflow failure when root widths look safe @mobile', async ({
   page,
 }) => {
   await installFixture(page)
@@ -56,7 +56,9 @@ test('unmarked hard clip remains an overflow failure when root widths look safe'
 })
 
 for (const overflow of ['hidden', 'clip'] as const) {
-  test(`explicit ${overflow} clip suppresses only its clipped descendants`, async ({ page }) => {
+  test(`explicit ${overflow} clip suppresses only its clipped descendants @mobile`, async ({
+    page,
+  }) => {
     await installFixture(page, { markClip: true, clipOverflow: overflow })
     const root = page.getByTestId('overflow-root')
 
@@ -65,7 +67,7 @@ for (const overflow of ['hidden', 'clip'] as const) {
 }
 
 for (const overflow of ['auto', 'scroll'] as const) {
-  test(`existing ${overflow} scroller suppression remains intact`, async ({ page }) => {
+  test(`existing ${overflow} scroller suppression remains intact @mobile`, async ({ page }) => {
     await installFixture(page, { clipOverflow: overflow })
     const root = page.getByTestId('overflow-root')
 
@@ -73,7 +75,7 @@ for (const overflow of ['auto', 'scroll'] as const) {
   })
 }
 
-test('marker with visible overflow does not suppress a descendant', async ({ page }) => {
+test('marker with visible overflow does not suppress a descendant @mobile', async ({ page }) => {
   await installFixture(page, { markClip: true, clipOverflow: 'visible' })
   const root = page.getByTestId('overflow-root')
 
@@ -82,7 +84,9 @@ test('marker with visible overflow does not suppress a descendant', async ({ pag
   )
 })
 
-test('marker on the assertion target cannot opt the whole surface out', async ({ page }) => {
+test('marker on the assertion target cannot opt the whole surface out @mobile', async ({
+  page,
+}) => {
   await installFixture(page, { markRoot: true })
   const root = page.getByTestId('overflow-root')
 
@@ -91,7 +95,9 @@ test('marker on the assertion target cannot opt the whole surface out', async ({
   )
 })
 
-test('marked clip container itself remains measurable when it overflows', async ({ page }) => {
+test('marked clip container itself remains measurable when it overflows @mobile', async ({
+  page,
+}) => {
   await installFixture(page, { markClip: true, clipWidth: 100 })
   const root = page.getByTestId('overflow-root')
 
@@ -110,7 +116,7 @@ test('marked clip container itself remains measurable when it overflows', async 
 // These fixtures are built specifically to diverge the two chains.
 // ---------------------------------------------------------------------------
 
-test('marked clip does NOT suppress an abs-positioned descendant whose containing block escapes it', async ({
+test('marked clip does NOT suppress an abs-positioned descendant whose containing block escapes it @mobile', async ({
   page,
 }) => {
   // `clip` is `position: static`, so it does not establish a containing
@@ -158,7 +164,7 @@ test('marked clip does NOT suppress an abs-positioned descendant whose containin
   )
 })
 
-test('marked clip still suppresses an abs-positioned descendant that is genuinely its containing block', async ({
+test('marked clip still suppresses an abs-positioned descendant that is genuinely its containing block @mobile', async ({
   page,
 }) => {
   // `clip` is itself `position: absolute`, so it IS `offender`'s containing
@@ -256,7 +262,7 @@ async function offenderIsPlacedByClip(page: Parameters<typeof expectNoHorizontal
   })
 }
 
-test('marked clip whose containing block comes only from backdrop-filter suppresses its abs descendant', async ({
+test('marked clip whose containing block comes only from backdrop-filter suppresses its abs descendant @mobile', async ({
   page,
 }) => {
   // `clip` is `position: static` with no transform/filter/contain — the ONLY
@@ -299,7 +305,7 @@ test('marked clip whose containing block comes only from backdrop-filter suppres
   await expectNoHorizontalOverflow(page, root, 'backdrop-filter containing block')
 })
 
-test('marked clip whose containing block comes only from will-change: backdrop-filter suppresses its abs descendant', async ({
+test('marked clip whose containing block comes only from will-change: backdrop-filter suppresses its abs descendant @mobile', async ({
   page,
 }) => {
   // `will-change: backdrop-filter` promotes the box the same way, and the token
@@ -333,7 +339,7 @@ test('marked clip whose containing block comes only from will-change: backdrop-f
   await expectNoHorizontalOverflow(page, root, 'will-change backdrop-filter containing block')
 })
 
-test('backdrop-filter: none does not make a marked clip suppress an escaping abs descendant', async ({
+test('backdrop-filter: none does not make a marked clip suppress an escaping abs descendant @mobile', async ({
   page,
 }) => {
   // Must-still-fail companion to the two fixtures above. The computed value of
@@ -371,7 +377,7 @@ test('backdrop-filter: none does not make a marked clip suppress an escaping abs
   )
 })
 
-test('container-type does NOT establish a containing block, so a marked query container cannot suppress an escaping abs descendant', async ({
+test('container-type does NOT establish a containing block, so a marked query container cannot suppress an escaping abs descendant @mobile', async ({
   page,
 }) => {
   // #3609 proposed treating `container-type: size | inline-size` as
@@ -508,7 +514,7 @@ for (const { label, decl, margin } of [
   { label: 'will-change: rotate', decl: 'will-change:rotate', margin: 150 },
   { label: 'will-change: contain', decl: 'will-change:contain', margin: 150 },
 ] as const) {
-  test(`marked clip whose containing block comes only from ${label} suppresses its abs descendant`, async ({
+  test(`marked clip whose containing block comes only from ${label} suppresses its abs descendant @mobile`, async ({
     page,
   }) => {
     await installContainingBlockFixture(page, decl, margin)
@@ -529,7 +535,7 @@ for (const { label, decl, margin } of [
   })
 }
 
-test('marked clip whose containing block comes only from a non-identity rotate suppresses its abs descendant', async ({
+test('marked clip whose containing block comes only from a non-identity rotate suppresses its abs descendant @mobile', async ({
   page,
 }) => {
   // `rotate` gets its own fixture because a real rotation moves the abs child
@@ -594,7 +600,7 @@ for (const { label, decl } of [
   { label: 'will-change: content-visibility', decl: 'will-change:content-visibility' },
   { label: 'will-change: opacity', decl: 'will-change:opacity' },
 ] as const) {
-  test(`${label} does not make a marked clip suppress an escaping abs descendant`, async ({
+  test(`${label} does not make a marked clip suppress an escaping abs descendant @mobile`, async ({
     page,
   }) => {
     // Must-still-flag companions. `clip` is static and carries only the inert
@@ -632,7 +638,9 @@ for (const { label, decl } of [
   })
 }
 
-test('contain: layout marked clip still suppresses its abs descendant', async ({ page }) => {
+test('contain: layout marked clip still suppresses its abs descendant @mobile', async ({
+  page,
+}) => {
   // Contrast case for the fixture above: real `contain` values DO establish a
   // containing block (measured: the abs child resolves against this box), and
   // unlike `container-type` they surface in computed `contain`. The pair

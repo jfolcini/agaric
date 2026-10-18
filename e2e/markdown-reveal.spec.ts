@@ -52,7 +52,7 @@ test.beforeEach(async ({ page, isMobile }) => {
   await (isMobile ? openPageMobile : openPage)(page, 'Getting Started')
 })
 
-test('the caret in bold text reveals its markers, and they never reach the clipboard or the stored block', async ({
+test('the caret in bold text reveals its markers, and they never reach the clipboard or the stored block @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, 'Make **bold** end')
@@ -84,7 +84,9 @@ test('the caret in bold text reveals its markers, and they never reach the clipb
   await expect(page.locator('[data-testid="block-static"]').nth(2)).toHaveText('Make bold end')
 })
 
-test('Delete before a revealed marker removes the bold from its whole range', async ({ page }) => {
+test('Delete before a revealed marker removes the bold from its whole range @editor @markdown @mobile', async ({
+  page,
+}) => {
   await typeBlock(page, 'Make **bold** end')
   await selectEditorRange(page, 7, 7)
   await expect(page.getByTestId('md-reveal-marker')).toHaveText(['**', '**'])
@@ -98,7 +100,7 @@ test('Delete before a revealed marker removes the bold from its whole range', as
   await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
 })
 
-test('Backspace after the opening marker at the block start removes the bold in one undo step, without a merge', async ({
+test('Backspace after the opening marker at the block start removes the bold in one undo step, without a merge @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, '**bold** rest')
@@ -123,7 +125,7 @@ test('Backspace after the opening marker at the block start removes the bold in 
   await expect(editor).toHaveText('**bold** rest')
 })
 
-test('a click past a marker types outside the bold, and a click on its near half inside', async ({
+test('a click past a marker types outside the bold, and a click on its near half inside @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, 'Make **bold** rest')
@@ -159,7 +161,7 @@ test('a click past a marker types outside the bold, and a click on its near half
   await expect(editor).toHaveText('Make Z**boldY**X rest')
 })
 
-test('ArrowRight at the end of a block steps past the closing marker before it leaves the block', async ({
+test('ArrowRight at the end of a block steps past the closing marker before it leaves the block @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, 'Make **bold**')
@@ -173,7 +175,7 @@ test('ArrowRight at the end of a block steps past the closing marker before it l
   await expect(editor).toHaveText('Make boldX')
 })
 
-test('an IME composition beside a marker leaves the markers in place until it ends', async ({
+test('an IME composition beside a marker leaves the markers in place until it ends @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, 'Make **bold** rest')
@@ -199,7 +201,9 @@ test('an IME composition beside a marker leaves the markers in place until it en
   await expect(editor.locator('strong')).toHaveText('bold')
 })
 
-test('turning the preference off removes the markers', async ({ page }) => {
+test('turning the preference off removes the markers @editor @markdown @mobile', async ({
+  page,
+}) => {
   await typeBlock(page, 'Make **bold** rest')
   await selectEditorRange(page, 7, 7)
   await expect(page.getByTestId('md-reveal-marker')).toHaveCount(2)
@@ -252,7 +256,7 @@ async function shownMarkers(page: Page): Promise<string[]> {
 const stored = (page: Page) =>
   page.locator('[data-testid="block-static"][data-block-id="0000000000000000000BLOCK03"]')
 
-test('each heading level shows its # run while the caret is in the heading, and is saved', async ({
+test('each heading level shows its # run while the caret is in the heading, and is saved @editor @markdown @mobile', async ({
   page,
 }) => {
   for (let level = 1; level <= 6; level++) {
@@ -267,7 +271,7 @@ test('each heading level shows its # run while the caret is in the heading, and 
   }
 })
 
-test('Backspace after the # run lowers a heading, and # left of it raises one, each in one undo step', async ({
+test('Backspace after the # run lowers a heading, and # left of it raises one, each in one undo step @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, '## Title')
@@ -301,7 +305,7 @@ test('Backspace after the # run lowers a heading, and # left of it raises one, e
   await expect(stored(page).locator('h2')).toHaveText('XTitle')
 })
 
-test('Backspace through a heading’s # run leaves a paragraph without merging blocks', async ({
+test('Backspace through a heading’s # run leaves a paragraph without merging blocks @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, '## Title')
@@ -316,7 +320,7 @@ test('Backspace through a heading’s # run leaves a paragraph without merging b
   await expect(blocks).toHaveCount(staticCount)
 })
 
-test('a click on the near half of the # run puts the caret left of it, and on the far half right of it', async ({
+test('a click on the near half of the # run puts the caret left of it, and on the far half right of it @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, '## Title')
@@ -335,7 +339,9 @@ test('a click on the near half of the # run puts the caret left of it, and on th
   await expect(editor.locator('h3')).toHaveText('### XTitle')
 })
 
-test('deleting [ or ](url) unlinks the label, in one undo step', async ({ page }) => {
+test('deleting [ or ](url) unlinks the label, in one undo step @editor @markdown @mobile', async ({
+  page,
+}) => {
   await typeBlock(page, 'see [label](https://example.com) end')
   const editor = page.locator(EDITOR)
   await expect(editor.locator('a')).toHaveText('label')
@@ -361,7 +367,7 @@ test('deleting [ or ](url) unlinks the label, in one undo step', async ({ page }
   await expect(stored(page).getByTestId('external-link')).toHaveCount(0)
 })
 
-test('the arrows cross ](url) as one unit, and Backspace past it unlinks the label', async ({
+test('the arrows cross ](url) as one unit, and Backspace past it unlinks the label @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, 'see [label](https://example.com) end')
@@ -392,7 +398,7 @@ test('the arrows cross ](url) as one unit, and Backspace past it unlinks the lab
   await expect(editor.locator('a')).toHaveText('labelY')
 })
 
-test('Ctrl+K in a revealed link edits its URL in the link popover, and the new ](url) shows', async ({
+test('Ctrl+K in a revealed link edits its URL in the link popover, and the new ](url) shows @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, 'see [label](https://example.com) end')
@@ -417,7 +423,7 @@ test('Ctrl+K in a revealed link edits its URL in the link popover, and the new ]
   )
 })
 
-test.describe('on a phone', () => {
+test.describe('on a phone @editor @markdown @mobile', () => {
   const phone = devices['Pixel 7']
   test.use({
     viewport: { width: 390, height: phone.viewport.height },
@@ -441,7 +447,7 @@ test.describe('on a phone', () => {
   })
 })
 
-test('a bare URL reveals nothing', async ({ page }) => {
+test('a bare URL reveals nothing @editor @markdown @mobile', async ({ page }) => {
   await typeBlock(page, 'go https://example.com now')
   const editor = page.locator(EDITOR)
   await expect(editor.locator('a')).toHaveText('https://example.com')
@@ -449,7 +455,9 @@ test('a bare URL reveals nothing', async ({ page }) => {
   await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
 })
 
-test('chips stay chips: no syntax beside a tag, and the arrows step over it', async ({ page }) => {
+test('chips stay chips: no syntax beside a tag, and the arrows step over it @editor @markdown @mobile', async ({
+  page,
+}) => {
   // GS_4: `Try tagging blocks with #[work] or #[personal] to organize your notes.`
   const block = page.locator('[data-testid="block-static"]').nth(3)
   const before = (await block.textContent()) ?? ''
@@ -479,7 +487,7 @@ test('chips stay chips: no syntax beside a tag, and the arrows step over it', as
   await expect(page.locator('[data-testid="block-static"]').nth(3)).toHaveText(before)
 })
 
-test('axe finds no violation with a heading’s # run and a link’s syntax drawn', async ({
+test('axe finds no violation with a heading’s # run and a link’s syntax drawn @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, '## see [label](https://example.com) **bold**')
@@ -497,7 +505,7 @@ test('axe finds no violation with a heading’s # run and a link’s syntax draw
   expect(violations).toEqual([])
 })
 
-test('an IME composition past a link in a heading leaves its markers in place until it ends', async ({
+test('an IME composition past a link in a heading leaves its markers in place until it ends @editor @markdown @mobile', async ({
   page,
 }) => {
   await typeBlock(page, '## see [label](https://example.com) rest')

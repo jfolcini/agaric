@@ -37,7 +37,7 @@ function calloutOf(page: Page, blockId: string): Locator {
   )
 }
 
-test.describe('Block context menu: callout variant', () => {
+test.describe('Block context menu: callout variant @editor @mobile', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)
@@ -122,7 +122,7 @@ test.describe('Block context menu: callout variant', () => {
   })
 })
 
-test.describe('Long-press menu: callout variant (iPhone viewport)', () => {
+test.describe('Long-press menu: callout variant (iPhone viewport) @editor @mobile', () => {
   const iPhone13 = devices['iPhone 13']
   test.use({
     viewport: iPhone13.viewport,
@@ -152,7 +152,7 @@ test.describe('Long-press menu: callout variant (iPhone viewport)', () => {
   })
 })
 
-test.describe('Toolbar Turn into: callout variant', () => {
+test.describe('Toolbar Turn into: callout variant @editor @mobile', () => {
   test('lists the variants with no search box, and still turns the block', async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)

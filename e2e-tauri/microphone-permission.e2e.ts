@@ -12,7 +12,7 @@
 
 import { waitForAppReady } from './helpers'
 
-describe('Agaric real-webview microphone (#5717)', () => {
+describe('Agaric real-webview microphone (#5717) @attachments', () => {
   it('resolves getUserMedia({ audio: true }) with a live audio track', async () => {
     await waitForAppReady()
 

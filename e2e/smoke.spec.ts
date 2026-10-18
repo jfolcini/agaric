@@ -1,6 +1,6 @@
 import { expect, test } from './helpers'
 
-test.describe('Smoke tests', () => {
+test.describe('Smoke tests @boot', () => {
   test('app loads and shows Agaric branding', async ({ page }) => {
     // Phase 1 deliberately removed the sidebar "Agaric" wordmark —
     // app identity now lives in the window title (set in `index.html`)

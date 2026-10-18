@@ -115,7 +115,7 @@ async function caretIntoBold(): Promise<void> {
   }, EDITOR)
 }
 
-describe('Markdown syntax revealed around the cursor on the real backend (#5689)', () => {
+describe('Markdown syntax revealed around the cursor on the real backend (#5689) @editor @markdown', () => {
   it('saves bold and italic typed with the markers drawn, and no marker', async () => {
     await waitForAppReady()
     await turnRevealOn()

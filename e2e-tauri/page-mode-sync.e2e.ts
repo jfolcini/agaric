@@ -101,7 +101,7 @@ async function waitPeerHolds(peer: SyncPeer, id: string, content: string): Promi
     })
 }
 
-describe('Agaric real-backend page mode while a peer edits (#5691)', () => {
+describe('Agaric real-backend page mode while a peer edits (#5691) @editor @pages @sync', () => {
   let peer: SyncPeer | undefined
 
   before(async () => {

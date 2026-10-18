@@ -72,7 +72,7 @@ async function ariaLevelOf(marker: string): Promise<string | null> {
   return $(`li[data-block-id="${id}"]`).getAttribute('aria-level')
 }
 
-describe('Agaric real-backend README import (#5160)', () => {
+describe('Agaric real-backend README import (#5160) @markdown', () => {
   it('imports a README as headings owning their sections, paragraphs, a fence and nested list items', async () => {
     await waitForAppReady()
     await navigateTo('Settings')

@@ -60,7 +60,7 @@ async function expectPersisted(page: Page, text: string): Promise<void> {
   )
 }
 
-test.describe('Inline emoji picker — `:` trigger (#130)', () => {
+test.describe('Inline emoji picker — `:` trigger (#130) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

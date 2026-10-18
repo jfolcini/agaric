@@ -50,7 +50,7 @@ function workChip(scope: Locator): Locator {
   return scope.getByTestId('tag-ref-chip').filter({ hasText: 'work' })
 }
 
-test('a tag colour picked in the Tags view paints its chips', async ({ page }) => {
+test('a tag colour picked in the Tags view paints its chips @editor @pages', async ({ page }) => {
   await waitForBoot(page)
   await navigateToView(page, 'Tags')
   const row = page.getByRole('listitem').filter({ has: page.getByTestId('tag-item-work') })

@@ -42,7 +42,7 @@ function shortcutRow(page: import('@playwright/test').Page, description: string)
   return page.locator('div:has(> [data-testid="kbd-keys-column"])').filter({ hasText: description })
 }
 
-test.describe('Keyboard shortcut customization', () => {
+test.describe('Keyboard shortcut customization @editor @settings', () => {
   test('recording a new binding updates the display, and the new binding fires while the old default no longer does', async ({
     page,
   }) => {

@@ -26,7 +26,7 @@ import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './he
 // the long-single-line-URL autosave loop a data: URI would trip.
 const IMG_URL = '/favicon.svg'
 
-test.describe('markdown image round-trip (#1434)', () => {
+test.describe('markdown image round-trip (#1434) @attachments @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

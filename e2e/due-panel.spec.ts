@@ -26,7 +26,7 @@ test.beforeEach(async ({ page }) => {
   await waitForBoot(page)
 })
 
-test('hide-before-scheduled hides a task scheduled next week and shows it again', async ({
+test('hide-before-scheduled hides a task scheduled next week and shows it again @journal', async ({
   page,
 }) => {
   // Dates are days from the pinned today; the blocks land under the seeded Projects page.
@@ -61,7 +61,7 @@ test('hide-before-scheduled hides a task scheduled next week and shows it again'
   await expect(future).toHaveCount(1)
 })
 
-test('an overdue task reads "(3d overdue)" and a click opens it focused on its page', async ({
+test('an overdue task reads "(3d overdue)" and a click opens it focused on its page @journal', async ({
   page,
 }) => {
   const [id] = await seedSearchBlocks(page, [{ content: 'Renew passport', todo: 'TODO', due: -3 }])

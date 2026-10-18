@@ -27,7 +27,7 @@ const BLOCK_GS_1 = '0000000000000000000BLOCK01'
 /** A 1x1 GIF: a local image, so nothing touches the network. */
 const DOT_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
 
-test('a folded inline image stays a chip after reopening the page and in the editor', async ({
+test('a folded inline image stays a chip after reopening the page and in the editor @attachments @editor', async ({
   page,
 }) => {
   await waitForBoot(page)

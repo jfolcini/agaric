@@ -21,7 +21,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  *   - Ctrl+A selects all blocks (only when no block is focused/editing)
  */
 
-test.describe('Batch block operations', () => {
+test.describe('Batch block operations @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

@@ -1,6 +1,6 @@
 import { expect, test } from './helpers'
 
-test.describe('Settings panel', () => {
+test.describe('Settings panel @settings', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     // Wait for app to boot

@@ -26,7 +26,7 @@ async function renderedBlockIds(page: import('@playwright/test').Page): Promise<
     .evaluateAll((els) => els.map((el) => el.getAttribute('data-block-id') ?? ''))
 }
 
-test.describe('Cross-block caret landing', () => {
+test.describe('Cross-block caret landing @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)

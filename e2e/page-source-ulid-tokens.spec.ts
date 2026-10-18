@@ -104,7 +104,9 @@ test.beforeEach(async ({ page }) => {
   await waitForBoot(page)
 })
 
-test('the outline shows a heading’s link by its page’s title, not its id', async ({ page }) => {
+test('the outline shows a heading’s link by its page’s title, not its id @editor @pages @markdown', async ({
+  page,
+}) => {
   const { targetId } = await seed(page)
   await openHost(page)
 
@@ -118,7 +120,7 @@ test('the outline shows a heading’s link by its page’s title, not its id', a
   await expect(heading).not.toContainText(targetId)
 })
 
-test('a block ref in Edit as Markdown hints its title, goes whole, comes back whole, and takes no typing', async ({
+test('a block ref in Edit as Markdown hints its title, goes whole, comes back whole, and takes no typing @editor @pages @markdown', async ({
   page,
 }) => {
   const { refId, targetId } = await seed(page)

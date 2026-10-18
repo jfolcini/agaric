@@ -38,7 +38,7 @@ test.beforeEach(async ({ page }) => {
   await openSearchView(page)
 })
 
-test('page-path chips scope the results without Enter; remove and Clear all re-run it', async ({
+test('page-path chips scope the results without Enter; remove and Clear all re-run it @search', async ({
   page,
 }) => {
   const seeded = await seedSearchBlocks(page, [
@@ -63,7 +63,7 @@ test('page-path chips scope the results without Enter; remove and Clear all re-r
   await expect.poll(() => searchResultIds(page)).toEqual(all)
 })
 
-test('zero-results Clear filters brings back the matching hits', async ({ page }) => {
+test('zero-results Clear filters brings back the matching hits @search', async ({ page }) => {
   const [notes] = await seedSearchBlocks(page, [
     { content: `${TERM} notes`, parentId: PAGE_QUICK_NOTES },
   ])

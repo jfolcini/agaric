@@ -33,7 +33,7 @@ async function makeLinkedBlock(page: import('@playwright/test').Page, url: strin
   return link
 }
 
-test.describe('Open external link in editor (#924)', () => {
+test.describe('Open external link in editor (#924) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

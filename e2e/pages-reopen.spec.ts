@@ -53,7 +53,7 @@ async function returnToPages(page: Page): Promise<void> {
     .toBeGreaterThan(0)
 }
 
-test('returning to Pages after only reading sends no list call', async ({ page }) => {
+test('returning to Pages after only reading sends no list call @pages', async ({ page }) => {
   await page.addInitScript(() => window.localStorage.setItem('__mockExtraPages', '120'))
   await waitForBoot(page)
   await installIpcRecorder(page)
@@ -88,7 +88,7 @@ test('returning to Pages after only reading sends no list call', async ({ page }
   expect(await listCalls(page)).toBe(0)
 })
 
-test('returning to Pages after setting a TODO shows the new badge', async ({ page }) => {
+test('returning to Pages after setting a TODO shows the new badge @pages', async ({ page }) => {
   await waitForBoot(page)
   await installIpcRecorder(page)
   await navigateToView(page, 'Pages')
@@ -108,7 +108,7 @@ test('returning to Pages after setting a TODO shows the new badge', async ({ pag
   expect(await listCalls(page)).toBe(1)
 })
 
-test('returning to Pages after a synced edit shows it', async ({ page }) => {
+test('returning to Pages after a synced edit shows it @pages', async ({ page }) => {
   await waitForBoot(page)
   await installIpcRecorder(page)
   await navigateToView(page, 'Pages')

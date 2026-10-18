@@ -92,7 +92,7 @@ async function autostartShownAfterRoundTrip(): Promise<string | null> {
   return toggle.getAttribute('aria-checked')
 }
 
-describe('Agaric real-backend Settings rows that reach the OS (#5741)', () => {
+describe('Agaric real-backend Settings rows that reach the OS (#5741) @settings', () => {
   before(async () => {
     // A backup left by a killed run is the developer's entry; the entry beside it is that run's.
     if (existsSync(AUTOSTART_BACKUP)) rmSync(AUTOSTART_ENTRY, { force: true })

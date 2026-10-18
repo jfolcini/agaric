@@ -24,7 +24,9 @@ import { expect, test, waitForBoot } from './helpers'
  * wrapper transparent to hit-testing it returns whatever is beneath, and
  * without the fix it returns the tooltip itself.
  */
-test('an open tooltip does not hit-test, so clicks reach what it covers', async ({ page }) => {
+test('an open tooltip does not hit-test, so clicks reach what it covers @spaces', async ({
+  page,
+}) => {
   await page.goto('/')
   await waitForBoot(page)
 

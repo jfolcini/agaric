@@ -72,7 +72,7 @@ async function openFromPageList(page: Page, title: string): Promise<void> {
 
 const embedOf = (id: string) => `{{embed ((${id}))}}`
 
-test.describe('embed render states', () => {
+test.describe('embed render states @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

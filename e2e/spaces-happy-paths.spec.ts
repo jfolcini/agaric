@@ -41,7 +41,7 @@ const editorTabs = (page: Page) =>
 const recentChips = (page: Page) =>
   page.getByTestId('quick-access-bar').locator('[data-slot="recent-page-chip"]')
 
-test('Open on launch keeps the chosen space, and falls back to Last used once a peer deletes it', async ({
+test('Open on launch keeps the chosen space, and falls back to Last used once a peer deletes it @spaces', async ({
   page,
 }) => {
   const panel = await openSpacesSettings(page)
@@ -80,7 +80,7 @@ test('Open on launch keeps the chosen space, and falls back to Last used once a 
   await expect(openOnLaunch).toHaveText('Last used')
 })
 
-test('switching spaces restores each space its own tabs, recent pages and journal date', async ({
+test('switching spaces restores each space its own tabs, recent pages and journal date @spaces', async ({
   page,
 }) => {
   await expect(dateDisplay(page)).toBeVisible()
@@ -120,7 +120,9 @@ test('switching spaces restores each space its own tabs, recent pages and journa
   await expect(recentChips(page)).toHaveText(['Quick Notes', 'Getting Started'])
 })
 
-test('in the collapsed sidebar, the space badge switches to the next space', async ({ page }) => {
+test('in the collapsed sidebar, the space badge switches to the next space @spaces', async ({
+  page,
+}) => {
   await navigateToView(page, 'Pages')
   await expect(
     page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }),

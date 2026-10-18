@@ -36,7 +36,7 @@ import {
 // 1. Heading syntax — TipTap inputRules convert "# " at start of line
 // ===========================================================================
 
-test.describe('Heading syntax (typed # prefix)', () => {
+test.describe('Heading syntax (typed # prefix) @editor @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -137,7 +137,7 @@ test.describe('Heading syntax (typed # prefix)', () => {
 // 2. Keyboard shortcut formatting — Ctrl+B (bold), Ctrl+I (italic), Ctrl+E (code)
 // ===========================================================================
 
-test.describe('Keyboard shortcut formatting', () => {
+test.describe('Keyboard shortcut formatting @editor @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -226,7 +226,7 @@ test.describe('Keyboard shortcut formatting', () => {
 // 3. Combined marks
 // ===========================================================================
 
-test.describe('Combined marks', () => {
+test.describe('Combined marks @editor @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -294,7 +294,7 @@ test.describe('Combined marks', () => {
 // 4. Round-trip persistence — format, save, re-open, verify marks survive
 // ===========================================================================
 
-test.describe('Round-trip persistence', () => {
+test.describe('Round-trip persistence @editor @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -417,7 +417,7 @@ test.describe('Round-trip persistence', () => {
 // 5. Typed delimiters follow the parser's flanking rule (#5160 N9)
 // ===========================================================================
 
-test.describe('Typed delimiters (#5160 N9)', () => {
+test.describe('Typed delimiters (#5160 N9) @editor @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

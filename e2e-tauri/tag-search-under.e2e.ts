@@ -43,7 +43,7 @@ async function tagOpenPage(tag: string): Promise<void> {
   await $(`[aria-label="Remove tag ${tag}"]`).waitForDisplayed({ timeout: ACTION_TIMEOUT })
 }
 
-describe('Agaric real-backend search under a tag (#5679)', () => {
+describe('Agaric real-backend search under a tag (#5679) @pages @search', () => {
   it('finds a block that only inherits the tag from its page', async () => {
     await waitForAppReady()
 

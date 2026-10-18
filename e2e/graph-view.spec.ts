@@ -24,7 +24,7 @@ function localDateStr(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-test.describe('Graph view', () => {
+test.describe('Graph view @graph', () => {
   // GraphView initial render legitimately goes through a d3 worker
   // Startup path that can exceed the 3s global `expect` timeout on
   // cold tests. Use `test.slow()` at the suite level instead of sprinkling

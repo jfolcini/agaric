@@ -45,7 +45,7 @@ async function freshBlock(page: import('@playwright/test').Page) {
   return { editor, blockId: blockId as string }
 }
 
-test.describe('Typed checkboxes (#5160 D6)', () => {
+test.describe('Typed checkboxes (#5160 D6) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)

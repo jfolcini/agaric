@@ -88,7 +88,7 @@ async function chipNames(root: string): Promise<string[]> {
   return names
 }
 
-describe('Agaric real-backend tag usage and rename (#5366)', () => {
+describe('Agaric real-backend tag usage and rename (#5366) @pages', () => {
   it('counts a tagged block and relabels the list and the chips after a rename', async () => {
     await waitForAppReady()
     await navigateTo('Tags')

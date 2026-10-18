@@ -81,7 +81,7 @@ async function leaveBlankBlockFor(marker: string): Promise<string | null> {
   return markedId
 }
 
-describe('Agaric real-backend attachment-only block (#5412)', () => {
+describe('Agaric real-backend attachment-only block (#5412) @editor @attachments', () => {
   it('control: the same sequence cleans up a blank block holding nothing', async () => {
     await waitForAppReady()
     const blank = `[data-block-id="${await markedBlockThenBlankSibling(CONTROL_MARKER)}"]`

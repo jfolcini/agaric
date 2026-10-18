@@ -25,7 +25,7 @@ import { emitMockEvent, expect, seedSearchBlocks, test } from './helpers'
 const PAGE_QUICK_NOTES = '00000000000000000000PAGE02'
 const PAGE_MEETINGS = '00000000000000000000PAGE05'
 
-test.describe('deep-link routing (#2683)', () => {
+test.describe('deep-link routing (#2683) @boot @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
@@ -90,7 +90,7 @@ async function selectSwitcherOption(page: import('@playwright/test').Page, name:
   await page.getByRole('option', { name, exact: true }).click()
 }
 
-test.describe('deep-link routing across spaces (#5415)', () => {
+test.describe('deep-link routing across spaces (#5415) @boot @spaces', () => {
   test('a link to a page in another space switches to that space and opens it', async ({
     page,
   }) => {

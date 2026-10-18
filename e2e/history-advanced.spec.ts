@@ -37,7 +37,7 @@ test.describe.configure({ mode: 'serial' })
  *    to test there beyond what's covered below.
  */
 
-test.describe('HistoryView — restore to here', () => {
+test.describe('HistoryView — restore to here @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)
@@ -106,7 +106,7 @@ test.describe('HistoryView — restore to here', () => {
   })
 })
 
-test.describe('HistoryView — diff toggle', () => {
+test.describe('HistoryView — diff toggle @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -142,7 +142,7 @@ test.describe('HistoryView — diff toggle', () => {
   })
 })
 
-test.describe('HistoryView — filter bar', () => {
+test.describe('HistoryView — filter bar @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -175,7 +175,7 @@ test.describe('HistoryView — filter bar', () => {
   })
 })
 
-test.describe('HistoryView — op log compaction', () => {
+test.describe('HistoryView — op log compaction @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)

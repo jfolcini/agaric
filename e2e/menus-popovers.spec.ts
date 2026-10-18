@@ -35,7 +35,7 @@ import { activePopover, expect, openPage, openSearchView, test, waitForBoot } fr
 // `openInNewTab` shortcut (Ctrl+T) which duplicates the active page into a new
 // tab (useAppKeyboardShortcuts.ts TAB_SHORTCUTS / line 151).
 
-test.describe('TabBar dropdown switcher (#1171 surface 1)', () => {
+test.describe('TabBar dropdown switcher (#1171 surface 1) @pages @search @journal', () => {
   test('open → switch tab → Escape closes and restores focus to the active tab', async ({
     page,
   }) => {
@@ -108,7 +108,7 @@ test.describe('TabBar dropdown switcher (#1171 surface 1)', () => {
 // group → the filter trigger renders. Trigger aria-label is
 // "Filter by source page" (sourceFilter.filterLabel, properties.ts:157).
 
-test.describe('SourcePageFilter popover (#1171 surface 2)', () => {
+test.describe('SourcePageFilter popover (#1171 surface 2) @pages @search @journal', () => {
   test('open → toggle a page → Escape closes and restores focus to the filter trigger', async ({
     page,
   }) => {
@@ -175,7 +175,7 @@ test.describe('SourcePageFilter popover (#1171 surface 2)', () => {
 // option applies the filter and closes the popover (handleTagSelect, lines
 // 173-176).
 
-test.describe('FilterHelperPopover +Filter (#1171 surface 3)', () => {
+test.describe('FilterHelperPopover +Filter (#1171 surface 3) @pages @search @journal', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })
@@ -243,7 +243,7 @@ test.describe('FilterHelperPopover +Filter (#1171 surface 3)', () => {
 // boots into the journal daily view, so the control is present without extra
 // navigation.
 
-test.describe('JournalCalendarDropdown (#1171 surface 4)', () => {
+test.describe('JournalCalendarDropdown (#1171 surface 4) @pages @search @journal', () => {
   test('open → pick a date → dropdown closes and focus restores to the calendar button', async ({
     page,
   }) => {
@@ -326,7 +326,7 @@ test.describe('JournalCalendarDropdown (#1171 surface 4)', () => {
 // Radix popover wrapping a cmdk Command list of seed tags; selecting one fires
 // handleSelect → close (lines 75-78).
 
-test.describe('HasTagFilterForm tag picker (#1171 surface 5)', () => {
+test.describe('HasTagFilterForm tag picker (#1171 surface 5) @pages @search @journal', () => {
   test('Has Tag filter → tag picker opens → select a tag → Escape closes', async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

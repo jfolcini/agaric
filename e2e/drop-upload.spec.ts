@@ -42,7 +42,7 @@ async function dropFile(page: Page, file: { name: string; type: string; size: nu
   }, file)
 }
 
-test.describe('Dropping a file onto a block', () => {
+test.describe('Dropping a file onto a block @attachments', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

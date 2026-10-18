@@ -87,7 +87,7 @@ async function commitBlockByBlur(page: import('@playwright/test').Page): Promise
   ).toBeVisible()
 }
 
-test.describe('Nested list survives blur (#1513)', () => {
+test.describe('Nested list survives blur (#1513) @editor', () => {
   test.beforeEach(async ({ page }) => {
     // Restore Tab as the in-editor key so it reaches `sinkListItem` instead of
     // the block-level indent handler (see use-block-keyboard.ts:448-452).

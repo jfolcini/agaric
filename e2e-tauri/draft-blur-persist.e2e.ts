@@ -26,7 +26,7 @@ import {
 
 const MARKER = runScopedMarker('wdio-draft-blur')
 
-describe('Agaric real-backend draft blur-save (#4671)', () => {
+describe('Agaric real-backend draft blur-save (#4671) @editor', () => {
   it('keeps text that was typed but never committed with Enter after a view round-trip', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

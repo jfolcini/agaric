@@ -24,7 +24,7 @@ import {
  *   3 tags: work, personal, idea
  */
 
-test.describe('Inner links — rendering', () => {
+test.describe('Inner links — rendering @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -84,7 +84,7 @@ test.describe('Inner links — rendering', () => {
   })
 })
 
-test.describe('Inner links — navigation', () => {
+test.describe('Inner links — navigation @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -167,7 +167,7 @@ async function typeLinkTrigger(page: import('@playwright/test').Page) {
   await expect(activeSuggestionList(page)).toBeVisible({ timeout: 5000 })
 }
 
-test.describe('Inner links — [[ picker', () => {
+test.describe('Inner links — [[ picker @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -322,7 +322,7 @@ test.describe('Inner links — [[ picker', () => {
   })
 })
 
-test.describe('Inner links — editor-mode chip navigation (#924 f6)', () => {
+test.describe('Inner links — editor-mode chip navigation (#924 f6) @editor @pages', () => {
   // f6 — the static/rendered tree already has click-to-navigate coverage
   // (see "clicking a link chip navigates…" above), but the EDITOR-mode chips
   // (tag_ref onClick + block_ref onNavigate, wired in src/editor/use-roving-editor.ts)
@@ -397,7 +397,7 @@ test.describe('Inner links — editor-mode chip navigation (#924 f6)', () => {
   })
 })
 
-test.describe('Inner links — link persistence', () => {
+test.describe('Inner links — link persistence @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -464,7 +464,7 @@ test.describe('Inner links — link persistence', () => {
   })
 })
 
-test.describe('Inner links — Add block button position', () => {
+test.describe('Inner links — Add block button position @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -498,7 +498,7 @@ test.describe('Inner links — Add block button position', () => {
 // [[ picker — create new page & input-rule auto-resolve
 // ===========================================================================
 
-test.describe('[[ picker — create new page & input-rule auto-resolve', () => {
+test.describe('[[ picker — create new page & input-rule auto-resolve @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

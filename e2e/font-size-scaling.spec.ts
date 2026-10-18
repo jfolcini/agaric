@@ -25,7 +25,7 @@ async function width(locator: Locator): Promise<number> {
 }
 
 for (const [size, textPx] of Object.entries(TEXT_PX)) {
-  test.describe(`font size ${size}`, () => {
+  test.describe(`font size ${size} @settings`, () => {
     test.use({ viewport: { width: 1440, height: 900 } })
 
     test.beforeEach(async ({ page }) => {

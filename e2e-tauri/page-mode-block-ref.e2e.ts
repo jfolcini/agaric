@@ -38,7 +38,7 @@ const TARGET = runScopedMarker('wdio-pm-target')
 
 const row = (marker: string) => $(`[data-testid="sortable-block"]*=${marker}`)
 
-describe('Agaric real-backend block refs to a page-mode edit (#5691)', () => {
+describe('Agaric real-backend block refs to a page-mode edit (#5691) @editor @pages', () => {
   it('a ((ref)) to a block split, typed into and indented in page mode still resolves to it', async () => {
     await waitForAppReady()
     await openNewPage()

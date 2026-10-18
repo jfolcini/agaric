@@ -112,7 +112,7 @@ async function waitForGroups(groups: string[], global: string[], when: string): 
     })
 }
 
-describe('Agaric real-backend Advanced Query grouping (#5738)', () => {
+describe('Agaric real-backend Advanced Query grouping (#5738) @search', () => {
   it('groups the matches by state with per-group counts and a Count aggregate', async () => {
     await waitForAppReady()
     const markdown = TASKS.map(([state, name]) => `- ${state} ${MARKER} ${name}`).join('\n')

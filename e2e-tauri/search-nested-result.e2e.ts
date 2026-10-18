@@ -67,7 +67,7 @@ async function waitForPage(expected: string[], what: string): Promise<void> {
     })
 }
 
-describe('Agaric real-backend search result for an indented block (#5738)', () => {
+describe('Agaric real-backend search result for an indented block (#5738) @search', () => {
   it('opens the page holding the block, with the block focused', async () => {
     await waitForAppReady()
     await openNewPage(PAGE)

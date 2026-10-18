@@ -153,7 +153,7 @@ async function expectShown(marker: string, what: string): Promise<void> {
   await blockStaticByMarker(marker).waitForDisplayed({ timeout: NAV_TIMEOUT, timeoutMsg: what })
 }
 
-describe('Agaric real-backend agent access from Settings (#5740)', () => {
+describe('Agaric real-backend agent access from Settings (#5740) @mcp @settings', () => {
   before(async () => {
     await waitForAppReady()
     socketPath = await enableFromSettings()

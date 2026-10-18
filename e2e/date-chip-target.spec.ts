@@ -44,7 +44,7 @@ for (const { kind, label } of [
   { kind: 'due', label: 'Due' },
   { kind: 'scheduled', label: 'Scheduled' },
 ] as const) {
-  test(`the ${kind} chip sets its own block's date while no block is being edited`, async ({
+  test(`the ${kind} chip sets its own block's date while no block is being edited @editor @journal`, async ({
     page,
   }) => {
     const [chipId] = await seedSearchBlocks(page, [
@@ -64,7 +64,9 @@ for (const { kind, label } of [
     ).toBeVisible()
   })
 
-  test(`the ${kind} chip sets its own block's date, not the edited block's`, async ({ page }) => {
+  test(`the ${kind} chip sets its own block's date, not the edited block's @editor @journal`, async ({
+    page,
+  }) => {
     const [chipId, editedId] = await seedSearchBlocks(page, [
       { content: 'Chip block', parentId: QUICK_NOTES, [kind]: '2026-03-20' },
       { content: 'Edited block', parentId: QUICK_NOTES },
