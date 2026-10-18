@@ -197,7 +197,7 @@ export function FilterGroup({
     <div
       className={cn(
         'filter-group flex flex-col gap-2 rounded-md border p-2',
-        depth > 0 && 'ml-3 border-l-2 bg-muted/30',
+        depth > 0 && 'ml-3 bg-muted/30',
       )}
       data-testid="filter-group"
       data-depth={depth}

@@ -1737,7 +1737,7 @@
    to depth 0 inside the container (see `selectEmbeddedRows`) — it does not
    continue the host page's indentation. */
 .embed-container {
-  @apply my-1 rounded-md;
+  @apply my-1 rounded-r-md;
   border-left: 2px solid var(--embed-rail);
   background: var(--embed-surface);
 }
