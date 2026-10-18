@@ -12,42 +12,30 @@
  * components (OverdueSection, UpcomingSection, DuePanelFilters).
  */
 
-import { Repeat } from 'lucide-react'
 import type React from 'react'
-import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DuePanelFilters } from '@/components/agenda/DuePanelFilters'
 import { OverdueSection } from '@/components/agenda/OverdueSection'
+import { ProjectedEntriesSection } from '@/components/agenda/ProjectedEntries'
 import { UpcomingSection } from '@/components/agenda/UpcomingSection'
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
 import { ListViewState } from '@/components/common/ListViewState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { BlockListItem } from '@/components/editor/BlockListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
-import { renderRichContent } from '@/components/RichContentRenderer'
-import { Badge } from '@/components/ui/badge'
-import { ListItem } from '@/components/ui/list-item'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useDuePanelData } from '@/hooks/useDuePanelData'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
-import { useRovingRowFocus } from '@/hooks/useListKeyboardNavigation'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
-import {
-  type RichContentCallbacks,
-  useRichContentCallbacks,
-  useTagClickHandler,
-} from '@/hooks/useRichContentCallbacks'
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
-import type { ActiveProjectedAgendaEntry } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { useLocalStoragePreference } from '@/lib/local-storage-preference'
 import { priorityRank } from '@/lib/priority-levels'
 import { TASK_STATE_SORT_ORDER } from '@/lib/task-states'
-import { cn } from '@/lib/utils'
-import { useResolveStore } from '@/stores/resolve'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -72,168 +60,6 @@ export interface DuePanelProps {
 // the #738 desync back silently.
 const GROUP_ORDER = [...TASK_STATE_SORT_ORDER, null] as const
 
-interface ProjectedEntryContentProps {
-  content: string
-  onTagClick: (id: string) => void
-  callbacks: RichContentCallbacks
-}
-
-/**
- * Rich-content body of a projected agenda entry. Memoized (#2193) so the
- * `renderRichContent` → `parse(content)` cost isn't paid for every projected
- * row each time DuePanel re-renders (arrow-key roving focus flips
- * `focusedIndex` on the parent on every keypress).
- *
- * The parse is wrapped in a `useMemo` keyed on `content` plus the resolve
- * `version`; the `onTagClick` / resolve callbacks are threaded via refs read
- * at call-time so a fresh parent closure doesn't bust the memo. Any change to
- * what the resolve callbacks return bumps `version`, which forces a recompute.
- */
-function ProjectedEntryContentInner({
-  content,
-  onTagClick,
-  callbacks,
-}: ProjectedEntryContentProps): React.ReactElement {
-  const onTagClickRef = useRef(onTagClick)
-  onTagClickRef.current = onTagClick
-  const callbacksRef = useRef(callbacks)
-  callbacksRef.current = callbacks
-
-  const resolveVersion = useResolveStore((s) => s.version)
-  const rendered = useMemo(
-    () =>
-      renderRichContent(content, {
-        // The row's tag chips ARE meant to be clickable: `DuePanel` wires
-        // `useTagClickHandler()` down to this component explicitly, and the
-        // chips `stopPropagation` so a tag click navigates to the tag rather
-        // than to the entry's page. (Block-link chips stay inert regardless —
-        // `renderBlockLink` needs `onNavigate` too, and none is passed.) So
-        // this stays `true`, unlike the sibling `AlertSection` rows, whose
-        // whole row is the only click target.
-        interactive: true,
-        // #4719 — the output lands in `<span className="min-w-0 flex-1
-        // truncate">` below, a single clamped line. Without `inline` a
-        // projected entry whose content starts `# ` or `- ` puts an <h1> /
-        // <ul> block box inside that span and breaks the row layout (#1533).
-        // The sibling `AlertSection` rows in this same panel already pass it.
-        inline: true,
-        onTagClick: (id) => onTagClickRef.current(id),
-        resolveBlockTitle: (id) => callbacksRef.current.resolveBlockTitle(id),
-        resolveBlockStatus: (id) => callbacksRef.current.resolveBlockStatus(id),
-        resolveTagName: (id) => callbacksRef.current.resolveTagName(id),
-        resolveTagStatus: (id) => callbacksRef.current.resolveTagStatus(id),
-      }),
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- onTagClick/resolve callbacks captured via refs (intentional perf optimization — see comment above); resolveVersion drives recomputation on cache updates
-    [content, resolveVersion],
-  )
-
-  return <>{rendered}</>
-}
-
-const ProjectedEntryContent = memo(ProjectedEntryContentInner)
-ProjectedEntryContent.displayName = 'ProjectedEntryContent'
-
-interface ProjectedEntryRowProps {
-  entry: ActiveProjectedAgendaEntry
-  /**
-   * Parent page title resolved by the caller from `pageTitles`. Passing the
-   * resolved string (not the whole map) keeps the memo shallow-compare precise:
-   * the row only re-renders when *its own* title changes, and reads it at click
-   * time from a stable prop instead of a per-render map lookup.
-   */
-  pageTitle: string
-  isFocused: boolean
-  onNavigateToPage: NavigateToPageFn | undefined
-  onTagClick: (id: string) => void
-  projectedBadgeLabel: string
-  emptyContentLabel: string
-}
-
-/**
- * One projected-agenda `<li>`. Memoized (#2200) so DuePanel re-renders driven
- * by arrow-key roving focus (which flips `focusedIndex` on the parent every
- * keypress) only re-render the two rows whose `isFocused` actually changed,
- * instead of rebuilding every projected row's `cn()` / `Badge` / `ListItem`
- * subtree each keystroke. This mirrors how the grouped-blocks list keeps focus
- * cheap: the memoized `BlockListItem` takes `isFocused` as a prop so the
- * structural markup is skipped on unrelated re-renders. The expensive
- * rich-content parse already lives behind its own memo (`ProjectedEntryContent`,
- * #2193); this memo covers the surrounding structural markup.
- */
-function ProjectedEntryRowInner({
-  entry,
-  pageTitle,
-  isFocused,
-  onNavigateToPage,
-  onTagClick,
-  projectedBadgeLabel,
-  emptyContentLabel,
-}: ProjectedEntryRowProps): React.ReactElement {
-  // #2200 — source the rich-content callbacks INSIDE the memoized row (the
-  // `BlockListItem` pattern) rather than taking them as a prop.
-  // `useRichContentCallbacks()` returns a fresh object literal each render, so
-  // threading it through a prop would fail this row's `memo` shallow-compare on
-  // every roving-focus re-render and re-render all projected rows per keystroke;
-  // consuming it internally keeps the row's prop surface reference-stable so
-  // only the two rows whose `isFocused` flips actually re-render.
-  const callbacks = useRichContentCallbacks()
-  const rowRef = useRovingRowFocus<HTMLLIElement>(isFocused)
-  const navigate = (): void => {
-    if (!entry.block.page_id || !onNavigateToPage) return
-    onNavigateToPage(entry.block.page_id, pageTitle, entry.block.id)
-  }
-  return (
-    <ListItem
-      ref={rowRef}
-      data-block-list-item
-      data-testid="projected-entry"
-      // #1520 — roving tabindex, mirroring the `BlockListItem` rows above: only
-      // the keyboard-focused projected entry is a tab stop so the list keeps a
-      // single roving tab stop instead of one per row.
-      tabIndex={isFocused ? 0 : -1}
-      className={cn(
-        // Override ListItem's `gap-3 rounded-lg px-3 py-2 hover:bg-accent/50` chrome
-        // with the muted dashed-border "projected" shape via tailwind-merge.
-        'gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70',
-        isFocused && 'list-cursor',
-      )}
-      onClick={navigate}
-      onKeyDown={(e) => {
-        if (e.key !== 'Enter' && e.key !== ' ') return
-        e.preventDefault()
-        navigate()
-      }}
-    >
-      <span className="text-xs font-mono opacity-60">
-        {entry.source === 'due_date' ? '\u23F0' : '\uD83D\uDCC5'}
-      </span>
-      <Badge tone="outline" className="text-xs font-normal">
-        <Repeat className="h-3 w-3 mr-1" />
-        {projectedBadgeLabel}
-      </Badge>
-      <span className="min-w-0 flex-1 truncate" title={entry.block.content ?? ''}>
-        {entry.block.content ? (
-          <ProjectedEntryContent
-            content={entry.block.content}
-            onTagClick={onTagClick}
-            callbacks={callbacks}
-          />
-        ) : (
-          emptyContentLabel
-        )}
-      </span>
-      {entry.block.priority && (
-        <Badge tone="priority" shape="rounded" size="sm" priorityLevel={entry.block.priority}>
-          P{entry.block.priority}
-        </Badge>
-      )}
-    </ListItem>
-  )
-}
-
-const ProjectedEntryRow = memo(ProjectedEntryRowInner)
-ProjectedEntryRow.displayName = 'ProjectedEntryRow'
-
 export function DuePanel({
   date,
   onNavigateToPage,
@@ -241,7 +67,6 @@ export function DuePanel({
 }: DuePanelProps): React.ReactElement | null {
   const { t } = useTranslation()
   const priorityLevels = usePriorityLevels()
-  const onTagClick = useTagClickHandler()
   const [collapsed, setCollapsed] = useState(false)
   const [sourceFilter, setSourceFilter] = useState<string | null>(null)
 
@@ -486,7 +311,6 @@ export function DuePanel({
             // row); the projected `<li>` markup below picks up where
             // grouped left off.
             const groupedCount = grouped.reduce((sum, g) => sum + g.items.length, 0)
-            let flatIndex = groupedCount
             return (
               // #1520 — roving tabindex: the focused `BlockListItem` row is the
               // single tab stop (the rest are `tabIndex=-1`), so the container
@@ -601,37 +425,15 @@ export function DuePanel({
                   </ScrollArea>
                 )}
 
-                {/* Projected future occurrences from repeating tasks.
-                    each `<li>` is part of the keyboard-nav flat-items
-                    array so arrow keys reach projected entries at the tail. */}
-                {uniqueProjected.length > 0 && (
-                  <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
-                    <p className="text-xs [@media(pointer:coarse)]:text-sm font-medium text-muted-foreground mb-2">
-                      {t('due.projected')}
-                    </p>
-                    <ul className="space-y-1" aria-label={t('duePanel.projectedListLabel')}>
-                      {uniqueProjected.map((entry) => {
-                        const currentFlatIndex = flatIndex++
-                        return (
-                          <ProjectedEntryRow
-                            key={`projected-${entry.block.id}-${entry.source}`}
-                            entry={entry}
-                            pageTitle={
-                              entry.block.page_id
-                                ? (pageTitles.get(entry.block.page_id) ?? t('duePanel.untitled'))
-                                : ''
-                            }
-                            isFocused={focusedIndex === currentFlatIndex}
-                            onNavigateToPage={onNavigateToPage}
-                            onTagClick={onTagClick}
-                            projectedBadgeLabel={t('duePanel.projectedBadge')}
-                            emptyContentLabel={t('duePanel.emptyContent')}
-                          />
-                        )
-                      })}
-                    </ul>
-                  </div>
-                )}
+                {/* Projected future occurrences from repeating tasks,
+                    at the tail of the keyboard-nav flat-items array. */}
+                <ProjectedEntriesSection
+                  entries={uniqueProjected}
+                  pageTitles={pageTitles}
+                  firstFlatIndex={groupedCount}
+                  focusedIndex={focusedIndex}
+                  onNavigateToPage={onNavigateToPage}
+                />
 
                 {/* Load more */}
                 <LoadMoreButton

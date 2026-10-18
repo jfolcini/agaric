@@ -7,8 +7,9 @@
 // `list_projected_agenda`: the `projected_agenda_cache` the materializer
 // rebuilds, or the on-the-fly projector when that cache does not cover the
 // day. The projection stops at `repeat-until` and after `repeat-count`
-// occurrences. The mock answers the command with an empty page
-// (`e2e/journal-panels.spec.ts`), so only this lane shows the projection.
+// occurrences. Agenda mode lists the same projection over the coming week
+// (`useAgendaProjectedEntries`). The mock answers the command with an empty
+// page (`e2e/journal-panels.spec.ts`), so only this lane shows the projection.
 //
 // Completing a repeating task makes its next occurrence in the same
 // transaction (`build_recurrence_sibling_in_tx`): `.+` counts the interval
@@ -169,6 +170,20 @@ async function projectedOnceHolding(day: string, expected: string[]): Promise<st
     },
   )
   return texts
+}
+
+/** Each projected Agenda row holding `task`: its text and its `<time>` date. */
+async function agendaProjectedRows(task: string): Promise<Array<{ text: string; date: string }>> {
+  return browser.execute(
+    (marker: string) =>
+      [...document.querySelectorAll('[data-testid="agenda-view"] [data-testid="projected-entry"]')]
+        .filter((row) => (row.textContent ?? '').includes(marker))
+        .map((row) => ({
+          text: row.textContent ?? '',
+          date: row.querySelector('time')?.getAttribute('datetime') ?? '',
+        })),
+    task,
+  )
 }
 
 /** Step the Daily journal forward one day to `day`. */
@@ -487,6 +502,61 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736)', () 
       ruledRows: 2,
       // Tomorrow is past the date: completing it made no next occurrence.
       boundedRows: 1,
+    })
+  })
+
+  // Last: it leaves the journal in Agenda mode, which the Daily-mode tests above step through.
+  it('lists the coming week of projected occurrences in Agenda mode, up to each bound', async () => {
+    const page = runScopedMarker('wdio-agenda-page')
+    const counted = runScopedMarker('wdio-agenda-count')
+    const until = runScopedMarker('wdio-agenda-until')
+    const open = runScopedMarker('wdio-agenda-open')
+    // With no date filter Agenda mode projects today and the six days after.
+    const week = await localDays(0, 7)
+    const [today, , inTwo] = week
+    if (today === undefined || inTwo === undefined) throw new Error('no dates to project over')
+    const daily = [`due_date:: ${today}`, 'repeat:: daily']
+    await seedTasks(page, [
+      { task: counted, props: [...daily, 'repeat-count:: 3'] },
+      { task: until, props: [...daily, `repeat-until:: ${inTwo}`] },
+      { task: open, props: daily },
+    ])
+
+    await navigateTo('Journal')
+    const agendaTab = $('button[role="tab"][aria-label="Agenda view"]')
+    await agendaTab.waitForClickable({ timeout: NAV_TIMEOUT })
+    await agendaTab.click()
+
+    // The unbounded task, projected every day of the week after today, says the
+    // projection was read after the save: a cache rebuild still pending answers
+    // without the new tasks, and each remount of the view asks again.
+    const after = week.slice(1)
+    await browser.waitUntil(
+      async () => {
+        const dates = (await agendaProjectedRows(open)).map((row) => row.date)
+        if (dates.join() === after.join()) return true
+        await navigateTo('Pages')
+        await navigateTo('Journal')
+        await $('[data-testid="agenda-view"]').waitForExist({ timeout: NAV_TIMEOUT })
+        return false
+      },
+      {
+        timeout: 2 * NAV_TIMEOUT,
+        interval: 3_000,
+        timeoutMsg: `Agenda mode never projected ${open} over ${after.join(', ')}`,
+      },
+    )
+
+    const countedRows = await agendaProjectedRows(counted)
+    const untilRows = await agendaProjectedRows(until)
+    expect({
+      counted: countedRows.map((row) => row.date),
+      until: untilRows.map((row) => row.date),
+      labelled: [...countedRows, ...untilRows].every((row) => row.text.includes('Projected')),
+    }).toEqual({
+      counted: after.slice(0, 3),
+      until: after.slice(0, 2),
+      labelled: true,
     })
   })
 })

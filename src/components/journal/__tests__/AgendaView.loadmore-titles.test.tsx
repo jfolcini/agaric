@@ -42,7 +42,9 @@ vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useTagClickHandler: vi.fn(() => vi.fn()),
 }))
 
-vi.mock('@/lib/agenda-filters', () => ({
+// The pure range helpers stay real: the projection plan reads them (#5735).
+vi.mock('@/lib/agenda-filters', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/agenda-filters')>()),
   executeAgendaFilters: vi.fn(),
   loadMoreAgendaFilters: vi.fn(),
   loadMoreUnfilteredAgenda: vi.fn(),
@@ -66,6 +68,11 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockGetBatchProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
       batchResolve: (...args: unknown[]) =>
         mockBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listProjectedAgenda: () =>
+        Promise.resolve({
+          status: 'ok',
+          data: { items: [], next_cursor: null, has_more: false, total_count: null },
+        }),
     },
   }
 })

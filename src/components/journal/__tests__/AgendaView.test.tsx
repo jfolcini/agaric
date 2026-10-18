@@ -23,7 +23,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 // ── Mock agenda-filters ─────────────────────────────────────────────
-vi.mock('@/lib/agenda-filters', () => ({
+// The pure range helpers stay real: the projection plan reads them (#5735).
+vi.mock('@/lib/agenda-filters', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/agenda-filters')>()),
   executeAgendaFilters: vi.fn(),
   loadMoreAgendaFilters: vi.fn(),
   loadMoreUnfilteredAgenda: vi.fn(),
@@ -36,6 +38,7 @@ vi.mock('@/lib/agenda-filters', () => ({
 // mocked on the same generated surface.
 const mockedBatchResolve = vi.hoisted(() => vi.fn())
 const mockedQueryByProperty = vi.hoisted(() => vi.fn())
+const mockedListProjectedAgenda = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
@@ -47,6 +50,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
       queryByProperty: (...args: unknown[]) =>
         mockedQueryByProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listProjectedAgenda: (...args: unknown[]) =>
+        mockedListProjectedAgenda(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -118,6 +123,7 @@ vi.mock('@/components/agenda/AgendaResults', () => ({
     pageTitles: Map<string, string>
     groupBy: string
     sortBy: string
+    projected?: { entries: unknown[] }
   }) => {
     clearFiltersRef.current = props.onClearFilters
     loadMoreRef.current = props.onLoadMore
@@ -134,6 +140,7 @@ vi.mock('@/components/agenda/AgendaResults', () => ({
         data-group-by={props.groupBy}
         data-sort-by={props.sortBy}
         data-page-titles={JSON.stringify([...props.pageTitles.entries()])}
+        data-projected-count={props.projected?.entries.length ?? 0}
       >
         AgendaResults
       </div>
@@ -148,7 +155,7 @@ vi.mock('@/lib/notify', () => ({
   },
 }))
 
-import { makeBlock as _makeBlock } from '@/__tests__/fixtures'
+import { makeBlock as _makeBlock, makeProjectedEntry } from '@/__tests__/fixtures'
 import { AgendaView } from '@/components/journal/AgendaView'
 import {
   executeAgendaFilters,
@@ -156,6 +163,7 @@ import {
   loadMoreUnfilteredAgenda,
 } from '@/lib/agenda-filters'
 import { recordBlockPropertyChange } from '@/lib/block-property-events'
+import { getTodayString } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
 import { useSpaceStore } from '@/stores/space'
 
@@ -206,6 +214,12 @@ beforeEach(() => {
     blocks: [],
     hasMore: false,
     cursor: null,
+  })
+  mockedListProjectedAgenda.mockResolvedValue({
+    items: [],
+    next_cursor: null,
+    has_more: false,
+    total_count: null,
   })
   // Clear localStorage for sort/group preferences
   localStorage.removeItem('agaric:agenda:groupBy')
@@ -393,6 +407,35 @@ describe('AgendaView', () => {
     expect(mockedBatchResolve).toHaveBeenCalledWith(['PAGE1', 'PAGE2'], {
       kind: 'active',
       space_id: 'SPACE_1',
+    })
+  })
+
+  // 6a. #5735 — projected occurrences reach AgendaResults with their pages' titles
+  it("passes projected occurrences down and resolves their task's page title", async () => {
+    mockedListProjectedAgenda.mockResolvedValue({
+      // Today lies inside the week Agenda mode projects with no date filter.
+      items: [
+        makeProjectedEntry({
+          projected_date: getTodayString(),
+          block: { page_id: 'PAGE9', due_date: '2000-01-01' },
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    mockedBatchResolve.mockResolvedValue([
+      { id: 'PAGE9', title: 'Chores', block_type: 'page', deleted: false },
+    ])
+
+    render(<AgendaView />)
+
+    await waitFor(() => {
+      const results = screen.getByTestId('agenda-results')
+      expect(results).toHaveAttribute('data-projected-count', '1')
+      expect(JSON.parse(results.getAttribute('data-page-titles') ?? '[]')).toEqual([
+        ['PAGE9', 'Chores'],
+      ])
     })
   })
 

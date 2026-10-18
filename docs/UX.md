@@ -135,7 +135,7 @@ The cross-feature primitives most worth knowing (not exhaustive — see `src/com
 - **Block zoom-in.** Title is a text link in a breadcrumb (`Page › Section › Block`), not a pill — the breadcrumb implies "you're inside this".
 - **Inline query blocks.** `{{query: …}}` blocks render a filtered list inline. Edit-on-click; the body is the query, not the results.
 - **Conflict resolution.** UI offers Keep / Discard per conflict, or batch operations. Devices are shown by name (not ULID) for the user to disambiguate.
-- **Agenda projection.** The agenda view dedupes overdue tasks against the projected (cached) view. `DeadlineWarningSection` surfaces near-future tasks that may slip.
+- **Agenda projection.** Agenda mode lists the projected occurrences of repeating tasks below the committed ones, leaving out an occurrence on its task's own date. `DeadlineWarningSection` surfaces near-future tasks that may slip.
 - **Templates.** Template-tagged pages (`template = true` property). The template picker (slash command + button) inserts the template's child blocks under the current block; dynamic variables substitute on insertion.
 - **Property drawer.** Sheet slide-in (or popover on desktop) with one `PropertyRowEditor` per property + the built-in date fields at the top. Blur-to-save semantics; add via `AddPropertyPopover`.
 - **Kebab menu.** `PageHeaderMenu` is the canonical placement for page-level actions (Undo, Redo, Outline, Insert emoji, Move to space, Add alias, Add tag, Export, Trash, Template). Don't sprinkle these actions elsewhere.

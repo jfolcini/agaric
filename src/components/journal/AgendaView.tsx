@@ -16,6 +16,7 @@ import {
 import { ViewHeader } from '@/components/layout/ViewHeader'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { useAgendaPreferences } from '@/hooks/useAgendaPreferences'
+import { useAgendaProjectedEntries } from '@/hooks/useAgendaProjectedEntries'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import {
   executeAgendaFilters,
@@ -93,6 +94,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   const [refreshKey, setRefreshKey] = useState(0)
   // #5256 — and after a task changes anywhere else, a synced peer included.
   const { invalidationKey } = useBlockPropertyEvents()
+  const projected = useAgendaProjectedEntries(agendaFilters)
 
   // ── Agenda sort/group state (persisted in localStorage) ─────────────
   const {
@@ -145,9 +147,10 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   }, [agendaFilters, refreshKey, invalidationKey, currentSpaceId])
 
   // ── Page-title resolution (#3340) ──────────────────────────────────
-  // Keyed on `filteredBlocks`, NOT on the initial-query identity. Title
-  // resolution used to live inside the fetch effect above, whose deps
-  // (`agendaFilters` / `refreshKey` / `currentSpaceId`) none of which change
+  // Keyed on `filteredBlocks` and the projected entries' pages, NOT on the
+  // initial-query identity. Title resolution used to live inside the fetch
+  // effect above, whose deps (`agendaFilters` / `refreshKey` /
+  // `currentSpaceId`) none of which change
   // when `loadMoreAgenda` appends a page — so every appended row rendered its
   // breadcrumb as "Untitled" and, because `groupBy` defaults to 'page',
   // `groupByPage` labelled the group with the raw page ULID and sorted that
@@ -158,9 +161,16 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   // still visible from an earlier cursor page. A resolve failure is logged and
   // degrades to the "Untitled" fallback rather than failing the whole view —
   // the blocks themselves loaded fine.
+  //
+  // The projected pages ride as an id string: every refetch replaces
+  // `projected.entries` with an equal array.
+  const projectedPageIds = collectUniquePageIds(projected.entries.map((e) => e.block)).join(',')
   useEffect(() => {
     if (currentSpaceId == null) return
     const pageIds = collectUniquePageIds(filteredBlocks)
+    for (const id of projectedPageIds === '' ? [] : projectedPageIds.split(',')) {
+      if (!pageIds.includes(id)) pageIds.push(id)
+    }
     if (pageIds.length === 0) return
     let cancelled = false
     resolveTitles(currentSpaceId, pageIds)
@@ -174,7 +184,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
     return () => {
       cancelled = true
     }
-  }, [filteredBlocks, currentSpaceId])
+  }, [filteredBlocks, projectedPageIds, currentSpaceId])
 
   /**
    * Load the next page of agenda results.
@@ -258,6 +268,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
         groupBy={agendaGroupBy}
         sortBy={agendaSortBy}
         onDateChanged={() => setRefreshKey((k) => k + 1)}
+        projected={projected}
       />
     </div>
   )
