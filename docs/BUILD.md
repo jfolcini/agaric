@@ -333,11 +333,12 @@ Useful flags (see `scripts/release.sh --help`):
 
 1. **`verify-version`** — fail-fast if the tag's version doesn't match the manifests (it's the first job; the bump already happened locally).
 2. **`validate`** — same gate as CI (`prek run --all-files`).
-3. **`build-and-release`** — Linux + Windows + macOS (x86_64 + aarch64) desktop bundles, uploaded to a draft Release created up front. Per-platform steps also `cargo tauri signer sign` the updater payloads, in isolated steps whose env holds only the signing secret.
-4. **`android-build-and-release`** — APK if release-signing secrets are present.
-5. **Provenance + SBOMs** — each artifact gets a Sigstore bundle (`*.sigstore.json` — signature) and an in-toto SLSA statement (`*.intoto.jsonl` — provenance, what OpenSSF Scorecard's Signed-Releases provenance probe matches), plus SPDX + CycloneDX SBOMs and a signed OpenVEX document (`generate-vex`).
-6. **`generate-latest-json`** — re-verifies every updater `.sig` with `minisign` against the pubkey pinned in `tauri.conf.json` (#2971), then stitches the `latest.json` the in-app updater fetches.
-7. **`publish-release`** — flips the draft to published and marks it Latest, gated on *every* terminal job above reporting success.
+3. **`e2e-tauri`** — the real-backend WebdriverIO lane (`e2e-tauri-weekly.yml`) over every spec, beside the builds; a red run blocks `publish-release`.
+4. **`build-and-release`** — Linux + Windows + macOS (x86_64 + aarch64) desktop bundles, uploaded to a draft Release created up front. Per-platform steps also `cargo tauri signer sign` the updater payloads, in isolated steps whose env holds only the signing secret.
+5. **`android-build-and-release`** — the signed APK. Without the keystore secret the job fails, so the release stays a draft.
+6. **Provenance + SBOMs** — each artifact gets a Sigstore bundle (`*.sigstore.json` — signature) and an in-toto SLSA statement (`*.intoto.jsonl` — provenance, what OpenSSF Scorecard's Signed-Releases provenance probe matches), plus SPDX + CycloneDX SBOMs and a signed OpenVEX document (`generate-vex`).
+7. **`generate-latest-json`** — re-verifies every updater `.sig` with `minisign` against the pubkey pinned in `tauri.conf.json` (#2971), then stitches the `latest.json` the in-app updater fetches.
+8. **`publish-release`** — flips the draft to published and marks it Latest, gated on *every* terminal job above reporting success.
 
 ### If a release tag fails at `verify-version`
 
@@ -351,7 +352,7 @@ scripts/release.sh <correct-version>          # re-cut cleanly
 
 ## Android release signing
 
-The `android-build-and-release` job in `.github/workflows/release.yml` builds the aarch64 release APK and signs it with a keystore stored in GitHub Secrets. Local builds produce unsigned APKs by default; if the secrets are absent in CI, the job stages the APK as `agaric-<tag>-android-aarch64-unsigned.apk` so the pipeline keeps working before a keystore is provisioned.
+The `android-build-and-release` job in `.github/workflows/release.yml` builds the aarch64 release APK and signs it with a keystore stored in GitHub Secrets. Local builds produce unsigned APKs by default; in CI a missing keystore secret fails the job, so a release never ships an unsigned APK.
 
 ### Generate the keystore (one-time)
 
@@ -376,7 +377,7 @@ Four secrets must be set under repo Settings → Secrets and variables → Actio
 | `ANDROID_KEY_ALIAS` | the key alias (`agaric-release` above) |
 | `ANDROID_KEY_PASSWORD` | the key password, often the same as the keystore password (passed as `--key-pass env:…`) |
 
-When `ANDROID_KEYSTORE_BASE64` is present, CI decodes the keystore, runs `zipalign -p -f 4`, then `apksigner sign` (APK signing scheme v2/v3 + v4 idsig), verifies with `apksigner verify`, and `shred`s the decoded `.jks`. When it is absent, the APK ships unsigned (see above).
+When `ANDROID_KEYSTORE_BASE64` is present, CI decodes the keystore, runs `zipalign -P 16 -f 4`, then `apksigner sign` (APK signing scheme v2/v3 + v4 idsig), verifies with `apksigner verify`, and `shred`s the decoded `.jks`. When it is absent, the job fails (see above).
 
 ### Sign an APK locally for testing
 
@@ -384,7 +385,7 @@ Mirror the CI flow with the build-tools binaries:
 
 ```bash
 BUILD_TOOLS="$ANDROID_HOME/build-tools/<latest>"
-"$BUILD_TOOLS/zipalign" -p -f 4 app-universal-release-unsigned.apk aligned.apk
+"$BUILD_TOOLS/zipalign" -P 16 -f 4 app-universal-release-unsigned.apk aligned.apk
 "$BUILD_TOOLS/apksigner" sign \
   --ks agaric-release.keystore \
   --ks-key-alias agaric-release \

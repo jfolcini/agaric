@@ -1,7 +1,7 @@
 # =============================================================================
 # WebdriverIO + tauri-driver real-backend E2E (issue #155)
 # =============================================================================
-# This is a STANDALONE workflow that RUNS ON pull requests but GATES none of
+# This workflow RUNS ON pull requests but GATES none of
 # them. Both halves are deliberate (#4671). It runs per-PR so a real-backend
 # regression is reported on the PR that introduces it instead of up to a week
 # later. It is still not part of the PR gate — not a job of `_validate.yml`,
@@ -9,6 +9,9 @@
 # (`branch-protection-assert.yml` pins those to `dco` + `validate / validate-all`) — so a
 # red run here never blocks a merge; it remains a high-fidelity canary. Its
 # `e2e-tauri-gate` job reports on every PR, so it can become one.
+#
+# A release is the exception: `release.yml` calls this workflow on every tag
+# and `publish-release` requires it, so a red run leaves the release a draft.
 #
 # Unlike the Playwright `e2e/` suite (which drives the app in headless Chromium
 # against the JS Tauri mock), this lane builds the REAL Agaric debug binary and
@@ -84,11 +87,15 @@ on:
   # runs; `gate` always reports.
   pull_request:
     branches: [main]
+  # `release.yml`'s `e2e-tauri` job.
+  workflow_call: {}
 
 # Per-REF, so a new push supersedes only that PR's own in-flight run: PR runs
 # carry `refs/pull/<n>/merge` and cron runs `refs/heads/main`, disjoint groups.
+# Under `workflow_call` the context is the caller's, so `github.workflow` is
+# `Release` there: a dispatch on a release tag cannot cancel the release's run.
 concurrency:
-  group: e2e-tauri-weekly-${{ github.ref }}
+  group: e2e-tauri-weekly-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -106,9 +113,9 @@ jobs:
   # `real_backend`: could the change alter what this lane BUILDS or RUNS (the
   # Rust app minus test-only files, the frontend bundle, the specs and their
   # runner, the manifests). One serial native build tells a docs-only or
-  # Rust-tests-only PR nothing. Schedule and dispatch have no
-  # diff and classify as relevant. When the lane's only paths are
-  # `e2e-tauri/*.e2e.ts` specs, `real_backend_specs` lists the changed ones
+  # Rust-tests-only PR nothing. Schedule, dispatch and `release.yml`'s call
+  # (a tag push) have no diff and run every spec. When the lane's only paths
+  # are `e2e-tauri/*.e2e.ts` specs, `real_backend_specs` lists the changed ones
   # still on disk and the run step passes just those (#5853); helpers,
   # `wdio.conf.ts` or the app empty it and every spec runs.
   detect:
