@@ -12,10 +12,11 @@
  * `bulletList` before `- [ ] ` can finish, so live-typed checkboxes were
  * shadowed. To recover the typed path the bare rule matches the bracket
  * syntax WITHOUT the leading `- ` (`[ ] `) and, when the cursor sits in the
- * single, freshly-created bullet item, replaces that one-item list with an
- * empty paragraph and fires onCheckbox. Inside a real multi-item list the
- * rule stays inert. The bulk-insert path (`- [ ] ` matched in one shot, e.g.
- * applyInputRules) still hits the direct rule.
+ * single, freshly-created bullet item, replaces that one-item list with a
+ * paragraph holding the text that followed the trigger and fires onCheckbox.
+ * Inside a real multi-item list the rule stays inert. The bulk-insert path
+ * (`- [ ] ` matched in one shot, e.g. applyInputRules) still hits the direct
+ * rule.
  */
 
 import { Extension, InputRule } from '@tiptap/core'
@@ -67,10 +68,10 @@ export const CheckboxInputRule = Extension.create<CheckboxInputRuleOptions>({
 
     // Bare path: `[ ] ` at the start of the block's first textblock makes it
     // a task (X11), and typed inside the single bullet item BulletList just
-    // created from `- ` (#1494) replaces that one-item list with an empty
-    // paragraph carrying the cursor. Returns null — leaving the typed text
-    // intact — inside a real list, and anywhere but the block's start (a
-    // table cell, a quote, a later paragraph).
+    // created from `- ` (#1494) replaces that one-item list with a paragraph
+    // holding the text after the trigger, the cursor at its start. Returns
+    // null — leaving the typed text intact — inside a real list, and anywhere
+    // but the block's start (a table cell, a quote, a later paragraph).
     const bareRule = new InputRule({
       find: BARE_RE,
       handler: ({ state, range, match }) => {
@@ -91,7 +92,8 @@ export const CheckboxInputRule = Extension.create<CheckboxInputRuleOptions>({
         const listDepth = $from.depth - 2
         const from = $from.before(listDepth)
         const to = $from.after(listDepth)
-        state.tr.replaceRangeWith(from, to, paragraphType.create())
+        const textAfterCaret = $from.parent.content.cut($from.parentOffset)
+        state.tr.replaceRangeWith(from, to, paragraphType.create(null, textAfterCaret))
         state.tr.setSelection(TextSelection.create(state.tr.doc, from + 1))
         fire(match)
         return undefined

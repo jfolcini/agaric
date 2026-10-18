@@ -1,4 +1,4 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, reopenPage, saveBlock, test, waitForBoot } from './helpers'
 
 /**
  * E2E for the typed checkbox (#5160 D6, P9, X11): typing `[/] ` at the start
@@ -72,5 +72,27 @@ test.describe('Typed checkboxes (#5160 D6)', () => {
       .poll(async () => (await persistedBlock(page, blockId)).todo_state)
       .toBe('CANCELLED')
     await expect(editor).not.toContainText('[-]')
+  })
+
+  test('typing "- [ ] " at the start of a block with text keeps the text', async ({ page }) => {
+    const { editor, blockId } = await freshBlock(page)
+    await editor.pressSequentially('hello world')
+    await expect(editor).toHaveText('hello world')
+    await editor.evaluate((el) =>
+      (
+        el as HTMLElement & { editor: { commands: { focus: (at: 'start') => boolean } } }
+      ).editor.commands.focus('start'),
+    )
+
+    await editor.pressSequentially('- [ ] ')
+
+    await expect(editor).toHaveText('hello world')
+    await expect.poll(async () => (await persistedBlock(page, blockId)).todo_state).toBe('TODO')
+    await saveBlock(page, 'Escape')
+
+    await reopenPage(page, PAGE)
+    const row = page.locator(`[data-testid="sortable-block"][data-block-id="${blockId}"]`)
+    await expect(row.getByTestId('task-checkbox-todo')).toBeVisible()
+    await expect(row.getByTestId('block-static')).toHaveText('hello world')
   })
 })
