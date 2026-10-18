@@ -1,4 +1,5 @@
 import { renderHook } from '@testing-library/react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -174,29 +175,29 @@ describe('event-name constants pinned', () => {
 
 describe('handleNavigatePayload', () => {
   it('forwards a valid block payload to navigateToPage', async () => {
-    await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+    await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
     expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, '')
   })
 
   it('rejects payloads missing the id field', async () => {
-    await handleNavigatePayload({}, 'deeplink:navigate-to-block', 'block')
+    await handleNavigatePayload({}, 'deeplink:navigate-to-block')
     expect(mockNavigateToPage).not.toHaveBeenCalled()
     expect(mockGetBlock).not.toHaveBeenCalled()
   })
 
   it('rejects payloads where id is empty', async () => {
-    await handleNavigatePayload({ id: '' }, 'deeplink:navigate-to-page', 'page')
+    await handleNavigatePayload({ id: '' }, 'deeplink:navigate-to-page')
     expect(mockNavigateToPage).not.toHaveBeenCalled()
   })
 
   it('rejects payloads where id is not a string', async () => {
-    await handleNavigatePayload({ id: 42 }, 'deeplink:navigate-to-page', 'page')
+    await handleNavigatePayload({ id: 42 }, 'deeplink:navigate-to-page')
     expect(mockNavigateToPage).not.toHaveBeenCalled()
   })
 
   it('rejects null / undefined payloads', async () => {
-    await handleNavigatePayload(null, 'deeplink:navigate-to-block', 'block')
-    await handleNavigatePayload(undefined, 'deeplink:navigate-to-block', 'block')
+    await handleNavigatePayload(null, 'deeplink:navigate-to-block')
+    await handleNavigatePayload(undefined, 'deeplink:navigate-to-block')
     expect(mockNavigateToPage).not.toHaveBeenCalled()
   })
 
@@ -205,7 +206,7 @@ describe('handleNavigatePayload', () => {
       throw new Error('store boom')
     })
     await expect(
-      handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block'),
+      handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block'),
     ).resolves.toBeUndefined()
   })
 
@@ -215,7 +216,7 @@ describe('handleNavigatePayload', () => {
     it('passes the fetched page title to navigateToPage', async () => {
       mockGetBlock.mockResolvedValueOnce(makeBlock({ id: PAGE_ID, content: 'Project Plan' }))
 
-      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page', 'page')
+      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page')
 
       expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Project Plan')
     })
@@ -226,25 +227,68 @@ describe('handleNavigatePayload', () => {
       // editor. The router's job is to deliver the real title.
       mockGetBlock.mockResolvedValueOnce(makeBlock({ id: PAGE_ID, content: '2026-06-11' }))
 
-      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page', 'page')
+      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page')
 
       expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, '2026-06-11')
     })
 
-    it('falls back to navigateToPage(id, "") when getBlock rejects', async () => {
+    it('an unreadable target opens nothing rather than an id of unknown type (#5899)', async () => {
       mockGetBlock.mockRejectedValueOnce(new Error('not found'))
 
-      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page', 'page')
+      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page')
 
-      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, '')
+      expect(mockGetBlock).toHaveBeenCalledWith(PAGE_ID)
+      expect(mockNavigateToPage).not.toHaveBeenCalled()
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Link target not found')
     })
 
     it('null content degrades to an empty title', async () => {
       mockGetBlock.mockResolvedValueOnce(makeBlock({ id: PAGE_ID, content: null }))
 
-      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page', 'page')
+      await handleNavigatePayload({ id: PAGE_ID }, 'deeplink:navigate-to-page')
 
       expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, '')
+    })
+  })
+
+  describe('a page link to a content block opens its page, not the block (#5899)', () => {
+    it('navigates to the containing page and targets the block', async () => {
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({ id, block_type: 'content', content: 'leaf', page_id: PAGE_ID })
+        if (id === PAGE_ID) return makeBlock({ id, content: 'Home Page' })
+        throw new Error(`unexpected fetch: ${id}`)
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-page')
+
+      expect(mockNavigateToPage).toHaveBeenCalledTimes(1)
+      expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Home Page', BLOCK_ID)
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    })
+
+    it('an ancestor walk that ends on a non-page block opens nothing', async () => {
+      mockGetBlock.mockImplementation(async (id: string) => {
+        if (id === BLOCK_ID)
+          return makeBlock({ id, block_type: 'content', content: 'leaf', parent_id: MID_ID })
+        return makeBlock({ id: MID_ID, block_type: 'content', content: 'rootless' })
+      })
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-page')
+
+      expect(mockGetBlock).toHaveBeenCalledWith(MID_ID)
+      expect(mockNavigateToPage).not.toHaveBeenCalled()
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Link target not found')
+    })
+
+    it('a page link to a tag still opens the tag', async () => {
+      mockGetBlock.mockResolvedValueOnce(
+        makeBlock({ id: BLOCK_ID, block_type: 'tag', content: 'work' }),
+      )
+
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-page')
+
+      expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, 'work')
     })
   })
 
@@ -266,7 +310,7 @@ describe('handleNavigatePayload', () => {
         throw new Error(`unexpected fetch: ${id}`)
       })
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
       expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Direct Page', BLOCK_ID)
       expect(mockGetBlock).toHaveBeenCalledTimes(2)
@@ -290,21 +334,22 @@ describe('handleNavigatePayload', () => {
         return makeBlock({ id: PAGE_ID, content: 'Still Reachable' })
       })
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
       expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Still Reachable', BLOCK_ID)
     })
 
-    it('falls back to navigateToPage(id, "") when the page_id fetch rejects', async () => {
+    it('opens nothing when the page_id fetch rejects', async () => {
       mockGetBlock.mockImplementation(async (id: string) => {
         if (id === BLOCK_ID)
           return makeBlock({ id, block_type: 'text', content: 'leaf', page_id: PAGE_ID })
         throw new Error('page purged')
       })
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
-      expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, '')
+      expect(mockGetBlock).toHaveBeenCalledWith(PAGE_ID)
+      expect(mockNavigateToPage).not.toHaveBeenCalled()
     })
 
     it('a corrupt self-referential page_id on a non-page block falls back to the walk', async () => {
@@ -320,7 +365,7 @@ describe('handleNavigatePayload', () => {
         return makeBlock({ id: PAGE_ID, content: 'Walked Page' })
       })
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
       expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Walked Page', BLOCK_ID)
     })
@@ -332,7 +377,7 @@ describe('handleNavigatePayload', () => {
         return makeBlock({ id: PAGE_ID, content: 'Meeting Notes' })
       })
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
       expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Meeting Notes', BLOCK_ID)
     })
@@ -346,7 +391,7 @@ describe('handleNavigatePayload', () => {
         return makeBlock({ id: PAGE_ID, content: 'Deep Page' })
       })
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
       expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Deep Page', BLOCK_ID)
     })
@@ -354,7 +399,7 @@ describe('handleNavigatePayload', () => {
     it('a block that IS a page navigates directly with its title (no blockId)', async () => {
       mockGetBlock.mockResolvedValueOnce(makeBlock({ id: BLOCK_ID, content: 'Actually a page' }))
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
       expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, 'Actually a page')
     })
@@ -366,31 +411,32 @@ describe('handleNavigatePayload', () => {
         return makeBlock({ id: PAGE_ID, content: '2026-06-11' })
       })
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
       expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, '2026-06-11', BLOCK_ID)
     })
 
-    it('an orphaned chain (no page ancestor) lands on the topmost ancestor + blockId', async () => {
+    it('an orphaned chain (no page ancestor) opens nothing', async () => {
       mockGetBlock.mockImplementation(async (id: string) => {
         if (id === BLOCK_ID)
           return makeBlock({ id, block_type: 'text', content: 'leaf', parent_id: MID_ID })
         return makeBlock({ id: MID_ID, block_type: 'text', content: 'rootless', parent_id: null })
       })
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
-      expect(mockNavigateToPage).toHaveBeenCalledWith(MID_ID, 'rootless', BLOCK_ID)
+      expect(mockGetBlock).toHaveBeenCalledWith(MID_ID)
+      expect(mockNavigateToPage).not.toHaveBeenCalled()
     })
 
-    it('a parentless non-page block navigates to itself without a blockId', async () => {
+    it('a parentless non-page block opens nothing', async () => {
       mockGetBlock.mockResolvedValueOnce(
         makeBlock({ id: BLOCK_ID, block_type: 'text', content: 'floating', parent_id: null }),
       )
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
-      expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, 'floating')
+      expect(mockNavigateToPage).not.toHaveBeenCalled()
     })
 
     it('a cyclic parent chain terminates at the hop cap instead of looping forever', async () => {
@@ -400,22 +446,24 @@ describe('handleNavigatePayload', () => {
         return makeBlock({ id: MID_ID, block_type: 'text', content: 'b', parent_id: BLOCK_ID })
       })
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
-      // Lands SOMEWHERE deterministic rather than hanging.
-      expect(mockNavigateToPage).toHaveBeenCalledTimes(1)
+      // The block itself, then one fetch per hop up to the cap.
+      expect(mockGetBlock).toHaveBeenCalledTimes(101)
+      expect(mockNavigateToPage).not.toHaveBeenCalled()
     })
 
-    it('falls back to navigateToPage(id, "") when an ancestor fetch rejects', async () => {
+    it('opens nothing when an ancestor fetch rejects', async () => {
       mockGetBlock.mockImplementation(async (id: string) => {
         if (id === BLOCK_ID)
           return makeBlock({ id, block_type: 'text', content: 'leaf', parent_id: PAGE_ID })
         throw new Error('parent purged')
       })
 
-      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block', 'block')
+      await handleNavigatePayload({ id: BLOCK_ID }, 'deeplink:navigate-to-block')
 
-      expect(mockNavigateToPage).toHaveBeenCalledWith(BLOCK_ID, '')
+      expect(mockGetBlock).toHaveBeenCalledWith(PAGE_ID)
+      expect(mockNavigateToPage).not.toHaveBeenCalled()
     })
   })
 })
@@ -869,7 +917,7 @@ describe('deep links switch to the target page’s space (#5415)', () => {
       scope.space_id === SPACE_B ? ids.map((id) => ({ id, title: 'Notes' })) : [],
     )
 
-    await handleNavigatePayload({ id: PAGE_ID }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE, 'page')
+    await handleNavigatePayload({ id: PAGE_ID }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE)
 
     expect(useSpaceStore.getState().currentSpaceId).toBe(SPACE_B)
     expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Notes')
@@ -884,7 +932,7 @@ describe('deep links switch to the target page’s space (#5415)', () => {
       scope.space_id === SPACE_A ? ids.map((id) => ({ id, title: 'Notes' })) : [],
     )
 
-    await handleNavigatePayload({ id: PAGE_ID }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE, 'page')
+    await handleNavigatePayload({ id: PAGE_ID }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE)
 
     expect(useSpaceStore.getState().currentSpaceId).toBe(SPACE_A)
     expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Notes')
@@ -893,7 +941,7 @@ describe('deep links switch to the target page’s space (#5415)', () => {
   it('a page no listed space owns still opens, in the active space', async () => {
     mockBatchResolve.mockResolvedValue([])
 
-    await handleNavigatePayload({ id: PAGE_ID }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE, 'page')
+    await handleNavigatePayload({ id: PAGE_ID }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE)
 
     expect(useSpaceStore.getState().currentSpaceId).toBe(SPACE_A)
     expect(mockNavigateToPage).toHaveBeenCalledWith(PAGE_ID, 'Notes')

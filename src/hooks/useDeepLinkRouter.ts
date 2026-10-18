@@ -38,7 +38,9 @@ import { useEffect } from 'react'
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { getCurrentDeepLink } from '@/lib/platform/deep-link'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 import { requireActiveScope } from '@/lib/space-scope'
@@ -97,10 +99,6 @@ function isOpenSettingsPayload(p: unknown): p is OpenSettingsPayload {
     (p as { tab: string }).tab.length > 0
   )
 }
-
-/** Distinguishes the two navigate events — a BLOCK id needs containing-
- *  page resolution before it can be fed to `navigateToPage`. */
-export type NavigateTargetKind = 'block' | 'page'
 
 /**
  * #734 — upper bound on the parent-chain walk when resolving a block's
@@ -163,33 +161,26 @@ async function safeNavigateToPage(
 /**
  * Apply a `deeplink:navigate-to-block` / `deeplink:navigate-to-page` event.
  *
- * #734 — both events used to share a blind `navigateToPage(id, '')`:
- * a BLOCK link opened the block's own ULID as if it were a page (no
- * containing-page resolution, no scroll-and-highlight), and a DATE-titled
- * page bypassed the journal redirect because `tabs.ts` keys it on the
- * TITLE — which was always `''` here. The handler now resolves the
- * target through `getBlock`:
+ * The row's `block_type` decides, not the link's kind: a link from an agent
+ * or a hand edit can carry the wrong one (#5899).
  *
- *   - `kind === 'page'` → fetch the page's title so the journal redirect
- * And the tab label work like every in-app navigation.
- *   - `kind === 'block'` → resolve the containing page via the
- *     denormalized `blocks.page_id` column (maintained by the
- *     materializer: `page_id_self_for_pages` CHECK for pages, cross-page
- *     moves reparent it — the same column AlertSection / AgendaResults
- *     already navigate through) and navigate THERE, passing the original
- *     block id as the third arg so the editor scrolls to and highlights
- *     it (same contract as in-app `[[ULID]]` links). Rows without a
- *     `page_id` (orphaned subtrees / legacy data) fall back to walking
- *     `parent_id` to the nearest `page`-typed ancestor.
+ *   - A `page` or `tag` row opens as itself, with its title so the journal
+ *     redirect and the tab label work like every in-app navigation (#734).
+ *   - A `content` row opens its containing page, found through the
+ *     denormalized `blocks.page_id` column, or for rows without one
+ *     (orphaned subtrees, legacy data) by walking `parent_id` to the nearest
+ *     `page`-typed ancestor. The block id goes along as the third arg so the
+ *     editor scrolls to and highlights it, as in-app `[[ULID]]` links do.
  *
- * IPC failures degrade to the legacy `navigateToPage(id, '')` so a
- * deep link is never silently dropped. Never rejects.
+ * A content block is never opened as a page: `PageEditor` would find it
+ * childless and seed an empty child under it on every visit (#5899). So a
+ * target that cannot be read, or a chain that ends without a page, navigates
+ * nowhere and shows the same "Link target not found" toast as an in-app link
+ * to a missing block. `get_block` is not space-scoped, so a failed
+ * read means the row is gone, trashed, or the IPC is down: nothing a page
+ * view could show. Never rejects.
  */
-export async function handleNavigatePayload(
-  payload: unknown,
-  eventName: string,
-  kind: NavigateTargetKind,
-): Promise<void> {
+export async function handleNavigatePayload(payload: unknown, eventName: string): Promise<void> {
   if (!isBlockNavigatePayload(payload)) {
     logger.warn('deeplink', `${eventName} payload missing valid id`, {
       payload: JSON.stringify(payload),
@@ -198,23 +189,19 @@ export async function handleNavigatePayload(
   }
   try {
     let block = unwrap(await commands.getBlock(payload.id))
-    if (kind === 'page' || block.block_type === 'page') {
+    if (block.block_type === 'page' || block.block_type === 'tag') {
       await safeNavigateToPage(eventName, payload.id, block.content ?? '')
       return
     }
-    // BLOCK target — prefer the denormalized `page_id` column: ONE extra
-    // IPC fetch (for the page title) instead of an O(depth) sequential
-    // parent walk, and immune to a soft-deleted intermediate ancestor
-    // killing the chain mid-walk.
+    // Prefer the denormalized `page_id` column: ONE extra IPC fetch (for
+    // the page title) instead of an O(depth) sequential parent walk, and
+    // immune to a soft-deleted intermediate ancestor killing the chain
+    // mid-walk.
     if (block.page_id !== null && block.page_id !== payload.id) {
       const page = unwrap(await commands.getBlock(block.page_id))
       await safeNavigateToPage(eventName, page.id, page.content ?? '', payload.id)
       return
     }
-    // No usable `page_id` (orphaned subtree / legacy rows) — walk the
-    // parent chain. Stop at the first `page`-typed ancestor; if the chain
-    // ends without one, fall back to the topmost ancestor reached so the
-    // user still lands as close to the block as possible.
     for (let hop = 0; block.parent_id !== null && hop < MAX_ANCESTOR_HOPS; hop++) {
       block = unwrap(await commands.getBlock(block.parent_id))
       if (block.block_type === 'page') {
@@ -222,18 +209,11 @@ export async function handleNavigatePayload(
         return
       }
     }
-    await safeNavigateToPage(
-      eventName,
-      block.id,
-      block.content ?? '',
-      block.id === payload.id ? undefined : payload.id,
-    )
+    logger.warn('deeplink', `${eventName} target has no containing page`, { id: payload.id })
+    notify.error(t('blockTree.linkTargetNotFound'))
   } catch (err) {
-    // Target fetch failed (unknown id, IPC down, …) — preserve the
-    // pre-#734 behaviour so the link still opens SOMETHING the views
-    // can re-resolve on mount.
     logger.warn('deeplink', `${eventName} target resolution failed`, { id: payload.id }, err)
-    await safeNavigateToPage(eventName, payload.id, '')
+    notify.error(t('blockTree.linkTargetNotFound'))
   }
 }
 
@@ -285,7 +265,7 @@ export function useDeepLinkRouter(): void {
     (event) => {
       try {
         // Async (block→page resolution) but never rejects — see handler.
-        void handleNavigatePayload(event.payload, DEEPLINK_EVENT_NAVIGATE_TO_BLOCK, 'block')
+        void handleNavigatePayload(event.payload, DEEPLINK_EVENT_NAVIGATE_TO_BLOCK)
       } catch (err) {
         logger.error(
           'deeplink',
@@ -312,7 +292,7 @@ export function useDeepLinkRouter(): void {
     DEEPLINK_EVENT_NAVIGATE_TO_PAGE,
     (event) => {
       try {
-        void handleNavigatePayload(event.payload, DEEPLINK_EVENT_NAVIGATE_TO_PAGE, 'page')
+        void handleNavigatePayload(event.payload, DEEPLINK_EVENT_NAVIGATE_TO_PAGE)
       } catch (err) {
         logger.error('deeplink', `${DEEPLINK_EVENT_NAVIGATE_TO_PAGE} handler threw`, undefined, err)
       }
@@ -451,11 +431,11 @@ export function dispatchLaunchUrl(raw: string): void {
   const normalisedId = identifier.toUpperCase()
   switch (host) {
     case 'block': {
-      void handleNavigatePayload({ id: normalisedId }, DEEPLINK_EVENT_NAVIGATE_TO_BLOCK, 'block')
+      void handleNavigatePayload({ id: normalisedId }, DEEPLINK_EVENT_NAVIGATE_TO_BLOCK)
       return
     }
     case 'page': {
-      void handleNavigatePayload({ id: normalisedId }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE, 'page')
+      void handleNavigatePayload({ id: normalisedId }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE)
       return
     }
     case 'settings': {
