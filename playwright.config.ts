@@ -93,7 +93,7 @@ export default defineConfig({
     // infra/dev-server flake, not a bad spec). A pre-built static bundle has
     // no on-the-fly compilation, so there is nothing to stall.
     //
-    // `build:e2e` builds with `VITE_E2E=1`, which keeps the tauri IPC mock in
+    // The build runs with `VITE_E2E=1`, which keeps the tauri IPC mock in
     // the bundle (main.tsx gates the mock on `import.meta.env.VITE_E2E`); the
     // suite depends on that mock, and a plain prod build would tree-shake it
     // out. `preview:e2e` serves `dist/` with `--strictPort` so the

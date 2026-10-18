@@ -6,8 +6,8 @@
 
 Authoritative values are in [`playwright.config.ts`](../playwright.config.ts).
 
-- Test dir `e2e/`, Chromium only, base URL `http://localhost:5173`.
-- Web server: `npm run build:e2e && npm run preview:e2e` — a static production build served by `vite preview`. `VITE_E2E=1` keeps the tauri mock in the bundle (`src/main.tsx` gates the import on it); a plain prod build tree-shakes it out. `build:e2e` runs `tsc -b`, so a type error anywhere (a stray import in a scratch spec) surfaces only as "Process from config.webServer was not able to start"; run `npm run build:e2e` to read it.
+- Test dir `e2e/`, Chromium only, base URL `http://localhost:$PW_PORT` (default 5173).
+- Web server: `VITE_E2E=1 vite build`, then `npm run preview:e2e` on `PW_PORT` — a static production build served by `vite preview`. `VITE_E2E=1` keeps the tauri mock in the bundle (`src/main.tsx` gates the import on it); a plain prod build tree-shakes it out. The build does not type-check: a type error in a spec shows in `npm run typecheck`.
 
 ```sh
 npm run test:e2e                              # whole suite
@@ -19,9 +19,9 @@ npm run typecheck:e2e                         # tsc for this directory only
 
 `e2e/**/*.ts` belongs to [`tsconfig.e2e.json`](../tsconfig.e2e.json), so `tsc -b` covers it at `src/` strictness. A new sibling TypeScript directory must be claimed by a tsconfig project (check with `npx tsc -p <cfg> --listFiles | grep -c "/<dir>/"`); the editor type-checks files no gate does.
 
-### One run at a time on :5173
+### One run per port
 
-`reuseExistingServer` is on locally, so Playwright attaches to whatever already listens on :5173: a leftover `npm run dev` or older `vite preview` means testing the wrong bundle, and a concurrent run shares or kills the first one's server. Before a run, kill the PID from `lsof -ti :5173`, never `pkill -f`, which also matches unrelated shells.
+`reuseExistingServer` is on locally, so Playwright attaches to whatever already listens on its port: a leftover `npm run dev` or older `vite preview` means testing the wrong bundle, and a concurrent run shares or kills the first one's server. Give each worktree its own port (`PW_PORT=5557 npx playwright test …`). Before a run, kill the PID from `lsof -ti :$PW_PORT`, never `pkill -f`, which also matches unrelated shells.
 
 ## Mock backend
 

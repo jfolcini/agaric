@@ -324,7 +324,8 @@ types_or = ["ts", "tsx"]
 stages = ["pre-commit"]
 
 # Vitest: smart related-only tests. Pre-push only (#817): test-related-ts.sh
-# collects the changed .ts/.tsx files (skipping bindings.ts), and — when any
+# collects the changed .ts/.tsx/.mjs files (a change to bindings.ts or the
+# conformance fixtures adds the tests that read them), and — when any
 # match — runs `npx vitest related --run` on them. vitest's `related` then
 # expands that set to every test that transitively imports those files. There
 # is no foundational-module fallback to the full suite (unlike the Rust
