@@ -138,7 +138,7 @@ runs:
         fi
 
         install_status=0
-        sudo apt-get install -y "${pkgs[@]}" || install_status=$?
+        sudo apt-get install -y -qq "${pkgs[@]}" || install_status=$?
 
         if [ "${install_status}" -eq 0 ]; then
           if [ "${update_status}" -ne 0 ]; then

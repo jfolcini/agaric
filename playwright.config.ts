@@ -41,7 +41,9 @@ export default defineConfig({
   // responsive; the suite stays comfortably parallel without thrashing.
   // (#1458: the server is now a static `vite preview` build, not dev+HMR.)
   workers: process.env['CI'] ? 2 : 4,
-  reporter: 'list',
+  // CI: one dot per test, full error and stack for each failure, plus GitHub
+  // annotations. `list` printed one line per passing test (hundreds per shard).
+  reporter: process.env['CI'] ? [['dot'], ['github']] : 'list',
   expect: {
     // Overlay mounts (popover/dialog/suggestion portals) can take a beat to
     // appear under parallel-context load; 8s occasionally clipped them. 15s

@@ -1178,6 +1178,7 @@ jobs:
             --shard=${{ matrix.shard }}/3 \
             --reporter=blob \
             --reporter=dot \
+            --silent=passed-only \
             --outputFile=.vitest-reports/blob-${{ matrix.shard }}-3.json \
             --coverage \
             --coverage.thresholds.lines=0 \
@@ -1263,6 +1264,7 @@ jobs:
         run: |
           npx vitest run \
             --mergeReports=.vitest-reports \
+            --silent=passed-only \
             --coverage \
             --coverage.reportsDirectory=coverage-merged \
             --coverage.reporter=json \

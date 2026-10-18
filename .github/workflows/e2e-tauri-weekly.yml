@@ -127,6 +127,9 @@ jobs:
     # Generous ceiling: cold Rust debug build of the whole Tauri app + apt +
     # cargo-install tauri-driver + the WebKitWebView run. Bounds a wedged run.
     timeout-minutes: 45
+    env:
+      # No `Compiling <crate>` line per crate; warnings and errors still print.
+      CARGO_TERM_QUIET: 'true'
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
