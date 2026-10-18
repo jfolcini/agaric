@@ -13,7 +13,7 @@ import {
 } from '@/lib/block-property-events'
 import { i18n } from '@/lib/i18n'
 import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
-import { buildFilters, parseQueryExpression } from '@/lib/query-utils'
+import { parseQueryExpression } from '@/lib/query-utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -1061,56 +1061,6 @@ describe('QueryResult – table mode', () => {
 
     // Nothing is withheld, so no caveat.
     expect(screen.queryByTestId('query-sort-partial-notice')).toBeNull()
-  })
-})
-
-/* ------------------------------------------------------------------ */
-/*  buildFilters tests                                                */
-/* ------------------------------------------------------------------ */
-
-describe('buildFilters', () => {
-  it('maps todo_state to TodoState filter', () => {
-    const filters = buildFilters([{ key: 'todo_state', value: 'TODO' }], [])
-    expect(filters).toEqual([{ type: 'TodoState', state: 'TODO' }])
-  })
-
-  it('maps priority to Priority filter', () => {
-    const filters = buildFilters([{ key: 'priority', value: '1' }], [])
-    expect(filters).toEqual([{ type: 'Priority', level: '1' }])
-  })
-
-  it('maps due_date to DueDate Eq filter', () => {
-    const filters = buildFilters([{ key: 'due_date', value: '2025-01-01' }], [])
-    expect(filters).toEqual([{ type: 'DueDate', op: 'Eq', value: '2025-01-01' }])
-  })
-
-  it('maps custom property key to PropertyText filter', () => {
-    const filters = buildFilters([{ key: 'status', value: 'active' }], [])
-    expect(filters).toEqual([{ type: 'PropertyText', key: 'status', op: 'Eq', value: 'active' }])
-  })
-
-  it('maps tag filters to HasTagPrefix', () => {
-    const filters = buildFilters([], ['project-x'])
-    expect(filters).toEqual([{ type: 'HasTagPrefix', prefix: 'project-x' }])
-  })
-
-  it('combines multiple property and tag filters', () => {
-    const filters = buildFilters(
-      [
-        { key: 'todo_state', value: 'TODO' },
-        { key: 'priority', value: '1' },
-      ],
-      ['project-x'],
-    )
-    expect(filters).toEqual([
-      { type: 'TodoState', state: 'TODO' },
-      { type: 'Priority', level: '1' },
-      { type: 'HasTagPrefix', prefix: 'project-x' },
-    ])
-  })
-
-  it('returns empty array when no filters', () => {
-    expect(buildFilters([], [])).toEqual([])
   })
 })
 

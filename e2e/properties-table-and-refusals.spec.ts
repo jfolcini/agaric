@@ -7,6 +7,7 @@ import {
   expect,
   focusBlock,
   getConsoleErrors,
+  ipc,
   navigateToView,
   openPage,
   openSettingsTab,
@@ -39,20 +40,6 @@ interface PropertyDef {
   key: string
   value_type: string
   options: string | null
-}
-
-function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
-  return page.evaluate(
-    ({ c, a }) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke(c, a)
-    },
-    { c: cmd, a: args },
-  ) as Promise<T>
 }
 
 /** The block's stored properties as `key → value_text`. */

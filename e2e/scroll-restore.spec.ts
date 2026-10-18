@@ -1,18 +1,8 @@
 import type { Page } from '@playwright/test'
 
-import { expect, test } from './helpers'
+import { emitMockEvent, expect, test } from './helpers'
 
 const TITLE = 'Scroll restore long page'
-
-async function emitMockEvent(page: Page, event: string, payload: unknown) {
-  await page.evaluate(
-    ({ event: evt, payload: data }) =>
-      (
-        window as unknown as { __emitMockEvent: (e: string, p: unknown) => Promise<void> }
-      ).__emitMockEvent(evt, data),
-    { event, payload },
-  )
-}
 
 /** The text and offset of the first block row at the top of the scroll pane. */
 async function topRow(page: Page) {

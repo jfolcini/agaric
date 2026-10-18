@@ -157,8 +157,8 @@ export function useImportRunner(): UseImportRunner {
   const [currentFileBlocksDone, setCurrentFileBlocksDone] = useState(0)
   const [currentFileBlocksTotal, setCurrentFileBlocksTotal] = useState(0)
 
-  // #1927 — navigate to a just-imported page. The backend `ImportResult`
-  // carries only the page title (no id), so resolve the title→id through
+  // #1927 — navigate to a just-imported page. The run result keeps only the
+  // page title (`navTitle`), so resolve the title→id through
   // `resolvePageByAlias` (a page's title is one of its aliases), scoped to
   // the target space, then reuse the app's `navigateToPage` action. No-op
   // if the title can't be resolved (e.g. the page was renamed out from
@@ -309,8 +309,8 @@ export function useImportRunner(): UseImportRunner {
       }
 
       // #1927 — the title to navigate to after a successful import. We resolve
-      // it to a page id lazily in the View action (the result carries no
-      // page_id), so the toast/panel only need the title.
+      // it to a page id lazily in the View action, so the toast/panel only need
+      // the title.
       const navTitle = totalBlocks > 0 ? lastTitle : null
 
       setImportResult({

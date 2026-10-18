@@ -3,6 +3,7 @@ import type { Locator, Page } from '@playwright/test'
 import {
   activePopover,
   expect,
+  ipc,
   navigateToView,
   openPage,
   seedSearchBlocks,
@@ -24,23 +25,16 @@ import {
 /** `SEED_IDS` in `src/lib/tauri-mock/seed.ts`. */
 const GETTING_STARTED = '00000000000000000000PAGE01'
 
-function createTag(page: Page, name: string): Promise<string> {
-  return page.evaluate(async (content) => {
-    const { invoke } = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-      }
-    ).__TAURI_INTERNALS__
-    const { id } = (await invoke('create_block', {
-      blockType: 'tag',
-      content,
-      parentId: null,
-      index: null,
-      scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
-      blockId: null,
-    })) as { id: string }
-    return id
-  }, name)
+async function createTag(page: Page, name: string): Promise<string> {
+  const { id } = await ipc<{ id: string }>(page, 'create_block', {
+    blockType: 'tag',
+    content: name,
+    parentId: null,
+    index: null,
+    scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+    blockId: null,
+  })
+  return id
 }
 
 test.describe('Tag query composer', () => {

@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, openAddFilter, test, waitForBoot } from './helpers'
+import { expect, ipc, openAddFilter, test, waitForBoot } from './helpers'
 
 /**
  * The Agenda filter builder narrows the rendered list by status, by priority
@@ -47,20 +47,6 @@ const ALL_TASKS = [
   'Design new dashboard',
   'Submit report',
 ]
-
-function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
-  return page.evaluate(
-    ({ c, a }) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke(c, a)
-    },
-    { c: cmd, a: args },
-  ) as Promise<T>
-}
 
 async function seedErrandTag(page: Page): Promise<void> {
   const tag = await ipc<{ id: string }>(page, 'create_block', {

@@ -1,6 +1,16 @@
-import type { Locator, Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
 
-import { expect, navigateToView, openSettingsTab, test, waitForBoot } from './helpers'
+import {
+  emitMockEvent,
+  expect,
+  navigateToView,
+  openSettingsTab,
+  pairOnePeer,
+  syncButton,
+  syncTooltipLines,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E — sync happy paths the mock can show failing (#5739): the sidebar Sync
@@ -18,32 +28,7 @@ interface MockWindow {
   __TAURI_INTERNALS__: {
     invoke: (cmd: string, args?: unknown, opts?: unknown) => Promise<unknown>
   }
-  __emitMockEvent?: (event: string, payload?: unknown) => Promise<void>
   __releaseStartSync?: () => void
-}
-
-function emitMockEvent(page: Page, event: string, payload: unknown): Promise<void> {
-  return page.evaluate(
-    ({ event: evt, payload: data }) =>
-      (window as unknown as MockWindow).__emitMockEvent?.(evt, data),
-    { event, payload },
-  )
-}
-
-/** Pair one device as the mock completes a pairing: it appears a few reads after the confirm. */
-async function pairOnePeer(page: Page): Promise<void> {
-  const peerCount = () =>
-    page.evaluate(async () => {
-      const { invoke } = (window as unknown as MockWindow).__TAURI_INTERNALS__
-      return ((await invoke('list_peer_refs')) as unknown[]).length
-    })
-  await page.evaluate(() =>
-    (window as unknown as MockWindow).__TAURI_INTERNALS__.invoke('confirm_pairing', {
-      passphrase: 'alpha bravo charlie delta',
-      scannedPeer: null,
-    }),
-  )
-  await expect.poll(peerCount).toBe(1)
 }
 
 /** Hold the next `start_sync` open until `releaseStartSync`. */
@@ -63,22 +48,6 @@ function holdNextStartSync(page: Page): Promise<void> {
 
 function releaseStartSync(page: Page): Promise<void> {
   return page.evaluate(() => (window as unknown as MockWindow).__releaseStartSync?.())
-}
-
-/** Its name changes with the network, so find it by the status dot it carries. */
-function syncButton(page: Page): Locator {
-  return page
-    .locator('[data-sidebar="footer"]')
-    .getByRole('button')
-    .filter({ has: page.getByTestId('sync-button-status-dot') })
-}
-
-/** The Sync icon's tooltip lines (state, then last synced), opened from the keyboard. */
-async function syncTooltipLines(page: Page): Promise<Locator> {
-  const button = syncButton(page)
-  await button.blur()
-  await button.focus()
-  return page.getByRole('tooltip').locator(':scope > div > span')
 }
 
 test('the sidebar Sync icon shows idle, syncing, failed and offline, and when it last synced', async ({

@@ -40,7 +40,7 @@ import { createReducers } from '@/stores/page-blocks-reducers'
 import type { PageBlockState } from '@/stores/page-blocks-types'
 import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
-import { selectPageStack, useTabsStore } from '@/stores/tabs'
+import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
 // #2254 — `PageBlockState` and `FlatBlock` now live in `page-blocks-types.ts`;
@@ -396,15 +396,17 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // the delete flow handles "this page is no longer valid in the
         // current view" (`usePageDeleteAction` and #2803's move handler →
         // `removePages`): drop the page from the active space's recent-pages
-        // MRU (the click itself just re-recorded it via `recordVisit`) and,
-        // when this page sits on top of the active tab's stack, pop it via
-        // the existing `goBack()` — which also closes the tab / returns to
-        // the view the stack was opened from when it empties (#4287; `pages`
-        // when that origin is unknown). Delete and the page-header move purge
-        // only the active space's tabs, and never recent-pages; the Pages
-        // view's batch move purges neither, so stale refs heal lazily here at
-        // the rejection point. The active space is NOT switched to follow the
-        // page (see #2785's note in PageHeader.handleMoveToSpace). #2810 — key
+        // MRU (the click itself just re-recorded it via `recordVisit`) and
+        // drop it from every tab of the active space via `removePages`, which
+        // also leaves the editor for the view the stack was opened from when no
+        // tab is left (#4287; `pages` when that origin is unknown). Popping only
+        // the active tab would land on another tab holding the same page, which
+        // PageEditor renders without reloading (#5753). Delete and the
+        // page-header move purge only the active space's tabs, and never
+        // recent-pages; the Pages view's batch move purges neither, so stale
+        // refs heal lazily here at the rejection point. The active space is
+        // NOT switched to follow the page (see #2785's note in
+        // PageHeader.handleMoveToSpace). #2810 — key
         // the heal on the structured `PageNotInSpace` code rather than the
         // generic `kind: 'validation'` (message-regexing was retired in
         // #2251): a malformed id is `kind: 'ulid'` (`BlockId::from_string`), and any
@@ -421,7 +423,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           // active space. The rejection can land after the user already
           // switched spaces (e.g. followed the page into its new home) —
           // `removeRecentPage` keys on the CURRENT active space and
-          // `goBack()` pops the CURRENT active slice, so healing then would
+          // `removePages` prunes the CURRENT active slice, so healing then would
           // purge a legitimate recents entry / pop a legitimate tab in the
           // wrong space. Skipping is safe: the heal is lazy by design and
           // re-fires the next time the stale reference is followed.
@@ -433,10 +435,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           if (trashed) notify.info(i18n.t('error.pageInTrash'), { id: 'page-in-trash' })
           else notify.info(i18n.t('error.pageNotInCurrentSpace'), { id: 'page-not-in-space' })
           useRecentPagesStore.getState().removeRecentPage(rootParentId)
-          const tabsState = useTabsStore.getState()
-          if (selectPageStack(tabsState).at(-1)?.pageId === rootParentId) {
-            tabsState.goBack()
-          }
+          useTabsStore.getState().removePages([rootParentId])
           return
         }
         logger.error(
