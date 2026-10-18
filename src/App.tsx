@@ -119,7 +119,7 @@ function preloadSearchOverlays(): void {
  *
  * Below the 768px `useIsMobile` breakpoint the sidebar is a Sheet with NO
  * persistent rail (see `Sidebar`'s mobile branch), so this button is the
- * primary way in; the left-edge swipe and Ctrl+B remain as secondaries.
+ * way in; Ctrl+B remains as a secondary.
  * Gated on exactly the same `useIsMobile()` predicate the Sheet branch uses —
  * not the wider `useShouldShowMobileChrome()` — so the affordance can never be
  * absent while the rail is, and can never appear next to the desktop sidebar.

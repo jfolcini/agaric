@@ -2,7 +2,7 @@
  * GestureCoachMark — one-time, first-run mobile coach-mark overlay (#1422).
  *
  * Agaric ships rich touch UX (swipe-to-delete/indent #927, long-press
- * context menu #926, edge-swipe sidebar, quick-capture FAB) that is
+ * context menu #926, quick-capture FAB) that is
  * discoverable only by accident. This overlay surfaces those gestures
  * once, on the first mobile/touch launch, then never again.
  *

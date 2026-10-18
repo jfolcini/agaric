@@ -2844,7 +2844,7 @@ describe('App shell heading ownership', () => {
 // safe if the header carries a visible way back into navigation, so these
 // tests pin the hamburger's presence on mobile and its absence on desktop.
 // Without them, a regression that drops the trigger leaves phone users with
-// no nav affordance at all except an undiscoverable edge swipe.
+// no nav affordance at all.
 describe('App — mobile sidebar trigger', () => {
   it('renders a labelled hamburger in the header on mobile', async () => {
     mockedUseIsMobile.mockReturnValue(true)
