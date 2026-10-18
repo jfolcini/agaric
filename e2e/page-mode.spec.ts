@@ -15,9 +15,11 @@ import type { Page } from '@playwright/test'
 
 import {
   activeSuggestionPopup,
+  emitMockEvent,
   expect,
   getInvokeCalls,
   installIpcRecorder,
+  ipc,
   readClipboard,
   test,
   waitForBoot,
@@ -31,15 +33,6 @@ const SEED_TAG_WORK = '000000000000000000000TAG01'
 
 interface MockWindow {
   __TAURI_INTERNALS__: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> }
-  __emitMockEvent?: (event: string, payload?: unknown) => Promise<void>
-}
-
-/** Call the backend as a peer or a test does: no local command, no event. */
-function invoke<T>(page: Page, cmd: string, args: Record<string, unknown>): Promise<T> {
-  return page.evaluate(
-    ({ cmd: c, args: a }) => (window as unknown as MockWindow).__TAURI_INTERNALS__.invoke(c, a),
-    { cmd, args },
-  ) as Promise<T>
 }
 
 interface Seeded {
@@ -133,7 +126,7 @@ function shown(page: Page): Promise<DocBlock[]> {
 
 /** The page as the backend holds it now: live blocks in document order, with depth. */
 async function backend(page: Page, pageId: string): Promise<DocBlock[]> {
-  const { blocks } = await invoke<{
+  const { blocks } = await ipc<{
     blocks: Array<{ id: string; parent_id: string; position: number; content: string | null }>
   }>(page, 'load_page_subtree', { rootBlockId: pageId, scope: SCOPE })
   const children = new Map<string, typeof blocks>()
@@ -308,18 +301,15 @@ test.describe('page mode (#5691)', () => {
     await page.keyboard.type('X')
     await expect.poll(async () => (await backend(page, seeded.pageId))[5]?.text).toBe('bloXck 5')
 
-    await invoke(page, 'edit_block', { blockId: seeded.ids[7], toText: 'block 7, from a peer' })
-    await page.evaluate(
-      (payload) => (window as unknown as MockWindow).__emitMockEvent?.('sync:complete', payload),
-      {
-        type: 'complete',
-        remote_device_id: 'device-b',
-        ops_received: 1,
-        ops_sent: 0,
-        changed_blocks: 1,
-        changed_page_ids: [seeded.pageId],
-      },
-    )
+    await ipc(page, 'edit_block', { blockId: seeded.ids[7], toText: 'block 7, from a peer' })
+    await emitMockEvent(page, 'sync:complete', {
+      type: 'complete',
+      remote_device_id: 'device-b',
+      ops_received: 1,
+      ops_sent: 0,
+      changed_blocks: 1,
+      changed_page_ids: [seeded.pageId],
+    })
 
     await expect(page.locator(`[data-page-block-id="${seeded.ids[7]}"]`)).toHaveText(
       'block 7, from a peer',
@@ -387,17 +377,14 @@ async function seedRows(
 
 /** What a sync that changed `pageId` tells the app, as `sync-events` delivers it. */
 async function syncedPage(page: Page, pageId: string): Promise<void> {
-  await page.evaluate(
-    (payload) => (window as unknown as MockWindow).__emitMockEvent?.('sync:complete', payload),
-    {
-      type: 'complete',
-      remote_device_id: 'device-b',
-      ops_received: 1,
-      ops_sent: 0,
-      changed_blocks: 1,
-      changed_page_ids: [pageId],
-    },
-  )
+  await emitMockEvent(page, 'sync:complete', {
+    type: 'complete',
+    remote_device_id: 'device-b',
+    ops_received: 1,
+    ops_sent: 0,
+    changed_blocks: 1,
+    changed_page_ids: [pageId],
+  })
 }
 
 /** Select from block `from`'s start to block `to`'s start (or end), as a drag would. */
@@ -451,15 +438,15 @@ test.describe('page mode keeps the page whole (#5691)', () => {
     ])
     await openInPageMode(page, 'Peers change it', 4)
 
-    const created = await invoke<{ id: string }>(page, 'create_block', {
+    const created = await ipc<{ id: string }>(page, 'create_block', {
       blockType: 'content',
       content: 'from a peer',
       parentId: pageId,
       index: 1,
       scope: SCOPE,
     })
-    await invoke(page, 'move_block', { blockId: ids[0], newParentId: ids[3], newIndex: 0 })
-    await invoke(page, 'delete_block', { blockId: ids[2] })
+    await ipc(page, 'move_block', { blockId: ids[0], newParentId: ids[3], newIndex: 0 })
+    await ipc(page, 'delete_block', { blockId: ids[2] })
     await syncedPage(page, pageId)
 
     await expect
@@ -491,7 +478,7 @@ test.describe('page mode keeps the page whole (#5691)', () => {
     await caret(page, 1, 'end')
 
     await page.keyboard.type(' typed')
-    await invoke(page, 'delete_block', { blockId: ids[1] })
+    await ipc(page, 'delete_block', { blockId: ids[1] })
     await syncedPage(page, pageId)
 
     await expect(
@@ -516,7 +503,7 @@ test.describe('page mode keeps the page whole (#5691)', () => {
       [0, 'gamma'],
       [0, 'delta'],
     ])
-    await invoke(page, 'edit_block', { blockId: ids[3], toText: `see ((${ids[1]}))` })
+    await ipc(page, 'edit_block', { blockId: ids[3], toText: `see ((${ids[1]}))` })
     await openInPageMode(page, 'Cut and paste', 4)
     await installIpcRecorder(page)
 
@@ -622,7 +609,7 @@ test.describe('page mode behaves as block mode (#5691)', () => {
       [0, 'middle'],
       [0, 'the referenced one'],
     ])
-    await invoke(page, 'edit_block', { blockId: ids[1], toText: `see ((${ids[2]}))` })
+    await ipc(page, 'edit_block', { blockId: ids[1], toText: `see ((${ids[2]}))` })
     await openInPageMode(page, 'Chips', 3)
 
     await page.locator(`${EDITOR} [data-testid="block-ref-chip"]`).dispatchEvent('click')
@@ -683,7 +670,7 @@ test.describe('page mode behaves as block mode (#5691)', () => {
       `${EDITOR} [data-page-block-id="${ids[0]}"] [data-testid="tag-ref-chip"]`,
     )
     await expect(chip).toHaveText('newtag')
-    const tags = await invoke<Array<{ tag_id: string; name: string }>>(
+    const tags = await ipc<Array<{ tag_id: string; name: string }>>(
       page,
       'list_all_tags_in_space',
       { scope: SCOPE },
@@ -719,14 +706,14 @@ test.describe('page mode behaves as block mode (#5691)', () => {
       [0, 'shipped'],
       [0, 'plain'],
     ])
-    await invoke(page, 'set_todo_state', { blockId: ids[0], state: 'TODO' })
-    await invoke(page, 'set_todo_state', { blockId: ids[2], state: 'DONE' })
+    await ipc(page, 'set_todo_state', { blockId: ids[0], state: 'TODO' })
+    await ipc(page, 'set_todo_state', { blockId: ids[2], state: 'DONE' })
     await openInPageMode(page, 'Page tasks', 4)
     const marker = (id: string | undefined) =>
       page.locator(`${EDITOR} [data-page-block-id="${id}"] [data-testid="task-marker"]`)
     const label = (state: string) => `Task: ${state}. Click to cycle.`
     const state = async (id: string | undefined) =>
-      (await invoke<{ todo_state: string | null }>(page, 'get_block', { blockId: id })).todo_state
+      (await ipc<{ todo_state: string | null }>(page, 'get_block', { blockId: id })).todo_state
 
     await expect(marker(ids[0])).toHaveAttribute('aria-label', label('TODO'))
     await expect(marker(ids[2])).toHaveAttribute('aria-label', label('DONE'))

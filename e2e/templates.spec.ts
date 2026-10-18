@@ -1,10 +1,9 @@
-import type { Page } from '@playwright/test'
-
 import {
   activePopover,
   activeRoleDialog,
   expect,
   focusBlock,
+  ipc,
   navigateToView,
   openPage,
   test,
@@ -43,21 +42,6 @@ test.describe.configure({ mode: 'serial' })
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Call the mock backend directly, to seed state and read it back. */
-function ipc<T>(page: Page, cmd: string, args: Record<string, unknown>): Promise<T> {
-  return page.evaluate(
-    ({ c, a }) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke(c, a)
-    },
-    { c: cmd, a: args },
-  ) as Promise<T>
-}
 
 /** Open the kebab (page actions) menu on the current page. */
 async function openKebabMenu(page: import('@playwright/test').Page) {

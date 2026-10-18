@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { expect, test, waitForBoot } from './helpers'
+import { expect, ipc, seedSearchBlocks, test, waitForBoot } from './helpers'
 
 /**
  * Monthly mode and the journal date picker: a day with a due and a scheduled
@@ -18,43 +18,18 @@ import { expect, test, waitForBoot } from './helpers'
 const NOW = new Date('2026-10-14T10:00:00')
 const DOTTED_DAYS = ['2026-11-05', '2026-11-26']
 const EMPTY_DAY = '2026-11-09'
-// SEED_IDS.PAGE_PROJECTS (src/lib/tauri-mock/seed.ts).
-const PAGE_PROJECTS = '00000000000000000000PAGE04'
 
-async function seedDay(page: Page, date: string): Promise<void> {
-  await page.evaluate(
-    async ({ day, projects }) => {
-      const { invoke } = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__
-      const journalId = await invoke('create_page_in_space', {
-        parentId: null,
-        content: day,
-        spaceId: 'SPACE_PERSONAL',
-      })
-      const { blocks } = (await invoke('create_blocks_batch', {
-        specs: [
-          { blockType: 'content', content: `Note for ${day}`, parentId: journalId, position: null },
-          { blockType: 'content', content: `Due on ${day}`, parentId: projects, position: null },
-          {
-            blockType: 'content',
-            content: `Scheduled on ${day}`,
-            parentId: projects,
-            position: null,
-          },
-        ],
-      })) as { blocks: Array<{ id: string }> }
-      const [, due, scheduled] = blocks
-      for (const task of [due, scheduled]) {
-        await invoke('set_todo_state', { blockId: task?.id, state: 'TODO' })
-      }
-      await invoke('set_due_date', { blockId: due?.id, date: day })
-      await invoke('set_scheduled_date', { blockId: scheduled?.id, date: day })
-    },
-    { day: date, projects: PAGE_PROJECTS },
-  )
+async function seedDay(page: Page, day: string): Promise<void> {
+  const journalId = await ipc<string>(page, 'create_page_in_space', {
+    parentId: null,
+    content: day,
+    spaceId: 'SPACE_PERSONAL',
+  })
+  await seedSearchBlocks(page, [
+    { content: `Note for ${day}`, parentId: journalId },
+    { content: `Due on ${day}`, todo: 'TODO', due: day },
+    { content: `Scheduled on ${day}`, todo: 'TODO', scheduled: day },
+  ])
 }
 
 test('Monthly mode dots each source on a day, none on an empty day, and a click opens Daily', async ({

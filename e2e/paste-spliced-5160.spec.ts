@@ -1,6 +1,14 @@
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, focusBlockById, openPage, selectEditorRange, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlockById,
+  ipc,
+  openPage,
+  selectEditorRange,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * #5160 D4 — multi-line text pasted into a block is read as blocks and spliced
@@ -21,20 +29,6 @@ const LLM_ANSWER =
 interface Row {
   id: string
   content: string | null
-}
-
-function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
-  return page.evaluate(
-    ({ c, a }) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke(c, a)
-    },
-    { c: cmd, a: args },
-  ) as Promise<T>
 }
 
 async function childrenOf(page: Page, parentId: string): Promise<Row[]> {

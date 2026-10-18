@@ -277,6 +277,18 @@ describe('mdFilesToUnits', () => {
     expect((await topicUnit?.load())?.vaultNotes).toBeNull()
   })
 
+  it('matches a `[[Name]]` to its note in any case and with padding spaces', async () => {
+    const plain = folderFile(['- [[note]]'], 'plain.md', 'Vault/plain.md')
+    const padded = folderFile(['- [[ Note ]]'], 'padded.md', 'Vault/padded.md')
+    const note = folderFile(['- body'], 'Note.md', 'Vault/Note.md')
+    const files = [plain, padded, note]
+
+    const [plainUnit, paddedUnit] = mdFilesToUnits(files, indexVaultFiles(files))
+
+    expect((await plainUnit?.load())?.vaultNotes).toEqual(['Vault/Note.md'])
+    expect((await paddedUnit?.load())?.vaultNotes).toEqual(['Vault/Note.md'])
+  })
+
   it('ships no note paths on a plain pick, whose links already name its titles', async () => {
     const home = new File(['- [[topic]]'], 'home.md', { type: 'text/markdown' })
     const topic = new File(['- body'], 'topic.md', { type: 'text/markdown' })

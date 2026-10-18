@@ -1,5 +1,3 @@
-import type { BacklinkFilter, CompareOp } from '@/lib/bindings'
-
 /** Parsed property filter from shorthand syntax (property:key=value). */
 export interface PropertyFilter {
   key: string
@@ -55,9 +53,10 @@ export const QUERY_KEYS = ['tag', 'property', 'type', 'expr', 'key', 'value', 't
 export const QUERY_TYPE_VALUES = ['tag', 'property', 'backlinks'] as const
 
 /**
- * Well-known property keys that `buildFilters` maps to specialised filter
- * variants (everything else falls through to `PropertyText`). Offered as
- * completions for the `property:` shorthand's key segment.
+ * Well-known property keys that the inline query resolver
+ * (`propertyFilterToExpr` in `inline-query-resolve.ts`) maps to their own
+ * filters rather than a plain property match. Offered as completions for the
+ * `property:` shorthand's key segment.
  */
 export const QUERY_PROPERTY_KEYS = ['todo_state', 'priority', 'due_date'] as const
 
@@ -127,60 +126,4 @@ export function parseQueryExpression(expr: string): {
 
   const explicitType = params['type'] as 'tag' | 'property' | 'backlinks' | undefined
   return { type: explicitType ?? 'unknown', params, propertyFilters, tagFilters }
-}
-
-/** Map PropertyFilter operator to Rust CompareOp variant. */
-function toCompareOp(op: PropertyFilter['operator']): CompareOp {
-  switch (op) {
-    case 'neq': {
-      return 'Neq'
-    }
-    case 'lt': {
-      return 'Lt'
-    }
-    case 'gt': {
-      return 'Gt'
-    }
-    case 'lte': {
-      return 'Lte'
-    }
-    case 'gte': {
-      return 'Gte'
-    }
-    default: {
-      return 'Eq'
-    }
-  }
-}
-
-/** Build BacklinkFilter objects from parsed shorthand filters.
- *
- * Maps known fixed-field keys (todo_state, priority, due_date) to their
- * specialised filter variants, and falls back to PropertyText for custom
- * property keys.  Tag filters become HasTagPrefix filters.
- */
-export function buildFilters(
-  propertyFilters: PropertyFilter[],
-  tagFilters: string[],
-): BacklinkFilter[] {
-  const filters: BacklinkFilter[] = []
-
-  for (const pf of propertyFilters) {
-    const op = toCompareOp(pf.operator)
-    if (pf.key === 'todo_state') {
-      filters.push({ type: 'TodoState', state: pf.value })
-    } else if (pf.key === 'priority') {
-      filters.push({ type: 'Priority', level: pf.value })
-    } else if (pf.key === 'due_date') {
-      filters.push({ type: 'DueDate', op, value: pf.value })
-    } else {
-      filters.push({ type: 'PropertyText', key: pf.key, op, value: pf.value })
-    }
-  }
-
-  for (const tf of tagFilters) {
-    filters.push({ type: 'HasTagPrefix', prefix: tf })
-  }
-
-  return filters
 }

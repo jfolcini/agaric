@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildFilters, OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
+import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 
 describe('parseQueryExpression', () => {
   it('parses tag query', () => {
@@ -264,96 +264,6 @@ describe('parseQueryExpression', () => {
       tagFilters: [],
     })
     expect(`property:${result.params['property']}`).toBe('property:key=')
-  })
-})
-
-describe('buildFilters', () => {
-  it('maps todo_state to TodoState filter', () => {
-    const filters = buildFilters([{ key: 'todo_state', value: 'TODO' }], [])
-    expect(filters).toEqual([{ type: 'TodoState', state: 'TODO' }])
-  })
-
-  it('maps priority to Priority filter', () => {
-    const filters = buildFilters([{ key: 'priority', value: '1' }], [])
-    expect(filters).toEqual([{ type: 'Priority', level: '1' }])
-  })
-
-  it('maps due_date to DueDate Eq filter', () => {
-    const filters = buildFilters([{ key: 'due_date', value: '2025-01-01' }], [])
-    expect(filters).toEqual([{ type: 'DueDate', op: 'Eq', value: '2025-01-01' }])
-  })
-
-  it('maps custom property key to PropertyText filter', () => {
-    const filters = buildFilters([{ key: 'status', value: 'active' }], [])
-    expect(filters).toEqual([{ type: 'PropertyText', key: 'status', op: 'Eq', value: 'active' }])
-  })
-
-  it('maps tag filters to HasTagPrefix', () => {
-    const filters = buildFilters([], ['project-x'])
-    expect(filters).toEqual([{ type: 'HasTagPrefix', prefix: 'project-x' }])
-  })
-
-  it('combines multiple property and tag filters', () => {
-    const filters = buildFilters(
-      [
-        { key: 'todo_state', value: 'TODO' },
-        { key: 'priority', value: '1' },
-      ],
-      ['project-x'],
-    )
-    expect(filters).toEqual([
-      { type: 'TodoState', state: 'TODO' },
-      { type: 'Priority', level: '1' },
-      { type: 'HasTagPrefix', prefix: 'project-x' },
-    ])
-  })
-
-  it('returns empty array when no filters', () => {
-    expect(buildFilters([], [])).toEqual([])
-  })
-
-  it('handles multiple tag filters', () => {
-    const filters = buildFilters([], ['alpha', 'beta'])
-    expect(filters).toEqual([
-      { type: 'HasTagPrefix', prefix: 'alpha' },
-      { type: 'HasTagPrefix', prefix: 'beta' },
-    ])
-  })
-
-  it('preserves order of property filters followed by tag filters', () => {
-    const filters = buildFilters([{ key: 'status', value: 'active' }], ['tag1'])
-    expect(filters[0]?.type).toBe('PropertyText')
-    expect(filters[1]?.type).toBe('HasTagPrefix')
-  })
-
-  it('maps due_date with gt operator to DueDate Gt filter', () => {
-    const filters = buildFilters([{ key: 'due_date', value: '2025-06-01', operator: 'gt' }], [])
-    expect(filters).toEqual([{ type: 'DueDate', op: 'Gt', value: '2025-06-01' }])
-  })
-
-  it('maps custom property with lte operator to PropertyText Lte filter', () => {
-    const filters = buildFilters([{ key: 'score', value: '100', operator: 'lte' }], [])
-    expect(filters).toEqual([{ type: 'PropertyText', key: 'score', op: 'Lte', value: '100' }])
-  })
-
-  it('defaults to Eq when operator is undefined', () => {
-    const filters = buildFilters([{ key: 'due_date', value: '2025-01-01' }], [])
-    expect(filters).toEqual([{ type: 'DueDate', op: 'Eq', value: '2025-01-01' }])
-  })
-
-  it('maps neq operator to Neq compare op', () => {
-    const filters = buildFilters([{ key: 'status', value: 'active', operator: 'neq' }], [])
-    expect(filters).toEqual([{ type: 'PropertyText', key: 'status', op: 'Neq', value: 'active' }])
-  })
-
-  it('maps lt operator to Lt compare op', () => {
-    const filters = buildFilters([{ key: 'status', value: 'active', operator: 'lt' }], [])
-    expect(filters).toEqual([{ type: 'PropertyText', key: 'status', op: 'Lt', value: 'active' }])
-  })
-
-  it('maps gte operator to Gte compare op', () => {
-    const filters = buildFilters([{ key: 'status', value: 'active', operator: 'gte' }], [])
-    expect(filters).toEqual([{ type: 'PropertyText', key: 'status', op: 'Gte', value: 'active' }])
   })
 })
 

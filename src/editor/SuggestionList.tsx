@@ -150,11 +150,22 @@ export const SuggestionList = ({
     onSelect: selectItem,
   })
 
+  // Each row's DOM id. An item listed twice (the slash menu's Recent band repeats
+  // catalog items) keeps `suggestion-<id>` on its first row and adds `~<index>`
+  // on a later one, which no item id contains, so the ids stay unique.
+  const optionIds = useMemo(() => {
+    const seen = new Set<string>()
+    return items.map((item, index) => {
+      const id = seen.has(item.id) ? `suggestion-${item.id}~${index}` : `suggestion-${item.id}`
+      seen.add(item.id)
+      return id
+    })
+  }, [items])
+
   // #1102 — the id of the currently-highlighted option, or null when there is
   // no active row (empty list). This is the source of truth fed to the FOCUSED
   // contenteditable's `aria-activedescendant` (the listbox stays unfocused).
-  const activeItem = items[selectedIndex]
-  const activeDescendantId = activeItem ? `suggestion-${activeItem.id}` : null
+  const activeDescendantId = optionIds[selectedIndex] ?? null
 
   // Scroll selected item into view on keyboard navigation
   useEffect(() => {
@@ -315,7 +326,7 @@ export const SuggestionList = ({
   const renderItem = (item: PickerItem, index: number) => (
     <button
       key={item.id}
-      id={`suggestion-${item.id}`}
+      id={optionIds[index]}
       className={cn(
         'suggestion-item flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm transition-colors [@media(pointer:coarse)]:py-3 [@media(pointer:coarse)]:min-h-[44px] touch-target focus-outline',
         index === selectedIndex

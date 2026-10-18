@@ -282,6 +282,24 @@ describe('#1102 — onActiveDescendantChange reports the highlighted option id',
     expect(onActiveDescendantChange).toHaveBeenLastCalledWith('suggestion-1')
   })
 
+  it('an item listed twice (Recent band and its group) gets one id per row', () => {
+    const items: PickerItem[] = [
+      { id: 'date', label: 'DATE', category: 'slashCommand.categories.recent' },
+      { id: 'todo', label: 'TODO', category: 'slashCommand.categories.tasks' },
+      { id: 'date', label: 'DATE', category: 'slashCommand.categories.dates' },
+    ]
+    const { ref } = renderPopup(items, vi.fn())
+    act(() => {
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+      ref.current?.onKeyDown({ event: makeKeyEvent('ArrowDown') })
+    })
+
+    const options = screen.getAllByRole('option')
+    expect(new Set(options.map((o) => o.id)).size).toBe(3)
+    const active = screen.getByRole('listbox').getAttribute('aria-activedescendant') ?? ''
+    expect(document.getElementById(active)).toBe(options[2])
+  })
+
   it('reports null when the list is empty (no active option)', () => {
     const command = vi.fn()
     const onActiveDescendantChange = vi.fn()
