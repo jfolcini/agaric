@@ -19,24 +19,24 @@ function TooltipProvider({
 TooltipProvider.displayName = 'TooltipProvider'
 
 /**
- * Long-press fallback context (#1735).
+ * What `Tooltip` shares with its `TooltipTrigger`: the trigger element, so the
+ * tooltip can tell when its trigger's own Select or menu is open, and, with
+ * `openOnLongPress`, the press-and-hold handlers (#1735).
  *
  * Radix hover tooltips never open on a coarse-pointer tap, so the label of an
  * icon-only control — which lives in the tooltip — is invisible to sighted
- * touch users (it survives only as `aria-label` for assistive tech). To close
- * that discoverability gap at the primitive level, `Tooltip` can opt into a
- * press-and-hold fallback: holding the trigger surfaces the tooltip on touch.
- *
- * The behaviour is opt-in (default off) so the 24 other Tooltip call sites keep
- * their pure hover/focus semantics. When enabled, `Tooltip` lifts `open` into
- * controlled state (hover/focus still drive it via Radix's `onOpenChange`) and
- * publishes long-press handlers for `TooltipTrigger` to spread onto the trigger.
+ * touch users (it survives only as `aria-label` for assistive tech). The
+ * press-and-hold fallback closes that gap; it is opt-in so the other call sites
+ * keep pure hover/focus semantics.
  */
-const TooltipLongPressContext = React.createContext<{
-  onPointerDown: (e: React.PointerEvent) => void
-  onPointerUp: () => void
-  onPointerLeave: () => void
-  onPointerMove: (e: React.PointerEvent) => void
+const TooltipTriggerContext = React.createContext<{
+  setTrigger: (node: HTMLElement | null) => void
+  longPress: {
+    onPointerDown: (e: React.PointerEvent) => void
+    onPointerUp: () => void
+    onPointerLeave: () => void
+    onPointerMove: (e: React.PointerEvent) => void
+  } | null
 } | null>(null)
 
 interface TooltipProps extends React.ComponentProps<typeof TooltipPrimitive.Root> {
@@ -48,28 +48,60 @@ interface TooltipProps extends React.ComponentProps<typeof TooltipPrimitive.Root
   openOnLongPress?: boolean
 }
 
-function Tooltip({ openOnLongPress = false, open, onOpenChange, ...props }: TooltipProps) {
-  // Only lift open state when the fallback is requested AND the call site has
-  // not already taken control of `open` itself — otherwise defer entirely to
-  // Radix's own uncontrolled hover/focus handling.
-  const isControlled = openOnLongPress && open === undefined
+/** The trigger is, or wraps, the trigger of a Select, Popover or menu that is open. */
+function isTriggerMenuOpen(trigger: HTMLElement | null): boolean {
+  if (trigger == null) return false
+  const expanded = '[aria-expanded="true"]'
+  return trigger.matches(expanded) || trigger.querySelector(expanded) != null
+}
 
+function Tooltip({ openOnLongPress = false, open, onOpenChange, ...props }: TooltipProps) {
+  const triggerRef = React.useRef<HTMLElement | null>(null)
   const [internalOpen, setInternalOpen] = React.useState(false)
   const handleOpenChange = React.useCallback(
     (next: boolean) => {
+      // A tooltip that opens over its trigger's open menu is the topmost Radix
+      // layer, so it takes the Escape meant for the menu and the clicks on its
+      // options. Hover (Radix's delay timer outlives the click that opens the
+      // menu) and focus (returned to the trigger) both reach here.
+      if (next && isTriggerMenuOpen(triggerRef.current)) return
       setInternalOpen(next)
       onOpenChange?.(next)
     },
     [onOpenChange],
   )
 
-  const longPress = useLongPress({ onLongPress: () => setInternalOpen(true) })
+  const setTrigger = React.useCallback((node: HTMLElement | null) => {
+    triggerRef.current = node
+  }, [])
 
-  if (!isControlled) {
+  // A tooltip already open when its menu opens closes then: Radix leaves it
+  // open when it opened in the same moment as the press that opened the menu.
+  React.useEffect(() => {
+    const trigger = triggerRef.current
+    if (!internalOpen || trigger == null) return
+    const closeIfMenuOpen = () => {
+      if (isTriggerMenuOpen(trigger)) handleOpenChange(false)
+    }
+    // The menu can have opened before this effect ran.
+    closeIfMenuOpen()
+    const observer = new MutationObserver(closeIfMenuOpen)
+    observer.observe(trigger, { subtree: true, attributeFilter: ['aria-expanded'] })
+    return () => observer.disconnect()
+  }, [internalOpen, handleOpenChange])
+
+  const longPress = useLongPress({ onLongPress: () => setInternalOpen(true) })
+  const context = React.useMemo(
+    () => ({ setTrigger, longPress: openOnLongPress ? longPress : null }),
+    [setTrigger, openOnLongPress, longPress],
+  )
+
+  // A call site that controls `open` itself owns it entirely.
+  if (open !== undefined) {
     return (
       <TooltipPrimitive.Root
         data-slot="tooltip"
-        {...(open === undefined ? {} : { open })}
+        open={open}
         {...(onOpenChange === undefined ? {} : { onOpenChange })}
         {...props}
       />
@@ -77,14 +109,14 @@ function Tooltip({ openOnLongPress = false, open, onOpenChange, ...props }: Tool
   }
 
   return (
-    <TooltipLongPressContext.Provider value={longPress}>
+    <TooltipTriggerContext.Provider value={context}>
       <TooltipPrimitive.Root
         data-slot="tooltip"
         open={internalOpen}
         onOpenChange={handleOpenChange}
         {...props}
       />
-    </TooltipLongPressContext.Provider>
+    </TooltipTriggerContext.Provider>
   )
 }
 Tooltip.displayName = 'Tooltip'
@@ -97,10 +129,20 @@ const TooltipTrigger = ({
   onPointerMove,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) => {
-  const longPress = React.useContext(TooltipLongPressContext)
+  const context = React.useContext(TooltipTriggerContext)
+  const longPress = context?.longPress
+  const setTrigger = context?.setTrigger
+  const composedRef = React.useCallback(
+    (node: HTMLButtonElement | null) => {
+      setTrigger?.(node)
+      if (typeof ref === 'function') return ref(node)
+      if (ref != null) ref.current = node
+    },
+    [setTrigger, ref],
+  )
   return (
     <TooltipPrimitive.Trigger
-      ref={ref}
+      ref={composedRef}
       data-slot="tooltip-trigger"
       // Compose the consumer's handlers with the long-press fallback (#1735) so
       // a press-and-hold opens the tooltip without clobbering drag / focus
