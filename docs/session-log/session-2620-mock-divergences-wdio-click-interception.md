@@ -1,4 +1,4 @@
-# Session 2620 — Two mock divergences closed, the WDIO click interceptions, and review notes from #5870, #5881 and #5884
+# Session 2620 — Two mock divergences closed, the WDIO click interceptions, and review notes from #5870 and #5881
 
 The last follow-up of session `01DfwuhFseNHQzDHna7LsBiH`. Its reserved range (2593–2599) now
 sits below the numbering window, so this log takes 2620.
@@ -30,18 +30,18 @@ whose `expected` the backend authored:
 
 **Review notes:** #5870's duplicated date helpers are one `isoDay` in `e2e-tauri/helpers.ts`
 (with the third copy in `reminder-due-task.e2e.ts`); #5881's `openPropertyDrawer`, copied in two
-specs, is one helper; #5884's stall test builds its job with `counter_job`, as session 2596
-said the next PR would.
+specs, is one helper. #5884's `counter_job` note, which session 2596 promised to the next PR,
+landed in #5895 first; this branch's identical change dropped out on rebase. It was shown red here
+before that: with `MissedTickBehavior::Skip` removed the stall test counts 10 runs instead of 1.
 
 **Shown red:** each mock fix by reverting it (the fixture's mock leg fails on the backend's
 answer; the scope mutation also reddens 14 `SpacesTab` tests and the space-delete spec).
 `focusForTyping` with a cover laid over the alias input: the old helper fails on `element click
-intercepted`, the new one passes. The stall test with `MissedTickBehavior::Skip` removed: 10 runs
-instead of 1. Not shown red on demand: the pointer move in `clickPageSourceButton`; the old code
+intercepted`, the new one passes. Not shown red on demand: the pointer move in `clickPageSourceButton`; the old code
 failed in 1 of 4 plain runs and 3 of 5 instrumented ones, and the recorded `mouseover` on the
 toast is the evidence for it.
 
 **Ran:** conformance with and without `CONFORMANCE_UPDATE`; vitest over all of `src/`;
 `npm run typecheck`, `npm run typecheck:e2e-tauri`; Playwright on the spaces, templates,
-onboarding and property specs; the stall test; on a binary rebuilt from this tree, the changed
-real-lane specs listed in the PR.
+onboarding and property specs; on a binary rebuilt from this tree, the changed real-lane specs
+listed in the PR.
