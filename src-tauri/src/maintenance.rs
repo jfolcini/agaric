@@ -14,7 +14,7 @@
 //! propagated.
 //!
 //! Retry-on-failure (#3311): a failed job is retried on the very NEXT
-//! tick, not after its own `interval` elapses again — `run_tick` advances
+//! tick, not after its own `interval` elapses again — `run_tick_at` advances
 //! `last_run` only on `Ok`, so a job that has never succeeded stays
 //! permanently due. This is deliberate (and pinned by
 //! `run_tick_does_not_advance_last_run_on_failure`): the realistic failure
@@ -116,12 +116,13 @@ pub struct MaintenanceJob {
     pub name: &'static str,
     /// Wall-clock target between successful runs.
     pub interval: Duration,
-    /// #3311: last time `run` SUCCEEDED, in monotonic instants — NOT the
-    /// last time it was invoked. A run that returns `Err` leaves this
-    /// untouched, so a failing job stays due and is retried on the very next
-    /// tick (see the retry-on-failure note in the module docs). `None`
-    /// means "never succeeded in this process" — the first eligible tick
-    /// fires the job immediately rather than waiting one `interval`.
+    /// #3311: the scheduled instant of the last tick in which `run`
+    /// SUCCEEDED — NOT the last time it was invoked. A run that returns
+    /// `Err` leaves this untouched, so a failing job stays due and is
+    /// retried on the very next tick (see the retry-on-failure note in the
+    /// module docs). `None` means "never succeeded in this process" — the
+    /// first eligible tick fires the job immediately rather than waiting one
+    /// `interval`.
     pub last_run: Option<Instant>,
     /// Gating predicate. Returning `false` skips the job for this
     /// tick without bumping `last_run`.
@@ -359,7 +360,7 @@ fn is_write_contention(err: &AppError) -> bool {
 /// so it abandons the run with `Err` instead of re-queueing every root
 /// behind the same lock. Returning `Err` rather than `Ok` is load-bearing
 /// twice over: it is what stops the drain loop from opening the NEXT
-/// batch into the same contention, and it is what re-arms `run_tick`'s
+/// batch into the same contention, and it is what re-arms `run_tick_at`'s
 /// retry-on-failure (this module's header) so the retry lands on the next
 /// 60 s tick instead of 24 h from now — the cadence a transient
 /// `SQLITE_BUSY` deserves. Rows purged before the contention stay purged:
@@ -461,7 +462,7 @@ pub async fn tombstone_purge(
 /// # Errors
 ///
 /// The writer being busy/locked (#4018), or the per-root fallback hitting the
-/// same — either way the caller's `?` ends the run so `run_tick` retries on
+/// same — either way the caller's `?` ends the run so `run_tick_at` retries on
 /// the next 60 s tick instead of 24 h from now.
 async fn purge_batch(
     pool: &SqlitePool,
@@ -567,7 +568,7 @@ fn log_run_outcome(total_purged: usize, batches: usize, skipped: usize, cutoff_m
 /// a genuine poison root (see [`is_write_contention`]). Every remaining root
 /// would pay a full `busy_timeout` for a failure that belongs to none of
 /// them, so the error is returned and the caller's `?` abandons the run —
-/// which is also what re-arms `run_tick`'s next-tick retry. The un-attempted
+/// which is also what re-arms `run_tick_at`'s next-tick retry. The un-attempted
 /// roots are deliberately left OUT of `poisoned`: they were never shown to be
 /// unpurgeable.
 async fn purge_roots_one_at_a_time(
@@ -693,25 +694,31 @@ pub fn spawn_daemon(jobs: Vec<MaintenanceJob>, shutdown_flag: Arc<AtomicBool>) {
         // already be running.
         ticker.tick().await;
         loop {
-            ticker.tick().await;
+            let tick = ticker.tick().await;
             if shutdown_flag.load(Ordering::Acquire) {
                 break;
             }
-            run_tick(&mut jobs).await;
+            run_tick_at(&mut jobs, tick).await;
         }
     });
 }
 
 /// Single-tick body, factored out for testability — `spawn_daemon`'s
-/// loop is a fire-and-forget `tokio::spawn` wrapper, but `run_tick` is a
+/// loop is a fire-and-forget `tokio::spawn` wrapper, but `run_tick_at` is a
 /// pure function over a `&mut Vec<MaintenanceJob>` and is exercised
 /// directly by the unit tests below.
-pub async fn run_tick(jobs: &mut [MaintenanceJob]) {
-    let now = Instant::now();
+///
+/// `tick` is the instant the tick was scheduled for (what `Interval::tick`
+/// returns), not the wall clock: scheduled ticks are exactly
+/// [`TICK_INTERVAL`] apart, so a job whose `interval` is a multiple of it is
+/// due on exactly those ticks. Measured on the wall clock, the job's own run
+/// time or a late wake shortens the gap to the next tick below `interval`
+/// and the job slips a whole tick.
+pub async fn run_tick_at(jobs: &mut [MaintenanceJob], tick: Instant) {
     for job in jobs.iter_mut() {
         let due = match job.last_run {
             None => true,
-            Some(last) => now.saturating_duration_since(last) >= job.interval,
+            Some(last) => tick.saturating_duration_since(last) >= job.interval,
         };
         if !due {
             continue;
@@ -723,7 +730,7 @@ pub async fn run_tick(jobs: &mut [MaintenanceJob]) {
         let result = (job.run)().await;
         match result {
             Ok(()) => {
-                job.last_run = Some(Instant::now());
+                job.last_run = Some(tick);
                 tracing::debug!(job = job.name, "maintenance job ran");
             }
             // #3311: `last_run` is deliberately NOT advanced here — the job
@@ -782,7 +789,7 @@ mod tests {
             counter.clone(),
             dummy_predicate_true(),
         )];
-        run_tick(&mut jobs).await;
+        run_tick_at(&mut jobs, Instant::now()).await;
         assert_eq!(
             counter.load(Ordering::Relaxed),
             1,
@@ -806,7 +813,7 @@ mod tests {
             counter.clone(),
             dummy_predicate_false(),
         )];
-        run_tick(&mut jobs).await;
+        run_tick_at(&mut jobs, Instant::now()).await;
         assert_eq!(
             counter.load(Ordering::Relaxed),
             0,
@@ -831,9 +838,9 @@ mod tests {
             counter.clone(),
             dummy_predicate_true(),
         )];
-        run_tick(&mut jobs).await;
+        run_tick_at(&mut jobs, Instant::now()).await;
         assert_eq!(counter.load(Ordering::Relaxed), 1, "first tick runs job");
-        run_tick(&mut jobs).await;
+        run_tick_at(&mut jobs, Instant::now()).await;
         assert_eq!(
             counter.load(Ordering::Relaxed),
             1,
@@ -858,7 +865,7 @@ mod tests {
             }),
         };
         let mut jobs = vec![job];
-        run_tick(&mut jobs).await;
+        run_tick_at(&mut jobs, Instant::now()).await;
         assert!(
             jobs[0].last_run.is_none(),
             "last_run must stay None after a failing job so it is retried immediately on the next tick"
@@ -900,14 +907,14 @@ mod tests {
         };
         let mut jobs = vec![job];
 
-        run_tick(&mut jobs).await;
+        run_tick_at(&mut jobs, Instant::now()).await;
         assert_eq!(calls.load(Ordering::Relaxed), 1, "first tick runs the job");
         // (`last_run` after the failure is pinned by
         // `run_tick_does_not_advance_last_run_on_failure`; this test pins
         // what that state actually BUYS.)
 
         // No time has elapsed — far less than the job's 24 h interval.
-        run_tick(&mut jobs).await;
+        run_tick_at(&mut jobs, Instant::now()).await;
         assert_eq!(
             calls.load(Ordering::Relaxed),
             2,
@@ -919,12 +926,57 @@ mod tests {
             "the successful retry records last_run"
         );
 
-        run_tick(&mut jobs).await;
+        run_tick_at(&mut jobs, Instant::now()).await;
         assert_eq!(
             calls.load(Ordering::Relaxed),
             2,
             "after a success the job's own interval gates it again — the \
              retry-immediately state must not be sticky"
+        );
+    }
+
+    /// A job whose `interval` is `TICK_INTERVAL` runs on every tick, even
+    /// though its body takes time and the first tick's wake was late: the
+    /// next tick is exactly one `TICK_INTERVAL` after the first one's
+    /// SCHEDULED instant, so `last_run` must be that instant.
+    #[tokio::test(start_paused = true)]
+    async fn run_tick_runs_a_tick_interval_job_on_every_tick() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let job = MaintenanceJob {
+            name: "slow_minute_job",
+            interval: TICK_INTERVAL,
+            last_run: None,
+            predicate: dummy_predicate_true(),
+            run: {
+                let calls = calls.clone();
+                Box::new(move || {
+                    let calls = calls.clone();
+                    Box::pin(async move {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        calls.fetch_add(1, Ordering::Relaxed);
+                        Ok(())
+                    })
+                })
+            },
+        };
+        let mut jobs = vec![job];
+
+        let first = Instant::now();
+        tokio::time::advance(Duration::from_millis(5)).await;
+        run_tick_at(&mut jobs, first).await;
+        assert_eq!(
+            jobs[0].last_run,
+            Some(first),
+            "last_run must be the tick's scheduled instant, not the wake or the job's end"
+        );
+
+        let second = first + TICK_INTERVAL;
+        tokio::time::advance(second - Instant::now()).await;
+        run_tick_at(&mut jobs, second).await;
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            2,
+            "a TICK_INTERVAL job must run on the very next tick"
         );
     }
 
@@ -1545,7 +1597,7 @@ mod tests {
     /// Drives a REAL `SQLITE_BUSY` by holding the single write lock from
     /// another connection, and pins all three halves of the new contract: the
     /// per-root fallback does not run, the run ends, and it ends with `Err` so
-    /// `run_tick` retries on the next 60 s tick instead of in 24 h.
+    /// `run_tick_at` retries on the next 60 s tick instead of in 24 h.
     ///
     /// The other side of the split — a genuine poison root still gets its
     /// per-root isolation and the run still returns `Ok` — is

@@ -13,10 +13,10 @@
 // task's first line. The second task proves a later run happened, so the
 // first task's single capture is "once", not "not yet twice".
 //
-// Slow by design: the job runs on the daemon's 60 s tick, and its own 60 s
-// interval, measured from the end of its previous run, makes it skip every
-// other tick, so a reminder can take two minutes to arrive. Each wait is its
-// own case to stay inside the per-test timeout.
+// Slow by design: the job runs on every 60 s tick of the maintenance daemon,
+// the first about a minute after boot, so a reminder arrives up to a minute
+// after its time. Each wait is its own case to stay inside the per-test
+// timeout.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
@@ -43,7 +43,7 @@ const DATE_PICKER = '[data-testid="date-picker-popup"]'
 const SWITCH = '[data-testid="notifications-enabled-switch"]'
 const TIME_INPUT = '[data-testid="notifications-reminder-time"]'
 const NOTIFY_MATCH = "type='method_call',interface='org.freedesktop.Notifications',member='Notify'"
-// Two job intervals and a tick of slack: see the header.
+// Up to a minute until the reminder time, a tick until the run after it, and slack.
 const REMINDER_TIMEOUT = 240_000
 
 let monitor: ChildProcess | undefined

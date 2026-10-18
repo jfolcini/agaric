@@ -4374,7 +4374,7 @@ mod page_ids_backstop_tests {
         );
 
         let mut jobs = vec![page_ids_backstop_job(&mat)];
-        maintenance::run_tick(&mut jobs).await;
+        maintenance::run_tick_at(&mut jobs, tokio::time::Instant::now()).await;
         mat.flush_background().await.expect("drain the first tick");
         assert_eq!(
             page_id_of(&pools.read, CHILD).await.as_deref(),
@@ -4410,7 +4410,7 @@ mod projected_agenda_midnight_job_tests {
             .expect("drain the materializer's startup work");
 
         let before = load();
-        maintenance::run_tick(&mut jobs).await;
+        maintenance::run_tick_at(&mut jobs, tokio::time::Instant::now()).await;
         mat.flush_background().await.expect("drain the first tick");
         assert_eq!(
             load() - before,
