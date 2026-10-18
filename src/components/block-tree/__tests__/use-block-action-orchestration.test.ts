@@ -125,6 +125,7 @@ function makeDefaultParams(
       getMarkdown: vi.fn(() => null as string | null),
       originalMarkdown: '' as string,
       splitAtCaret: vi.fn(() => null as { before: string; after: string } | null),
+      markCommitted: vi.fn(),
     },
     setFocused: vi.fn(),
     setSelected: vi.fn(),

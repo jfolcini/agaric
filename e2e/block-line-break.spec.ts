@@ -1,6 +1,6 @@
 import { devices } from '@playwright/test'
 
-import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, reopenPage, saveBlock, test, waitForBoot } from './helpers'
 
 /**
  * E2E for #5160 D2 — a line break inside a block.
@@ -108,6 +108,53 @@ test.describe('A line break inside a block (#5160 D2)', () => {
     await expect(first).toHaveText('hello world')
     await expect(first.locator('br')).toHaveCount(0)
     expect(await blockContent(page, BLOCK_GS_1)).toBe('hello\n\nworld')
+  })
+
+  test('a `key:: value` line Enter splits off becomes the property once the caret leaves it', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await openPage(page, 'Getting Started')
+    await invokeIn(page)('edit_block', { blockId: BLOCK_GS_1, toText: 'intro\nstatus:: done' })
+    await reopenGettingStarted(page)
+
+    const rows = page.locator('[data-testid="sortable-block"]')
+    const rowCount = await rows.count()
+    const editor = await focusBlock(page, 0)
+    await expect(editor).toHaveText('introstatus:: done')
+    // The caret at the start of the second line, after the break.
+    await page.evaluate(() => {
+      const root = document.querySelector('[data-testid="block-editor"] [contenteditable="true"]')
+      const walker = document.createTreeWalker(root as Node, NodeFilter.SHOW_TEXT)
+      let line = walker.nextNode()
+      while (line !== null && line.textContent !== 'status:: done') line = walker.nextNode()
+      if (line === null) throw new Error('second line not found')
+      const range = document.createRange()
+      range.setStart(line, 0)
+      range.collapse(true)
+      window.getSelection()?.removeAllRanges()
+      window.getSelection()?.addRange(range)
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    await page.keyboard.press('Enter')
+    await expect(rows).toHaveCount(rowCount + 1)
+    const split = rows.nth(1)
+    const splitId = (await split.getAttribute('data-block-id')) as string
+    // The caret moved into the new block with the line.
+    const splitEditor = split.locator('[data-testid="block-editor"] [contenteditable="true"]')
+    await expect(splitEditor).toHaveText('status:: done')
+    await expect(splitEditor).toBeFocused()
+
+    // Leave the new block for another block.
+    await rows.nth(2).locator('[data-testid="block-static"]').click()
+
+    await expect.poll(() => blockContent(page, splitId)).toBe('')
+
+    await reopenPage(page, 'Getting Started')
+    const row = page.locator(`[data-testid="sortable-block"][data-block-id="${splitId}"]`)
+    await expect(row.getByTestId('property-chip').filter({ hasText: 'done' })).toBeVisible()
+    expect(await blockContent(page, splitId)).toBe('')
+    expect(await blockContent(page, BLOCK_GS_1)).not.toContain('status::')
   })
 })
 
