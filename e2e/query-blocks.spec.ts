@@ -2,7 +2,9 @@ import {
   expect,
   focusBlock,
   openPage,
+  reopenPage,
   saveBlock,
+  seedSearchBlocks,
   test,
   typeSlashCommand,
   waitForBoot,
@@ -330,6 +332,82 @@ test.describe('Legacy query syntax', () => {
     await expect(queryResult).toContainText('1 result', { timeout: 5000 })
     await expect(items).toHaveCount(1)
     await expect(items.first()).toContainText('These notes complement the')
+  })
+})
+
+// ===========================================================================
+// 4b. Backlinks query in table mode: column sort and Load more
+// ===========================================================================
+
+test.describe('Backlinks query sort and pagination', () => {
+  // Meetings (`SEED_IDS.PAGE_MEETINGS`, src/lib/tauri-mock/seed.ts) has no
+  // referrers in the seed, so the seeded blocks below are the whole set.
+  const PAGE_MEETINGS = '00000000000000000000PAGE05'
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  const odds = Array.from({ length: 28 }, (_, i) => pad(2 * i + 1))
+  const evens = Array.from({ length: 27 }, (_, i) => pad(2 * i + 2))
+  // Odds are created before evens, so the default newest-id-first order is not
+  // the content order: the first 50 rows are every even plus the odds 55..11.
+  const byIdDesc = [...odds, ...evens].toReversed()
+  const firstPage = byIdDesc.slice(0, 50)
+  const rowsFor = (labels: string[]): RegExp[] =>
+    labels.map((n) => new RegExp(`^Referrer ${n} links`))
+
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+    // More referrers than one `useQueryExecution` page (`PAGE_SIZE`) holds.
+    await seedSearchBlocks(
+      page,
+      [...odds, ...evens].map((n) => ({ content: `Referrer ${n} links [[${PAGE_MEETINGS}]]` })),
+    )
+    await openPage(page, 'Getting Started')
+  })
+
+  test('sorts the referrers by a column and Load more fetches the rest', async ({ page }) => {
+    await focusBlock(page)
+    await page.keyboard.press('ControlOrMeta+a')
+    await page.keyboard.type(`{{query type:backlinks target:${PAGE_MEETINGS} table:true}}`, {
+      delay: 20,
+    })
+    await saveBlock(page)
+
+    const queryResult = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="query-result"]')
+    const table = queryResult.getByRole('table')
+    const rows = table.getByRole('rowgroup').last().getByRole('row')
+    const contentHeader = table.getByRole('columnheader', { name: /^Sort by Content/ })
+    const loadMore = queryResult.getByRole('button', { name: 'Load more', exact: true })
+
+    await expect(queryResult).toContainText('first 50 loaded')
+    await expect(rows).toHaveText(rowsFor(firstPage))
+    await expect(contentHeader).toHaveAttribute('aria-sort', 'none')
+
+    await contentHeader.getByRole('button').click()
+    await expect(contentHeader).toHaveAttribute('aria-sort', 'ascending')
+    await expect(rows).toHaveText(rowsFor(firstPage.toSorted()))
+
+    await contentHeader.getByRole('button').click()
+    await expect(contentHeader).toHaveAttribute('aria-sort', 'descending')
+    await expect(rows).toHaveText(rowsFor(firstPage.toSorted().toReversed()))
+
+    // The second page joins the sorted table: 09..01 land at the bottom.
+    await loadMore.click()
+    await expect(rows).toHaveText(rowsFor(byIdDesc.toSorted().toReversed()))
+    await expect(loadMore).toHaveCount(0)
+    await expect(queryResult).toContainText('55 results')
+    await expect(
+      table.getByRole('columnheader', { name: 'Sort by Content', exact: true }),
+    ).toHaveAttribute('aria-sort', 'descending')
+
+    // The query block persisted; on return it re-fetches every loaded page and
+    // drops the column sort, so all 55 referrers come back in default order.
+    await reopenPage(page, 'Getting Started')
+    await expect(queryResult).toContainText('55 results')
+    await expect(rows).toHaveText(rowsFor(byIdDesc))
+    await expect(contentHeader).toHaveAttribute('aria-sort', 'none')
+    await expect(loadMore).toHaveCount(0)
   })
 })
 
