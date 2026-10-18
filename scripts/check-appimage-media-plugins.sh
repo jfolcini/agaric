@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Fail when an AppImage's AppDir lacks the GStreamer plugins WebKitGTK captures
 # the camera and microphone through (#5718): pipewiresrc and v4l2src for the
-# camera, pulsesrc for the microphone, appsink to hand WebKit the frames.
+# camera, pulsesrc for the microphone, appsink to hand WebKit the frames. Voice
+# notes also need opusenc, which WebCodecs' AudioEncoder('opus') runs on, and
+# opusdec with oggdemux to play the Ogg file back (#5730).
 # `bundleMediaFramework` copies the build machine's plugin directory, and the
 # AppImage reads only its own, so a build machine without these packages ships
 # an AppImage that finds no device.
@@ -23,7 +25,9 @@ for entry in \
   libgstpipewire.so:gstreamer1.0-pipewire \
   libgstapp.so:gstreamer1.0-plugins-base \
   libgstvideo4linux2.so:gstreamer1.0-plugins-good \
-  libgstpulseaudio.so:gstreamer1.0-plugins-good; do
+  libgstpulseaudio.so:gstreamer1.0-plugins-good \
+  libgstopus.so:gstreamer1.0-plugins-base \
+  libgstogg.so:gstreamer1.0-plugins-base; do
   file="${entry%%:*}"
   package="${entry#*:}"
   if [ ! -f "$plugins/$file" ]; then
@@ -36,4 +40,4 @@ done
 if [ "$missing" -ne 0 ]; then
   exit 1
 fi
-echo "OK: the AppImage bundles the camera and microphone plugins."
+echo "OK: the AppImage bundles the camera, microphone and voice note plugins."

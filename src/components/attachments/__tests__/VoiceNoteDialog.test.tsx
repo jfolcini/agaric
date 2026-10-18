@@ -1,9 +1,10 @@
 /**
  * VoiceNoteDialog (#5364): the `/voice` recorder.
  *
- * `getUserMedia` and `MediaRecorder` are faked — neither exists under
- * happy-dom — while the save goes through the in-memory backend, so the
- * attachment is asserted by re-querying `list_attachments` / `read_attachment`.
+ * `getUserMedia`, `MediaRecorder` and the Web Audio + WebCodecs route (#5730)
+ * are faked — none exists under happy-dom — while the save goes through the
+ * in-memory backend, so the attachment is asserted by re-querying
+ * `list_attachments` / `read_attachment`.
  */
 
 import { type InvokeArgs, invoke } from '@tauri-apps/api/core'
@@ -14,9 +15,20 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import {
+  FakeAudioContext,
+  FakeAudioEncoder,
+  FakeAudioWorkletNode,
+  OPUS_HEAD,
+  fakeMicrophone,
+  installWebAudioFakes,
+  lastOf,
+} from '@/__tests__/mocks/web-audio'
+import { OggOpusWriter } from '@/components/attachments/ogg-opus'
 import { VoiceNoteDialog } from '@/components/attachments/VoiceNoteDialog'
 import { MAX_ATTACHMENT_BYTES } from '@/lib/file-utils'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 
@@ -400,5 +412,176 @@ describe('VoiceNoteDialog', () => {
     await waitFor(async () => {
       expect(await axe(dialog)).toHaveNoViolations()
     })
+  })
+})
+
+describe('VoiceNoteDialog on WebKitGTK, encoding Ogg Opus itself (#5730)', () => {
+  const CELT_20MS = 19 << 3
+  let mic: ReturnType<typeof fakeMicrophone>
+
+  beforeEach(() => {
+    installWebAudioFakes()
+    vi.stubGlobal('MediaRecorder', undefined)
+    mic = fakeMicrophone()
+    getUserMedia.mockImplementation(async () => mic.stream)
+  })
+
+  afterEach(() => {
+    getUserMedia.mockImplementation(async () => stream)
+    vi.restoreAllMocks()
+  })
+
+  function audioPacket(fill: number): Uint8Array {
+    const bytes = new Uint8Array(40).fill(fill)
+    bytes[0] = CELT_20MS
+    return bytes
+  }
+
+  function encoder(): FakeAudioEncoder {
+    return lastOf(FakeAudioEncoder.instances)
+  }
+
+  function context(): FakeAudioContext {
+    return lastOf(FakeAudioContext.instances)
+  }
+
+  it('records, stops, and attaches an Ogg Opus file to the block', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 18, 9, 30))
+    const onClose = vi.fn()
+    const user = userEvent.setup()
+    render(<Harness onClose={onClose} />)
+
+    await startRecording(user)
+    act(() => {
+      lastOf(FakeAudioWorkletNode.instances).feed(new Float32Array(2048))
+      encoder().emit(audioPacket(1))
+      encoder().emit(audioPacket(2))
+    })
+    await user.click(screen.getByRole('button', { name: t('voiceNote.stop') }))
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    const [row] = listedAttachments()
+    expect(listedAttachments()).toHaveLength(1)
+    expect(row).toMatchObject({
+      filename: 'voice-note-2026-10-18-0930.ogg',
+      mime_type: 'audio/ogg',
+    })
+    const expected = new OggOpusWriter(OPUS_HEAD)
+    expected.addPacket(audioPacket(1))
+    expected.addPacket(audioPacket(2))
+    const bytes = dispatch('read_attachment', { attachmentId: row?.['id'] }) as ArrayBuffer
+    expect([...new Uint8Array(bytes)]).toEqual([
+      ...new Uint8Array(await expected.finish().arrayBuffer()),
+    ])
+    expect(mic.track.stop).toHaveBeenCalledOnce()
+    expect(context().close).toHaveBeenCalledOnce()
+  })
+
+  it('Cancel while recording releases the microphone and the audio context, and saves nothing', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+    await startRecording(user)
+    act(() => encoder().emit(audioPacket(1)))
+
+    await user.click(screen.getByRole('button', { name: t('action.cancel') }))
+    await act(async () => {})
+
+    expect(screen.queryByTestId('voice-note-dialog')).not.toBeInTheDocument()
+    expect(mic.track.stop).toHaveBeenCalledOnce()
+    expect(context().close).toHaveBeenCalledOnce()
+    expect(listedAttachments()).toEqual([])
+  })
+
+  it('unmounting while recording releases the microphone and the audio context', async () => {
+    const user = userEvent.setup()
+    const { unmount } = render(<Harness />)
+    await startRecording(user)
+
+    unmount()
+    await act(async () => {})
+
+    expect(mic.track.stop).toHaveBeenCalledOnce()
+    expect(context().close).toHaveBeenCalledOnce()
+    expect(listedAttachments()).toEqual([])
+  })
+
+  it('saves what was encoded when the encoder fails mid-recording', async () => {
+    vi.spyOn(logger, 'error').mockImplementation(() => {})
+    const onClose = vi.fn()
+    const user = userEvent.setup()
+    render(<Harness onClose={onClose} />)
+    await startRecording(user)
+
+    act(() => {
+      encoder().emit(audioPacket(3))
+      encoder().fail(new DOMException('encoder crashed', 'EncodingError'))
+    })
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+    expect(listedAttachments()).toHaveLength(1)
+    expect(mic.track.stop).toHaveBeenCalledOnce()
+    expect(context().close).toHaveBeenCalledOnce()
+  })
+
+  it('reports an encoder that fails before any audio, and is ready to record again', async () => {
+    const error = vi.spyOn(logger, 'error').mockImplementation(() => {})
+    const user = userEvent.setup()
+    render(<Harness />)
+    await startRecording(user)
+
+    const failure = new DOMException('encoder crashed', 'EncodingError')
+    act(() => encoder().fail(failure))
+
+    await waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('voiceNote.micError')),
+    )
+    expect(error).toHaveBeenCalledWith(
+      'VoiceNoteDialog',
+      'the recording failed',
+      undefined,
+      failure,
+    )
+    expect(screen.getByRole('button', { name: t('voiceNote.record') })).toBeEnabled()
+    expect(mic.track.stop).toHaveBeenCalledOnce()
+    expect(context().close).toHaveBeenCalledOnce()
+    expect(listedAttachments()).toEqual([])
+  })
+
+  it('reports an encoder that cannot take the microphone, and releases it', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    FakeAudioEncoder.supported = false
+    const user = userEvent.setup()
+    render(<Harness />)
+
+    await user.click(screen.getByRole('button', { name: t('voiceNote.record') }))
+
+    await waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('voiceNote.micError')),
+    )
+    expect(screen.getByRole('button', { name: t('voiceNote.record') })).toBeEnabled()
+    expect(mic.track.stop).toHaveBeenCalledOnce()
+    expect(context().close).toHaveBeenCalledOnce()
+  })
+
+  it('stops a recorder that finished starting after the dialog was closed', async () => {
+    let answer: () => void = () => {}
+    FakeAudioEncoder.isConfigSupported.mockImplementationOnce(
+      (config) =>
+        new Promise((resolve) => {
+          answer = () => resolve({ supported: true, config })
+        }),
+    )
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByRole('button', { name: t('voiceNote.record') }))
+    await waitFor(() => expect(FakeAudioEncoder.isConfigSupported).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: t('action.cancel') }))
+
+    await act(async () => answer())
+
+    expect(mic.track.stop).toHaveBeenCalledOnce()
+    expect(context().close).toHaveBeenCalledOnce()
+    expect(listedAttachments()).toEqual([])
   })
 })

@@ -656,10 +656,13 @@ function AttachmentAudio({
   }
 
   return (
+    // `auto`, not `metadata`: the bytes are already in memory, and under
+    // `metadata` WebKitGTK reports an Ogg Opus note's duration from however much
+    // it happened to read, often a fraction of it (#5730).
     // oxlint-disable-next-line jsx-a11y/media-has-caption -- a voice note has no caption track yet; its transcript is a later slice of #5364
     <audio
       controls
-      preload="metadata"
+      preload="auto"
       src={url}
       aria-label={t('attachment.audioLabel', { filename: att.filename })}
       className="max-w-full"
