@@ -23,7 +23,7 @@ On a Wayland desktop, `xvfb-run` sets only `DISPLAY`, so without the `env` prefi
 
 The `--config` skips `prepare-external-bins.mjs`'s release build of the `agaric-mcp` sidecar, which `--no-bundle` ships nowhere (the debug `agaric-mcp` built above is the bridge `mcp-agent-token.e2e.ts` spawns); `wdio.conf.ts`'s own build, when `WDIO_SKIP_TAURI_BUILD` is unset, does not pass it and pays that cost. A dev box without those runs nothing; `npm run typecheck:e2e-tauri` and `npx vitest run e2e-tauri` are the local checks.
 
-`gh run view --log` prints nothing for this repo; read a failed job with `gh api /repos/jfolcini/agaric/actions/jobs/<job_id>/logs` and `gh run download <run_id>` for the `e2e-tauri-diagnostics` artifact (screenshots, app log, the visibility verdict).
+A failed job's log: [`.github/AGENTS.md`](../.github/AGENTS.md) § Reading a run. `gh run download <run_id>` fetches the `e2e-tauri-diagnostics` artifact (screenshots, app log, the visibility verdict).
 
 Show a spec red here, not on a scratch branch: apply the break, rebuild, and run that spec alone (`npm run test:e2e-tauri -- --spec e2e-tauri/<file>.e2e.ts`). A branch pushed only to show red costs a full CI run and leaves a remote branch behind.
 
