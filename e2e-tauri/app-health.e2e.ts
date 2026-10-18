@@ -23,8 +23,10 @@ import {
   clipboardText,
   importMarkdownPage,
   navigateTo,
+  openNewPage,
   runScopedMarker,
   takeDownload,
+  typeMarkerVerified,
   waitForAppReady,
   waitForToast,
 } from './helpers'
@@ -135,34 +137,6 @@ describe('Agaric real-backend App health and bug report (#5741, #5740)', () => {
     )
   })
 
-  it('rebuilds every derived table of a vault with a task, a tag, a link and properties, and finds no difference', async () => {
-    const marker = runScopedMarker('wdio-integrity')
-    await navigateTo('Journal')
-    await openAppHealth()
-    const empty = await runIntegrityCheck()
-
-    // An existing target: a page the import creates for a link diverges in the check.
-    await importMarkdownPage(`${marker}-target`, `- ${marker}-target-body\n`)
-    await importMarkdownPage(
-      marker,
-      [
-        `- TODO ${marker}-task #${marker}-tag [[${marker}-target]]`,
-        '  repeat:: weekly',
-        `  assignee:: ${marker}-carol`,
-        `- ${marker}-parent`,
-        `  - ${marker}-child`,
-        '',
-      ].join('\n'),
-    )
-    await navigateTo('Journal')
-    await openAppHealth()
-    const seeded = await runIntegrityCheck()
-
-    // The linked page and its block, then the page, its blocks and the new
-    // tag: the check folded exactly what the imports wrote.
-    expect(seeded.blocks - empty.blocks).toBe(7)
-  })
-
   it('puts the integrity section in the bug report, copies the body verbatim, and saves the ZIP with the logs', async () => {
     await navigateTo('Journal')
     await openAppHealth()
@@ -232,5 +206,47 @@ describe('Agaric real-backend App health and bug report (#5741, #5740)', () => {
     }
     expect(metadata.device_id).toBe('[REDACTED_DEVICE_ID]')
     expect(body).toContain(metadata.app_version ?? 'metadata.json names no app_version')
+
+    await browser.keys(['Escape'])
+    await $(PREVIEW).waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+  })
+
+  // Last: a regression leaves a diverged row in the shared vault, and every
+  // later check would report it.
+  it('rebuilds every derived table of a vault with a task, a tag, links that create pages and properties, and finds no difference', async () => {
+    const marker = runScopedMarker('wdio-integrity')
+    await navigateTo('Journal')
+    await openAppHealth()
+    const empty = await runIntegrityCheck()
+
+    await importMarkdownPage(
+      marker,
+      [
+        `- TODO ${marker}-task #${marker}-tag [[${marker}-target]]`,
+        '  repeat:: weekly',
+        `  assignee:: ${marker}-carol`,
+        `- ${marker}-parent`,
+        `  - ${marker}-child`,
+        '',
+      ].join('\n'),
+    )
+    await openNewPage(`${marker}-linker`)
+    await typeMarkerVerified(`[[${marker}-typed`)
+    // WebKit coalesces two identical keys sent together (`typeVerified`); the
+    // closing `]]` creates the page.
+    await browser.keys([']'])
+    await browser.pause(40)
+    await browser.keys([']'])
+    await $('[data-testid="block-editor"]')
+      .$(`[data-testid="block-link-chip"]=${marker}-typed`)
+      .waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    await navigateTo('Journal')
+    await openAppHealth()
+    const seeded = await runIntegrityCheck()
+
+    // The imported page, its three blocks, the new tag and the page its link
+    // created; the new page, its first block and the page the typed link
+    // created: the check folded exactly what the import and the editor wrote.
+    expect(seeded.blocks - empty.blocks).toBe(9)
   })
 })

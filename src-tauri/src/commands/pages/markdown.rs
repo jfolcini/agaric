@@ -4453,7 +4453,7 @@ async fn stamp_space_property(
     block_id: String,
     space_id: &str,
 ) -> Result<(), AppError> {
-    let (_block, _space_op) = set_property_in_tx(
+    let (_block, space_op) = set_property_in_tx(
         &mut *tx,
         materializer.loro_state(),
         device_id,
@@ -4466,6 +4466,7 @@ async fn stamp_space_property(
         None,
     )
     .await?;
+    tx.enqueue_without_dispatch(space_op);
     Ok(())
 }
 
