@@ -603,6 +603,34 @@ function stopTouchPropagation(e: React.TouchEvent): void {
 }
 
 /**
+ * Chromium's `MediaRecorder` (Android, Windows) writes WebM with no Duration
+ * element, so `duration` stays `Infinity` and the controls show no length
+ * until the note has played to the end. A seek past the end makes the element
+ * scan for the last frame and report the real duration; the playhead then goes
+ * back to the start. A seek plays nothing. Module-level so the ref callback is
+ * stable: React attaches it once per element and runs the cleanup on unmount.
+ */
+function resolveUnknownDuration(audio: HTMLAudioElement): () => void {
+  const controller = new AbortController()
+  const { signal } = controller
+  const rewindOnceKnown = () => {
+    if (!Number.isFinite(audio.duration)) return
+    audio.removeEventListener('durationchange', rewindOnceKnown)
+    audio.currentTime = 0
+  }
+  audio.addEventListener(
+    'loadedmetadata',
+    () => {
+      if (Number.isFinite(audio.duration)) return
+      audio.addEventListener('durationchange', rewindOnceKnown, { signal })
+      audio.currentTime = Number.MAX_SAFE_INTEGER
+    },
+    { signal },
+  )
+  return () => controller.abort()
+}
+
+/**
  * Inline `<audio controls>` player for an `audio/*` attachment (#5364). Same
  * viewport-gated byte read and blob-URL lifecycle as `AttachmentImage`; on a
  * failed read it falls back to the file chip so the recording stays
@@ -661,6 +689,7 @@ function AttachmentAudio({
     // it happened to read, often a fraction of it (#5730).
     // oxlint-disable-next-line jsx-a11y/media-has-caption -- a voice note has no caption track yet; its transcript is a later slice of #5364
     <audio
+      ref={resolveUnknownDuration}
       controls
       preload="auto"
       src={url}
