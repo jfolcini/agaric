@@ -15,7 +15,7 @@
 
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
@@ -229,7 +229,7 @@ export interface SyncPeer {
   waitPulled(): Promise<void>
   /** The device ids the peer holds a pairing with. */
   listPeers(): Promise<string[]>
-  /** End the peer and delete its vault. */
+  /** End the peer, copy its log into the diagnostics artifact, and delete its vault. */
   stop(): Promise<void>
 }
 
@@ -243,7 +243,12 @@ export async function startSyncPeer(): Promise<SyncPeer> {
     'e2e_sync_peer',
   )
   const vault = mkdtempSync(path.join(os.tmpdir(), 'agaric-wdio-peer-'))
-  const child = spawn(binary, [vault], { stdio: ['pipe', 'pipe', 'inherit'] })
+  // As for the app (`createSandboxEnv`): the console gets warnings and errors,
+  // the vault's log gets everything, and `stop` copies it into the artifact.
+  const child = spawn(binary, [vault], {
+    stdio: ['pipe', 'pipe', 'inherit'],
+    env: { ...process.env, AGARIC_STDERR_LOG: process.env['AGARIC_STDERR_LOG'] ?? 'warn' },
+  })
   await new Promise<void>((resolve, reject) => {
     child.once('spawn', resolve)
     child.once('error', (error) => {
@@ -344,6 +349,16 @@ export async function startSyncPeer(): Promise<SyncPeer> {
         const exited = once(child, 'exit')
         child.stdin.end()
         await exited
+      }
+      const log = path.join(vault, 'logs', 'e2e_sync_peer.log')
+      try {
+        if (existsSync(log)) {
+          const destination = path.join(import.meta.dirname, 'artifacts', 'peer-logs')
+          mkdirSync(destination, { recursive: true })
+          copyFileSync(log, path.join(destination, `${path.basename(vault)}.log`))
+        }
+      } catch (error) {
+        console.warn(`sync peer log rescue failed: ${String(error)}`)
       }
       rmSync(vault, { recursive: true, force: true })
     },

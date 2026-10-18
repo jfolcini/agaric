@@ -770,6 +770,9 @@ function createSandboxEnv(): NodeJS.ProcessEnv {
     ...process.env,
     AGARIC_DATA_DIR: sandboxVaultDir,
     AGARIC_E2E_SANDBOX: '1',
+    // The console carries only warnings and errors; the full `info` log is in
+    // `agaric.log*`, which `rescueAppLogs` copies into the diagnostics artifact.
+    AGARIC_STDERR_LOG: process.env['AGARIC_STDERR_LOG'] ?? 'warn',
     // Layer 2. `HOME` itself is left alone on purpose: `tauri-driver` and
     // WebKitWebDriver are resolved out of the real home (`~/.cargo/bin`) and
     // load user-level GTK/webkit state from it, so rewriting it would break the
@@ -984,7 +987,8 @@ export const config: WebdriverIO.Config = {
   strictSelectors: false,
 
   framework: 'mocha',
-  reporters: ['spec'],
+  // A passing spec file prints nothing; a failing one prints its whole report.
+  reporters: [['spec', { onlyFailures: true }]],
   mochaOpts: {
     ui: 'bdd',
     timeout: 300_000,

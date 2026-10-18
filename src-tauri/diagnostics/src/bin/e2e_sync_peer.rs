@@ -4,7 +4,8 @@
 //! opens a vault in the directory named by its one argument and runs the app's
 //! own sync daemon on it. `e2e-tauri/sync-peer.ts` drives it with one JSON
 //! command per stdin line and reads one JSON reply per stdout line. The end of
-//! stdin shuts it down; the log goes to stderr.
+//! stdin shuts it down. The log goes to `<vault>/logs/e2e_sync_peer.log` and
+//! to stderr, which `AGARIC_STDERR_LOG` filters on its own.
 //!
 //! Every step is the app's own code: `init_pools`, the daemon,
 //! `confirm_pairing_inner` with the fields of the QR the app showed (what a
@@ -727,16 +728,51 @@ async fn serve(mut peer: Peer) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The full `info` log to `<vault>/logs/e2e_sync_peer.log`, where the harness
+/// rescues it from; stderr at `AGARIC_STDERR_LOG` (`info` when unset).
+fn init_logging(vault: &Path) -> std::io::Result<()> {
+    use tracing_subscriber::filter::LevelFilter;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::{EnvFilter, Layer, fmt};
+
+    let logs = vault.join("logs");
+    std::fs::create_dir_all(&logs)?;
+    let file = std::fs::File::create(logs.join("e2e_sync_peer.log"))?;
+    let stderr_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .with_env_var("AGARIC_STDERR_LOG")
+        .from_env_lossy();
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_ansi(false)
+                .with_filter(stderr_filter),
+        )
+        .with(
+            fmt::layer()
+                .with_writer(file)
+                .with_ansi(false)
+                .with_filter(LevelFilter::INFO),
+        )
+        .init();
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
-        .init();
     let Some(vault) = std::env::args_os().nth(1).map(PathBuf::from) else {
         eprintln!("usage: e2e_sync_peer <vault-dir>");
         return ExitCode::from(2);
     };
+    if let Err(e) = init_logging(&vault) {
+        eprintln!(
+            "e2e_sync_peer: cannot open its log in {}: {e}",
+            vault.display()
+        );
+        return ExitCode::from(2);
+    }
     let peer = match Peer::open(&vault).await {
         Ok(peer) => peer,
         Err(e) => {

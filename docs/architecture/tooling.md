@@ -87,7 +87,7 @@ Enforced by the `tauri-command-sanitize` prek hook: every new `#[tauri::command]
 
 ## Observability
 
-`tracing` macros throughout the Rust code. The OS-correct app data directory hosts the log file (`agaric.log` rolled by `tracing-appender`). `src/lib/logger.ts` mirrors structured logging on the frontend; errors are buffered for the `BugReportDialog` to attach.
+`tracing` macros throughout the Rust code. The OS-correct app data directory hosts the log file (`agaric.log` rolled by `tracing-appender`). `RUST_LOG` adds directives to both the file and the console; `AGARIC_STDERR_LOG`, when set, is the console's filter in place of those (the real-backend e2e harness sets it to `warn`, and the full log is in its diagnostics artifact). `src/lib/logger.ts` mirrors structured logging on the frontend; errors are buffered for the `BugReportDialog` to attach.
 
 `reportIpcError` is the canonical IPC-error funnel — wraps every `invoke()` call site so a backend `AppError` always lands in a typed toast + log entry, never `console.error` and silence.
 

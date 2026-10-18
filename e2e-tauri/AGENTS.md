@@ -22,7 +22,7 @@ On a Wayland desktop, `xvfb-run` sets only `DISPLAY`, so without the `env` prefi
 
 The CLI builds every bin of the packages after `--`, so the one compile also emits the `agaric-mcp` bridge `mcp-agent-token.e2e.ts` spawns and the `e2e_sync_peer` sync peer, and compiles `agaric` once. The `--config` skips `prepare-external-bins.mjs`'s release build of the `agaric-mcp` sidecar, which `--no-bundle` ships nowhere; `wdio.conf.ts`'s own build, when `WDIO_SKIP_TAURI_BUILD` is unset, passes neither and pays for both. A dev box without those runs nothing; `npm run typecheck:e2e-tauri` and `npx vitest run e2e-tauri` are the local checks.
 
-A failed job's log: [`.github/AGENTS.md`](../.github/AGENTS.md) § Reading a run. `gh run download <run_id> -p 'e2e-tauri-diagnostics-*'` fetches each shard's diagnostics (screenshots, app log, the visibility verdict).
+A failed job's log: [`.github/AGENTS.md`](../.github/AGENTS.md) § Reading a run. `gh run download <run_id> -p 'e2e-tauri-diagnostics-*'` fetches each shard's diagnostics (screenshots, app log, sync peer logs, the visibility verdict). The harness sets `AGARIC_STDERR_LOG=warn` for the app and the sync peer, so the console carries only their warnings and errors and the full `info` log is in that artifact; `AGARIC_STDERR_LOG=info` brings the stream back.
 
 Show a spec red here, not on a scratch branch: apply the break, rebuild, and run that spec alone (`npm run test:e2e-tauri -- --spec e2e-tauri/<file>.e2e.ts`). A branch pushed only to show red costs a full CI run and leaves a remote branch behind.
 
