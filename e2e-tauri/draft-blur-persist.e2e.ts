@@ -9,7 +9,7 @@
 // guards. No in-app gesture leaves a draft ROW to be restored later — every
 // navigation commits through blur, and `flush_all_drafts` only runs at boot
 // (useAppBootRecovery) — so this is the blur-save half of the draft story;
-// the boot-recovery half needs a process kill the harness cannot drive.
+// `editor-durability.e2e.ts` kills the app for the boot-recovery half.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------

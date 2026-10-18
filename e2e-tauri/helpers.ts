@@ -98,7 +98,16 @@
 //     location to Office" (`blockTree.setLocationMessage`).
 // ---------------------------------------------------------------------------
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { type Socket, createConnection } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -644,6 +653,55 @@ export async function reopenPageByTitle(title: string): Promise<void> {
   await titleSpan.waitForClickable({ timeout: NAV_TIMEOUT })
   await titleSpan.click()
   await $('[aria-label="Page title"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
+}
+
+const APP_BINARY =
+  process.env['TAURI_APP_BINARY'] ??
+  path.resolve(import.meta.dirname, '..', 'src-tauri', 'target', 'debug', 'agaric')
+
+/** PIDs of the app binary under test; the lane runs one spec file at a time. */
+function appPids(): number[] {
+  const binary = realpathSync(APP_BINARY)
+  return readdirSync('/proc')
+    .filter((entry) => /^\d+$/.test(entry))
+    .filter((entry) => {
+      try {
+        return readlinkSync(`/proc/${entry}/exe`) === binary
+      } catch {
+        return false
+      }
+    })
+    .map(Number)
+}
+
+/**
+ * End the app and open it again on the same vault: the app process ends and a
+ * new one opens it, so nothing the webview held survives.
+ *
+ * The restart ends the WebDriver session and starts another: `tauri-driver`
+ * keeps the sandbox's `AGARIC_DATA_DIR`, so the new app opens the same vault.
+ * The old app must be gone first, or the new one hands its launch to it over
+ * the single-instance D-Bus name and the session never starts (see
+ * `reapSessionApp` in wdio.conf.ts).
+ *
+ * `'close'` ends the session and lets the app shut down; `'kill'` sends the
+ * app SIGKILL first, so it gets no chance to save anything on the way out
+ * (a crash, or the OS killing it).
+ */
+export async function restartApp(how: 'close' | 'kill' = 'close'): Promise<void> {
+  if (how === 'kill') {
+    for (const pid of appPids()) process.kill(pid, 'SIGKILL')
+  } else {
+    await browser.deleteSession()
+  }
+  await browser.waitUntil(() => Promise.resolve(appPids().length === 0), {
+    timeout: NAV_TIMEOUT,
+    interval: 200,
+    timeoutMsg: `the app (pid ${appPids().join(', ')}) outlived its session`,
+  })
+  // A killed app's session is deleted here; the error that answers is suppressed.
+  await browser.reloadSession()
+  await waitForAppReady()
 }
 
 /**
