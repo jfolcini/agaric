@@ -42,9 +42,11 @@ name: Validate (prek-equivalent)
 #                        frontend changes minus vitest test files and
 #                        `e2e-tauri/`.
 #   - cargo-tests     — backend `cargo nextest` + llvm-cov instrumentation,
-#                        sharded 2 ways; gated on backend changes.
+#                        sharded 2 ways; gated on the classifier's
+#                        `rust_tests`: a backend change outside the paths
+#                        only `lint` reads.
 #   - cargo-coverage  — merges the cargo-tests shard coverage into one
-#                        report; gated on backend changes like cargo-tests
+#                        report; gated on `rust_tests` like cargo-tests
 #                        (`validate-all` requires success/allowed-skip). Its
 #                        merge/upload steps can fail on a genuine
 #                        merge/upload breakage, and (since #648 wired
@@ -52,7 +54,7 @@ name: Validate (prek-equivalent)
 #                        coverage drop beyond tolerance — this job gates the
 #                        merge like its siblings.
 #   - mcp-tests       — `agaric-mcp` sidecar release build + UDS smoke +
-#                        externalBin verify; gated on backend changes.
+#                        externalBin verify; gated on `rust_tests`.
 #   - validate-all    — a trivial aggregate so branch-protection rules have
 #                        one stable check name to depend on (the required
 #                        context is `validate / validate-all`); fail-closed
@@ -133,6 +135,7 @@ jobs:
       docs: ${{ steps.classify.outputs.docs }}
       frontend: ${{ steps.classify.outputs.frontend }}
       backend: ${{ steps.classify.outputs.backend }}
+      rust_tests: ${{ steps.classify.outputs.rust_tests }}
       ci: ${{ steps.classify.outputs.ci }}
       desktop: ${{ steps.classify.outputs.desktop }}
       android: ${{ steps.classify.outputs.android }}
@@ -1447,11 +1450,13 @@ jobs:
   # ---------------------------------------------------------------------------
   cargo-tests:
     needs: detect-changes
-    # Run the Rust nextest+coverage suite iff the diff touches backend files
-    # (src-tauri/, .rs, Cargo.toml/lock, migrations, .sqlx/). Fail-closed
-    # classifier — see detect-changes. cargo-coverage `needs: cargo-tests`, so
-    # it skips transitively when this job is skipped.
-    if: needs.detect-changes.outputs.backend == 'true'
+    # Run the Rust nextest+coverage suite iff the diff touches a backend file
+    # a Rust test can see (`rust_tests`: src-tauri/, .rs, Cargo.toml/lock,
+    # migrations, .sqlx/, minus the benches, fuzz crate, lint configs and
+    # guard baselines only `lint` reads). Fail-closed classifier — see
+    # detect-changes. cargo-coverage `needs: cargo-tests`, so it skips
+    # transitively when this job is skipped.
+    if: needs.detect-changes.outputs.rust_tests == 'true'
     runs-on: ubuntu-24.04
     # PEND-86: split into a 2-shard matrix via nextest `--partition count:N/2`.
     # The single-job full suite + llvm-cov was the ~16-min critical-path long
@@ -1610,7 +1615,7 @@ jobs:
   # cargo-coverage — union-merge the two cargo-tests shards' partial lcov
   # reports into the canonical `rust-coverage-lcov` artifact + a step-summary.
   # GATING: this job IS in `validate-all`'s needs (`check_job cargo-coverage`
-  # requires success, allowed-skip only when backend is absent from the
+  # requires success, allowed-skip only when `rust_tests` is absent from the
   # diff) — a merge hiccup, an lcov-tool quirk, or (since #648 wired `--gate`
   # into the rust ratchet call below) a real coverage drop all fail the push.
   # `if: !cancelled()` so partial coverage still publishes if a shard went red.
@@ -1619,11 +1624,11 @@ jobs:
     runs-on: ubuntu-24.04
     needs: cargo-tests
     # `success() || failure()` (i.e. cargo-tests actually ran) — NOT
-    # `!cancelled()`, because a backend-absent PR SKIPS cargo-tests, and a
-    # skipped upstream would otherwise let this job run and then fail
+    # `!cancelled()`, because a `rust_tests`-absent PR SKIPS cargo-tests, and
+    # a skipped upstream would otherwise let this job run and then fail
     # downloading shard artifacts that were never produced. Skipping coverage
-    # when no Rust changed is correct and consistent with the `backend`
-    # category gate on cargo-tests: this job stays paired with cargo-tests and
+    # when no tested Rust changed is correct and consistent with the
+    # `rust_tests` gate on cargo-tests: this job stays paired with cargo-tests and
     # runs iff cargo-tests ran.
     if: ${{ (success() || failure()) && needs.cargo-tests.result != 'cancelled' }}
     timeout-minutes: 10
@@ -1763,10 +1768,10 @@ jobs:
   # ---------------------------------------------------------------------------
   mcp-tests:
     needs: detect-changes
-    # Run the MCP sidecar build + UDS smoke iff the diff touches backend files
-    # (same `backend` category as cargo-tests). Fail-closed classifier — see
-    # detect-changes.
-    if: needs.detect-changes.outputs.backend == 'true'
+    # Run the MCP sidecar build + UDS smoke iff the diff touches a backend file
+    # a Rust test can see (same `rust_tests` output as cargo-tests).
+    # Fail-closed classifier — see detect-changes.
+    if: needs.detect-changes.outputs.rust_tests == 'true'
     runs-on: ubuntu-24.04
     # MCP build + smoke is much lighter than the full nextest+llvm-cov
     # run on cargo-tests: one dev-profile compile of `src-tauri` shared by
@@ -1849,7 +1854,7 @@ jobs:
   #     job's category is absent — lint iff docs_only; vitest/vitest-coverage iff
   #     !vitest; vitest-e2e-tauri iff !vitest_e2e_tauri; playwright iff
   #     !playwright; cargo-tests/cargo-coverage/mcp-tests
-  #     iff !backend; docs-lint is the complement (success iff docs_only, else
+  #     iff !rust_tests; verify-lockfiles iff !backend; docs-lint is the complement (success iff docs_only, else
   #     skipped).
   # INVARIANT: under classifier failure or any category true, that category's
   # heavy jobs MUST be success — no code change rides in on a skip (classifier is
@@ -1880,6 +1885,7 @@ jobs:
           VITEST_E2E_TAURI: ${{ needs.detect-changes.outputs.vitest_e2e_tauri }}
           PLAYWRIGHT: ${{ needs.detect-changes.outputs.playwright }}
           BACKEND: ${{ needs.detect-changes.outputs.backend }}
+          RUST_TESTS: ${{ needs.detect-changes.outputs.rust_tests }}
         run: |
           set -euo pipefail
 
@@ -1905,12 +1911,12 @@ jobs:
           }
 
           classifier="$(result_of detect-changes)"
-          echo "detect-changes result=$classifier docs_only=${DOCS_ONLY:-<empty>} vitest=${VITEST:-<empty>} vitest_e2e_tauri=${VITEST_E2E_TAURI:-<empty>} playwright=${PLAYWRIGHT:-<empty>} backend=${BACKEND:-<empty>}"
+          echo "detect-changes result=$classifier docs_only=${DOCS_ONLY:-<empty>} vitest=${VITEST:-<empty>} vitest_e2e_tauri=${VITEST_E2E_TAURI:-<empty>} playwright=${PLAYWRIGHT:-<empty>} backend=${BACKEND:-<empty>} rust_tests=${RUST_TESTS:-<empty>}"
 
           # ---- Resolve category booleans, fail-closed -----------------------
           # On a SUCCESSFUL classifier, trust its outputs (normalised so only
           # the literal string "true" counts as present). Otherwise we cannot
-          # trust any category: PIN vitest=vitest_e2e_tauri=playwright=backend=true,
+          # trust any category: PIN vitest=vitest_e2e_tauri=playwright=backend=rust_tests=true,
           # docs_only=false (require/run everything) and fail the gate — a
           # classifier that did not succeed can never let a heavy job pass on a
           # skip.
@@ -1919,16 +1925,18 @@ jobs:
           vitest_e2e_tauri="true"
           playwright="true"
           backend="true"
+          rust_tests="true"
           if [ "$classifier" = "success" ]; then
             docs_only="false"; if [ "$DOCS_ONLY" = "true" ]; then docs_only="true"; fi
             vitest="false"; if [ "$VITEST" = "true" ]; then vitest="true"; fi
             vitest_e2e_tauri="false"; if [ "$VITEST_E2E_TAURI" = "true" ]; then vitest_e2e_tauri="true"; fi
             playwright="false"; if [ "$PLAYWRIGHT" = "true" ]; then playwright="true"; fi
             backend="false"; if [ "$BACKEND" = "true" ]; then backend="true"; fi
+            rust_tests="false"; if [ "$RUST_TESTS" = "true" ]; then rust_tests="true"; fi
           else
-            gate_fail "detect-changes did not succeed (result=$classifier) — failing gate (fail-closed); pinning vitest=vitest_e2e_tauri=playwright=backend=true, docs_only=false."
+            gate_fail "detect-changes did not succeed (result=$classifier) — failing gate (fail-closed); pinning vitest=vitest_e2e_tauri=playwright=backend=rust_tests=true, docs_only=false."
           fi
-          echo "resolved: docs_only=$docs_only vitest=$vitest vitest_e2e_tauri=$vitest_e2e_tauri playwright=$playwright backend=$backend"
+          echo "resolved: docs_only=$docs_only vitest=$vitest vitest_e2e_tauri=$vitest_e2e_tauri playwright=$playwright backend=$backend rust_tests=$rust_tests"
 
           # verify-version-agreement is always-on (#2975) — no category gates
           # it, so a skip is never acceptable.
@@ -1953,15 +1961,16 @@ jobs:
           pw_skip_ok="false"; if [ "$playwright" != "true" ]; then pw_skip_ok="true"; fi
           check_job playwright "$pw_skip_ok"
 
-          # backend suite (+ its transitive coverage): skip allowed only when
-          # the backend category is absent from the diff.
-          be_skip_ok="false"; if [ "$backend" != "true" ]; then be_skip_ok="true"; fi
-          check_job cargo-tests "$be_skip_ok"
-          check_job cargo-coverage "$be_skip_ok"
-          check_job mcp-tests "$be_skip_ok"
-          # #4142: the Cargo.lock graph check is gated on the same `backend`
+          # Rust suites (+ cargo-tests' transitive coverage): skip allowed only
+          # when no path a Rust test can see changed.
+          rt_skip_ok="false"; if [ "$rust_tests" != "true" ]; then rt_skip_ok="true"; fi
+          check_job cargo-tests "$rt_skip_ok"
+          check_job cargo-coverage "$rt_skip_ok"
+          check_job mcp-tests "$rt_skip_ok"
+          # #4142: the Cargo.lock graph check is gated on the `backend`
           # category (both lockfiles and every Cargo.toml live under
-          # src-tauri/), so it takes the same skip rule.
+          # src-tauri/), so it takes that category's skip rule.
+          be_skip_ok="false"; if [ "$backend" != "true" ]; then be_skip_ok="true"; fi
           check_job verify-lockfiles "$be_skip_ok"
 
           # ---- docs-lint: the complement (runs on docs-only PRs) ------------
@@ -1982,7 +1991,7 @@ jobs:
             echo "::error::validate-all gate FAILED (see above)."
             exit 1
           fi
-          echo "validate-all gate PASSED (docs_only=$docs_only vitest=$vitest vitest_e2e_tauri=$vitest_e2e_tauri playwright=$playwright backend=$backend)."
+          echo "validate-all gate PASSED (docs_only=$docs_only vitest=$vitest vitest_e2e_tauri=$vitest_e2e_tauri playwright=$playwright backend=$backend rust_tests=$rust_tests)."
 
   # ---------------------------------------------------------------------------
   # stop-after-<job> — on a pull request, once a job validate-all gates on has

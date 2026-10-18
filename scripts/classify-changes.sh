@@ -29,8 +29,12 @@ set -euo pipefail
 #   frontend     any src/, e2e/, e2e-tauri/, *.ts/tsx/js/jsx/css, package*.json,
 #                vite/vitest/tailwind/postcss/tsconfig config, index.html.
 #   backend      any src-tauri/, *.rs, Cargo.*, migrations, .sqlx/.
+#   rust_tests   any backend path but the ones only `lint` reads
+#                (`rust_lint_only_re`): drives cargo-tests, cargo-coverage and
+#                mcp-tests.
 #   ci           any .github/, scripts/, .claude/, prek.toml, .taplo.toml,
-#                lychee.toml, .gitleaks.toml.
+#                lychee.toml, .gitleaks.toml, justfile, .editorconfig,
+#                .vscode/.
 #   desktop      a Linux-bundle-relevant path: `ci.yml`'s `build`.
 #   android      an Android-package-relevant path: `ci.yml`'s `android-build`.
 #   vitest       the whole sharded suite and its coverage gate: any `frontend`
@@ -55,7 +59,7 @@ set -euo pipefail
 emit() {
   printf '%s\n' \
     "docs_only=$docs_only" "docs=$docs" "frontend=$frontend" "backend=$backend" \
-    "ci=$ci" "desktop=$desktop" "android=$android" "vitest=$vitest" \
+    "rust_tests=$rust_tests" "ci=$ci" "desktop=$desktop" "android=$android" "vitest=$vitest" \
     "vitest_e2e_tauri=$vitest_e2e_tauri" "playwright=$playwright" \
     "playwright_specs=$playwright_specs" "real_backend=$real_backend" \
     "real_backend_specs=$real_backend_specs" "codeql_languages=$codeql_languages"
@@ -64,7 +68,8 @@ emit() {
 # The "run everything" classification, then exit 0.
 full_suite() {
   echo "$1" >&2
-  docs_only=false docs=true frontend=true backend=true ci=true desktop=true android=true
+  docs_only=false docs=true frontend=true backend=true rust_tests=true ci=true desktop=true
+  android=true
   vitest=true vitest_e2e_tauri=false playwright=true playwright_specs='' real_backend=true
   real_backend_specs=''
   codeql_languages='["actions","javascript-typescript","rust"]'
@@ -133,8 +138,19 @@ printf '  %s\n' "${changed[@]}" >&2
 docs_re='^(docs/|.*\.md$|LICENSE([.-].*)?$|NOTICE$|AUTHORS$|CHANGELOG$)'
 
 # `^src-tauri/` already subsumes the Cargo/migrations alternatives; they are
-# listed so the intent is legible.
-backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/|^scripts/(check-sqlx-cache-drift|check-unsafe-allowlist)\.sh$|^scripts/coverage-ratchet\.mjs$|^scripts/coverage-baseline\.json$)'
+# listed so the intent is legible. `sqlx-offline-check` is the composite only
+# `lint`'s backend-gated sqlx steps run.
+backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/|^scripts/(check-sqlx-cache-drift|check-unsafe-allowlist)\.sh$|^scripts/coverage-ratchet\.mjs$|^scripts/coverage-baseline\.json$|^\.github/actions/sqlx-offline-check/)'
+# Backend paths only `lint` reads, so they run its Rust half and no Rust
+# suite, bundle build or real-backend lane: the benches (`test = false`, so
+# nextest never builds them; clippy `--all-targets` does), the fuzz crate (its
+# own workspace; `lint` cargo-checks it), the clippy / cargo-deny / OSV
+# configs, the cargo-audit and cargo-mutants configs (`lint` and the weekly
+# lane), the guard baselines its prek hooks ratchet against and the two
+# guards in `backend_re` above, the `.env.example` `scripts/setup.sh` copies,
+# and the sqlx composite above. Nothing else under `src-tauri/.cargo/`: a
+# `config.toml` there would set every build's flags.
+rust_lint_only_re='^(src-tauri/(benches/|fuzz/|clippy\.toml$|deny\.toml$|osv-scanner\.toml$|\.cargo/(audit|mutants)\.toml$|(dynamic-sql|migrations-test-coverage|table-ownership)-baseline\.txt$|unsafe-allowlist\.txt$|\.env\.example$)|scripts/(check-sqlx-cache-drift|check-unsafe-allowlist)\.sh$|\.github/actions/sqlx-offline-check/)'
 frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$|^scripts/check-(axe-presence|test-file-naming)\.sh$|^scripts/(coverage-ratchet|print-coverage-thresholds|check-bundle-budget(\.test)?)\.mjs$|^scripts/(bundle-budgets|coverage-baseline)\.json$|^scripts/check-(bare-icon-buttons|import-cycles|store-layering|migrations-strict|mutants-scope|mutation-reports|stryker-modules)\.mjs$|^scripts/lib/js-scanner\.mjs$|^scripts/classify-changes\.sh$|^src-tauri/src/commands/(queries|blocks/queries|pages/metadata)\.rs$|^src-tauri/agaric-store/src/(fts/(toggle_filter|metadata_filter)|query/engine)\.rs$)'
 # `scripts/` and `.claude/` are tooling: the guards and their manual-stage
 # self-tests run in `lint` (a `scripts/*.test.mjs` runs wherever it is
@@ -160,7 +176,15 @@ frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|
 # coverage/bundle scripts and their baselines as `ci` alone: no local phase
 # runs either coverage gate or the bundle budget, so there is no suite to
 # route them to.
-ci_re='(^\.github/|^scripts/|^\.claude/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$)'
+# The root `justfile` is a façade nothing in CI runs, and `.editorconfig` and
+# `.vscode/` are read only by editors and by oxfmt, which `lint` runs whenever
+# `ci` is set.
+# `.gitignore` and `.gitattributes` are not here, so both fail closed:
+# `.gitignore` decides which files Tailwind's source scan reads (an edit can
+# drop classes from the CSS) and which knip analyses, and `lint` runs knip
+# only for `frontend`; `.gitattributes` sets `eol=` on the shell scripts and
+# `-text` on test corpora.
+ci_re='(^\.github/|^scripts/|^\.claude/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$|^justfile$|^\.editorconfig$|^\.vscode/)'
 
 # Bundle/packaging gates for `ci.yml`'s two build jobs. Narrow on purpose:
 # logic correctness lives in the suites above, so these only guard bundling /
@@ -172,7 +196,8 @@ ci_re='(^\.github/|^scripts/|^\.claude/|^prek\.toml$|^\.taplo\.toml$|^lychee\.to
 # `scripts/check-android-trigger.mjs` asserts every literal path listed still
 # exists. Both name `.github/actions/`: the build jobs run their toolchain
 # preamble through the composites there, so a SHA bump inside one is a change
-# to the bundle job and must run it.
+# to the bundle job and must run it (bar `sqlx-offline-check`, which neither
+# runs: `rust_lint_only_re`).
 desktop_re='^(src-tauri/|\.cargo/config\.toml\.example$|scripts/(fix-appimage-icons\.sh|check-appimage-media-plugins\.sh|prepare-external-bins\.mjs)$|package(-lock)?\.json$|\.github/workflows/ci\.yml$|\.github/actions/)'
 android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/build\.rs$|src-tauri/src/(lib|lifecycle|android_jni)\.rs$|src-tauri/agaric-store/src/db/mod\.rs$|src-tauri/agaric-sync/src/android_context\.rs$|src-tauri/agaric-sync/src/sync_daemon/(android_multicast|android_network_block|mod|session_supervisor)\.rs$|scripts/patch-android-build\.sh$|scripts/check-android-so-alignment\.mjs$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$|\.github/actions/)'
 
@@ -185,17 +210,18 @@ android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-t
 # share the composites).
 real_backend_re='^(src/|src-tauri/|e2e-tauri/|public/|wdio\.conf\.ts$|index\.html$|vite\.config\.ts$|tsconfig[^/]*\.json$|package(-lock)?\.json$|\.github/workflows/e2e-tauri-weekly\.yml$)'
 
-# Rust files that compile only into test targets, so they cannot change what
-# `build`, `android-build` or the real-backend lane produces: a crate's
-# integration tests (`src-tauri/tests/`, `src-tauri/<crate>/tests/`), and
-# modules every one of whose `mod` declarations is `#[cfg(test)]`
-# (`tests.rs`, `*_tests.rs`, and everything under a `tests/` or `*_tests/`
-# directory). `src/commands/tests/` is the exception: it is
+# Rust files that compile only into test targets, and the data only those
+# targets read, so they cannot change what `build`, `android-build` or the
+# real-backend lane produces: a crate's integration tests (`src-tauri/tests/`,
+# `src-tauri/<crate>/tests/`), modules every one of whose `mod` declarations
+# is `#[cfg(test)]` (`tests.rs`, `*_tests.rs`, and everything under a `tests/`
+# or `*_tests/` directory), insta snapshots, proptest regression seeds, and
+# the nextest config. `src/commands/tests/` is the exception: it is
 # `cfg(any(test, feature = "test-util"))`, so it stays non-test-only. A new
 # module matching these names must be `#[cfg(test)]` or be listed as an
 # exception here. Classified by FILE, never by diff hunk: an edit inside the
 # `mod tests` block of a production file is a production-file change.
-test_only_re='^src-tauri/(.*/)?(tests/.*|[^/]*_tests/.*|tests\.rs|[^/]*_tests\.rs)$'
+test_only_re='^src-tauri/((.*/)?(tests/.*|[^/]*_tests/.*|tests\.rs|[^/]*_tests\.rs|snapshots/[^/]*\.snap|proptest-regressions/.*)|\.config/nextest\.toml)$'
 test_only_exception_re='^src-tauri/src/commands/tests/'
 
 # Test-only classes, which narrow the three frontend lanes. A test file can
@@ -224,20 +250,23 @@ e2e_re='^e2e/'
 pw_spec_re='^e2e/[A-Za-z0-9._/-]+\.spec\.ts$'
 vitest_test_re='^src/.*\.(test|spec)\.tsx?$'
 src_test_infra_re='^src/lib/tauri-mock/'
-# Files outside the frontend set that a Playwright spec reads from disk:
-# `e2e/interface-zoom.spec.ts` sizes its viewport from `tauri.conf.json`.
-pw_reads_re='^src-tauri/tauri\.conf\.json$'
+# Files outside the frontend set that the Playwright job reads:
+# `e2e/interface-zoom.spec.ts` sizes its viewport from `tauri.conf.json`, and
+# the job sets up through the `playwright-setup` composite.
+pw_reads_re='^(src-tauri/tauri\.conf\.json$|\.github/actions/playwright-setup/)'
 # Past this many changed specs Playwright runs every shard instead: the list
 # runs on one leg, which a sweep over most specs would hold past
 # `playwright.config.ts`'s `globalTimeout`.
 pw_spec_list_max=20
 
-# CodeQL languages, by the code each extractor reads. A path no category
+# CodeQL languages, by the extensions each extractor reads. A path no category
 # recognizes selects all three (the pin below), as do the CodeQL config and
-# workflow; a recognized path that carries no code (a TOML or JSON config)
-# selects none.
-codeql_rust_re='(\.rs$|(^|/)Cargo\.(toml|lock)$|^src-tauri/)'
-codeql_js_re='(\.(ts|tsx|js|jsx|mjs|cjs|html)$|(^|/)package(-lock)?\.json$|^(src|e2e|e2e-tauri|scripts)/)'
+# workflow; a recognized path that carries no code (a TOML, SQL, CSS or shell
+# file, a JSON config other than the npm manifests) selects none. The
+# JavaScript extractor also reads JSON and YAML, which this skips: CodeQL is
+# advisory, not a merge gate, and every push to `main` analyses all three.
+codeql_rust_re='(\.rs$|(^|/)Cargo\.(toml|lock)$)'
+codeql_js_re='(\.(ts|tsx|js|jsx|mjs|cjs|html)$|(^|/)package(-lock)?\.json$)'
 codeql_actions_re='^\.github/'
 codeql_all_re='^\.github/(codeql/|workflows/codeql\.yml$)'
 
@@ -255,15 +284,17 @@ codeql_all_re='^\.github/(codeql/|workflows/codeql\.yml$)'
 #
 # FAIL-CLOSED default for UNRECOGNIZED non-docs paths: a file that is neither
 # docs nor any known category (rust-toolchain.toml, .cargo/config.toml,
-# rustfmt.toml, a root Justfile / Dockerfile / *.sh) is a build/toolchain
-# change no single suite owns, so it pins frontend=backend=ci=true, every
-# frontend lane whole, the real-backend lane whole and every CodeQL language.
+# rustfmt.toml, .gitattributes, .gitignore, a root Dockerfile / *.sh) is a
+# build/toolchain change no single suite owns, so it pins
+# frontend=backend=rust_tests=ci=true, every frontend lane whole, the
+# real-backend lane whole and every CodeQL language.
 # Recognized-but-unsuited categories (a pure `ci` change like a workflow edit)
 # do NOT trip this: `lint` (incl. zizmor) covers them.
 docs_only=true
 docs=false
 frontend=false
 backend=false
+rust_tests=false
 ci=false
 desktop=false
 android=false
@@ -286,8 +317,13 @@ for f in "${changed[@]}"; do
   matched_cat=false
   test_only=false
   if [[ "$f" =~ $test_only_re ]] && [[ ! "$f" =~ $test_only_exception_re ]]; then test_only=true; fi
+  # A lint-only path builds nothing either, so the build gates treat it alike.
+  if [[ "$f" =~ $rust_lint_only_re ]]; then test_only=true; fi
   if [[ "$f" =~ $frontend_re ]]; then frontend=true; matched_cat=true; fi
-  if [[ "$f" =~ $backend_re ]]; then backend=true; matched_cat=true; fi
+  if [[ "$f" =~ $backend_re ]]; then
+    backend=true; matched_cat=true
+    if [[ ! "$f" =~ $rust_lint_only_re ]]; then rust_tests=true; fi
+  fi
   if [[ "$f" =~ $ci_re ]]; then ci=true; matched_cat=true; fi
   # Build gates only: they never suppress the fail-closed branch below, and a
   # test-only file never makes a build relevant.
@@ -320,9 +356,10 @@ for f in "${changed[@]}"; do
   if [[ "$f" =~ $codeql_actions_re ]]; then lang_actions=true; fi
   if [[ "$f" =~ $codeql_all_re ]]; then lang_rust=true; lang_js=true; lang_actions=true; fi
   if [ "$matched_cat" = "false" ]; then
-    echo "Unrecognized non-docs path: $f → pinning frontend=backend=ci=true, every lane whole and every CodeQL language (fail-closed)." >&2
+    echo "Unrecognized non-docs path: $f → pinning frontend=backend=rust_tests=ci=true, every lane whole and every CodeQL language (fail-closed)." >&2
     frontend=true
     backend=true
+    rust_tests=true
     ci=true
     vitest_full=true
     pw_full=true

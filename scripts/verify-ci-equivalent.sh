@@ -114,8 +114,10 @@ sqlx_probe_dir_cleanup() {
 MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-tauri/src/bin/agaric-mcp\.rs$|^src-tauri/binaries/'
 
 # ── CI/tooling change classifier ────────────────────────────────────
-# Workflows, the lint-tool configs the CI `lint` job keys on, and the
-# repo's own tooling under `scripts/` and `.claude/`.
+# Workflows, the lint-tool configs the CI `lint` job keys on, the
+# repo's own tooling under `scripts/` and `.claude/`, and the editor and
+# `just` files no suite reads (`justfile`, `.editorconfig`, `.vscode/`; why in
+# the comment above `ci_re`).
 #
 # `^scripts/` and `^\.claude/` are deliberate, and mirror `classify-changes.sh`'s
 # `ci_re`; the rationale (tooling is attributable: its guards run in Phase
@@ -139,7 +141,7 @@ MCP_PATH_RE='^src-tauri/src/mcp/.*\.rs$|^src-tauri/src/commands/mcp\.rs$|^src-ta
 # it — none of which derive from `CI_PATH_RE` automatically.
 #
 # Defined up here so `--self-test` below can drive it directly.
-CI_PATH_RE='^\.github/|^scripts/|^\.claude/|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$'
+CI_PATH_RE='^\.github/|^scripts/|^\.claude/|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$|^justfile$|^\.editorconfig$|^\.vscode/'
 
 # Shell scripts the RUST phases depend on. These are CI-attributable for
 # Phase A purposes (shellcheck still runs), but a change to
@@ -605,11 +607,16 @@ if [ "${1:-}" = "--self-test" ]; then
     st_ci 'scripts/push.sh'                 yes 'ditto for push.sh'
     st_ci '.github/workflows/release.yml'   yes 'a workflow is CI'
     st_ci 'prek.toml'                       yes 'the hook config is CI'
+    st_ci 'justfile'                        yes 'the just facade is CI (nothing in CI runs it)'
+    st_ci '.editorconfig'                   yes 'the editor config is CI (read by oxfmt)'
+    st_ci '.vscode/extensions.json'         yes 'editor settings are CI'
     # MUST NOT be CI — these change how everything is built, no per-category
     # suite covers them, and they must keep hitting the fail-closed arm.
     st_ci 'rust-toolchain.toml'             no  'the toolchain pin is NOT CI (must fail closed)'
     st_ci '.cargo/config.toml'              no  'cargo config is NOT CI (must fail closed)'
     st_ci 'bootstrap.sh'                    no  'a ROOT-level *.sh is NOT CI (must fail closed)'
+    st_ci '.gitattributes'                  no  'gitattributes sets eol on scripts, NOT CI (must fail closed)'
+    st_ci '.gitignore'                      no  'gitignore steers Tailwind and knip, NOT CI (must fail closed)'
     st_ci 'src-tauri/src/lib.rs'            no  'Rust is not CI'
     # A CI-attributed script may ALSO need the Rust phases. Attribution and
     # Rust-relevance are independent: these are CI (so Phase A runs their
@@ -724,7 +731,7 @@ if [ "${1:-}" = "--self-test" ]; then
             # made the "fails closed if a new one opens anywhere else" claim
             # in the comment above CI_PATH_RE untrue: a new arm added to
             # either regex covering a path outside that list (e.g. a future
-            # `^Justfile$`) would pass silently, PROVIDED that path is
+            # `^Dockerfile$`) would pass silently, PROVIDED that path is
             # already tracked. Run both regexes over the actual tracked
             # tree instead, so the claim holds for any currently tracked
             # path — see the note above CI_PATH_RE for the residual gap
@@ -2196,8 +2203,8 @@ else
     # ratcheted: the --self-test divergence-ratchet checks fail closed if
     # either gap widens, narrows, or a new one opens for any CURRENTLY
     # TRACKED path — the checks scan `git ls-files`, so an arm added for a
-    # path that is not yet tracked (a future `^Justfile$`, say, before any
-    # Justfile is committed) still passes silently — so this note itself is
+    # path that is not yet tracked (a future `^Dockerfile$`, say, before any
+    # Dockerfile is committed) still passes silently — so this note itself is
     # what they mean by "update the divergence note" on failure. Widening
     # `classify-changes.sh` to match is a separate change with its own blast
     # radius.
