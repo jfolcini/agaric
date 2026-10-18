@@ -2,6 +2,7 @@ import {
   blurEditors,
   expect,
   focusBlock,
+  ipc,
   openPage,
   readClipboard,
   reopenPage,
@@ -62,20 +63,6 @@ const CHILD_TEXT = 'a child that travels with its parent'
 interface Row {
   id: string
   content: string | null
-}
-
-function ipc<T>(page: import('@playwright/test').Page, cmd: string, args: unknown): Promise<T> {
-  return page.evaluate(
-    ({ c, a }) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke(c, a)
-    },
-    { c: cmd, a: args },
-  ) as Promise<T>
 }
 
 async function childrenOf(page: import('@playwright/test').Page, parentId: string) {

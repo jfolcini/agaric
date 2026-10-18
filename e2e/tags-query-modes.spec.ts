@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { expect, navigateToView, test, waitForBoot } from './helpers'
+import { expect, ipc, navigateToView, test, waitForBoot } from './helpers'
 
 /**
  * The Tags view's filter panel returns the blocks its mode selects (#5366):
@@ -21,20 +21,6 @@ import { expect, navigateToView, test, waitForBoot } from './helpers'
  */
 
 const PERSONAL = 'SPACE_PERSONAL'
-
-function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
-  return page.evaluate(
-    ({ c, a }) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke(c, a)
-    },
-    { c: cmd, a: args },
-  ) as Promise<T>
-}
 
 function createPage(page: Page, title: string): Promise<string> {
   return ipc<string>(page, 'create_page_in_space', {

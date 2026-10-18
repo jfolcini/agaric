@@ -318,6 +318,14 @@ describe('RichContentRenderer', () => {
       )
     })
 
+    it('paints a legacy hex in the accent token it migrates to (#1099)', () => {
+      localStorage.setItem('tag-colors', JSON.stringify({ [TAG_ID]: '#ef4444' }))
+      render(renderRichContent(`#[${TAG_ID}]`, { resolveTagName: () => '#MyTag' }))
+      expect(screen.getByTestId('tag-ref-chip').style.getPropertyValue('--tag-color')).toBe(
+        'var(--accent-rose, var(--accent-current))',
+      )
+    })
+
     it('leaves the chip of an uncoloured tag unstyled', () => {
       setTagColor('01XRZ3NDEKTSV4RRFFQ69G5FAV', 'accent-rose')
       render(renderRichContent(`#[${TAG_ID}]`, { resolveTagName: () => '#MyTag' }))

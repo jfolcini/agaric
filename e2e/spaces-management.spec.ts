@@ -72,6 +72,7 @@ import {
   installIpcRecorder,
   openPage,
   showJournalPages,
+  switchToSpace,
   test,
   waitForBoot,
 } from './helpers'
@@ -111,11 +112,6 @@ async function selectSwitcherOption(
   // closes before selecting an option.
   await page.mouse.move(0, 0)
   await page.getByRole('option', { name, exact: true }).click()
-}
-
-/** Switch the active space via the sidebar SpaceSwitcher. */
-async function switchToSpace(page: import('@playwright/test').Page, name: string): Promise<void> {
-  await selectSwitcherOption(page, name)
 }
 
 /** Open Settings › Spaces from the switcher's *Manage spaces…* item; returns the tab panel. */

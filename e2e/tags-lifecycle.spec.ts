@@ -7,9 +7,11 @@ import {
   blurEditors,
   expect,
   focusBlockById,
+  ipc,
   navigateToView,
   openPage,
   saveBlock,
+  switchToSpace,
   test,
   waitForBoot,
 } from './helpers'
@@ -36,20 +38,6 @@ interface TagRow {
   name: string
 }
 
-function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
-  return page.evaluate(
-    ({ c, a }) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke(c, a)
-    },
-    { c: cmd, a: args },
-  ) as Promise<T>
-}
-
 function tagsInSpace(page: Page, spaceId: string): Promise<TagRow[]> {
   return ipc<TagRow[]>(page, 'list_all_tags_in_space', {
     scope: { kind: 'active', space_id: spaceId },
@@ -72,14 +60,6 @@ function tagRow(page: Page, name: string) {
   return page
     .locator('[data-slot="list-item"]')
     .filter({ has: page.getByTestId(`tag-item-${name}`) })
-}
-
-async function switchToSpace(page: Page, name: string): Promise<void> {
-  await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
-  // The trigger's hover tooltip can cover the option list (see
-  // spaces-management.spec.ts); move off it before choosing.
-  await page.mouse.move(0, 0)
-  await page.getByRole('option', { name, exact: true }).click()
 }
 
 /** Create a space in Settings › Spaces; the app stays on Settings and on the active space. */

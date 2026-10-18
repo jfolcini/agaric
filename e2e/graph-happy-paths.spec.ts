@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test'
 import {
   chooseSelectOption,
   expect,
+  ipc,
   navigateToView,
   openAddFilter,
   openPage,
@@ -50,35 +51,30 @@ async function openGraph(page: Page): Promise<void> {
   await expect(page.locator(NODES).first()).toBeVisible()
 }
 
-function invoke(page: Page, cmd: string, args: Record<string, unknown>): Promise<unknown> {
-  return page.evaluate(
-    ([c, a]) => {
-      const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
-        invoke: (cmd: string, args: unknown) => Promise<unknown>
-      }
-      return internals.invoke(c, a)
-    },
-    [cmd, args] as const,
-  )
-}
-
 /** A page in the Personal space whose one block links to `linkTo`. */
 async function seedLinkingPage(page: Page, title: string, linkTo: string): Promise<string> {
-  const id = (await invoke(page, 'create_page_in_space', {
+  const id = (await ipc(page, 'create_page_in_space', {
     parentId: null,
     content: title,
     spaceId: 'SPACE_PERSONAL',
   })) as string
-  await invoke(page, 'create_blocks_batch', {
+  await ipc(page, 'create_blocks_batch', {
     specs: [{ blockType: 'content', content: `see [[${linkTo}]]`, parentId: id, position: null }],
   })
   return id
 }
 
-async function addFilter(page: Page, dimension: string, value?: string): Promise<void> {
+async function addFilter(
+  page: Page,
+  dimension: string,
+  { value, checkbox }: { value?: string | undefined; checkbox?: string | undefined } = {},
+): Promise<void> {
   const popover = await openAddFilter(page)
   await chooseSelectOption(page, 'Select a dimension', dimension)
   if (value !== undefined) await chooseSelectOption(page, dimension, value)
+  if (checkbox !== undefined) {
+    await popover.getByRole('checkbox', { name: checkbox, exact: true }).check()
+  }
   await popover.getByRole('button', { name: 'Apply' }).click()
 }
 
@@ -125,14 +121,11 @@ test.describe('Graph view happy paths', () => {
   test('the Tag filter narrows the graph to the pages carrying the tag', async ({ page }) => {
     await waitForBoot(page)
     // The seed tags only child blocks; the graph's tag filter matches page tags.
-    await invoke(page, 'add_tag', { blockId: PAGE_PROJECTS, tagId: TAG_IDEA })
+    await ipc(page, 'add_tag', { blockId: PAGE_PROJECTS, tagId: TAG_IDEA })
     await openGraph(page)
     await expect.poll(() => nodeLabels(page)).toEqual(SEED_PAGES)
 
-    const popover = await openAddFilter(page)
-    await chooseSelectOption(page, 'Select a dimension', 'Tag')
-    await popover.getByRole('checkbox', { name: 'idea', exact: true }).check()
-    await popover.getByRole('button', { name: 'Apply' }).click()
+    await addFilter(page, 'Tag', { checkbox: 'idea' })
 
     await expect.poll(() => nodeLabels(page)).toEqual(['Projects'])
     await page.getByRole('button', { name: 'Remove Tag: 1 filter' }).click()
@@ -157,10 +150,10 @@ test.describe('Graph view happy paths', () => {
   }) => {
     await waitForBoot(page)
     // One task field per page, so each filter keeps exactly one page.
-    await invoke(page, 'set_todo_state', { blockId: PAGE_PROJECTS, state: 'TODO' })
-    await invoke(page, 'set_priority', { blockId: PAGE_MEETINGS, level: '1' })
-    await invoke(page, 'set_due_date', { blockId: PAGE_QUICK_NOTES, date: '2026-07-01' })
-    await invoke(page, 'set_scheduled_date', { blockId: PAGE_GETTING_STARTED, date: '2026-06-30' })
+    await ipc(page, 'set_todo_state', { blockId: PAGE_PROJECTS, state: 'TODO' })
+    await ipc(page, 'set_priority', { blockId: PAGE_MEETINGS, level: '1' })
+    await ipc(page, 'set_due_date', { blockId: PAGE_QUICK_NOTES, date: '2026-07-01' })
+    await ipc(page, 'set_scheduled_date', { blockId: PAGE_GETTING_STARTED, date: '2026-06-30' })
     await openGraph(page)
     await expect.poll(() => nodeLabels(page)).toEqual(SEED_PAGES)
 
@@ -170,12 +163,7 @@ test.describe('Graph view happy paths', () => {
       { dimension: 'Has due date', pill: 'Has due date: Yes', kept: 'Quick Notes' },
       { dimension: 'Has scheduled date', pill: 'Has scheduled date: Yes', kept: 'Getting Started' },
     ]) {
-      const popover = await openAddFilter(page)
-      await chooseSelectOption(page, 'Select a dimension', dimension)
-      if (checkbox !== undefined) {
-        await popover.getByRole('checkbox', { name: checkbox, exact: true }).check()
-      }
-      await popover.getByRole('button', { name: 'Apply' }).click()
+      await addFilter(page, dimension, { checkbox })
 
       await expect.poll(() => nodeLabels(page), { message: pill }).toEqual([kept])
       await page.getByRole('button', { name: `Remove ${pill} filter` }).click()
@@ -241,7 +229,7 @@ test.describe('Graph view happy paths', () => {
     await page.getByRole('button', { name: 'Focus on this page' }).click()
     await expect.poll(() => nodeLabels(page)).toEqual(['Getting Started', 'Quick Notes'])
 
-    await addFilter(page, 'Has backlinks', 'No')
+    await addFilter(page, 'Has backlinks', { value: 'No' })
 
     await expect(page.getByTestId('graph-no-matches')).toHaveText(
       '"Getting Started" is hidden by the active filters',

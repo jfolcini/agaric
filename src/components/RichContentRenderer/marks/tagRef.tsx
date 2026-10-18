@@ -3,7 +3,7 @@ import type React from 'react'
 import type { RenderContext } from '@/components/RichContentRenderer/context'
 import type { TagRefNode } from '@/editor/types'
 import { PREFERENCES, usePreference } from '@/lib/preferences'
-import { tagColorStyle } from '@/lib/tag-colors'
+import { migrateTagColors, tagColorStyle } from '@/lib/tag-colors'
 import { cn } from '@/lib/utils'
 
 /**
@@ -43,7 +43,9 @@ function TagRefChip({
   ...props
 }: { tagId: string } & React.ComponentProps<'span'>): React.ReactElement {
   const [tagColors] = usePreference(PREFERENCES.tagColors)
-  return <span {...props} style={tagColorStyle(tagColors[tagId])} />
+  // The raw read skips the #1099 legacy-hex migration `getTagColors` applies;
+  // that one also writes back, which a render must not.
+  return <span {...props} style={tagColorStyle(migrateTagColors(tagColors).colors[tagId])} />
 }
 
 export function renderTagRef(

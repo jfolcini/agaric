@@ -1,4 +1,4 @@
-import { expect, navigateToView, openSettingsTab, test } from './helpers'
+import { emitMockEvent, expect, navigateToView, openSettingsTab, test } from './helpers'
 
 /**
  * E2E — `sync:complete` / `sync:error` Tauri events (#2683).
@@ -16,22 +16,6 @@ import { expect, navigateToView, openSettingsTab, test } from './helpers'
  * so a spec can fire a backend event exactly as `@tauri-apps/api/event`'s
  * `emit()` would.
  */
-
-interface MockEventWindow extends Window {
-  __emitMockEvent?: (event: string, payload?: unknown) => Promise<void>
-}
-
-async function emitMockEvent(
-  page: import('@playwright/test').Page,
-  event: string,
-  payload: unknown,
-) {
-  await page.evaluate(
-    ({ event: evt, payload: data }) =>
-      (window as unknown as MockEventWindow).__emitMockEvent?.(evt, data),
-    { event, payload },
-  )
-}
 
 test.describe('sync events (#2683)', () => {
   test.beforeEach(async ({ page }) => {

@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { expect, focusBlockById, openPage, saveBlock, test, waitForBoot } from './helpers'
+import { expect, focusBlockById, ipc, openPage, saveBlock, test, waitForBoot } from './helpers'
 
 /**
  * #5160 D8 / N7: typing `#project` and a space, or `#[[multi word]]`, in a
@@ -17,20 +17,6 @@ const TAG_REF = /#\[([0-9A-Z]{26})\]/g
 interface TagRow {
   tag_id: string
   name: string
-}
-
-function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
-  return page.evaluate(
-    ({ c, a }) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke(c, a)
-    },
-    { c: cmd, a: args },
-  ) as Promise<T>
 }
 
 async function storedContent(page: Page): Promise<string> {
