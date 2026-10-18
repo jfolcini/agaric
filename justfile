@@ -68,6 +68,12 @@ test: test-fe test-be test-doc
 test-fe *ARGS: _require-npm
     npm run test -- "$@"
 
+# Frontend tests that import what your uncommitted work touches, plus the tests reading a changed fixture or bindings.ts; `--dry` previews, `--range main...HEAD` checks a branch.
+[group('test')]
+[positional-arguments]
+test-fe-related *ARGS: _require-npm
+    bash scripts/test-related-ts.sh --worktree "$@"
+
 # `--workspace` (#3212): bare `cargo nextest run` from `src-tauri/` (a workspace
 # ROOT that is also the `agaric` root package) resolves to the `agaric` package
 # ONLY — it silently skips agaric-core/store/engine/sync/observability/diagnostics
@@ -131,6 +137,15 @@ clippy:
 [group('verify')]
 check: _require-npm
     prek run --all-files
+
+# Frontend inner loop: typecheck, oxlint, then the tests your uncommitted work can break.
+[group('verify')]
+check-fe: typecheck lint test-fe-related
+
+# Backend inner loop: cargo fmt --check, clippy as CI runs it, then the tests your uncommitted work can break.
+[group('verify')]
+check-be: && clippy test-be-related
+    cd src-tauri && cargo fmt --all --check
 
 # Pre-push verifier: pre-commit hooks + vitest/nextest scoped to the push range + sqlx cache check (clippy, knip, lychee, npm-audit run only in the pre-push hook).
 [group('verify')]
