@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { flushSync } from 'react-dom'
 
 import { consumePendingSplit } from '@/components/block-tree/use-block-flush'
 import { shouldSplitOnBlur } from '@/editor/content-delta'
@@ -19,6 +20,27 @@ import type { MountedBlocks } from '@/lib/zoom-scope'
 import { useBlockStore } from '@/stores/blocks'
 import type { usePageBlockStoreApi } from '@/stores/page-blocks'
 import type { DeleteBlockOptions } from '@/stores/page-blocks-types'
+import { classifyUnmountFlush } from '@/stores/unmount-flush'
+
+/**
+ * Read the block Enter split off, holding `split.after`, as typed, as page mode
+ * reads a new block: an empty baseline commits the task marker, `key:: value`
+ * line or `#name` it holds when the caret leaves it. Plain text and several
+ * paragraphs keep the loaded baseline, so leaving writes nothing and the
+ * paragraphs stay one block, as page mode keeps them. So does the whole block
+ * moved by Enter at its start: page mode keeps that text in the block it was
+ * loaded in.
+ */
+function readSplitOffAsTyped(
+  editor: Pick<RovingEditorHandle, 'activeBlockId' | 'markCommitted'>,
+  blockId: string,
+  split: { before: string; after: string },
+): void {
+  if (split.before.trim() === '') return
+  const { kind } = classifyUnmountFlush('', split.after)
+  if (kind !== 'checkbox' && kind !== 'property' && kind !== 'tag') return
+  if (editor.activeBlockId === blockId) editor.markCommitted('')
+}
 
 /**
  * Scroll the block's DOM node into view after a reorder so the
@@ -233,6 +255,7 @@ export interface UseBlockActionOrchestrationParams {
     | 'getMarkdown'
     | 'originalMarkdown'
     | 'splitAtCaret'
+    | 'markCommitted'
   >
   setFocused: (id: string | null) => void
   /** Replace the block selection; a non-empty one also leaves editing. */
@@ -1190,8 +1213,10 @@ export function useBlockActionOrchestration({
         // committed with the old, un-split content.
         discardDraft(focusedBlockId)
         // The SOURCE's #4729 exemption was registered above, before the
-        // awaits; this `setFocused` is what consumes it.
-        setFocused(newBlockId)
+        // awaits; this `setFocused` is what consumes it. Flushed, so the
+        // editor is on the new block (EditableBlock's auto-mount) on return.
+        flushSync(() => setFocused(newBlockId))
+        readSplitOffAsTyped(rovingEditorRef.current, newBlockId, split)
         announce(t('announce.blockCreated'))
         await continueListStyle(newBlockId, listStyle)
         return
