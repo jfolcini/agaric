@@ -204,6 +204,8 @@ interface ProjectedEntriesSectionProps {
   onNavigateToPage: NavigateToPageFn | undefined
   /** Each row shows its date: for a host whose entries span several days. */
   showDate?: boolean | undefined
+  /** The level of the host's other section headings, so the label sits beside them. */
+  headingLevel: 'h2' | 'h4'
 }
 
 export function ProjectedEntriesSection({
@@ -213,15 +215,16 @@ export function ProjectedEntriesSection({
   focusedIndex,
   onNavigateToPage,
   showDate = false,
+  headingLevel: Heading,
 }: ProjectedEntriesSectionProps): React.ReactElement | null {
   const { t } = useTranslation()
   const onTagClick = useTagClickHandler()
   if (entries.length === 0) return null
   return (
     <div className="mt-3 border-t border-dashed border-muted-foreground/30 pt-3">
-      <p className="text-xs [@media(pointer:coarse)]:text-sm font-medium text-muted-foreground mb-2">
+      <Heading className="text-xs [@media(pointer:coarse)]:text-sm font-medium text-muted-foreground mb-2">
         {t('due.projected')}
-      </p>
+      </Heading>
       <ul className="space-y-1" aria-label={t('duePanel.projectedListLabel')}>
         {entries.map((entry, i) => (
           <ProjectedEntryRow

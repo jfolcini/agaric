@@ -112,6 +112,7 @@ export function resolveNavOptions(options: UseListKeyboardNavigationOptions): Re
 
 interface KeyLike {
   key: string
+  defaultPrevented: boolean
   preventDefault: () => void
 }
 
@@ -189,9 +190,11 @@ const KEY_RULES: readonly KeyRule[] = [
     apply: (setIndex, o) => setIndex((prev) => Math.min(o.itemCount - 1, prev + o.pageSize)),
     preventDefault: true,
   },
-  // Enter or Space → select (only when onSelect is provided)
+  // Enter or Space → select (only when onSelect is provided). A row that acted
+  // on the key itself has prevented its default; selecting too would act twice.
   {
-    matches: (e, o) => (e.key === 'Enter' || e.key === ' ') && o.onSelect !== undefined,
+    matches: (e, o) =>
+      (e.key === 'Enter' || e.key === ' ') && o.onSelect !== undefined && !e.defaultPrevented,
     apply: (_setIndex, o, focusedIndex) => o.onSelect?.(focusedIndex),
   },
 ]

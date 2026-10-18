@@ -43,6 +43,7 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       getBatchProperties: (...args: unknown[]) =>
         mockGetBatchProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
       batchResolve: () => Promise.resolve({ status: 'ok', data: [] }),
+      recordPageOpen: () => Promise.resolve({ status: 'ok', data: null }),
     },
   }
 })
@@ -52,6 +53,7 @@ import { AgendaResults, type AgendaResultsProps } from '@/components/agenda/Agen
 import type { AgendaProjectedEntries } from '@/hooks/useAgendaProjectedEntries'
 import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
+import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 const committed = makeBlockRow({
   id: 'B1',
@@ -96,6 +98,8 @@ describe('AgendaResults projected occurrences', () => {
   it('lists each occurrence after the committed tasks, labelled and dated', () => {
     render(<AgendaResults {...props()} />)
 
+    // An h2, beside the group headings.
+    expect(screen.getByRole('heading', { level: 2, name: t('due.projected') })).toBeInTheDocument()
     const rows = within(projectedList()).getAllByRole('listitem')
     expect(rows.map((row) => row.querySelector('time')?.getAttribute('dateTime'))).toEqual([
       '2026-10-18',
@@ -130,6 +134,22 @@ describe('AgendaResults projected occurrences', () => {
     await user.keyboard('{Enter}')
 
     expect(onNavigateToPage).toHaveBeenCalledWith('PAGE2', 'Chores', 'REPEAT1')
+  })
+
+  // The row acts on its own Enter; the list's Enter must not act again on the
+  // cursor row, which is not always the row holding DOM focus.
+  it('opens only the occurrence Enter is pressed on', async () => {
+    const user = userEvent.setup()
+    useTabsStore.setState({ tabs: [{ id: '0', pageStack: [], label: '' }], activeTabIndex: 0 })
+    const onNavigateToPage = (pageId: string, title?: string, blockId?: string) =>
+      useTabsStore.getState().navigateToPage(pageId, title ?? '', blockId)
+    render(<AgendaResults {...props({ onNavigateToPage })} />)
+
+    const [first] = within(projectedList()).getAllByRole('listitem')
+    first?.focus()
+    await user.keyboard('{Enter}')
+
+    expect(selectPageStack(useTabsStore.getState()).map((p) => p.pageId)).toEqual(['PAGE2'])
   })
 
   it('offers its own Load more while the projection has more pages', async () => {
