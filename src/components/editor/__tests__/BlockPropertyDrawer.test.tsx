@@ -1064,6 +1064,30 @@ describe('BlockPropertyDrawer', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 
+  // #5862 — the block never held the draft's key, and the undo of a DeleteProperty
+  // for it fails, which aborts the page's undo group.
+  it('removes a text draft without any delete_property', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('assignee', 'text')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Add property' }))
+    await user.click(await screen.findByText('Assignee'))
+    expect(await screen.findByTestId('property-value-input-assignee')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Delete property' }))
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('property-value-input-assignee')).not.toBeInTheDocument()
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_property', expect.anything())
+  })
+
   it('drops unsaved draft rows when the drawer switches to a different block', async () => {
     const user = userEvent.setup()
     setupMock([], [makeDef('assignee', 'text')])
