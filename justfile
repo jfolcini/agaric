@@ -78,6 +78,12 @@ test-fe *ARGS: _require-npm
 test-be *ARGS:
     cd src-tauri && cargo nextest run --workspace "$@"
 
+# Backend tests of the crates your uncommitted work touches, and of every crate depending on them; `--dry` previews, `--range main...HEAD` checks a branch.
+[group('test')]
+[positional-arguments]
+test-be-related *ARGS:
+    bash scripts/test-related-rust.sh --worktree "$@"
+
 # Rust doc-tests, which nextest does not run. Needs the sqlx dev DB, same as `test-be`.
 [group('test')]
 test-doc:
