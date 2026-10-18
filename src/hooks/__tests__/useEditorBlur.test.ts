@@ -2020,6 +2020,20 @@ describe('useEditorBlur', () => {
       expect(markCommitted).toHaveBeenCalledExactlyOnceWith('typed text')
     })
 
+    // Untouched, it equals its stored text: only the compare against the
+    // placeholder reports it, so its task marker or property line is committed.
+    it('saves an untouched block read as typed', () => {
+      const { roving, markCommitted, edit, blur } = setup()
+      roving.originalMarkdown = '.'
+      roving.storedMarkdown = 'typed text'
+
+      press('pointerdown')
+      blur()
+
+      expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed text')
+      expect(markCommitted).toHaveBeenCalledExactlyOnceWith('typed text')
+    })
+
     it('stops watching the focus once the hold ends', () => {
       const subscribe = useBlockStore.subscribe
       const watcherCalls = vi.fn()

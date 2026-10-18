@@ -992,8 +992,18 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
     // This is the assertion the helper-level tests cannot make: it goes red if
     // the call site passes a `peer_id` the scheduler's memory is not keyed on,
     // or a `peer_refs` slice this peer is not in.
-    let (fresh_events, fresh_failures) =
-        cycle(Some(agaric_store::db::now_ms()), &reported[0], true).await;
+    //
+    // Arms B, C and D each wait out a real connect timeout against a peer that never
+    // answers and share nothing but the text A produced, so they dial together.
+    let (
+        (fresh_events, fresh_failures),
+        (dark_repeat_events, dark_repeat_failures),
+        (went_dark_events, _),
+    ) = tokio::join!(
+        cycle(Some(agaric_store::db::now_ms()), &reported[0], true),
+        cycle(None, &reported[0], false),
+        cycle(None, &reported[0], true),
+    );
     assert!(
         error_texts(&fresh_events).is_empty(),
         "#4084/#4120: the SAME failure against a peer that is still streaming to us \
@@ -1024,7 +1034,6 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
     // immediately — so the old `already_reported && still_serving` gate could
     // never close and this text fired once every resync interval, forever, with
     // nothing about it having changed since the first time.
-    let (dark_repeat_events, dark_repeat_failures) = cycle(None, &reported[0], false).await;
     assert!(
         error_texts(&dark_repeat_events).is_empty(),
         "#4305: an unchanged failure against a peer the user has already been told \
@@ -1042,7 +1051,6 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
     // was told while it was still serving us. That is a different fact about
     // the pair — "we cannot pull" became "we are not exchanging at all" — so it
     // reports once more.
-    let (went_dark_events, _) = cycle(None, &reported[0], true).await;
     assert_eq!(
         error_texts(&went_dark_events),
         vec![reported[0].clone()],

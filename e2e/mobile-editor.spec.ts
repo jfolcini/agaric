@@ -24,6 +24,7 @@ import {
   focusBlock,
   getInvokeCalls,
   installIpcRecorder,
+  ipc,
   test,
   waitForBoot,
 } from './helpers'
@@ -244,6 +245,60 @@ test.describe('Mobile editor (iPhone 13 viewport)', () => {
     await editor.press('ArrowDown')
 
     await expect.poll(async () => liveEditorBlockId(page)).not.toBe(startId)
+  })
+
+  // `useEditorBlur` holds only a mouse press; a tap's compat mousedown on
+  // another block's text keeps the editor focused (`keepEditorUntilClick`).
+  test('tapping another block while editing moves the editor there, and both edits persist', async ({
+    page,
+  }) => {
+    const statics = page.locator('[data-testid="block-static"]')
+    const firstId = (await statics.nth(0).getAttribute('data-block-id')) as string
+    const belowId = (await statics.nth(2).getAttribute('data-block-id')) as string
+    const content = async (blockId: string) =>
+      (await ipc<{ content: string }>(page, 'get_block', { blockId })).content
+    const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
+
+    await statics.nth(0).tap({ position: { x: 4, y: 4 } })
+    await expect(editor).toBeFocused()
+    await page.keyboard.type('AAA')
+    await page
+      .locator(`[data-testid="block-static"][data-block-id="${belowId}"]`)
+      .tap({ position: { x: 4, y: 4 } })
+
+    await expect.poll(() => liveEditorBlockId(page)).toBe(belowId)
+    await expect(editor).toBeFocused()
+    await page.keyboard.type('BBB')
+    await expect(editor).toContainText('BBB')
+    await blurEditors(page)
+    await expect.poll(() => content(firstId)).toContain('AAA')
+    await expect.poll(() => content(belowId)).toContain('BBB')
+    expect(await content(firstId)).not.toContain('BBB')
+  })
+
+  // A code block is shorter in the editor than rendered static, so a blur
+  // before the tap's click moves the rows below it and the tap lands on
+  // another row.
+  test('tapping the block below a code block being edited moves the editor there', async ({
+    page,
+  }) => {
+    const statics = page.locator('[data-testid="block-static"]')
+    const codeId = (await statics.nth(0).getAttribute('data-block-id')) as string
+    const belowId = (await statics.nth(1).getAttribute('data-block-id')) as string
+    const staticOf = (blockId: string) =>
+      page.locator(`[data-testid="block-static"][data-block-id="${blockId}"]`)
+
+    await focusBlock(page, 0)
+    await typeCodeFence(page, 'js')
+    await page.keyboard.type('const a = 1')
+    await blurEditors(page)
+    await expect(staticOf(codeId).locator('pre')).toBeVisible()
+
+    await staticOf(codeId).tap({ position: { x: 4, y: 4 } })
+    await expect(page.locator('[data-testid="block-editor"] pre')).toBeVisible()
+    await staticOf(belowId).tap({ position: { x: 4, y: 4 } })
+
+    await expect.poll(() => liveEditorBlockId(page)).toBe(belowId)
   })
 
   // #5291 — the capture writes past the open journal's page store, which

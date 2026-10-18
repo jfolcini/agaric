@@ -3,6 +3,8 @@ import { devices } from '@playwright/test'
 import {
   expect,
   focusBlock,
+  getInvokeCalls,
+  installIpcRecorder,
   openPage,
   reopenPage,
   replaceEditorText,
@@ -253,6 +255,26 @@ test.describe('A line break inside a block (#5160 D2)', () => {
     await expect.poll(() => blockState(page, splitId)).toBe('.')
     await reopenPage(page, 'Getting Started')
     expect(await blockState(page, splitId)).toBe('.')
+  })
+
+  test('an untouched split-off `key:: value` line becomes the property when a press on a control leaves it', async ({
+    page,
+  }) => {
+    const { splitId } = await splitOffStatusLine(page)
+    await installIpcRecorder(page)
+    const header = page
+      .getByTestId('linked-references')
+      .getByRole('button', { name: /\d+ References?$/ })
+
+    await header.click()
+
+    await expect(header).toHaveAttribute('aria-expanded', 'false')
+    await expect.poll(() => blockContent(page, splitId)).toBe('')
+    expect(await getInvokeCalls(page, 'set_property')).toHaveLength(1)
+    await reopenPage(page, 'Getting Started')
+    const row = page.locator(`[data-testid="sortable-block"][data-block-id="${splitId}"]`)
+    await expect(row.getByTestId('property-chip').filter({ hasText: 'done' })).toBeVisible()
+    expect(await blockContent(page, splitId)).toBe('')
   })
 })
 

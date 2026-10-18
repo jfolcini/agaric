@@ -24,7 +24,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import type { StoreApi } from 'zustand'
 
-import { computeContentDelta, shouldSplitOnBlur } from '@/editor/content-delta'
+import { computeLeaveDelta, shouldSplitOnBlur } from '@/editor/content-delta'
 import type { DocNode } from '@/editor/types'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { logger } from '@/lib/logger'
@@ -233,16 +233,14 @@ export function useEditorBlur(params: {
       // leaving it now drops the formatting toolbar from the flow, everything
       // below moves up before the release, and the click lands elsewhere.
       // `unmount()` would empty the doc on screen, so the save reads it live,
-      // compared as `unmount()` compares it: against the stored text, then
-      // against `loaded` for a block read as typed. It then rebases both
-      // baselines, and the deferred unmount finds nothing new.
+      // compared as `unmount()` compares it (`computeLeaveDelta`). It then
+      // rebases both baselines, and the deferred unmount finds nothing new.
       const re = rovingEditorRef.current
       const keptEditor = primaryPressDown ? re.editor : null
       let changed: string | null
       if (keptEditor) {
         const doc = keptEditor.getJSON() as DocNode
-        let delta = computeContentDelta(re.storedMarkdown, doc)
-        if (!delta.changed && loaded !== re.storedMarkdown) delta = computeContentDelta(loaded, doc)
+        const delta = computeLeaveDelta(re.storedMarkdown, loaded, doc)
         changed = delta.changed ? delta.newMarkdown : null
         if (changed !== null) re.markCommitted(changed)
       } else {

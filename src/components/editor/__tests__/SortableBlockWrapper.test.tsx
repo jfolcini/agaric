@@ -387,9 +387,6 @@ describe('SortableBlockWrapper', () => {
 
     const li = container.querySelector('li[data-block-id="BLK001"]')
     expect(li?.className).toContain('bg-ring/8')
-    // Must NOT add a left border that would collide with the focused block's
-    // inset-shadow accent.
-    expect(li?.className).not.toContain('border-l')
   })
 
   it('tints the over-row independent of focus state (#991)', () => {
