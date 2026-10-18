@@ -1,4 +1,4 @@
-import { expect, test } from './helpers'
+import { expect, seedSearchBlocks, test } from './helpers'
 
 /**
  * E2E — `agaric://` deep-link routing (#2683).
@@ -17,7 +17,7 @@ import { expect, test } from './helpers'
  *
  * Event payload shapes mirror the Rust router
  * (`src-tauri/src/deeplink/mod.rs`, see `useDeepLinkRouter.ts` header):
- *   - `deeplink:navigate-to-page` → `{ id: <ULID> }`
+ *   - `deeplink:navigate-to-block` / `deeplink:navigate-to-page` → `{ id: <ULID> }`
  *   - `deeplink:open-settings` → `{ tab: <tab name> }`
  */
 
@@ -37,8 +37,9 @@ async function emitMockEvent(
   )
 }
 
-// Seed id — see src/lib/tauri-mock/seed.ts SEED_IDS.PAGE_QUICK_NOTES.
+// Seed ids — see src/lib/tauri-mock/seed.ts SEED_IDS.
 const PAGE_QUICK_NOTES = '00000000000000000000PAGE02'
+const PAGE_MEETINGS = '00000000000000000000PAGE05'
 
 test.describe('deep-link routing (#2683)', () => {
   test.beforeEach(async ({ page }) => {
@@ -52,6 +53,31 @@ test.describe('deep-link routing (#2683)', () => {
     await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes', {
       timeout: 5000,
     })
+  })
+
+  test('deeplink:navigate-to-block opens the page, scrolled to and focused on the block', async ({
+    page,
+  }) => {
+    // Enough rows above the target that it sits below the fold unless the page scrolls to it.
+    const fillers = Array.from({ length: 40 }, (_, i) => ({
+      content: `Deep link filler ${i + 1}`,
+      parentId: PAGE_MEETINGS,
+    }))
+    const ids = await seedSearchBlocks(page, [
+      ...fillers,
+      { content: 'Deep link target', parentId: PAGE_MEETINGS },
+    ])
+    const targetId = ids.at(-1)
+
+    await emitMockEvent(page, 'deeplink:navigate-to-block', { id: targetId })
+
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Meetings')
+    const target = page.locator(`[data-block-id="${targetId}"]`).first()
+    await expect(target).toBeInViewport()
+    // The top of the page is scrolled away, so the target was reached by scrolling.
+    await expect(page.locator(`[data-block-id="${ids[0]}"]`).first()).not.toBeInViewport()
+    await expect(target.locator('[contenteditable="true"]')).toBeFocused()
+    await expect(target.locator('[contenteditable="true"]')).toHaveText('Deep link target')
   })
 
   test('deeplink:open-settings event with tab "agent" opens the Agent access tab', async ({
