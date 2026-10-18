@@ -27,33 +27,13 @@
  * Both changes are purely additive (the handlers were previously
  * write-only / unreachable) and do not touch the seeded `SPACE_PERSONAL`
  * entry's own behaviour, so no other spec's assumptions change.
- *
- * Documented (not implemented) gaps — cite the exact mechanism, no fakes:
- *
- *   1. **Delete-after-emptying a space** (suggested scenario "delete is
- *      blocked for a non-empty space and allowed after moving pages out")
- *      is NOT exercisable. `SpacesTab`'s emptiness probe calls
- *      `listBlocks({ blockType: 'page', spaceId })`
- *      (src/components/settings/SpacesTab.tsx); the mock's `list_blocks`
- *      handler (src/lib/tauri-mock/handlers.ts:1278) ignores the
- *      `scope`/`spaceId` argument entirely and returns EVERY non-deleted
- *      page block in the whole mock vault. Because seed pages always
- *      exist, `items.length` is never 0 for ANY space — `emptiness` is
- *      permanently `false` and Delete stays disabled no matter how many
- *      pages actually live in the target space. Rewriting `list_blocks`
- *      to honour `scope` is out of scope here: it is a generic,
- *      widely-reused handler (agenda, trash-adjacent queries, the "[["
- *      picker, …) and many existing specs depend on its current
- *      deliberately-unscoped "return everything" behaviour — narrowing it
- *      is a wide-blast-radius change that belongs in its own PR. The test
- *      below asserts the CURRENT (limited) mock behaviour honestly,
- *      labelled as such.
  */
 
 import {
   expect,
   getInvokeCalls,
   installIpcRecorder,
+  navigateToView,
   openPage,
   showJournalPages,
   switchToSpace,
@@ -317,28 +297,40 @@ test.describe('Spaces — rename, recolour, delete', () => {
     await expect(page.getByTestId('space-top-stripe')).toHaveAttribute('style', /accent-rose/)
   })
 
-  test('delete is blocked for the sole seeded space, and (documented mock limitation) for a freshly created space too', async ({
+  test('delete is blocked for the sole space and for a space holding pages, and deletes an empty one', async ({
     page,
   }) => {
     // Sole space: the last-space guard disables Delete outright.
     const panel = await openSpacesSettings(page)
     await expect(panel.getByRole('button', { name: 'Delete space', exact: true })).toBeDisabled()
 
-    // Create a second, never-populated space. In the real backend this
-    // would be immediately deletable; under this mock it is not — see the
-    // file-header comment (`list_blocks` ignores `scope`, so the
-    // emptiness probe always sees the globally-seeded pages and reports
-    // "non-empty" for every space). Asserting the CURRENT behaviour here,
-    // not the real one.
     await panel.getByRole('button', { name: 'Create new space', exact: true }).click()
     await panel.getByPlaceholder('New space name').fill('Empty Space')
     await panel.getByRole('button', { name: 'Create', exact: true }).click()
     // Rows render alphabetically (#2684): "Empty Space" < "Personal", so
     // the new row is first.
-    const newRow = panel.locator('[data-slot="space-manage-row"]').first()
+    const rows = panel.locator('[data-slot="space-manage-row"]')
+    const newRow = rows.first()
+    const personalRow = rows.nth(1)
     await expect(newRow.getByRole('textbox', { name: 'Rename space' })).toHaveValue('Empty Space')
-    await expect(newRow.getByRole('button', { name: 'Delete space', exact: true })).toBeDisabled()
-    await expect(newRow.getByTestId('space-delete-blocked-hint')).toBeVisible()
+    // Personal holds the seeded pages, so the emptiness probe blocks it.
+    await expect(
+      personalRow.getByRole('button', { name: 'Delete space', exact: true }),
+    ).toBeDisabled()
+    await expect(personalRow.getByTestId('space-delete-blocked-hint')).toBeVisible()
+
+    await newRow.getByRole('button', { name: 'Delete space', exact: true }).click()
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Delete', exact: true }).click()
+    await expect(rows).toHaveCount(1)
+
+    // Re-read from the store, not the row the delete left behind.
+    await navigateToView(page, 'Journal')
+    const reopened = await openSpacesSettings(page)
+    const reopenedRows = reopened.locator('[data-slot="space-manage-row"]')
+    await expect(reopenedRows).toHaveCount(1)
+    await expect(reopenedRows.getByRole('textbox', { name: 'Rename space' })).toHaveValue(
+      'Personal',
+    )
   })
 })
 

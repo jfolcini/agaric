@@ -1017,7 +1017,7 @@ export const blocksHandlers = {
     // single `request` DTO (the agenda knobs flatten in as `date` /
     // `dateRange` / `source`); `scope` stays a separate top-level arg.
     const req = (a['request'] as Record<string, unknown>) ?? a
-    readActiveSpaceScope('list_blocks', a)
+    const spaceId = readActiveSpaceScope('list_blocks', a)
     const limit = listBlocksLimit(req['limit'])
     const cursor = req['cursor'] as unknown
     const active = [...blocks.values()].filter((b) => !(b['deleted_at'] as string | null))
@@ -1104,7 +1104,9 @@ export const blocksHandlers = {
       // saved-view page would show up here where the backend hides it. Not
       // covered by a fixture step either — filed as #3878 rather than fixed
       // silently.
-      const items = active.filter((b) => b['block_type'] === blockType)
+      const items = active.filter(
+        (b) => b['block_type'] === blockType && ownerSpaceOf(b) === spaceId,
+      )
       // `list_by_type` mints `Cursor::for_id`.
       return paginateKeyset(items, idKey, limit, cursor, items.length, [])
     }
