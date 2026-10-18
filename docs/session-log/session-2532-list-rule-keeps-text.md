@@ -17,8 +17,13 @@ paragraph content as it is and puts the caret after the typed character.
 the bullet rule's `[^[]` matched it: the rule set `bullet`, swallowed the Enter
 and stored a hard break (`\` and a newline). The bullet rule is now
 `[^[\n]`. The ordered rule's `.` never matched `\n`. Enter after `- ` now does
-what Enter after `1. ` already did: the editor's own list Enter lifts the empty
-item out, leaving one empty plain block with no style.
+what Enter after `1. ` already did: `splitListItem` declines an empty top-level
+item and the core keymap's `liftEmptyBlock` lifts it out, leaving one empty
+plain block with no style.
+
+**Checkboxes.** `CheckboxInputRule`'s bare rule had the same loss: `- [ ] ` or
+`- [x] ` typed before `hello world` set the task state and left the block empty.
+It now keeps the text after the trigger, with the caret at its start.
 
 **Tests**, each shown red against the unfixed code:
 - vitest (`list-style-input-rule.test.ts`): `- a` and `1. a` at the start of

@@ -521,6 +521,29 @@ describe('CheckboxInputRule — typed path under BulletList shadowing (#1494)', 
     }
   })
 
+  it.each([
+    ['- [ ] ', 'TODO'],
+    ['- [x] ', 'DONE'],
+  ])(
+    'typing "%s" at the start of "hello world" fires %s and keeps the text',
+    async (typed, state) => {
+      const onCheckbox = vi.fn()
+      editor = buildEditor(onCheckbox, [
+        { type: 'paragraph', content: [{ type: 'text', text: 'hello world' }] },
+      ])
+      editor.commands.focus('start')
+      typeChars(editor, typed)
+      await flush()
+      expect(onCheckbox).toHaveBeenCalledTimes(1)
+      expect(onCheckbox).toHaveBeenCalledWith(state)
+      expect(editor.getJSON()).toEqual({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello world' }] }],
+      })
+      expect(editor.state.selection.from).toBe(1)
+    },
+  )
+
   it('bare "[ ] " (no dash) typed at the start of a plain paragraph fires TODO (X11)', async () => {
     const onCheckbox = vi.fn()
     editor = buildEditor(onCheckbox)

@@ -64,6 +64,7 @@ describe('ListStyleInputRule real-editor integration', () => {
         Document,
         Paragraph,
         Text,
+        Bold,
         History,
         BulletList,
         OrderedList,
@@ -89,13 +90,6 @@ describe('ListStyleInputRule real-editor integration', () => {
         view.dispatch(view.state.tr.insertText(ch, from, to))
       }
     }
-  }
-
-  // TipTap runs input rules on Enter with the text `\n`; `someProp` walks
-  // every `handleKeyDown` (input rules, then the list keymap) like a keydown.
-  function pressEnter(ed: Editor): void {
-    const { view } = ed
-    view.someProp('handleKeyDown', (f) => f(view, new KeyboardEvent('keydown', { key: 'Enter' })))
   }
 
   async function flush(): Promise<void> {
@@ -230,31 +224,15 @@ describe('ListStyleInputRule real-editor integration', () => {
   )
 
   it('keeps marks on the text after the caret', async () => {
-    editor = new Editor({
-      element: document.createElement('div'),
-      extensions: [
-        Document,
-        Paragraph,
-        Text,
-        Bold,
-        BulletList,
-        OrderedList,
-        ListItem,
-        ListStyleInputRule.configure({ onListStyle: null }),
-      ],
-      content: {
-        type: 'doc',
+    editor = buildEditor(null, null, [
+      {
+        type: 'paragraph',
         content: [
-          {
-            type: 'paragraph',
-            content: [
-              { type: 'text', text: 'hello ' },
-              { type: 'text', text: 'world', marks: [{ type: 'bold' }] },
-            ],
-          },
+          { type: 'text', text: 'hello ' },
+          { type: 'text', text: 'world', marks: [{ type: 'bold' }] },
         ],
       },
-    })
+    ])
     editor.commands.focus('start')
     typeChars(editor, '- a')
     await flush()
@@ -279,7 +257,8 @@ describe('ListStyleInputRule real-editor integration', () => {
       const onListStyle = vi.fn()
       editor = buildEditor(onListStyle)
       typeChars(editor, marker)
-      pressEnter(editor)
+      const { view } = editor
+      view.someProp('handleKeyDown', (f) => f(view, new KeyboardEvent('keydown', { key: 'Enter' })))
       await flush()
 
       expect(onListStyle).not.toHaveBeenCalled()
