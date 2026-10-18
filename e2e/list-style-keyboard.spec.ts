@@ -7,6 +7,7 @@ import {
   installIpcRecorder,
   openPage,
   reopenPage,
+  replaceEditorText,
   saveBlock,
   test,
   typeSlashCommand,
@@ -134,6 +135,25 @@ test.describe('listStyle keyboard grain (#4552 slice 3)', () => {
     await expect(marker(rows(page).nth(1))).toHaveText('2.')
     await expect(rows(page).nth(2)).toContainText('not a step')
     await expect(marker(rows(page).nth(2))).toHaveCount(0)
+  })
+
+  test('typing "- " then a character at the start of a block keeps its text', async ({ page }) => {
+    const editor = await focusBlock(page)
+    await replaceEditorText(page, 'hello world')
+    await expect(editor).toHaveText('hello world')
+    await editor.evaluate((el) =>
+      (
+        el as HTMLElement & { editor: { commands: { focus: (at: 'start') => boolean } } }
+      ).editor.commands.focus('start'),
+    )
+    await page.keyboard.type('- a')
+    await expect(editor).toHaveText('ahello world')
+    await expect.poll(() => listStyleWrites(page)).toHaveLength(1)
+    await saveBlock(page, 'Escape')
+
+    await reopenPage(page, 'Getting Started')
+    await expect(marker(rows(page).nth(0))).toHaveText('•')
+    await expect(rows(page).nth(0).getByTestId('block-static')).toHaveText('•ahello world')
   })
 
   test('Backspace on an empty styled block clears the style, then deletes it', async ({ page }) => {

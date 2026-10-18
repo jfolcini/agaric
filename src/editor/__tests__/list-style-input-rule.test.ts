@@ -1,4 +1,5 @@
 import { Editor } from '@tiptap/core'
+import Bold from '@tiptap/extension-bold'
 import Document from '@tiptap/extension-document'
 import History from '@tiptap/extension-history'
 import { BulletList, OrderedList } from '@tiptap/extension-list'
@@ -88,6 +89,13 @@ describe('ListStyleInputRule real-editor integration', () => {
         view.dispatch(view.state.tr.insertText(ch, from, to))
       }
     }
+  }
+
+  // TipTap runs input rules on Enter with the text `\n`; `someProp` walks
+  // every `handleKeyDown` (input rules, then the list keymap) like a keydown.
+  function pressEnter(ed: Editor): void {
+    const { view } = ed
+    view.someProp('handleKeyDown', (f) => f(view, new KeyboardEvent('keydown', { key: 'Enter' })))
   }
 
   async function flush(): Promise<void> {
@@ -197,6 +205,87 @@ describe('ListStyleInputRule real-editor integration', () => {
     expect(onListStyle).not.toHaveBeenCalled()
     expect(editor.state.doc.child(0).type.name).toBe('bulletList')
   })
+
+  it.each([
+    ['- ', 'bullet'],
+    ['1. ', 'ordered'],
+  ] as const)(
+    'typing "%sa" at the start of "hello world" keeps the text after the caret',
+    async (marker, style) => {
+      const onListStyle = vi.fn()
+      editor = buildEditor(onListStyle, null, [
+        { type: 'paragraph', content: [{ type: 'text', text: 'hello world' }] },
+      ])
+      editor.commands.focus('start')
+      typeChars(editor, `${marker}a`)
+      await flush()
+
+      expect(onListStyle).toHaveBeenCalledWith(style)
+      expect(editor.getJSON()).toEqual({
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: 'ahello world' }] }],
+      })
+      expect(editor.state.selection.from).toBe(2)
+    },
+  )
+
+  it('keeps marks on the text after the caret', async () => {
+    editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [
+        Document,
+        Paragraph,
+        Text,
+        Bold,
+        BulletList,
+        OrderedList,
+        ListItem,
+        ListStyleInputRule.configure({ onListStyle: null }),
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: [
+              { type: 'text', text: 'hello ' },
+              { type: 'text', text: 'world', marks: [{ type: 'bold' }] },
+            ],
+          },
+        ],
+      },
+    })
+    editor.commands.focus('start')
+    typeChars(editor, '- a')
+    await flush()
+
+    expect(editor.getJSON()).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'ahello ' },
+            { type: 'text', text: 'world', marks: [{ type: 'bold' }] },
+          ],
+        },
+      ],
+    })
+  })
+
+  it.each(['- ', '1. '])(
+    'Enter right after "%s" lifts the empty item out of the list without setting a style',
+    async (marker) => {
+      const onListStyle = vi.fn()
+      editor = buildEditor(onListStyle)
+      typeChars(editor, marker)
+      pressEnter(editor)
+      await flush()
+
+      expect(onListStyle).not.toHaveBeenCalled()
+      expect(editor.getJSON()).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] })
+    },
+  )
 
   it('rule with onListStyle=null still collapses the list without crashing', async () => {
     editor = buildEditor(null)
