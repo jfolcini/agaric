@@ -28,7 +28,7 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import type { PageSourceBufferHandle } from '@/components/pages/PageSourceBuffer'
 import { PageSourceChanges } from '@/components/pages/PageSourceChanges'
 import { PageSourceConflictDialog } from '@/components/pages/PageSourceConflictDialog'
-import { latestUndoEntry, notifyPageSourceSaved } from '@/components/pages/PageSourceSaveReport'
+import { notifyPageSourceSaved } from '@/components/pages/PageSourceSaveReport'
 import { findUnresolvedUlidTokens } from '@/components/pages/ulid-tokens'
 import { Button } from '@/components/ui/button'
 import { SHARED_INPUT_CLASSES } from '@/components/ui/input'
@@ -50,6 +50,7 @@ import { PREFERENCES, readPreference, removePreference, writePreference } from '
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { cn } from '@/lib/utils'
 import { usePageBlockStore } from '@/stores/page-blocks'
+import { latestUndoEntry } from '@/stores/undo'
 
 const LazyPageSourceBuffer = lazy(() =>
   import('@/components/pages/PageSourceBuffer').then((m) => ({ default: m.PageSourceBuffer })),

@@ -17,12 +17,7 @@ import { performPageUndo } from '@/hooks/useUndoShortcuts'
 import type { PageSourceReport } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
-import { useUndoStore } from '@/stores/undo'
-
-/** The page's latest undo entry, compared by identity. */
-export function latestUndoEntry(pageId: string): unknown {
-  return useUndoStore.getState().pages.get(pageId)?.undoStack[0]
-}
+import { latestUndoEntry } from '@/stores/undo'
 
 function countsLine(report: PageSourceReport): string {
   const others = [

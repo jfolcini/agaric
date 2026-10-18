@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   isWithinUndoGroup,
+  latestUndoEntry,
   MAX_COALESCED_UNDO_REFS,
   MAX_REDO_STACK,
   UNDO_GROUP_WINDOW_MS,
@@ -2051,5 +2052,34 @@ describe('isWithinUndoGroup', () => {
 
   it('uses UNDO_GROUP_WINDOW_MS constant (500ms)', () => {
     expect(UNDO_GROUP_WINDOW_MS).toBe(500)
+  })
+})
+
+describe('latestUndoEntry', () => {
+  beforeEach(() => {
+    useUndoStore.setState({ pages: new Map() })
+  })
+
+  it("is the page's newest undo entry", () => {
+    const newer = { refs: [{ device_id: 'device1', seq: 2 }], at: 2 }
+    const older = { refs: [{ device_id: 'device1', seq: 1 }], at: 1 }
+    useUndoStore.setState({
+      pages: new Map([
+        ['page1', { undoStack: [newer, older], redoStack: [], undoDepth: 0, redoGroupSizes: [] }],
+      ]),
+    })
+
+    expect(latestUndoEntry('page1')).toBe(newer)
+  })
+
+  it('is undefined for a page with an empty undo stack or no undo state', () => {
+    useUndoStore.setState({
+      pages: new Map([
+        ['page1', { undoStack: [], redoStack: [], undoDepth: 0, redoGroupSizes: [] }],
+      ]),
+    })
+
+    expect(latestUndoEntry('page1')).toBeUndefined()
+    expect(latestUndoEntry('page2')).toBeUndefined()
   })
 })
