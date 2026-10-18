@@ -36,6 +36,7 @@ import {
   navigateTo,
   reopenPageByTitle,
   runScopedMarker,
+  switchToSpace,
   waitForAppReady,
   waitForToast,
 } from './helpers'
@@ -62,7 +63,6 @@ const REF_NOTE_TWO = runScopedMarker('wdio-ref-note-two')
 
 const SYNC_BUTTON = '[data-slot="sidebar"] button[aria-label="Sync"]'
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
-const SWITCHER = '[aria-label="Switch space"]'
 
 interface Internals {
   invoke: (cmd: string, args?: unknown) => Promise<unknown>
@@ -92,23 +92,6 @@ async function pullPeerWrites<T>(peer: SyncPeer, writes: () => Promise<T>): Prom
   await $(SYNC_BUTTON).click()
   await peer.waitPulled()
   return written
-}
-
-/** The switcher trigger's label, as DOM text (see space-scoped-tag.e2e.ts). */
-async function switcherLabel(): Promise<string> {
-  const label = await browser.execute(
-    (selector: string) => document.querySelector(selector)?.textContent ?? '',
-    SWITCHER,
-  )
-  return label.trim()
-}
-
-async function switchToSpace(name: string): Promise<void> {
-  await chooseSelectOption(SWITCHER, name)
-  await browser.waitUntil(async () => (await switcherLabel()).includes(name), {
-    timeout: ACTION_TIMEOUT,
-    timeoutMsg: `space switcher never showed ${JSON.stringify(name)}`,
-  })
 }
 
 interface ListedPage {
