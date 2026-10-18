@@ -22,21 +22,18 @@ import type { OpRef, PropertyRow } from '@/lib/bindings'
 import { bumpFlushSeq, commitInlineProperties } from '@/stores/inline-property-commit'
 import { addedInlineProperties } from '@/stores/unmount-flush'
 
-/** A property as block mode's row draws it. */
-export type ShownProperty = InlineProperty
-
-const NONE: ShownProperty[] = []
+const NONE: InlineProperty[] = []
 
 /** The page's block properties as block mode's row draws them, by block id. */
 export class PageProperties {
-  private shown = new Map<string, ShownProperty[]>()
+  private shown = new Map<string, InlineProperty[]>()
   private readonly listeners = new Set<() => void>()
 
   constructor(rows: Record<string, PropertyRow[]>) {
     this.take(rows)
   }
 
-  of(id: string): ShownProperty[] {
+  of(id: string): InlineProperty[] {
     return this.shown.get(id) ?? NONE
   }
 

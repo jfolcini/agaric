@@ -62,8 +62,8 @@ export function BlockPropertyDrawer({
   // #2656 — keys of `DRAFT_ROW_VALUE_TYPES` properties added but not yet
   // persisted. Such properties have no valid empty value (the real backend
   // rejects it), so we render a local DRAFT row for value entry and only write
-  // on the first non-empty save. A draft is dropped (no backend call) if the
-  // user leaves it empty.
+  // on the first non-empty save; a ref draft is written by its page picker
+  // instead. A draft is dropped (no backend call) if the user leaves it empty.
   const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set())
   const { setDueDate: setDueDateCmd, setScheduledDate: setScheduledDateCmd } = useBlockReschedule()
   const { getProperties, listPropertyDefs, setProperty } = useBlockPropertyIpc()

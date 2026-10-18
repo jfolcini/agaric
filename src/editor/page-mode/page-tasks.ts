@@ -56,7 +56,6 @@ import { serialize } from '@/editor/markdown-serializer'
 import { isCurrentBlock } from '@/editor/page-mode/page-block-focus'
 import { blockDocJson, PageBlock } from '@/editor/page-mode/page-document'
 import type { PageLists } from '@/editor/page-mode/page-lists'
-import type { ShownProperty } from '@/editor/page-mode/page-properties'
 import { RENDERED, renderedText } from '@/editor/page-mode/page-rendered'
 import type { PageSaveApi, PageSaveState } from '@/editor/page-mode/page-save'
 import {
@@ -65,7 +64,7 @@ import {
 } from '@/editor/page-mode/PageBlockMetadata'
 import { blockIdOf } from '@/editor/token-ids'
 import { attachmentRowsEqual } from '@/hooks/useBatchAttachments'
-import { arraysShallowEqual } from '@/hooks/useExtraBlockProperties'
+import { arraysShallowEqual, type InlineProperty } from '@/hooks/useExtraBlockProperties'
 import type { AttachmentRow, OpRef } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '@/lib/block-utils'
 import { t } from '@/lib/i18n'
@@ -111,14 +110,15 @@ export interface PageTaskSource extends PageTaskActions {
   /** Block `id`'s row, as the page store holds it. */
   blockOf: (id: string) => FlatBlock | undefined
   /** Block `id`'s properties, as block mode's row draws them. */
-  propertiesOf: (id: string) => ShownProperty[]
+  propertiesOf: (id: string) => InlineProperty[]
   /** Block `id`'s attachments. */
   attachmentsOf: (id: string) => AttachmentRow[]
-  /** Follow a ref property's chip to block `id`, as block mode's link chips do. */
-  navigate: (id: string) => void
   /** Call `listener` on every change of the page store, the properties or the attachments. */
   subscribe: (listener: () => void) => () => void
-  /** Where a query result, or an embed's open-source, goes: block mode's chip navigation. */
+  /**
+   * Where a ref property's chip, a query result or an embed's open-source goes:
+   * block mode's chip navigation.
+   */
   navigate: (id: string) => void
   /** Block mode's title for a block, as a query's results name it. */
   resolveBlockTitle: (id: string) => string
@@ -242,7 +242,7 @@ interface Metadata {
   priority: string | null
   dueDate: string | null
   scheduledDate: string | null
-  properties: ShownProperty[]
+  properties: InlineProperty[]
   attachments: AttachmentRow[]
 }
 
