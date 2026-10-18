@@ -13,12 +13,16 @@ export default defineConfig({
     // `ui-select` mocks select nothing and `helpers/invoke.ts` (the strict
     // global `invoke`) selects a fraction of the tests it affects. The other
     // mocks and helpers are imported by the tests that use them, so the graph
-    // is right and they stay out.
+    // is right and they stay out. The files under `conformance/` and
+    // `bindings.ts` reach their tests through `fs`, which the graph cannot see
+    // either, so `vitest --changed` reruns everything when they change.
     forceRerunTriggers: [
       ...configDefaults.forceRerunTriggers,
       '**/src/__tests__/mocks/sonner.ts',
       '**/src/__tests__/mocks/ui-select.tsx',
       '**/src/__tests__/helpers/invoke.ts',
+      '**/conformance/**',
+      '**/src/lib/bindings.ts',
     ],
     // Emit a warning when a single test exceeds 2 seconds.
     // Catches regressions cheaply without altering test outcomes.
