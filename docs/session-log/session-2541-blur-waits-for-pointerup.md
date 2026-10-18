@@ -128,3 +128,46 @@ a real pointer. It already held through the #966 snapshot before this change.
 - The `#1498` comments on the inline controls and property chips say their
   purpose: they keep the editor and its caret focused. The spec's docstring
   is true again.
+
+**CI shard 2, `page-mode.spec.ts` (a `#name` left for the next block):**
+- The test failed on two of #5836's three attempts. The tag chip never
+  appeared, and `one #newtag` stayed text.
+- The same failure, at the same line, also hit main twice in the same window
+  (`9edcc6edd`, `84314899c`), commits without the hold. Shard 2 failed it 2 of
+  27 times on main, 0 of 28 on other branches, and 2 of 3 here.
+- Locally it never failed, run alone, as a whole file on two workers, on one
+  or two cores, as a whole CI shard, or with the CPU throttled through CDP.
+- Before this test presses *Page*, no block editor is open, so the hold never
+  engages in it.
+- Page mode reads `focusedBlockId` once, when the switch is clicked. The
+  switch's `setFocused(null)` ends any hold at once, through the focus watch,
+  so nothing from a press reaches page mode afterwards.
+- So the hold does not cause it, and nothing in the hook changed for it.
+- A new `page-mode.spec.ts` test pins the one real interaction. A block edited
+  when *Page* is pressed stays focused through the click, so page mode opens
+  with the cursor in it, as `changeMode` intends, and typing there saves. With
+  the hold reverted, page mode opens unfocused, which is the old behaviour,
+  and the test is red at `toBeFocused`.
+
+**The page-mode flake, fixed at its cause:** it predates #5836. In the same
+window, shard 2 failed it 2 of 27 times on main, 0 of 28 on other branches,
+and 2 of 3 here.
+- **The cause:** ProseMirror's focus handler puts its own selection back 20 ms
+  after a focus if the DOM's differs (`editHandlers.focus`). The test's
+  `caret()` focuses the editor and then sends keys at machine speed. Chrome
+  runs input ahead of timers, so the stream of keys starved that timer past
+  the `ArrowDown`. The timer then undid the arrow's native move before
+  ProseMirror read it.
+- **Measured:** in a failing run, a 20 ms marker queued after the focus fired
+  140 ms late, 5 ms after the arrow. A `Selection.collapse` stack trace showed
+  the write back came from the focus handler's timeout. The picker's close and
+  Escape were not involved: the DOM selection was already right after them.
+- **The fix:** `caret()` waits for a 20 ms timer queued right after its
+  `view.focus()`, which runs after ProseMirror's. The three frame waits that
+  hid the race are gone. Each arrow is now followed by a check that the cursor
+  reached the next block.
+- **Shown red:** without the wait, the `#name` test failed 11 of 40, each at
+  that cursor check. With it, it passed 40 of 40. The whole spec passed three
+  times through, and twice on two workers.
+- **Not a page-mode bug:** a user's keys leave gaps, so the timer runs before
+  their next arrow.

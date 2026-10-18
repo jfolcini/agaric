@@ -17,10 +17,12 @@ import {
   activeSuggestionPopup,
   emitMockEvent,
   expect,
+  focusBlockById,
   getInvokeCalls,
   installIpcRecorder,
   ipc,
   readClipboard,
+  replaceEditorText,
   test,
   waitForBoot,
 } from './helpers'
@@ -170,6 +172,11 @@ async function caret(page: Page, index: number, offset: number | 'end'): Promise
       const length = editor.state.doc.child(i).firstChild.content.size
       editor.commands.setTextSelection(pos + 2 + (o === 'end' ? length : o))
       editor.view.focus()
+      // ProseMirror puts its own selection back 20 ms after a focus if the DOM's
+      // differs (`editHandlers.focus`). Keys sent at machine speed starve that
+      // timer past a later arrow, whose move it then undoes. A 20 ms timer set
+      // after the focus runs after ProseMirror's.
+      return new Promise((resolve) => setTimeout(resolve, 20))
     },
     { selector: EDITOR, index, offset },
   )
@@ -667,11 +674,9 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     await page.keyboard.type(' #newtag')
     await expect(activeSuggestionPopup(page)).toBeVisible()
     await page.keyboard.press('Escape')
-    // Closing the picker redraws the text the caret is in; a native arrow pressed
-    // before that frame is taken back by ProseMirror's own selection.
     await expect(activeSuggestionPopup(page)).toBeHidden()
-    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)))
     await page.keyboard.press('ArrowDown')
+    await expect.poll(async () => (await cursor(page)).index).toBe(1)
 
     const chip = page.locator(
       `${EDITOR} [data-page-block-id="${ids[0]}"] [data-testid="tag-ref-chip"]`,
@@ -700,6 +705,29 @@ test.describe('page mode behaves as block mode (#5691)', () => {
       return found.map((v) => v.id)
     })
     expect(violations).toEqual([])
+  })
+
+  // The press on the switch blurs the block being edited, which stays in edit
+  // mode until the release (#5807): its text is saved, and page mode opens with
+  // the cursor in it, which nothing the press held back takes away.
+  test('Page pressed while a block is edited opens page mode with the cursor in that block', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Switch while editing', [
+      [0, 'one'],
+      [0, 'two'],
+    ])
+    await openViaPalette(page, 'Switch while editing')
+    await focusBlockById(page, ids[1] as string)
+    await replaceEditorText(page, 'two edited')
+
+    await modeSwitch(page, 'Page').click()
+
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(2)
+    await expect(page.locator(EDITOR)).toBeFocused()
+    await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 0 })
+    await page.keyboard.type('x ')
+    await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('x two edited')
   })
 
   test('a page of tasks opens in page mode; a click, Ctrl+Enter and a typed marker set them, and they stay', async ({
@@ -742,9 +770,8 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     await page.keyboard.type('[ ] ')
     await expect.poll(async () => (await shown(page))[1]?.text).toBe('[ ] call mom')
     await expect(marker(ids[1])).toHaveCount(0)
-    // An arrow pressed in the frame the last key is drawn in is taken back by ProseMirror's selection.
-    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)))
     await page.keyboard.press('ArrowDown')
+    await expect.poll(async () => (await cursor(page)).index).toBe(2)
     await expect(marker(ids[1])).toHaveAttribute('aria-label', label('TODO'))
     await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('call mom')
     expect((await shown(page))[1]?.text).toBe('call mom')
@@ -926,9 +953,8 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     await page.keyboard.type('status:: done')
     await expect.poll(async () => (await shown(page))[1]?.text).toBe('call momstatus:: done')
     await expect(chips(ids[1])).toHaveCount(1)
-    // An arrow pressed in the frame the last key is drawn in is taken back by ProseMirror's selection.
-    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)))
     await page.keyboard.press('ArrowDown')
+    await expect.poll(async () => (await cursor(page)).index).toBe(2)
     await expect(chips(ids[1])).toHaveCount(2)
     await expect(chips(ids[1]).nth(1)).toHaveAttribute('aria-label', 'Status: done')
     await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('call mom')
