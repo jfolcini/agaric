@@ -161,7 +161,7 @@ A [`justfile`](justfile) provides a discoverable façade over the day-to-day com
 just setup                   # = npm run setup (full bootstrap, incl. hook toolchain)
 just install-hooks           # (re)install the prek toolchain + git hooks
 just dev                     # cargo tauri dev
-just test                    # Vitest + cargo nextest
+just test                    # Vitest + cargo nextest + Rust doc-tests
 just check                   # prek run --all-files (pre-commit-stage hooks only, not all of CI)
 just verify                  # pre-push verifier (range-scoped tests; clippy/knip/lychee run in the pre-push hook)
 just push                    # verify-then-push (use instead of raw `git push`)

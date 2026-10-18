@@ -82,7 +82,7 @@ cd src-tauri && cargo nextest run --workspace   # Rust tests (bare form is packa
 prek run --all-files         # Full local gate (mirror of CI's `validate` job)
 ```
 
-With the optional [`just`](#optional-just-task-runner) runner installed, the same commands are `just dev`, `just test-fe`, `just typecheck`, `just test-be`, and `just check` (and `just test` runs both test suites); run `just --list` for the rest.
+With the optional [`just`](#optional-just-task-runner) runner installed, the same commands are `just dev`, `just test-fe`, `just typecheck`, `just test-be`, and `just check` (and `just test` runs both test suites plus the Rust doc-tests); run `just --list` for the rest.
 
 **Use `npm run typecheck`, not `npx tsc --noEmit`.** The root `tsconfig.json` is solution-style (`"files": []` + four `references`), and `--noEmit` does not follow project references — only `--build`/`-b` does. So `npx tsc --noEmit` checks an empty program and **always exits 0**, however broken the code is (#3805). `npm run typecheck` is `tsc -b --noEmit`, the same command the pre-commit hook runs, so a local green means the hook will be green too.
 
@@ -95,7 +95,7 @@ npm run format:changed   # oxfmt — fixes JS/TS/JSON in CHANGED files only (vs 
 npm run format:toml      # taplo — fixes TOML (a `taplo fmt --check` failure is NOT fixed by oxfmt)
 ```
 
-Prefer formatting only the files you changed (as above), since `npm run format` is `oxfmt --write .` — a whole-repo reformat that can produce large unrelated diffs; reserve it for intentional repo-wide passes. (`just fmt` runs both commands above.) Either way, oxfmt only touches JS/TS/JSON and never reformats TOML, so a `taplo fmt --check` hook failure must be fixed with `npm run format:toml`. The `format:toml` script needs the `taplo` binary on `PATH` (`cargo install taplo-cli --locked`).
+Prefer formatting only the files you changed (as above), since `npm run format` is `oxfmt --write .` — a whole-repo reformat that can produce large unrelated diffs; reserve it for intentional repo-wide passes. (`just fmt` runs both commands above, then `cargo fmt --all` for Rust.) Either way, oxfmt only touches JS/TS/JSON and never reformats TOML, so a `taplo fmt --check` hook failure must be fixed with `npm run format:toml`. The `format:toml` script needs the `taplo` binary on `PATH` (`cargo install taplo-cli --locked`).
 
 ### Marking code with a removal deadline
 
