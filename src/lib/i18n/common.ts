@@ -501,6 +501,8 @@ export const common: Record<string, string> = {
   'integrity.copyButton': 'Copy for a bug report',
   'integrity.copied': 'Integrity report copied',
   'integrity.copyFailed': 'Could not copy the integrity report',
+  'integrity.reportTitle_one': 'Integrity check: {{count}} divergence',
+  'integrity.reportTitle_other': 'Integrity check: {{count}} divergences',
   'help.reportBugTitle': 'Report a bug',
   'help.reportBugDescription':
     'Found a problem? Send us what happened and — if you like — the recent logs from your device.',

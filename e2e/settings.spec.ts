@@ -188,6 +188,45 @@ test.describe('Settings panel @settings', () => {
     await expect(page.getByTestId('bug-report-preview')).toContainText('## Integrity check')
   })
 
+  // The mock has no derived tables to diverge, so this stubs the one IPC to
+  // hand back the diverged result a real vault can produce.
+  test('a diverged integrity check opens a bug report that carries it', async ({ page }) => {
+    await page.evaluate(() => {
+      const internals = (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__
+      const invoke = internals.invoke.bind(internals)
+      internals.invoke = (c, a) =>
+        c === 'compute_reconciliation_report'
+          ? Promise.resolve({
+              blocks_scanned: 1865,
+              today: '2026-10-19',
+              total_divergences: 2,
+              artefacts: [
+                {
+                  artefact: 'pages_cache.last_edited_ms',
+                  count: 2,
+                  sample_keys: ['01M5500000000000000000000A', '01M5500000000000000000000B'],
+                },
+              ],
+            })
+          : invoke(c, a)
+    })
+    await page.getByRole('tab', { name: 'App health' }).click()
+    const panel = page.locator('[data-testid="settings-panel-status"]')
+    await panel.getByRole('button', { name: 'Run check' }).click()
+    await expect(panel.getByTestId('integrity-summary')).toBeVisible()
+
+    await panel.getByRole('button', { name: 'Report a bug' }).click()
+
+    await expect(page.getByLabel('Short title')).toHaveValue('Integrity check: 2 divergences')
+    await expect(page.getByTestId('bug-report-preview')).toContainText(
+      '2 divergences over 1865 blocks scanned, 2026-10-19.',
+    )
+  })
+
   // #2687 / #2686 — Agent access tab was never opened by any spec. Deeper
   // toggle / activity-feed coverage lives in e2e/agent-access.spec.ts; this
   // is the tab-rail-level smoke check plus one representative interaction.
