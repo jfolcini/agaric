@@ -1467,7 +1467,9 @@ jobs:
           # the single cache slot to a faster sibling and recompiled from
           # scratch every PR. See the matching comment in the `lint` job.
           shared-key: rust-cov
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # One shard saves: both compile the same instrumented tree, and two
+          # saves of one key race ("Unable to reserve cache", #5853).
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 }}
 
       - name: Install Node.js
         uses: ./.github/actions/setup-node

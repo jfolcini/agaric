@@ -43,9 +43,11 @@ permissions:
 # so a rapid merge stack collapses to a single scan of the latest main HEAD
 # instead of N parallel 3-job matrices — the Security tab only ever reflects
 # the tip of main anyway. schedule/dispatch runs share the ref group too.
+# Only PR runs cancel: on main a newer run waits and replaces the one pending
+# run, so a running analysis finishes instead of being thrown away (#5853).
 concurrency:
   group: codeql-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   detect:
