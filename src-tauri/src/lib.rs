@@ -784,6 +784,24 @@ fn init_log_bridge(max_level: tracing_log::log::LevelFilter) {
     }
 }
 
+/// The stderr layer's filter: `AGARIC_STDERR_LOG` when set, else the log file's.
+///
+/// A harness sets it to `warn` so the console carries only problems while the
+/// file keeps the full `info` record. An invalid value comes back as an error
+/// message beside the file's filter, to report once the subscriber is up.
+fn stderr_log_filter(
+    stderr_log: &str,
+    file_filter: impl Fn() -> tracing_subscriber::EnvFilter,
+) -> (tracing_subscriber::EnvFilter, Option<String>) {
+    if stderr_log.trim().is_empty() {
+        return (file_filter(), None);
+    }
+    match tracing_subscriber::EnvFilter::try_new(stderr_log) {
+        Ok(filter) => (filter, None),
+        Err(e) => (file_filter(), Some(format!("{stderr_log:?}: {e}"))),
+    }
+}
+
 /// [`init_logging`]'s tail: announce the outcome, then park the appender and
 /// OTel guards plus the frontend-span ingestor in managed state.
 fn manage_logging_guards<R: tauri::Runtime>(
@@ -793,8 +811,16 @@ fn manage_logging_guards<R: tauri::Runtime>(
     obs_enabled: bool,
     log_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
     obs_guard: Option<agaric_observability::ObservabilityGuard>,
+    stderr_log_error: Option<String>,
 ) {
     use tauri::Manager;
+
+    if let Some(error) = stderr_log_error {
+        tracing::warn!(
+            %error,
+            "AGARIC_STDERR_LOG is not a valid filter; the console uses the log file's level"
+        );
+    }
 
     // #2110 M1a/M1b — announce only when telemetry is actually enabled; stay
     // silent (no new log line) when off so the existing logging output is
@@ -941,6 +967,8 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
         EnvFilter::try_new(&directives)
             .unwrap_or_else(|_| EnvFilter::new(build_log_directives("", &defaults)))
     };
+    let stderr_log = std::env::var("AGARIC_STDERR_LOG").unwrap_or_default();
+    let (stderr_filter, stderr_log_error) = stderr_log_filter(&stderr_log, make_log_filter);
 
     // #2110 M3 — the OTel trace layer captures at `debug` (default), so the
     // dispatch-time `ipc::request::run` span (Tauri `tracing` feature; target
@@ -1001,7 +1029,7 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     // directly onto the bare `Registry` (each implements `Layer` only for that
     // exact subscriber type, not for an already-`Layered` one). A `Vec` of them
     // is itself one `Layer<Registry>`; it carries its own `debug` filter and is
-    // added first. The stderr + file layers each carry their own `info` filter.
+    // added first. The stderr + file layers each carry their own filter.
     // `Option::then` attaches the OTel layers (with the debug filter) ONLY when
     // they exist — when disabled this is `None`, a no-op that leaves the
     // registry's max level at `info` so debug callsites stay free (M2b).
@@ -1011,7 +1039,7 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
         .with(
             tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stderr)
-                .with_filter(make_log_filter()),
+                .with_filter(stderr_filter),
         )
         .with(file_layer.map(|f| f.with_filter(make_log_filter())))
         // NOT `.init()`. `SubscriberInitExt::init` sets the global default
@@ -1034,6 +1062,7 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
         obs_enabled,
         log_guard,
         obs_guard,
+        stderr_log_error,
     );
 }
 
@@ -3328,6 +3357,47 @@ mod log_bridge_tests {
             !directives.contains("swarm_discovery=debug"),
             "the default must NOT be appended alongside the operator's, got: {directives}"
         );
+    }
+}
+
+/// `AGARIC_STDERR_LOG` moves the console's level without moving the file's.
+#[cfg(test)]
+mod stderr_log_filter_tests {
+    use super::{BASE_LOG_LAYER_DEFAULTS, build_log_directives, stderr_log_filter};
+    use tracing::Level;
+    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    fn file_filter() -> EnvFilter {
+        EnvFilter::new(build_log_directives("", BASE_LOG_LAYER_DEFAULTS))
+    }
+
+    #[test]
+    fn unset_keeps_the_file_filter() {
+        let (stderr, error) = stderr_log_filter("", file_filter);
+        assert!(error.is_none());
+        assert_eq!(stderr.to_string(), file_filter().to_string());
+    }
+
+    #[test]
+    fn warn_drops_an_info_event_the_file_keeps() {
+        let (stderr, error) = stderr_log_filter("warn", file_filter);
+        assert!(error.is_none());
+        let console = tracing_subscriber::registry().with(stderr);
+        let file = tracing_subscriber::registry().with(file_filter());
+        assert!(!tracing::subscriber::with_default(console, || {
+            tracing::enabled!(target: "agaric_store::cache", Level::INFO)
+        }));
+        assert!(tracing::subscriber::with_default(file, || {
+            tracing::enabled!(target: "agaric_store::cache", Level::INFO)
+        }));
+    }
+
+    #[test]
+    fn an_invalid_value_falls_back_to_the_file_filter() {
+        let (stderr, error) = stderr_log_filter("agaric=loud", file_filter);
+        assert!(error.is_some());
+        assert_eq!(stderr.to_string(), file_filter().to_string());
     }
 }
 
