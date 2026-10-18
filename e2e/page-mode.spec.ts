@@ -1383,6 +1383,47 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     expect(await axeViolations()).toEqual([])
   })
 
+  test('an open picker keeps its arrows beside a query or an embed: the highlight moves, and the caret and the typed name stay', async ({
+    page,
+  }) => {
+    const { pageId } = await seedRows(page, 'Picker beside', [
+      [0, 'first'],
+      [0, '{{query tag:work}}'],
+      [0, `{{embed ((${SEED_BLOCK_GS_1}))}}`],
+      [0, 'last'],
+    ])
+    await openInPageMode(page, 'Picker beside', 4)
+    const highlighted = activeSuggestionPopup(page).locator(
+      '[data-testid="suggestion-item"][aria-selected="true"]',
+    )
+    const tagNames = async () =>
+      (await ipc<Array<{ name: string }>>(page, 'list_all_tags_in_space', { scope: SCOPE })).map(
+        (tag) => tag.name,
+      )
+
+    // ArrowDown above the query: the picker's, not a step into the query's text.
+    await caret(page, 0, 'end')
+    await page.keyboard.type(' #wo')
+    await expect(highlighted).toHaveCount(1)
+    const first = (await highlighted.textContent()) ?? ''
+    await page.keyboard.press('ArrowDown')
+    await expect(highlighted).not.toHaveText(first)
+    expect((await cursor(page)).index).toBe(0)
+    await page.keyboard.press('Escape')
+    await expect(activeSuggestionPopup(page)).toHaveCount(0)
+    await expect.poll(async () => (await backend(page, pageId))[0]?.text).toBe('first #wo')
+    expect(await tagNames()).not.toContain('wo')
+
+    // ArrowUp below the embed, likewise.
+    await caret(page, 3, 'end')
+    await page.keyboard.type(' #wo')
+    await expect(highlighted).toHaveCount(1)
+    const top = (await highlighted.textContent()) ?? ''
+    await page.keyboard.press('ArrowUp')
+    await expect(highlighted).not.toHaveText(top)
+    expect((await cursor(page)).index).toBe(3)
+  })
+
   test('/ and :: are plain text: no menu or picker takes Enter, which splits the block', async ({
     page,
   }) => {

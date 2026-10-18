@@ -45,6 +45,9 @@ const ARROWS: Record<string, { dir: 1 | -1; side: 'up' | 'down' | 'left' | 'righ
 /** An arrow leaving a textblock towards a block whose text is not shown puts the caret in it. */
 export const PageRenderedKeys = Extension.create({
   name: 'pageRenderedKeys',
+  // Behind every arrow the default-priority extensions take, an open picker's
+  // first: among equal priorities TipTap runs the one registered last first.
+  priority: 99,
   addProseMirrorPlugins() {
     return [
       new Plugin({
