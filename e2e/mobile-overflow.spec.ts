@@ -568,7 +568,9 @@ test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
         )
         if (Math.abs(control.right - rightmost) > 1)
           problems.push(`${key}: Delete/Built-in ends at ${control.right}, row at ${rightmost}`)
-        const line1Bottom = Math.max(name.bottom, control.bottom)
+        // Line 1 is the name's line box, which is 44 px tall on touch either way.
+        const nameLine = (nameEl.parentElement ?? nameEl).getBoundingClientRect()
+        const line1Bottom = Math.max(nameLine.bottom, control.bottom)
         const isSelect = [...el.querySelectorAll('[data-slot="badge"]')].some(
           (b) => b.textContent === 'select',
         )
