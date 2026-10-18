@@ -145,6 +145,6 @@ The Tauri wrapper is not unit-tested.
    ```
 
 3. Register it in the `agaric_commands!` macro in `src-tauri/src/lib.rs`, the only registration point (both `run()` and the specta export expand it).
-4. Regenerate `src/lib/bindings.ts` (`just gen-bindings`).
+4. Regenerate `src/lib/bindings.ts` (`just gen-bindings`; `just ipc-check` chains it with the conformance regeneration, the mock tests and the typecheck).
 5. Call it via `@/lib/bindings` (`commands.myCommand(...)` returns `{ status: 'ok' | 'error' }`; unwrap at the call site). Only logic the generated binding cannot express goes in `src/lib/ipc-helpers.ts`.
 6. After a `query!`-family change, `just gen-sqlx` needs `DATABASE_URL` pointing at a migrated DB (`src-tauri/.env.example`).

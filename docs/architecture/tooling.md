@@ -12,7 +12,7 @@ The `agaric_commands!` macro in `src-tauri/src/lib.rs` is the **single source of
 
 Because both consumers come from the same token tree, the handler and the bindings cannot drift. Add a command in one place → both update.
 
-Bindings are generated into `src/lib/bindings.ts` by the `regenerate_ts_bindings` ignored test (`cargo test -- specta_tests --ignored`). The generated file is checked in. A Rust test gate (`ts_bindings_up_to_date`) runs in CI; the generated content is whitespace-and-header-normalised before compare, so cosmetic diffs don't fail the gate.
+Bindings are generated into `src/lib/bindings.ts` by the `regenerate_ts_bindings` ignored test (`cargo test --lib -- specta_tests --ignored`). The generated file is checked in. A Rust test gate (`ts_bindings_up_to_date`) runs in CI; the generated content is whitespace-and-header-normalised before compare, so cosmetic diffs don't fail the gate.
 
 The frontend never calls `invoke()` directly (enforced by the `no-raw-invoke` prek hook). It calls the generated `commands.*` surface and unwraps with `unwrap` from `@/lib/app-error`. The hand-written wrapper layer that used to sit on top is gone (#2927), along with the ratchet that retired it; what survives is the small permanent floor in `src/lib/ipc-helpers.ts`. See [`frontend.md § Tauri command surface`](frontend.md).
 

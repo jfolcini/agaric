@@ -2652,7 +2652,8 @@ describe('#3083 conformance-coverage ratchet', () => {
         `allowlist waiver: ${JSON.stringify(uncovered)}. A name-only mock handler ` +
         `can silently diverge from the backend. FIX by EITHER (a) adding a ` +
         `conformance/fixtures/*.json fixture that drives the command (author its ` +
-        `expected with CONFORMANCE_UPDATE=1 cargo nextest run -E ` +
+        `expected with CONFORMANCE_UPDATE=1 cargo nextest run --workspace ` +
+        `--test command_integration -E ` +
         `'test(conformance_fixtures_match_backend)'), OR (b) adding an entry to ` +
         `NO_FIXTURE_ALLOWLIST in this file with a reason. If the command is ` +
         `read-only, give it a query-verb prefix or add it to READ_ONLY_EXACT.`,
@@ -2787,7 +2788,8 @@ describe('#3083 conformance-coverage ratchet', () => {
         `conformance/fixtures/*.json fixture that drives this branch's discriminator ` +
         `arg — wire it in src-tauri/tests/command_integration/conformance_query.rs ` +
         `and in the WIRE table of ./conformance-query.ts, then author the expectation ` +
-        `with CONFORMANCE_UPDATE=1 cargo nextest run -E ` +
+        `with CONFORMANCE_UPDATE=1 cargo nextest run --workspace ` +
+        `--test command_integration -E ` +
         `'test(conformance_fixtures_match_backend)' — OR (b) adding an entry to ` +
         `READ_QUERY_BRANCH_ALLOWLIST in this file with a reason.`,
     ).toEqual([])
@@ -3495,7 +3497,8 @@ describe('#3083 conformance-coverage ratchet', () => {
       misaligned,
       `These query steps have no positionally-matching \`expected_queries\` entry ` +
         `${JSON.stringify(misaligned)}. The two arrays are index-aligned — re-author ` +
-        `with CONFORMANCE_UPDATE=1 cargo nextest run -E ` +
+        `with CONFORMANCE_UPDATE=1 cargo nextest run --workspace ` +
+        `--test command_integration -E ` +
         `'test(conformance_fixtures_match_backend)'.`,
     ).toEqual([])
 

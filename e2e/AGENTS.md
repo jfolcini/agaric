@@ -37,7 +37,7 @@ Root rule: [AGENTS.md § Testing invariants](../AGENTS.md#testing-invariants-ant
 - Write the fixture (seed + ops + optional `scenarios` tags) without `expected`, then:
 
   ```sh
-  cd src-tauri && CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'
+  cd src-tauri && CONFORMANCE_UPDATE=1 cargo nextest run --workspace --test command_integration -E 'test(conformance_fixtures_match_backend)'
   npx vitest run src/lib/tauri-mock src/lib/__tests__/tauri-mock.test.ts
   ```
 

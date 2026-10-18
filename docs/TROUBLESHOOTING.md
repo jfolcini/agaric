@@ -98,7 +98,7 @@ just gen-sqlx
 The `specta_tests::ts_bindings_up_to_date` test fails:
 
 ```text
-TypeScript bindings are stale — regenerate with: cd src-tauri && cargo test -- specta_tests --ignored
+TypeScript bindings are stale — regenerate with: cd src-tauri && cargo test --lib -- specta_tests --ignored
 ```
 
 CI fails on the same drift via the `ts_bindings_up_to_date` Rust test itself, run as part of the `cargo nextest run` suite (not a standalone prek hook).
@@ -115,7 +115,7 @@ produces, and the parity test rejects the diff.
 Regenerate the bindings, then commit `src/lib/bindings.ts`:
 
 ```bash
-cd src-tauri && cargo test -- specta_tests --ignored
+cd src-tauri && cargo test --lib -- specta_tests --ignored
 ```
 
 ## 4. Materializer test deadlock

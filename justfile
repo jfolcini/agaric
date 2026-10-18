@@ -166,7 +166,14 @@ push *ARGS:
 # Regenerate Tauri IPC TypeScript bindings (src/lib/bindings.ts) after changing IPC-exposed Rust types.
 [group('codegen')]
 gen-bindings:
-    cd src-tauri && cargo test -- specta_tests --ignored
+    cd src-tauri && cargo test --lib -- specta_tests --ignored
+
+# After changing a command: bindings, conformance fixtures, mock tests, typecheck.
+[group('codegen')]
+ipc-check: gen-bindings _require-npm
+    cd src-tauri && CONFORMANCE_UPDATE=1 cargo nextest run --workspace --test command_integration -E 'test(conformance_fixtures_match_backend)'
+    npx vitest run src/lib/tauri-mock
+    npm run typecheck
 
 # Regenerate ALL FOUR committed sqlx offline query caches after changing SQL:
 # the workspace root (`src-tauri/.sqlx`) plus each layered-workspace member
