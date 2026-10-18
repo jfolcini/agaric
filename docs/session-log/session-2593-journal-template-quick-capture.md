@@ -1,4 +1,4 @@
-# Session 2577 — The Quick Capture hotkey raises a minimized window, and journal template variables on the real backend (#5735)
+# Session 2593 — The Quick Capture hotkey raises a minimized window, and journal template variables on the real backend (#5735)
 
 #5735 asked for two real-backend specs: journal template variables expanded for the
 day being created, and the global Quick Capture hotkey working while the app is
