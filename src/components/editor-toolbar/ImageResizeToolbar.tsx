@@ -4,6 +4,7 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -81,11 +82,14 @@ export function ImageResizeToolbar({
   // the file: the fixed form emits a `_c(...)` cache the pre-fix form did
   // not. Safe here because nothing the cache is keyed on can go
   // stale: the key set reduces to `blockId`, `currentWidth`,
-  // `currentAlignment`, the two change callbacks and the i18n `t` — strings
-  // and functions, with no object whose state mutates behind a stable
-  // identity. Contrast SelectionBubbleMenu, where a TipTap `Editor` in the
+  // `currentAlignment`, the two change callbacks, the i18n `t` and the batch
+  // provider's value, which is replaced, never mutated — no object whose state
+  // mutates behind a stable identity. Contrast SelectionBubbleMenu, where a TipTap `Editor` in the
   // key set froze the subtree and the identical edit had to be reverted.
   const { containerRef, onKeyDown: rovingOnKeyDown, onFocus: rovingOnFocus } = useRovingTabindex()
+  // The batch this image's properties came from reads them again once one is written: page
+  // mode hears of the write no other way.
+  const batchProperties = useBatchPropertyRows()
 
   const handleClick = useCallback(
     (value: string) => {
@@ -99,6 +103,7 @@ export function ImageResizeToolbar({
           value_bool: null,
         })
         .then(unwrap)
+        .then(() => batchProperties?.invalidate(blockId))
         .catch((err) => {
           logger.warn('ImageResizeToolbar', 'property save failed', { blockId, value }, err)
           // Revert on failure — restore previous width
@@ -106,7 +111,7 @@ export function ImageResizeToolbar({
           notify.error(t('imageResize.saveFailed'))
         })
     },
-    [blockId, currentWidth, onWidthChange, t],
+    [batchProperties, blockId, currentWidth, onWidthChange, t],
   )
 
   const handleAlign = useCallback(
@@ -121,6 +126,7 @@ export function ImageResizeToolbar({
           value_bool: null,
         })
         .then(unwrap)
+        .then(() => batchProperties?.invalidate(blockId))
         .catch((err) => {
           logger.warn('ImageResizeToolbar', 'alignment save failed', { blockId, value }, err)
           // Revert on failure — restore previous alignment
@@ -128,7 +134,7 @@ export function ImageResizeToolbar({
           notify.error(t('imageAlign.saveFailed'))
         })
     },
-    [blockId, currentAlignment, onAlignmentChange, t],
+    [batchProperties, blockId, currentAlignment, onAlignmentChange, t],
   )
 
   return (

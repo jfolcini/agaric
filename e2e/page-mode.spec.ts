@@ -1320,6 +1320,57 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     expect(violations).toEqual([])
   })
 
+  test('an image dragged to a new size keeps it once Tab draws its block anew', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Page image size', [
+      [0, 'first'],
+      [0, 'photo'],
+    ])
+    await ipc(page, 'add_attachment_with_bytes', {
+      blockId: ids[1],
+      filename: 'photo.png',
+      mimeType: 'image/png',
+      bytes: PNG_1X1,
+    })
+    await openInPageMode(page, 'Page image size', 2)
+    const inPhoto = (selector: string) =>
+      page.locator(`${EDITOR} [data-page-block-id="${ids[1]}"] ${selector}`)
+    const width = () =>
+      inPhoto('[data-testid="image-resize-wrapper"]').evaluate(
+        (el) => (el as HTMLElement).style.maxWidth,
+      )
+    await expect(inPhoto('img[alt="photo.png"]')).toBeVisible()
+    expect(await width()).toBe('100%')
+
+    // Centred, the image grows both ways: a quarter of the row is the handle an eighth past its middle.
+    const row = await inPhoto('[data-testid="attachment-section"]').boundingBox()
+    await inPhoto('[data-testid="image-resize-wrapper"]').hover()
+    const handle = await inPhoto('[data-testid="image-resize-handle"]').boundingBox()
+    if (row === null || handle === null) throw new Error('the image row has no layout box')
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(row.x + row.width * 0.625, handle.y + handle.height / 2, { steps: 5 })
+    await page.mouse.up()
+    await expect.poll(width).toBe('25%')
+    await expect
+      .poll(async () => {
+        const rows = await ipc<Array<{ key: string; value_text: string | null }>>(
+          page,
+          'get_properties',
+          { blockId: ids[1] },
+        )
+        return rows.find((r) => r.key === 'image_width')?.value_text
+      })
+      .toBe('25')
+
+    await caret(page, 1, 'end')
+    await page.keyboard.press('Tab')
+    await expect.poll(async () => (await backend(page, pageId))[1]?.depth).toBe(1)
+    await expect(inPhoto('img[alt="photo.png"]')).toBeVisible()
+    await expect.poll(width).toBe('25%')
+  })
+
   test('a page with a query and an embed opens in page mode; the caret reveals their text, an edited query shows its results, and they stay', async ({
     page,
   }) => {
@@ -1512,7 +1563,8 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     await expect(inBlock(ids[2], '.due-date-chip')).toHaveText('Dec 24')
     await expect.poll(async () => (await row(ids[2])).due_date).toBe('2026-12-24')
 
-    // /attach opens the file dialog as it is picked; the file is the block's.
+    // /attach opens the file dialog as it is picked; the image is the block's, and, as block
+    // mode's /attach, not in its text (the rows read at the end).
     await caret(page, 1, 'end')
     await page.keyboard.type(' /attach')
     const chooser = page.waitForEvent('filechooser')
@@ -1520,9 +1572,9 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     await (
       await chooser
     ).setFiles({
-      name: 'trip.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('trip notes'),
+      name: 'trip.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
     })
     await expect
       .poll(async () =>
@@ -1530,7 +1582,7 @@ test.describe('page mode behaves as block mode (#5691)', () => {
           (attachment) => attachment.filename,
         ),
       )
-      .toEqual(['trip.txt'])
+      .toEqual(['trip.png'])
 
     // The drawer clears a date.
     await caret(page, 1, 'end')

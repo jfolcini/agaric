@@ -10,6 +10,7 @@ import {
 } from '@/components/editor-toolbar/ImageResizeToolbar'
 import { MimeIcon } from '@/components/rendering/MimeIcon'
 import { renderRichContent } from '@/components/RichContentRenderer'
+import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
 import { useEnteredViewport } from '@/hooks/useEnteredViewport'
 import { unwrap } from '@/lib/app-error'
 import { formatSize } from '@/lib/attachment-utils'
@@ -167,6 +168,9 @@ function AttachmentImage({
   // Viewport gate (#758 item 5): don't read the attachment bytes over IPC
   // until the placeholder actually approaches the viewport.
   const [inView, viewGateRef] = useEnteredViewport<HTMLSpanElement>()
+  // The batch this image's properties came from reads them again once one is written: page
+  // mode hears of the write no other way.
+  const batchProperties = useBatchPropertyRows()
 
   // Caption state (#2214). The input is *controlled* rather than uncontrolled
   // (`defaultValue`): the field mounts only once the image bytes resolve, so if
@@ -287,6 +291,7 @@ function AttachmentImage({
           value_bool: null,
         })
         .then(unwrap)
+        .then(() => batchProperties?.invalidate(blockId))
         .catch((err) => {
           logger.warn('AttachmentRenderer', 'resize save failed', { blockId, snapped }, err)
           // Revert on failure — restore the previous width.
@@ -294,7 +299,7 @@ function AttachmentImage({
           notify.error(t('imageResize.saveFailed'))
         })
     },
-    [blockId, imageWidth, onImageWidthChange, t],
+    [batchProperties, blockId, imageWidth, onImageWidthChange, t],
   )
 
   // When a caption exists it doubles as the image's alt text (#212 item 3);
@@ -329,6 +334,7 @@ function AttachmentImage({
           value_bool: null,
         })
         .then(unwrap)
+        .then(() => batchProperties?.invalidate(blockId))
         .catch((err) => {
           logger.warn('AttachmentRenderer', 'caption save failed', { blockId }, err)
           // Revert on failure — restore the previous caption.
@@ -337,7 +343,7 @@ function AttachmentImage({
           notify.error(t('imageCaption.saveFailed'))
         })
     },
-    [blockId, imageCaption, onImageCaptionChange, t],
+    [batchProperties, blockId, imageCaption, onImageCaptionChange, t],
   )
 
   useEffect(() => {

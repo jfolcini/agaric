@@ -329,6 +329,8 @@ function PageModeDocument({
       pick: (step: () => Promise<void>, readAgain: boolean) => void
       setListStyle: (id: string, style: ListStyle) => void
       command: (item: PickerItem) => void
+      /** `/attach`'s file: attached, as block mode's `/attach` attaches it, never put in the text. */
+      attachPicked: (id: string, files: File[]) => void
     }
   >({
     cycle: () => {},
@@ -345,6 +347,7 @@ function PageModeDocument({
     pick: () => {},
     setListStyle: () => {},
     command: () => {},
+    attachPicked: () => {},
   })
   const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)
   // Block mode's chip navigation: another page opens; a block of this page takes the cursor.
@@ -462,7 +465,7 @@ function PageModeDocument({
     datePicker,
     openPropertyDrawer: setDrawerBlockId,
     saveQuery: (id, expression) => actions.current.saveQuery(id, expression),
-    attach: (id, files) => actions.current.attach(id, files),
+    attach: (id, files) => actions.current.attachPicked(id, files),
   })
   // The session reads these as they are when it needs them, not as it was built with.
   const blocked = useEffectEvent((blocker: PageModeBlocker) => onBlocked(blocker))
@@ -614,6 +617,25 @@ function PageModeDocument({
         await change()
       })
     }
+    // Block mode's upload, once the block exists; with `inline`, as block mode's paste and drop,
+    // an image also goes in at the caret if the caret is still in that block once uploaded. It
+    // reads the page again itself.
+    const attach = (id: string, files: File[], inline: boolean): void => {
+      let attached = false
+      void afterSave(id, async () => {
+        attached = true
+        await processFileAttachments(files, id, t, {
+          editor: inline ? editor : null,
+          // Read once uploaded, as block mode's roving handle is: the caret may have moved on.
+          get activeBlockId() {
+            return cursorBlock()
+          },
+        })
+      }).then(() => {
+        // The block was gone, or its save failed: say so rather than drop the files.
+        if (!attached) notify.error(t('blockTree.attachFileFailed'))
+      })
+    }
     // While a command runs after its save: the flush its handler asks for first
     // (`flushActiveDraft`) is that save, and one queued behind it would wait forever.
     let running = false
@@ -648,35 +670,24 @@ function PageModeDocument({
         })
       },
       attachmentsChanged: readAgain,
-      // Block mode's upload, once the block exists; an image also goes in at the caret, as block
-      // mode puts it there, if the caret is still in that block once uploaded. It reads the page
-      // again itself.
-      attach: (id, files) => {
-        let attached = false
-        void afterSave(id, async () => {
-          attached = true
-          await processFileAttachments(files, id, t, {
-            editor,
-            // Read once uploaded, as block mode's roving handle is: the caret may have moved on.
-            get activeBlockId() {
-              return cursorBlock()
-            },
-          })
-        }).then(() => {
-          // The block was gone, or its save failed: say so rather than drop the files.
-          if (!attached) notify.error(t('blockTree.attachFileFailed'))
-        })
-      },
+      attach: (id, files) => attach(id, files, true),
+      attachPicked: (id, files) => attach(id, files, false),
       // As a click on block mode's static block, which takes it into editing.
       edit: (id) => {
         cursorInto(editor, id)
       },
       // Written in turn with the saves: the read its change to the store asks for comes after it.
       saveQuery: (id, expression) => {
+        let ran = false
         let saved = false
         return afterSave(id, async () => {
+          ran = true
           saved = await pageStore.getState().edit(id, `{{query ${expression}}}`)
-        }).then(() => saved)
+        }).then(() => {
+          // The block was gone, or its save failed: say so, as the store's refused edit does.
+          if (!ran) notify.error(t('error.saveFailed'))
+          return saved
+        })
       },
       // A date picked: written in turn with the saves, so no read of a save's overtakes it.
       // An until date is a property, which page mode shows from its own read.

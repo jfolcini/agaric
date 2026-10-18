@@ -16,7 +16,8 @@
  *   changes nothing but the document (a mark toggled at the caret, which a
  *   save's change would clear, and what inserts at the caret), and `/attach`,
  *   whose file dialog WebKit opens only inside the key or click that picked
- *   it; the file chosen is attached as a pasted one is, once the block is saved.
+ *   it; the file chosen is attached once the block is saved, and, as block
+ *   mode's `/attach`, an image is not put in the text.
  *
  * `/duplicate` and `/template` are not offered: they write blocks through the
  * block store, outside the document, which owns the page's structure here.
@@ -133,7 +134,7 @@ export interface PageSlashCommandsOptions {
   openPropertyDrawer: (id: string) => void
   /** Write the query block mode's builder saved for a block; resolves whether it did. */
   saveQuery: (id: string, expression: string) => Promise<boolean>
-  /** Attach files to a block, as a paste does, once a save has created it. */
+  /** Attach files to a block once a save has created it, as block mode's `/attach` does. */
   attach: (id: string, files: File[]) => void
 }
 

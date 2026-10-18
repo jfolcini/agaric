@@ -9,7 +9,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { blockerIn, blockerMessage, type PageModeBlocker } from '@/editor/page-mode/page-mode-fit'
 import type { PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
@@ -54,6 +54,22 @@ export function usePageMode(pageId: string): PageModeState {
   const pageStore = usePageBlockStoreApi()
   const setFocused = useBlockStore((s) => s.setFocused)
 
+  /** Open page mode on the block block mode was editing, which commits as it loses focus. */
+  const takeCursor = useCallback(() => {
+    const focused = useBlockStore.getState().focusedBlockId
+    setCursor(focused === null ? null : { pageId, blockId: focused })
+    setFocused(null)
+  }, [pageId, setFocused])
+
+  // Page mode back by itself, the page fitting again (blocks deleted in block mode): that opening
+  // takes the cursor too, or it opens on the block the switch last named, perhaps gone.
+  const wasBlocked = useRef(blocker !== null)
+  useEffect(() => {
+    const returned = wasBlocked.current && blocker === null
+    wasBlocked.current = blocker !== null
+    if (returned && available && mode === 'page') takeCursor()
+  }, [available, blocker, mode, takeCursor])
+
   const afterFlush = useCallback((then: () => void) => {
     const editor = editorRef.current
     if (editor === null) then()
@@ -81,10 +97,7 @@ export function usePageMode(pageId: string): PageModeState {
           notify.info(blockerMessage(blocker))
           return
         }
-        // As for source mode: the block being edited commits as it loses focus.
-        const focused = useBlockStore.getState().focusedBlockId
-        setCursor(focused === null ? null : { pageId, blockId: focused })
-        setFocused(null)
+        takeCursor()
         setChosen({ pageId, mode: 'page' })
         return
       }
@@ -103,7 +116,7 @@ export function usePageMode(pageId: string): PageModeState {
           })
       })
     },
-    [afterFlush, blocker, pageId, pageStore, setFocused],
+    [afterFlush, blocker, pageId, pageStore, setFocused, takeCursor],
   )
 
   return {
