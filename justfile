@@ -172,6 +172,7 @@ gen-bindings:
 [group('codegen')]
 ipc-check: gen-bindings _require-npm
     cd src-tauri && CONFORMANCE_UPDATE=1 cargo nextest run --workspace --test command_integration -E 'test(conformance_fixtures_match_backend)'
+    npx oxfmt --write conformance/fixtures/
     npx vitest run src/lib/tauri-mock
     npm run typecheck
 

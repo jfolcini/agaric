@@ -989,22 +989,12 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn spawn_daemon_runs_a_job_once_after_a_stall() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let job = MaintenanceJob {
-            name: "minute_job",
-            interval: TICK_INTERVAL,
-            last_run: None,
-            predicate: dummy_predicate_true(),
-            run: {
-                let calls = calls.clone();
-                Box::new(move || {
-                    let calls = calls.clone();
-                    Box::pin(async move {
-                        calls.fetch_add(1, Ordering::Relaxed);
-                        Ok(())
-                    })
-                })
-            },
-        };
+        let job = counter_job(
+            "minute_job",
+            TICK_INTERVAL,
+            calls.clone(),
+            dummy_predicate_true(),
+        );
         let shutdown = Arc::new(AtomicBool::new(false));
         spawn_daemon(vec![job], shutdown.clone());
         // Let the daemon start its ticker and park on the first real tick.
