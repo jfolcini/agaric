@@ -142,6 +142,9 @@ describe('Agaric real-backend Advanced Query grouping (#5738)', () => {
 
     await chooseSelectOption('[data-testid="advanced-query-group"]', 'State')
     await waitForGroups(expectedGroups(false), [], 'grouped by state')
+    // Grouped mode's total counts the buckets, not the blocks in them.
+    const grouped = `${BUCKETS.length} groups`
+    await expect(total).toHaveText(grouped)
 
     const addAggregate = $('[data-testid="advanced-query-aggregates"]').$('button=Add aggregate')
     await addAggregate.waitForClickable({ timeout: ACTION_TIMEOUT })
@@ -156,5 +159,6 @@ describe('Agaric real-backend Advanced Query grouping (#5738)', () => {
       [`Count: ${TASKS.length}`],
       'after navigating away and back',
     )
+    await expect($('[data-testid="advanced-query-total"]')).toHaveText(grouped)
   })
 })

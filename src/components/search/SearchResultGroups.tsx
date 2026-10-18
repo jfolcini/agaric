@@ -83,7 +83,8 @@ export function SearchResultGroups({
   if (groups.length === 0) return null
 
   const focusedRow = flatRows[focusedIndex]
-  const totalMatches = flatRows.length
+  // Every loaded row, collapsed groups included: `flatRows` drops collapsed rows.
+  const totalMatches = groups.reduce((n, g) => n + g.blocks.length, 0)
   const pageCount = groups.length
 
   // Resolve, per group, the id of the row that should drive

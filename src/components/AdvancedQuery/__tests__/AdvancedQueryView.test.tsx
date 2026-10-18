@@ -586,6 +586,30 @@ describe('AdvancedQueryView', () => {
     expect(within(group).getByText('Member row')).toBeInTheDocument()
   })
 
+  it('labels the grouped total as a group count, not a block count', async () => {
+    // Grouped mode's totalCount is the number of groups; the six members span
+    // three groups.
+    routeInvoke(
+      makeResponse({
+        rows: [],
+        groups: [
+          { key: 'a', count: 3, members: [makeRow({ id: 'BLK_A' })] },
+          { key: 'b', count: 2, members: [makeRow({ id: 'BLK_B' })] },
+          { key: 'c', count: 1, members: [makeRow({ id: 'BLK_C' })] },
+        ],
+        totalCount: 3,
+      }),
+    )
+    useAdvancedQueryStore.setState({
+      controlsBySpace: {
+        [SPACE_ID]: { fulltext: '', sort: [], groupBy: { key: { type: 'Tag' } }, aggregates: [] },
+      },
+    })
+    render(<AdvancedQueryView />)
+
+    expect(await screen.findByTestId('advanced-query-total')).toHaveTextContent('3 groups')
+  })
+
   it('resolves a Tag group-key id to its title in the header (#1447)', async () => {
     const tagId = '01J000000000000000000TAG00'
     mockedInvoke.mockImplementation(async (cmd, args) => {

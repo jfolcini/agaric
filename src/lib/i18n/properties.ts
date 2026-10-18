@@ -49,6 +49,8 @@ export const properties: Record<string, string> = {
   'advancedQuery.noResults': 'No blocks match these filters',
   'advancedQuery.totalCount_one': '{{count}} matching block',
   'advancedQuery.totalCount_other': '{{count}} matching blocks',
+  'advancedQuery.groupCount_one': '{{count}} group',
+  'advancedQuery.groupCount_other': '{{count}} groups',
   // Polite live-region announcement while a query is (re)fetching.
   'advancedQuery.searching': 'Searching…',
   // #1280 D2 — advanced-query controls (full-text / sort / group-by / aggregate).

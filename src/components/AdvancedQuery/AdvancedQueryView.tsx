@@ -310,9 +310,11 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
               className="px-1 pb-1 text-xs text-muted-foreground"
               data-testid="advanced-query-total"
             >
-              {t('advancedQuery.totalCount', {
-                count: totalCount ?? (isGrouped ? groups.length : results.length),
-              })}
+              {/* Grouped mode pages over groups and a block can sit in several
+                  (tag groups), so the group count is the only honest total. */}
+              {isGrouped
+                ? t('advancedQuery.groupCount', { count: totalCount ?? groups.length })
+                : t('advancedQuery.totalCount', { count: totalCount ?? results.length })}
             </p>
 
             {/* Global aggregate summary bar (shown in both flat and grouped mode

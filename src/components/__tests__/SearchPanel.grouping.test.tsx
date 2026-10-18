@@ -173,9 +173,7 @@ describe(' Phase 1 — SearchPanel page grouping', () => {
 
     await waitFor(() => {
       const summary = screen.getByTestId('search-result-count-summary')
-      expect(summary).toHaveTextContent(
-        t('search.matchCountPlural', { matchCount: 3, pageCount: 2 }),
-      )
+      expect(summary).toHaveTextContent('3 matches in 2 pages')
     })
   })
 

@@ -2,18 +2,15 @@
  * Tests for `ResultCountSummary` — the "N matches in M pages" string
  * Above the first search-result group (Phase 1).
  *
- * Covers the three string variants enumerated in the plan:
- *  - 0 matches / 0 pages → renders nothing (SearchPanel handles empty
- *    elsewhere via `search.noResultsFound`).
- *  - 1 match in 1 page → singular form.
- *  - N matches in M pages → plural form with both counts.
+ * 0 matches renders nothing (SearchPanel handles empty elsewhere via
+ * `search.noResultsFound`); otherwise matches and pages each take their own
+ * singular or plural noun.
  */
 
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import { ResultCountSummary } from '@/components/search/ResultCountSummary'
-import { t } from '@/lib/i18n'
 
 describe('ResultCountSummary', () => {
   it('renders nothing for 0 matches', () => {
@@ -21,23 +18,14 @@ describe('ResultCountSummary', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('renders the singular form for 1 match in 1 page', () => {
-    render(<ResultCountSummary matchCount={1} pageCount={1} />)
-    expect(screen.getByText(t('search.matchCountSingular'))).toBeInTheDocument()
-  })
-
-  it('renders the plural form for N matches in M pages', () => {
-    render(<ResultCountSummary matchCount={9} pageCount={3} />)
-    expect(
-      screen.getByText(t('search.matchCountPlural', { matchCount: 9, pageCount: 3 })),
-    ).toBeInTheDocument()
-  })
-
-  it('renders the plural form for 2-and-1 (still plural because of the second quantity)', () => {
-    render(<ResultCountSummary matchCount={2} pageCount={1} />)
-    expect(
-      screen.getByText(t('search.matchCountPlural', { matchCount: 2, pageCount: 1 })),
-    ).toBeInTheDocument()
+  it.each([
+    [1, 1, '1 match in 1 page'],
+    [9, 3, '9 matches in 3 pages'],
+    [50, 1, '50 matches in 1 page'],
+    [1, 2, '1 match in 2 pages'],
+  ])('renders %i match(es) over %i page(s) as "%s"', (matchCount, pageCount, text) => {
+    render(<ResultCountSummary matchCount={matchCount} pageCount={pageCount} />)
+    expect(screen.getByTestId('search-result-count-summary').textContent).toBe(text)
   })
 
   it('exposes a stable `data-testid` for integration tests', () => {

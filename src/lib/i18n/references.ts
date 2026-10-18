@@ -418,8 +418,10 @@ export const references: Record<string, string> = {
   'unlinkedReferences.errorBoundary': 'Failed to load unlinked mentions.',
   'graph.filterBar.errorBoundary': 'Filter bar failed to render.',
   'search.resultsRegionLabel': 'Search results',
-  'search.matchCountSingular': '1 match in 1 page',
-  'search.matchCountPlural': '{{matchCount}} matches in {{pageCount}} pages',
+  'search.matchCount_one': '{{count}} match in {{pages}}',
+  'search.matchCount_other': '{{count}} matches in {{pages}}',
+  'search.pageCount_one': '{{count}} page',
+  'search.pageCount_other': '{{count}} pages',
   'search.matchCountInGroupSingular': '1 match',
   'search.matchCountInGroupPlural': '{{count}} matches',
   /**
