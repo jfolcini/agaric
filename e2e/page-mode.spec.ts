@@ -106,6 +106,8 @@ async function openViaPalette(page: Page, title: string): Promise<void> {
   await page.locator('[cmdk-item]').filter({ hasText: title }).first().waitFor()
   await page.keyboard.press('Enter')
   await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
+  // The pane fades in after a page opens; axe blends the fade into the text colours.
+  await expect(page.getByTestId('view-transition-wrapper')).toHaveCSS('opacity', '1')
 }
 
 function modeSwitch(page: Page, name: 'Blocks' | 'Page') {
