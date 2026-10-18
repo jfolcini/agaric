@@ -53,7 +53,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   // properties have no valid empty value (the real backend rejects it), so we
   // render a local DRAFT row for value entry and only write on the first
   // non-empty save. A draft is dropped (no backend call) if the user leaves it
-  // empty.
+  // empty or removes it.
   const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set())
 
   const { data: storedRows, error: storedRowsError, isPending } = usePageProperties(pageId)
@@ -154,6 +154,23 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     logTag: 'PagePropertyTable',
   })
 
+  const forgetDraft = useCallback((key: string) => {
+    setDraftKeys((prev) => {
+      if (!prev.has(key)) return prev
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+  }, [])
+
+  const dropDraft = useCallback(
+    (key: string) => {
+      setProperties((prev) => prev.filter((p) => p.key !== key))
+      forgetDraft(key)
+    },
+    [forgetDraft],
+  )
+
   /**
    * Wrapper that resolves valueType from def before delegating to hook.
    *
@@ -169,32 +186,30 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
       const valueType = def?.value_type ?? 'text'
       if (draftKeys.has(key)) {
         if (rawValue.trim() === '') {
-          setProperties((prev) => prev.filter((p) => p.key !== key))
-          setDraftKeys((prev) => {
-            const next = new Set(prev)
-            next.delete(key)
-            return next
-          })
+          dropDraft(key)
           return
         }
-        setDraftKeys((prev) => {
-          const next = new Set(prev)
-          next.delete(key)
-          return next
-        })
+        forgetDraft(key)
       }
       await doSave(key, rawValue, valueType)
     },
-    [doSave, draftKeys],
+    [doSave, draftKeys, dropDraft, forgetDraft],
   )
 
+  // A draft was never written, so removing one is local: a `delete_property`
+  // for a key the page never held appends an op whose undo fails, which
+  // aborts the page's undo group.
   const handleConfirmDelete = useCallback(() => {
     if (deleteTarget) {
-      // `usePropertySave` toasts and logs its own failure; never rejects.
-      void doDeleteProperty(deleteTarget)
+      if (draftKeys.has(deleteTarget)) {
+        dropDraft(deleteTarget)
+      } else {
+        // `usePropertySave` toasts and logs its own failure; never rejects.
+        void doDeleteProperty(deleteTarget)
+      }
       setDeleteTarget(null)
     }
-  }, [deleteTarget, doDeleteProperty])
+  }, [deleteTarget, doDeleteProperty, draftKeys, dropDraft])
 
   // #2792 / #2804 — `DRAFT_ROW_VALUE_TYPES` have no valid empty initializer
   // (the backend rejects an empty `value_text`, a ref with no target and, for
@@ -357,6 +372,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                     )
                   }}
                   onRefSaved={async () => {
+                    forgetDraft(prop.key)
                     const updated = unwrap(await commands.getProperties(pageId))
                     setProperties(updated)
                   }}

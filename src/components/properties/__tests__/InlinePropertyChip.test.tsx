@@ -1,11 +1,18 @@
+import type { InvokeArgs } from '@tauri-apps/api/core'
+import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { InlinePropertyChip } from '@/components/properties/InlinePropertyChip'
+import { unresolvedBlockLabel } from '@/lib/block-title'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { seedBlocks } from '@/lib/tauri-mock/seed'
 import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 const TARGET = '00000000000000000000PAGE02'
 
@@ -39,6 +46,7 @@ function renderChip(
 beforeEach(() => {
   vi.clearAllMocks()
   useResolveStore.setState({ cache: new Map(), version: 0 })
+  useSpaceStore.setState({ currentSpaceId: null })
 })
 
 describe('InlinePropertyChip', () => {
@@ -81,6 +89,57 @@ describe('InlinePropertyChip', () => {
 
       expect(onNavigate).toHaveBeenCalledExactlyOnceWith(TARGET)
       expect(onEditProp).not.toHaveBeenCalled()
+    })
+
+    // #5862 — the boot preload leaves out blocks, other spaces' pages and evicted entries.
+    it('asks for the title of a target the resolve cache does not hold', async () => {
+      seedBlocks()
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      vi.mocked(invoke).mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+        dispatch(cmd, args),
+      )
+      renderChip({ key: 'owner', value: TARGET, kind: 'ref' }, { onNavigate: vi.fn() })
+
+      expect(
+        await screen.findByRole('button', {
+          name: t('property.openRefTarget', { title: 'Quick Notes' }),
+        }),
+      ).toHaveTextContent('Quick Notes')
+    })
+
+    it('asks nothing for a target the resolve cache holds', () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      useResolveStore.setState({
+        cache: new Map([
+          [
+            keyFor('SPACE_PERSONAL', TARGET),
+            { title: 'Quick Notes', deleted: false, resolved: true },
+          ],
+        ]),
+      })
+      renderChip({ key: 'owner', value: TARGET, kind: 'ref' }, { onNavigate: vi.fn() })
+
+      expect(invoke).not.toHaveBeenCalled()
+    })
+
+    it('keeps the id and logs when asking for the title fails', async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      vi.mocked(invoke).mockRejectedValue(new Error('resolve failed'))
+      const warn = vi.spyOn(logger, 'warn')
+      renderChip({ key: 'owner', value: TARGET, kind: 'ref' }, { onNavigate: vi.fn() })
+
+      await waitFor(() => {
+        expect(warn).toHaveBeenCalledWith(
+          'BlockTree',
+          'Batch resolve failed for uncached block links',
+          undefined,
+          expect.any(Error),
+        )
+      })
+      const label = unresolvedBlockLabel(TARGET)
+      expect(
+        screen.getByRole('button', { name: t('property.openRefTarget', { title: label }) }),
+      ).toHaveTextContent(label)
     })
 
     it('has no a11y violations', async () => {

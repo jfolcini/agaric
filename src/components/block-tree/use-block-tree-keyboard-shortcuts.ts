@@ -170,6 +170,20 @@ function focusIsInRows(pageStore: StoreApi<PageBlockState>): boolean {
   return storeOwnsBlock(pageStore, rowId ?? null)
 }
 
+/**
+ * Whether a mounted tree draws the cursor ring on `cursorId`. BlockTree draws it
+ * only on a block its store holds, so a cursor whose block was deleted from
+ * under the selection (a sync, an action that keeps the selection) shows
+ * nothing and must not spend an Escape (#5859).
+ */
+function cursorIsShown(pageStore: StoreApi<PageBlockState>, cursorId: string | null): boolean {
+  let shown = storeOwnsBlock(pageStore, cursorId)
+  forEachPageStore((_pageId, store) => {
+    shown ||= storeOwnsBlock(store, cursorId)
+  })
+  return shown
+}
+
 export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShortcutsOptions): void {
   const {
     focusedBlockId,
@@ -254,14 +268,16 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
       }
       // `clearSelection` (Escape by default) — clear the selection and its
       // cursor (when not editing and there is a cursor, which a selection
-      // always has, #5734).
+      // always has, #5734). A cursor no tree shows is cleared too, but the
+      // Escape stays with the next handler, such as zoom-out.
+      const cursorId = selectCursorBlockId(state)
       if (
         matchesShortcutBinding(e, 'clearSelection') &&
         !e.defaultPrevented &&
         !state.focusedBlockId &&
-        selectCursorBlockId(state) !== null
+        cursorId !== null
       ) {
-        e.preventDefault()
+        if (cursorIsShown(pageStore, cursorId)) e.preventDefault()
         clearSelected()
       }
     }
@@ -455,7 +471,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // Fires only when:
   //   - the user is actually zoomed into a block (zoomedBlockId !== null)
   //   - no block is focused in the editor (Escape would blur the editor)
-  //   - no selection or block-select cursor (Escape clears them first)
+  //   - no block-select cursor a tree shows (Escape clears it first)
   //   - no popup/overlay is open (suggestion popups handle their own Escape)
   //
   // #2903 — NOT routed through `addOwnedBlockListener`: zoom-out Escape fires
@@ -473,7 +489,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
       if (!isLastInteractedTree(pageStore)) return
       const state = useBlockStore.getState()
       if (state.focusedBlockId) return
-      if (selectCursorBlockId(state) !== null) return
+      if (cursorIsShown(pageStore, selectCursorBlockId(state))) return
       // Respect open suggestion popups / overlays
       const popupOpen = document.querySelector(
         '.suggestion-renderer, [role="dialog"][data-state="open"], [data-radix-popper-content-wrapper]',

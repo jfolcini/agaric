@@ -319,13 +319,25 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       expect(opts.clearSelected).toHaveBeenCalledTimes(1)
     })
 
-    it('clears a selection held by blocks no mounted tree owns', () => {
+    it('#5859 — clears a selection held by blocks no mounted tree owns and passes the Escape on', () => {
       const opts = makeOptions({ focusedBlockId: null, selectedBlockIds: ['STALE_DAY_BLOCK'] })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
-      fireEvent.keyDown(document, { key: 'Escape' })
+      const notCancelled = fireEvent.keyDown(document, { key: 'Escape' })
 
       expect(opts.clearSelected).toHaveBeenCalledTimes(1)
+      expect(notCancelled).toBe(true)
+    })
+
+    it('#5859 — spends the Escape on a cursor another mounted tree shows', () => {
+      mountedStores.push(makePageStore(['OTHER_DAY_BLOCK']))
+      const opts = makeOptions({ focusedBlockId: null, selectedBlockIds: ['OTHER_DAY_BLOCK'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const notCancelled = fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.clearSelected).toHaveBeenCalledTimes(1)
+      expect(notCancelled).toBe(false)
     })
 
     it('does not clear selection when no blocks are selected', () => {
@@ -1245,6 +1257,46 @@ describe('useBlockTreeKeyboardShortcuts', () => {
         initialProps: opts,
       })
       // A new `selectAllIds` re-registers the clear-selection listener after the zoom-out one.
+      rerender({ ...opts, selectAllIds: selectAllScoped(['BLOCK_1', 'BLOCK_2']) })
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.zoomToRoot).not.toHaveBeenCalled()
+      expect(opts.clearSelected).toHaveBeenCalledTimes(1)
+    })
+
+    it.each([
+      ['the clear-selection listener runs first', false],
+      ['the zoom-out listener runs first', true],
+    ])('#5859 — Escape zooms out past a cursor on a deleted block when %s', (_order, zoomFirst) => {
+      const opts = makeOptions({
+        focusedBlockId: null,
+        selectedBlockIds: [],
+        zoomedBlockId: 'BLOCK_1',
+      })
+      useBlockStore.setState({ selectionFocusId: 'DELETED_BLOCK' })
+      const { rerender } = renderHook((o) => useBlockTreeKeyboardShortcuts(o), {
+        initialProps: opts,
+      })
+      // A new `selectAllIds` re-registers the clear-selection listener after the zoom-out one.
+      if (zoomFirst) rerender({ ...opts, selectAllIds: selectAllScoped(['BLOCK_1', 'BLOCK_2']) })
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.zoomToRoot).toHaveBeenCalledTimes(1)
+    })
+
+    it('#5859 — Escape clears a cursor another mounted tree shows instead of zooming out', () => {
+      mountedStores.push(makePageStore(['OTHER_DAY_BLOCK']))
+      const opts = makeOptions({
+        focusedBlockId: null,
+        selectedBlockIds: [],
+        zoomedBlockId: 'BLOCK_1',
+      })
+      useBlockStore.setState({ selectionFocusId: 'OTHER_DAY_BLOCK' })
+      const { rerender } = renderHook((o) => useBlockTreeKeyboardShortcuts(o), {
+        initialProps: opts,
+      })
       rerender({ ...opts, selectAllIds: selectAllScoped(['BLOCK_1', 'BLOCK_2']) })
 
       fireEvent.keyDown(document, { key: 'Escape' })
