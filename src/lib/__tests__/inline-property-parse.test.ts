@@ -338,6 +338,21 @@ describe('stripPropertyLines', () => {
   it('drops the marker on a lone backslash line only when the run truly reaches index 0', () => {
     expect(stripPropertyLines('\\\ncontext:: home', new Set([1]))).toBe('')
   })
+
+  // A property line that is a paragraph of its own takes one blank line with it.
+  it.each([
+    ['the first', 'status:: done\n\nmore text', [0], 'more text'],
+    ['a middle', 'a\n\nk:: v\n\nb', [2], 'a\n\nb'],
+    ['the last', 'a\n\nk:: v', [2], 'a'],
+    ['a two-line', 'a\n\nk:: v\nj:: w\n\nb', [2, 3], 'a\n\nb'],
+    ['each adjacent', 'k:: v\n\nj:: w\n\nb', [0, 2], 'b'],
+  ])('leaves no blank line where %s property paragraph was', (_, content, lines, kept) => {
+    expect(stripPropertyLines(content, new Set(lines))).toBe(kept)
+  })
+
+  it('keeps the blank line after a paragraph whose last line was the property', () => {
+    expect(stripPropertyLines('a\nk:: v\n\nb', new Set([1]))).toBe('a\n\nb')
+  })
 })
 
 describe('buildInlinePropertySetParams', () => {

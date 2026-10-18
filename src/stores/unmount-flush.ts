@@ -1,6 +1,7 @@
 /**
- * runUnmountFlush — the shared post-`unmount()` decision chain: split →
- * checkbox → inline properties → tags written as text → plain edit (#3278).
+ * runUnmountFlush — the shared post-`unmount()` decision chain: a split, else
+ * the task marker, inline properties and tags written as text the edit typed,
+ * all of them on one leave as page mode commits them, else a plain edit (#3278).
  *
  * Every unmount-triggered save — DOM blur (`useEditorBlur` Step 5),
  * programmatic focus move (`persistUnmount` in EditableBlock), imperative
@@ -26,7 +27,7 @@
  * debounced content commit, which must skip exactly the edits this chain
  * would not commit as a plain edit.
  *
- * This function performs the classification AND makes the actual store call
+ * This function performs the classification AND makes the actual store calls
  * for the chosen branch. Callers layer their own extras on top of the
  * returned `{ kind, outcome }`:
  *
@@ -64,6 +65,7 @@ import {
   commitInlineProperties,
   commitTypedTags,
   type PageBlockStoreLike,
+  readFlushSeq,
 } from '@/stores/inline-property-commit'
 
 // #5448 — the saves whose text write lands only after an IPC answers (the
@@ -93,18 +95,13 @@ export async function settlePendingSaves(blockId: string): Promise<void> {
 }
 
 export type UnmountFlushResult =
-  | { kind: 'split'; outcome: Promise<boolean> | void }
-  | { kind: 'checkbox'; outcome: Promise<boolean> }
-  | { kind: 'property'; outcome: Promise<boolean> }
-  | { kind: 'tag'; outcome: Promise<boolean> }
-  | { kind: 'edit'; outcome: Promise<boolean> | void }
+  | { kind: 'split' | 'edit'; outcome: Promise<boolean> | void }
+  | { kind: 'checkbox' | 'property' | 'tag'; outcome: Promise<boolean> }
 
+/** The first of split, task marker, property line and tag the edit introduced, else a plain edit. */
 export type UnmountFlushClassification =
-  | { kind: 'split' }
+  | { kind: 'split' | 'property' | 'tag' | 'edit' }
   | { kind: 'checkbox'; cleanContent: string; todoState: TodoState }
-  | { kind: 'property'; inlineProps: InlinePropertyLine[] }
-  | { kind: 'tag'; tags: TagToken[] }
-  | { kind: 'edit' }
 
 /** The `key:: value` lines of `changed` whose key `loaded` did not already carry. */
 export function addedInlineProperties(loaded: string, changed: string): InlinePropertyLine[] {
@@ -116,7 +113,8 @@ export function addedInlineProperties(loaded: string, changed: string): InlinePr
 
 /**
  * What the flush does with `changed`, given the block was loaded as `loaded`:
- * the first branch whose shape the edit introduced, else a plain edit.
+ * the first branch whose shape the edit introduced, else a plain edit. The
+ * flush commits that shape and every later one the edit also typed.
  */
 export function classifyUnmountFlush(loaded: string, changed: string): UnmountFlushClassification {
   if (shouldSplitOnBlur(changed, loaded)) return { kind: 'split' }
@@ -124,10 +122,8 @@ export function classifyUnmountFlush(loaded: string, changed: string): UnmountFl
   if (todoState && !processCheckboxSyntax(loaded).todoState) {
     return { kind: 'checkbox', cleanContent, todoState }
   }
-  const inlineProps = addedInlineProperties(loaded, changed)
-  if (inlineProps.length > 0) return { kind: 'property', inlineProps }
-  const tags = tagsWrittenAsText(changed)
-  if (tags.length > 0) return { kind: 'tag', tags }
+  if (addedInlineProperties(loaded, changed).length > 0) return { kind: 'property' }
+  if (tagsWrittenAsText(changed).length > 0) return { kind: 'tag' }
   return { kind: 'edit' }
 }
 
@@ -170,8 +166,6 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
     changed,
     edit,
     splitBlock,
-    rootParentId,
-    pageStore,
     invokeSync = (fn) => fn(),
     onWillSplit,
     dedupe,
@@ -189,56 +183,15 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
     return { kind: 'split', outcome }
   }
 
-  // 2. Checkbox — a leading GFM task marker the edit typed folds into `todo_state`.
-  if (classified.kind === 'checkbox') {
+  // 2–4. What the edit typed: its task marker, then its `key:: value` lines,
+  //      then its tags, each committed on the text the one before it wrote,
+  //      as page mode's leave does.
+  if (classified.kind !== 'edit') {
     const mySeq = bumpFlushSeq(blockId)
-    const outcome = trackPendingSave(
-      blockId,
-      commitCheckboxState({
-        blockId,
-        content: changed,
-        cleanContent: classified.cleanContent,
-        todoState: classified.todoState,
-        mySeq,
-        edit,
-        pageStore,
-        rootParentId,
-      }),
-    )
-    return { kind: 'checkbox', outcome }
-  }
-
-  // 3. Inline `key:: value` properties the edit added.
-  if (classified.kind === 'property') {
-    const mySeq = bumpFlushSeq(blockId)
-    const outcome = trackPendingSave(
-      blockId,
-      commitInlineProperties({
-        blockId,
-        content: changed,
-        inlineProps: classified.inlineProps,
-        mySeq,
-        edit,
-        rootParentId,
-      }),
-    )
-    return { kind: 'property', outcome }
-  }
-
-  // 4. Tags written as text: saved as the plain edit is, then written as tags.
-  if (classified.kind === 'tag') {
-    const mySeq = bumpFlushSeq(blockId)
-    const textSaved =
-      dedupe?.content === changed ? dedupe.outcome : invokeSync(() => edit(blockId, changed))
-    const outcome = commitTypedTags({
-      blockId,
-      content: changed,
-      tags: classified.tags,
-      textSaved,
-      mySeq,
-      edit,
-    })
-    return { kind: 'tag', outcome }
+    const typed = commitTyped(deps, classified, mySeq, invokeSync)
+    // The marker and property commits write the text only after their IPCs answer.
+    const outcome = classified.kind === 'tag' ? typed : trackPendingSave(blockId, typed)
+    return { kind: classified.kind, outcome }
   }
 
   // 5. Plain edit — with the #1062 dedup skip.
@@ -248,4 +201,71 @@ export function runUnmountFlush(deps: UnmountFlushDeps): UnmountFlushResult {
   bumpFlushSeq(blockId)
   const outcome = invokeSync(() => edit(blockId, changed))
   return { kind: 'edit', outcome }
+}
+
+/**
+ * Commit the task marker, `key:: value` lines and tags the edit typed, in that
+ * order, each on the text the commit before it wrote. A failed text write
+ * does not stop the property commit, whose write carries that text too; the
+ * tags wait for a saved text, as they always have. Stops once a newer save of
+ * the block has started. Resolves `false` only when the step that wrote last
+ * says its text was not saved, the helpers' draft-gating contract.
+ */
+async function commitTyped(
+  deps: UnmountFlushDeps,
+  classified: UnmountFlushClassification,
+  mySeq: number,
+  invokeSync: <T>(fn: () => T) => T,
+): Promise<boolean> {
+  const { blockId, loaded, changed, edit, pageStore, rootParentId, dedupe } = deps
+  let content = changed
+  let lastWrite: Promise<boolean> | void | undefined
+  // The text each step writes is the next step's; the same text twice is one write.
+  const write = (id: string, next: string): Promise<boolean> | void => {
+    if (lastWrite !== undefined && next === content) return lastWrite
+    content = next
+    lastWrite = edit(id, next)
+    return lastWrite
+  }
+  const current = () => readFlushSeq(blockId) === mySeq
+  let ok = true
+  if (classified.kind === 'checkbox') {
+    ok = await commitCheckboxState({
+      blockId,
+      content,
+      cleanContent: classified.cleanContent,
+      todoState: classified.todoState,
+      mySeq,
+      edit: write,
+      pageStore,
+      rootParentId,
+    })
+    if (!current()) return true
+  }
+  const inlineProps = addedInlineProperties(loaded, content)
+  if (inlineProps.length > 0) {
+    ok = await commitInlineProperties({
+      blockId,
+      content,
+      inlineProps,
+      mySeq,
+      edit: write,
+      rootParentId,
+    })
+    if (!current()) return true
+  }
+  const tags = tagsWrittenAsText(content)
+  if (tags.length === 0) return ok
+  if (lastWrite === undefined) {
+    lastWrite =
+      dedupe?.content === changed ? dedupe.outcome : invokeSync(() => edit(blockId, changed))
+  }
+  return commitTypedTags({
+    blockId,
+    content,
+    tags,
+    textSaved: lastWrite,
+    mySeq,
+    edit: write,
+  })
 }

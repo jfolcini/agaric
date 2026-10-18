@@ -270,3 +270,108 @@ describe('a #name saved as text becomes the tag (#5160 follow-up 7a)', () => {
     expect(created).toEqual([])
   })
 })
+
+describe('one leave commits every kind the edit typed, as page mode does', () => {
+  // A task paragraph's Shift+Enter line break serializes as `\` and a newline.
+  const TYPED = '- [ ] call mom #work\\\nstatus:: done'
+  const calls: string[] = []
+
+  function mockCommands(overrides: Parameters<typeof mockInvokeCommands>[0] = {}) {
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        set_todo_state: (args) => {
+          calls.push(`todo:${args['state'] as string}`)
+          return undefined
+        },
+        get_property_def: () => null,
+        list_property_defs: () => ({
+          items: [],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
+        set_property: (args) => {
+          const value = args['value'] as { value_text: string }
+          calls.push(`property:${args['key'] as string}=${value.value_text}`)
+          return undefined
+        },
+        list_all_tags_in_space: (): TagCacheRow[] => [
+          { tag_id: 'TAG_WORK', name: 'work', usage_count: 1, updated_at: '' },
+        ],
+        ...overrides,
+      }),
+    )
+  }
+
+  beforeEach(() => {
+    calls.length = 0
+    useSpaceStore.setState({ currentSpaceId: 'SPACE' })
+    mockCommands()
+  })
+
+  afterEach(() => {
+    useSpaceStore.setState({ currentSpaceId: null })
+  })
+
+  it('a typed task marker, property line and tag: the state, the property, then the tag', async () => {
+    const { result, edit } = run('', TYPED)
+    await expect(result.outcome).resolves.toBe(true)
+    expect(calls).toEqual(['todo:TODO', 'property:status=done'])
+    expect(edit.mock.calls.map(([, content]) => content)).toEqual([
+      'call mom #work\\\nstatus:: done',
+      'call mom #work',
+      'call mom #[TAG_WORK]',
+    ])
+  })
+
+  it('a refused task state keeps the marker as text and still commits the property and the tag', async () => {
+    mockCommands({
+      set_todo_state: () => {
+        throw new Error('refused')
+      },
+    })
+    const { result, edit } = run('', TYPED)
+    await expect(result.outcome).resolves.toBe(true)
+    expect(calls).toEqual(['property:status=done'])
+    expect(edit).toHaveBeenLastCalledWith('BLOCK', '- [ ] call mom #[TAG_WORK]')
+  })
+
+  it('a failed text write is carried by the next one', async () => {
+    const { result, edit } = run('', TYPED)
+    edit.mockResolvedValueOnce(false)
+    await expect(result.outcome).resolves.toBe(true)
+    expect(calls).toEqual(['todo:TODO', 'property:status=done'])
+    expect(edit.mock.calls.map(([, content]) => content)).toEqual([
+      'call mom #work\\\nstatus:: done',
+      'call mom #work',
+      'call mom #[TAG_WORK]',
+    ])
+  })
+
+  it('a refused property line writes the text once, then the tag', async () => {
+    mockCommands({
+      set_property: () => {
+        throw new Error('refused')
+      },
+    })
+    const { result, edit } = run('', TYPED)
+    await expect(result.outcome).resolves.toBe(true)
+    expect(edit.mock.calls.map(([, content]) => content)).toEqual([
+      'call mom #work\\\nstatus:: done',
+      'call mom #[TAG_WORK]\\\nstatus:: done',
+    ])
+  })
+
+  it('stops once a newer save of the block has started', async () => {
+    mockCommands({
+      set_todo_state: () => {
+        bumpFlushSeq('BLOCK')
+        return undefined
+      },
+    })
+    const { result, edit } = run('', TYPED)
+    await expect(result.outcome).resolves.toBe(true)
+    expect(calls).toEqual([])
+    expect(edit).not.toHaveBeenCalled()
+  })
+})

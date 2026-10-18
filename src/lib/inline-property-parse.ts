@@ -173,11 +173,25 @@ export function parseInlineProperties(content: string): InlinePropertyLine[] {
  * Remove the given (0-based) line indexes from `content`, joining the
  * remaining lines with `\n`. The flush integration calls this with ONLY the
  * lines whose property writes succeeded, so a rejected write leaves its line
- * literal (nothing lost).
+ * literal (nothing lost). Lines that were a paragraph of their own take one
+ * blank separator line with them, so no empty paragraph is left where they were.
  */
 export function stripPropertyLines(content: string, lineIndexes: ReadonlySet<number>): string {
   const lines = content.split('\n')
-  const kept = lines.filter((_, i) => !lineIndexes.has(i))
+  const blank = (i: number) => lines[i]?.trim() === ''
+  const kept: string[] = []
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!lineIndexes.has(i)) {
+      kept.push(lines[i] as string)
+      continue
+    }
+    let end = i
+    while (lineIndexes.has(end + 1)) end += 1
+    const ownParagraph = (i === 0 || blank(i - 1)) && (end === lines.length - 1 || blank(end + 1))
+    if (ownParagraph && end < lines.length - 1) end += 1
+    else if (ownParagraph && kept.at(-1)?.trim() === '') kept.pop()
+    i = end
+  }
   // When the ORIGINAL last line is stripped, the line that becomes the new
   // last one may still carry its hard-break marker (`notes\` + newline +
   // `key:: value` → strip → `notes\`). A marker with no following line is a
