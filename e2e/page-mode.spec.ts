@@ -779,16 +779,16 @@ test.describe('page mode behaves as block mode (#5691)', () => {
       [0, 'plan trip'],
       [0, 'plain'],
     ])
-    await invoke(page, 'set_todo_state', { blockId: ids[0], state: 'TODO' })
-    await invoke(page, 'set_priority', { blockId: ids[0], level: '1' })
-    await invoke(page, 'set_due_date', { blockId: ids[0], date: '2026-10-20' })
-    await invoke(page, 'set_scheduled_date', { blockId: ids[1], date: '2026-11-01' })
+    await ipc(page, 'set_todo_state', { blockId: ids[0], state: 'TODO' })
+    await ipc(page, 'set_priority', { blockId: ids[0], level: '1' })
+    await ipc(page, 'set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    await ipc(page, 'set_scheduled_date', { blockId: ids[1], date: '2026-11-01' })
     await openInPageMode(page, 'Page dates', 3)
     const inBlock = (id: string | undefined, selector: string) =>
       page.locator(`${EDITOR} [data-page-block-id="${id}"] ${selector}`)
     const badge = (id: string | undefined) => inBlock(id, '[data-testid="priority-badge"]')
     const row = (id: string | undefined) =>
-      invoke<{ priority: string | null; due_date: string | null; scheduled_date: string | null }>(
+      ipc<{ priority: string | null; due_date: string | null; scheduled_date: string | null }>(
         page,
         'get_block',
         { blockId: id },
