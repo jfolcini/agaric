@@ -582,15 +582,18 @@ function PageModeDocument({
       },
       attachmentsChanged: readAgain,
       // Block mode's upload, once the block exists; an image also goes in at the caret, as block
-      // mode puts it there, while the caret is in that block. It reads the page again itself.
+      // mode puts it there, if the caret is still in that block once uploaded. It reads the page
+      // again itself.
       attach: (id, files) => {
         let attached = false
         void afterSave(id, async () => {
           attached = true
-          const caret = cursorBlock() === id
           await processFileAttachments(files, id, t, {
-            editor: caret ? editor : null,
-            activeBlockId: caret ? id : null,
+            editor,
+            // Read once uploaded, as block mode's roving handle is: the caret may have moved on.
+            get activeBlockId() {
+              return cursorBlock()
+            },
           })
         }).then(() => {
           // The block was gone, or its save failed: say so rather than drop the files.

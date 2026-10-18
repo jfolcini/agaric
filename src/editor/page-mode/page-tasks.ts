@@ -64,6 +64,7 @@ import type { AttachmentRow, OpRef } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '@/lib/block-utils'
 import { t } from '@/lib/i18n'
 import { matchesShortcutBinding, tipTapShortcutMap } from '@/lib/keyboard-config'
+import { notify } from '@/lib/notify'
 import { scrollParentY } from '@/lib/scroll-parent'
 import type { TodoState } from '@/lib/task-states'
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -438,13 +439,18 @@ function caretBlockId(state: EditorState): string | null {
   return $head.depth < 1 ? null : blockIdOf($head.node(1))
 }
 
-/** The block under `event`'s pointer, else the caret's. */
+/** The block under `event`'s pointer: ProseMirror calls the drop handler only once it has a position. */
 function blockAtPointer(view: EditorView, event: MouseEvent): string | null {
-  const at = view.posAtCoords({ left: event.clientX, top: event.clientY })
-  if (at === null) return caretBlockId(view.state)
+  const at = view.posAtCoords({ left: event.clientX, top: event.clientY }) as { pos: number }
   const $at = view.state.doc.resolve(at.pos)
-  const block = $at.depth >= 1 ? $at.node(1) : ($at.nodeAfter ?? $at.nodeBefore)
-  return block === null ? caretBlockId(view.state) : blockIdOf(block)
+  return blockIdOf($at.depth >= 1 ? $at.node(1) : (($at.nodeAfter ?? $at.nodeBefore) as PMNode))
+}
+
+/** The block a paste goes to: the caret's, or the first a selection between blocks (Ctrl+A) holds. */
+function pasteBlockId(state: EditorState): string | null {
+  const { $from } = state.selection
+  const block = $from.depth >= 1 ? $from.node(1) : $from.nodeAfter
+  return caretBlockId(state) ?? (block === null ? null : blockIdOf(block))
 }
 
 /**
@@ -512,9 +518,11 @@ const PageTaskKeys = Extension.create<{ tasks: PageTaskSource | null }>({
           // As block mode's: files win over any text the clipboard also holds.
           handlePaste(view, event) {
             const files = Array.from(event.clipboardData?.files ?? [])
-            const id = caretBlockId(view.state)
-            if (tasks === null || files.length === 0 || id === null) return false
-            tasks.attach(id, files)
+            if (tasks === null || files.length === 0) return false
+            const id = pasteBlockId(view.state)
+            // Taken either way: a file is never left to a text paste that drops it.
+            if (id === null) notify.error(t('blockTree.attachFileFailed'))
+            else tasks.attach(id, files)
             return true
           },
           handleDrop(view, event) {

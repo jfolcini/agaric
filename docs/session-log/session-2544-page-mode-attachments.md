@@ -145,3 +145,11 @@ with no new warnings. Playwright on a private port: `page-mode`,
 `scroll-ipc-counts`, `import-export`). One `page-mode` run under load failed
 "arrows move the cursor across blocks" (a 200-block page with no attachment).
 It passed three runs alone.
+
+**Review of #5837.**
+- A pasted image went inline in the block the caret moved to mid-upload. The
+  caret is now read after the upload, as block mode's handle is.
+- A file pasted over a Ctrl+A selection was lost silently. It now goes to the
+  first block selected, or is taken with a toast.
+- `blockAtPointer`'s fallbacks to the caret's block are gone: ProseMirror calls
+  the drop handler only with a position, and a page always holds a block.

@@ -2119,6 +2119,61 @@ describe('PageModeEditor attachments (#5743)', () => {
     expect(backendText(ids[0] as string)).toBe(`notes![shot.png](attachment:${attachment?.id})`)
   })
 
+  it('an image pasted goes in nowhere once the caret has left its block during the upload', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let uploading = false
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'add_attachment_with_bytes') {
+        uploading = true
+        await held
+      }
+      return structuredClone(dispatch(cmd, args))
+    })
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 5))
+    })
+
+    pasteFiles(editor, [new File([new Uint8Array([1, 2, 3])], 'shot.png', { type: 'image/png' })])
+    await waitFor(() => {
+      expect(uploading).toBe(true)
+    })
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 1, 6))
+    })
+    release()
+
+    await waitFor(() => {
+      expect(backendFiles(ids[0] as string)).toEqual(['shot.png'])
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(docTexts(editor)).toEqual(['first', 'second'])
+    expect(backendText(ids[1] as string)).toBe('second')
+  })
+
+  it('a file pasted over the whole page (Ctrl+A) is attached to its first block', async () => {
+    const { pageId, ids } = seedPage(['notes', 'more'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.selectAll()
+    })
+
+    expect(pasteFiles(editor, [new File(['x'], 'clip.txt', { type: 'text/plain' })])).toBe(true)
+
+    await waitFor(() => {
+      expect(backendFiles(ids[0] as string)).toEqual(['clip.txt'])
+    })
+    expect(backendFiles(ids[1] as string)).toEqual([])
+  })
+
   it('a paste the backend refuses says so, and attaches nothing', async () => {
     const { pageId, ids } = seedPage(['notes'])
     const { container } = renderPageMode(pageId)
