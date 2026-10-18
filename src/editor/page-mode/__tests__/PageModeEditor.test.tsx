@@ -1503,6 +1503,62 @@ describe('PageModeEditor mounts a block’s controls as it nears the viewport (#
     expect(inBlock(container, ids[2], BADGE)?.textContent).toBe('P3')
   })
 
+  it('a block that gains a task and a priority unmounted shows empty boxes, then its controls', async () => {
+    const { pageId, ids } = seedPage(['first', 'plain', 'loses'])
+    dispatch('set_todo_state', { blockId: ids[2], state: 'TODO' })
+    dispatch('set_priority', { blockId: ids[2], level: '1' })
+    const { container, store } = renderPageMode(pageId)
+    await editorIn(container)
+    const io = await observer()
+
+    dispatch('set_todo_state', { blockId: ids[1], state: 'DONE' })
+    dispatch('set_priority', { blockId: ids[1], level: '2' })
+    dispatch('set_todo_state', { blockId: ids[2], state: null })
+    dispatch('set_priority', { blockId: ids[2], level: null })
+    await act(async () => {
+      await store.getState().load()
+    })
+
+    const box = await waitFor(() => {
+      const found = inBlock(container, ids[1] as string, '.page-block-controls')
+      if (found === null) throw new Error('no checkbox box yet')
+      return found
+    })
+    expect(box.getAttribute('aria-label')).toBe(t('block.todoCycleTip', { state: 'DONE' }))
+    const row = inBlock(container, ids[1] as string, '.page-block-metadata') as HTMLElement
+    expect(row.childElementCount).toBe(0)
+    expect(row.hasAttribute('data-priority')).toBe(true)
+    expect(container.querySelector(MARKER)).toBeNull()
+    // The block that lost both has neither box.
+    expect(inBlock(container, ids[2] as string, '.page-block-controls')).toBeNull()
+    expect(inBlock(container, ids[2] as string, '.page-block-metadata')).toBeNull()
+
+    report(io, blockEl(container, ids[1] as string), true)
+    await waitFor(() => {
+      expect(
+        inBlock(container, ids[1] as string, '[data-testid="task-checkbox-done"]'),
+      ).not.toBeNull()
+    })
+    expect(inBlock(container, ids[1] as string, BADGE)?.textContent).toBe('P2')
+  })
+
+  it('a block deleted before it nears the view is no longer observed', async () => {
+    const { container, store, io, ids } = await openOffscreen()
+    const gone = blockEl(container, ids[1])
+    expect(io.observed.has(gone)).toBe(true)
+
+    dispatch('delete_block', { blockId: ids[1] })
+    await act(async () => {
+      await store.getState().load()
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector(`[data-page-block-id="${ids[1]}"]`)).toBeNull()
+    })
+    expect(io.observed.has(gone)).toBe(false)
+    expect(io.observed.size).toBe(2)
+  })
+
   it('a mounted block drawn anew, at a new depth, keeps its controls mounted', async () => {
     const { container, editor, store, io, ids } = await openOffscreen()
     report(io, blockEl(container, ids[2]), true)
@@ -1537,20 +1593,7 @@ describe('PageModeEditor mounts a block’s controls as it nears the viewport (#
     })
   })
 
-  it('printing mounts every block’s controls', async () => {
-    const { container, editor } = await openOffscreen()
-
-    act(() => {
-      dispatchEvent(new Event('beforeprint'))
-    })
-
-    await waitFor(() => {
-      expect(container.querySelectorAll(MARKER)).toHaveLength(3)
-    })
-    expect(liveControls(editor)).toBe(4)
-  })
-
-  it('leaving page mode disconnects the observer and leaves no control mounted', async () => {
+  it('leaving page mode leaves no control mounted and no block observed', async () => {
     const { container, editor, io, ids, unmount } = await openOffscreen()
     report(io, blockEl(container, ids[2]), true)
     await waitFor(() => {
@@ -1558,16 +1601,10 @@ describe('PageModeEditor mounts a block’s controls as it nears the viewport (#
     })
     const portals = (editor as unknown as { contentComponent: { getSnapshot: () => object } })
       .contentComponent
-    const disconnect = vi.spyOn(io, 'disconnect')
-    const removed = vi.spyOn(window, 'removeEventListener')
 
     unmount()
 
     expect(Object.keys(portals.getSnapshot())).toHaveLength(0)
-    await waitFor(() => {
-      expect(disconnect).toHaveBeenCalledTimes(1)
-    })
     expect(io.observed.size).toBe(0)
-    expect(removed.mock.calls.filter(([type]) => type === 'beforeprint')).toHaveLength(1)
   })
 })

@@ -23,7 +23,8 @@ block nears the viewport.
   task actions. They now show what they changed where they were pressed. A
   block that becomes a task while its controls are mounted mounts its new
   checkbox at once.
-- `beforeprint` mounts every block's controls. Export reads the backend, not
+- Nothing mounts for print: the app has no print path, and the page sits in a
+  clipped scroller that would print one screen. Export reads the backend, not
   the DOM. Find in page walks the DOM: the blocks' text is all there, as it was.
   A chip's text ("P1", "Oct 20") is found only once its row has mounted. Block
   mode's off-screen rows are empty placeholders, so its find already misses
@@ -36,7 +37,8 @@ block nears the viewport.
   checkbox's box is absolutely positioned in the slot page mode keeps left of
   the text, so it takes no room. The row's empty box keeps the row's height in
   CSS (`.page-block-metadata:empty`): its top margin, then a date chip's height
-  (icon and padding), or, with `data-priority`, the badge's. The Playwright
+  (icon and padding), or, with `data-priority`, the badge's, which pads taller
+  below Tailwind's `sm` (`max-sm:py-1`). The Playwright
   spec measures them equal to the pixel.
 
 **Accessibility.** An unmounted checkbox's box is `role="img"` with block
@@ -65,18 +67,24 @@ the block is within a screen.
   - A mounted block drawn anew at a new depth keeps its controls. Red: the
     remembered ids ignored.
   - No `IntersectionObserver`: everything mounts. Red: nothing revealed there.
-  - `beforeprint` mounts every block's controls. Red: no listener.
-  - Leaving page mode leaves no portal, disconnects the observer and removes
-    the print listener. Red twice: no `disconnect`, and the listener kept.
-- Playwright `page-mode.spec.ts`, on a 200-block page where every block is a
-  task, with a priority and a due date, a due date, a priority, or neither:
+  - A block that gains a task and a priority while unmounted shows empty
+    boxes, the checkbox's naming the state, then its controls once reported;
+    one that loses both has no box. Red: a row mounted as it is made.
+  - A block deleted before it nears the view is no longer observed. Red: the
+    node view's `unwatch` removed.
+  - Leaving page mode leaves no portal and no block observed. Red: the same
+    `unwatch` removed.
+- Playwright `page-mode.spec.ts`, at 1280 and 600 px wide, on a 200-block page
+  where every block is a task, with a priority and a due date, a due and a
+  scheduled date, a priority, or neither:
   - The bottom's controls are empty boxes, the checkbox's naming the state.
   - Scrolled to the bottom, they mount with the backend's values, twenty
     blocks up included, and a block in the middle stays unmounted.
   - The last twenty blocks' tops and heights match before and after.
   - axe passes over the page.
-  - Red three times: the badge row's reservation removed (heights 52 to 56,
-    each top after them moved), mounting at once (the bottom's marker there
+  - Red four times: the badge row's reservation removed (heights 52 to 56,
+    each top after them moved), the narrow-window reservation removed (heights
+    56 to 58 at 600 px), mounting at once (the bottom's marker there
     on open), and the viewport as root (twenty blocks up, above the view,
     not mounted). The spec passed 20 of 20 at 8 workers.
 

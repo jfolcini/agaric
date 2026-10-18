@@ -14,11 +14,11 @@
  * id, so a split or a join that moves an id moves them with it.
  *
  * A block's controls mount the first time it comes within a screen of the
- * viewport, the caret enters it, or the page is printed, and then stay
- * (`ControlsGate`): mounting a long page's all at once held the frame it
- * opened in. Until then each control's box is there, empty: the row's as tall
- * as the row, so nothing moves as it mounts, and the checkbox's naming the
- * task state to assistive technology.
+ * viewport or the caret enters it, and then stay (`ControlsGate`): mounting a
+ * long page's all at once held the frame it opened in. Until then each
+ * control's box is there, empty: the row's as tall as the row, so nothing moves
+ * as it mounts, and the checkbox's naming the task state to assistive
+ * technology.
  *
  * A task marker typed or pasted at the start of a block, `- [ ] ` or a bare
  * `[ ] ` (`[/]`, `[x]`, `[-]`), becomes the block's state once the caret has
@@ -82,10 +82,9 @@ export interface PageTaskSource extends PageTaskActions {
 /**
  * When the blocks' controls mount: one `IntersectionObserver` per editor, whose
  * root is the scroller the page is in, mounts a block's the first time it
- * comes within a screen of the viewport. The caret's block, and every block
- * before printing, mount at once, and so does a block drawn anew (a new depth)
- * whose id has mounted before. A runtime without the observer mounts
- * everything.
+ * comes within a screen of the viewport. The caret's block mounts at once,
+ * and so does a block drawn anew (a new depth) whose id has mounted before. A
+ * runtime without the observer mounts everything.
  */
 class ControlsGate {
   private readonly waiting = new Map<Element, () => void>()
@@ -95,11 +94,6 @@ class ControlsGate {
 
   constructor(editor: Editor) {
     this.editor = editor
-    addEventListener('beforeprint', this.revealAll)
-    editor.on('destroy', () => {
-      this.observer?.disconnect()
-      removeEventListener('beforeprint', this.revealAll)
-    })
   }
 
   /** Call `reveal` once `dom`, block `id`'s, nears the viewport. */
@@ -140,10 +134,6 @@ class ControlsGate {
   unwatch(dom: Element): void {
     this.waiting.delete(dom)
     this.observer?.unobserve(dom)
-  }
-
-  private readonly revealAll = (): void => {
-    for (const dom of this.waiting.keys()) this.reveal(dom)
   }
 }
 

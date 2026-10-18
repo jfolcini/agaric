@@ -1170,6 +1170,12 @@
 .page-mode-editor .page-block-metadata:empty[data-priority] {
   min-height: max(1.375rem, calc(var(--agaric-font-size, 1rem) * 0.875 + 0.25rem));
 }
+/* The badge pads taller below Tailwind's `sm` (`max-sm:py-1`). */
+@media (width < 40rem) {
+  .page-mode-editor .page-block-metadata:empty[data-priority] {
+    min-height: max(1.5rem, calc(var(--agaric-font-size, 1rem) * 0.875 + 0.25rem));
+  }
+}
 /* A closed task reads as block mode's, struck and muted, but not while edited;
    muted by the token rather than by opacity, which leaves it 3.4:1. */
 .page-mode-editor
