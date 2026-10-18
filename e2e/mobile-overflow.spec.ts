@@ -545,6 +545,52 @@ test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
       }),
     )
     expect(overflowing).toEqual([])
+
+    // Line 1 is the name with Delete or Built-in at its right end; a select row's
+    // options (Edit options, or Locked) start line 2 flush with the name, right under it.
+    const misaligned = await rows.evaluateAll((els) =>
+      els.flatMap((el) => {
+        const key = el.textContent ?? ''
+        const nameEl = el.querySelector('span.font-medium')
+        const controlEl = [...el.querySelectorAll('button, [data-slot="badge"]')].find(
+          (n) =>
+            n.getAttribute('aria-label')?.startsWith('Delete property') ||
+            n.textContent === 'Built-in',
+        )
+        if (!nameEl || !controlEl) return [`${key}: no name or Delete/Built-in`]
+        const name = nameEl.getBoundingClientRect()
+        const control = controlEl.getBoundingClientRect()
+        const problems: string[] = []
+        if (control.top >= name.bottom || control.bottom <= name.top)
+          problems.push(`${key}: Delete/Built-in is off the name's line`)
+        const rightmost = Math.max(
+          ...[...el.querySelectorAll('*')].map((n) => n.getBoundingClientRect().right),
+        )
+        if (Math.abs(control.right - rightmost) > 1)
+          problems.push(`${key}: Delete/Built-in ends at ${control.right}, row at ${rightmost}`)
+        const line1Bottom = Math.max(name.bottom, control.bottom)
+        const isSelect = [...el.querySelectorAll('[data-slot="badge"]')].some(
+          (b) => b.textContent === 'select',
+        )
+        const optionsEl = el.querySelector(
+          'button[aria-label="Edit options"], [data-testid^="locked-options-"]',
+        )
+        if (isSelect && !optionsEl) problems.push(`${key}: a select row without its options`)
+        if (optionsEl) {
+          const options = optionsEl.getBoundingClientRect()
+          if (Math.abs(options.left - name.left) > 1)
+            problems.push(`${key}: options at x=${options.left}, name at x=${name.left}`)
+          if (Math.abs(options.top - line1Bottom) > 1)
+            problems.push(`${key}: options top ${options.top}, line 1 ends at ${line1Bottom}`)
+        }
+        const below = [...el.querySelectorAll('*')].some(
+          (n) => n.getBoundingClientRect().top >= line1Bottom,
+        )
+        if (!isSelect && below) problems.push(`${key}: a row without options takes two lines`)
+        return problems
+      }),
+    )
+    expect(misaligned).toEqual([])
   })
 
   test("Month view's today marker stays inside its day cell and off its count", async ({
