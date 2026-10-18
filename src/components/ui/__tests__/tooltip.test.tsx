@@ -301,3 +301,24 @@ describe('Tooltip on a Select trigger (#5908)', () => {
     await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
   })
 })
+
+// A collapse chevron sets aria-expanded but opens no popup: its tooltip still
+// shows while the block is expanded.
+describe('Tooltip on a disclosure button', () => {
+  it('opens while the button is expanded', () => {
+    render(
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button type="button" aria-expanded="true" aria-label="Collapse">
+              v
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Collapse</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>,
+    )
+    fireEvent.focusIn(screen.getByRole('button', { name: 'Collapse' }))
+    expect(tooltipContent()).not.toBeNull()
+  })
+})
