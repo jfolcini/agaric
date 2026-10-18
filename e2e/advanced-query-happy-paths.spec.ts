@@ -71,6 +71,8 @@ test('a nested AND / OR / NOT tree returns exactly the blocks it selects', async
 
   await root.getByRole('button', { name: 'Add group', exact: true }).click()
   const anyGroup = root.getByRole('group', { name: 'Filter group', exact: true })
+  // One border width all round (docs/UX.md § Design tokens, Radius).
+  await expect(anyGroup).toHaveCSS('border-left-width', '1px')
   await anyGroup.getByRole('radio', { name: 'Any', exact: true }).click()
   await addTagLeaf(page, anyGroup, 'work')
   await addTagLeaf(page, anyGroup, 'personal')

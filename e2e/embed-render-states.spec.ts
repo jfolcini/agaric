@@ -126,6 +126,9 @@ test.describe('embed render states', () => {
     const embed = page.getByTestId('embed-container')
     const strip = embed.getByRole('navigation', { name: 'Embed source' })
     await expect(strip).toHaveText('Embedded from Meetings')
+    // The rail's side is square (docs/UX.md § Design tokens, Radius).
+    await expect(embed).toHaveCSS('border-top-left-radius', '0px')
+    await expect(embed).toHaveCSS('border-bottom-left-radius', '0px')
     await expect(embed.locator('[data-embed-block-id]')).toHaveText([
       'Weekly standup notes',
       'Design review feedback',
