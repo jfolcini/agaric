@@ -91,10 +91,13 @@ describe('Agaric real-backend tasks in page mode (#5743)', () => {
     }, `${PAGE_MODE} [data-page-block-id="${blockId}"] [data-testid="task-marker"]`)
     await waitForState(blockId, 'DOING', 'after a click')
 
-    // Away and back: the state is read from what the backend stored.
+    // Away and back: the state is read from what the backend stored. The page
+    // reopens as *Edit pages as* says (Blocks); the switch is the page on
+    // screen's only. Page opens again: the `created_at` the task's state wrote
+    // keeps nothing out.
     await navigateTo('Journal')
     await reopenPageByTitle('Untitled')
-    await $(PAGE_MODE).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await chooseEditMode('Page')
     await waitForState(blockId, 'DOING', 'after navigating away and back')
     expect((await pageModeBlocks()).map((block) => block.text)).toEqual([MARKER, NEXT])
 

@@ -25,6 +25,7 @@
  * dynamic import, so TipTap stays off the startup path.
  */
 
+import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Transaction } from '@tiptap/pm/state'
 import { type Editor, EditorContent, useEditor } from '@tiptap/react'
 import type React from 'react'
@@ -195,6 +196,15 @@ function commandsApi(read: () => Promise<TreeRow[]>): PageSaveApi {
   }
 }
 
+/** The block `id` of `doc`, or null. */
+function blockById(doc: PMNode, id: string): PMNode | null {
+  let found: PMNode | null = null
+  doc.forEach((node) => {
+    if (found === null && blockIdOf(node) === id) found = node
+  })
+  return found
+}
+
 /** Put the cursor at the start of block `id` and show it; false when the page has no such block. */
 function cursorInto(editor: Editor, id: string): boolean {
   let at = -1
@@ -310,8 +320,9 @@ function PageModeDocument({
       const { $head } = editor.state.selection
       return $head.depth < 1 ? null : blockIdOf($head.node(1))
     }
-    // The blocks changed whose task markers and `#name`s are not committed yet, and the caret's block.
-    const typedIn = new Set<string>()
+    // The blocks changed whose task markers and `#name`s are not committed yet,
+    // each as it was before (`commitPageTask`), and the caret's block.
+    const typedIn = new Map<string, PMNode | null>()
     let caretIn = cursorBlock()
 
     /** Bring the page as the store holds it into the document, unless it holds what page mode cannot show. */
@@ -346,11 +357,11 @@ function PageModeDocument({
       const refs: OpRef[] = []
       // A copy: a block typed in again while a commit awaits is for the next save, not this loop.
       const pending = [...typedIn]
-      for (const id of pending) {
+      for (const [id, loaded] of pending) {
         // Never the caret's block: its marker or name may still be being typed.
         if (!closing && cursorBlock() === id) continue
         typedIn.delete(id)
-        const task = await commitPageTask(id, save, api, pageStore)
+        const task = await commitPageTask(id, loaded, save, api, pageStore)
         refs.push(...task.refs, ...(await commitPageTags(id, save, api, task.markdown)))
       }
       return refs
@@ -425,7 +436,9 @@ function PageModeDocument({
       caretIn = cursorBlock()
       if (transaction.docChanged && transaction.getMeta(REMOTE_PATCH) !== true) {
         const maps = [transaction, ...appendedTransactions].flatMap((tr) => tr.mapping.maps)
-        for (const id of changedBlocks(editor.state.doc, maps)) typedIn.add(id)
+        for (const id of changedBlocks(editor.state.doc, maps)) {
+          if (!typedIn.has(id)) typedIn.set(id, blockById(transaction.before, id))
+        }
         clearTimeout(timer)
         timer = setTimeout(() => void flush(), CONTENT_COMMIT_DEBOUNCE_MS)
       }

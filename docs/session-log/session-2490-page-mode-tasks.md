@@ -26,6 +26,10 @@ task state now opens in page mode.
   the marker from the saved node: `processCheckboxSyntax`, or the bare `[ ] `
   block mode's input rule also takes. It then commits through
   `commitCheckboxState`. The tag commit runs after it, on the text it wrote.
+- Only a marker the edit typed is folded, as block mode's `classifyUnmountFlush`
+  requires: each changed block is recorded as it was before its first change
+  (`transaction.before`), and a block that already started with a marker, such
+  as `[x] means unknown`, keeps it as text (review of #5805).
 - `TODO` stays a word, as the editor docs say block mode keeps it. The brief
   asked for the keyword, but block mode does not convert it, so neither does
   page mode.
@@ -56,7 +60,10 @@ task state now opens in page mode.
   `page-mode-setting.spec.ts` now blocks on a priority.
 - e2e-tauri `page-mode-tasks.e2e.ts`: a typed marker, a click, a round trip and
   the Agenda list, which reads `blocks.todo_state`. Undated tasks never reach
-  `agenda_cache`. This spec is type-checked only; it runs in CI.
+  `agenda_cache`. This spec is type-checked only; it runs in CI. Its first CI run
+  failed at the round trip: the page reopened in blocks, because the switch
+  changes the page on screen only and the setting was Blocks, with Page still
+  offered. The spec now chooses Page again after reopening.
 
 **Measurement.** `AGARIC_PERF=1 e2e/perf.spec.ts -g 'page mode'` now seeds every
 block as a task, TODO and DONE in turn. With the run's sizes held to 500 and 5

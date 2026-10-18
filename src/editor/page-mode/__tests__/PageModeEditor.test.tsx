@@ -756,6 +756,23 @@ describe('PageModeEditor tasks (#5743)', () => {
     await checkbox(container, ids[1] as string)
   })
 
+  it('a marker the block already held stays text when the block is edited and left', async () => {
+    const { pageId, ids } = seedPage(['first', '[x] means unknown'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeAt(editor, 1, 17, '!')
+    caretTo(editor, 0)
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect(backendState(ids[1] as string)).toBeNull()
+    expect(docTexts(editor)).toEqual(['first', '\\[x\\] means unknown!'])
+    expect(backendText(ids[1] as string)).toBe('\\[x\\] means unknown!')
+    expect(container.querySelector('[data-testid="task-marker"]')).toBeNull()
+  })
+
   it('a typed `- [x] ` gives DONE, and `TODO` stays a word, as in block mode', async () => {
     const { pageId, ids } = seedPage(['first', 'shipped', 'later'])
     const { container } = renderPageMode(pageId)

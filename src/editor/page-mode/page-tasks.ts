@@ -203,17 +203,22 @@ function withoutMarker(node: PMNode, length: number): PMNode {
 /**
  * Make the task marker block `id` holds as text, as last saved, its task
  * state, through block mode's commit: the state, then the text without the
- * marker. Resolves the edit's refs, and the block's text as it now stands.
+ * marker. Only a marker the edit typed counts: `loaded`, the block before it
+ * was edited (none for a new block), holding one already keeps it text, as
+ * block mode's `classifyUnmountFlush` does. Resolves the edit's refs, and the
+ * block's text as it now stands.
  */
 export async function commitPageTask(
   id: string,
+  loaded: PMNode | null,
   save: PageSaveState,
   api: PageSaveApi,
   pageStore: PageBlockStoreLike,
 ): Promise<{ refs: OpRef[]; markdown: string | undefined }> {
   const saved = save.saved.get(id)
   const node = saved?.node ?? null
-  const task = node === null ? null : leadingTask(node)
+  const typed = loaded !== null && leadingTask(loaded) !== null
+  const task = node === null || typed ? null : leadingTask(node)
   if (saved === undefined || node === null || task === null) {
     return { refs: [], markdown: saved?.markdown }
   }
