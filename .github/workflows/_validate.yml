@@ -546,6 +546,7 @@ jobs:
           scripts/check-table-ownership.test.mjs
           scripts/lib/check-dynamic-sql.test.mjs
           scripts/check-baseline-paths.test.mjs
+          scripts/ci-capacity-report.test.mjs
 
       - name: Verify npm package provenance signatures
         # Requires Node 22.5+; fails on a package whose registry signature or
