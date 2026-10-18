@@ -45,7 +45,7 @@
  * The other tests are NOT opt-in: rendered-row and IPC counts are
  * deterministic, unlike the timings, so they pin the big page's initial render
  * window (#5329) and what opening each list view (#5366) or a page (#5445)
- * costs on every PR.
+ * costs in every Playwright run.
  */
 
 import { writeFileSync } from 'node:fs'
