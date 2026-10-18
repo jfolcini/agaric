@@ -6,6 +6,7 @@ import {
   expect,
   getInvokeCalls,
   installIpcRecorder,
+  pairOnePeer,
   test,
   waitForBoot,
 } from './helpers'
@@ -339,25 +340,12 @@ test.describe('Sync pairing flows', () => {
 
     /**
      * Pins one peer the way a completed pairing does in the mock (see the file
-     * header): `confirm_pairing` arms the reveal and a later `list_peer_refs`
-     * read materializes the row. Reading until it appears, rather than a fixed
-     * number of times, keeps the reveal count out of this file. The pairing UI
-     * that produces the row is the first test's subject; these start after it.
+     * header) and opens its Sync panel. The pairing UI that produces the row is
+     * the first test's subject; these start after it.
      */
-    async function pairOnePeer(page: import('@playwright/test').Page) {
+    async function pairAndShowOnePeer(page: import('@playwright/test').Page) {
       await waitForBoot(page)
-      await page.evaluate(async () => {
-        const invoke = (
-          window as unknown as {
-            __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-          }
-        ).__TAURI_INTERNALS__.invoke
-        await invoke('confirm_pairing', {
-          passphrase: 'alpha bravo charlie delta',
-          scannedPeer: null,
-        })
-      })
-      await expect.poll(async () => (await listPeerRows(page)).length).toBe(1)
+      await pairOnePeer(page)
       await showSyncPanel(page)
       const panel = page.getByTestId('settings-panel-sync')
       await expect(panel.getByText('Paired Device', { exact: true })).toBeVisible()
@@ -375,7 +363,7 @@ test.describe('Sync pairing flows', () => {
     }
 
     test('unpairing a peer removes its row', async ({ page }) => {
-      const panel = await pairOnePeer(page)
+      const panel = await pairAndShowOnePeer(page)
 
       await panel.getByRole('button', { name: 'Unpair device Paired Device', exact: true }).click()
       const confirm = activeAlertDialog(page)
@@ -391,7 +379,7 @@ test.describe('Sync pairing flows', () => {
     })
 
     test('renaming a peer persists its local name', async ({ page }) => {
-      const panel = await pairOnePeer(page)
+      const panel = await pairAndShowOnePeer(page)
 
       await panel.getByRole('button', { name: 'Rename device Paired Device', exact: true }).click()
       const dialog = activeDialog(page)
@@ -411,7 +399,7 @@ test.describe('Sync pairing flows', () => {
     })
 
     test('setting a manual address persists it on the peer', async ({ page }) => {
-      const panel = await pairOnePeer(page)
+      const panel = await pairAndShowOnePeer(page)
 
       await panel
         .getByRole('button', { name: 'Edit address for Paired Device', exact: true })

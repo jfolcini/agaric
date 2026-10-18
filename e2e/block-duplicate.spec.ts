@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import { blurEditors, expect, focusBlockById, reopenPage, test, waitForBoot } from './helpers'
+import { blurEditors, expect, focusBlockById, ipc, reopenPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E for Duplicate (#976 item 13, #5140 Phase 3a) through its two UI entry
@@ -26,20 +26,6 @@ interface Row {
   content: string | null
   todo_state: string | null
   priority: string | null
-}
-
-function ipc<T>(page: Page, cmd: string, args: Record<string, unknown>): Promise<T> {
-  return page.evaluate(
-    ({ c, a }) => {
-      const invoke = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__.invoke
-      return invoke(c, a)
-    },
-    { c: cmd, a: args },
-  ) as Promise<T>
 }
 
 async function childrenOf(page: Page, parentId: string): Promise<Row[]> {

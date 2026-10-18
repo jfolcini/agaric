@@ -1,6 +1,14 @@
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, navigateToView, openPage, openSettingsTab, test, waitForBoot } from './helpers'
+import {
+  expect,
+  navigateToView,
+  openPage,
+  openSettingsTab,
+  switchToSpace,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * Spaces happy paths (#5739): the "Open on launch" setting, per-space tabs /
@@ -17,13 +25,6 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
   await waitForBoot(page)
 })
-
-async function switchToSpace(page: Page, name: string): Promise<void> {
-  await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
-  // The trigger's hover tooltip can land on top of the option list.
-  await page.mouse.move(0, 0)
-  await page.getByRole('option', { name, exact: true }).click()
-}
 
 async function openSpacesSettings(page: Page): Promise<Locator> {
   await navigateToView(page, 'Settings')

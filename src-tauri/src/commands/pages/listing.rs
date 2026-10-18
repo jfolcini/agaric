@@ -211,8 +211,8 @@ pub async fn get_page_inner(
 ///
 /// Includes the four agenda-shaped native columns on `blocks`
 /// (`todo_state` / `priority` / `due_date` / `scheduled_date`) because
-/// the graph node renderer keys node colour / icons on them.  The
-/// markdown exporter ignores them.
+/// the graph view's Status, Priority and date filters read them on the
+/// client.  The markdown exporter ignores them.
 #[derive(Serialize, Type, Clone, Debug, sqlx::FromRow)]
 pub struct PageHeading {
     pub id: BlockId,

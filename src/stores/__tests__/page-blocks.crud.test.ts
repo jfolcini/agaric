@@ -740,7 +740,25 @@ describe('PageBlockStore', () => {
       expect(bySpace[OTHER_SPACE]?.map((p) => p.pageId)).toEqual(['PAGE_1'])
     })
 
-    it('leaves the tab stack alone when the rejected page is NOT the active tab top (background reload)', async () => {
+    it('#5753 — heals a page open in two tabs out of both, not into the other copy', async () => {
+      useTabsStore.setState({
+        tabs: [
+          tab('0', [{ pageId: 'PAGE_1', title: 'Moved page' }]),
+          tab('1', [{ pageId: 'PAGE_1', title: 'Moved page' }]),
+        ],
+        activeTabIndex: 0,
+      })
+      stubInvoke(mockedInvoke, {
+        load_page_subtree: () => Promise.reject(membershipRejection('PAGE_1')),
+      })
+
+      await store.getState().load()
+
+      expect(useTabsStore.getState().tabs.map((t) => t.pageStack)).toEqual([[]])
+      expect(useNavigationStore.getState().currentView).toBe('pages')
+    })
+
+    it('leaves the tab stack alone when no tab holds the rejected page (background reload)', async () => {
       useTabsStore.setState({
         tabs: [tab('0', [{ pageId: 'OTHER', title: 'Other page' }])],
         activeTabIndex: 0,
@@ -760,7 +778,7 @@ describe('PageBlockStore', () => {
         translate('error.pageNotInCurrentSpace'),
         expect.objectContaining({ id: 'page-not-in-space' }),
       )
-      // The active tab shows a DIFFERENT page — goBack must not fire.
+      // No tab holds the rejected page, so no tab changes.
       expect(selectPageStack(useTabsStore.getState()).map((p) => p.pageId)).toEqual(['OTHER'])
       // The stale recents entry is still cleaned.
       expect(useRecentPagesStore.getState().recentPagesBySpace[TEST_SPACE_ID]).toEqual([])
@@ -823,7 +841,7 @@ describe('PageBlockStore', () => {
       // Race: the stale-ref load is scoped to TEST_SPACE_ID, but the user
       // switches to the page's NEW space before the rejection resolves.
       // Healing then would operate on the wrong space — `removeRecentPage`
-      // keys on the CURRENT active space and `goBack` pops the CURRENT
+      // keys on the CURRENT active space and `removePages` prunes the CURRENT
       // active slice — purging a recents entry / tab entry where the page
       // legitimately lives. The guard must skip the heal entirely (lazy
       // heal re-fires on the next follow of the still-stale reference).
@@ -851,7 +869,7 @@ describe('PageBlockStore', () => {
       // No heal, no toast of either kind, nothing popped or purged. The
       // space-switch subscriber flushed the flat mirror into the old space's
       // slice and pulled OTHER_SPACE's slice into the flat fields — exactly
-      // the state a guard-less heal would corrupt (goBack / removeRecentPage
+      // the state a guard-less heal would corrupt (removePages / removeRecentPage
       // act on the ACTIVE = OTHER_SPACE partition).
       expect(toast.info).not.toHaveBeenCalled()
       expect(toast.error).not.toHaveBeenCalled()

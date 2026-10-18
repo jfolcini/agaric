@@ -4016,18 +4016,18 @@ fn parse_import_payload(
 }
 
 /// The page title each of a folder pick's `.md` paths imports as, keyed by its
-/// file name folded as a link name is ([`LinkMatches`]): the note a bare
-/// `[[Name]]` names wherever it sits in the vault, as Obsidian reads it
-/// (#5740). Of two notes of one name the one nearer the vault root wins, then
-/// the one whose title sorts first, so every file of the pick reads a name
-/// alike whichever order the files import in.
+/// file name lowercased in full Unicode, as the frontend's `linkedNotePaths`
+/// keys the notes it ships: the note a bare `[[Name]]` names wherever it sits
+/// in the vault, as Obsidian reads it (#5740). Of two notes of one name the one
+/// nearer the vault root wins, then the one whose title sorts first, so every
+/// file of the pick reads a name alike whichever order the files import in.
 fn vault_note_titles(paths: &[String]) -> HashMap<String, String> {
     let depth = |title: &str| title.matches('/').count();
     let mut notes: HashMap<String, String> = HashMap::new();
     for path in paths {
         let title = folder_path_to_namespace_title(path);
         let name = title.rsplit('/').next().unwrap_or_default();
-        let name = name.to_ascii_lowercase();
+        let name = name.to_lowercase();
         if name.is_empty() {
             continue;
         }
@@ -4055,7 +4055,7 @@ fn rewrite_vault_wikilinks(content: &str, notes: &HashMap<String, String>) -> St
             let m = caps.get(0).expect("group 0 always present");
             let body = &caps[1];
             let (name, rest) = body.split_at(body.find(['|', '#']).unwrap_or(body.len()));
-            match notes.get(&name.trim().to_ascii_lowercase()) {
+            match notes.get(&name.trim().to_lowercase()) {
                 Some(title) if page_link_is_token(content, m.start(), &code_spans) => {
                     format!("[[{title}{rest}]]")
                 }
@@ -7582,7 +7582,7 @@ mod tests {
     fn a_bare_wikilink_names_the_vault_note_of_that_name() {
         let notes: Vec<String> = vec!["v/sub/Topic.md".into(), "v/Über.md".into()];
         let (parsed, _) = parse_import_payload(
-            "- é[[topic]] [[ Topic |l]] [[Topic#h]] [[v/sub/Topic]] [[none]] [[Über]]\n\
+            "- é[[topic]] [[ Topic |l]] [[Topic#h]] [[v/sub/Topic]] [[none]] [[Über]] [[über]]\n\
              - ![[Topic]] #[[Topic]] \\[[Topic]] `[[Topic]]`\n\
              - ````\n  [[Topic]]\n  ````\n",
             Some("v/home.md".into()),
@@ -7594,7 +7594,7 @@ mod tests {
         assert_eq!(
             contents,
             [
-                "é[[v/sub/Topic]] [[v/sub/Topic|l]] [[v/sub/Topic#h]] [[v/sub/Topic]] [[none]] [[v/Über]]",
+                "é[[v/sub/Topic]] [[v/sub/Topic|l]] [[v/sub/Topic#h]] [[v/sub/Topic]] [[none]] [[v/Über]] [[v/Über]]",
                 "![[Topic]] #[[Topic]] \\[[Topic]] `[[Topic]]`",
                 "````\n[[Topic]]\n````",
             ]

@@ -1493,3 +1493,61 @@ export async function chooseSelectOption(
   await page.getByRole('option', { name: option, exact: true }).click()
   await expect(trigger).toHaveText(option)
 }
+
+/** Call a mock backend command directly, the way the frontend's IPC does; resolves to its result. */
+export function ipc<T>(page: Page, cmd: string, args: unknown): Promise<T> {
+  return page.evaluate(
+    ({ c, a }) =>
+      (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__.invoke(c, a),
+    { c: cmd, a: args },
+  ) as Promise<T>
+}
+
+/** Fire a backend event at the app's `listen()` callbacks, as `emit()` from the Rust side would. */
+export function emitMockEvent(page: Page, event: string, payload: unknown): Promise<void> {
+  return page.evaluate(
+    ({ event: evt, payload: data }) =>
+      (
+        window as unknown as { __emitMockEvent: (e: string, p: unknown) => Promise<void> }
+      ).__emitMockEvent(evt, data),
+    { event, payload },
+  )
+}
+
+/** Switch the active space through the sidebar SpaceSwitcher. */
+export async function switchToSpace(page: Page, name: string): Promise<void> {
+  await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
+  // The trigger's hover tooltip can land on top of the option list.
+  await page.mouse.move(0, 0)
+  await page.getByRole('option', { name, exact: true }).click()
+}
+
+/** Pair one device as the mock completes a pairing: it appears a few reads after the confirm. */
+export async function pairOnePeer(page: Page): Promise<void> {
+  const peerCount = () => ipc<unknown[]>(page, 'list_peer_refs', undefined).then((r) => r.length)
+  await ipc(page, 'confirm_pairing', {
+    passphrase: 'alpha bravo charlie delta',
+    scannedPeer: null,
+  })
+  await expect.poll(peerCount).toBe(1)
+}
+
+/** The sidebar Sync button. Its name changes with the network, so find it by the status dot it carries. */
+export function syncButton(page: Page): Locator {
+  return page
+    .locator('[data-sidebar="footer"]')
+    .getByRole('button')
+    .filter({ has: page.getByTestId('sync-button-status-dot') })
+}
+
+/** The Sync icon's tooltip lines (state, then last synced), opened from the keyboard. */
+export async function syncTooltipLines(page: Page): Promise<Locator> {
+  const button = syncButton(page)
+  await button.blur()
+  await button.focus()
+  return page.getByRole('tooltip').locator(':scope > div > span')
+}

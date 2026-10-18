@@ -1,4 +1,4 @@
-import { expect, test } from './helpers'
+import { emitMockEvent, expect, test } from './helpers'
 
 /**
  * E2E — `agaric://` deep-link routing (#2683).
@@ -20,22 +20,6 @@ import { expect, test } from './helpers'
  *   - `deeplink:navigate-to-page` → `{ id: <ULID> }`
  *   - `deeplink:open-settings` → `{ tab: <tab name> }`
  */
-
-interface MockEventWindow extends Window {
-  __emitMockEvent?: (event: string, payload?: unknown) => Promise<void>
-}
-
-async function emitMockEvent(
-  page: import('@playwright/test').Page,
-  event: string,
-  payload: unknown,
-) {
-  await page.evaluate(
-    ({ event: evt, payload: data }) =>
-      (window as unknown as MockEventWindow).__emitMockEvent?.(evt, data),
-    { event, payload },
-  )
-}
 
 // Seed id — see src/lib/tauri-mock/seed.ts SEED_IDS.PAGE_QUICK_NOTES.
 const PAGE_QUICK_NOTES = '00000000000000000000PAGE02'

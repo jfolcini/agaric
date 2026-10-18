@@ -1,4 +1,4 @@
-import { expect, test } from './helpers'
+import { emitMockEvent, expect, test } from './helpers'
 
 /**
  * E2E — live `mcp:activity` events into the Agent access settings tab
@@ -28,22 +28,6 @@ import { expect, test } from './helpers'
  * The feed renders with both access toggles off, which is how every test
  * here reaches it.
  */
-
-interface MockEventWindow extends Window {
-  __emitMockEvent?: (event: string, payload?: unknown) => Promise<void>
-}
-
-async function emitMockEvent(
-  page: import('@playwright/test').Page,
-  event: string,
-  payload: unknown,
-) {
-  await page.evaluate(
-    ({ event: evt, payload: data }) =>
-      (window as unknown as MockEventWindow).__emitMockEvent?.(evt, data),
-    { event, payload },
-  )
-}
 
 async function openAgentAccessTab(page: import('@playwright/test').Page) {
   await page.goto('/')
