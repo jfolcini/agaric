@@ -9,6 +9,7 @@ import {
   navigateToView,
   openPage,
   reopenPage,
+  replaceEditorText,
   showJournalPages,
   test,
   waitForBoot,
@@ -108,9 +109,14 @@ async function moveGettingStartedTo(page: Page, space: string): Promise<void> {
   await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
 }
 
-/** The newest "Broken link removed" toast. */
+/**
+ * The "Broken link removed" toast the last removal raised: sonner prepends, so
+ * it is the front toast, and an earlier removal's toast can still be alive behind it.
+ */
 function removedToast(page: Page) {
-  return page.locator('[data-sonner-toast]').filter({ hasText: 'Broken link removed' }).first()
+  return page
+    .locator('[data-sonner-toast][data-front="true"]')
+    .filter({ hasText: 'Broken link removed' })
 }
 
 /** QN_1's content as the backend holds it. */
@@ -137,9 +143,7 @@ test.describe('link chips follow their target', () => {
     await expect(chip).toContainText(GS_1_TEXT)
 
     await focusBlockById(page, BLOCK_GS_1)
-    await page.keyboard.press('End')
-    await page.keyboard.press('Shift+Home')
-    await page.keyboard.type('Buy oat milk')
+    await replaceEditorText(page, 'Buy oat milk')
     await blurEditors(page)
 
     await expect(chip).toContainText('Buy oat milk')
