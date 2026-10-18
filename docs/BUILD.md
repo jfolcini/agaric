@@ -198,7 +198,7 @@ cargo bench --bench interactive_slo              # warm latency mean budgets at 
   its tests read. Migrations, a `Cargo.toml` or `Cargo.lock`, `src-tauri/.config/nextest.toml`
   and its setup scripts, and `rust-toolchain.toml` run the full suite. The diff is against
   `HEAD`; pass `--range origin/main...HEAD` to cover a branch's commits too. Pre-push
-  Phase D runs the same selection over the push range.
+  Phase D runs the same selection over the push range, only when the push changes Rust.
 
 - **`just test-be-release`** runs the backend suite with `debug_assertions` OFF and
   `overflow-checks` ON, via `[profile.release-test]`. Use it after promoting a
