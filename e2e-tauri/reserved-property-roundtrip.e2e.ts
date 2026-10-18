@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------------------
-// Real-backend reserved-property (todo state) round-trip (#3085).
+// Real-backend block-property round-trips: a reserved property (todo state,
+// #3085) and a ref property added from the block's property drawer (#5862).
 //
 // Bug class (#3082): a reserved block property set through the UI must persist
 // across a navigation round-trip against the real backend. `todo_state` is a
@@ -24,6 +25,12 @@
 // set the checkbox becomes permanently visible (`[.block-active_&]` aside), so
 // the post-navigation assertion is stable.
 //
+// A ref property added from the drawer used to send `set_property` with every
+// value field null, which the backend refuses (`validate_set_property`), so
+// the add failed. Add now opens a draft row whose page picker writes the ref
+// (#5862). Only this lane holds the backend that refused the add; the chip's
+// live title is pinned on the mock lane (`e2e/property-ref-boolean-chips.spec.ts`).
+//
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
@@ -32,16 +39,68 @@ import {
   NAV_TIMEOUT,
   addBlockWithMarker,
   blockStaticByMarker,
+  chooseSelectOption,
   navigateTo,
+  openNewPage,
+  openSettingsTab,
+  reopenPageByTitle,
+  reopenPageHolding,
   runScopedMarker,
+  typeInputVerified,
+  typeMarkerVerified,
   waitForAppReady,
+  waitForToast,
 } from './helpers'
 
 // #3334 — scoped to this run, so the durable read cannot resolve a previous
 // run's leftover row (which would carry its own already-set todo state).
 const MARKER = runScopedMarker('wdio-reserved-prop-todo')
 
-describe('Agaric real-backend reserved-property round-trip (#3085)', () => {
+const REF_KEY = runScopedMarker('wdio-ref-owner')
+const REF_HOME = runScopedMarker('wdio-ref-home')
+const REF_BLOCK = runScopedMarker('wdio-ref-block')
+const REF_TARGET = runScopedMarker('wdio-ref-target')
+
+const DRAWER = '[role="dialog"]*=Block Properties'
+
+/** Block `id`'s row, static or holding the editor (coming back to a page can refocus its block). */
+const blockRow = (id: string) => $(`[data-testid="sortable-block"][data-block-id="${id}"]`)
+
+/** Open block `id`'s property drawer from its row's context menu. */
+async function openPropertyDrawer(id: string): Promise<void> {
+  const row = blockRow(id)
+  await row.waitForDisplayed({ timeout: NAV_TIMEOUT })
+  await row.click({ button: 'right' })
+  const item = $('[role="menuitem"]*=Properties')
+  await item.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await item.click()
+  await $(DRAWER).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+}
+
+/** Close the open property drawer with its Close button. */
+async function closePropertyDrawer(): Promise<void> {
+  const close = $(DRAWER).$('[data-slot="sheet-close"]')
+  await close.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await close.click()
+  await $(DRAWER).waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+}
+
+/** The drawer row's page picker for `key` (`pageProperty.valueLabel`), which shows the ref's title. */
+const refPicker = (key: string) => $(`button[aria-label="${key} value"]`)
+
+/** Wait until the drawer's picker for `key` shows `title`. */
+async function expectPickerShows(key: string, title: string): Promise<void> {
+  await browser.waitUntil(async () => (await refPicker(key).getText()) === title, {
+    timeout: ACTION_TIMEOUT,
+    timeoutMsg: `the drawer's ${key} row never showed ${title}`,
+  })
+}
+
+/** The ref chip on block `id` that opens `title` (`property.openRefTarget`). */
+const refChip = (id: string, title: string) =>
+  blockRow(id).$(`[data-testid="property-chip"] button[aria-label="Open ${title}"]`)
+
+describe('Agaric real-backend block-property round-trips (#3085, #5862)', () => {
   it('persists a todo state set via the task checkbox across a navigation round-trip', async () => {
     await waitForAppReady()
     await navigateTo('Journal')
@@ -101,5 +160,61 @@ describe('Agaric real-backend reserved-property round-trip (#3085)', () => {
         timeoutMsg: 'todo state did not persist across the navigation round-trip',
       },
     )
+  })
+
+  it('adds a ref property from the drawer and keeps it across a navigation round-trip', async () => {
+    await waitForAppReady()
+
+    // 1. Define the ref key in Settings › Properties; the drawer offers only defined keys.
+    await openSettingsTab('properties')
+    const panel = '[data-testid="settings-panel-properties"]'
+    await typeInputVerified(`${panel} input[aria-label="Property key"]`, REF_KEY)
+    await chooseSelectOption(`${panel} [aria-label="Type"]`, 'ref')
+    const create = $(panel).$('button*=Create')
+    await create.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await create.click()
+    await waitForToast('Property definition created')
+
+    // 2. The page the ref will point at, and a page holding the block that carries it.
+    await openNewPage(REF_TARGET)
+    await openNewPage(REF_HOME)
+    await typeMarkerVerified(REF_BLOCK)
+    await reopenPageHolding(REF_HOME, REF_BLOCK)
+    const blockId = await blockStaticByMarker(REF_BLOCK).getAttribute('data-block-id')
+    if (blockId === null) throw new Error(`the block ${REF_BLOCK} has no data-block-id`)
+
+    // 3. Add the key from the drawer, then pick the target in its row's page picker.
+    await openPropertyDrawer(blockId)
+    const add = $(DRAWER).$('button[aria-label="Add property"]')
+    await add.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await add.click()
+    await typeInputVerified('input[aria-label="Search definitions"]', REF_KEY)
+    // The picker lists a key as `formatPropertyName` spells it.
+    const label = REF_KEY.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+    const def = $(`.//button[span[normalize-space(.)="${label}"]]`)
+    await def.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await def.click()
+    await refPicker(REF_KEY).waitForClickable({
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: `adding ${REF_KEY} opened no row with a page picker`,
+    })
+    await refPicker(REF_KEY).click()
+    const page = $('[aria-label="Select a page"]').$(
+      `.//button[span[normalize-space(.)="${REF_TARGET}"]]`,
+    )
+    await page.waitForClickable({ timeout: ACTION_TIMEOUT })
+    await page.click()
+    await expectPickerShows(REF_KEY, REF_TARGET)
+    await closePropertyDrawer()
+
+    // 4. Leave and come back: the chip and the drawer row read the stored ref.
+    await reopenPageByTitle(REF_HOME)
+    await refChip(blockId, REF_TARGET).waitForDisplayed({
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: `block ${blockId} shows no ${REF_KEY} chip opening ${REF_TARGET} after the round-trip`,
+    })
+    await openPropertyDrawer(blockId)
+    await expectPickerShows(REF_KEY, REF_TARGET)
+    await closePropertyDrawer()
   })
 })
