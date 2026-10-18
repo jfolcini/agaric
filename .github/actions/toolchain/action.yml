@@ -35,9 +35,18 @@ runs:
       uses: ./.github/actions/prepare-apt
 
     - name: Cache apt archives (Tauri system deps)
-      # Bump the `-v1` suffix when the package list below changes.
-      if: inputs.rust == 'true' && inputs.bundle-deps != 'true'
+      # Bump the `-v1` suffix when the package list below changes. Only `main`
+      # saves: a PR's save is scoped to `refs/pull/<n>/merge`, which nothing
+      # else restores, so PRs restore only (#5853).
+      if: inputs.rust == 'true' && inputs.bundle-deps != 'true' && github.ref == 'refs/heads/main'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: /var/cache/apt/archives/*.deb
+        key: apt-tauri-${{ runner.os }}-v1
+
+    - name: Restore apt archives (Tauri system deps)
+      if: inputs.rust == 'true' && inputs.bundle-deps != 'true' && github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: /var/cache/apt/archives/*.deb
         key: apt-tauri-${{ runner.os }}-v1
@@ -84,8 +93,8 @@ runs:
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
         workspaces: src-tauri
-        # Keep `~/.cargo/bin/` so cargo-installed plugins (sqlx-cli, tauri-cli)
-        # survive across runs.
+        # Keep `~/.cargo/bin/` so cargo-installed plugins (sqlx-cli) survive
+        # across runs.
         cache-bin: 'true'
         shared-key: ${{ inputs.rust-shared-key }}
         # Only `main` writes, so feature-branch churn cannot evict the baseline.
