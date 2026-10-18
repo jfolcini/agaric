@@ -1,15 +1,14 @@
 # Optional faster-linker config for local Rust builds (Linux).
 #
 # You normally DON'T need to copy this by hand: `scripts/setup.sh` (aka
-# `npm run setup` / `just setup`) auto-writes `.cargo/config.toml` on Linux
-# when a fast linker is on PATH — preferring `mold`, falling back to `lld`.
+# `npm run setup` / `just setup`) and `scripts/seed-worktree.sh` auto-write
+# `.cargo/config.toml` on Linux when a fast linker is on PATH — `mold`, or
+# `lld` only when mold is not installed.
 # This file is the reference / manual fallback.
 #
 # Why: the link step is the long pole of incremental Rust compiles on this
-# codebase (~200K LOC + the Tauri/sqlx/Loro/rustls tree), not codegen. A faster
-# linker cuts incremental relink time substantially (mold measured ~60% faster
-# on this project, 2026-05-16; lld is close behind and ships on most CI/dev
-# images already).
+# codebase (the Tauri/sqlx/Loro/rustls tree), not codegen. A faster linker cuts
+# incremental relink time substantially.
 #
 # Manual activation (only if setup.sh didn't wire it — e.g. you installed the
 # linker afterwards):
@@ -17,8 +16,8 @@
 #   sudo apt install mold      # Debian/Ubuntu (mold is in main since 22.04)
 #   cp .cargo/config.toml.example .cargo/config.toml
 #
-# ...or just re-run `scripts/setup.sh`, which wires whichever of mold/lld it
-# finds. Match the `[target.…]` triple to your host (`rustc -vV | grep host`).
+# ...or just re-run `scripts/setup.sh`, which wires mold (else lld) when
+# it finds one. Match the `[target.…]` triple to your host (`rustc -vV | grep host`).
 # gcc/clang's `-fuse-ld=<ld>` gives a clear error if the linker isn't installed,
 # never silent breakage.
 #

@@ -5,7 +5,7 @@
 # WHY THIS EXISTS (issue #3171)
 # -----------------------------
 # `git worktree add` gives you a checkout, but not a build/commit/push-ready
-# one. Three gaps each cost a full failed verify/push cycle before the real
+# one. Four gaps each cost a full failed verify/push cycle before the real
 # cause is visible:
 #
 #   1. node_modules must be symlinked to the main checkout's BEFORE an
@@ -25,6 +25,10 @@
 #      out on the name mismatch (local branch vs `main`) instead of pushing.
 #      Unsetting the bogus upstream makes push.sh fall through to its
 #      `--set-upstream origin <branch>` path, which pushes to the right ref.
+#   4. `.cargo/config.toml` (the mold linker wiring) is gitignored, so a
+#      worktree gets only the `.example` and otherwise links with the system
+#      default linker. This runs `ensure_fast_linker` (scripts/lib/
+#      fast-linker.sh, shared with setup.sh) to write it.
 #
 # The MCP prebuilt binary (`node scripts/prepare-external-bins.mjs`) is a
 # `cargo build --release` — expensive — so it is NOT run by default. Pass
@@ -55,6 +59,8 @@ and push without the friction documented in issue #3171:
   - corrects the upstream that `git worktree add -b <branch> origin/main`
     leaves pointed at origin/main, which makes push.sh take its bare
     `git push` path and fail on a branch-name mismatch
+  - writes the gitignored .cargo/config.toml that selects the mold linker
+    (otherwise the worktree links with the system default linker)
 
 Options:
   --mcp       Also build the MCP sidecar binary via
@@ -108,7 +114,7 @@ PROBLEMS=()
 # ── 1. node_modules symlink — do this FIRST, before anything else could ────
 #      invoke npm and create a real directory in its place.
 echo
-echo "▶ [1/4] node_modules"
+echo "▶ [1/5] node_modules"
 if [ "$IS_MAIN_CHECKOUT" -eq 1 ]; then
   echo "  this IS the main checkout — leaving node_modules as-is."
   SKIPPED+=("node_modules (this is the main checkout, not a worktree)")
@@ -141,7 +147,7 @@ fi
 
 # ── 2. src-tauri/.env + migrated dev.db ─────────────────────────────────────
 echo
-echo "▶ [2/4] src-tauri/.env + migrated dev.db"
+echo "▶ [2/5] src-tauri/.env + migrated dev.db"
 MAIN_ENV="$MAIN_ROOT/src-tauri/.env"
 DEST_ENV="$WORKTREE_ROOT/src-tauri/.env"
 if [ -f "$DEST_ENV" ]; then
@@ -171,7 +177,7 @@ fi
 
 # ── 3. branch upstream ───────────────────────────────────────────────────
 echo
-echo "▶ [3/4] branch upstream"
+echo "▶ [3/5] branch upstream"
 branch="$(git rev-parse --abbrev-ref HEAD)"
 if upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2> /dev/null)"; then
   # Strip the leading "<remote>/" to compare branch names only -- local
@@ -194,9 +200,28 @@ else
   SKIPPED+=("no upstream configured (nothing to fix)")
 fi
 
-# ── 4. MCP prebuilt binary (opt-in) ─────────────────────────────────────────
+# ── 4. mold linker config ────────────────────────────────────────────────
 echo
-echo "▶ [4/4] MCP prebuilt binary (opt-in, expensive)"
+echo "▶ [4/5] .cargo/config.toml (mold linker)"
+# shellcheck source=lib/fast-linker.sh
+. "$WORKTREE_ROOT/scripts/lib/fast-linker.sh"
+if [ -f .cargo/config.toml ]; then
+  echo "  .cargo/config.toml already present -- leaving it untouched."
+  SKIPPED+=(".cargo/config.toml (already present)")
+else
+  # `|| true`: without rustc on PATH its probe fails, and under `set -e` that
+  # would abort the seed before the summary.
+  ensure_fast_linker || true
+  if [ -f .cargo/config.toml ]; then
+    DONE+=(".cargo/config.toml written (fast linker wired)")
+  else
+    SKIPPED+=(".cargo/config.toml (no mold/lld on PATH, or not a Linux host)")
+  fi
+fi
+
+# ── 5. MCP prebuilt binary (opt-in) ─────────────────────────────────────────
+echo
+echo "▶ [5/5] MCP prebuilt binary (opt-in, expensive)"
 if [ "$RUN_MCP" -eq 1 ]; then
   echo "  running node scripts/prepare-external-bins.mjs (release build, can be slow)..."
   node "$WORKTREE_ROOT/scripts/prepare-external-bins.mjs"

@@ -33,7 +33,7 @@ On [Claude Code on the web](https://code.claude.com/docs/en/claude-code-on-the-w
 A few specifics for that environment:
 
 - **Node.** The cloud VMs ship Node 20/21/22 (via `nvm`) by default; 20/21 and pre-22.22.2 don't satisfy `engines.node` — `scripts/setup.sh` provisions the `.nvmrc` Node on startup, so you don't have to.
-- **Linux system packages.** The remote-only opt-in installs the six native packages used by CI's Rust compile/test lane in [`_validate.yml`](../.github/workflows/_validate.yml) — `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libssl-dev`, `librsvg2-dev`, `libsoup-3.0-dev`, `pkg-config` — plus `patchelf`, which is bundle-time only but cheap and keeps `cargo tauri build` working in the same sandbox. It deliberately excludes `libappindicator3-dev` (AppImage tray bundling) and `mold` (an optional linker speed-up that `ensure_fast_linker` degrades cleanly without). An already-provisioned VM performs no apt or network call.
+- **Linux system packages.** The remote-only opt-in installs the six native packages used by CI's Rust compile/test lane in [`_validate.yml`](../.github/workflows/_validate.yml) — `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libssl-dev`, `librsvg2-dev`, `libsoup-3.0-dev`, `pkg-config` — plus `patchelf`, which is bundle-time only but cheap and keeps `cargo tauri build` working in the same sandbox. It also installs `mold`, the project linker that `ensure_fast_linker` wires (see [Speed up Rust builds](#speed-up-rust-builds-linux)); like `patchelf`, a miss of only `mold` does not stop compiling or testing. It deliberately excludes `libappindicator3-dev` (AppImage tray bundling). An already-provisioned VM performs no apt or network call.
 - **Faster startup (optional).** `SessionStart` hooks run on every session and aren't filesystem-cached. For the quickest starts you can *also* paste `bash scripts/setup.sh --install-system-deps` into your environment's **Setup script** field in the web UI: setup scripts run once and Anthropic snapshots the result, so the system and heavy cargo-tool installs land in the cache instead of re-running each session. The committed hook still guarantees bootstrap even if you skip this.
 - **Network.** `npm ci`, `nvm install` (`nodejs.org`), and `nvm.sh` (`raw.githubusercontent.com`) all use hosts on the default **Trusted** allowlist, so bootstrap works at every network-access level. Only `git clone` of third-party repos is blocked — the GitHub git proxy scopes the credential to this repo, independent of the network level.
 - **prek's git-cloned hooks.** Because of that git scoping, prek's three hooks built from upstream repos — `gitleaks`, `actionlint`, and `conventional-pre-commit` — can't be provisioned in a sandboxed session, so `scripts/setup-hooks.sh` leaves the git hooks **unwired** there (commits keep working; those three still run in CI). Every `language = "system"` hook works once its host binary is installed. Locally, with normal git access, all hooks wire up.
@@ -154,20 +154,20 @@ Keep a `bacon` window open next to the editor. Defaults are sensible; optional `
 
 The link step is the long pole of incremental Rust compiles on this codebase, not codegen. Two things address that, and **`scripts/setup.sh` now wires both automatically** — you no longer copy anything by hand:
 
-1. **A faster linker.** `setup.sh` writes `.cargo/config.toml` on a Linux host when a fast linker is on PATH, preferring [`mold`](https://github.com/rui314/mold) and falling back to `lld`. Install one for the win:
+1. **The mold linker.** `mold` is the project linker, as in CI. `setup.sh` (and `seed-worktree.sh` for a `git worktree add` checkout, whose gitignored `.cargo/config.toml` is otherwise absent) writes `.cargo/config.toml` on a Linux host, selecting `mold`; it falls back to `lld` only when mold is not installed. Install mold first:
 
    ```sh
    sudo apt install mold        # Debian/Ubuntu (mold has been in main since 22.04)
    # then re-run: bash scripts/setup.sh   (or: cp .cargo/config.toml.example .cargo/config.toml)
    ```
 
-   `lld` already ships on most CI/dev images, so on many machines the fast linker is wired with no extra install. Neither is bundled; without either, gcc/clang's `-fuse-ld=<ld>` errors clearly (`cannot find -fuse-ld=…`) rather than failing silently.
+   With neither linker installed, nothing is wired and the default linker is used; a hand-written config naming a missing linker errors clearly (`cannot find -fuse-ld=…`) rather than failing silently.
 
 2. **`split-debuginfo = "unpacked"`** (committed in `[profile.dev]`, `src-tauri/Cargo.toml`). Leaves DWARF beside the object files instead of packing it into the linked artifact, so the linker copies far fewer bytes — complementary to the fast linker. First-party debuggability and runtime are unchanged; the dev profile never ships.
 
-Measured on this project (2026-05-16): with **mold**, an incremental `cargo check` after touching a single Rust file dropped from ~20 s to ~7-10 s. With **lld** (the fallback) plus `unpacked` split-debuginfo, a steady-state incremental **relink** of the app crate went ~21 s → ~18 s — smaller, because that relink is dominated by recompiling the app crate itself rather than by linking. Incremental `cargo check` is unaffected by the linker choice, as expected (check doesn't link).
+Incremental `cargo check` is unaffected by the linker choice (check doesn't link); the win is on incremental builds and tests that relink.
 
-The active `.cargo/config.toml` is gitignored, so it never leaks into the tree — only the `.example` is tracked, and `setup.sh` never overwrites an existing file (a manual override wins). An unconditional `[target.…] rustflags` would break a fresh clone that hasn't installed the linker, which is why it's generated rather than committed. **Linux-only**: `setup.sh` only wires the Linux host triple, so macOS/Windows and Android cross-builds are untouched. Safe to delete any time.
+The active `.cargo/config.toml` is gitignored, so it never leaks into the tree — only the `.example` is tracked, and `setup.sh` and `seed-worktree.sh` never overwrite an existing file (a manual override wins). An unconditional `[target.…] rustflags` would break a fresh clone that hasn't installed the linker, which is why it's generated rather than committed. **Linux-only**: they only wire the Linux host triple, so macOS/Windows and Android cross-builds are untouched. Safe to delete any time.
 
 ## Testing
 

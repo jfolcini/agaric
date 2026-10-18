@@ -38,7 +38,7 @@ If you'd rather wire just the git hooks by hand (e.g. you already have the toolc
 
 ### Working in a `git worktree`
 
-`scripts/setup.sh` is for a fresh clone; a `git worktree add` checkout needs different seeding (its own `node_modules`, the gitignored `.env` beside [`src-tauri/.env.example`](src-tauri/.env.example), a migrated dev DB, and upstream tracking). Run `bash scripts/seed-worktree.sh` right after creating the worktree — it's idempotent, so re-running it is always safe. See the script's header comment for the gaps it closes (issue #3171) and `--mcp` for the opt-in MCP sidecar build.
+`scripts/setup.sh` is for a fresh clone; a `git worktree add` checkout needs different seeding (its own `node_modules`, the gitignored `.env` beside [`src-tauri/.env.example`](src-tauri/.env.example), a migrated dev DB, the gitignored `.cargo/config.toml` that links with mold, and upstream tracking). Run `bash scripts/seed-worktree.sh` right after creating the worktree — it's idempotent, so re-running it is always safe. See the script's header comment for the gaps it closes (issue #3171) and `--mcp` for the opt-in MCP sidecar build.
 
 ### Optional: `just` task runner
 
