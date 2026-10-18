@@ -1,6 +1,6 @@
 /**
- * The References panel's filters: the builder's Status and Priority, and the
- * source-page popover's exclude.
+ * The References panel's filters: the builder's Status, Priority, Has Tag and
+ * Property, and the source-page popover's exclude.
  *
  * A task's state and priority live in their `blocks` columns, so the builder
  * must send `TodoState` / `Priority`; a property filter on `todo` / `priority`
@@ -26,6 +26,7 @@ import {
 // links to Getting Started, so the panel lists five references.
 const GETTING_STARTED = '00000000000000000000PAGE01'
 const MEETINGS = '00000000000000000000PAGE05'
+const TAG_WORK = '000000000000000000000TAG01'
 
 /** Tasks on Projects (A, B, C) and Meetings (D), each linking to Getting Started. */
 async function seedTasks(page: Page): Promise<void> {
@@ -83,5 +84,46 @@ test.describe('References filters', () => {
     await references.getByRole('button', { name: 'Filter by source page' }).click()
     await activePopover(page).getByRole('button', { name: 'Clear all' }).click()
     await expect(rows).toHaveText([/task D/, /task A/, /task B/, /task C/, /complement/])
+  })
+})
+
+test.describe('References tag and property filters', () => {
+  test('Has Tag and a Property filter narrow the references, each on its own', async ({ page }) => {
+    await waitForBoot(page)
+    const link = `[[${GETTING_STARTED}]]`
+    await seedSearchBlocks(page, [
+      { content: `Tagged E on ${link}`, tagIds: [TAG_WORK], props: { context: 'office' } },
+      { content: `Tagged F on ${link}`, tagIds: [TAG_WORK] },
+      { content: `Untagged G on ${link}`, props: { context: 'office' } },
+    ])
+    await openPage(page, 'Getting Started')
+    const references = page.getByTestId('linked-references')
+    const rows = references.getByText(/(Tagged|Untagged) [E-G] on|complement the/)
+    const showing = references.getByText(/^Showing \d+ of \d+ backlinks$/)
+    await expect(rows).toHaveText([/E on/, /F on/, /G on/, /complement/])
+    // A block in edit mode would take the first click on Add filter.
+    await expect(page.getByTestId('block-editor')).toHaveCount(0)
+
+    await references.getByRole('button', { name: 'Add filter', exact: true }).click()
+    await chooseSelectOption(page, 'Filter category', 'Has Tag')
+    await references.getByTestId('tag-search-popover').click()
+    await activePopover(page).getByRole('option', { name: 'work', exact: true }).click()
+    await expect(references.getByTestId('tag-search-popover')).toHaveText('work')
+    await references.getByRole('button', { name: 'Apply filter' }).click()
+    await expect(rows).toHaveText([/E on/, /F on/])
+    await expect(showing).toHaveText('Showing 2 of 4 backlinks')
+
+    await references.getByRole('button', { name: 'Add filter', exact: true }).click()
+    await chooseSelectOption(page, 'Filter category', 'Property')
+    await chooseSelectOption(page, 'Property key', 'context')
+    await references.getByRole('textbox', { name: 'Property value' }).fill('office')
+    await references.getByRole('button', { name: 'Apply filter' }).click()
+    await expect(rows).toHaveText([/E on/])
+    await expect(showing).toHaveText('Showing 1 of 4 backlinks')
+
+    // Without the tag pill the property filter alone admits G.
+    await references.getByRole('button', { name: /^Remove filter has tag/ }).click()
+    await expect(rows).toHaveText([/E on/, /G on/])
+    await expect(showing).toHaveText('Showing 2 of 4 backlinks')
   })
 })
