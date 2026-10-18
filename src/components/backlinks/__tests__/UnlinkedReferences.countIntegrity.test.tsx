@@ -227,11 +227,18 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
   // #3733 note 1.
   it('"Link it" under an active filter leaves "Showing N of M" agreeing with the rows', async () => {
     const user = userEvent.setup()
-    mockedListUnlinked.mockImplementation(async (_pageId, filters) =>
-      filters
-        ? makeResponse({ ids: ['B1', 'B2', 'B3', 'B4'], total: 40, filtered: 4 })
-        : makeResponse({ ids: ['B1'], total: 40, filtered: 40 }),
-    )
+    // "Link it" refetches once the graph-structure debounce settles, so the stub
+    // answers with each linked row gone, as the backend would.
+    mockedListUnlinked.mockImplementation(async (_pageId, filters) => {
+      const linked = mockedEditBlock.mock.calls.length
+      return filters
+        ? makeResponse({
+            ids: ['B1', 'B2', 'B3', 'B4'].slice(linked),
+            total: 40 - linked,
+            filtered: 4 - linked,
+          })
+        : makeResponse({ ids: ['B1'], total: 40 - linked, filtered: 40 - linked })
+    })
 
     const { container } = renderPanel()
     await expand(user)
@@ -242,8 +249,7 @@ describe('UnlinkedReferences — the count must agree with the rows', () => {
     })
     expect(shownCounts()).toEqual({ filtered: 4, total: 40 })
 
-    // Link the first row away. Nothing refetches (editBlock emits no property
-    // event), so what is on screen afterwards is the optimistic update alone.
+    // Link the first row away.
     await user.click(screen.getAllByRole('button', { name: /^Link it:/i })[0] as HTMLElement)
 
     await waitFor(() => {

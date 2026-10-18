@@ -216,7 +216,9 @@ describe('QrScanner', () => {
   it('moves focus to Retry camera when the camera fails', async () => {
     render(<QrScanner onScan={vi.fn()} />)
 
-    expect(await screen.findByRole('button', { name: /retry camera/i })).toHaveFocus()
+    const retry = await screen.findByRole('button', { name: /retry camera/i })
+    // An effect moves the focus, and it can run after the button is found.
+    await waitFor(() => expect(retry).toHaveFocus())
   })
 
   it('success: calls onScan with decoded text', async () => {

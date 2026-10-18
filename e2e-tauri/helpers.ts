@@ -572,8 +572,8 @@ export async function enterBlankSibling(): Promise<string> {
 
 /**
  * Assert that nothing matching `selector` is in the DOM, after a nav
- * round-trip re-queried the backend. A reverse `waitForExist` alone would pass
- * on a page that has not finished rendering yet, so callers put it AFTER the
+ * round-trip re-queried the backend. Absence alone also holds on a page that
+ * has not finished rendering yet, so callers put it AFTER the
  * positive readiness signal of the view (`navigateTo`'s `aria-current`, a
  * sibling row that must be present). Each poll is a fresh find inside
  * `waitUntil`, which retries a poll that throws: WebKitWebDriver fails a find
