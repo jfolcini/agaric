@@ -721,8 +721,8 @@ function extractCandidates(text) {
   return found
 }
 
-// #4244 part (b) — an OPPORTUNISTIC WARNING (never a failure) when a cited
-// line number exceeds the target file's current length. This guard strips
+// #4244 part (b) — a WARNING when a cited line number exceeds the target
+// file's current length. This guard strips
 // `:N` before checking anything (see the header) — it verifies the file
 // EXISTS, never that the line is right — so a citation can be "path-valid"
 // and still point at a section that moved or was deleted long ago. Checking
@@ -762,10 +762,10 @@ function extractCandidates(text) {
 // SAME shrink-only treatment: an entry whose (doc, ref, maxCited) no
 // longer corresponds to a LIVE warning (the citing file was fixed, the
 // anchor was removed, the citing doc was renamed) is a STALE entry,
-// and `check()` DOES now fold that into `failed` — never the warning
-// itself, only a rotted acknowledgment of one. Structured records (not
-// pre-joined `warningKey` strings) so the staleness check can read
-// `entry.doc` back out without reparsing the composite key.
+// and `check()` folds that into `failed` just as it does an unacknowledged
+// warning. Structured records (not pre-joined `warningKey` strings) so the
+// staleness check can read `entry.doc` back out without reparsing the
+// composite key.
 //
 // The staleness test itself is UNGATED over this list — an entry with no
 // matching LIVE warning is stale, full stop. #4264 names TWO rot triggers
@@ -1438,19 +1438,18 @@ function check() {
   const acknowledgedKeys = new Set(acknowledged.map(warningKey))
   const warningKeysPresent = new Set(warnings.map(warningKey))
   const staleKnownWarnings = acknowledged.filter((e) => !warningKeysPresent.has(warningKey(e)))
+  const newWarnings = warnings.filter((w) => !acknowledgedKeys.has(warningKey(w)))
   // #4244 part (b) — a warning `KNOWN_INTENTIONAL_WARNINGS` acknowledges
   // only prints; an unacknowledged one fails, because CI hides a passing
   // hook's output. A STALE acknowledgment is a rotted piece of THIS GUARD'S
   // OWN CONFIG, exactly like a stale baseline entry, so it fails the same way
   // `staleEntries` does.
-  const acknowledgedWarningKeys = new Set(acknowledged.map(warningKey))
-  const unacknowledgedWarnings = warnings.filter((w) => !acknowledgedWarningKeys.has(warningKey(w)))
   const failed =
     newMisses.length > 0 ||
     staleEntries.length > 0 ||
     scanErrors.length > 0 ||
     staleKnownWarnings.length > 0 ||
-    unacknowledgedWarnings.length > 0
+    newWarnings.length > 0
 
   if (!failed && warnings.length === 0) {
     return 0
@@ -1530,7 +1529,6 @@ function check() {
     // #4244 part (b) — a cited line number past the target's current length
     // is usually drift (the file shrank, or the section moved); a new one
     // fails the run above, an acknowledged one only prints.
-    const newWarnings = warnings.filter((w) => !acknowledgedKeys.has(warningKey(w)))
     const knownWarnings = warnings.filter((w) => acknowledgedKeys.has(warningKey(w)))
     const knownCount = knownWarnings.length
     process.stderr.write(
@@ -1805,7 +1803,9 @@ function bareCitationScenarios(root) {
       return { status: r.status, stderr: r.stderr ?? '' }
     }
     mkdirSync(join(dir, 'src-tauri', 'src'), { recursive: true })
-    writeFileSync(join(dir, 'src-tauri', 'src', 'session_supervisor.rs'), 'fn f() {}\n')
+    // Long enough that `:708-716` stays in range: a past-EOF line citation
+    // fails the run on its own, which is not what these cases are about.
+    writeFileSync(join(dir, 'src-tauri', 'src', 'session_supervisor.rs'), 'fn f() {}\n'.repeat(716))
 
     // THE ACTUAL #4135 DEFECT SHAPE: a bare filename with a line RANGE, cited
     // from a doc, naming a file that does not even exist under that bare
@@ -2393,7 +2393,10 @@ function partiallyRootedCitationScenarios(root) {
       return { status: r.status, stderr: r.stderr ?? '' }
     }
     mkdirSync(join(dir, 'src', 'pagination'), { recursive: true })
-    writeFileSync(join(dir, 'src', 'pagination', 'mod.rs'), 'fn f() {}\n')
+    // Long enough that the issue's `:658-668` stays in range: a past-EOF
+    // line citation fails the run on its own, which is not what these cases
+    // are about.
+    writeFileSync(join(dir, 'src', 'pagination', 'mod.rs'), 'fn f() {}\n'.repeat(668))
 
     // THE ACTUAL #4184 DEFECT SHAPE, the issue's own example: a citation with
     // a slash but no known root, naming a file that DOES exist in the tree
@@ -2861,13 +2864,11 @@ function spanPairingScenarios(root) {
 }
 
 /**
- * #4244 part (b) — the opportunistic line-bounds WARNING. Every assertion
- * here proves the same two things together: the warning fires/does-not-fire
- * on the right shape, AND (the part that actually matters) it never once
- * moves the exit code away from what the miss/baseline machinery alone
- * would have produced — a run with only a warning is still green, and a run
- * that is failing for a real reason still fails with the warning printed
- * alongside it rather than swallowed.
+ * #4244 part (b) — the line-bounds WARNING. Every assertion here proves two
+ * things together: the warning fires/does-not-fire on the right shape, and an
+ * unacknowledged one fails the run, printed alongside any real miss rather
+ * than swallowed by it. Fixtures cannot acknowledge one (see
+ * `knownIntentionalWarningScenarios`), so every warning here is NEW.
  */
 function lineBoundsWarningScenarios(root) {
   return withScrubbedProcessEnv(root, () => {
@@ -2912,21 +2913,22 @@ function lineBoundsWarningScenarios(root) {
       `expected 0 with no WARNING, got ${atBoundary.status}: ${atBoundary.stderr}`,
     )
 
-    // OUT-OF-BOUNDS: cites line 40 of a 5-line file — warns, but the exit
-    // code STAYS 0. This is the central claim of #4244 part (b): a
-    // deliberately historical citation (the real `tauri.ts:1871` case) must
-    // never be reddened by this feature.
+    // OUT-OF-BOUNDS: cites line 40 of a 5-line file — warns AND fails: an
+    // unacknowledged one is a red, because CI hides a passing hook's output.
+    // A deliberate one is acknowledged in `KNOWN_INTENTIONAL_WARNINGS`, which
+    // only the `knownIntentionalWarningScenarios` battery can stand up.
     writeFileSync(join(dir, 'README.md'), 'See `src/short.ts:40` for the constant.\n')
     git('add', '-A')
     const outOfBounds = run(['--worktree'])
     record(
-      'a citation past the target’s length WARNS but still exits 0 (never a failure)',
-      outOfBounds.status === 0 &&
+      'an unacknowledged citation past the target’s length WARNS and fails the run',
+      outOfBounds.status === 1 &&
         /WARNING/.test(outOfBounds.stderr) &&
         /short\.ts/.test(outOfBounds.stderr) &&
         /cites line 40/.test(outOfBounds.stderr) &&
-        /only 5 line/.test(outOfBounds.stderr),
-      `expected 0 with a WARNING naming short.ts/line 40/5 lines, got ${outOfBounds.status}: ${outOfBounds.stderr}`,
+        /only 5 line/.test(outOfBounds.stderr) &&
+        /\(NEW\)/.test(outOfBounds.stderr),
+      `expected 1 with a WARNING naming short.ts/line 40/5 lines (NEW), got ${outOfBounds.status}: ${outOfBounds.stderr}`,
     )
 
     // A RANGE citation is bound-checked on its END (the larger number): the
@@ -2935,9 +2937,9 @@ function lineBoundsWarningScenarios(root) {
     git('add', '-A')
     const rangeOutOfBounds = run(['--worktree'])
     record(
-      'a RANGE citation whose END exceeds the file length still warns',
-      rangeOutOfBounds.status === 0 && /WARNING/.test(rangeOutOfBounds.stderr),
-      `expected 0 with a WARNING, got ${rangeOutOfBounds.status}: ${rangeOutOfBounds.stderr}`,
+      'a RANGE citation whose END exceeds the file length warns and fails',
+      rangeOutOfBounds.status === 1 && /WARNING/.test(rangeOutOfBounds.stderr),
+      `expected 1 with a WARNING, got ${rangeOutOfBounds.status}: ${rangeOutOfBounds.stderr}`,
     )
 
     // THE WARNING NEVER MASKS A REAL FAILURE, and never gets masked BY one:
@@ -2959,11 +2961,10 @@ function lineBoundsWarningScenarios(root) {
     // THE REAL #4244 SHAPE: a test asserting the ABSENCE of a deliberately
     // stale doc anchor, past the target file's current length — mirrors
     // `tauri.ts:1871` in `src/lib/__tests__/platform.test.ts` (106 lines) —
-    // must warn but stay green, from a `.ts` COMMENT (not a markdown doc),
-    // proving the historical citation in the real tree is unaffected by
-    // this change. `README.md` is reset first — the previous scenario left
-    // it citing a genuinely missing path, and this one must isolate the
-    // warning-only case.
+    // is judged from a `.ts` COMMENT (not a markdown doc) too: unacknowledged,
+    // it warns and fails like any other. `README.md` is reset first — the
+    // previous scenario left it citing a genuinely missing path, and this one
+    // must isolate the warning-only case.
     writeFileSync(join(dir, 'README.md'), 'Nothing notable here.\n')
     writeFileSync(join(dir, 'src', 'tauri.ts'), 'export const TAURI = 1\n')
     writeFileSync(
@@ -2973,11 +2974,11 @@ function lineBoundsWarningScenarios(root) {
     git('add', '-A')
     const historical = run(['--worktree'])
     record(
-      'the real #4244 historical shape (a stale anchor named for its ABSENCE) warns but stays green',
-      historical.status === 0 &&
+      'the real #4244 historical shape, from a `.ts` comment and unacknowledged, warns and fails',
+      historical.status === 1 &&
         /WARNING/.test(historical.stderr) &&
         /tauri\.ts/.test(historical.stderr),
-      `expected 0 with a WARNING naming tauri.ts, got ${historical.status}: ${historical.stderr}`,
+      `expected 1 with a WARNING naming tauri.ts, got ${historical.status}: ${historical.stderr}`,
     )
     return results
   })
