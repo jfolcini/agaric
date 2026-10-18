@@ -41,6 +41,7 @@ import {
   blockStaticByMarker,
   chooseSelectOption,
   navigateTo,
+  openContextMenu,
   openNewPage,
   openSettingsTab,
   reopenPageByTitle,
@@ -68,9 +69,7 @@ const blockRow = (id: string) => $(`[data-testid="sortable-block"][data-block-id
 
 /** Open block `id`'s property drawer from its row's context menu. */
 async function openPropertyDrawer(id: string): Promise<void> {
-  const row = blockRow(id)
-  await row.waitForDisplayed({ timeout: NAV_TIMEOUT })
-  await row.click({ button: 'right' })
+  await openContextMenu(blockRow(id))
   const item = $('[role="menuitem"]*=Properties')
   await item.waitForClickable({ timeout: ACTION_TIMEOUT })
   await item.click()

@@ -35,6 +35,7 @@ import {
   editAtEnd,
   navigateTo,
   occurrenceIn,
+  openContextMenu,
   openNewPage,
   openPageSource,
   pageSourceButton,
@@ -196,9 +197,7 @@ async function nextJournalDay(day: string): Promise<void> {
 
 /** Open block `id`'s property drawer from its context menu. */
 async function openPropertyDrawer(id: string): Promise<void> {
-  const row = $(`[data-testid="block-static"][data-block-id="${id}"]`)
-  await row.waitForDisplayed({ timeout: NAV_TIMEOUT })
-  await row.click({ button: 'right' })
+  await openContextMenu($(`[data-testid="block-static"][data-block-id="${id}"]`))
   const item = $('[role="menuitem"]*=Properties')
   await item.waitForClickable({ timeout: ACTION_TIMEOUT })
   await item.click()

@@ -88,6 +88,9 @@ describe('Agaric real-backend Most linked sort (#5366)', () => {
     }
 
     await navigateTo('Pages')
+    // The page count mounts left of the sort trigger once the list loads and
+    // shifts it right, so a click aimed before the shift lands on the count.
+    await $('[data-testid="page-browser-count"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
     await chooseSelectOption('[aria-label="Sort order"]', 'Most linked')
     const expected = [
       { title: TARGET, inbound: '2 ↗' },

@@ -537,6 +537,34 @@ export async function ctrlClick(element: ReturnType<typeof $>): Promise<void> {
 }
 
 /**
+ * Open `element`'s context menu by sending it the `contextmenu` event a
+ * right-click sends. A WebDriver right-click is not that: WebKitWebDriver
+ * releases the right button as the left one (`mouseup` and `click` with
+ * `button` 0), so on a static block it also focuses the block, and the editor
+ * that mounts takes focus a moment later, closing any popover opened since
+ * (the property drawer's "Add property" picker, #5881).
+ */
+export async function openContextMenu(element: ReturnType<typeof $>): Promise<void> {
+  await element.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  await browser.execute(
+    (target: HTMLElement) => {
+      const { left, top, width, height } = target.getBoundingClientRect()
+      target.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          button: 2,
+          buttons: 2,
+          clientX: left + width / 2,
+          clientY: top + height / 2,
+        }),
+      )
+    },
+    await element.getElement(),
+  )
+}
+
+/**
  * Press End and Enter in the roving editor's block, and return the id of the
  * blank sibling Enter created once the editor is in it. Enter's create is a
  * round-trip, and until it answers the editor still sits, emptied, in the
