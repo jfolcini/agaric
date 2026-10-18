@@ -24,7 +24,7 @@ whose `expected` the backend authored:
 - "Markdown saved" toasts slid in under a pointer left on Save; WebKit reports that as the
   pointer entering the toast, sonner expands the stack and holds it open, and two saves later
   it covers Save and Cancel. `clickPageSourceButton` waits for the button, clicks it and moves
-  the pointer off; it replaces `pageSourceButton` at all eleven call sites.
+  the pointer off; it replaces `pageSourceButton` at every call site.
 - `page-alias-undo`: the closing page menu still covered the alias input. `focusForTyping`
   waits for its target to be clickable.
 
