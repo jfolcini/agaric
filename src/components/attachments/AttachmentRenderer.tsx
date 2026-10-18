@@ -592,7 +592,7 @@ function AttachmentFileChip({
     >
       <MimeIcon mimeType={att.mime_type} />
       <span className="truncate max-w-[200px]">{att.filename}</span>
-      <span className="shrink-0 opacity-70">{formatSize(att.size_bytes)}</span>
+      <span className="shrink-0">{formatSize(att.size_bytes)}</span>
     </button>
   )
 }
@@ -779,7 +779,7 @@ function MarkdownAttachment({
           <MimeIcon mimeType={att.mime_type} />
           <span className="truncate">{att.filename}</span>
         </button>
-        <span className="shrink-0 opacity-70">{formatSize(att.size_bytes)}</span>
+        <span className="shrink-0">{formatSize(att.size_bytes)}</span>
         <button
           type="button"
           className="ml-auto inline-flex shrink-0 items-center rounded bg-transparent border-0 p-0.5 text-muted-foreground hover:text-foreground transition-colors"

@@ -28,6 +28,13 @@ import {
 const axePath = createRequire(import.meta.url).resolve('axe-core')
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' }
 const EDITOR = '[data-testid="page-mode-editor"]'
+/** A 1×1 PNG, enough for the browser to decode as an image. */
+const PNG_1X1 = [
+  ...Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  ),
+]
 /** The mock's seeded `work` tag (`src/lib/tauri-mock/seed.ts`). */
 const SEED_TAG_WORK = '000000000000000000000TAG01'
 
@@ -1185,6 +1192,94 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     await modeSwitch(page, 'Page').click()
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(8)
     await expect.poll(markers).toEqual(['•', '1.', '1.', '2.', '', '1.', '2.', ''])
+    expect(await backend(page, pageId)).toEqual(await shown(page))
+    await page.addScriptTag({ path: axePath })
+    const violations = await page.evaluate(async () => {
+      const { axe } = window as unknown as {
+        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
+      }
+      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
+      return found.map((v) => v.id)
+    })
+    expect(violations).toEqual([])
+  })
+
+  test('a page with attachments opens in page mode; an image opens full screen, a dropped file attaches, and they stay', async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const { pageId, ids } = await seedRows(page, 'Page attachments', [
+      [0, 'photo'],
+      [0, 'notes'],
+      [0, 'plain'],
+    ])
+    await ipc(page, 'add_attachment_with_bytes', {
+      blockId: ids[0],
+      filename: 'photo.png',
+      mimeType: 'image/png',
+      bytes: PNG_1X1,
+    })
+    await ipc(page, 'add_attachment_with_bytes', {
+      blockId: ids[1],
+      filename: 'notes.txt',
+      mimeType: 'text/plain',
+      bytes: [...Buffer.from('hello')],
+    })
+    await installIpcRecorder(page)
+    await openInPageMode(page, 'Page attachments', 3)
+    const inBlock = (id: string | undefined, selector: string) =>
+      page.locator(`${EDITOR} [data-page-block-id="${id}"] ${selector}`)
+    const files = async (id: string | undefined) =>
+      (await ipc<Array<{ filename: string }>>(page, 'list_attachments', { blockId: id })).map(
+        (row) => row.filename,
+      )
+
+    const image = inBlock(ids[0], 'img[alt="photo.png"]')
+    await expect(image).toBeVisible()
+    await expect(inBlock(ids[1], '[data-testid="markdown-attachment-body"]')).toHaveText('hello')
+    await expect(inBlock(ids[0], '[data-testid="attachment-badge"]')).toHaveAttribute(
+      'aria-label',
+      '1 attachment',
+    )
+    await expect(inBlock(ids[2], '.page-block-metadata')).toHaveCount(0)
+    // The image's size and caption come from the page's one read, not a read per block.
+    for (const call of await getInvokeCalls(page, 'get_batch_properties')) {
+      expect(call['blockIds']).toHaveLength(3)
+    }
+
+    // The image opens full screen, as in block mode.
+    await inBlock(ids[0], '[aria-label="Open image photo.png in full screen"]').click()
+    const lightbox = page.getByRole('dialog', { name: 'photo.png' })
+    await expect(lightbox).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(lightbox).toHaveCount(0)
+
+    // A file dropped on a block is attached to it, as block mode attaches it.
+    await inBlock(ids[2], 'p').evaluate((el) => {
+      const data = new DataTransfer()
+      data.items.add(new File(['dropped'], 'dropped.txt', { type: 'text/plain' }))
+      const { left, top } = el.getBoundingClientRect()
+      const init = {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: data,
+        clientX: left + 2,
+        clientY: top + 2,
+      }
+      el.dispatchEvent(new DragEvent('dragover', init))
+      el.dispatchEvent(new DragEvent('drop', init))
+    })
+    await expect.poll(() => files(ids[2])).toEqual(['dropped.txt'])
+    await expect(inBlock(ids[2], '[data-testid="markdown-attachment-body"]')).toHaveText('dropped')
+    expect((await shown(page)).map((block) => block.text)).toEqual(['photo', 'notes', 'plain'])
+
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Page attachments')
+    // The switch is the page on screen's: choose Page again.
+    await modeSwitch(page, 'Page').click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
+    await expect(inBlock(ids[0], 'img[alt="photo.png"]')).toBeVisible()
+    await expect(inBlock(ids[2], '[data-testid="markdown-attachment-body"]')).toHaveText('dropped')
     expect(await backend(page, pageId)).toEqual(await shown(page))
     await page.addScriptTag({ path: axePath })
     const violations = await page.evaluate(async () => {

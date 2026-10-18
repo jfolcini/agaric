@@ -3,26 +3,20 @@
  * its Blocks | Page switch. Pages open as the device's *Edit pages as* setting
  * says (`PREFERENCES.editMode`); the switch changes the mode of the page on
  * screen only. Desktop only. A page holding what page mode cannot show yet
- * (`page-mode-fit.ts`) stays in block mode, the switch saying why: at once for
- * what the page store's rows show, else once page mode's own check finds it
- * (its block properties and attachments), which the switch runs when pointed
- * at. No TipTap here: `PageEditor` imports this statically, and the editor
- * loads through `PageModeSlot`'s dynamic import.
+ * (`page-mode-fit.ts`) stays in block mode, the switch saying why, as the page
+ * store's rows show it, or as page mode found it while open until the switch,
+ * pointed at, finds the rows no longer hold it. No TipTap here: `PageEditor`
+ * imports this statically, and the editor loads through `PageModeSlot`'s
+ * dynamic import.
  */
 
 import type React from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
-import {
-  blockerIn,
-  blockerMessage,
-  type PageModeBlocker,
-  readPageFit,
-} from '@/editor/page-mode/page-mode-fit'
+import { blockerIn, blockerMessage, type PageModeBlocker } from '@/editor/page-mode/page-mode-fit'
 import type { PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { t } from '@/lib/i18n'
-import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { type EditMode, PREFERENCES, usePreference } from '@/lib/preferences'
 import { useBlockStore } from '@/stores/blocks'
@@ -42,7 +36,7 @@ export interface PageModeState {
   cursorBlockId: string | null
   onBlocked: (blocker: PageModeBlocker) => void
   changeMode: (mode: EditMode) => void
-  /** Look for what keeps the page out of page mode before it is chosen. */
+  /** Look again at what keeps the page out of page mode, before it is chosen. */
   checkFit: () => void
   /** Run `then` once page mode's unsaved text is saved; at once outside page mode. */
   afterFlush: (then: () => void) => void
@@ -89,17 +83,10 @@ export function usePageMode(pageId: string): PageModeState {
     [afterFlush, chosen, pageId, pageStore],
   )
 
+  // Every blocker is in the rows: one page mode found that they no longer hold is gone.
   const checkFit = useCallback(() => {
-    if (inRows !== null) return
-    const { blocks: rows, truncatedTotal } = pageStore.getState()
-    // Whatever was found before is looked for again: a property may be gone.
-    readPageFit(rows, truncatedTotal ?? rows.length).then(
-      (fit) => setFound(fit.blocker === null ? null : { pageId, blocker: fit.blocker }),
-      (err: unknown) => {
-        logger.warn('usePageMode', 'Failed to check the page for page mode', { pageId }, err)
-      },
-    )
-  }, [inRows, pageId, pageStore])
+    if (inRows === null) setFound(null)
+  }, [inRows])
 
   const changeMode = useCallback(
     (next: EditMode) => {

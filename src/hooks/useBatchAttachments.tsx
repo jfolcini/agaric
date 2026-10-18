@@ -70,7 +70,7 @@ interface BatchAttachmentsValue {
   invalidate: (blockId: string) => void
 }
 
-const BatchAttachmentsContext = createContext<BatchAttachmentsValue | null>(null)
+export const BatchAttachmentsContext = createContext<BatchAttachmentsValue | null>(null)
 
 // Split from `BatchAttachmentsValue` (#2701) so consumers that only read
 // `get`/`getCount`/`invalidate` (SortableBlock's paperclip badge,
@@ -102,7 +102,10 @@ function attachmentRowEqual(a: AttachmentRow, b: AttachmentRow): boolean {
   )
 }
 
-function rowsEqual(a: readonly AttachmentRow[], b: readonly AttachmentRow[]): boolean {
+export function attachmentRowsEqual(
+  a: readonly AttachmentRow[],
+  b: readonly AttachmentRow[],
+): boolean {
   if (a === b) return true
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) {
@@ -131,7 +134,7 @@ function mergeFetchedIntoCache(
   for (const id of fetchedIds) {
     const rows = record[id] ?? []
     const prior = next.get(id)
-    if (prior !== undefined && rowsEqual(prior, rows)) continue
+    if (prior !== undefined && attachmentRowsEqual(prior, rows)) continue
     next.set(id, rows)
     changed = true
   }

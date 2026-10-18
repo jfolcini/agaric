@@ -1416,78 +1416,40 @@ describe('PageEditor page mode (#5691)', () => {
     expect(capturedPageHeaderProps?.editMode).toBe('blocks')
   })
 
-  const attachment = {
-    id: 'ATT1',
-    block_id: 'B1',
-    filename: 'a.png',
-    mime_type: 'image/png',
-    size_bytes: 1,
-    fs_path: 'a.png',
-    created_at: 0,
-    content_hash: null,
-  }
-
-  it('pointing at the switch reads the blocks’ attachments, and a page with one is blocked', async () => {
-    stubInvoke({
-      load_page_subtree: () => ({
-        blocks: [makeBlock({ id: 'B1', content: 'text', parent_id: 'PAGE_1' })],
-        truncated: false,
-        total: 1,
-      }),
-      get_batch_properties: () => ({}),
-      list_attachments_batch: () => ({ B1: [attachment] }),
-    })
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-    await modeSwitch()
-    await loadPage()
-    expect(capturedPageHeaderProps?.editModeBlocked).toBeNull()
-
-    act(() => capturedPageHeaderProps?.onEditModeIntent?.())
-
-    await waitFor(() => {
-      expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.attachments'))
-    })
-  })
-
-  describe('an attachment found and since removed', () => {
-    /** A page whose one block holds an attachment until `removeAttachment` is called, blocked once pointed at. */
-    async function blockedByAttachment(): Promise<() => void> {
-      let attachments: Record<string, (typeof attachment)[]> = { B1: [attachment] }
+  describe('a query page mode found, gone from the page since', () => {
+    /** Page mode open on a page of plain text, then a query found by it, back in block mode. */
+    async function blockedByQuery(): Promise<void> {
+      const user = userEvent.setup()
+      writePreference(PREFERENCES.editMode, 'page')
       stubInvoke({
         load_page_subtree: () => ({
           blocks: [makeBlock({ id: 'B1', content: 'text', parent_id: 'PAGE_1' })],
           truncated: false,
           total: 1,
         }),
-        get_batch_properties: () => ({}),
-        list_attachments_batch: () => attachments,
       })
       render(<PageEditor pageId="PAGE_1" title="My Page" />)
       await modeSwitch()
-      await loadPage()
-      act(() => capturedPageHeaderProps?.onEditModeIntent?.())
+      await user.click(await screen.findByRole('button', { name: 'a query arrives' }))
       await waitFor(() => {
-        expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.attachments'))
+        expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.queries'))
       })
-      return () => {
-        attachments = {}
-      }
+      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
     }
 
-    it('pointing at the switch looks again, and Page is offered', async () => {
-      const removeAttachment = await blockedByAttachment()
-      removeAttachment()
+    it('pointing at the switch looks again, and Page is offered, with no read', async () => {
+      await blockedByQuery()
+      mockedInvoke.mockClear()
 
       act(() => capturedPageHeaderProps?.onEditModeIntent?.())
 
-      await waitFor(() => {
-        expect(capturedPageHeaderProps?.editModeBlocked).toBeNull()
-      })
+      expect(capturedPageHeaderProps?.editModeBlocked).toBeNull()
+      expect(mockedInvoke).not.toHaveBeenCalled()
     })
 
     it('choosing Page looks again, and opens page mode', async () => {
-      const removeAttachment = await blockedByAttachment()
-      removeAttachment()
+      await blockedByQuery()
+      vi.mocked(toast.info).mockClear()
 
       act(() => capturedPageHeaderProps?.onEditModeChange?.('page'))
 
