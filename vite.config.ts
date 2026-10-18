@@ -9,6 +9,9 @@ import { defineConfig, type Plugin } from 'vite'
 
 import { VENDOR_CHUNK_GROUPS } from './scripts/vendor-chunk-groups.ts'
 
+// Paths resolve from `import.meta.dirname`, not `__dirname`: Vite 8's native config
+// loader warns on the CommonJS global, and CI keeps warnings on its console.
+
 // #1458: the Playwright e2e suite runs against a static `vite preview`
 // production build (not the HMR dev server, which stalled under shard load and
 // cascaded a random shard to the CI job cap). One spec — `pdfjs-v6-smoke` —

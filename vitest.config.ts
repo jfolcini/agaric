@@ -2,6 +2,9 @@ import path from 'node:path'
 
 import { configDefaults, defineConfig } from 'vitest/config'
 
+// Paths resolve from `import.meta.dirname`, not `__dirname`: Vite 8's native config
+// loader warns on the CommonJS global, and CI keeps warnings on its console.
+
 export default defineConfig({
   test: {
     environment: 'happy-dom',
