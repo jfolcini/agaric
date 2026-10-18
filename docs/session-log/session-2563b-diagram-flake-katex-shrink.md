@@ -1,4 +1,4 @@
-# Session 2563 — a wide equation is tapped before KaTeX shrinks it
+# Session 2563b — a wide equation is tapped before KaTeX shrinks it
 
 **Asked:** fix the cause of a CI flake in `e2e/diagram-legibility.spec.ts`,
 "a wide equation being edited at 390 px scrolls inside its node view
