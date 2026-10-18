@@ -1104,7 +1104,7 @@ jobs:
           #
           # This step is not the only place the real GUI is launched under
           # Xvfb on a runner: `e2e-tauri-weekly.yml`'s "Run WebdriverIO
-          # real-backend smoke (Xvfb)" does the same thing and failed 3 of its
+          # real-backend specs (Xvfb)" does the same thing and failed 3 of its
           # last 5 runs (2026-08-10, 08-17, 08-24). The 0.9.9 release then hit
           # the same shape here on this step's FIRST ever release run — #4081
           # landed 2026-08-18, one day after the 0.9.8 bump, so no earlier

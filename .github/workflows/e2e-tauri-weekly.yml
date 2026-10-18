@@ -18,8 +18,9 @@
 # app uses live IPC automatically — hence the binary is a plain (non-VITE_E2E)
 # debug build.
 #
-# `tauri-driver` is a CARGO binary (installed below), not an npm package. On
-# Linux it proxies `WebKitWebDriver` from the `webkit2gtk-driver` apt package.
+# `tauri-driver` is a CARGO binary (built by the `build` job and shipped to the
+# shards with the app), not an npm package. On Linux it proxies
+# `WebKitWebDriver` from the `webkit2gtk-driver` apt package.
 # Docs: https://v2.tauri.app/develop/tests/webdriver/ . Running it on a dev
 # box: e2e-tauri/AGENTS.md § Running.
 #
@@ -123,121 +124,43 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash scripts/classify-changes.sh >> "$GITHUB_OUTPUT"
 
-  e2e-tauri:
-    name: Real-backend WebdriverIO smoke
+  # Build once, then run the specs in three shards from the build's binaries
+  # (#5849): a build per shard would cost each shard minutes of compile for a
+  # few minutes of specs. Every spec file boots the app on its own vault, so a
+  # file runs the same in any shard (e2e-tauri/AGENTS.md § Rules).
+  build:
+    name: Build the real-backend binaries
     needs: detect
     if: needs.detect.outputs.real_backend == 'true'
     runs-on: ubuntu-24.04
-    # Generous ceiling: cold Rust debug build of the whole Tauri app + apt +
-    # cargo-install tauri-driver + the WebKitWebView run. Bounds a wedged run.
-    timeout-minutes: 45
-    env:
-      # No `Compiling <crate>` line per crate; warnings and errors still print.
-      CARGO_TERM_QUIET: 'true'
-
+    # A cold Rust debug build of the whole Tauri app, plus apt on a slow mirror.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain
-        uses: ./.github/actions/rust-toolchain
-        with:
-          # Keep in lockstep with rust-toolchain.toml / src-tauri/Cargo.toml.
-          toolchain: 1.95.0
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
-          # Cache `~/.cargo/bin/` so the `cargo install tauri-driver` below
-          # survives week to week (same `cache-bin` pattern `_validate.yml`'s
-          # lint job uses for sqlx-cli). tauri-driver has no prebuilt binary in
-          # taiki-e/install-action's manifest, so it compiles from source on
-          # every cold run; the install step below is guarded on
-          # `command -v tauri-driver` so a cache hit skips that compile
-          # entirely — mirroring the sqlx-cli guard in `_validate.yml`.
-          cache-bin: 'true'
-          # Per-job-class key (issue #813): rust-cache keeps ONE immutable
-          # cache per key, so lanes with different target trees must not share
-          # one. This lane's tree is a `tauri build --debug` of the whole app
-          # (dev profile) plus the `e2e_sync_peer` binary, and matches none
-          # of `rust-lint` / `rust-cov` / `rust-mcp` / `rust-release` /
-          # `rust-mutants`.
-          shared-key: rust-e2e-tauri
-          # Only runs on `main` write the cache; a `workflow_dispatch` from a
-          # feature branch reads main's cache and writes only an ephemeral
-          # layer. Same `save-if` discipline as every sibling lane.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install Node.js
-        uses: ./.github/actions/setup-node
-        with:
-          node-version: 24
-          cache: npm
-
+      # Up to the Rust cache, these steps run in `actions/toolchain`'s order and
+      # environment, so the restore computes `mcp-tests`' key: rust-cache hashes
+      # `.cargo/config.toml` (the mold step) and every `CARGO*` / `RUST*`
+      # variable into it. Hence `CARGO_TERM_QUIET` is set on the cargo steps,
+      # not on the job.
       - name: Prepare apt (free dpkg lock, bound downloads)
-        # Same composite action `_validate.yml` (lint / playwright / cargo-tests
-        # / mcp-tests) and `scheduled-deep-checks.yml` (full-suite) use: stops the runner's boot-time `unattended-upgrades`
-        # / `apt-daily` jobs that hold the dpkg lock, bounds mirror stalls, and
-        # — load-bearing for the cache step below — sets
-        # `APT::Keep-Downloaded-Packages "true"` + makes
-        # /var/cache/apt/archives writable so the .debs survive the install and
-        # can be saved. Without this step an `actions/cache` on the archive dir
-        # saves nothing (#1464).
         uses: ./.github/actions/prepare-apt
 
-      # Cache the .debs across runs (#1464), same pattern as the `apt-tauri-*`
-      # and `apt-playwright-*` caches in `_validate.yml` /
-      # `scheduled-deep-checks.yml`: on a hit `apt-get install` resolves from
-      # the cache instead of the Ubuntu mirror (the observed slow part — the
-      # sibling lanes' comments record ~12 min apt steps on a bad mirror).
-      #
-      # OWN KEY (`apt-tauri-e2e-…`), deliberately NOT the shared `apt-tauri-…`
-      # key: this lane installs a SUPERSET (webkit2gtk-driver, xvfb and
-      # dbus-daemon on top of the standard Tauri stack). Reusing the shared
-      # key would let whichever lane saved first pin its own package set, so
-      # a hit here could be missing exactly the .debs this lane adds. Bump
-      # the `-vN` suffix when the package list below changes.
-      #
-      # Only `main` (the weekly schedule, or a dispatch on `main`) saves: a PR
-      # run's save is scoped to `refs/pull/<n>/merge`, which nothing else can
-      # restore, so PRs restore only (#5853).
-      - name: Cache apt archives (Tauri system deps + WebDriver/Xvfb)
-        if: github.ref == 'refs/heads/main'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: /var/cache/apt/archives/*.deb
-          key: apt-tauri-e2e-${{ runner.os }}-v5
-
-      - name: Restore apt archives (Tauri system deps + WebDriver/Xvfb)
-        if: github.ref != 'refs/heads/main'
+      - name: Restore apt archives (Tauri system deps)
+        # The shared key `actions/toolchain` saves on main for exactly the list
+        # below. Restored, never saved: a PR's save is readable by nothing else,
+        # and main runs this lane only weekly (#5853).
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /var/cache/apt/archives/*.deb
-          key: apt-tauri-e2e-${{ runner.os }}-v5
+          key: apt-tauri-${{ runner.os }}-v1
 
       - name: Install system dependencies
-        # The Tauri Linux build deps are copied verbatim from `_validate.yml`'s
-        # "Install system dependencies" step (webkit/gtk/ssl/rsvg/soup + mold).
-        # ADDED for this lane:
-        #   - webkit2gtk-driver — provides WebKitWebDriver, which tauri-driver
-        #     proxies on Linux (the actual WebDriver backend for the WebView).
-        #   - xvfb — a virtual display so the WebKitWebView can render headless.
-        #   - dbus-daemon — owns `dbus-run-session` (verified in release.yml:
-        #     `dpkg -S /usr/bin/dbus-run-session` on noble), for the launch
-        #     step below (#4444).
-        #   - openbox — a window manager, so the app window gets focus (#5457).
-        #   - gstreamer1.0-plugins-good — WebKitGTK's WAV demuxer (wavparse), so
-        #     `editor-durability.e2e.ts` can play an audio attachment (#5733).
-        #   - xdotool — presses OS-level chords at the X server for the Quick
-        #     Capture hotkey spec (#5741).
-        #   - dbus-bin — `dbus-monitor`, the reminder spec's notification sink
-        #     (#5741); dbus-daemon depends on it, named because a spec calls it.
-        # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
-        # that cannot serve the index no longer reds this job as a code
-        # failure; the INSTALL decides. Measured trace + exit codes in
-        # .github/actions/apt-install/action.yml.
+        # `actions/toolchain`'s list: webkit/gtk/ssl/rsvg/soup compile the
+        # Tauri crates; mold links them. #4163: `apt-get update` is ADVISORY
+        # inside this action; the install decides.
         uses: ./.github/actions/apt-install
         with:
           packages: >-
@@ -248,6 +171,139 @@ jobs:
             libsoup-3.0-dev
             pkg-config
             mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        # The repo ships `.cargo/config.toml.example` so local builds don't
+        # require mold; CI has mold from the apt step above.
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: ./.github/actions/rust-toolchain
+        with:
+          # Keep in lockstep with rust-toolchain.toml / src-tauri/Cargo.toml.
+          toolchain: 1.95.0
+
+      - name: Rust cache (mcp-tests' entry, read-only)
+        # `mcp-tests` compiles the same dev profile of the same dependency graph
+        # and stays the key's only writer. This lane's own key never hit: only
+        # main saved it, and main runs this lane only weekly (#5853). Cargo's
+        # fingerprints decide what rebuilds; tauri and everything above it
+        # always do, because this build adds tauri's `custom-protocol`.
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+          # `mcp-tests` saves with it, and the cached paths are part of the
+          # entry's identity.
+          cache-bin: 'true'
+          shared-key: rust-mcp
+          save-if: false
+
+      - name: Install Node.js
+        uses: ./.github/actions/setup-node
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install tauri-driver
+        # A cargo binary with no prebuilt release; the shards run this build of
+        # it from the artifact below.
+        env:
+          CARGO_TERM_QUIET: 'true'
+        run: cargo install tauri-driver --locked
+
+      - name: Build the app, the sync peer and the agaric-mcp bridge
+        # One compile. The CLI runs `cargo build --bins --features
+        # tauri/custom-protocol` with the arguments after `--`, so it emits
+        # src-tauri/target/debug/agaric (the app, `dist/` embedded), the
+        # `agaric-mcp` bridge `mcp-agent-token.e2e.ts` spawns, and the
+        # `e2e_sync_peer` second device of the sync specs (#5365), plus the two
+        # diagnostics tools nothing here runs. A cargo call of its own would
+        # compile `agaric` again: the app's build script reruns when
+        # `TAURI_CONFIG`, which only the CLI sets, changes. Adding the
+        # diagnostics crate changes no feature of the app's dependencies.
+        #
+        # Plain build (no VITE_E2E), so the app talks to the real backend, not
+        # the JS mock. `--config` narrows beforeBuildCommand to the vite build:
+        # the default also runs prepare-external-bins.mjs, a RELEASE build of
+        # the agaric-mcp sidecar that `--no-bundle` ships nowhere.
+        env:
+          CARGO_TERM_QUIET: 'true'
+        run: >-
+          npm run tauri -- build --debug --no-bundle
+          --config '{"build":{"beforeBuildCommand":"npm run build"}}'
+          -- -p agaric -p agaric-diagnostics
+
+      - name: Stage tauri-driver beside the binaries
+        run: cp ~/.cargo/bin/tauri-driver src-tauri/target/debug/
+
+      - name: Upload the binaries
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-tauri-binaries
+          path: |
+            src-tauri/target/debug/agaric
+            src-tauri/target/debug/agaric-mcp
+            src-tauri/target/debug/e2e_sync_peer
+            src-tauri/target/debug/tauri-driver
+          if-no-files-found: error
+          # Read only by this run's shards.
+          retention-days: 1
+
+  specs:
+    name: Real-backend specs
+    needs: [detect, build]
+    runs-on: ubuntu-24.04
+    # apt on a slow mirror plus a shard of specs, which the slowest files can
+    # make uneven.
+    timeout-minutes: 40
+    strategy:
+      # Every shard runs to the end, so a run reports every failing spec. The
+      # lane gates no merge, so a red shard has nothing to stop early.
+      fail-fast: false
+      matrix:
+        # One leg for a spec-only diff: it runs just the changed specs.
+        shard: ${{ fromJSON(needs.detect.outputs.real_backend_specs == '' && '[1, 2, 3]' || '[1]') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: ./.github/actions/setup-node
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
+      - name: Install runtime dependencies
+        # What the specs run; the build deps stay in `build`.
+        #   - webkit2gtk-driver — provides WebKitWebDriver, which tauri-driver
+        #     proxies on Linux. It pins `libwebkit2gtk-4.1-0`, whose
+        #     dependencies provide every shared library the binaries link.
+        #   - xvfb — a virtual display so the WebKitWebView can render headless.
+        #   - dbus-daemon — owns `dbus-run-session` (verified in release.yml:
+        #     `dpkg -S /usr/bin/dbus-run-session` on noble), for the run step
+        #     below (#4444).
+        #   - openbox — a window manager, so the app window gets focus (#5457).
+        #   - gstreamer1.0-plugins-good — WebKitGTK's WAV demuxer (wavparse), so
+        #     `editor-durability.e2e.ts` can play an audio attachment (#5733).
+        #   - xdotool — presses OS-level chords at the X server for the Quick
+        #     Capture hotkey spec (#5741).
+        #   - dbus-bin — `dbus-monitor`, the reminder spec's notification sink
+        #     (#5741); dbus-daemon depends on it, named because a spec calls it.
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
             webkit2gtk-driver
             xvfb
             dbus-daemon
@@ -256,62 +312,21 @@ jobs:
             xdotool
             dbus-bin
 
-      - name: Enable mold linker (CI-only .cargo/config.toml)
-        # Mirrors `_validate.yml`: the repo ships `.cargo/config.toml.example`
-        # (mold linker) staged so local builds don't require mold; CI has mold
-        # from the apt step above, so materialise the active config for a faster
-        # link step on the debug build.
-        run: |
-          mkdir -p .cargo
-          cp .cargo/config.toml.example .cargo/config.toml
+      - name: Download the binaries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-tauri-binaries
+          path: src-tauri/target/debug
 
-      - name: Install npm dependencies
-        run: npm ci
+      - name: Restore the binaries' exec bits
+        # An artifact does not keep file modes.
+        working-directory: src-tauri/target/debug
+        run: chmod +x agaric agaric-mcp e2e_sync_peer tauri-driver
 
-      - name: Install tauri-driver
-        # tauri-driver is a cargo binary (NOT npm); it lands in ~/.cargo/bin,
-        # where wdio.conf.ts looks for it. --locked pins its own dependency tree.
-        #
-        # Guarded on `command -v` so a warm `cache-bin` restore (see the Rust
-        # cache step) skips the from-source compile entirely — the same
-        # idempotence guard `_validate.yml` and `scheduled-deep-checks.yml` use
-        # for sqlx-cli, which is likewise absent from taiki-e/install-action's
-        # prebuilt manifest. On a cache miss this still compiles as before.
-        run: |
-          if ! command -v tauri-driver >/dev/null; then cargo install tauri-driver --locked; fi
-
-      - name: Build Agaric debug binary
-        # `tauri build --debug --no-bundle` compiles the real app to
-        # src-tauri/target/debug/agaric (Cargo bin name) without producing
-        # installers. Plain build (no VITE_E2E) → the app talks to the real
-        # backend, not the JS mock.
-        #
-        # `--config` narrows tauri.conf.json's beforeBuildCommand to the vite
-        # build. The default also runs prepare-external-bins.mjs, a RELEASE
-        # build of the agaric-mcp sidecar no bundle ships (`--no-bundle`; no
-        # `externalBin` entry either); the spec that spawns the bridge uses
-        # the debug build below, so skipping it only saves build time.
-        run: >-
-          npm run tauri -- build --debug --no-bundle
-          --config '{"build":{"beforeBuildCommand":"npm run build"}}'
-
-      - name: Build the sync peer
-        # The second device the sync specs pair the app with (#5365): a
-        # headless vault on the app's own sync daemon. Its own
-        # step because `tauri build` builds only the app crate; it recompiles
-        # the tauri crates once more, without the CLI's `custom-protocol`.
-        working-directory: src-tauri
-        run: cargo build -p agaric-diagnostics --bin e2e_sync_peer
-
-      - name: Build the agaric-mcp bridge
-        # The bridge `mcp-agent-token.e2e.ts` spawns with an agent's token
-        # (#5667). The debug bin reuses the lib the sync peer step just built.
-        working-directory: src-tauri
-        run: cargo build -p agaric --bin agaric-mcp
-
-      - name: Run WebdriverIO real-backend smoke (Xvfb)
-        # The binary is already built above, so tell wdio.conf.ts to skip its
-        # own onPrepare build. xvfb-run gives the WebKitWebView a display and
+      - name: Run WebdriverIO real-backend specs (Xvfb)
+        # The binaries come from `build`, so tell wdio.conf.ts to skip its
+        # own onPrepare build. `--shard 1/1`, the spec-only leg's, selects
+        # every spec it is given. xvfb-run gives the WebKitWebView a display and
         # dbus-run-session a session bus (#4444: without one every worker boot
         # stalled a flat 30 s, consistent with the 25 s dbus default timeout),
         # the composition release.yml uses for its boot smoke. Bare Xvfb has no
@@ -329,9 +344,11 @@ jobs:
         # WDIO_KEEP_VAULT=1 to retain the sandbox for a post-mortem.
         env:
           WDIO_SKIP_TAURI_BUILD: '1'
+          TAURI_DRIVER_PATH: ${{ github.workspace }}/src-tauri/target/debug/tauri-driver
+          SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
           SPECS: ${{ needs.detect.outputs.real_backend_specs }}
         run: |
-          args=()
+          args=(--shard "$SHARD")
           for spec in $SPECS; do args+=(--spec "$spec"); done
           xvfb-run -a dbus-run-session -- bash -c 'openbox & npm run test:e2e-tauri -- "$@"' bash "${args[@]}"
 
@@ -358,8 +375,8 @@ jobs:
         # pattern because `path: |` is a literal block scalar: a `#` line
         # inside it is DATA handed to the globber, not a comment.
         #
-        # The evidence that does exist is in `e2e-tauri-diagnostics` below:
-        # wdio.conf.ts now copies the app's own
+        # The evidence that does exist is in `e2e-tauri-diagnostics-<shard>`
+        # below: wdio.conf.ts now copies the app's own
         # `<AGARIC_DATA_DIR>/logs/agaric.log*` into `e2e-tauri/artifacts/`
         # before the throwaway vault that holds it is deleted — from
         # `afterTest` per failing test, and from `afterSession` once per
@@ -368,7 +385,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-tauri-logs
+          name: e2e-tauri-logs-${{ matrix.shard }}
           path: |
             logs/
             wdio-logs*/
@@ -385,7 +402,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: e2e-tauri-diagnostics
+          name: e2e-tauri-diagnostics-${{ matrix.shard }}
           path: e2e-tauri/artifacts/
           if-no-files-found: ignore
           retention-days: 14
@@ -393,11 +410,12 @@ jobs:
   # The one stable context this workflow emits on every PR, so it can become a
   # required check (#4671). `if: always()` is load-bearing: a skipped required
   # check counts as passing. Mirrors `validate-all`: `detect` must succeed, the
-  # lane must succeed, and a skipped lane is accepted only when `detect` said
-  # the diff is not relevant.
+  # build and every shard must succeed, and a skipped job is accepted only when
+  # `detect` said the diff is not relevant. A failed build skips `specs`, which
+  # then fails here too.
   gate:
     name: e2e-tauri-gate
-    needs: [detect, e2e-tauri]
+    needs: [detect, build, specs]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -406,22 +424,27 @@ jobs:
         env:
           DETECT: ${{ needs.detect.result }}
           RELEVANT: ${{ needs.detect.outputs.real_backend }}
-          LANE: ${{ needs.e2e-tauri.result }}
+          BUILD: ${{ needs.build.result }}
+          SHARDS: ${{ needs.specs.result }}
         run: |
           set -euo pipefail
-          echo "detect=$DETECT real_backend=${RELEVANT:-<empty>} e2e-tauri=$LANE"
+          echo "detect=$DETECT real_backend=${RELEVANT:-<empty>} build=$BUILD specs=$SHARDS"
           if [ "$DETECT" != "success" ]; then
             echo "::error::detect result=$DETECT; failing closed."
             exit 1
           fi
-          case "$LANE" in
-            success) ;;
-            skipped)
-              if [ "$RELEVANT" != "false" ]; then
-                echo "::error::the lane was skipped but detect said real_backend='${RELEVANT}', not 'false'."
-                exit 1
-              fi ;;
-            *)
-              echo "::error::e2e-tauri result=$LANE."
-              exit 1 ;;
-          esac
+          check() {
+            case "$2" in
+              success) ;;
+              skipped)
+                if [ "$RELEVANT" != "false" ]; then
+                  echo "::error::$1 was skipped but detect said real_backend='${RELEVANT}', not 'false'."
+                  exit 1
+                fi ;;
+              *)
+                echo "::error::$1 result=$2."
+                exit 1 ;;
+            esac
+          }
+          check build "$BUILD"
+          check specs "$SHARDS"
