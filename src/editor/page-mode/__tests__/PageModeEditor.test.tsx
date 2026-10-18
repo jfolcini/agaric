@@ -1222,6 +1222,43 @@ describe('PageModeEditor priorities and dates (#5743)', () => {
     expect(editor.state.selection.from).toBe(caret)
   })
 
+  it('a block a peer adds above while the picker is open leaves the caret in its own block when it closes', async () => {
+    const { pageId, ids } = seedPage(['pay rent', 'buy milk'])
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    const { container, store } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 1, 3))
+      editor.view.focus()
+    })
+    fireEvent.click(await inBlock(container, ids[0] as string, '.due-date-chip'))
+    const field = await screen.findByRole('textbox', { name: t('journal.typeDateLabel') })
+
+    dispatch('create_block', {
+      blockType: 'content',
+      content: 'from a peer',
+      parentId: pageId,
+      index: 0,
+      scope: SCOPE,
+    })
+    await act(async () => {
+      await store.getState().load()
+    })
+    await waitFor(() => {
+      expect(docTexts(editor)).toEqual(['from a peer', 'pay rent', 'buy milk'])
+    })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Escape' })
+    })
+    await waitFor(() => {
+      expect(editor.view.hasFocus()).toBe(true)
+    })
+
+    const { $from } = editor.state.selection
+    expect(blockIdOf($from.node(1))).toBe(ids[1])
+    expect($from.parentOffset).toBe(3)
+  })
+
   it('Ctrl+Shift+D opens the picker, and the date chosen is linked at the caret, as its page', async () => {
     const { pageId, ids } = seedPage(['meet on '])
     const { container, handle } = renderPageMode(pageId)
@@ -1250,6 +1287,46 @@ describe('PageModeEditor priorities and dates (#5743)', () => {
       await handle.current?.flush()
     })
     expect(backendText(ids[0] as string)).toBe(`meet on [[${datePage}]]`)
+  })
+
+  it('a peer’s change to the block’s other fields redraws the checkbox alone; a date change, the row', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
+    dispatch('set_priority', { blockId: ids[0], level: '1' })
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    const { container, store } = renderPageMode(pageId)
+    await editorIn(container)
+    await inBlock(container, ids[0] as string, '.due-date-chip')
+    const redrawn = vi.spyOn(ReactRenderer.prototype, 'updateProps')
+    const rowsRedrawn = () =>
+      redrawn.mock.calls.filter(([props]) => props !== undefined && 'dueDate' in props).length
+
+    dispatch('set_todo_state', { blockId: ids[0], state: 'DOING' })
+    dispatch('edit_block', { blockId: ids[0], toText: 'first, from a peer' })
+    dispatch('set_priority', { blockId: ids[1], level: '3' })
+    await act(async () => {
+      await store.getState().load()
+    })
+    await waitFor(() => {
+      expect(container.querySelector(`[data-page-block-id="${ids[0]}"]`)).toHaveAttribute(
+        'data-todo-state',
+        'DOING',
+      )
+    })
+    await inBlock(container, ids[1] as string, BADGE)
+    expect(redrawn).toHaveBeenCalledTimes(1)
+    expect(rowsRedrawn()).toBe(0)
+
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-21' })
+    await act(async () => {
+      await store.getState().load()
+    })
+    await waitFor(() => {
+      expect(rowsRedrawn()).toBe(1)
+    })
+    expect(
+      (await inBlock(container, ids[0] as string, '.due-date-chip')).getAttribute('aria-label'),
+    ).toBe(t('block.dueDate', { date: formatCompactDate('2026-10-21') }))
   })
 
   it('a peer’s priority and dates, set or cleared, show on reload, outside the document and its undo', async () => {
