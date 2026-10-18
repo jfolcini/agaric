@@ -63,7 +63,8 @@ export function BlockPropertyDrawer({
   // persisted. Such properties have no valid empty value (the real backend
   // rejects it), so we render a local DRAFT row for value entry and only write
   // on the first non-empty save; a ref draft is written by its page picker
-  // instead. A draft is dropped (no backend call) if the user leaves it empty.
+  // instead. A draft is dropped (no backend call) if the user leaves it empty
+  // or removes it.
   const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set())
   const { setDueDate: setDueDateCmd, setScheduledDate: setScheduledDateCmd } = useBlockReschedule()
   const { getProperties, listPropertyDefs, setProperty } = useBlockPropertyIpc()
@@ -272,6 +273,23 @@ export function BlockPropertyDrawer({
     [blockId, t, setProperty, getProperties],
   )
 
+  const forgetDraft = useCallback((key: string) => {
+    setDraftKeys((prev) => {
+      if (!prev.has(key)) return prev
+      const next = new Set(prev)
+      next.delete(key)
+      return next
+    })
+  }, [])
+
+  const dropDraft = useCallback(
+    (key: string) => {
+      setProperties((prev) => prev.filter((p) => p.key !== key))
+      forgetDraft(key)
+    },
+    [forgetDraft],
+  )
+
   // #2656 — save wrapper for editable value rows. For a not-yet-persisted
   // DRAFT (text/select/url) row, an empty value means "nothing entered": drop the
   // draft locally without a backend call (an empty `value_text` would be
@@ -281,23 +299,25 @@ export function BlockPropertyDrawer({
     (key: string, value: string, type: string): Promise<void> => {
       if (draftKeys.has(key)) {
         if (value.trim() === '') {
-          setProperties((prev) => prev.filter((p) => p.key !== key))
-          setDraftKeys((prev) => {
-            const next = new Set(prev)
-            next.delete(key)
-            return next
-          })
+          dropDraft(key)
           return Promise.resolve()
         }
-        setDraftKeys((prev) => {
-          const next = new Set(prev)
-          next.delete(key)
-          return next
-        })
+        forgetDraft(key)
       }
       return handleSave(key, value, type)
     },
-    [draftKeys, handleSave],
+    [draftKeys, dropDraft, forgetDraft, handleSave],
+  )
+
+  // A draft was never written, so removing one is local: a `delete_property`
+  // for a key the block never held appends an op whose undo fails, which
+  // aborts the page's undo group.
+  const handleRemove = useCallback(
+    (key: string) => {
+      if (draftKeys.has(key)) dropDraft(key)
+      else void handleDelete(key)
+    },
+    [draftKeys, dropDraft, handleDelete],
   )
 
   // Definitions available for the add-property popover:
@@ -354,10 +374,13 @@ export function BlockPropertyDrawer({
                       onSave={(v) => handleSave(prop.key, v, propType)}
                       onDelete={
                         !SYSTEM_MANAGED_PROPERTY_KEYS.has(prop.key)
-                          ? () => handleDelete(prop.key)
+                          ? () => handleRemove(prop.key)
                           : undefined
                       }
-                      onRefSaved={reloadProperties}
+                      onRefSaved={() => {
+                        forgetDraft(prop.key)
+                        void reloadProperties()
+                      }}
                     />
                   )
                 }
@@ -379,7 +402,7 @@ export function BlockPropertyDrawer({
                     onSave={(v) => handleSaveField(prop.key, v, getType(prop.key))}
                     onRemove={
                       !SYSTEM_MANAGED_PROPERTY_KEYS.has(prop.key)
-                        ? () => handleDelete(prop.key)
+                        ? () => handleRemove(prop.key)
                         : undefined
                     }
                     removeAriaLabel={t('property.delete')}

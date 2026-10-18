@@ -23,7 +23,7 @@ import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { properties, propertyDefs, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { opLog, properties, propertyDefs, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -1147,35 +1147,77 @@ describe('BlockPropertyDrawer', () => {
 
   // #5736 — a ref with no target is a row with no value, which the backend
   // refuses (`validate_set_property`), so adding one writes nothing until a page is picked.
-  it('adds a ref property as a draft and writes it only once a page is picked', async () => {
-    const user = userEvent.setup()
+  describe('ref draft', () => {
     const blockId = SEED_IDS.BLOCK_GS_1
-    seedBlocks()
-    propertyDefs.set('owner', {
-      key: 'owner',
-      value_type: 'ref',
-      options: null,
-      created_at: '2026-01-01T00:00:00.000Z',
-    })
-    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
-    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
-    renderWithProvider(<BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />)
-    await waitFor(() => {
-      expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
+    const removeOwner = () =>
+      screen.getByRole('button', { name: t('pageProperty.deletePropertyLabel', { key: 'owner' }) })
+
+    beforeEach(() => {
+      seedBlocks()
+      propertyDefs.set('owner', {
+        key: 'owner',
+        value_type: 'ref',
+        options: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+      })
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
     })
 
-    await user.click(screen.getByRole('button', { name: 'Add property' }))
-    await user.click(await screen.findByText('Owner'))
-    const picker = await screen.findByRole('button', {
-      name: t('pageProperty.valueLabel', { key: 'owner' }),
+    /** Open the drawer, add an `owner` ref draft and return its page picker. */
+    async function addOwnerDraft(user: ReturnType<typeof userEvent.setup>) {
+      renderWithProvider(<BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />)
+      await waitFor(() => {
+        expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
+      })
+      await user.click(screen.getByRole('button', { name: 'Add property' }))
+      await user.click(await screen.findByText('Owner'))
+      return screen.findByRole('button', { name: t('pageProperty.valueLabel', { key: 'owner' }) })
+    }
+
+    it('writes it only once a page is picked', async () => {
+      const user = userEvent.setup()
+      const picker = await addOwnerDraft(user)
+      expect(properties.get(blockId)?.has('owner') ?? false).toBe(false)
+
+      await user.click(picker)
+      await user.click(await screen.findByRole('button', { name: 'Quick Notes' }))
+
+      await waitFor(() => {
+        expect(properties.get(blockId)?.get('owner')?.['value_ref']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
+      })
     })
-    expect(properties.get(blockId)?.has('owner') ?? false).toBe(false)
 
-    await user.click(picker)
-    await user.click(await screen.findByRole('button', { name: 'Quick Notes' }))
+    // #5862 — the block never held the key, and the undo of a DeleteProperty
+    // for it fails, which aborts the page's undo group.
+    it('removed before a page is picked, writes no delete', async () => {
+      const user = userEvent.setup()
+      await addOwnerDraft(user)
 
-    await waitFor(() => {
-      expect(properties.get(blockId)?.get('owner')?.['value_ref']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
+      await user.click(removeOwner())
+
+      await waitFor(() => {
+        expect(
+          screen.queryByRole('button', { name: t('pageProperty.valueLabel', { key: 'owner' }) }),
+        ).not.toBeInTheDocument()
+      })
+      expect(opLog.filter((op) => op.op_type === 'delete_property')).toEqual([])
+      expect(mockedInvoke).not.toHaveBeenCalledWith('delete_property', expect.anything())
+    })
+
+    it('removed after a page is picked, deletes the stored value', async () => {
+      const user = userEvent.setup()
+      await user.click(await addOwnerDraft(user))
+      await user.click(await screen.findByRole('button', { name: 'Quick Notes' }))
+      await waitFor(() => {
+        expect(properties.get(blockId)?.has('owner')).toBe(true)
+      })
+
+      await user.click(removeOwner())
+
+      await waitFor(() => {
+        expect(properties.get(blockId)?.has('owner')).toBe(false)
+      })
     })
   })
 

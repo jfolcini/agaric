@@ -28,7 +28,7 @@ import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { properties, propertyDefs, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
+import { opLog, properties, propertyDefs, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
 
 // Wrap `reportIpcError` in a spy that delegates to the real implementation.
 // Lets FE-H-17 partial-failure assertions inspect call arguments while
@@ -78,6 +78,7 @@ import { PagePropertyTable } from '@/components/pages/PagePropertyTable'
 import { performPageUndo } from '@/hooks/useUndoShortcuts'
 import { t } from '@/lib/i18n'
 import { invalidatePropertyCaches } from '@/lib/property-caches'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedToastError = vi.mocked(toast.error)
 
@@ -2014,5 +2015,60 @@ describe('PagePropertyTable refetch on property changes made elsewhere (#5287)',
 
     expect(screen.queryByLabelText(valueLabel('context'))).not.toBeInTheDocument()
     expect(screen.getByLabelText(valueLabel('reviewer'))).toHaveValue('x')
+  })
+})
+
+// #5862 — removing a ref draft before a page is picked writes nothing: the page
+// never held the key, and the undo of a DeleteProperty for it fails, which
+// aborts the page's undo group.
+describe('PagePropertyTable removing a ref draft against the real tauri-mock (#5862)', () => {
+  const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
+  const valueLabel = (key: string) => t('pageProperty.valueLabel', { key })
+  const removeOwner = () =>
+    screen.getByRole('button', { name: t('pageProperty.deletePropertyLabel', { key: 'owner' }) })
+
+  beforeEach(() => {
+    seedBlocks()
+    properties.set(PAGE_ID, new Map())
+    propertyDefs.set('owner', makeDef('owner', 'ref'))
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  })
+
+  /** Render the table, add an `owner` ref draft and return its page picker. */
+  async function addOwnerDraft(user: ReturnType<typeof userEvent.setup>) {
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+    await user.click(await screen.findByText('Owner'))
+    return screen.findByRole('button', { name: valueLabel('owner') })
+  }
+
+  it('removed before a page is picked, writes no delete', async () => {
+    const user = userEvent.setup()
+    await addOwnerDraft(user)
+
+    await user.click(removeOwner())
+    await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: valueLabel('owner') })).not.toBeInTheDocument()
+    })
+    expect(opLog.filter((op) => op.op_type === 'delete_property')).toEqual([])
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_property', expect.anything())
+  })
+
+  it('removed after a page is picked, deletes the stored value', async () => {
+    const user = userEvent.setup()
+    await user.click(await addOwnerDraft(user))
+    await user.click(await screen.findByRole('button', { name: 'Getting Started' }))
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.has('owner')).toBe(true)
+    })
+
+    await user.click(removeOwner())
+    await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.has('owner')).toBe(false)
+    })
   })
 })
