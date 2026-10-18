@@ -442,3 +442,65 @@ jobs:
           path: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
           if-no-files-found: error
           retention-days: 90
+
+  # ---------------------------------------------------------------------------
+  # Prune superseded Rust cache generations (#5853). A `Cargo.lock` change
+  # starts a new generation of every `v0-rust-<shared-key>-` family, and the
+  # old one sits in the shared 10 GB quota until LRU eviction takes it, along
+  # with whatever else was read least recently. After `main`'s Rust jobs save,
+  # this keeps each family's newest `refs/heads/main` entry and deletes the
+  # rest, including any PR-scoped copy: every Rust family is main-only
+  # (`save-if`), so a PR copy is readable by nobody else. Runs on every main
+  # push, docs-only ones included, because `_validate.yml` does not export
+  # which Rust lanes ran; a run with nothing to prune takes seconds.
+  # ---------------------------------------------------------------------------
+  cache-prune:
+    needs: [validate, build, android-build]
+    # `refs/heads/main` is only ever a push here: PR runs carry `refs/pull/N/merge`.
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    steps:
+      - name: Delete all but the newest main entry of each Rust cache family
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        # Safe when two main runs prune at once (one concurrency group per
+        # commit): each deletes only entries older than one it listed, under
+        # the same total order, so no run deletes a family's newest entry. A
+        # listing or delete error is a warning, not a red `main`: the worst
+        # outcome is a stale generation that the next push prunes.
+        run: |
+          set -euo pipefail
+          if ! listing="$(gh cache list --key v0-rust- --limit 100 --json id,key,createdAt,ref)"; then
+            echo "::warning::could not list the Rust caches; nothing pruned"
+            exit 0
+          fi
+          # A key outside rust-cache's `<family>-Linux-x64-<env>-<lock>` shape
+          # (a rust-cache bump changing it) fails the job before any delete:
+          # a misparsed family would merge two keys and delete one's newest.
+          stale="$(jq -r '
+            map(select(.key | test("^v0-rust-.+-Linux-x64-[0-9a-f]+-[0-9a-f]+$") | not) | .key) as $bad
+            | if ($bad | length) > 0 then error("unparsed Rust cache keys: \($bad)") else . end
+            | group_by(.key | sub("-Linux-x64-[0-9a-f]+-[0-9a-f]+$"; ""))
+            | map(
+                (map(select(.ref == "refs/heads/main")) | max_by([.createdAt, .id]) | .id) as $keep
+                | .[] | select(.id != $keep)
+              )
+            | .[] | [.id, .ref, .key] | @tsv
+          ' <<<"$listing")"
+          if [ -z "$stale" ]; then
+            echo "nothing to prune"
+            exit 0
+          fi
+          while IFS=$'\t' read -r id ref key; do
+            if out="$(gh cache delete "$id" 2>&1)"; then
+              echo "deleted $key ($ref)"
+            elif grep -q 'Could not find a cache' <<<"$out"; then
+              echo "already deleted, by a concurrent prune: $key ($ref)"
+            else
+              echo "::warning::could not delete $key ($ref): $out"
+            fi
+          done <<<"$stale"
