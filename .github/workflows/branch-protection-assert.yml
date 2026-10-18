@@ -54,8 +54,11 @@ jobs:
           # rule TYPES alone would still pass after someone removed
           # `validate-all` from the required contexts or flipped strict
           # off — exactly the silent-weakening drift this job exists to
-          # catch.
-          EXPECTED_CONTEXTS='["dco","validate-all"]'
+          # catch. The context is the check run's full name: `ci.yml`'s
+          # `validate` job calls `_validate.yml`, so it posts
+          # `validate / validate-all`, and a bare `validate-all` never
+          # matched (#5853).
+          EXPECTED_CONTEXTS='["dco","validate / validate-all"]'
 
           RULES="$(gh api "repos/${REPO}/rules/branches/main")"
           ACTUAL="$(jq -c '[.[] | .type] | sort' <<<"${RULES}")"
