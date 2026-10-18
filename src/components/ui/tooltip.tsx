@@ -48,11 +48,17 @@ interface TooltipProps extends React.ComponentProps<typeof TooltipPrimitive.Root
   openOnLongPress?: boolean
 }
 
-/** The trigger is, or wraps, the trigger of a Select, Popover or menu that is open. */
+/**
+ * The trigger is, or wraps, the trigger of a Select, Popover or menu that is
+ * open. A disclosure button (a collapse chevron) also sets `aria-expanded`, but
+ * opens no popup, so its tooltip still shows.
+ */
+const OPEN_POPUP_TRIGGER =
+  '[aria-expanded="true"]:is([aria-haspopup]:not([aria-haspopup="false"]), [role="combobox"])'
+
 function isTriggerMenuOpen(trigger: HTMLElement | null): boolean {
   if (trigger == null) return false
-  const expanded = '[aria-expanded="true"]'
-  return trigger.matches(expanded) || trigger.querySelector(expanded) != null
+  return trigger.matches(OPEN_POPUP_TRIGGER) || trigger.querySelector(OPEN_POPUP_TRIGGER) != null
 }
 
 function Tooltip({ openOnLongPress = false, open, onOpenChange, ...props }: TooltipProps) {
