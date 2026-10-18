@@ -205,6 +205,12 @@ fail-fast = false
 retries = 2
 slow-timeout = { period = "60s", terminate-after = 2 }
 leak-timeout = "30s"
+# Output: a failure, a retry, a SLOW and a LEAK test print as they happen, with
+# the failing test's full output; a pass prints nothing (thousands of PASS lines
+# per shard otherwise). A test that only passed on a retry stays in the closing
+# summary as FLAKY.
+status-level = "leak"
+final-status-level = "flaky"
 
 # Same headroom in CI (3×60s=180s) — see the default-profile override above.
 # Every test flagged SLOW (>30s) in a full-suite sweep is listed here so the

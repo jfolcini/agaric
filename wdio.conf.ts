@@ -966,7 +966,12 @@ export const config: WebdriverIO.Config = {
 
   // Real WebKitWebView boot + first real-backend IPC round-trip is slower than
   // a headless-chrome mock, so keep the log quiet and the waits generous.
-  logLevel: 'info',
+  // `warn`, not `info`: `info` logs every WebDriver COMMAND, DATA and RESULT
+  // (the `executeScript` payloads alone are tens of thousands of lines), which
+  // buried a red run's actual failure. A failure still prints through the spec
+  // reporter and the `afterTest` diagnostics (`console.warn`, independent of
+  // this level); `--logLevel=info` on the CLI brings the wire log back.
+  logLevel: 'warn',
   bail: 0,
   waitforTimeout: 20_000,
   // A hung request does not recover on retry, so these only bound how long a
