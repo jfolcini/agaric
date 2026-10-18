@@ -2214,6 +2214,38 @@ describe('PageModeEditor attachments (#5743)', () => {
     expect(backendFiles(ids[1] as string)).toEqual([])
   })
 
+  it('an export during a pasted file’s upload saves the typing before it reads', async () => {
+    const { pageId, ids } = seedPage(['notes', 'other'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    // The focus registers page mode's flush, which an export asks for (`flushActiveDraft`).
+    act(() => {
+      editor.view.dom.dispatchEvent(new FocusEvent('focus'))
+    })
+    let answer = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'add_attachment_with_bytes') await held
+      return dispatch(cmd, args)
+    })
+    caretTo(editor, 0)
+    pasteFiles(editor, [new File(['pasted text'], 'clip.txt', { type: 'text/plain' })])
+    await waitFor(() => {
+      expect(callsTo('add_attachment_with_bytes')).toBe(1)
+    })
+
+    typeAt(editor, 1, 5, ' typed')
+    const exported = flushActiveDraft()
+    answer()
+    await act(async () => {
+      await exported
+    })
+    expect(backendText(ids[1] as string)).toBe('other typed')
+    expect(backendFiles(ids[0] as string)).toEqual(['clip.txt'])
+  })
+
   it('a paste the backend refuses says so, and attaches nothing', async () => {
     const { pageId, ids } = seedPage(['notes'])
     const { container } = renderPageMode(pageId)
@@ -3636,6 +3668,56 @@ describe('PageModeEditor slash menu and pickers (#5743)', () => {
     await waitFor(() => {
       expect(resultsIn(container, ids[1] as string)).toHaveLength(2)
     })
+  })
+
+  it('/attach opens the file dialog inside the pick, and the file chosen is attached once the block is saved', async () => {
+    const { pageId } = seedPage(['first'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 5))
+    })
+    press(editor, 'Enter')
+    const added = blockIdOf(editor.state.doc.child(1)) as string
+    // WebKit opens a file dialog only inside the key or click that asked for it,
+    // so the dialog cannot wait for the save that creates the block: hold that save.
+    let answer = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'create_block') await held
+      return dispatch(cmd, args)
+    })
+    const opened: HTMLInputElement[] = []
+    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (
+      this: HTMLInputElement,
+    ) {
+      opened.push(this)
+    })
+
+    typeIn(editor, 1, 0, '/attach')
+    const option = await screen.findByRole('option', { name: /ATTACH — Attach file to block/ })
+    act(() => {
+      fireEvent.click(option)
+    })
+    expect(opened.map((input) => input.type)).toEqual(['file'])
+    click.mockRestore()
+
+    const file = new File(['picked text'], 'picked.txt', { type: 'text/plain' })
+    Object.defineProperty(opened[0], 'files', { value: [file] })
+    act(() => {
+      opened[0]?.dispatchEvent(new Event('change'))
+    })
+    answer()
+    await waitFor(() => {
+      const rows = dispatch('list_attachments', { blockId: added }) as Array<{ filename: string }>
+      expect(rows.map((row) => row.filename)).toEqual(['picked.txt'])
+    })
+    expect(backendPage(pageId)).toEqual([
+      [backendPage(pageId)[0]?.[0], 'first'],
+      [added, ''],
+    ])
   })
 
   it('a command after typing saves the typing first, with the editor’s own flush registered', async () => {

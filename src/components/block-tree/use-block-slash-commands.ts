@@ -29,6 +29,7 @@
 
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
+import { canRecordVoiceNote } from '@/components/attachments/voice-recording'
 import type {
   SlashCommandContext,
   SlashHandlerTables,
@@ -45,7 +46,8 @@ import { useSlashCommandTemplate } from '@/components/block-tree/use-block-slash
 import type { PickerItem } from '@/editor/SuggestionList'
 import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
 import { useListStyleSyntax } from '@/hooks/useListStyleSyntax'
-import { addRecentCommand, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
+import { searchSlashCommands } from '@/lib/slash-commands'
+import { addRecentCommand, getRecentCommands, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
 
 export type {
   UseBlockSlashCommandsParams,
@@ -104,6 +106,13 @@ export async function runSlashCommand(
       return
     }
   }
+}
+
+/** The slash menu for `query`: the catalog, with recent commands on an empty query, less `/voice` where nothing can record. */
+export function searchSlashMenu(query: string): PickerItem[] {
+  return searchSlashCommands(query, getRecentCommands(RECENT_SLASH_PREFIX)).filter(
+    (command) => command.id !== 'voice' || canRecordVoiceNote(),
+  )
 }
 
 /** Every command's handler but `/template`'s, whose picker state is its caller's. */

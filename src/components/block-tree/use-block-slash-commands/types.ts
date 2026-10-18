@@ -60,6 +60,13 @@ export interface SlashCommandContext {
    * mode leaves it out: its document is the block, written with `edit_block`.
    */
   blockText?: { read: () => string; write: (markdown: string) => void }
+  /**
+   * Where the file `/attach` picks goes, in place of the upload here: page
+   * mode's, once a save has created the block (#5743). The dialog still opens
+   * as the command is picked: WebKit opens no file dialog outside the key or
+   * click that asked for it.
+   */
+  attachFiles?: (files: File[]) => void
 }
 
 export type SlashHandler = (ctx: SlashCommandContext, item: PickerItem) => Promise<void> | void

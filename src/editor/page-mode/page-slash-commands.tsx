@@ -10,11 +10,13 @@
  * - A command that writes to the block (its task state, priority, a property,
  *   a list style) or opens what writes to it (the date picker on a due, a
  *   scheduled or an until date, the property drawer, the query builder, the
- *   file dialog, the voice recorder) runs once a save has created the block,
- *   as the checkbox and the chips do; page mode then reads the page again, so
- *   the chips show what it wrote. Only a command that changes nothing but the
- *   document runs as it is picked (`runsInDocument`): a mark toggled at the
- *   caret, which a save's change would clear, and what inserts at the caret.
+ *   voice recorder) runs once a save has created the block, as the checkbox
+ *   and the chips do; page mode then reads the page again, so the chips show
+ *   what it wrote. A command runs as it is picked (`runsAtOnce`) when it
+ *   changes nothing but the document (a mark toggled at the caret, which a
+ *   save's change would clear, and what inserts at the caret), and `/attach`,
+ *   whose file dialog WebKit opens only inside the key or click that picked
+ *   it; the file chosen is attached as a pasted one is, once the block is saved.
  *
  * `/duplicate` and `/template` are not offered: they write blocks through the
  * block store, outside the document, which owns the page's structure here.
@@ -28,9 +30,12 @@ import type React from 'react'
 import { lazy, Suspense, useState } from 'react'
 import type { StoreApi } from 'zustand'
 
-import { canRecordVoiceNote } from '@/components/attachments/voice-recording'
 import type { UseBlockDatePickerReturn } from '@/components/block-tree/use-block-date-picker'
-import { runSlashCommand, useSlashHandlers } from '@/components/block-tree/use-block-slash-commands'
+import {
+  runSlashCommand,
+  searchSlashMenu,
+  useSlashHandlers,
+} from '@/components/block-tree/use-block-slash-commands'
 import type {
   DatePickerMode,
   SlashCommandContext,
@@ -41,9 +46,7 @@ import { parse, serialize } from '@/editor/markdown-serializer'
 import { blockDocJson } from '@/editor/page-mode/page-document'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
-import { searchSlashCommands } from '@/lib/slash-commands'
 import type { PageBlockState } from '@/stores/page-blocks'
-import { getRecentCommands, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
 
 const BlockTablePicker = lazy(() =>
   import('@/components/block-tree/BlockTablePicker').then((m) => ({
@@ -55,13 +58,11 @@ const NOT_IN_PAGE_MODE = new Set(['duplicate', 'template'])
 
 /** Block mode's menu for `query`, less what page mode does not offer. */
 export function searchPageSlashCommands(query: string): PickerItem[] {
-  return searchSlashCommands(query, getRecentCommands(RECENT_SLASH_PREFIX)).filter(
-    (command) =>
-      !NOT_IN_PAGE_MODE.has(command.id) && (command.id !== 'voice' || canRecordVoiceNote()),
-  )
+  return searchSlashMenu(query).filter((command) => !NOT_IN_PAGE_MODE.has(command.id))
 }
 
-const IN_DOCUMENT = new Set([
+const AT_ONCE = new Set([
+  'attach',
   'bold',
   'italic',
   'code-mark',
@@ -87,9 +88,9 @@ const IN_DOCUMENT = new Set([
   'h6',
 ])
 
-/** Whether command `id` changes the document alone, so runs as it is picked. */
-export function runsInDocument(id: string): boolean {
-  return IN_DOCUMENT.has(id) || id.startsWith('callout-')
+/** Whether command `id` runs as it is picked, not once a save has created its block. */
+export function runsAtOnce(id: string): boolean {
+  return AT_ONCE.has(id) || id.startsWith('callout-')
 }
 
 function blockAt(editor: Editor, id: string): { pos: number; node: PMNode } | null {
@@ -132,6 +133,8 @@ export interface PageSlashCommandsOptions {
   openPropertyDrawer: (id: string) => void
   /** Write the query block mode's builder saved for a block; resolves whether it did. */
   saveQuery: (id: string, expression: string) => Promise<boolean>
+  /** Attach files to a block, as a paste does, once a save has created it. */
+  attach: (id: string, files: File[]) => void
 }
 
 export interface PageSlashCommands {
@@ -151,6 +154,7 @@ export function usePageSlashCommands({
   datePicker,
   openPropertyDrawer,
   saveQuery,
+  attach,
 }: PageSlashCommandsOptions): PageSlashCommands {
   const handlers = useSlashHandlers()
   const [queryBlockId, setQueryBlockId] = useState<string | null>(null)
@@ -185,6 +189,7 @@ export function usePageSlashCommands({
       openPropertyDrawer,
       openVoiceNoteRecorder: setVoiceBlockId,
       blockText: blockText(editor, id),
+      attachFiles: (files) => attach(id, files),
     }
     await runSlashCommand(handlers, ctx, item)
   }

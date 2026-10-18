@@ -244,6 +244,10 @@ function handleAttach(ctx: SlashCommandContext): void {
   input.addEventListener('change', async () => {
     const file = input.files?.[0]
     if (!file) return
+    if (ctx.attachFiles) {
+      ctx.attachFiles([file])
+      return
+    }
     const filename = file.name
     const sizeBytes = file.size
     const mimeType = file.type || guessMimeType(filename)

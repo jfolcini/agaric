@@ -17,7 +17,8 @@ what page mode does with it:
 | `due` `schedule` `repeat-until` | the picker on the focused block | (b) the picker opens on the command's block (`openDatePickerFor`); an until date is read again after the pick |
 | `effort-*` `assignee-*` `location-*` `repeat-*` `repeat-limit-*` | `set_property` / `delete_property` | (b) after the save; the page is read again, so the chips show it |
 | `assignee` `location`, the *Custom…* presets | the property drawer | (b) page mode's drawer, on the block |
-| `attach` `voice` | the file dialog, the recorder | (b) after the save; the attachment's invalidation reads the page again |
+| `attach` | the file dialog, then the upload | (b) the dialog at once, inside the pick; the file goes to page mode's paste upload, which waits for the save |
+| `voice` | the recorder | (b) after the save; the attachment's invalidation reads the page again |
 | `link` `block-ref` `tag` `embed` | insert `[[`, `((`, `@`, `{{embed ` at the caret | (a) at once, in the document |
 | `bold` `italic` `code-mark` `strike` `highlight` | a stored mark at the caret | (a) at once |
 | `code` `quote` | toggle the node at the caret | (a) at once |
@@ -47,13 +48,15 @@ store, outside the document, which owns the page's structure there. The menu's
   page mode's `afterSave`. That makes a save that creates the block (`keep`, so
   a block holding only `/todo` is created empty), then runs the handler, then
   reads the page again. This is the same chain the checkbox and the chips use.
-  Only the document-only commands (`runsInDocument`) run as picked: a mark
-  needs the caret as it is, and a link should open its picker without waiting.
-  An unknown future command gets the safe default.
+  Only the document-only commands and `/attach` (`runsAtOnce`) run as picked:
+  a mark needs the caret as it is, a link should open its picker without
+  waiting, and WebKit opens a file dialog only inside the key or click that
+  asked for it. An unknown future command gets the safe default.
 - Block mode's property handlers call `flushActiveDraft` first, which is page
   mode's flush: queued behind the very step running the handler, it waited
-  forever. While a change after its save runs, that flush resolves at once,
-  since the save it asks for has just run.
+  forever. While a command runs after its save, that flush resolves at once,
+  since the save it asks for has just run. Only the command: an export during
+  a pasted file's upload still flushes.
 - `useBlockDatePicker`'s `openDatePickerFor` takes any mode, so `/due`,
   `/schedule` and `/repeat-until` open the picker on the command's block, as a
   chip opens it on the chip's.
@@ -125,6 +128,30 @@ Recent-band spec that read it as a heading, now read the group's name.
   commit, and the query's results are #5844's.
 - fast-check: not extended. #5721's property drives a bare editor with no
   pickers (`commands` left out), and the commands run block mode's handlers.
+
+**Review round (#5866).**
+- `/attach` opened its file dialog only after the save's IPC answered, outside
+  the key or click. WebKitGTK and WKWebView open no dialog then, and throw
+  nothing; Chromium keeps the activation about 5 s, so Playwright cannot show
+  it. The dialog now opens as the command is picked. The file chosen goes to
+  page mode's paste upload (`SlashCommandContext.attachFiles`), which waits for
+  the save. Block mode is unchanged. `/voice` needs nothing: `getUserMedia`
+  runs from the recorder's own Record click. No other command opens a file
+  dialog, the clipboard or fullscreen.
+- The flush guard is set only while a command runs, no longer through every
+  change after a save, so an export during a pasted file's upload saves the
+  typing first.
+- `searchSlashMenu` (the `/voice` filter) is shared by `BlockTree` and page mode.
+- vitest, each red first:
+  - `/attach`, with the save creating the block held unanswered: the file
+    input's `click()` runs within the pick, and the file chosen is attached
+    once the save answers. Red twice: `/attach` back on the deferred path (no
+    `click()`, `[]`), and no hand-off to page mode's upload (the empty block
+    never created).
+  - An export during a pasted file's held upload saves the typing first. Red:
+    the guard back around every change (`other`, not `other typed`).
+- Playwright: the slash spec picks `/attach` through Chromium's file chooser,
+  and the block holds the file. It cannot go red on the old order, as above.
 
 **Measurement.** `AGARIC_PERF=1 AGARIC_PERF_REPEATS=5 e2e/perf.spec.ts -g
 'page mode'`, sizes held to 500, unthrottled, median [min–max], page mode's

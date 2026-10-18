@@ -93,7 +93,7 @@ import {
   type TreeRow,
 } from '@/editor/page-mode/page-save'
 import {
-  runsInDocument,
+  runsAtOnce,
   searchPageSlashCommands,
   usePageSlashCommands,
 } from '@/editor/page-mode/page-slash-commands'
@@ -462,6 +462,7 @@ function PageModeDocument({
     datePicker,
     openPropertyDrawer: setDrawerBlockId,
     saveQuery: (id, expression) => actions.current.saveQuery(id, expression),
+    attach: (id, files) => actions.current.attach(id, files),
   })
   // The session reads these as they are when it needs them, not as it was built with.
   const blocked = useEffectEvent((blocker: PageModeBlocker) => onBlocked(blocker))
@@ -597,9 +598,6 @@ function PageModeDocument({
     }
     // Its callers close page mode: the mode switch, source mode, a blocker, a link away.
     flushRef.current = () => flush(true)
-    // While a change after its save runs: the flush a command asks for first
-    // (`flushActiveDraft`) is that save, and one queued behind it would wait forever.
-    let changing = false
     // After the save, so the block exists: an empty one is created for it (`keep`).
     const afterSave = (id: string, change: () => Promise<void>): Promise<void> => {
       clearTimeout(timer)
@@ -613,14 +611,12 @@ function PageModeDocument({
         if (editor.isDestroyed || !save.saved.has(id)) return
         // A block created here since the store last loaded: the change reads its row there.
         if (!pageStore.getState().blocksById.has(id)) await read()
-        changing = true
-        try {
-          await change()
-        } finally {
-          changing = false
-        }
+        await change()
       })
     }
+    // While a command runs after its save: the flush its handler asks for first
+    // (`flushActiveDraft`) is that save, and one queued behind it would wait forever.
+    let running = false
     const readAgain = (): void => {
       void enqueue(async () => {
         if (!editor.isDestroyed) await bringIn(await read())
@@ -714,8 +710,18 @@ function PageModeDocument({
       command: (item) => {
         const id = cursorBlock()
         if (id === null) return
-        if (runsInDocument(item.id)) void runCommand(id, item)
-        else void afterSave(id, () => runCommand(id, item)).then(readAgain)
+        if (runsAtOnce(item.id)) {
+          void runCommand(id, item)
+          return
+        }
+        void afterSave(id, async () => {
+          running = true
+          try {
+            await runCommand(id, item)
+          } finally {
+            running = false
+          }
+        }).then(readAgain)
       },
     }
 
@@ -745,7 +751,7 @@ function PageModeDocument({
       setActiveEditor(editor)
       unregisterDraft()
       unregisterDraft = registerActiveDraftFlush(pageId, () =>
-        changing ? Promise.resolve() : flush(),
+        running ? Promise.resolve() : flush(),
       )
     }
     const onBlur = (): void => void flush()

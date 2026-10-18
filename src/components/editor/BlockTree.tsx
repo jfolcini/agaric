@@ -40,7 +40,6 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
-import { canRecordVoiceNote } from '@/components/attachments/voice-recording'
 import { BlockBatchActionMenu } from '@/components/block-tree/BlockBatchActionMenu'
 import { BlockDndOverlay } from '@/components/block-tree/BlockDndOverlay'
 import { useBlockActionOrchestration } from '@/components/block-tree/use-block-action-orchestration'
@@ -57,7 +56,10 @@ import { useBlockNavigateToLink } from '@/components/block-tree/use-block-naviga
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { BlockResolversProvider } from '@/components/block-tree/use-block-resolvers'
-import { useBlockSlashCommands } from '@/components/block-tree/use-block-slash-commands'
+import {
+  searchSlashMenu,
+  useBlockSlashCommands,
+} from '@/components/block-tree/use-block-slash-commands'
 import { useBlockTreeContextBags } from '@/components/block-tree/use-block-tree-context-bags'
 import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tree-event-listeners'
 import { useBlockTreeKeyboardShortcuts } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
@@ -94,7 +96,7 @@ import { convertBlockContent } from '@/lib/block-type-convert'
 import { listStyleForBlockType, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { searchPropertyKeys, searchSlashCommands } from '@/lib/slash-commands'
+import { searchPropertyKeys } from '@/lib/slash-commands'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { mountedScopedIds } from '@/lib/zoom-scope'
@@ -102,7 +104,6 @@ import { selectCursorBlockId, useBlockStore } from '@/stores/blocks'
 import { deleteBlockIfLeakedEmpty } from '@/stores/empty-block-cleanup'
 import { storeOwnsBlock, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
 import type { DeleteBlockOptions } from '@/stores/page-blocks-types'
-import { getRecentCommands, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
 import { useSpaceStore } from '@/stores/space'
 
 // #5441 — the slash-command pickers mount only while open; lazy so the date
@@ -615,10 +616,7 @@ export function BlockTree({
     searchBlockRefs: resolve.searchBlockRefs,
     onCreatePage: resolve.onCreatePage,
     onCreateTag: resolve.onCreateTag,
-    searchSlashCommands: (query: string) =>
-      searchSlashCommands(query, getRecentCommands(RECENT_SLASH_PREFIX)).filter(
-        (command) => command.id !== 'voice' || canRecordVoiceNote(),
-      ),
+    searchSlashCommands: searchSlashMenu,
     onSlashCommand: dispatch.thunks.slashCommand,
     onCheckbox: dispatch.thunks.checkbox,
     onListStyle: dispatch.thunks.listStyle,

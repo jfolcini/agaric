@@ -1512,6 +1512,26 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     await expect(inBlock(ids[2], '.due-date-chip')).toHaveText('Dec 24')
     await expect.poll(async () => (await row(ids[2])).due_date).toBe('2026-12-24')
 
+    // /attach opens the file dialog as it is picked; the file is the block's.
+    await caret(page, 1, 'end')
+    await page.keyboard.type(' /attach')
+    const chooser = page.waitForEvent('filechooser')
+    await menu.locator('#suggestion-attach').click()
+    await (
+      await chooser
+    ).setFiles({
+      name: 'trip.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('trip notes'),
+    })
+    await expect
+      .poll(async () =>
+        (await ipc<Array<{ filename: string }>>(page, 'list_attachments', { blockId: ids[1] })).map(
+          (attachment) => attachment.filename,
+        ),
+      )
+      .toEqual(['trip.txt'])
+
     // The drawer clears a date.
     await caret(page, 1, 'end')
     await page.keyboard.press('Control+Shift+P')
@@ -1537,7 +1557,7 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     expect(await row(ids[2])).toMatchObject({ todo_state: null, due_date: '2026-12-24' })
     expect((await backend(page, pageId)).map((b) => b.text)).toEqual([
       'pay rent ',
-      'plan trip',
+      'plan trip ',
       'plain ',
     ])
   })
