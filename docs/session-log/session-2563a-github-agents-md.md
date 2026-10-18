@@ -1,4 +1,4 @@
-# Session 2563 — `.github/AGENTS.md`: what an edit to CI can break
+# Session 2563a — `.github/AGENTS.md`: what an edit to CI can break
 
 The maintainer asked for an AGENTS.md beside the workflows after a CI audit (#5853)
 found facts an agent editing them would miss. `.github/AGENTS.md` holds them: how
