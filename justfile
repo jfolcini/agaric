@@ -144,12 +144,12 @@ fmt-all: _require-npm
 
 # --- Verify ----------------------------------------------------------------
 
-# Full local gate — CI's `validate` job mirror. Needs the prek host binaries (lychee, typos-cli, shellcheck, …).
+# Every pre-commit-stage prek hook over the whole tree. Not all of CI's validate job: pre-push and manual hooks (clippy, knip, lychee, npm-audit, …) and the sqlx lanes are not run. Needs the prek host binaries (typos-cli, shellcheck, …).
 [group('verify')]
 check: _require-npm
     prek run --all-files
 
-# Pre-push CI-equivalent verifier (nextest + clippy + knip + lychee + related tests).
+# Pre-push verifier: pre-commit hooks + vitest/nextest scoped to the push range + sqlx cache check (clippy, knip, lychee, npm-audit run only in the pre-push hook).
 [group('verify')]
 verify:
     bash scripts/verify-ci-equivalent.sh
