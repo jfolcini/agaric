@@ -43,9 +43,12 @@ cargo tauri dev                                  # desktop app with hot reload �
 npm run test                                     # vitest
 npm run typecheck                                # tsc -b across every tsconfig project
 cd src-tauri && cargo nextest run --workspace    # Rust tests
-npx playwright test                              # e2e (see e2e/)
+PW_PORT=<port> npx playwright test               # e2e on the mock (see e2e/); one port per worktree
+just e2e-real e2e-tauri/<file>.e2e.ts            # one real-backend spec (see e2e-tauri/)
+just e2e-related --range origin/main...HEAD      # the e2e specs a change can affect, per lane: run them before a push
 cargo tauri android build --target aarch64 --debug
 prek run --all-files                             # every pre-commit hook
+prek run --hook-stage manual --all-files         # the CI-only hooks (self-tests, baselines) the lint job also runs
 scripts/push.sh                                  # push after a Rust change (runs the pre-push verify first)
 ```
 
@@ -181,7 +184,7 @@ cd src-tauri && cargo test --lib -- specta_tests --ignored     # or: just gen-bi
 ## Pre-commit & CI
 
 - **Pre-commit:** `prek.toml` is the list. Formatters auto-fix and abort the commit once; re-stage and commit again. Tool config: `_typos.toml`, `.taplo.toml`, `.github/zizmor.yml`.
-- **Pre-push:** `scripts/verify-ci-equivalent.sh` runs a `dev.db` migration preflight, every pre-commit hook over the whole tree, then vitest, nextest, doc-tests, and the four `sqlx prepare --check` lanes scoped to the pushed range. Not run locally: Playwright, the full suites, coverage and bundle-budget gates, bundle builds. Run one heavy gate at a time; two concurrent nextest/clippy runs get OOM-killed silently.
+- **Pre-push:** `scripts/verify-ci-equivalent.sh` runs a `dev.db` migration preflight, every pre-commit hook over the whole tree, then vitest, nextest, doc-tests, and the four `sqlx prepare --check` lanes scoped to the pushed range. Not run locally: Playwright, WebdriverIO, the manual-stage hooks, the full suites, coverage and bundle-budget gates, bundle builds. Run one heavy gate at a time; two concurrent nextest/clippy runs get OOM-killed silently.
 - **CI:** `.github/workflows/_validate.yml` is the reusable workflow (`detect-changes` gates `lint`, `docs-lint`, `vitest`, `playwright`, `cargo-tests`, `cargo-coverage`, `mcp-tests` behind `validate-all`). `ci.yml` adds the Linux bundle and Android builds; `release.yml` the cross-OS matrix, attestation, and upload; `scheduled-deep-checks.yml` the weekly benches and mutation sweep. Required contexts on `main`: `dco`, `validate / validate-all`.
 - **Reviewer:** `claude-code-review.yml` is advisory: the ruleset does not count its review. It reviews a non-draft PR when it is opened, marked ready or reopened, and again when the `re-review` label is added (a push alone does not), and skips a PR whose diff is only Markdown. Its posture is the one in [How we work](#how-we-work): block only on a concrete correctness or security defect.
 
@@ -239,7 +242,7 @@ The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained second i
 
 - Rust: `cd src-tauri && cargo nextest run --workspace -E 'test(name)'`. Use nextest, not `cargo test`, for anything that reads a process-global counter and asserts on the delta (`tests/command_integration/conformance.rs` does); see `src-tauri/tests/AGENTS.md` § "Process-global state".
 - TS: `npx vitest run <paths>`. Vitest does not type-check; run `npm run typecheck` too.
-- e2e: every top-level test or describe title in `e2e/` and `e2e-tauri/` ends with its area tags (`… @editor @pages`, vocabulary in `scripts/e2e-related.sh`); `node --test scripts/e2e-related.test.mjs` (run by `lint`) fails a spec without a known one. Before a push, `just e2e-related` (or `--range main...HEAD`) prints the command that runs the specs a change can affect, per lane. CI still runs both suites whole.
+- e2e: every top-level test or describe title in `e2e/` and `e2e-tauri/` ends with its area tags (`… @editor @pages`, vocabulary in `scripts/e2e-related.sh`); `node --test scripts/e2e-related.test.mjs` (run by `lint`) fails a spec without a known one. `just e2e-related` selects specs by these tags; where it prints "the whole lane", CI's run is the check.
 - A filter that selects zero tests exits 0 (vitest `-t`; nextest under `--no-tests=pass`, as in `scripts/test-related-rust.sh`). Read the count on the summary line, never an exit code through a pipe.
 - A whole-workspace nextest run can outlast a foreground tool call: split it with `--partition count:1/2` and `count:2/2`, or run it in the background.
 - The hooks run fmt and oxlint at commit and clippy at push, and only when wired (cloud sessions can leave them unwired). Before handing off a Rust change, run `cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings` yourself; `--lib` skips test code and `-p` skips the other crates.
