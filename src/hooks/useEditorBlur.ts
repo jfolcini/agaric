@@ -7,7 +7,9 @@
  *   3. Early-persist for newly created (empty) blocks
  *   4. Portal / transient-UI guard (relatedTarget in a portal or in the
  *      editor wrapper + visible-element scan)
- *   5. Unmount -> save-or-split -> discard draft -> clear focus
+ *   5. Unmount -> save-or-split -> discard draft -> clear focus. A blur by a
+ *      mouse press saves at once but unmounts and clears focus only once that
+ *      press ends (#5807).
  *
  * B-56: Step 4b now scopes the portal scan to elements OUTSIDE the editor
  * wrapper (`e.currentTarget`). Elements inside the wrapper (e.g. the
@@ -18,15 +20,50 @@
  */
 
 import type React from 'react'
-import { useCallback, useLayoutEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import type { StoreApi } from 'zustand'
 
-import { shouldSplitOnBlur } from '@/editor/content-delta'
+import { computeContentDelta, shouldSplitOnBlur } from '@/editor/content-delta'
+import type { DocNode } from '@/editor/types'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { logger } from '@/lib/logger'
+import { useBlockStore } from '@/stores/blocks'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { runUnmountFlush } from '@/stores/unmount-flush'
+
+/**
+ * A primary mouse or pen button is down. Its press blurs the editor on
+ * mousedown, before the release is hit-tested; a touch tap blurs only after
+ * its release, so it never holds the swap.
+ */
+let primaryPressDown = false
+/** The editor-to-static swap the press that is down holds back. */
+let swapWhenPressEnds: (() => void) | null = null
+
+function endPress(): void {
+  primaryPressDown = false
+  const swap = swapWhenPressEnds
+  swapWhenPressEnds = null
+  // The release's mouseup and click run later in this same task. Swapping in
+  // the next one lets their handlers see the layout and focus the press saw.
+  if (swap) setTimeout(swap)
+}
+
+window.addEventListener(
+  'pointerdown',
+  (e) => {
+    primaryPressDown = e.button === 0 && e.pointerType !== 'touch'
+  },
+  true,
+)
+// A press ends in a release (outside the window too: the browser delivers it to
+// the page that took the press), a cancel, a native drag, a context menu that
+// swallows the release, or the window losing focus.
+for (const type of ['pointerup', 'pointercancel', 'dragstart', 'contextmenu']) {
+  window.addEventListener(type, endPress, true)
+}
+window.addEventListener('blur', endPress)
 
 /**
  * Single-attribute opt-in for transient UI elements (popups, toolbars,
@@ -48,7 +85,13 @@ export const EDITOR_PORTAL_SELECTOR = '[data-editor-portal]'
 export function useEditorBlur(params: {
   rovingEditor: Pick<
     RovingEditorHandle,
-    'activeBlockId' | 'originalMarkdown' | 'storedMarkdown' | 'getMarkdown' | 'unmount'
+    | 'activeBlockId'
+    | 'originalMarkdown'
+    | 'storedMarkdown'
+    | 'getMarkdown'
+    | 'unmount'
+    | 'editor'
+    | 'markCommitted'
   >
   blockId: string
   /** Store edit — resolves `false` when the backend write failed and the
@@ -93,6 +136,11 @@ export function useEditorBlur(params: {
   useLayoutEffect(() => {
     rovingEditorRef.current = params.rovingEditor
   })
+
+  // The swap a press holds back for this block; a block that unmounts first
+  // runs it then, so no editor outlives its block.
+  const pendingSwapRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => pendingSwapRef.current?.(), [])
 
   const handleBlur = useCallback(
     (e: React.FocusEvent) => {
@@ -179,7 +227,22 @@ export function useEditorBlur(params: {
       // Step 5: Unmount -> save or split -> discard draft -> clear focus.
       // `loaded` was read above, before `unmount()` resets it: the flush
       // classifies the edit against it (#5160 D2).
-      const changed = rovingEditorRef.current.unmount()
+      //
+      // A mouse press keeps the block in edit mode until it ends (#5807):
+      // leaving it now drops the formatting toolbar from the flow, everything
+      // below moves up before the release, and the click lands elsewhere.
+      // `unmount()` would empty the doc on screen, so the save reads it live
+      // and rebases the baseline, and the deferred unmount finds nothing new.
+      const re = rovingEditorRef.current
+      const keptEditor = primaryPressDown ? re.editor : null
+      let changed: string | null
+      if (keptEditor) {
+        const delta = computeContentDelta(loaded, keptEditor.getJSON() as DocNode)
+        changed = delta.changed ? delta.newMarkdown : null
+        if (changed !== null) re.markCommitted(changed)
+      } else {
+        changed = re.unmount()
+      }
       // Findings 2/48: capture the save's settlement so the draft discard can
       // gate its deleteDraft on the write actually committing (`edit` resolves
       // false on failure — it never rejects). Pre-fix the draft row was
@@ -221,6 +284,28 @@ export function useEditorBlur(params: {
       // `saveOutcome` resolves successfully (when one exists).
       discardDraft(saveOutcome, changed ?? undefined)
       logger.debug('editor', 'blur', { blockId })
+      if (keptEditor) {
+        // The hold ends with the press, or as soon as focus leaves this block:
+        // whatever moved it owns the focus from then on, even if it gives it
+        // back to this block with a new editor (a cancelled drag, #923).
+        const endHold = (pressEnded: boolean) => {
+          stopWatchingFocus()
+          if (pendingSwapRef.current !== swap) return
+          pendingSwapRef.current = null
+          const refocused = wrapper.contains(document.activeElement)
+          if (refocused) return
+          // Its edit was saved on the blur.
+          if (rovingEditorRef.current.activeBlockId === blockId) rovingEditorRef.current.unmount()
+          if (pressEnded) setFocused(null)
+        }
+        const swap = () => endHold(true)
+        const stopWatchingFocus = useBlockStore.subscribe((state) => {
+          if (state.focusedBlockId !== blockId) endHold(false)
+        })
+        pendingSwapRef.current = swap
+        swapWhenPressEnds = swap
+        return
+      }
       setFocused(null)
     },
     [blockId, edit, splitBlock, setFocused, discardDraft, rootParentId, pageStore],

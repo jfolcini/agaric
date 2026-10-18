@@ -423,11 +423,11 @@ function EditableBlockInner({
   )
 
   // A press on this block's text while the editor sits on another block of this
-  // tree must not blur it: the blur collapses that block (its toolbar goes), the
-  // rows below move up under the pointer, the release lands on another element,
-  // and the click that would move the editor here never fires. Kept focused, the
-  // click runs handleFocus, which saves the other block first. A press on a chip
-  // or button inside the block still moves focus, so its blur saves as before.
+  // tree keeps that editor focused, so the click's handleFocus saves that block
+  // and moves the editor here with no blur in between. The click lands without
+  // it too: a mouse press's blur keeps the other block in edit mode until the
+  // release (`useEditorBlur`), and on touch the blur moves nothing. A press on a
+  // chip or button inside the block still moves focus, so its blur saves.
   const keepEditorUntilClick = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       const active = rovingEditorRef.current.activeBlockId

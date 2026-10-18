@@ -95,16 +95,6 @@ async function openTarget(): Promise<void> {
     },
     { timeout: NAV_TIMEOUT, timeoutMsg: `${TARGET}'s References never listed its sources` },
   )
-  // Leave the editor first: a click's press blurs it, and the shorter static row lifts Add filter.
-  // The editor can open after the panel lists, so an Escape pressed before it is lost: repeat.
-  await browser.waitUntil(
-    async () => {
-      if (!(await $('[data-testid="block-editor"]').isExisting())) return true
-      await browser.keys(['Escape'])
-      return false
-    },
-    { timeout: ACTION_TIMEOUT, timeoutMsg: 'the block editor never closed on Escape' },
-  )
   await waitForListed(ALL, '', 'with no filter')
 }
 

@@ -32,10 +32,10 @@ export function AddBlockButton({
       variant="ghost"
       size="sm"
       className={className ?? 'text-muted-foreground'}
-      // Keep the roving editor mounted through the click: blurring it on
-      // mousedown swaps its row for the shorter static row, the button moves
-      // up under the pointer, and the mouseup lands off it, so `onClick`
-      // never fires.
+      // Keeps the edited block focused through a tap. A tap's blur runs before
+      // its click, unlike a mouse press's, which `useEditorBlur` holds until the
+      // release. The page's `onClick` reads that focus (`unfocusedBlankTail`), so
+      // without this it reopens the blank block just left instead of adding one.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
     >
