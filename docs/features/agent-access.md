@@ -35,7 +35,7 @@ Settings → Agent access makes that entry for you: add an agent, then use its r
 
 Each agent has:
 
-- **A name**, which its edits carry in History and the activity feed (`agent:<name>`). What the client calls itself is not used.
+- **A name**, which its edits carry as their origin (`agent:<name>`): the activity feed and the `page_history` / `block_history` tools show it, the History view does not. What the client calls itself is not used.
 - **Read-only or read-write.** A read-only agent gets only the read tools; a write tool is an unknown tool to it.
 - **Spaces**: every space, including ones created later, or a list. The agent sees and uses only those (see [Space scoping](#space-scoping)).
 - **A token** (`agt_` and 32 hex digits) that works only against this device's socket. Agents are not synced.
