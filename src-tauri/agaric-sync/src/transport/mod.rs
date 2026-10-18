@@ -31,7 +31,7 @@ pub mod endpoint;
 /// module docs for why the chunking layer does not come along.
 pub mod session;
 
-/// Bulk byte transfer (attachments, compressed snapshots) over a QUIC bi-stream.
+/// Bulk byte transfer (attachment files) over a QUIC bi-stream.
 /// The replacement for `SyncConnection`'s `send_binary_streaming` family — see the
 /// module docs for why the chunk loop does not come along and why the receive cap
 /// belongs to the caller.

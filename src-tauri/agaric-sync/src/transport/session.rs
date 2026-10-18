@@ -19,25 +19,29 @@
 //! congestion controller and the connection's flow-control windows already do the work
 //! `BINARY_FRAME_CHUNK_SIZE` was hand-rolling.
 //!
-//! # What did **not** get simpler, and is worth knowing
+//! # Loro bytes travel raw (#5761)
 //!
-//! The 4× JSON inflation is a property of `SyncMessage`'s *shape*, not of WebSocket:
-//! `LoroSyncMessage::{Snapshot,Update}.bytes` is a `Vec<u8>` inside a
-//! `#[serde(tag = "type")]` enum, and serde_json has no choice but to write it as
-//! `[104,101,...]`. QUIC removes the *cap* that made the inflation fatal, so nothing
-//! here has to care — but a later slice that wants Loro payloads to cost what they
-//! weigh will have to change the encoding (a binary serde format, or moving bulk onto
-//! its own stream), not the transport. This module deliberately keeps the existing
-//! serde encoding so this slice tests the transport claim and nothing else.
+//! A [`SyncMessage::LoroSync`](crate::sync_protocol::SyncMessage::LoroSync) is not one
+//! frame. Its `bytes` are a `Vec<u8>`, which serde_json writes as a number array of up
+//! to four characters a byte, so one frame under [`MAX_FRAME_SIZE`] held about 64 MB of
+//! Loro state, and decoding it held many times the payload in memory.
+//! [`send_sync_message`] writes it as a
+//! [`SyncMessage::LoroSyncChunked`](crate::sync_protocol::SyncMessage::LoroSyncChunked)
+//! frame, which carries everything but the bytes and their count, then the bytes raw on
+//! the same stream. [`recv_sync_message`] reads the frame, then exactly that many bytes
+//! straight into the buffer the engine imports from, and returns the `LoroSync`; no
+//! caller sees the split.
 //!
-//! # The size cap is not decoration
+//! # The size caps are not decoration
 //!
 //! The length prefix is attacker-controlled in exactly the same sense every other field
 //! is (the threat model is the user's own paired devices, so "attacker" here means
 //! "corruption or a version skew"). Allocating whatever it says would turn four
 //! mistyped bytes into a 4 GB allocation, so it is bounded by [`MAX_FRAME_SIZE`]
-//! *before* the buffer is created — the same discipline `wire.rs` applies to
-//! `LoroSyncChunkedHeader::size_bytes`, and the same constant.
+//! *before* the buffer is created, and a Loro header's `size_bytes` by
+//! [`MAX_LORO_SYNC_PAYLOAD_SIZE`](crate::sync_constants::MAX_LORO_SYNC_PAYLOAD_SIZE) the
+//! same way. The sender refuses bytes over that cap before writing any, so a peer is
+//! never sent what it would refuse.
 
 use std::time::Duration;
 
@@ -47,14 +51,14 @@ use agaric_core::error::AppError;
 
 use crate::sync_constants::{BINARY_FRAME_CHUNK_SIZE, MAX_LORO_SYNC_PAYLOAD_SIZE};
 use crate::sync_protocol::SyncMessage;
+use crate::sync_protocol::loro_sync_types::LoroSyncChunkedHeader;
 
 /// Largest single framed [`SyncMessage`] accepted, in bytes.
 ///
 /// Deliberately the existing [`MAX_LORO_SYNC_PAYLOAD_SIZE`] (256 MB) rather than a new
-/// number: that constant is already the crate's answer to "the largest protocol payload
-/// we will allocate for before we have seen the bytes", and it bounds both chunked
-/// sub-flows in `sync_daemon::wire`. Under QUIC there is no separate header to bound,
-/// so the one cap applies directly to the frame.
+/// number: that constant is the crate's answer to "the largest protocol payload we will
+/// allocate for before we have seen the bytes", and it bounds a Loro header's
+/// `size_bytes` too.
 pub const MAX_FRAME_SIZE: u64 = MAX_LORO_SYNC_PAYLOAD_SIZE;
 
 /// Bytes of length prefix. A `u32` covers [`MAX_FRAME_SIZE`] with three orders of
@@ -95,15 +99,36 @@ fn wire_err(msg: impl Into<String>) -> AppError {
     AppError::InvalidOperation(format!("[transport::session] {}", msg.into()))
 }
 
-/// Write one [`SyncMessage`] to `send` as `u32` big-endian length + serde-JSON body.
+/// Write one [`SyncMessage`] to `send` as `u32` big-endian length + serde-JSON body,
+/// followed for a [`SyncMessage::LoroSync`] by its Loro bytes, raw (see the module docs).
 ///
 /// The stream is left open: a session is many messages on one bi-stream, so finishing
 /// is the caller's decision, not the frame's.
 ///
 /// # Errors
-/// If the message fails to serialise, exceeds [`MAX_FRAME_SIZE`], or the stream is
-/// closed / reset by the peer.
+/// If the message fails to serialise, its frame exceeds [`MAX_FRAME_SIZE`], its Loro
+/// bytes exceed [`MAX_LORO_SYNC_PAYLOAD_SIZE`] (refused before anything is written), or
+/// the stream is closed / reset by the peer.
 pub async fn send_sync_message(send: &mut SendStream, msg: &SyncMessage) -> Result<(), AppError> {
+    let SyncMessage::LoroSync { msg, is_last } = msg else {
+        return send_frame(send, msg).await;
+    };
+    let (header, bytes) = LoroSyncChunkedHeader::split(msg);
+    if header.size_bytes() > MAX_LORO_SYNC_PAYLOAD_SIZE {
+        return Err(AppError::validation(format!(
+            "[transport::session] {} Loro bytes are too large to send \
+             (max {MAX_LORO_SYNC_PAYLOAD_SIZE})",
+            header.size_bytes()
+        )));
+    }
+    let is_last = *is_last;
+    send_frame(send, &SyncMessage::LoroSyncChunked { header, is_last }).await?;
+    send.write_all(bytes)
+        .await
+        .map_err(|e| wire_err(format!("write Loro bytes: {e}")))
+}
+
+async fn send_frame(send: &mut SendStream, msg: &SyncMessage) -> Result<(), AppError> {
     let payload = serde_json::to_vec(msg).map_err(|e| wire_err(format!("serialize: {e}")))?;
     let len = payload.len() as u64;
     if len > MAX_FRAME_SIZE {
@@ -156,9 +181,10 @@ impl BodyReader for RecvStream {
 /// reservation policy assertable.
 ///
 /// The limit of that guard is worth knowing: it binds *this* function, so a
-/// `Vec::with_capacity(capacity)` reintroduced at the [`recv_sync_message`] call site
-/// would restore the amplification with every test still green. The buffer is created
-/// empty there for that reason, and this is the only thing that should ever size it.
+/// `Vec::with_capacity(capacity)` reintroduced at a call site (`recv_frame`,
+/// `read_loro_bytes`) would restore the amplification with every test still green. The
+/// buffer is created empty there for that reason, and this is the only thing that should
+/// ever size it.
 ///
 /// # Why a scratch buffer instead of `resize`
 ///
@@ -266,9 +292,46 @@ pub async fn recv_sync_message_within(
 /// for free, and why every caller outside a driver loop owes it explicitly.
 ///
 /// # Errors
-/// If the peer closed the stream mid-frame, the announced length exceeds
-/// [`MAX_FRAME_SIZE`], or the body does not deserialise.
+/// If the peer closed the stream mid-frame or mid-Loro-bytes, the announced length
+/// exceeds [`MAX_FRAME_SIZE`] or the announced Loro bytes
+/// [`MAX_LORO_SYNC_PAYLOAD_SIZE`], or the body does not deserialise.
 pub async fn recv_sync_message(recv: &mut RecvStream) -> Result<SyncMessage, AppError> {
+    match recv_frame(recv).await? {
+        SyncMessage::LoroSyncChunked { header, is_last } => {
+            let bytes = read_loro_bytes(recv, header.size_bytes()).await?;
+            Ok(SyncMessage::LoroSync {
+                msg: header.into_message(bytes),
+                is_last,
+            })
+        }
+        frame => Ok(frame),
+    }
+}
+
+/// Read the `size_bytes` Loro bytes that follow a `LoroSyncChunked` frame into the
+/// buffer the engine imports from, refusing a count over the cap before reading or
+/// reserving anything.
+async fn read_loro_bytes<R: BodyReader>(
+    recv: &mut R,
+    size_bytes: u64,
+) -> Result<Vec<u8>, AppError> {
+    if size_bytes > MAX_LORO_SYNC_PAYLOAD_SIZE {
+        return Err(AppError::validation(format!(
+            "[transport::session] peer announced {size_bytes} Loro bytes \
+             (max {MAX_LORO_SYNC_PAYLOAD_SIZE}); refusing to allocate"
+        )));
+    }
+    let len = usize::try_from(size_bytes).map_err(|_| {
+        AppError::validation(format!(
+            "[transport::session] {size_bytes} Loro bytes exceed this platform's usize"
+        ))
+    })?;
+    let mut bytes = Vec::new();
+    read_body(recv, len, &mut bytes).await?;
+    Ok(bytes)
+}
+
+async fn recv_frame(recv: &mut RecvStream) -> Result<SyncMessage, AppError> {
     let mut prefix = [0u8; LEN_PREFIX_BYTES];
     recv.read_exact(&mut prefix)
         .await
@@ -316,11 +379,15 @@ mod tests {
     use sqlx::SqlitePool;
     use tempfile::TempDir;
 
+    use agaric_store::space::SpaceId;
+
     use super::*;
     use crate::apply_host::ApplyHost;
     use crate::apply_host::test_support::RecordingApplyHost;
+    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
     use crate::sync_protocol::{SyncOrchestrator, SyncState};
     use crate::transport::endpoint::{RecordingResolver, lan_only};
+    use crate::transport::test_support::{QuicPair, quic_pair};
     // The canonical constant, not a copy of its value. A local copy would let a bump to
     // `service::SYNC_ALPN` leave every test here green: each test builds *both* ends
     // from the same local copy, so the two would simply agree with each other while
@@ -911,5 +978,278 @@ mod tests {
             capacity,
             "a sub-chunk frame must not reserve a whole chunk"
         );
+    }
+
+    // -- Loro bytes raw after a header (#5761) --------------------------------
+
+    const LORO_SPACE: &str = "01HZ5761SPACEXXXXXXXXXXXXX";
+
+    fn loro_sync(snapshot: bool, bytes: Vec<u8>) -> SyncMessage {
+        let space_id = SpaceId::from_trusted(LORO_SPACE);
+        let protocol_version = LORO_SYNC_PROTOCOL_VERSION;
+        let msg = if snapshot {
+            LoroSyncMessage::Snapshot {
+                protocol_version,
+                space_id,
+                bytes,
+            }
+        } else {
+            LoroSyncMessage::Update {
+                protocol_version,
+                space_id,
+                from_vv: vec![7, 8],
+                bytes,
+            }
+        };
+        SyncMessage::LoroSync {
+            msg,
+            is_last: false,
+        }
+    }
+
+    /// A `LoroSync` is a header frame holding everything but the bytes, then the bytes
+    /// as they are: no JSON number array anywhere.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_loro_sync_is_a_header_frame_then_its_raw_bytes() {
+        let mut pair = quic_pair().await;
+        let payload: Vec<u8> = (0..=255).collect();
+        send_sync_message(&mut pair.server.send, &loro_sync(false, payload.clone()))
+            .await
+            .expect("the LoroSync is sent");
+
+        let recv = &mut pair.client.recv;
+        let mut prefix = [0u8; LEN_PREFIX_BYTES];
+        recv.read_exact(&mut prefix)
+            .await
+            .expect("the length prefix");
+        let len = usize::try_from(u32::from_be_bytes(prefix)).expect("a u32 fits usize");
+        let mut frame = vec![0u8; len];
+        recv.read_exact(&mut frame).await.expect("the frame");
+        let frame: serde_json::Value = serde_json::from_slice(&frame).expect("the frame is JSON");
+        assert_eq!(
+            frame,
+            serde_json::json!({
+                "type": "LoroSyncChunked",
+                "header": {
+                    "kind": "update",
+                    "protocol_version": 1,
+                    "space_id": LORO_SPACE,
+                    "from_vv": [7, 8],
+                    "size_bytes": 256,
+                },
+                "is_last": false,
+            }),
+            "the frame carries everything but the bytes"
+        );
+        let mut raw = vec![0u8; payload.len()];
+        recv.read_exact(&mut raw)
+            .await
+            .expect("the bytes follow the frame");
+        assert_eq!(raw, payload, "the bytes travel as they are");
+    }
+
+    /// Both variants, an empty payload among them, come back as the `LoroSync` sent,
+    /// and the next frame starts where the bytes end.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_loro_sync_round_trips_and_the_next_frame_follows_it() {
+        let mut pair = quic_pair().await;
+        let after = SyncMessage::SyncComplete {
+            last_hash: "next".to_owned(),
+        };
+        let sent = [
+            loro_sync(true, vec![0xff, 0x00, 0x10]),
+            loro_sync(false, Vec::new()),
+            after,
+        ];
+        for msg in &sent {
+            send_sync_message(&mut pair.server.send, msg)
+                .await
+                .expect("the message is sent");
+        }
+        for msg in &sent {
+            let got = recv_sync_message(&mut pair.client.recv)
+                .await
+                .expect("the message is received");
+            assert_eq!(&got, msg, "what arrives is what was sent");
+        }
+    }
+
+    /// A stream that ends inside the Loro bytes is an error, never a short `LoroSync`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stream_ending_inside_the_loro_bytes_is_refused() {
+        let mut pair = quic_pair().await;
+        let header = LoroSyncChunkedHeader::Snapshot {
+            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+            space_id: SpaceId::from_trusted(LORO_SPACE),
+            size_bytes: 64,
+        };
+        let is_last = true;
+        send_frame(
+            &mut pair.server.send,
+            &SyncMessage::LoroSyncChunked { header, is_last },
+        )
+        .await
+        .expect("the header is sent");
+        pair.server
+            .send
+            .write_all(&[1, 2, 3, 4])
+            .await
+            .expect("four of the 64 bytes are sent");
+        pair.server.send.finish().expect("the stream finishes");
+
+        let err = recv_sync_message(&mut pair.client.recv)
+            .await
+            .expect_err("a truncated payload must not decode");
+        assert!(
+            err.to_string().contains("read payload"),
+            "expected a payload-read failure, got: {err}"
+        );
+    }
+
+    /// A peer that stops partway through the Loro bytes fails the read, which asks for
+    /// nothing past the failure; no short buffer reaches the engine.
+    #[tokio::test]
+    async fn a_short_read_of_the_loro_bytes_is_refused() {
+        let mut reader = StallingReader::new(1);
+        let size = u64::try_from(READ_CHUNK_BYTES + 10).expect("fits u64");
+
+        let err = match read_loro_bytes(&mut reader, size).await {
+            Err(err) => err,
+            Ok(bytes) => panic!(
+                "bytes that stop arriving must not read, got {}",
+                bytes.len()
+            ),
+        };
+        assert!(
+            err.to_string().contains("read payload"),
+            "expected a payload-read failure, got: {err}"
+        );
+        assert_eq!(
+            reader.requests,
+            vec![READ_CHUNK_BYTES, 10],
+            "one chunk arrived, the tail was asked for and refused"
+        );
+    }
+
+    /// `size_bytes` is the peer's word: over the cap it is invalid and refused before a
+    /// byte is read or reserved; at the cap it is read.
+    #[tokio::test]
+    async fn an_over_cap_loro_size_is_refused_before_reading() {
+        let mut reader = StallingReader::new(0);
+        let err = read_loro_bytes(&mut reader, MAX_LORO_SYNC_PAYLOAD_SIZE + 1)
+            .await
+            .expect_err("a size over the cap must be refused");
+        assert!(
+            matches!(err, AppError::Validation { .. }),
+            "an over-cap size is invalid input, got: {err:?}"
+        );
+        assert!(
+            reader.requests.is_empty(),
+            "nothing may be read for a refused size, but it asked for {:?}",
+            reader.requests
+        );
+
+        let mut reader = StallingReader::new(0);
+        let err = read_loro_bytes(&mut reader, MAX_LORO_SYNC_PAYLOAD_SIZE)
+            .await
+            .expect_err("the stalled reader fails the read");
+        assert!(
+            err.to_string().contains("read payload"),
+            "a size at the cap is read, not refused, got: {err}"
+        );
+    }
+
+    /// The server sends `sent`; what the client receives. `try_join!` so a refused send
+    /// fails here instead of leaving the receive waiting.
+    async fn round_trip(pair: &mut QuicPair, sent: &SyncMessage) -> SyncMessage {
+        let ((), got) = tokio::try_join!(
+            send_sync_message(&mut pair.server.send, sent),
+            recv_sync_message(&mut pair.client.recv),
+        )
+        .expect("the payload is sent and received");
+        got
+    }
+
+    /// A payload over the cap is refused before a byte is written, so the peer is not
+    /// sent what it would refuse and the stream stays clean for the next message.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_over_cap_loro_payload_is_refused_before_sending() {
+        let mut pair = quic_pair().await;
+        let over = usize::try_from(MAX_LORO_SYNC_PAYLOAD_SIZE + 1).expect("fits usize");
+        let refused = tokio::time::timeout(
+            SESSION_TIMEOUT,
+            send_sync_message(&mut pair.server.send, &loro_sync(true, vec![0; over])),
+        )
+        .await
+        .expect("the refusal must not wait on the peer to read");
+        assert!(
+            matches!(refused, Err(AppError::Validation { .. })),
+            "an over-cap payload is invalid input, got: {refused:?}"
+        );
+
+        let next = SyncMessage::SyncComplete {
+            last_hash: "next".to_owned(),
+        };
+        assert_eq!(
+            round_trip(&mut pair, &next).await,
+            next,
+            "nothing of the refused payload reached the stream"
+        );
+    }
+
+    /// The sizes the property below reaches only by chance: either side of
+    /// [`READ_CHUNK_BYTES`] and of its double, and the cap itself, which both ends
+    /// must accept.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_loro_payload_at_each_boundary_arrives_as_sent() {
+        let mut pair = quic_pair().await;
+        let step = READ_CHUNK_BYTES;
+        let cap = usize::try_from(MAX_LORO_SYNC_PAYLOAD_SIZE).expect("the cap fits usize");
+        for len in [0, 1, step - 1, step, step + 1, 2 * step, 2 * step + 1, cap] {
+            let sent = loro_sync(len % 2 == 0, (0..len).map(stream_byte).collect());
+            let got = round_trip(&mut pair, &sent).await;
+            assert!(got == sent, "a {len}-byte payload arrived changed");
+        }
+    }
+
+    /// Whatever its size, a Loro payload arrives as it was sent. The sizes sit around
+    /// the old inline threshold (2,400,000 bytes), and [`READ_CHUNK_BYTES`] and its
+    /// double, where the read turns into several requests.
+    #[test]
+    fn a_loro_payload_of_any_size_arrives_as_sent() {
+        use std::cell::RefCell;
+
+        use proptest::prelude::*;
+        use proptest::test_runner::{Config, TestRunner};
+
+        let rt = tokio::runtime::Runtime::new().expect("a tokio runtime");
+        let pair = RefCell::new(rt.block_on(quic_pair()));
+        let around = |edge: usize| (edge - 64)..=(edge + 64);
+        let size = prop_oneof![
+            0..=4096_usize,
+            around(2_400_000),
+            around(READ_CHUNK_BYTES),
+            around(2 * READ_CHUNK_BYTES),
+        ];
+        let mut runner = TestRunner::new(Config::with_cases(48));
+        let outcome = runner.run(
+            &(size, any::<u64>(), any::<bool>()),
+            |(len, seed, snapshot)| {
+                let mut x = seed | 1;
+                let bytes = (0..len)
+                    .map(|_| {
+                        x ^= x << 13;
+                        x ^= x >> 7;
+                        x ^= x << 17;
+                        x.to_le_bytes()[0]
+                    })
+                    .collect();
+                let sent = loro_sync(snapshot, bytes);
+                let got = rt.block_on(round_trip(&mut pair.borrow_mut(), &sent));
+                prop_assert!(got == sent, "a {}-byte payload arrived changed", len);
+                Ok(())
+            },
+        );
+        outcome.expect("every payload arrives as sent");
     }
 }

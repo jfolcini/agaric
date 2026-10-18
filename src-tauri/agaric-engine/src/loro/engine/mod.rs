@@ -281,8 +281,10 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// Engine on-disk format version. `1` = the legacy flat-map block model
 /// (no longer supported); `2` = the [`LoroTree`] block hierarchy (
 /// Phase 3); `3` = adds the `page_aliases` root (#5387); `4` = adds the
-/// `block_attachments` root (#5608). Each bump makes the sync handshake turn
-/// away a peer that would carry state it cannot project. The v1→v2
+/// `block_attachments` root (#5608); `5` = the doc is unchanged, but its sync
+/// bytes travel raw after a header frame instead of inside the JSON (#5761).
+/// Each bump makes the sync handshake turn away a peer that would carry state
+/// it cannot project, or bytes it cannot read. The v1→v2
 /// forward-migration was retired in #332 once every persisted snapshot had
 /// been re-saved as v2; [`LoroEngine::import`] now
 /// rejects a stray v1 snapshot loudly via
@@ -295,7 +297,7 @@ const SIBLING_ORDER_VERSION: i64 = 1;
 /// well-formed-but-newer-than-supported Loro blob is rejected up front rather
 /// than trusted and left to fail downstream on the projection path. See
 /// `LoroEngine::stamp_format_version` / `LoroEngine::reject_unknown_format_version`.
-pub const ENGINE_FORMAT_VERSION: u32 = 4;
+pub const ENGINE_FORMAT_VERSION: u32 = 5;
 /// Key under [`ENGINE_META_ROOT`] recording the engine format version a doc was
 /// written under (#1584). Stored as a Loro `I64`. Absent ⇒ a pre-#1584 export
 /// (legacy-unstamped); such docs are *accepted* — see

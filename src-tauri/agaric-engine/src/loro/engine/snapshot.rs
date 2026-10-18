@@ -115,7 +115,8 @@ impl LoroEngine {
         // v in [0, supported): an older-but-stamped format. v == 1 is the
         // retired flat-map model, which `reject_legacy_v1_snapshot` already
         // catches by structure. A v2 or v3 doc is a v4 doc without the page
-        // alias or attachment roots, so it is accepted as is.
+        // alias or attachment roots, and a v4 doc is a v5 doc, so each is
+        // accepted as is.
         Ok(())
     }
     /// Import bytes previously produced by `export_snapshot` (or any

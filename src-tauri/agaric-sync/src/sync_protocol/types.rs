@@ -701,44 +701,14 @@ pub enum SyncMessage {
     /// `SyncComplete` once it processes the last one. The sole
     /// streaming-phase payload.
     LoroSync { msg: LoroSyncMessage, is_last: bool },
-    /// Transport-level escape hatch for large `LoroSync` payloads
-    /// (#611). Announces that the Loro bytes follow out-of-band as
-    /// exactly `header.size_bytes()` of chunked binary frames, because
-    /// the inline JSON number-array encoding (worst case 4 chars/byte)
-    /// would blow the per-message receive cap — 10 MB on the WebSocket
-    /// transport this split was sized against (see
-    /// [`LoroSyncChunkedHeader`]).
-    ///
-    /// **Nothing in this build produces it.** The iroh port (#3464) removed
-    /// the chunking layer along with the transport that needed it: a QUIC
-    /// frame is bounded by `transport::session::MAX_FRAME_SIZE` (256 MB), so
-    /// an over-threshold payload now ships as one ordinary
-    /// [`SyncMessage::LoroSync`]. The variant stays on the wire so a peer
-    /// still running the chunking build is decoded and rejected explicitly
-    /// rather than as an unknown `type` tag — reaching `handle_message` fails
-    /// the session loudly.
-    ///
-    /// Position in the message sequence: identical to `LoroSync`
-    /// (step 2 above) — it *is* a `LoroSync`, merely re-encoded for
-    /// transport.
+    /// How a [`SyncMessage::LoroSync`] travels (#5761): this frame, then
+    /// exactly `header.size_bytes()` raw Loro bytes on the same stream.
+    /// `transport::session` writes and reads the pair, and hands every caller
+    /// the `LoroSync` back, so the orchestrator never sees this variant;
+    /// reaching `handle_message` fails the session loudly.
     LoroSyncChunked {
         header: LoroSyncChunkedHeader,
         is_last: bool,
-        /// #2200 — the binary payload that follows is a single zstd frame
-        /// wrapping the raw Loro bytes, so the receiver must decompress it
-        /// (bounded by [`crate::sync_constants::MAX_LORO_SYNC_PAYLOAD_SIZE`])
-        /// before reassembly. `header.size_bytes()` counts the *compressed*
-        /// bytes on the wire (what `receive_binary_chunked` consumes);
-        /// after decompression the receiver holds the raw payload.
-        ///
-        /// `#[serde(default)]` (→ `false`) for wire back-compat. Nothing sets
-        /// it any more: the compressor retired with the WebSocket transport
-        /// (#3464) and the `HeadExchange.wire_compression` capability that used
-        /// to gate it was deleted in #3543, so every sender that can still
-        /// reach this variant emits raw bytes (`compressed: false`), which is
-        /// exactly what a #611-only peer always received.
-        #[serde(default)]
-        compressed: bool,
     },
     /// #2481 phase 1 — audit-only op-log replication batch. Streams op
     /// records the peer lacks (`seq > the peer's advertised per-device
@@ -784,19 +754,16 @@ pub enum SyncMessage {
     /// whose serialised
     /// `records` exceed [`crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES`]
     /// (#2593). Announces that the batch's `serde_json`-encoded records follow
-    /// out-of-band as exactly `size_bytes` of chunked binary frames — the same
-    /// machinery [`LoroSyncChunked`](SyncMessage::LoroSyncChunked) uses — so a lone
+    /// out-of-band as exactly `size_bytes` of chunked binary frames, so a lone
     /// oversized op record (a
     /// sync-applied/imported op carrying a large block `content`) replicates its
     /// audit metadata instead of being dropped at the inline frame cap.
     ///
-    /// **Nothing in this build produces it**, for the same reason as
-    /// [`LoroSyncChunked`](SyncMessage::LoroSyncChunked): the iroh port (#3464)
-    /// removed the chunking layer,
+    /// **Nothing in this build produces it**: the iroh port (#3464) removed
+    /// the chunking layer,
     /// and an oversized batch now ships inline under QUIC's 256 MB frame cap.
     /// The variant stays on the wire so a chunking-era peer is decoded and
-    /// rejected explicitly; reaching `handle_message` fails the session loudly
-    /// (same contract as `LoroSyncChunked`).
+    /// rejected explicitly; reaching `handle_message` fails the session loudly.
     ///
     /// **Capability-gated identically to [`OpLogBatch`](SyncMessage::OpLogBatch).**
     /// It is only produced

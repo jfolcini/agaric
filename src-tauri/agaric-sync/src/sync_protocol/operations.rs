@@ -745,8 +745,8 @@ pub(crate) fn billed_bytes(rec: &OpTransfer) -> usize {
 /// #2481 phase 1 — partition op transfers into `OpLogBatch`-sized groups.
 ///
 /// Each returned batch serializes to under `max_bytes` (the caller passes
-/// [`crate::sync_constants::LORO_INLINE_MAX_BYTES`]) so it travels inline on
-/// the wire, riding the same size discipline as `LoroSync` (#611). Op records
+/// [`crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES`]) so it travels
+/// inline on the wire. Op records
 /// are inherently small (a single text edit), so in practice a batch holds
 /// many records and no single record approaches the cap; a lone record that
 /// somehow exceeds `max_bytes` still ships in its own batch rather than being

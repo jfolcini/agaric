@@ -136,7 +136,7 @@
     "fn": "src-tauri/agaric-sync/src/sync_protocol/operations.rs::batch_ops_for_wire",
     "kind": "read-only",
     "status": "not-a-fan-out",
-    "reason": "A PARTITIONER, not a fan-out: it slices one Vec<OpTransfer> into size-bounded chunks so each fits LORO_INLINE_MAX_BYTES on the wire. Pure, no I/O, no single-item sibling to agree with \u2014 the thing that must agree with a fold is its CALLER's ingest, not the slicing"
+    "reason": "A PARTITIONER, not a fan-out: it slices one Vec<OpTransfer> into size-bounded chunks so each fits OP_LOG_BATCH_INLINE_MAX_BYTES on the wire. Pure, no I/O, no single-item sibling to agree with \u2014 the thing that must agree with a fold is its CALLER's ingest, not the slicing"
   },
   {
     "fn": "src-tauri/agaric-sync/src/sync_protocol/operations.rs::ingest_replicated_batch",

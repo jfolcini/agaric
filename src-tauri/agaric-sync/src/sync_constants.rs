@@ -19,58 +19,29 @@ use std::time::Duration;
 // and responder (`sync_daemon::server`) message loops.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(120);
 
-// Granularity of the chunked bulk transfers: snapshot blobs in
-// `sync_daemon::snapshot_transfer`, attachment files in `sync_files`, and large
-// LoroSync / OpLogBatch payloads in `transport::session`.
+// Granularity of the streamed reads: attachment files in `sync_files` (through
+// `transport::bulk`), and frame bodies and raw Loro bytes in
+// `transport::session`.
 //
 // Under the retired WebSocket transport this *was* the binary frame size, sized
 // to sit well under that transport's 10 MB per-message cap. Under QUIC there is
 // no such frame: `transport::bulk` copies a byte stream through a fixed buffer
-// of this size (`BULK_COPY_BYTES`), so the number now sets peak copy-buffer heap
-// and the cadence of `on_progress` ticks. It is kept at the old value so
-// progress reporting lands where users have seen it land, and nothing caps it —
-// raising it costs heap per in-flight transfer, not correctness.
+// of this size (`BULK_COPY_BYTES`), and `transport::session` reads through one,
+// so the number now sets peak copy-buffer heap and the cadence of `on_progress`
+// ticks. It is kept at the old value so progress reporting lands where users
+// have seen it land, and nothing caps it — raising it costs heap per in-flight
+// transfer, not correctness.
 pub const BINARY_FRAME_CHUNK_SIZE: usize = 5_000_000;
 
 // ---------------------------------------------------------------------------
-// LoroSync payload transport (#611)
+// LoroSync payload transport (#5761)
 // ---------------------------------------------------------------------------
 
-// Largest Loro payload (`LoroSyncMessage::{Snapshot,Update}.bytes`) that is
-// shipped *inline* as part of the JSON message.
-//
-// Since the iroh port (#3464) this is a *documentation* threshold rather than a
-// dispatch one: the chunked binary path it used to select
-// (`SyncMessage::LoroSyncChunked`) went with the WebSocket transport, and an
-// over-threshold payload now travels as one QUIC frame. It is kept because the
-// arithmetic below is what fixes where a chunking-era peer draws the line, and
-// because `OP_LOG_BATCH_INLINE_MAX_BYTES` still gates a live decision on it.
-//
-// Sizing: `Vec<u8>` serialises as a JSON number array, which inflates each
-// byte to at most 4 characters ("255," — three digits plus the separator).
-// `2_400_000 * 4 = 9_600_000` characters of array body, leaving ~400 KB of
-// headroom for the envelope (`type`/`kind` tags, `space_id`, `from_vv`,
-// `is_last`) under a 10 MB per-message cap. That cap was the retired
-// WebSocket transport's; QUIC's frame cap (`transport::session::MAX_FRAME_SIZE`,
-// 256 MB) is far higher, but the threshold stays put — it is on the wire, so
-// moving it is a protocol change, not a tuning knob, and peers on either side
-// of the port have to agree on where the split falls. The decision is
-// made on `bytes.len()` (not the serialised length) so the classification is
-// deterministic and never requires materialising an over-cap JSON string just
-// to measure it.
-//
-// Compatibility: payloads at or under this threshold keep the exact
-// `protocol_version: 1` inline wire shape, so a pre-#611 peer interoperates
-// untouched for every payload it could ever successfully receive (its
-// receive cap broke at ~2.8 MB of Loro bytes anyway).
-pub const LORO_INLINE_MAX_BYTES: usize = 2_400_000;
-
 // Upper bound on an announced payload size accepted from a peer before the
-// buffer is allocated — defence-in-depth against a runaway or malicious length
-// causing an unbounded allocation. Originally bounded
-// `LoroSyncChunkedHeader::size_bytes`; since #3464 it is
-// `transport::session::MAX_FRAME_SIZE`, the cap on a whole framed message,
-// which is the same job one layer out.
+// buffer is allocated, so a corrupt length cannot become an unbounded
+// allocation. It bounds `LoroSyncChunkedHeader::size_bytes`, the raw Loro
+// bytes after a `LoroSync` header (#5761), and is
+// `transport::session::MAX_FRAME_SIZE`, the cap on a whole framed message.
 pub const MAX_LORO_SYNC_PAYLOAD_SIZE: u64 = 256 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
@@ -84,11 +55,10 @@ pub const MAX_LORO_SYNC_PAYLOAD_SIZE: u64 = 256 * 1024 * 1024;
 // batch ships inline and this bound only gates the peer-capability check in
 // `collect_op_batches_for_peer`.
 //
-// Reuses `LORO_INLINE_MAX_BYTES` as the threshold so both streaming payloads
-// obey one size discipline. Unlike a Loro `Vec<u8>` (which inflates ~4×
-// as a JSON number array), the records serialise as JSON objects/strings
-// (~1× plus escaping), so a batch under this bound is comfortably within the
-// 10 MB per-message cap that sized `LORO_INLINE_MAX_BYTES` once wrapped in the
+// It is on the wire: a chunking-era peer split its batches here, under the
+// retired WebSocket transport's 10 MB per-message cap. The records serialise
+// as JSON objects/strings (~1× plus escaping), so a batch under this bound sat
+// comfortably within that cap once wrapped in the
 // `{"type":"OpLogBatch","records":[..],"is_last":..}` envelope. The decision
 // is made on the serialised payload length (not the whole message) so the
 // capability check never requires materialising an over-cap JSON just to
@@ -98,7 +68,7 @@ pub const MAX_LORO_SYNC_PAYLOAD_SIZE: u64 = 256 * 1024 * 1024;
 // `OpLogBatch` wire shape, so a peer that understands `OpLogBatch` (#2481
 // phase 1) but not the chunked envelope (#2593) interoperates untouched for
 // every batch it could ever successfully receive.
-pub const OP_LOG_BATCH_INLINE_MAX_BYTES: usize = LORO_INLINE_MAX_BYTES;
+pub const OP_LOG_BATCH_INLINE_MAX_BYTES: usize = 2_400_000;
 
 // Hard cap on a serialised `OpLogBatch` payload, mirroring
 // `MAX_LORO_SYNC_PAYLOAD_SIZE`. A batch above it is dropped at the sender

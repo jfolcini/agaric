@@ -29,8 +29,10 @@ propose new behavior. The canonical source is the code, primarily:
 - `src-tauri/agaric-sync/src/sync_files.rs` — the attachment-transfer sub-protocol.
 - `src-tauri/agaric-sync/src/sync_constants.rs` — shared protocol constants.
 - `src-tauri/agaric-sync/src/transport/session.rs` — QUIC framing of `SyncMessage`
-  (length prefix, `MAX_FRAME_SIZE`).
-- `src-tauri/agaric-sync/src/transport/bulk.rs` — bulk byte transfer on the same stream.
+  (length prefix, `MAX_FRAME_SIZE`), and a `LoroSync`'s raw bytes after its header
+  frame.
+- `src-tauri/agaric-sync/src/transport/bulk.rs` — attachment byte transfer on the same
+  stream.
 - `src-tauri/agaric-sync/src/transport/driver.rs` — the shared session loop and its
   `SessionLimits`.
 - `src-tauri/agaric-sync/src/transport/service.rs` — the ALPN, admission control, and
@@ -47,38 +49,38 @@ Two distinct serde-tagged enums travel on the wire:
   with a `"type"` discriminant plus the variant's fields, e.g.
   `{"type":"HeadExchange","heads":[…]}`. A session is many messages on one
   bi-stream; the transport owes the protocol only the message boundary.
-- The streaming payload `LoroSyncMessage` is nested inside
-  `SyncMessage::LoroSync` and uses
+- The streaming payload's header `LoroSyncChunkedHeader` is nested inside
+  `SyncMessage::LoroSyncChunked` and uses
   `#[serde(tag = "kind", rename_all = "snake_case")]`, producing
-  `{"kind":"snapshot",…}` / `{"kind":"update",…}`.
+  `{"kind":"snapshot",…}` / `{"kind":"update",…}`. The `LoroSyncMessage` it
+  describes never travels as JSON: its bytes follow the frame raw.
 
-Bulk binary payloads (snapshot blobs, attachment file bytes) are **not**
-JSON. They are written as raw bytes on the same bi-stream after a JSON control
-message and copied through one fixed `BULK_COPY_BYTES` (5 MB) buffer — see
-[Binary-frame transfer](#binary-frame-transfer).
+Two payloads are **not** JSON. They are written as raw bytes on the same
+bi-stream, each after the JSON message that announces its length:
 
-**The chunking layer is gone (#3464).** `LoroSyncChunked` and `OpLogBatchChunked`
-existed only to work around the WebSocket message cap: a `LoroSyncMessage.bytes`
-is a `Vec<u8>` inside a serde-JSON envelope, so it serialises as a number array
-at up to 4 characters per byte, and any vault past ~2.5 MB of Loro state produced
-an over-cap frame. A QUIC stream has no message boundary and no length ceiling,
-so the workaround has no counterpart. Both variants remain in the `SyncMessage`
-enum and remain rejected by the orchestrator, but **nothing produces them any
-more** and nothing reassembles them. Two consequences the reader should not have
-to derive:
+- A `LoroSync`'s Loro bytes follow its `LoroSyncChunked` header frame
+  (`transport::session`, #5761) — see
+  [`SyncMessage::LoroSyncChunked`](#syncmessagelorosyncchunked). Snapshots and
+  updates alike; the catch-up's snapshots are `LoroSync` messages too.
+- Attachment file bytes follow a `FileOffer`, copied through one fixed
+  `BULK_COPY_BYTES` (5 MB) buffer (`transport::bulk`) — see
+  [Binary-frame transfer](#binary-frame-transfer).
 
-- **zstd wire compression is gone with them (#3512).** It lived in the retired
-  `sync_daemon::wire` module, deleted with the rest of the old transport in
-  #3544. The `HeadExchange.wire_compression` capability that gated it was then
-  **removed from the wire in #3543**, once it was established that no surviving
-  code path read the received value — see
-  [`SyncMessage::HeadExchange`](#syncmessageheadexchange) for the compatibility
-  argument. The `compressed: bool` on the two retired chunked variants remains,
-  permanently `false`.
-- **The 4× JSON expansion is now paid in full**, against a 256 MB frame cap
-  instead of a 10 MB message cap. That is a much larger budget than before, but
-  it makes a single space past roughly 64 MB of Loro state a hard offer failure
-  at a threshold nobody has measured.
+**The chunking layer is gone (#3464).** The WebSocket transport capped a message
+at 10 MB, so `sync_daemon::wire` cut oversized payloads into binary frames and
+reassembled them. A QUIC stream has no message boundary and no length ceiling,
+so nothing is chunked any more. `OpLogBatchChunked` remains in the `SyncMessage`
+enum, rejected by the orchestrator, and **nothing produces it**; an oversized
+`OpLogBatch` travels as one inline frame. `LoroSyncChunked` is how every
+`LoroSync` travels.
+
+**zstd wire compression went with it (#3512).** It lived in the retired
+`sync_daemon::wire` module, deleted with the rest of the old transport
+(#3544). The `HeadExchange.wire_compression` capability that gated it was then
+**removed from the wire in #3543**, once it was established that no surviving
+code path read the received value — see
+[`SyncMessage::HeadExchange`](#syncmessageheadexchange) for the compatibility
+argument. `OpLogBatchChunked` keeps its `compressed: bool`, permanently `false`.
 
 ### Transport limits
 
@@ -89,11 +91,10 @@ transport owns, in `src-tauri/agaric-sync/src/transport/`:
 | --- | --- | --- |
 | `SYNC_ALPN` | `agaric/sync/0` | The ALPN both ends negotiate (`transport/service.rs`). A mismatch fails the QUIC handshake before any application data moves; bumping it strands a device that has not upgraded. |
 | `transport::session::MAX_FRAME_SIZE` | 256 MB (= `MAX_LORO_SYNC_PAYLOAD_SIZE`) | Hard cap on one framed `SyncMessage`, checked on send and, on receive, **before** a buffer is allocated. |
-| `BINARY_FRAME_CHUNK_SIZE` | 5,000,000 bytes | Two jobs now. It is the receive buffer's growth step in `transport::session` — a frame is reserved as bytes actually land, so a 4-byte prefix cannot commit 256 MB — and it is `BULK_COPY_BYTES`, the single fixed buffer bulk transfer copies through. |
-| `LORO_INLINE_MAX_BYTES` | 2,400,000 bytes | Threshold above which a `LoroSync` payload's `bytes` used to leave the inline JSON envelope for `LoroSyncChunked` (#611). **Now inert**: nothing produces the chunked variant, so every `LoroSync` rides the inline shape whatever its size. |
-| `OP_LOG_BATCH_INLINE_MAX_BYTES` | 2,400,000 bytes (= `LORO_INLINE_MAX_BYTES`) | Same story for `OpLogBatchChunked` (#2593). The threshold still gates whether an oversized batch is *skipped* when the peer lacks the capability, but the chunked frame it would have gated is no longer emitted. |
+| `BINARY_FRAME_CHUNK_SIZE` | 5,000,000 bytes | Two jobs now. It is the receive buffer's growth step in `transport::session`, for a frame and for a `LoroSync`'s raw bytes alike — a buffer is reserved as bytes actually land, so a 4-byte prefix cannot commit 256 MB — and it is `BULK_COPY_BYTES`, the single fixed buffer bulk transfer copies through. |
+| `OP_LOG_BATCH_INLINE_MAX_BYTES` | 2,400,000 bytes | The threshold above which an `OpLogBatch` used to leave the inline frame for `OpLogBatchChunked` (#2593). It still gates whether an oversized batch is *skipped* when the peer lacks the capability, but the chunked frame it would have gated is no longer emitted. |
 | `MAX_OP_LOG_BATCH_PAYLOAD_SIZE` | 256 MB | Batches serialising larger than this are dropped from the reply entirely (state still converges via `LoroSync`). |
-| `MAX_LORO_SYNC_PAYLOAD_SIZE` | 256 MB | The crate's answer to "the largest protocol payload we will allocate for before we have seen the bytes"; `MAX_FRAME_SIZE` is deliberately this value rather than a new number. |
+| `MAX_LORO_SYNC_PAYLOAD_SIZE` | 256 MB | The crate's answer to "the largest protocol payload we will allocate for before we have seen the bytes": the most raw Loro bytes one `LoroSync` may announce, refused as a validation error before any read. `MAX_FRAME_SIZE` is deliberately this value rather than a new number. |
 | `HANDSHAKE_TIMEOUT` | 120 s | Per-`handle_message` budget, applied by `SessionLimits::dispatch` in `transport/driver.rs`. |
 | `transport::session::RECV_TIMEOUT` | 180 s | Per-awaited-message receive guard, applied by `recv_sync_message_within`. Carried across from `SyncConnection::RECV_TIMEOUT` by value, restated rather than imported because `sync_net` is retired. |
 | `transport::driver::RECV_TIMEOUT` (private) | 180 s | **A second, same-named constant** — this is the one that feeds `SessionLimits::recv`, i.e. the session driver's default. Same value and same provenance as `session::RECV_TIMEOUT`, but a different item: retuning one does not move the other. Disambiguated here because the name alone does not. |
@@ -451,9 +452,8 @@ Update   { protocol_version: u8, space_id: SpaceId,
 ### `SyncMessage::LoroSyncChunked`
 
 ```text
-LoroSyncChunked { header: LoroSyncChunkedHeader, is_last: bool,
-                  compressed: bool }   // #[serde(default)], permanently false
-                                       // since #3543 retired the capability
+LoroSyncChunked { header: LoroSyncChunkedHeader, is_last: bool }
+<header.size_bytes raw Loro bytes>
 
 LoroSyncChunkedHeader (serde tag "kind", snake_case):
   Snapshot { protocol_version: u8, space_id: SpaceId, size_bytes: u64 }
@@ -461,36 +461,28 @@ LoroSyncChunkedHeader (serde tag "kind", snake_case):
              from_vv: LoroVersionVector, size_bytes: u64 }
 ```
 
-**Retired by the QUIC cutover; the variant remains in the enum and nothing
-emits it.** It was the chunked-binary transport encoding of `LoroSync` (#611):
-an inline `LoroSyncMessage.bytes` serialises as a JSON number array (~3.6×
-inflation, worst case 4 chars/byte), and a single WebSocket text frame was
-capped at 10 MB, so a growing space payload would eventually exceed the cap and
-permanently break sync. Payloads larger than `LORO_INLINE_MAX_BYTES` therefore
-travelled out-of-band as a header-only envelope followed by `size_bytes` of raw
-Loro bytes in binary frames.
+**How every `LoroSync` travels (#5761).** `transport::session::send_sync_message`
+writes a `LoroSync` as this frame, which is the `LoroSyncMessage` without its
+`bytes` (`LoroSyncChunkedHeader::split`), then the bytes themselves, raw, on the
+same stream; it refuses bytes over `MAX_LORO_SYNC_PAYLOAD_SIZE` before writing
+anything. `recv_sync_message` reads the frame, refuses a `size_bytes` over
+`MAX_LORO_SYNC_PAYLOAD_SIZE` (256 MB) as a validation error before it reads or
+reserves anything, reads exactly `size_bytes` into the buffer the engine imports
+from, and returns the `LoroSync`. A stream that ends first is an error, never a
+short payload. Neither the orchestrator nor the snapshot catch-up sees the
+split; `handle_message` fails the session on a `LoroSyncChunked` that reaches
+it, since its bytes were never read. `protocol_version` is validated by
+`apply_remote` once the bytes are in.
 
-A QUIC stream has no message boundary and no length ceiling, so the workaround
-has no counterpart: `transport::session` writes the whole `LoroSync` as one
-length-prefixed frame under the 256 MB `MAX_FRAME_SIZE`. The producer and the
-reassembler both lived in `sync_daemon::wire`, which is deleted (#3544), so
-`LORO_INLINE_MAX_BYTES` no longer routes anything and `compressed` no longer has
-a compressor behind it (#3512).
+Every payload takes this path, `Update` deltas included; there is no size
+threshold. Why the bytes left the JSON is in the `transport::session` module
+docs, and `benches/groups/loro_wire_bench.rs` measures both encodings.
 
-**Still rejected at the orchestrator.** `handle_message` fails the session
-loudly on this variant, and that contract is unchanged — it now means "a peer on
-an incompatible build sent this" rather than "the wire layer failed to
-reassemble". `protocol_version` is validated by `apply_remote`, so
-version-mismatch handling stays in one place either way.
-
-**Compatibility.** A pre-cutover peer cannot reach this code path at all. It
-browses and announces `_agaric._tcp.local.`, so it never sees a current build's
-record and a current build never sees its; and it dials TCP where nothing is
-listening. The frames are unreachable rather than merely unused. Note that the
-service-type change is a **silent** break — no event fires, so "incompatible
-release" is indistinguishable from "device is off" — whereas an ALPN mismatch
-would be loud. The ALPN is negotiated inside the QUIC handshake, after the dial,
-so it cannot be the mechanism that reports this one (#3488).
+**Compatibility.** Engine format 5 (`ENGINE_FORMAT_VERSION`) marks the change.
+A format-4 peer would read this frame as an unsupported variant and the raw
+bytes after it as a frame, so the responder refuses it at `HeadExchange` with
+the `EngineFormatMismatch` code (#5728), which the frontend words as "update
+both devices".
 
 ### `SyncMessage::SyncComplete`
 
@@ -542,7 +534,7 @@ session — the direction is enforced, not just conventional.
 
 `OpLogBatch` used to share `LoroSync`'s inline/chunked transport (#2593): a batch
 whose serialized records exceeded `OP_LOG_BATCH_INLINE_MAX_BYTES`
-(= `LORO_INLINE_MAX_BYTES`, 2,400,000 bytes) rode a
+(2,400,000 bytes) rode a
 [`SyncMessage::OpLogBatchChunked`](#syncmessageoplogbatchchunked) header + binary
 frames instead of an inline JSON frame, so a single op record larger than the
 inline bound — a sync-applied/imported op whose `payload` carries a large block
@@ -581,8 +573,7 @@ becomes mandatory.
 OpLogBatchChunked { size_bytes: u64, is_last: bool, compressed: bool }   // streamer → puller
 ```
 
-**Retired by the QUIC cutover on the same terms as
-[`LoroSyncChunked`](#syncmessagelorosyncchunked); nothing emits it.** It was the
+**Retired by the QUIC cutover; nothing emits it.** It was the
 chunked-binary transport encoding of `OpLogBatch` (#2593): a batch whose
 `serde_json`-encoded `records` exceeded `OP_LOG_BATCH_INLINE_MAX_BYTES` travelled
 as this envelope (announcing `size_bytes` of follow-up binary frames,
@@ -797,8 +788,8 @@ Mechanics worth pinning:
   version vector for that space, or a full `Snapshot` for a space the
   initiator didn't advertise (#1230) — and queues all but the first into
   `pending_loro_messages`. The driver loop drains the queue via
-  `next_message()` after each `handle_message`. Over-threshold payloads are
-  re-encoded as `LoroSyncChunked` by the wire layer transparently.
+  `next_message()` after each `handle_message`. Each `LoroSync` travels as a
+  `LoroSyncChunked` header frame and its raw bytes (`transport::session`).
 - #2481 audit tail: when the puller advertised `op_log_replication: true`,
   `head_exchange_outgoing_loro` also queues the op records the puller lacks
   (`collect_ops_for_peer` → `batch_ops_for_wire`) into `pending_op_batches`,
@@ -1033,8 +1024,7 @@ Mechanics:
   the file phase ends and the next sync asks again). A row with no hash, from
   an add before #5728, accepts the offer's own hash.
 - Binary data rides the same QUIC stream as the JSON control messages, copied
-  through one `BULK_COPY_BYTES` (5 MB) buffer — the same path the snapshot
-  transfer uses. A zero-length file sends **no bytes at all**: the old transport
+  through one `BULK_COPY_BYTES` (5 MB) buffer. A zero-length file sends **no bytes at all**: the old transport
   sent one empty frame as a sentinel and QUIC has no counterpart, so both ends of
   the bulk phase have to cross in the same commit. The zero-byte case is guarded
   by reading the trailing marker off the same stream.
@@ -1047,8 +1037,10 @@ Mechanics:
 
 ### Binary-frame transfer
 
-Both the snapshot blob and attachment files use the shared bulk path in
-`src-tauri/agaric-sync/src/transport/bulk.rs`. There is no chunking layer: a QUIC
+Attachment files use the bulk path in
+`src-tauri/agaric-sync/src/transport/bulk.rs`; a snapshot is a `LoroSync`, whose
+raw bytes `transport::session` reads (see
+[`SyncMessage::LoroSyncChunked`](#syncmessagelorosyncchunked)). There is no chunking layer: a QUIC
 stream is a reliable, ordered, flow-controlled byte stream, so `send_bulk` copies
 the payload straight onto the same bi-stream the JSON control messages use, and
 `recv_bulk` reads exactly `size_bytes` back off it.

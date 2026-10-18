@@ -679,14 +679,14 @@ impl SyncOrchestrator {
             (_, SyncMessage::SyncComplete { .. }) => {
                 return Err(self.fail_session("SyncComplete received in wrong state"));
             }
-            // LoroSyncChunked must never reach the orchestrator — since
-            // #3464 nothing produces it (see the dispatch match below).
-            // This arm only keeps the state match exhaustive; the dispatch
-            // match rejects it loudly.
+            // LoroSyncChunked must never reach the orchestrator — the
+            // transport turns it back into a LoroSync (see the dispatch match
+            // below). This arm only keeps the state match exhaustive; the
+            // dispatch match rejects it loudly.
             (_, SyncMessage::LoroSyncChunked { .. }) => {}
-            // OpLogBatchChunked, like LoroSyncChunked, has no producer since
-            // #3464 and never legitimately reaches the orchestrator. This arm
-            // keeps the match exhaustive; the dispatch match rejects it loudly.
+            // OpLogBatchChunked has no producer since #3464 and never
+            // legitimately reaches the orchestrator. This arm keeps the match
+            // exhaustive; the dispatch match rejects it loudly.
             (_, SyncMessage::OpLogBatchChunked { .. }) => {}
             // File-transfer messages must never reach the protocol
             // orchestrator — they are read directly off the wire by
@@ -1301,21 +1301,19 @@ impl SyncOrchestrator {
                 Ok(None)
             }
 
-            // ---- Chunked LoroSync header (#611) ------------------------------
-            // The chunked encoding went with the WebSocket transport (#3464):
-            // QUIC frames are capped at 256 MB, so an oversized `LoroSync`
-            // ships inline and nothing produces this variant. It can only
-            // arrive from a chunking-era peer, which this build cannot decode
-            // — fail loudly.
+            // ---- LoroSync header (#5761) ------------------------------------
+            // `transport::session::recv_sync_message` reads the raw bytes that
+            // follow this header and returns the `LoroSync`, so one here was
+            // read without its bytes — fail loudly.
             SyncMessage::LoroSyncChunked { .. } => Err(AppError::InvalidOperation(
-                "LoroSyncChunked is not supported: the chunked encoding was \
-                 removed with the WebSocket transport, and an oversized LoroSync \
-                 now travels inline"
+                "LoroSyncChunked reached the orchestrator: its Loro bytes were \
+                 never read; the transport's recv_sync_message returns a LoroSync"
                     .into(),
             )),
             // ---- Chunked OpLogBatch header (#2593) --------------------------
-            // Same story as LoroSyncChunked: no sender produces it, and a
-            // chunking-era peer's frame cannot be decoded — fail loudly.
+            // The chunked encoding went with the WebSocket transport (#3464):
+            // no sender produces it, and a chunking-era peer's frame cannot be
+            // decoded — fail loudly.
             SyncMessage::OpLogBatchChunked { .. } => Err(AppError::InvalidOperation(
                 "OpLogBatchChunked is not supported: the chunked encoding was \
                  removed with the WebSocket transport, and an oversized \

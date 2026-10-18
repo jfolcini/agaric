@@ -19,6 +19,8 @@ mod compaction_bench;
 mod engine_checkpoint_bench;
 #[path = "groups/history_bench.rs"]
 mod history_bench;
+#[path = "groups/loro_wire_bench.rs"]
+mod loro_wire_bench;
 #[path = "groups/op_log_bench.rs"]
 mod op_log_bench;
 #[path = "groups/rehydrate_bench.rs"]
@@ -47,5 +49,6 @@ criterion_main!(
     compaction_bench::compact_benches,
     op_log_bench::benches,
     soft_delete_bench::benches,
+    loro_wire_bench::benches,
     sync_import_bench::benches,
 );
