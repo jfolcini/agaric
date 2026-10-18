@@ -175,6 +175,9 @@ PW_PORT=5557 npx playwright test                 # e2e on its own port: one per 
 npx vitest --changed origin/main                 # while iterating: the tests the branch can reach, committed or not
 just test-be -E 'test(name)'                     # one backend test, `--workspace` kept (args go to nextest)
 just test-be-related                             # tests of the crates your uncommitted work touches (`--dry` previews)
+just test-fe-related                             # vitest tests your uncommitted work can reach (`--dry` previews)
+just check-fe                                    # typecheck, oxlint, then `just test-fe-related`
+just check-be                                    # cargo fmt --check, `just clippy`, then `just test-be-related`
 just test-fe src/lib/foo.test.ts                 # one frontend file (args go to vitest)
 just test-doc                                    # Rust doc-tests: nextest does not run them (`just test` does)
 just clippy                                      # clippy as CI runs it: --workspace --all-targets -D warnings
