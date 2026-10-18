@@ -13,6 +13,7 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 
 import { serialize } from '@/editor/markdown-serializer'
 import { blockDocJson, depthOf, pageDocContent } from '@/editor/page-mode/page-document'
+import type { PageListSource } from '@/editor/page-mode/page-lists'
 import { pageModeExtensions } from '@/editor/page-mode/page-mode-extensions'
 import type { PageSaveApi, TreeRow } from '@/editor/page-mode/page-save'
 import { blockIdOf } from '@/editor/token-ids'
@@ -40,6 +41,7 @@ export function openPage(
   rows: readonly Row[],
   mintId: () => string = idMinter(),
   onCreateTag: (name: string) => Promise<string> = () => Promise.resolve(''),
+  lists?: PageListSource,
 ): Editor {
   return new Editor({
     element: document.createElement('div'),
@@ -55,6 +57,7 @@ export function openPage(
       onTagClick: () => {},
       placeholder: '',
       mintId,
+      ...(lists === undefined ? {} : { lists }),
     }),
     content: pageDocContent(
       rows.map(([id, depth, content]) => ({ id, depth, content })),

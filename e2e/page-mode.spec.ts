@@ -1070,6 +1070,133 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     })
   }
 
+  test('a page of bullet and numbered blocks opens in page mode; `1. `, Enter and Enter again make and leave a list, and it stays', async ({
+    page,
+  }) => {
+    // axe reads colours, which a fade in progress makes wrong.
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const { pageId, ids } = await seedRows(page, 'Page lists', [
+      [0, 'buy'],
+      [0, 'one'],
+      [1, 'sub'],
+      [0, 'two'],
+      [0, 'notes'],
+    ])
+    const listStyle = (value: string) => ({
+      value_text: value,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    })
+    await ipc(page, 'set_property', {
+      blockId: ids[0],
+      key: 'listStyle',
+      value: listStyle('bullet'),
+    })
+    for (const id of ids.slice(1, 4)) {
+      await ipc(page, 'set_property', {
+        blockId: id,
+        key: 'listStyle',
+        value: listStyle('ordered'),
+      })
+    }
+    const styleOf = async (id: string) =>
+      (
+        await ipc<Array<{ key: string; value_text: string | null }>>(page, 'get_properties', {
+          blockId: id,
+        })
+      ).find((row) => row.key === 'listStyle')?.value_text ?? null
+    const markers = () =>
+      page
+        .locator(`${EDITOR} [data-page-block]`)
+        .evaluateAll((els) =>
+          els.map(
+            (el) => el.querySelector(':scope > [data-testid="list-marker"]')?.textContent ?? '',
+          ),
+        )
+    await openInPageMode(page, 'Page lists', 5)
+    await expect.poll(markers).toEqual(['•', '1.', '1.', '2.', ''])
+
+    // The marker leads the text's first line, left of it, as block mode draws it.
+    const line = await page.evaluate((selector) => {
+      const block = document.querySelector(`${selector} [data-page-block]:nth-child(2)`)
+      const marker = block?.querySelector(':scope > [data-testid="list-marker"]')?.firstChild
+      const text = block?.querySelector('.page-block-content p')?.firstChild
+      if (!marker || !text) return null
+      const glyph = (node: Node) => {
+        const range = document.createRange()
+        range.setStart(node, 0)
+        range.setEnd(node, 1)
+        return range.getBoundingClientRect()
+      }
+      const m = glyph(marker)
+      const t = glyph(text)
+      return { gap: t.left - m.right, baseline: Math.abs(t.bottom - m.bottom) }
+    }, EDITOR)
+    expect(line?.gap).toBeGreaterThan(0)
+    expect(line?.baseline).toBeLessThan(1)
+
+    await caret(page, 4, 'end')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('1. first')
+    await page.keyboard.press('Enter')
+    await page.keyboard.type('second')
+    await expect
+      .poll(async () => (await shown(page)).map((b) => b.text))
+      .toEqual(['buy', 'one', 'sub', 'two', 'notes', 'first', 'second'])
+    await expect.poll(markers).toEqual(['•', '1.', '1.', '2.', '', '1.', '2.'])
+    await page.keyboard.press('Enter')
+    await expect.poll(markers).toEqual(['•', '1.', '1.', '2.', '', '1.', '2.', '3.'])
+    // The empty item's placeholder follows its marker rather than running under it.
+    const empty = page.locator(`${EDITOR} [data-page-block]`).nth(7)
+    await expect(empty.locator('p.is-editor-empty')).toHaveCount(1)
+    const markerBox = await empty.locator(':scope > [data-testid="list-marker"]').boundingBox()
+    const emptyBox = await empty.locator('p.is-editor-empty').boundingBox()
+    expect(emptyBox?.x).toBeGreaterThanOrEqual((markerBox?.x ?? 0) + (markerBox?.width ?? 0))
+    // Enter on the empty third item leaves the list instead of making a fourth.
+    await page.keyboard.press('Enter')
+    await expect.poll(markers).toEqual(['•', '1.', '1.', '2.', '', '1.', '2.', ''])
+    await page.keyboard.type('done')
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((b) => b.text))
+      .toEqual(['buy', 'one', 'sub', 'two', 'notes', 'first', 'second', 'done'])
+    const made = (await shown(page)).slice(5).map((b) => b.id)
+    await expect.poll(() => Promise.all(made.map(styleOf))).toEqual(['ordered', 'ordered', null])
+
+    // A click on a marker puts the caret at the start of its block's text.
+    const clicked = await page
+      .locator(`${EDITOR} [data-page-block]`)
+      .nth(3)
+      .locator(':scope > [data-testid="list-marker"]')
+      .boundingBox()
+    await page.mouse.click(
+      (clicked?.x ?? 0) + (clicked?.width ?? 0) / 2,
+      (clicked?.y ?? 0) + (clicked?.height ?? 0) / 2,
+    )
+    await expect.poll(() => cursor(page)).toEqual({ index: 3, offset: 0 })
+
+    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    await page.keyboard.press('Escape')
+    await expect(page.locator(EDITOR)).not.toBeFocused()
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Page lists')
+    // The switch is the page on screen's: choose Page again.
+    await modeSwitch(page, 'Page').click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(8)
+    await expect.poll(markers).toEqual(['•', '1.', '1.', '2.', '', '1.', '2.', ''])
+    expect(await backend(page, pageId)).toEqual(await shown(page))
+    await page.addScriptTag({ path: axePath })
+    const violations = await page.evaluate(async () => {
+      const { axe } = window as unknown as {
+        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
+      }
+      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
+      return found.map((v) => v.id)
+    })
+    expect(violations).toEqual([])
+  })
+
   test('/ and :: are plain text: no menu or picker takes Enter, which splits the block', async ({
     page,
   }) => {

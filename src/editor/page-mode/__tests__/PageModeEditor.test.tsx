@@ -18,7 +18,7 @@ import {
   MockIntersectionObserver,
 } from '@/__tests__/helpers/viewport-observer-mocks'
 import { getActiveEditor } from '@/editor/active-editor'
-import { markdownOf } from '@/editor/page-mode/__tests__/page-mode-fixtures'
+import { markdownOf, type as typeText } from '@/editor/page-mode/__tests__/page-mode-fixtures'
 import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
 import { PageModeEditor, type PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import { blockIdOf } from '@/editor/token-ids'
@@ -415,49 +415,23 @@ describe('PageModeEditor', () => {
     expect(container.querySelector('[data-testid="page-mode-editor"]')).toBeNull()
   })
 
-  it('does not open a page holding a bullet block', async () => {
-    const { pageId, ids } = seedPage(['first'])
-    dispatch('set_property', {
-      blockId: ids[0],
-      key: 'listStyle',
-      value: {
-        value_text: 'bullet',
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-        value_bool: null,
-      },
-    })
-    const { container, onBlocked } = renderPageMode(pageId)
-
-    await waitFor(() => {
-      expect(onBlocked).toHaveBeenCalledWith({ kind: 'listStyle' })
-    })
-    expect(container.querySelector('[data-testid="page-mode-editor"]')).toBeNull()
-  })
-
   it('leaves page mode when a reload brings in what it cannot show', async () => {
     const { pageId, ids } = seedPage(['first'])
     const { container, store, onBlocked } = renderPageMode(pageId)
     await editorIn(container)
 
-    dispatch('set_property', {
+    dispatch('add_attachment_with_bytes', {
       blockId: ids[0],
-      key: 'listStyle',
-      value: {
-        value_text: 'ordered',
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-        value_bool: null,
-      },
+      filename: 'a.png',
+      mimeType: 'image/png',
+      bytes: [0],
     })
     await act(async () => {
       await store.getState().load()
     })
 
     await waitFor(() => {
-      expect(onBlocked).toHaveBeenCalledWith({ kind: 'listStyle' })
+      expect(onBlocked).toHaveBeenCalledWith({ kind: 'attachments' })
     })
   })
 })
@@ -2155,5 +2129,327 @@ describe('PageModeEditor mounts a block’s controls as it nears the viewport (#
 
     expect(Object.keys(portals.getSnapshot())).toHaveLength(0)
     expect(io.observed.size).toBe(0)
+  })
+})
+
+describe('PageModeEditor lists (#5743)', () => {
+  function setStyle(id: string, style: 'bullet' | 'ordered'): void {
+    dispatch('set_property', {
+      blockId: id,
+      key: 'listStyle',
+      value: {
+        value_text: style,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+  }
+
+  /** Block `id`'s list style in the backend, or null. */
+  function backendStyle(id: string): string | null {
+    const rows = dispatch('get_properties', { blockId: id }) as PropertyRow[]
+    return rows.find((row) => row.key === 'listStyle')?.value_text ?? null
+  }
+
+  /** Each block's marker, in order: '' for none. */
+  function markers(container: HTMLElement): string[] {
+    return [...container.querySelectorAll('[data-page-block]')].map(
+      (block) => block.querySelector(':scope > [data-testid="list-marker"]')?.textContent ?? '',
+    )
+  }
+
+  /** Type `text` at the caret as the keyboard does, input rules included. */
+  function typeKeys(editor: Editor, text: string): void {
+    act(() => {
+      typeText(editor, text)
+    })
+  }
+
+  /** A page of `texts`, each given the style beside it. */
+  function seedList(rows: ReadonlyArray<[string, 'bullet' | 'ordered' | null]>) {
+    const seeded = seedPage(rows.map(([text]) => text))
+    rows.forEach(([, style], i) => {
+      if (style !== null) setStyle(seeded.ids[i] as string, style)
+    })
+    return seeded
+  }
+
+  it('draws block mode’s markers, numbered by runs of siblings, outside the text, with no a11y violations', async () => {
+    const { pageId, ids } = seedList([
+      ['one', 'ordered'],
+      ['two', 'ordered'],
+      ['three', 'ordered'],
+      ['plain', null],
+      ['four', 'ordered'],
+      ['dot', 'bullet'],
+    ])
+    const children = dispatch('create_blocks_batch', {
+      specs: ['nested a', 'nested b'].map((content) => ({
+        blockType: 'content',
+        content,
+        parentId: ids[1],
+        position: null,
+      })),
+    }) as { blocks: BlockRow[] }
+    for (const child of children.blocks) setStyle(child.id, 'ordered')
+    const { container, onBlocked } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    expect(docTexts(editor)).toEqual([
+      'one',
+      'two',
+      'nested a',
+      'nested b',
+      'three',
+      'plain',
+      'four',
+      'dot',
+    ])
+    expect(markers(container)).toEqual(['1.', '2.', '1.', '2.', '3.', '', '1.', '•'])
+    const marker = container.querySelector('[data-testid="list-marker"]') as HTMLElement
+    expect(marker).toHaveAttribute('aria-hidden', 'true')
+    expect(marker.contentEditable).toBe('false')
+    expect(marker.closest('.page-block-content')).toBeNull()
+    expect(onBlocked).not.toHaveBeenCalled()
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
+  it('`- ` and `1. ` then a character make the block a list, without the prefix', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    caretTo(editor, 0)
+    typeKeys(editor, '- a')
+    caretTo(editor, 1)
+    typeKeys(editor, '1. b')
+
+    expect(docTexts(editor)).toEqual(['afirst', 'bsecond'])
+    expect(markers(container)).toEqual(['•', '1.'])
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    await waitFor(() => {
+      expect([backendStyle(ids[0] as string), backendStyle(ids[1] as string)]).toEqual([
+        'bullet',
+        'ordered',
+      ])
+    })
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'afirst'],
+      [ids[1], 'bsecond'],
+    ])
+  })
+
+  it('`- [` waits: a typed task marker stays one, as block mode’s rule leaves it', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    caretTo(editor, 0)
+    typeKeys(editor, '- [ ] ')
+
+    expect(docTexts(editor)).toEqual(['\\- \\[ \\] first'])
+    expect(markers(container)).toEqual([''])
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    await waitFor(() => {
+      expect((dispatch('get_block', { blockId: ids[0] }) as BlockRow).todo_state).toBe('TODO')
+    })
+    expect(backendStyle(ids[0] as string)).toBeNull()
+  })
+
+  it('Enter continues the list into a new block, and Enter on that empty block leaves it', async () => {
+    const { pageId, ids } = seedList([
+      ['one', 'ordered'],
+      ['two', 'ordered'],
+    ])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 1, 3))
+    })
+    expect(press(editor, 'Enter')).toBe(true)
+    const added = blockIdOf(editor.state.doc.child(2)) as string
+    expect(markers(container)).toEqual(['1.', '2.', '3.'])
+    await waitFor(() => {
+      expect(backendStyle(added)).toBe('ordered')
+    })
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'one'],
+      [ids[1], 'two'],
+      [added, ''],
+    ])
+
+    expect(press(editor, 'Enter')).toBe(true)
+
+    expect(editor.state.doc.childCount).toBe(3)
+    expect(markers(container)).toEqual(['1.', '2.', ''])
+    await waitFor(() => {
+      expect(backendStyle(added)).toBeNull()
+    })
+    expect(backendPage(pageId).map(([id]) => id)).toEqual([ids[0], ids[1], added])
+  })
+
+  it('Enter splitting a list block’s text gives the half with the new id the style', async () => {
+    const { pageId, ids } = seedList([['onetwo', 'bullet']])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 3))
+    })
+    press(editor, 'Enter')
+
+    expect(docTexts(editor)).toEqual(['one', 'two'])
+    expect(markers(container)).toEqual(['•', '•'])
+    const added = blockIdOf(editor.state.doc.child(1)) as string
+    await waitFor(() => {
+      expect(backendStyle(added)).toBe('bullet')
+    })
+    expect(backendStyle(ids[0] as string)).toBe('bullet')
+  })
+
+  it('Backspace at a list block’s start takes its style off, and the next one joins', async () => {
+    const { pageId, ids } = seedList([
+      ['one', 'bullet'],
+      ['two', 'ordered'],
+    ])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    caretTo(editor, 1)
+    expect(press(editor, 'Backspace')).toBe(true)
+    expect(markers(container)).toEqual(['•', ''])
+    expect(docTexts(editor)).toEqual(['one', 'two'])
+    await waitFor(() => {
+      expect(backendStyle(ids[1] as string)).toBeNull()
+    })
+
+    expect(press(editor, 'Backspace')).toBe(true)
+    expect(docTexts(editor)).toEqual(['onetwo'])
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(backendPage(pageId)).toEqual([[ids[0], 'onetwo']])
+    expect(backendStyle(ids[0] as string)).toBe('bullet')
+
+    // The first block of the page leaves its list too.
+    caretTo(editor, 0)
+    expect(press(editor, 'Backspace')).toBe(true)
+    expect(markers(container)).toEqual([''])
+    await waitFor(() => {
+      expect(backendStyle(ids[0] as string)).toBeNull()
+    })
+  })
+
+  it('a refused style write says so, and the block shows the style the backend kept', async () => {
+    const { pageId, ids } = seedList([['one', 'ordered']])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'delete_property') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    caretTo(editor, 0)
+    press(editor, 'Backspace')
+    expect(markers(container)).toEqual([''])
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.clearListStyleFailed'))
+    })
+    expect(markers(container)).toEqual(['1.'])
+    expect(backendStyle(ids[0] as string)).toBe('ordered')
+  })
+
+  it('Ctrl+Z gives the prefix back, then the typing, and leaves the style, as block mode’s undo does', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    caretTo(editor, 0)
+    typeKeys(editor, '- a')
+    await waitFor(() => {
+      expect(backendStyle(ids[0] as string)).toBe('bullet')
+    })
+    act(() => {
+      editor.commands.undo()
+    })
+    expect(docTexts(editor)).toEqual(['\\- afirst'])
+    act(() => {
+      editor.commands.undo()
+    })
+
+    expect(docTexts(editor)).toEqual(['first'])
+    expect(markers(container)).toEqual(['•'])
+    expect(backendStyle(ids[0] as string)).toBe('bullet')
+  })
+
+  it('a peer’s list style, set or cleared, shows on reload, outside the document and its undo', async () => {
+    const { pageId, ids } = seedList([
+      ['one', 'ordered'],
+      ['two', null],
+    ])
+    const { container, store } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    expect(markers(container)).toEqual(['1.', ''])
+
+    dispatch('delete_property', { blockId: ids[0], key: 'listStyle' })
+    setStyle(ids[1] as string, 'bullet')
+    await act(async () => {
+      await store.getState().load()
+    })
+
+    await waitFor(() => {
+      expect(markers(container)).toEqual(['', '•'])
+    })
+    expect(docTexts(editor)).toEqual(['one', 'two'])
+    expect(editor.can().undo()).toBe(false)
+  })
+
+  it('typing, its save and a reload redraw no marker', async () => {
+    const { pageId } = seedList([
+      ['one', 'ordered'],
+      ['two', 'ordered'],
+      ['dot', 'bullet'],
+    ])
+    const { container, handle, store } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const drawn = [...container.querySelectorAll('[data-testid="list-marker"]')]
+    expect(drawn).toHaveLength(3)
+    const changes: MutationRecord[] = []
+    const observer = new MutationObserver((records) => {
+      changes.push(
+        ...records.filter((record) =>
+          [record.target, ...record.addedNodes, ...record.removedNodes].some(
+            (node) => node instanceof Element && node.matches('[data-testid="list-marker"]'),
+          ),
+        ),
+        ...records.filter((record) => record.target.parentElement?.matches('.list-marker')),
+      )
+    })
+    observer.observe(container, { subtree: true, childList: true, characterData: true })
+
+    typeAt(editor, 1, 3, ' typed')
+    typeAt(editor, 0, 3, '!')
+    await act(async () => {
+      await handle.current?.flush()
+      await store.getState().load()
+      await handle.current?.flush()
+      await store.getState().load()
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    observer.disconnect()
+
+    expect(docTexts(editor)).toEqual(['one!', 'two typed', 'dot'])
+    expect(changes).toEqual([])
+    expect([...container.querySelectorAll('[data-testid="list-marker"]')]).toEqual(drawn)
   })
 })

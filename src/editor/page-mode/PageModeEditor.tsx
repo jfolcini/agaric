@@ -23,6 +23,9 @@
  * The property chips show what page mode last read of the page's properties,
  * which it reads again with each reload; a chip opens block mode's property
  * editor, the `+N` pill its drawer, and each, once closed, reads them again.
+ * A bullet or numbered block's marker shows its `listStyle` from the same
+ * read; the list keys and input rules give a block its style at once, written
+ * after the save on the same chain (`page-lists.ts`).
  *
  * Chips go where block mode's go (`useBlockNavigateToLink`, a block of this
  * page by moving the cursor to it), and each save's ops reach `UndoStore`
@@ -62,6 +65,7 @@ import {
   pageDocContent,
   REMOTE_PATCH,
 } from '@/editor/page-mode/page-document'
+import { PageLists } from '@/editor/page-mode/page-lists'
 import { pageModeExtensions } from '@/editor/page-mode/page-mode-extensions'
 import { type PageModeBlocker, readPageFit } from '@/editor/page-mode/page-mode-fit'
 import { commitPageProperties, PageProperties } from '@/editor/page-mode/page-properties'
@@ -85,6 +89,7 @@ import type { NavigateToPageFn } from '@/lib/block-events'
 import { newBlockId } from '@/lib/block-id'
 import { t } from '@/lib/i18n'
 import { createBlock } from '@/lib/ipc-helpers'
+import { type ListStyle, setListStyle } from '@/lib/list-style'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -273,8 +278,14 @@ function PageModeDocument({
   const editorRef = useRef<Editor | null>(null)
   const flushRef = useRef<() => Promise<void>>(() => Promise.resolve())
   const [properties] = useState(() => new PageProperties(openedWith))
-  // What the checkbox, the badge, the chips and the task keys do, once the session runs.
-  const actions = useRef<PageTaskActions & { pick: (step: () => Promise<void>) => void }>({
+  const [lists] = useState(() => new PageLists(openedWith, blocks))
+  // What the checkbox, the badge, the chips and the keys do, once the session runs.
+  const actions = useRef<
+    PageTaskActions & {
+      pick: (step: () => Promise<void>) => void
+      setListStyle: (id: string, style: ListStyle) => void
+    }
+  >({
     cycle: () => {},
     cyclePriority: () => {},
     setPriority: () => {},
@@ -283,6 +294,7 @@ function PageModeDocument({
     openPropertyDrawer: () => {},
     propertiesEdited: () => {},
     pick: () => {},
+    setListStyle: () => {},
   })
   const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)
   // Block mode's chip navigation: another page opens; a block of this page takes the cursor.
@@ -331,6 +343,10 @@ function PageModeDocument({
         openDateLinkPicker: () => actions.current.openDateLinkPicker(),
         openPropertyDrawer: (id: string) => actions.current.openPropertyDrawer(id),
         propertiesEdited: () => actions.current.propertiesEdited(),
+      },
+      lists: {
+        lists,
+        setStyle: (id: string, style: ListStyle) => actions.current.setListStyle(id, style),
       },
     }),
     content: pageDocContent(blocks, newBlockId),
@@ -419,8 +435,9 @@ function PageModeDocument({
       }
       await resolveLinks(fresh, () => editor.isDestroyed)
       if (editor.isDestroyed) return
-      // Before the patch: a block it brings in draws its properties at once.
+      // Before the patch: a block it brings in draws its properties and marker at once.
       properties.take(fit.properties)
+      lists.take(fit.properties)
       const { keptAsNew } = applyRemote(editor.view, save, treeRows(fresh), newBlockId, refused)
       if (keptAsNew > 0) {
         notify.info(t('pageMode.keptAsNew', { count: keptAsNew }), {
@@ -495,9 +512,9 @@ function PageModeDocument({
     // Its callers close page mode: the mode switch, source mode, a blocker, a link away.
     flushRef.current = () => flush(true)
     // After the save, so the block exists: an empty one is created for it (`keep`).
-    const afterSave = (id: string, change: () => Promise<void>): void => {
+    const afterSave = (id: string, change: () => Promise<void>): Promise<void> => {
       clearTimeout(timer)
-      void enqueue(async () => {
+      return enqueue(async () => {
         save.keep.add(id)
         try {
           await runSave(false)
@@ -539,6 +556,28 @@ function PageModeDocument({
       },
       // A date picked: written in turn with the saves, so no read of a save's overtakes it.
       pick: (step) => void enqueue(step),
+      // Shown at once, so the next key reads it; written once the block exists, as block mode writes it.
+      setListStyle: (id, style) => {
+        if (lists.styleOf(id) === style) return
+        const seq = lists.want(id, style)
+        void afterSave(id, async () => {
+          try {
+            await setListStyle(id, style)
+            lists.settle(id, seq, style)
+          } catch (err) {
+            logger.error('PageModeEditor', 'Failed to write a list style', { id, style }, err)
+            notify.error(
+              t(
+                style === 'none'
+                  ? 'blockTree.clearListStyleFailed'
+                  : 'blockTree.setListStyleFailed',
+              ),
+            )
+          }
+        })
+          // Refused, or not run as the block was not saved: it shows the style last read.
+          .then(() => lists.settle(id, seq, null))
+      },
     }
 
     const onTransaction = ({
@@ -613,7 +652,7 @@ function PageModeDocument({
         if (savesInFlight.get(pageId) === leaving) savesInFlight.delete(pageId)
       })
     }
-  }, [editor, pageId, blocks, pageStore, properties])
+  }, [editor, pageId, blocks, pageStore, properties, lists])
 
   // The picker closed: the caret goes back where it was. The dialog's own
   // restore aims at its date field, which its autofocus took first.

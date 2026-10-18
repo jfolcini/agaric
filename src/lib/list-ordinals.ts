@@ -28,7 +28,7 @@ import type { FlatBlock } from '@/lib/tree-utils'
  * are absent.
  */
 export function computeListOrdinals(
-  items: readonly FlatBlock[],
+  items: readonly Pick<FlatBlock, 'id' | 'depth'>[],
   styleOf: (id: string) => ListStyle,
 ): Map<string, number> {
   const result = new Map<string, number>()

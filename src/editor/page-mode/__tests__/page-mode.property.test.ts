@@ -4,7 +4,8 @@
  * pasted, paragraphs pasted from outside, a `#name`, a task marker or a
  * `key:: value` line typed and the caret moved to another block, a task's
  * state cycled, a priority, a due or scheduled date or a property set or
- * cleared (#5743), and undo, each step perhaps
+ * cleared, a `- ` or `1. ` list prefix typed at a block's start (#5743), and
+ * undo, Enter and Backspace on list blocks among them, each step perhaps
  * followed by a peer's change (an edit, or a block created, moved or deleted) brought in
  * as a reload does, and perhaps by a save whose commands fail before a clean
  * one. After every clean save:
@@ -23,6 +24,11 @@
  *   typed into it (`commitPageProperties`, which also takes the line out of
  *   its text) unless the block held that key as text before it was changed,
  *   or by the property commands, and none other;
+ * - each block holds the list style its marker shows (`page-lists.ts`): the
+ *   one a prefix gave it, taken out of its text, the one Enter carried on to
+ *   the block it made, or none once Enter on it empty or Backspace at its
+ *   start left the list; and each marker is the one block mode draws for the
+ *   backend's styles, numbered over the document's blocks;
  * - an id that survives a step stays on the text it was on: a step that only
  *   types keeps every id, Enter adds one new id beside the block it splits, a
  *   join drops only the joined block's, Tab keeps the order and Shift+Tab the
@@ -68,6 +74,8 @@ import {
   depthOf,
   REMOTE_PATCH,
 } from '@/editor/page-mode/page-document'
+import { pickerOpen } from '@/editor/page-mode/page-keys'
+import { PageLists, type PageListSource } from '@/editor/page-mode/page-lists'
 import { commitPageProperties } from '@/editor/page-mode/page-properties'
 import {
   createSaveState,
@@ -83,6 +91,9 @@ import { blockIdOf } from '@/editor/token-ids'
 import { commands } from '@/lib/bindings'
 import type { BlockRow, OpRef, PropertyRow } from '@/lib/bindings'
 import { parseInlineProperties } from '@/lib/inline-property-parse'
+import { listMarkerText } from '@/lib/list-marker-glyph'
+import { computeListOrdinals } from '@/lib/list-ordinals'
+import { asListStyle, type ListStyle, setListStyle } from '@/lib/list-style'
 import { nextTaskState, type TodoState } from '@/lib/task-states'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks as mockBlocks, seedBlocks } from '@/lib/tauri-mock/seed'
@@ -291,6 +302,20 @@ const actionArb = fc.oneof(
     value: fc.constantFrom('Ana', 'Bo'),
     to: fc.nat(),
   }),
+  fc.record({
+    kind: fc.constant('listPrefix' as const),
+    block: fc.nat(),
+    prefix: fc.constantFrom(
+      ['- ', 'bullet'] as const,
+      ['* ', 'bullet'] as const,
+      ['1. ', 'ordered'] as const,
+      ['12. ', 'ordered'] as const,
+    ),
+  }),
+  // Enter at a list block's text, Backspace at its start: one of the page's list blocks, if any.
+  // `again`: Enter at the block's end, then once more in the empty block it made, which leaves the list.
+  fc.record({ kind: fc.constant('listEnter' as const), block: fc.nat(), at, again: fc.boolean() }),
+  fc.record({ kind: fc.constant('listBackspace' as const), block: fc.nat() }),
   fc.record({ kind: fc.constant('undo' as const) }),
 )
 type Action = typeof actionArb extends fc.Arbitrary<infer T> ? T : never
@@ -353,8 +378,66 @@ interface Acted {
 const FIELDS = ['priority', 'due_date', 'scheduled_date'] as const
 type Field = (typeof FIELDS)[number]
 
+/**
+ * Press `key` at the caret. In a list block, Enter splitting it gives the
+ * block it made the same style; Enter in it empty, or Backspace at its start,
+ * takes its style off and changes nothing else. An open picker takes the key.
+ */
+function pressInList(ed: Editor, lists: PageLists, key: 'Enter' | 'Backspace'): void {
+  const node = ed.state.selection.$head.node(1)
+  const id = blockIdOf(node) as string
+  const before = new Set(idsOf(ed.state.doc))
+  const style = pickerOpen(ed.state) ? 'none' : lists.styleOf(id)
+  press(ed, key)
+  if (style === 'none') return
+  const made = idsOf(ed.state.doc).find((other) => !before.has(other))
+  if (made === undefined) {
+    expect(lists.styleOf(id)).toBe('none')
+    expect(idsOf(ed.state.doc)).toEqual([...before])
+    return
+  }
+  expect([key, markdownOf(node) === '']).toEqual(['Enter', false])
+  expect([lists.styleOf(id), lists.styleOf(made)]).toEqual([style, style])
+}
+
+type ListStep = Extract<Action, { kind: 'listPrefix' | 'listEnter' | 'listBackspace' }>
+
+const isListStep = (action: Action): action is ListStep => action.kind.startsWith('list')
+
+/** Apply a list step: a prefix typed at a block's start, or Enter or Backspace in a list block. */
+function applyList(ed: Editor, action: ListStep, lists: PageLists): Acted {
+  if (action.kind === 'listPrefix') {
+    const index = action.block % ed.state.doc.childCount
+    caret(ed, index, 0)
+    const id = blockIdOf(ed.state.doc.child(index)) as string
+    const before = ed.state.doc.child(index).firstChild?.textContent ?? ''
+    type(ed, `${action.prefix[0]}q`)
+    // The block takes the prefix's style, and the prefix leaves its text.
+    expect(lists.styleOf(id)).toBe(action.prefix[1])
+    expect(ed.state.doc.child(index).firstChild?.textContent).toBe(`q${before}`)
+    return { index, offset: 0 }
+  }
+  const listed = idsOf(ed.state.doc).flatMap((id, i) => (lists.styleOf(id) === 'none' ? [] : [i]))
+  const index = listed[action.block % Math.max(listed.length, 1)]
+  if (index === undefined) return { index: 0, offset: 0 }
+  if (action.kind === 'listBackspace') {
+    caret(ed, index, 0)
+    pressInList(ed, lists, 'Backspace')
+    return { index, offset: 0 }
+  }
+  const length = firstTextLength(ed, index)
+  const offset = action.again ? length : action.at % (length + 1)
+  caret(ed, index, offset)
+  pressInList(ed, lists, 'Enter')
+  const { $head } = ed.state.selection
+  if (action.again && $head.index(0) === index + 1 && markdownOf($head.node(1)) === '') {
+    pressInList(ed, lists, 'Enter')
+  }
+  return { index, offset }
+}
+
 /** Apply `action`; resolves the block it acted on, if any. */
-function apply(ed: Editor, action: Action): Acted | null {
+function apply(ed: Editor, action: Action, lists: PageLists): Acted | null {
   const count = ed.state.doc.childCount
   if (action.kind === 'undo') {
     ed.commands.undo()
@@ -373,6 +456,7 @@ function apply(ed: Editor, action: Action): Acted | null {
     ed.view.pasteHTML(html)
     return { index: to, offset, target }
   }
+  if (isListStep(action)) return applyList(ed, action, lists)
   const index = action.block % count
   const offset = 'at' in action ? action.at % (firstTextLength(ed, index) + 1) : 0
   caret(ed, index, offset)
@@ -427,8 +511,8 @@ function apply(ed: Editor, action: Action): Acted | null {
     if (action.html) ed.view.pasteHTML('<p>from</p><p>outside</p>')
     else ed.view.pasteText('from\noutside')
   } else if (action.kind === 'type') type(ed, action.text)
-  else if (action.kind === 'enter') press(ed, 'Enter')
-  else if (action.kind === 'backspace') press(ed, 'Backspace')
+  else if (action.kind === 'enter') pressInList(ed, lists, 'Enter')
+  else if (action.kind === 'backspace') pressInList(ed, lists, 'Backspace')
   else press(ed, 'Tab', { shiftKey: action.kind === 'shiftTab' })
   return { index, offset }
 }
@@ -452,7 +536,10 @@ function expectIdsKept(
     return
   }
   const { index, offset, target } = acted as Acted
-  if (action.kind === 'enter' && after.length === before.length + 1) {
+  if (
+    (action.kind === 'enter' || action.kind === 'listEnter') &&
+    after.length === before.length + 1
+  ) {
     expect(fresh).toHaveLength(1)
     const added = offset === 0 ? index : index + 1
     expect(after).toEqual([...before.slice(0, added), fresh[0], ...before.slice(added)])
@@ -652,6 +739,51 @@ function backendProperties(page: MockPage): Map<string, string> {
   return held
 }
 
+/** Each live block's list style in the mock backend, where it has one. */
+function backendListStyles(page: MockPage): Map<string, ListStyle> {
+  const held = new Map<string, ListStyle>()
+  for (const [id] of page.live()) {
+    const row = (dispatch('get_properties', { blockId: id }) as PropertyRow[]).find(
+      (property) => property.key === 'listStyle',
+    )
+    if (row !== undefined) held.set(id, asListStyle(row.value_text))
+  }
+  return held
+}
+
+/** A list source as the editor's: a style shown at once, its write queued for after the save. */
+function listSource(rows: readonly Row[]) {
+  const lists = new PageLists(
+    {},
+    rows.map(([id, depth]) => ({ id, depth })),
+  )
+  const writes: Array<{ id: string; style: ListStyle; seq: number }> = []
+  const source: PageListSource = {
+    lists,
+    setStyle: (id, style) => {
+      if (lists.styleOf(id) === style) return
+      writes.push({ id, style, seq: lists.want(id, style) })
+    },
+  }
+  return { lists, writes, source }
+}
+
+/** As the editor does after the save: each style given since, through block mode's command. */
+async function writeListStyles(
+  save: PageSaveState,
+  lists: PageLists,
+  writes: Array<{ id: string; style: ListStyle; seq: number }>,
+): Promise<void> {
+  for (const { id, style, seq } of writes.splice(0)) {
+    if (!save.saved.has(id)) {
+      lists.settle(id, seq, null)
+      continue
+    }
+    await setListStyle(id, style)
+    lists.settle(id, seq, style)
+  }
+}
+
 /** The `#` rule's create: a tag in the mock backend. */
 function createTag(name: string): Promise<string> {
   const tag = dispatch('create_block', {
@@ -786,6 +918,28 @@ async function setField(acted: Acted | null, save: PageSaveState, fields: Map<st
   else fields.set(`${id}:${key}`, value)
 }
 
+/**
+ * The backend holds the style each block's marker shows, and the marker is
+ * block mode's for the backend's styles over the document's blocks.
+ */
+function expectListsHeld(ed: Editor, page: MockPage, lists: PageLists): void {
+  const held = backendListStyles(page)
+  const live = new Set(page.live().map(([id]) => id))
+  const items: Array<{ id: string; depth: number }> = []
+  ed.state.doc.forEach((node) =>
+    items.push({ id: blockIdOf(node) as string, depth: depthOf(node) }),
+  )
+  const shown = items
+    .map(({ id }) => [id, lists.styleOf(id)] as const)
+    .filter(([id, style]) => style !== 'none' && live.has(id))
+  expect(held).toEqual(new Map(shown))
+  const styleOf = (id: string): ListStyle => held.get(id) ?? 'none'
+  const ordinals = computeListOrdinals(items, styleOf)
+  expect(items.map(({ id }) => lists.markerOf(id))).toEqual(
+    items.map(({ id }) => listMarkerText(styleOf(id), ordinals.get(id))),
+  )
+}
+
 describe('page mode against the mock backend', () => {
   it('keeps the backend equal to the document, ids on their text, and peers’ changes', async () => {
     await fc.assert(
@@ -795,7 +949,8 @@ describe('page mode against the mock backend', () => {
         async (rows, steps) => {
           editor?.destroy()
           const page = mockPage(rows)
-          const ed = openPage(rows, undefined, createTag)
+          const { lists, writes, source } = listSource(rows)
+          const ed = openPage(rows, undefined, createTag, source)
           editor = ed
           const save = createSaveState(page.pageId, page.rows(), ed.state.doc)
           const seen = new Set(idsOf(ed.state.doc))
@@ -814,7 +969,7 @@ describe('page mode against the mock backend', () => {
             const before = idsOf(ed.state.doc)
             const emptyBefore: boolean[] = []
             ed.state.doc.forEach((node) => emptyBefore.push(markdownOf(node) === ''))
-            const acted = apply(ed, action)
+            const acted = apply(ed, action, lists)
             const after = idsOf(ed.state.doc)
             const emptyAfter = new Map<string, boolean>()
             ed.state.doc.forEach((node) =>
@@ -832,6 +987,8 @@ describe('page mode against the mock backend', () => {
               for (const id of idsOf(ed.state.doc)) seen.add(id)
             }
 
+            // A block given a style is created even if empty, as the editor's `afterSave` keeps it.
+            for (const { id } of writes) save.keep.add(id)
             if (failures !== null) {
               page.failWith(failures)
               await savePage(ed.state.doc, save, page.api)
@@ -848,6 +1005,8 @@ describe('page mode against the mock backend', () => {
             expect(result.error).toBeUndefined()
             // A block the save gave a new id: its old one was refused.
             for (const id of idsOf(ed.state.doc)) seen.add(id)
+            save.keep.clear()
+            await writeListStyles(save, lists, writes)
 
             await commitAndCycle(ed, save, page, acted, states, fields, props, loaded, mintKept)
 
@@ -861,6 +1020,7 @@ describe('page mode against the mock backend', () => {
             expect(backendProperties(page)).toEqual(
               new Map([...props].filter(([key]) => live.has(key.split(':')[0] as string))),
             )
+            expectListsHeld(ed, page, lists)
           }
         },
       ),

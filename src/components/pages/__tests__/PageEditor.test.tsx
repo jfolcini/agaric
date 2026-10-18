@@ -229,7 +229,6 @@ import type { TypedInvokeHandlers } from '@/__tests__/helpers/invoke'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { PageEditor } from '@/components/pages/PageEditor'
 import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
-import type { PropertyRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import { useBlockStore } from '@/stores/blocks'
@@ -1417,26 +1416,26 @@ describe('PageEditor page mode (#5691)', () => {
     expect(capturedPageHeaderProps?.editMode).toBe('blocks')
   })
 
-  it('pointing at the switch reads the blocks’ properties, and a page with a bullet block is blocked', async () => {
+  const attachment = {
+    id: 'ATT1',
+    block_id: 'B1',
+    filename: 'a.png',
+    mime_type: 'image/png',
+    size_bytes: 1,
+    fs_path: 'a.png',
+    created_at: 0,
+    content_hash: null,
+  }
+
+  it('pointing at the switch reads the blocks’ attachments, and a page with one is blocked', async () => {
     stubInvoke({
       load_page_subtree: () => ({
         blocks: [makeBlock({ id: 'B1', content: 'text', parent_id: 'PAGE_1' })],
         truncated: false,
         total: 1,
       }),
-      get_batch_properties: () => ({
-        B1: [
-          {
-            key: 'listStyle',
-            value_text: 'bullet',
-            value_num: null,
-            value_date: null,
-            value_ref: null,
-            value_bool: null,
-          },
-        ],
-      }),
-      list_attachments_batch: () => ({}),
+      get_batch_properties: () => ({}),
+      list_attachments_batch: () => ({ B1: [attachment] }),
     })
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
     await modeSwitch()
@@ -1446,47 +1445,38 @@ describe('PageEditor page mode (#5691)', () => {
     act(() => capturedPageHeaderProps?.onEditModeIntent?.())
 
     await waitFor(() => {
-      expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.listStyle'))
+      expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.attachments'))
     })
   })
 
-  describe('a bullet block found and since made plain', () => {
-    const bullet: PropertyRow = {
-      key: 'listStyle',
-      value_text: 'bullet',
-      value_num: null,
-      value_date: null,
-      value_ref: null,
-      value_bool: null,
-    }
-
-    /** A page whose one block is a bullet until `clearProperty` is called, blocked once pointed at. */
-    async function blockedByProperty(): Promise<() => void> {
-      let properties: Record<string, PropertyRow[]> = { B1: [bullet] }
+  describe('an attachment found and since removed', () => {
+    /** A page whose one block holds an attachment until `removeAttachment` is called, blocked once pointed at. */
+    async function blockedByAttachment(): Promise<() => void> {
+      let attachments: Record<string, (typeof attachment)[]> = { B1: [attachment] }
       stubInvoke({
         load_page_subtree: () => ({
           blocks: [makeBlock({ id: 'B1', content: 'text', parent_id: 'PAGE_1' })],
           truncated: false,
           total: 1,
         }),
-        get_batch_properties: () => properties,
-        list_attachments_batch: () => ({}),
+        get_batch_properties: () => ({}),
+        list_attachments_batch: () => attachments,
       })
       render(<PageEditor pageId="PAGE_1" title="My Page" />)
       await modeSwitch()
       await loadPage()
       act(() => capturedPageHeaderProps?.onEditModeIntent?.())
       await waitFor(() => {
-        expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.listStyle'))
+        expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.attachments'))
       })
       return () => {
-        properties = {}
+        attachments = {}
       }
     }
 
     it('pointing at the switch looks again, and Page is offered', async () => {
-      const clearProperty = await blockedByProperty()
-      clearProperty()
+      const removeAttachment = await blockedByAttachment()
+      removeAttachment()
 
       act(() => capturedPageHeaderProps?.onEditModeIntent?.())
 
@@ -1496,8 +1486,8 @@ describe('PageEditor page mode (#5691)', () => {
     })
 
     it('choosing Page looks again, and opens page mode', async () => {
-      const clearProperty = await blockedByProperty()
-      clearProperty()
+      const removeAttachment = await blockedByAttachment()
+      removeAttachment()
 
       act(() => capturedPageHeaderProps?.onEditModeChange?.('page'))
 

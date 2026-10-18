@@ -380,7 +380,8 @@ async function seedBigPage(
   title = BIG_TITLE,
   /**
    * Every block a task, TODO and DONE in turn, with a priority (1, 2, 3 in
-   * turn), a due date and a property, and every third a scheduled date too.
+   * turn), a due date, a property and a list style (runs of seven numbered
+   * blocks, then three bullets), and every third a scheduled date too.
    */
   tasks = false,
 ): Promise<void> {
@@ -430,17 +431,19 @@ async function seedBigPage(
         value: '2026-11-01',
       })
       // The batch takes only the task fields: the user's properties one by one.
-      for (const blockId of all) {
+      const text = (value: string) => ({
+        value_text: value,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      })
+      for (const [i, blockId] of all.entries()) {
+        await invoke('set_property', { blockId, key: 'assignee', value: text('Ana') })
         await invoke('set_property', {
           blockId,
-          key: 'assignee',
-          value: {
-            value_text: 'Ana',
-            value_num: null,
-            value_date: null,
-            value_ref: null,
-            value_bool: null,
-          },
+          key: 'listStyle',
+          value: text(i % 10 < 7 ? 'ordered' : 'bullet'),
         })
       }
     },
@@ -1482,9 +1485,9 @@ interface ModeSample {
 /**
  * #5691 — page mode against block mode on the same page, at 500, 2,000 and
  * 5,000 blocks (page mode's 500-block cap is lifted for the run), every block
- * a task with a priority, a due date and a property, a third with a scheduled
- * date too, so each carries its checkbox, badge and chips in both modes
- * (#5743). Each size
+ * a task with a priority, a due date, a property and a list style, a third
+ * with a scheduled date too, so each carries its checkbox, list marker, badge
+ * and chips in both modes (#5743). Each size
  * runs `AGARIC_PERF_REPEATS` times (default 3) on a fresh vault, alternating
  * which mode opens the page first; each cell is the median with the band the
  * repeats fell in. Per mode: the open (block mode to its first block, page
