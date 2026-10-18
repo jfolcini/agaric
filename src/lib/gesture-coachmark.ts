@@ -13,7 +13,7 @@
  */
 
 import type { LucideIcon } from 'lucide-react'
-import { Hand, PanelLeft, PenLine, Pointer } from 'lucide-react'
+import { Hand, PenLine, Pointer } from 'lucide-react'
 
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
@@ -39,7 +39,7 @@ export interface GestureEntry {
 /**
  * Ordered list of the hidden mobile touch gestures Agaric already ships
  * (the gestures themselves are implemented elsewhere — see #927 swipe,
- * #926 long-press, the sidebar edge-swipe, and the quick-capture FAB).
+ * #926 long-press, and the quick-capture FAB).
  */
 export const GESTURE_ENTRIES: readonly GestureEntry[] = [
   {
@@ -51,11 +51,6 @@ export const GESTURE_ENTRIES: readonly GestureEntry[] = [
     icon: Pointer,
     titleKey: 'gestures.longPress.title',
     descKey: 'gestures.longPress.desc',
-  },
-  {
-    icon: PanelLeft,
-    titleKey: 'gestures.edgeSwipe.title',
-    descKey: 'gestures.edgeSwipe.desc',
   },
   {
     icon: PenLine,

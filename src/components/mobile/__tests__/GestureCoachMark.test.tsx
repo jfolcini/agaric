@@ -5,7 +5,7 @@
  * mobile/touch launch, then never again. Coverage:
  *  - Render gate: shows on mobile (`useShouldShowMobileChrome()` true),
  *    renders nothing on desktop (false).
- *  - Lists the four key gestures (swipe / long-press / edge-swipe / FAB).
+ *  - Lists the three key gestures (swipe / long-press / FAB).
  *  - Dismissing sets the persisted "seen" flag.
  *  - One-time: with the flag set it does not re-render, and a remount
  *    after dismissal stays closed.
@@ -34,7 +34,6 @@ const SEEN_KEY = 'agaric-gesture-coachmark-seen'
 const GESTURE_TITLE_KEYS = [
   'gestures.swipe.title',
   'gestures.longPress.title',
-  'gestures.edgeSwipe.title',
   'gestures.quickCapture.title',
 ] as const
 
@@ -93,7 +92,7 @@ describe('GestureCoachMark', () => {
     expect(screen.queryByTestId('gesture-coachmark')).toBeNull()
   })
 
-  it('lists the four key gestures', () => {
+  it('lists the three key gestures', () => {
     render(<GestureCoachMark />)
     for (const key of GESTURE_TITLE_KEYS) {
       expect(screen.getByText(t(key))).toBeInTheDocument()

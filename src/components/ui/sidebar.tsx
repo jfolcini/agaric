@@ -15,7 +15,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { useSidebarEdgeSwipe } from '@/components/ui/sidebar/use-sidebar-edge-swipe'
 import { useSidebarKeyboard } from '@/components/ui/sidebar/use-sidebar-keyboard'
 import { useSidebarRailDrag } from '@/components/ui/sidebar/use-sidebar-rail-drag'
 import { type SidebarState, useSidebarState } from '@/components/ui/sidebar/use-sidebar-state'
@@ -72,9 +71,6 @@ const SidebarProvider = ({
   // Adds a keyboard shortcut to toggle the sidebar.
   useSidebarKeyboard(toggleSidebar)
 
-  // Swipe-from-left-edge gesture to open mobile sidebar (navigation drawer pattern).
-  useSidebarEdgeSwipe(isMobile, openMobile, setOpenMobile)
-
   // Perf 17: list every captured value — including the `useState` setters
   // `setOpenMobile` / `setIsResizing` which React guarantees stable. The
   // explicit deps list documents the full closure.
@@ -126,26 +122,6 @@ const SidebarProvider = ({
         )}
         {...props}
       >
-        {/*
-             sub-fix 1: 3px coarse-pointer-only edge gradient hint that
-            tells touch users a sidebar lives behind the left edge.
-            `pointer:coarse` only — desktop layout unaffected. Hidden when
-            the sidebar is already open on mobile.
-
-            Pointer-coarse vs width-breakpoint (`max-sm:`) divergence is
-            intentional — see `docs/UI-MAP.md` § "Mobile / a11y posture"
-            (and `docs/UX.md` § Touch & responsive) for the rule.
-            Touch-primary affordances (this swipe hint) use
-            `[@media(pointer:coarse)]`; inline indicators that compete with
-            content for space use `max-sm:`.
-          */}
-        {isMobile && !openMobile && (
-          <div
-            aria-hidden="true"
-            data-testid="sidebar-swipe-hint"
-            className="pointer-events-none fixed left-0 inset-y-0 z-40 hidden w-[3px] bg-foreground/10 [@media(pointer:coarse)]:block"
-          />
-        )}
         {children}
       </div>
     </SidebarContext.Provider>
@@ -190,8 +166,8 @@ const Sidebar = ({
     // Mobile is offcanvas for EVERY `collapsible` variant: no persistent
     // rail, no layout gap, nothing pinned to the edge. The whole viewport
     // width belongs to content, and navigation lives behind the header
-    // hamburger (`SidebarTrigger`, rendered on mobile by App.tsx), the
-    // left-edge swipe (`useSidebarEdgeSwipe`), or Ctrl+B.
+    // hamburger (`SidebarTrigger`, rendered on mobile by App.tsx) or Ctrl+B.
+    // No left-edge swipe: on Android gesture navigation that is system Back.
     //
     // `collapsible="icon"` used to render a persistent 48-px icon rail here
     // *in addition* to this Sheet (UX-231). That rail existed because the

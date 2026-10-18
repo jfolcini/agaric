@@ -345,9 +345,6 @@ export const common: Record<string, string> = {
     'Swipe right to indent, short-swipe left to outdent, or swipe further left to reveal delete.',
   'gestures.longPress.title': 'Hold a block',
   'gestures.longPress.desc': 'Hold a block, then drag to move it — or let go to open its menu.',
-  'gestures.edgeSwipe.title': 'Swipe from the left edge',
-  'gestures.edgeSwipe.desc':
-    'Drag in from the left edge of the screen to open the navigation menu. The menu button at the top left opens it too.',
   'gestures.quickCapture.title': 'Quick-capture button',
   'gestures.quickCapture.desc': 'Tap the floating pen button to jot a note into your journal.',
   'dialog.cancel': 'Cancel',
