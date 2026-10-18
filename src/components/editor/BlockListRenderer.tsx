@@ -516,7 +516,10 @@ function SentinelDropZone({
           style={{ marginLeft: 0 }}
         />
       )}
-      <div className="min-h-[60px]" />
+      {/* Room to drop below the last block, only while dragging: at rest it
+          was a blank band under every list. dnd-kit re-measures droppables
+          once the drag starts, after this has grown. */}
+      {activeId != null && <div className="min-h-[60px]" />}
     </li>
   )
 }

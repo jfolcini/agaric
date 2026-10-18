@@ -20,6 +20,7 @@ import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
 import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { Button } from '@/components/ui/button'
+import { IconButton } from '@/components/ui/icon-button'
 import { useEnteredViewport } from '@/hooks/useEnteredViewport'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
@@ -214,6 +215,10 @@ function DaySectionInner({
     setFirstBlockRequested(true)
     onAddBlock(entry.dateStr)
   }
+  // A multi-day list shows an empty day as one row, the date plus "+", as
+  // calendar and agenda lists do; a placeholder card per day made an empty week
+  // a long scroll on phones (#5928). Daily mode's single day keeps EmptyState.
+  const emptyRow = compact && !entry.pageId
   const shouldLazyMount = lazyMount && !prefersReducedMotion && !firstBlockRequested
   const isWindowControlled = shouldLazyMount && onVisible != null
 
@@ -292,7 +297,7 @@ function DaySectionInner({
     >
       {/* Day heading — hidden in daily mode since header shows the date */}
       {!hideHeading && (
-        <div className="flex flex-wrap items-center gap-2 mb-2">
+        <div className={cn('flex flex-wrap items-center gap-2', !emptyRow && 'mb-2')}>
           <Heading
             className={cn(
               headingLevel === 'h2'
@@ -382,6 +387,21 @@ function DaySectionInner({
               onDeleteRequest={handleRequestDayDelete}
             />
           )}
+          {emptyRow && (
+            <>
+              <p className="sr-only">{t('agenda.day.empty', { date: entry.displayDate })}</p>
+              <IconButton
+                variant="ghost"
+                size="icon-sm"
+                className="ml-auto"
+                ariaLabel={t('agenda.day.addBlock')}
+                tooltip={t('agenda.day.addBlock')}
+                onClick={handleAddFirstBlock}
+              >
+                <Plus />
+              </IconButton>
+            </>
+          )}
         </div>
       )}
       {/* In daily mode (heading hidden), still show the "open in editor" link */}
@@ -433,46 +453,29 @@ function DaySectionInner({
           </div>
         ))}
 
-      {/* Empty state: compact for multi-day views, full for daily. Sits right under the day's
-          block tree, ahead of the agenda panels, so the CTA stays next to what it adds to. */}
-      {!entry.pageId &&
-        (compact ? (
-          <EmptyState
-            compact
-            message={t('agenda.day.empty', { date: entry.displayDate })}
-            action={
+      {/* Daily mode's empty state sits right under the day's block tree, ahead of the agenda
+          panels, so the CTA stays next to what it adds to. */}
+      {!entry.pageId && !compact && (
+        <EmptyState
+          icon={CalendarIcon}
+          message={t('journal.noBlocks', { date: entry.displayDate })}
+          compact
+          action={
+            <>
               <Button
                 variant="ghost"
                 size="sm"
-                className="mt-2 mx-auto flex items-center gap-1"
+                className="mt-3 mx-auto flex items-center gap-1"
                 onClick={handleAddFirstBlock}
               >
                 <Plus className="h-4 w-4" />
-                {t('agenda.day.addBlock')}
+                {t('journal.addFirstBlock')}
               </Button>
-            }
-          />
-        ) : (
-          <EmptyState
-            icon={CalendarIcon}
-            message={t('journal.noBlocks', { date: entry.displayDate })}
-            compact
-            action={
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-3 mx-auto flex items-center gap-1"
-                  onClick={handleAddFirstBlock}
-                >
-                  <Plus className="h-4 w-4" />
-                  {t('journal.addFirstBlock')}
-                </Button>
-                <p className="text-xs text-muted-foreground mt-2">{t('journal.emptyHint')}</p>
-              </>
-            }
-          />
-        ))}
+              <p className="text-xs text-muted-foreground mt-2">{t('journal.emptyHint')}</p>
+            </>
+          }
+        />
+      )}
 
       {/* "Add block" button — only shown when there IS content (otherwise the empty state has the CTA) */}
       {entry.pageId && (

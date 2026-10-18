@@ -738,9 +738,21 @@ describe('BlockListRenderer', () => {
     const sentinelLi = tree?.querySelector('li[aria-hidden]')
     expect(sentinelLi).toBeInTheDocument()
 
-    // The sentinel should contain a spacer div
-    const spacer = sentinelLi?.querySelector('.min-h-\\[60px\\]')
-    expect(spacer).toBeInTheDocument()
+    // No drag, no spacer: at rest it is a blank band under the list (#5928).
+    expect(sentinelLi?.querySelector('.min-h-\\[60px\\]')).not.toBeInTheDocument()
+  })
+
+  it('grows the sentinel into a drop zone while a drag is active (#5928)', () => {
+    const blocks = [
+      makeBlock({ id: 'BLK001', content: 'First' }),
+      makeBlock({ id: 'BLK002', content: 'Second' }),
+    ]
+    const { container } = render(
+      <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks, activeId: 'BLK001' })} />,
+    )
+
+    const sentinelLi = container.querySelector('.block-tree li[aria-hidden]')
+    expect(sentinelLi?.querySelector('.min-h-\\[60px\\]')).toBeInTheDocument()
   })
 
   it('does not render sentinel when there are no blocks', () => {
