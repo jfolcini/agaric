@@ -548,11 +548,10 @@ resolve_node_modules_source() {
 #
 # Symlinks every TOP-LEVEL entry of the borrowed install (packages, scoped
 # `@scope` directories, and `.bin`) into a REAL directory in the worktree.
-# Real directory, not a symlink to the whole tree, because the tsconfigs put
-# `tsBuildInfoFile` under `./node_modules/.tmp/` — with a whole-tree symlink
-# that write lands in the borrowed install and clobbers the caller's own
-# incremental state. Here `.tmp` is created inside the disposable worktree
-# and dies with it.
+# Real directory, not a symlink to the whole tree, so build state a tool
+# writes under `node_modules/` (`.vite`, `.vitest-cache`) lands in the
+# disposable worktree and dies with it, not in the borrowed install. tsc's
+# buildinfo is out of `node_modules/` already (`./.tsbuildinfo/`, gitignored).
 #
 # ONE `ln -s` for the whole set, not one `ln` per entry: measured 0.03 s
 # vs 1.28 s for ~710 entries, and this runs inside a prek hook.
@@ -566,14 +565,14 @@ resolve_node_modules_source() {
 # symlink and hard-errors on a REAL node_modules directory (issue #3171 --
 # `ln -s` nesting inside it produces confusing TS2688 vite/client + node
 # failures). That divergence is intentional, for the reason above
-# (tsBuildInfoFile under ./node_modules/.tmp/), not something to reconcile by
-# copying either shape into the other.
+# (build state under node_modules/), not something to reconcile by copying
+# either shape into the other.
 provision_node_modules() {
   local workdir="$1" src="$2"
   # `src/*/` expands to package and @scope directories; `.bin` is named
   # explicitly because it is a dotfile. The dot-directories deliberately NOT
-  # borrowed are build state, not resolution input: `.tmp` (tsbuildinfo, the
-  # whole point above), `.cache`, `.vite`, `.vite-temp`.
+  # borrowed are build state, not resolution input: `.tmp`, `.cache`, `.vite`,
+  # `.vite-temp`.
   #
   # Each candidate is `[ -e ]`-tested — a shell builtin, so this stays a
   # single process for the whole set — because `ln -s` creates DANGLING
