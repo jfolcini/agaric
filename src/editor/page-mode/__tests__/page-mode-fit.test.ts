@@ -5,7 +5,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
@@ -42,6 +42,24 @@ describe('blockerIn', () => {
       count: PAGE_MODE_BLOCK_CAP + 1,
     })
     expect(blockerIn(PAGE_MODE_BLOCK_CAP)).toBeNull()
+  })
+
+  describe('the cap the perf harness raises', () => {
+    const harness = window as { __pageModeBlockCap?: unknown }
+    afterEach(() => {
+      vi.unstubAllEnvs()
+      delete harness.__pageModeBlockCap
+    })
+
+    it('is raised in the e2e build only, and only by a number', () => {
+      harness.__pageModeBlockCap = 2
+      expect(blockerIn(3)).toBeNull()
+      vi.stubEnv('VITE_E2E', 'true')
+      expect(blockerIn(3)).toEqual({ kind: 'overCap', count: 3 })
+      expect(blockerIn(2)).toBeNull()
+      harness.__pageModeBlockCap = '2'
+      expect(blockerIn(3)).toBeNull()
+    })
   })
 })
 

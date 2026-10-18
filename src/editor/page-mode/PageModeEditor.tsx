@@ -84,7 +84,7 @@ import {
 import { PageLists } from '@/editor/page-mode/page-lists'
 import { pageModeExtensions } from '@/editor/page-mode/page-mode-extensions'
 import { type PageModeBlocker, readPageFit } from '@/editor/page-mode/page-mode-fit'
-import { commitPageProperties, PageProperties } from '@/editor/page-mode/page-properties'
+import { PageProperties } from '@/editor/page-mode/page-properties'
 import {
   createSaveState,
   type PageSaveApi,
@@ -97,8 +97,8 @@ import {
   searchPageSlashCommands,
   usePageSlashCommands,
 } from '@/editor/page-mode/page-slash-commands'
-import { commitPageTags } from '@/editor/page-mode/page-tags'
-import { commitPageTask, type PageTaskActions } from '@/editor/page-mode/page-tasks'
+import { commitPageTyped } from '@/editor/page-mode/page-tags'
+import type { PageTaskActions } from '@/editor/page-mode/page-tasks'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
@@ -546,13 +546,7 @@ function PageModeDocument({
         // Never the caret's block: its marker or name may still be being typed.
         if (!closing && cursorBlock() === id) continue
         typedIn.delete(id)
-        const task = await commitPageTask(id, loaded, save, api, pageStore)
-        const lines = await commitPageProperties(id, loaded, save, api, task.markdown)
-        refs.push(
-          ...task.refs,
-          ...lines.refs,
-          ...(await commitPageTags(id, save, api, lines.markdown)),
-        )
+        refs.push(...(await commitPageTyped(id, loaded, save, api, pageStore)))
       }
       return refs
     }
