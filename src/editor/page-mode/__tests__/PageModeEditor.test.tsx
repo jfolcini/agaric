@@ -420,18 +420,13 @@ describe('PageModeEditor', () => {
     const { container, store, onBlocked } = renderPageMode(pageId)
     await editorIn(container)
 
-    dispatch('add_attachment_with_bytes', {
-      blockId: ids[0],
-      filename: 'a.png',
-      mimeType: 'image/png',
-      bytes: [0],
-    })
+    dispatch('edit_block', { blockId: ids[0], toText: '{{query todo:TODO}}' })
     await act(async () => {
       await store.getState().load()
     })
 
     await waitFor(() => {
-      expect(onBlocked).toHaveBeenCalledWith({ kind: 'attachments' })
+      expect(onBlocked).toHaveBeenCalledWith({ kind: 'queries' })
     })
   })
 })
@@ -830,8 +825,14 @@ describe('PageModeEditor tasks (#5743)', () => {
     expect(docTexts(editor)).toEqual(['first', '\\[ \\] buy milk'])
   })
 
-  it('typing, its save and a reload draw no checkbox, badge or chip again', async () => {
+  it('typing, its save and a reload draw no checkbox, badge, chip or attachment again', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
+    dispatch('add_attachment_with_bytes', {
+      blockId: ids[1],
+      filename: 'notes.txt',
+      mimeType: 'text/plain',
+      bytes: [104, 105],
+    })
     dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
     dispatch('set_todo_state', { blockId: ids[1], state: 'DONE' })
     dispatch('set_priority', { blockId: ids[0], level: '1' })
@@ -855,6 +856,7 @@ describe('PageModeEditor tasks (#5743)', () => {
       expect(container.querySelectorAll('.block-metadata-row')).toHaveLength(2)
     })
     expect(container.querySelectorAll('[data-testid="property-chip"]')).toHaveLength(1)
+    expect(container.querySelectorAll('[data-testid="attachment-badge"]')).toHaveLength(1)
     const draw = vi.spyOn(ReactRenderer.prototype, 'render')
 
     typeAt(editor, 1, 6, ' typed')
@@ -1861,6 +1863,406 @@ describe('PageModeEditor properties (#5743)', () => {
   })
 })
 
+describe('PageModeEditor attachments (#5743)', () => {
+  // As the IPC does: the mock's rows are its own, so a rename there is not the row page mode holds.
+  beforeEach(() => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) =>
+      structuredClone(dispatch(cmd, args)),
+    )
+  })
+
+  /** Attach a text file to block `id` in the backend, as a peer or block mode would. */
+  function attachText(id: string, filename = 'notes.txt', text = 'hi'): string {
+    const row = dispatch('add_attachment_with_bytes', {
+      blockId: id,
+      filename,
+      mimeType: 'text/plain',
+      bytes: [...new TextEncoder().encode(text)],
+    }) as { id: string }
+    return row.id
+  }
+
+  /** Block `id`'s attachments in the backend, by filename. */
+  function backendFiles(id: string): string[] {
+    const rows = dispatch('list_attachments', { blockId: id }) as Array<{ filename: string }>
+    return rows.map((row) => row.filename)
+  }
+
+  const inBlock = (container: HTMLElement, id: string, selector: string) =>
+    container.querySelector(`[data-page-block-id="${id}"] ${selector}`)
+
+  /** What block `id`'s previews show: each text preview's body. */
+  function previews(container: HTMLElement, id: string): string[] {
+    return [
+      ...container.querySelectorAll(
+        `[data-page-block-id="${id}"] [data-testid="markdown-attachment-body"]`,
+      ),
+    ].map((body) => body.textContent ?? '')
+  }
+
+  /** Open block `id`'s attachment list from its badge. */
+  async function openList(container: HTMLElement, id: string): Promise<HTMLElement> {
+    const badge = await waitFor(() => {
+      const found = inBlock(container, id, '[data-testid="attachment-badge"]')
+      if (found === null) throw new Error('no attachment badge')
+      return found as HTMLElement
+    })
+    fireEvent.click(badge)
+    return screen.findByRole('list', { name: t('attachments.list') })
+  }
+
+  /** Paste `files` where the caret is, as the clipboard hands them to the editor. */
+  function pasteFiles(editor: Editor, files: File[]): boolean {
+    let taken = false
+    act(() => {
+      const clipboardData = { files, types: [], getData: () => '' }
+      const event = { clipboardData, preventDefault: () => {} } as unknown as ClipboardEvent
+      taken =
+        editor.view.someProp('handlePaste', (f) =>
+          f(editor.view, event, editor.state.doc.slice(0, 0)),
+        ) ?? false
+    })
+    return taken
+  }
+
+  it('shows block mode’s previews and badge under the text, outside it, with no a11y violations', async () => {
+    const { pageId, ids } = seedPage(['notes', 'plain'])
+    attachText(ids[0] as string, 'notes.txt', 'hello there')
+    const { container, onBlocked } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    await waitFor(() => {
+      expect(previews(container, ids[0] as string)).toEqual(['hello there'])
+    })
+    expect(
+      inBlock(container, ids[0] as string, '[data-testid="attachment-badge"]')?.getAttribute(
+        'aria-label',
+      ),
+    ).toBe(t('block.attachments', { count: 1 }))
+    expect(inBlock(container, ids[1] as string, '.page-block-metadata')).toBeNull()
+    expect(
+      container.querySelector('.page-block-content [data-testid="attachment-badge"]'),
+    ).toBeNull()
+    expect(docTexts(editor)).toEqual(['notes', 'plain'])
+    expect(onBlocked).not.toHaveBeenCalled()
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
+  it('the badge opens block mode’s list, whose rename is read back, and the badge keeps the count', async () => {
+    const { pageId, ids } = seedPage(['notes'])
+    attachText(ids[0] as string)
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    const list = await openList(container, ids[0] as string)
+    expect(within(list).getByText('notes.txt')).toBeInTheDocument()
+    fireEvent.click(
+      within(list).getByRole('button', { name: t('attachments.rename', { name: 'notes.txt' }) }),
+    )
+    const field = within(list).getByRole('textbox', {
+      name: t('attachments.rename', { name: 'notes.txt' }),
+    })
+    fireEvent.change(field, { target: { value: 'renamed.txt' } })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Enter' })
+    })
+
+    await waitFor(() => {
+      expect(backendFiles(ids[0] as string)).toEqual(['renamed.txt'])
+    })
+    await waitFor(() => {
+      expect(within(list).getByText('renamed.txt')).toBeInTheDocument()
+    })
+    // The preview has the new name too: page mode read the page again.
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', {
+          name: t('attachment.downloadFile', { filename: 'renamed.txt' }),
+        }),
+      ).toBeInTheDocument()
+    })
+    expect(docTexts(editor)).toEqual(['notes'])
+    expect(editor.can().undo()).toBe(false)
+  })
+
+  it('what the list deletes goes from the backend, the badge and the previews', async () => {
+    const { pageId, ids } = seedPage(['notes'])
+    attachText(ids[0] as string, 'one.txt', 'first file')
+    attachText(ids[0] as string, 'two.txt', 'second file')
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const list = await openList(container, ids[0] as string)
+
+    const remove = within(list).getByRole('button', {
+      name: t('attachments.delete', { name: 'one.txt' }),
+    })
+    fireEvent.click(remove)
+    await act(async () => {
+      fireEvent.click(remove)
+    })
+
+    await waitFor(() => {
+      expect(backendFiles(ids[0] as string)).toEqual(['two.txt'])
+    })
+    await waitFor(() => {
+      expect(previews(container, ids[0] as string)).toEqual(['second file'])
+    })
+    expect(
+      inBlock(container, ids[0] as string, '[data-testid="attachment-badge"]')?.getAttribute(
+        'aria-label',
+      ),
+    ).toBe(t('block.attachments', { count: 1 }))
+    expect(docTexts(editor)).toEqual(['notes'])
+  })
+
+  it('a refused delete says so, and the attachment stays', async () => {
+    const { pageId, ids } = seedPage(['notes'])
+    attachText(ids[0] as string)
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+    const list = await openList(container, ids[0] as string)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'delete_attachment') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    const remove = within(list).getByRole('button', {
+      name: t('attachments.delete', { name: 'notes.txt' }),
+    })
+    fireEvent.click(remove)
+    await act(async () => {
+      fireEvent.click(remove)
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('attachments.deleteFailed'))
+    })
+    expect(backendFiles(ids[0] as string)).toEqual(['notes.txt'])
+    expect(within(list).getByText('notes.txt')).toBeInTheDocument()
+    expect(previews(container, ids[0] as string)).toEqual(['hi'])
+  })
+
+  it('a refused rename says so, and the name stays', async () => {
+    const { pageId, ids } = seedPage(['notes'])
+    attachText(ids[0] as string)
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+    const list = await openList(container, ids[0] as string)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'rename_attachment') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    fireEvent.click(
+      within(list).getByRole('button', { name: t('attachments.rename', { name: 'notes.txt' }) }),
+    )
+    const field = within(list).getByRole('textbox', {
+      name: t('attachments.rename', { name: 'notes.txt' }),
+    })
+    fireEvent.change(field, { target: { value: 'renamed.txt' } })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Enter' })
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('attachments.renameFailed'))
+    })
+    expect(backendFiles(ids[0] as string)).toEqual(['notes.txt'])
+    expect(within(list).getByText('notes.txt')).toBeInTheDocument()
+  })
+
+  it('a file pasted is attached to the caret’s block, a new one too, and shows', async () => {
+    const { pageId, ids } = seedPage(['notes'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 5))
+    })
+    press(editor, 'Enter')
+    const fresh = blockIdOf(editor.state.doc.child(1)) as string
+
+    expect(
+      pasteFiles(editor, [new File(['pasted text'], 'clip.txt', { type: 'text/plain' })]),
+    ).toBe(true)
+
+    await waitFor(() => {
+      expect(backendFiles(fresh)).toEqual(['clip.txt'])
+    })
+    await waitFor(() => {
+      expect(previews(container, fresh)).toEqual(['pasted text'])
+    })
+    expect(backendFiles(ids[0] as string)).toEqual([])
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith(
+      t('blockTree.attachedFileMessage', { filename: 'clip.txt' }),
+    )
+  })
+
+  it('an image pasted goes in at the caret as well, as block mode puts it there', async () => {
+    const { pageId, ids } = seedPage(['notes'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 5))
+    })
+
+    pasteFiles(editor, [new File([new Uint8Array([1, 2, 3])], 'shot.png', { type: 'image/png' })])
+
+    await waitFor(() => {
+      expect(backendFiles(ids[0] as string)).toEqual(['shot.png'])
+    })
+    const [attachment] = dispatch('list_attachments', { blockId: ids[0] }) as Array<{ id: string }>
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(backendText(ids[0] as string)).toBe(`notes![shot.png](attachment:${attachment?.id})`)
+  })
+
+  it('an image pasted goes in nowhere once the caret has left its block during the upload', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let uploading = false
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'add_attachment_with_bytes') {
+        uploading = true
+        await held
+      }
+      return structuredClone(dispatch(cmd, args))
+    })
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 5))
+    })
+
+    pasteFiles(editor, [new File([new Uint8Array([1, 2, 3])], 'shot.png', { type: 'image/png' })])
+    await waitFor(() => {
+      expect(uploading).toBe(true)
+    })
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 1, 6))
+    })
+    release()
+
+    await waitFor(() => {
+      expect(backendFiles(ids[0] as string)).toEqual(['shot.png'])
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(docTexts(editor)).toEqual(['first', 'second'])
+    expect(backendText(ids[1] as string)).toBe('second')
+  })
+
+  it('a file pasted over the whole page (Ctrl+A) is attached to its first block', async () => {
+    const { pageId, ids } = seedPage(['notes', 'more'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.selectAll()
+    })
+
+    expect(pasteFiles(editor, [new File(['x'], 'clip.txt', { type: 'text/plain' })])).toBe(true)
+
+    await waitFor(() => {
+      expect(backendFiles(ids[0] as string)).toEqual(['clip.txt'])
+    })
+    expect(backendFiles(ids[1] as string)).toEqual([])
+  })
+
+  it('a paste the backend refuses says so, and attaches nothing', async () => {
+    const { pageId, ids } = seedPage(['notes'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    caretTo(editor, 0)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'add_attachment_with_bytes') throw new Error('disk full')
+      return dispatch(cmd, args)
+    })
+
+    pasteFiles(editor, [new File(['x'], 'clip.txt', { type: 'text/plain' })])
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.attachFileFailed'))
+    })
+    expect(backendFiles(ids[0] as string)).toEqual([])
+    expect(inBlock(container, ids[0] as string, '.page-block-metadata')).toBeNull()
+  })
+
+  it('a file pasted into a new block removed before it is saved says so, and attaches nothing', async () => {
+    const { pageId, ids } = seedPage(['notes'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 5))
+    })
+    press(editor, 'Enter')
+    const fresh = blockIdOf(editor.state.doc.child(1)) as string
+
+    act(() => {
+      const clipboardData = {
+        files: [new File(['x'], 'clip.txt', { type: 'text/plain' })],
+        types: [],
+        getData: () => '',
+      }
+      const event = { clipboardData, preventDefault: () => {} } as unknown as ClipboardEvent
+      editor.view.someProp('handlePaste', (f) =>
+        f(editor.view, event, editor.state.doc.slice(0, 0)),
+      )
+      // Before the save runs: the empty block joins the one before.
+      editor.view.someProp('handleKeyDown', (f) =>
+        f(editor.view, new KeyboardEvent('keydown', { key: 'Backspace' })),
+      )
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.attachFileFailed'))
+    })
+    expect(docTexts(editor)).toEqual(['notes'])
+    expect(backendFiles(ids[0] as string)).toEqual([])
+    expect(backendFiles(fresh)).toEqual([])
+  })
+
+  it('a paste with no file is text, as before', async () => {
+    const { pageId } = seedPage(['notes'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    caretTo(editor, 0)
+
+    expect(pasteFiles(editor, [])).toBe(false)
+  })
+
+  it('a peer’s attachment added or deleted shows on reload, outside the document and its undo', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const gone = attachText(ids[0] as string, 'gone.txt', 'old')
+    const { container, store, onBlocked } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(previews(container, ids[0] as string)).toEqual(['old'])
+    })
+
+    dispatch('delete_attachment', { attachmentId: gone })
+    attachText(ids[1] as string, 'new.txt', 'new')
+    await act(async () => {
+      await store.getState().load()
+    })
+
+    await waitFor(() => {
+      expect(previews(container, ids[1] as string)).toEqual(['new'])
+    })
+    await waitFor(() => {
+      expect(inBlock(container, ids[0] as string, '.page-block-metadata')).toBeNull()
+    })
+    expect(docTexts(editor)).toEqual(['first', 'second'])
+    expect(editor.can().undo()).toBe(false)
+    expect(onBlocked).not.toHaveBeenCalled()
+  })
+})
+
 describe('PageModeEditor mounts a block’s controls as it nears the viewport (#5743)', () => {
   beforeEach(() => {
     MockIntersectionObserver.instances = []
@@ -2102,6 +2504,32 @@ describe('PageModeEditor mounts a block’s controls as it nears the viewport (#
     await waitFor(() => {
       expect(inBlock(container, ids[1] as string, '[data-testid="property-chip"]')).not.toBeNull()
     })
+  })
+
+  it('a block with attachments shows its previews once near, or once the caret is in it', async () => {
+    const { pageId, ids } = seedPage(['first', 'notes', 'more notes'])
+    for (const id of ids.slice(1)) {
+      dispatch('add_attachment_with_bytes', {
+        blockId: id,
+        filename: 'notes.txt',
+        mimeType: 'text/plain',
+        bytes: [104, 105],
+      })
+    }
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const box = (id: string) => inBlock(container, id, '.page-block-metadata') as HTMLElement
+    expect(box(ids[1] as string).childElementCount).toBe(0)
+    expect(box(ids[2] as string).childElementCount).toBe(0)
+    const io = await observer()
+
+    report(io, blockEl(container, ids[1] as string), true)
+    caretTo(editor, 2)
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('[data-testid="markdown-attachment"]')).toHaveLength(2)
+    })
+    expect(inBlock(container, ids[1] as string, '[data-testid="attachment-badge"]')).not.toBeNull()
   })
 
   it('a runtime with no IntersectionObserver mounts every block’s controls at once', async () => {

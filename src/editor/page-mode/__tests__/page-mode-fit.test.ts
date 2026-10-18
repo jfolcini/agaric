@@ -1,7 +1,7 @@
 /**
- * What keeps a page out of page mode (#5691): what its rows hold, read at
- * once, and its blocks' properties and attachments, read with one IPC each.
- * The properties read is page mode's too: it draws them.
+ * What keeps a page out of page mode (#5691): what its rows hold. Its blocks'
+ * properties and attachments, read with one IPC each, are what page mode
+ * draws of them.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -132,6 +132,7 @@ describe('readPageFit', () => {
     expect(await readPageFit([repeating, row({ id: 'B2' })], 2)).toEqual({
       blocker: null,
       properties: rows,
+      attachments: {},
     })
   })
 
@@ -148,38 +149,47 @@ describe('readPageFit', () => {
     expect(await readPageFit([row(), row({ id: 'B2' })], 2)).toEqual({
       blocker: null,
       properties: rows,
+      attachments: {},
     })
   })
 
-  it('keeps out a page whose block holds an attachment', async () => {
+  it('lets in blocks with attachments, and hands them over (#5743)', async () => {
+    const attachments = {
+      B1: [
+        {
+          id: 'ATT1',
+          block_id: 'B1',
+          filename: 'a.png',
+          mime_type: 'image/png',
+          size_bytes: 1,
+          fs_path: 'a.png',
+          created_at: 0,
+          content_hash: null,
+        },
+      ],
+    }
     vi.mocked(invoke).mockImplementation(
       mockInvokeCommands({
         get_batch_properties: () => ({ B1: [] }),
-        list_attachments_batch: () => ({
-          B1: [
-            {
-              id: 'ATT1',
-              block_id: 'B1',
-              filename: 'a.png',
-              mime_type: 'image/png',
-              size_bytes: 1,
-              fs_path: 'a.png',
-              created_at: 0,
-            },
-          ],
-        }),
+        list_attachments_batch: () => attachments,
       }),
     )
-    expect((await readPageFit([row()], 1)).blocker).toEqual({ kind: 'attachments' })
+
+    expect(await readPageFit([row(), row({ id: 'B2' })], 2)).toEqual({
+      blocker: null,
+      properties: { B1: [] },
+      attachments,
+    })
   })
 
   it('asks nothing of an empty page, or of one its rows already keep out', async () => {
     vi.mocked(invoke).mockImplementation(mockInvokeCommands({}))
 
-    expect(await readPageFit([], 0)).toEqual({ blocker: null, properties: {} })
+    expect(await readPageFit([], 0)).toEqual({ blocker: null, properties: {}, attachments: {} })
     expect(await readPageFit([row({ content: '{{query todo:TODO}}' })], 1)).toEqual({
       blocker: { kind: 'queries' },
       properties: {},
+      attachments: {},
     })
   })
 

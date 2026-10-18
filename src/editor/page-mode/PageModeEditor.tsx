@@ -23,6 +23,9 @@
  * The property chips show what page mode last read of the page's properties,
  * which it reads again with each reload; a chip opens block mode's property
  * editor, the `+N` pill its drawer, and each, once closed, reads them again.
+ * The attachments and their badge show what the same read found; what the
+ * badge's list deletes or renames, and a file pasted or dropped, which block
+ * mode's own upload attaches after the save, read them again.
  * A bullet or numbered block's marker shows its `listStyle` from the same
  * read; the list keys and input rules give a block its style at once, written
  * after the save on the same chain (`page-lists.ts`).
@@ -57,8 +60,10 @@ import { useBlockNavigateToLink } from '@/components/block-tree/use-block-naviga
 import { setBlockPriority, useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { SelectionBubbleMenu } from '@/components/editor-toolbar/SelectionBubbleMenu'
+import { processFileAttachments } from '@/components/editor/EditableBlock'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
+import { PageAttachments } from '@/editor/page-mode/page-attachments'
 import {
   changedBlocks,
   firstTokenPos,
@@ -84,7 +89,8 @@ import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
-import { commands, type OpRef, type PropertyRow } from '@/lib/bindings'
+import { subscribeToAttachmentInvalidation } from '@/lib/attachment-invalidation'
+import { type AttachmentRow, commands, type OpRef, type PropertyRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { newBlockId } from '@/lib/block-id'
 import { t } from '@/lib/i18n'
@@ -149,6 +155,7 @@ export function PageModeEditor({
   const [opened, setOpened] = useState<{
     blocks: readonly FlatBlock[]
     properties: Record<string, PropertyRow[]>
+    attachments: Record<string, AttachmentRow[]>
   } | null>(null)
 
   useEffect(() => {
@@ -160,14 +167,17 @@ export function PageModeEditor({
       if (store.loading && store.blocks.length === 0) await store.load()
       if (cancelled) return
       const { blocks, truncatedTotal } = pageStore.getState()
-      const { blocker, properties } = await readPageFit(blocks, truncatedTotal ?? blocks.length)
+      const { blocker, properties, attachments } = await readPageFit(
+        blocks,
+        truncatedTotal ?? blocks.length,
+      )
       if (cancelled) return
       if (blocker !== null) {
         onBlocked(blocker)
         return
       }
       await resolveLinks(blocks, () => cancelled)
-      if (!cancelled) setOpened({ blocks, properties })
+      if (!cancelled) setOpened({ blocks, properties, attachments })
     }
     open().catch((err: unknown) => {
       logger.error('PageModeEditor', 'Failed to open page mode', { pageId }, err)
@@ -184,6 +194,7 @@ export function PageModeEditor({
       pageId={pageId}
       blocks={opened.blocks}
       properties={opened.properties}
+      attachments={opened.attachments}
       onBlocked={onBlocked}
       onNavigateToPage={onNavigateToPage}
       cursorBlockId={cursorBlockId ?? null}
@@ -255,6 +266,8 @@ interface PageModeDocumentProps {
   blocks: readonly FlatBlock[]
   /** The blocks' properties, read with them. */
   properties: Record<string, PropertyRow[]>
+  /** The blocks' attachments, read with them. */
+  attachments: Record<string, AttachmentRow[]>
   onBlocked: (blocker: PageModeBlocker) => void
   onNavigateToPage?: NavigateToPageFn | undefined
   cursorBlockId: string | null
@@ -265,6 +278,7 @@ function PageModeDocument({
   pageId,
   blocks,
   properties: openedWith,
+  attachments: openedWithAttachments,
   onBlocked,
   onNavigateToPage,
   cursorBlockId,
@@ -279,6 +293,7 @@ function PageModeDocument({
   const flushRef = useRef<() => Promise<void>>(() => Promise.resolve())
   const [properties] = useState(() => new PageProperties(openedWith))
   const [lists] = useState(() => new PageLists(openedWith, blocks))
+  const [attachments] = useState(() => new PageAttachments(openedWithAttachments))
   // What the checkbox, the badge, the chips and the keys do, once the session runs.
   const actions = useRef<
     PageTaskActions & {
@@ -293,6 +308,8 @@ function PageModeDocument({
     openDateLinkPicker: () => {},
     openPropertyDrawer: () => {},
     propertiesEdited: () => {},
+    attachmentsChanged: () => {},
+    attach: () => {},
     pick: () => {},
     setListStyle: () => {},
   })
@@ -327,12 +344,15 @@ function PageModeDocument({
       tasks: {
         blockOf: (id: string) => pageStore.getState().blocksById.get(id),
         propertiesOf: (id: string) => properties.of(id),
+        attachmentsOf: (id: string) => attachments.of(id),
         subscribe: (listener: () => void) => {
-          const unsubscribeStore = pageStore.subscribe(listener)
-          const unsubscribeProperties = properties.subscribe(listener)
+          const unsubscribes = [
+            pageStore.subscribe(listener),
+            properties.subscribe(listener),
+            attachments.subscribe(listener),
+          ]
           return () => {
-            unsubscribeStore()
-            unsubscribeProperties()
+            for (const unsubscribe of unsubscribes) unsubscribe()
           }
         },
         cycle: (id: string) => actions.current.cycle(id),
@@ -343,6 +363,8 @@ function PageModeDocument({
         openDateLinkPicker: () => actions.current.openDateLinkPicker(),
         openPropertyDrawer: (id: string) => actions.current.openPropertyDrawer(id),
         propertiesEdited: () => actions.current.propertiesEdited(),
+        attachmentsChanged: () => actions.current.attachmentsChanged(),
+        attach: (id: string, files: File[]) => actions.current.attach(id, files),
       },
       lists: {
         lists,
@@ -438,6 +460,7 @@ function PageModeDocument({
       // Before the patch: a block it brings in draws its properties and marker at once.
       properties.take(fit.properties)
       lists.take(fit.properties)
+      attachments.take(fit.attachments)
       const { keptAsNew } = applyRemote(editor.view, save, treeRows(fresh), newBlockId, refused)
       if (keptAsNew > 0) {
         notify.info(t('pageMode.keptAsNew', { count: keptAsNew }), {
@@ -527,6 +550,11 @@ function PageModeDocument({
         await change()
       })
     }
+    const readAgain = (): void => {
+      void enqueue(async () => {
+        if (!editor.isDestroyed) await bringIn(await read())
+      })
+    }
     actions.current = {
       cycle: (id) => afterSave(id, () => cycleTask(id)),
       cyclePriority: (id) => afterSave(id, () => cyclePriority(id)),
@@ -542,9 +570,7 @@ function PageModeDocument({
         }),
       // Read again in turn with the saves: the page, its properties among it.
       propertiesEdited: () => {
-        void enqueue(async () => {
-          if (!editor.isDestroyed) await bringIn(await read())
-        })
+        readAgain()
         // An editor closed by Enter or Escape left the focus nowhere: the caret goes
         // back, once that key is done with, or the Enter would split the block.
         setTimeout(() => {
@@ -552,6 +578,26 @@ function PageModeDocument({
           if (!editor.isDestroyed && (focused === null || focused === document.body)) {
             editor.view.focus()
           }
+        })
+      },
+      attachmentsChanged: readAgain,
+      // Block mode's upload, once the block exists; an image also goes in at the caret, as block
+      // mode puts it there, if the caret is still in that block once uploaded. It reads the page
+      // again itself.
+      attach: (id, files) => {
+        let attached = false
+        void afterSave(id, async () => {
+          attached = true
+          await processFileAttachments(files, id, t, {
+            editor,
+            // Read once uploaded, as block mode's roving handle is: the caret may have moved on.
+            get activeBlockId() {
+              return cursorBlock()
+            },
+          })
+        }).then(() => {
+          // The block was gone, or its save failed: say so rather than drop the files.
+          if (!attached) notify.error(t('blockTree.attachFileFailed'))
         })
       },
       // A date picked: written in turn with the saves, so no read of a save's overtakes it.
@@ -613,6 +659,8 @@ function PageModeDocument({
       if (document.visibilityState === 'hidden') void flush()
     }
     const onPageHide = (): void => void flush()
+    // An upload, or a revert elsewhere, changed attachments outside the list's own handlers.
+    const unsubscribeAttachments = subscribeToAttachmentInvalidation(readAgain)
     editor.on('transaction', onTransaction)
     editor.on('focus', onFocus)
     editor.on('blur', onBlur)
@@ -637,6 +685,7 @@ function PageModeDocument({
 
     return () => {
       unsubscribe()
+      unsubscribeAttachments()
       editor.off('transaction', onTransaction)
       editor.off('focus', onFocus)
       editor.off('blur', onBlur)
@@ -652,7 +701,7 @@ function PageModeDocument({
         if (savesInFlight.get(pageId) === leaving) savesInFlight.delete(pageId)
       })
     }
-  }, [editor, pageId, blocks, pageStore, properties, lists])
+  }, [editor, pageId, blocks, pageStore, properties, lists, attachments])
 
   // The picker closed: the caret goes back where it was. The dialog's own
   // restore aims at its date field, which its autofocus took first.

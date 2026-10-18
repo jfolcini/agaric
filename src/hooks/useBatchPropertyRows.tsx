@@ -50,7 +50,7 @@ interface BatchPropertiesValue {
   invalidate: (blockId: string) => void
 }
 
-const BatchPropertiesContext = createContext<BatchPropertiesValue | null>(null)
+export const BatchPropertiesContext = createContext<BatchPropertiesValue | null>(null)
 
 // Split from `BatchPropertiesValue` (#2701) so consumers that only read
 // `get`/`invalidate` (`useExtraBlockProperties`) don't re-render on the

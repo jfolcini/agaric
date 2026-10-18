@@ -1,12 +1,14 @@
 /**
- * Page mode's tasks (#5743): a block's task state, priority, dates and
- * properties are the block commands', not the document's (#5691). The page
- * store holds the first three, as it does for block mode, and page mode reads
- * the properties with the page (`page-properties.ts`). Each block's node view
- * draws block mode's own controls from them beside the editable text: the
- * checkbox (`BlockInlineControls`) before it, and under it the priority badge,
- * the due and scheduled chips, the repeat rule and the property chips
- * (`BlockMetadataRow`, in `PageBlockMetadata`). A bullet or numbered block's
+ * Page mode's tasks (#5743): a block's task state, priority, dates,
+ * properties and attachments are the block commands', not the document's
+ * (#5691). The page store holds the first three, as it does for block mode,
+ * and page mode reads the properties and attachments with the page
+ * (`page-properties.ts`, `page-attachments.ts`). Each block's node view draws
+ * block mode's own controls from them beside the editable text: the checkbox
+ * (`BlockInlineControls`) before it, and under it the attachments' previews,
+ * then the priority badge, the due and scheduled chips, the repeat rule, the
+ * property chips and the attachment badge (`BlockMetadataRow`, in
+ * `PageBlockMetadata`). A bullet or numbered block's
  * marker (`page-lists.ts`) leads its first line, plain DOM as block mode's
  * `ListMarkerDecoration` draws it, redrawn only when it changes. The checkbox
  * and the `cycleTaskState` key (Ctrl+Enter) cycle the state; the badge cycles the
@@ -14,7 +16,9 @@
  * date chip opens block mode's date picker, and `openDatePicker`
  * (Ctrl+Shift+D) opens it to link a date at the caret; a property chip opens
  * block mode's property editor, and the `+N` pill and `openPropertiesDrawer`
- * (Ctrl+Shift+P) its property drawer: all through block mode's commands. A
+ * (Ctrl+Shift+P) its property drawer; the attachment badge opens block mode's
+ * attachment list. A file pasted into a block, or dropped on one, is attached
+ * to it as block mode attaches it: all through block mode's commands. A
  * change made elsewhere reaches the controls with the page's reload, never
  * through the document or its undo history. The controls follow the block's
  * id, so a split or a join that moves an id moves them with it.
@@ -36,7 +40,7 @@
 import { type Editor, Extension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { type EditorState, Plugin } from '@tiptap/pm/state'
-import type { NodeView } from '@tiptap/pm/view'
+import type { EditorView, NodeView } from '@tiptap/pm/view'
 import { ReactRenderer } from '@tiptap/react'
 import type React from 'react'
 
@@ -54,11 +58,13 @@ import {
   type PageBlockMetadataProps,
 } from '@/editor/page-mode/PageBlockMetadata'
 import { blockIdOf } from '@/editor/token-ids'
+import { attachmentRowsEqual } from '@/hooks/useBatchAttachments'
 import { arraysShallowEqual } from '@/hooks/useExtraBlockProperties'
-import type { OpRef } from '@/lib/bindings'
+import type { AttachmentRow, OpRef } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '@/lib/block-utils'
 import { t } from '@/lib/i18n'
 import { matchesShortcutBinding, tipTapShortcutMap } from '@/lib/keyboard-config'
+import { notify } from '@/lib/notify'
 import { scrollParentY } from '@/lib/scroll-parent'
 import type { TodoState } from '@/lib/task-states'
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -84,6 +90,10 @@ export interface PageTaskActions {
   openPropertyDrawer: (id: string) => void
   /** A property editor or the drawer closed: read the page's properties again. */
   propertiesEdited: () => void
+  /** An attachment was deleted, renamed or added: read the page's attachments again. */
+  attachmentsChanged: () => void
+  /** Attach `files` to block `id`, as block mode's paste and drop do. */
+  attach: (id: string, files: File[]) => void
 }
 
 /** Where page mode reads block tasks, and what it does to them. */
@@ -92,7 +102,9 @@ export interface PageTaskSource extends PageTaskActions {
   blockOf: (id: string) => FlatBlock | undefined
   /** Block `id`'s properties, as block mode's row draws them. */
   propertiesOf: (id: string) => ShownProperty[]
-  /** Call `listener` on every change of the page store or the properties. */
+  /** Block `id`'s attachments. */
+  attachmentsOf: (id: string) => AttachmentRow[]
+  /** Call `listener` on every change of the page store, the properties or the attachments. */
   subscribe: (listener: () => void) => () => void
 }
 
@@ -215,6 +227,7 @@ interface Metadata {
   dueDate: string | null
   scheduledDate: string | null
   properties: ShownProperty[]
+  attachments: AttachmentRow[]
 }
 
 const sameMetadata = (a: Metadata | null, b: Metadata): boolean =>
@@ -222,13 +235,14 @@ const sameMetadata = (a: Metadata | null, b: Metadata): boolean =>
   a.priority === b.priority &&
   a.dueDate === b.dueDate &&
   a.scheduledDate === b.scheduledDate &&
-  arraysShallowEqual(a.properties, b.properties)
+  arraysShallowEqual(a.properties, b.properties) &&
+  attachmentRowsEqual(a.attachments, b.attachments)
 
 /**
  * A block as a node view: its text; before it, outside the editable text,
  * block mode's checkbox while the block holds a task state; and under it the
- * priority badge, date chips, repeat rule and property chips while it holds
- * any.
+ * attachments, priority badge, date chips, repeat rule and property chips
+ * while it holds any.
  */
 class PageBlockView implements NodeView {
   readonly dom = document.createElement('div')
@@ -307,6 +321,7 @@ class PageBlockView implements NodeView {
       dueDate: block?.due_date ?? null,
       scheduledDate: block?.scheduled_date ?? null,
       properties: id === null ? [] : this.tasks.propertiesOf(id),
+      attachments: id === null ? [] : this.tasks.attachmentsOf(id),
     })
   }
 
@@ -340,7 +355,7 @@ class PageBlockView implements NodeView {
   private showMetadata(id: string | null, metadata: Metadata): void {
     if (sameMetadata(this.shownMetadata, metadata)) return
     this.shownMetadata = metadata
-    const { priority, dueDate, scheduledDate, properties } = metadata
+    const { priority, dueDate, scheduledDate, properties, attachments } = metadata
     // As `SortableBlock` filters them: the repeat rule has its own chip, the rest are the app's.
     const filteredProperties = properties.filter(({ key }) => !INTERNAL_PROPERTY_KEYS.has(key))
     const repeats = properties.some(({ key }) => key === 'repeat')
@@ -349,13 +364,13 @@ class PageBlockView implements NodeView {
       dueDate !== null ||
       scheduledDate !== null ||
       repeats ||
-      filteredProperties.length > 0
+      filteredProperties.length > 0 ||
+      attachments.length > 0
     if (id === null || !drawn) {
       this.metadata?.destroy()
       this.metadata = null
       return
     }
-    // Block mode's row, without what page mode does not show yet: attachments.
     const props: PageBlockMetadataProps = {
       blockId: id,
       priority,
@@ -363,10 +378,12 @@ class PageBlockView implements NodeView {
       scheduledDate,
       properties,
       filteredProperties,
+      attachments,
       onTogglePriority: this.tasks.cyclePriority,
       onOpenDatePicker: this.tasks.openDatePicker,
       onShowProperties: this.tasks.openPropertyDrawer,
       onEdited: this.tasks.propertiesEdited,
+      onAttachmentsChanged: this.tasks.attachmentsChanged,
     }
     let row = this.metadata
     if (row === null) {
@@ -422,12 +439,28 @@ function caretBlockId(state: EditorState): string | null {
   return $head.depth < 1 ? null : blockIdOf($head.node(1))
 }
 
+/** The block under `event`'s pointer: ProseMirror calls the drop handler only once it has a position. */
+function blockAtPointer(view: EditorView, event: MouseEvent): string | null {
+  const at = view.posAtCoords({ left: event.clientX, top: event.clientY }) as { pos: number }
+  const $at = view.state.doc.resolve(at.pos)
+  return blockIdOf($at.depth >= 1 ? $at.node(1) : (($at.nodeAfter ?? $at.nodeBefore) as PMNode))
+}
+
+/** The block a paste goes to: the caret's, or the first a selection between blocks (Ctrl+A) holds. */
+function pasteBlockId(state: EditorState): string | null {
+  const { $from } = state.selection
+  const block = $from.depth >= 1 ? $from.node(1) : $from.nodeAfter
+  return caretBlockId(state) ?? (block === null ? null : blockIdOf(block))
+}
+
 /**
  * Block mode's task keys, on the block the caret is in: `cycleTaskState`
  * (Ctrl+Enter) cycles its task, `priority1`–`priority3` (Ctrl+Shift+1–3) set
  * its priority, bound as block mode's `PriorityShortcuts` binds them,
  * `openDatePicker` (Ctrl+Shift+D) opens the date picker to link a date at the
  * caret, and `openPropertiesDrawer` (Ctrl+Shift+P) opens its property drawer.
+ * Files pasted go to the caret's block, and files dropped to the block they
+ * land on.
  */
 const PageTaskKeys = Extension.create<{ tasks: PageTaskSource | null }>({
   name: 'pageTaskKeys',
@@ -481,6 +514,23 @@ const PageTaskKeys = Extension.create<{ tasks: PageTaskSource | null }>({
               return true
             }
             return false
+          },
+          // As block mode's: files win over any text the clipboard also holds.
+          handlePaste(view, event) {
+            const files = Array.from(event.clipboardData?.files ?? [])
+            if (tasks === null || files.length === 0) return false
+            const id = pasteBlockId(view.state)
+            // Taken either way: a file is never left to a text paste that drops it.
+            if (id === null) notify.error(t('blockTree.attachFileFailed'))
+            else tasks.attach(id, files)
+            return true
+          },
+          handleDrop(view, event) {
+            const files = Array.from(event.dataTransfer?.files ?? [])
+            const id = files.length === 0 ? null : blockAtPointer(view, event)
+            if (tasks === null || id === null) return false
+            tasks.attach(id, files)
+            return true
           },
         },
       }),

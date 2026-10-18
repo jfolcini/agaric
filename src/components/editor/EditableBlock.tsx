@@ -177,11 +177,11 @@ function isImageMime(mimeType: string): boolean {
   return mimeType.startsWith('image/')
 }
 
-async function processFileAttachments(
+export async function processFileAttachments(
   files: File[],
   blockId: string,
   t: TFunction,
-  rovingEditor: RovingEditorHandle,
+  rovingEditor: Pick<RovingEditorHandle, 'editor' | 'activeBlockId'>,
 ): Promise<void> {
   for (const file of files) {
     const info = extractFileInfo(file)

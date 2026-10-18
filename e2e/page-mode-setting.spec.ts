@@ -158,26 +158,19 @@ test.describe('page mode’s setting and switch (#5691)', () => {
     await expect(page.locator(EDITOR)).toHaveCount(0)
   })
 
-  test('a page holding an attachment: the switch finds out when pointed at, and says why', async ({
+  test('a page holding an embed keeps block mode, and the switch says why when pointed at', async ({
     page,
   }) => {
-    const [block] = await seedPage(page, 'Has an attachment', ['alpha'])
-    await page.evaluate(
-      ({ id }) =>
-        (window as unknown as MockWindow).__TAURI_INTERNALS__.invoke('add_attachment_with_bytes', {
-          blockId: id,
-          filename: 'notes.txt',
-          mimeType: 'text/plain',
-          bytes: [104, 105],
-        }),
-      { id: block as string },
-    )
-    await openViaPalette(page, 'Has an attachment')
+    const [source] = await seedPage(page, 'Embedded from', ['shown elsewhere'])
+    await seedPage(page, 'Has an embed', [`{{embed ((${source}))}}`, 'plain'])
+    await openViaPalette(page, 'Has an embed')
 
     await modeSwitch(page, 'Page').hover()
 
     await expect(modeSwitch(page, 'Page')).toHaveAttribute('aria-disabled', 'true')
-    await expect(page.getByRole('tooltip')).toHaveText('Page mode can’t show attachments yet.')
+    await expect(page.getByRole('tooltip')).toHaveText('Page mode can’t show embedded blocks yet.')
+    await page.keyboard.press('Control+Shift+M')
+    await expect(page.locator(EDITOR)).toHaveCount(0)
   })
 
   test('a page over the block cap keeps block mode, and the switch says why', async ({ page }) => {

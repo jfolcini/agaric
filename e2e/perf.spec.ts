@@ -58,6 +58,13 @@ const CPU = Number(process.env['AGARIC_PERF_CPU'] ?? 1)
 const PAGES = Number(process.env['AGARIC_PERF_PAGES'] ?? 500)
 const BIG_BLOCKS = Number(process.env['AGARIC_PERF_BLOCKS'] ?? 500)
 const TRACE = process.env['AGARIC_PERF_TRACE'] === '1'
+/** A 1×1 PNG, enough for the browser to decode as an image. */
+const PNG_1X1 = [
+  ...Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  ),
+]
 const REVEAL = process.env['AGARIC_PERF_REVEAL'] === '1'
 const TAGS = 50
 const BIG_TITLE = 'Perf big page'
@@ -380,13 +387,14 @@ async function seedBigPage(
   title = BIG_TITLE,
   /**
    * Every block a task, TODO and DONE in turn, with a priority (1, 2, 3 in
-   * turn), a due date, a property and a list style (runs of seven numbered
-   * blocks, then three bullets), and every third a scheduled date too.
+   * turn), a due date, a property, a list style (runs of seven numbered
+   * blocks, then three bullets) and a text attachment, every third a
+   * scheduled date too, and every tenth an image attachment.
    */
   tasks = false,
 ): Promise<void> {
   await page.evaluate(
-    async ({ bigBlocks, bigTitle, linkTargets: targets, tasks: allTasks }) => {
+    async ({ bigBlocks, bigTitle, linkTargets: targets, tasks: allTasks, png }) => {
       const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
         invoke: (cmd: string, args: unknown) => Promise<unknown>
       }
@@ -445,9 +453,23 @@ async function seedBigPage(
           key: 'listStyle',
           value: text(i % 10 < 7 ? 'ordered' : 'bullet'),
         })
+        await invoke('add_attachment_with_bytes', {
+          blockId,
+          filename: `notes-${i}.txt`,
+          mimeType: 'text/plain',
+          bytes: [104, 105],
+        })
+        if (i % 10 === 0) {
+          await invoke('add_attachment_with_bytes', {
+            blockId,
+            filename: `photo-${i}.png`,
+            mimeType: 'image/png',
+            bytes: png,
+          })
+        }
       }
     },
-    { bigBlocks: count, bigTitle: title, linkTargets, tasks },
+    { bigBlocks: count, bigTitle: title, linkTargets, tasks, png: PNG_1X1 },
   )
 }
 
@@ -1485,9 +1507,10 @@ interface ModeSample {
 /**
  * #5691 — page mode against block mode on the same page, at 500, 2,000 and
  * 5,000 blocks (page mode's 500-block cap is lifted for the run), every block
- * a task with a priority, a due date, a property and a list style, a third
- * with a scheduled date too, so each carries its checkbox, list marker, badge
- * and chips in both modes (#5743). Each size
+ * a task with a priority, a due date, a property, a list style and an
+ * attachment, a third with a scheduled date too and a tenth an image, so each
+ * carries its checkbox, list marker, badge, chips and previews in both modes
+ * (#5743). Each size
  * runs `AGARIC_PERF_REPEATS` times (default 3) on a fresh vault, alternating
  * which mode opens the page first; each cell is the median with the band the
  * repeats fell in. Per mode: the open (block mode to its first block, page
