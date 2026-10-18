@@ -704,6 +704,13 @@ export async function restartApp(how: 'close' | 'kill' = 'close'): Promise<void>
   await waitForAppReady()
 }
 
+/** Leave page `title` and come back, so the rows holding `marker` are the backend's. */
+export async function reopenPageHolding(title: string, marker: string): Promise<void> {
+  await navigateTo('Journal')
+  await reopenPageByTitle(title)
+  await blockStaticByMarker(marker).waitForDisplayed({ timeout: NAV_TIMEOUT })
+}
+
 /**
  * Wait for a sonner toast whose text contains `text`. Toasts carry no testid
  * (ui/sonner.tsx); sonner stamps `data-sonner-toast` on each `<li>`.
