@@ -14,12 +14,15 @@
  * refused reads the page again and saves once more: a block deleted elsewhere
  * while edited here is then kept as a new block, with a notice.
  *
- * A task marker or a `#name` left as text in a block becomes the block's task
- * state or the tag once the caret leaves that block or page mode closes
- * (`page-tasks.ts`, `page-tags.ts`). The checkbox, the priority badge and the
- * date chips show what the page store holds, and change it through block
- * mode's commands, after the save, on the same chain; a chip opens block
- * mode's date picker.
+ * A task marker, a `key:: value` line or a `#name` left as text in a block
+ * becomes the block's task state, property or tag once the caret leaves that
+ * block or page mode closes (`page-tasks.ts`, `page-properties.ts`,
+ * `page-tags.ts`). The checkbox, the priority badge and the date chips show
+ * what the page store holds, and change it through block mode's commands,
+ * after the save, on the same chain; a chip opens block mode's date picker.
+ * The property chips show what page mode last read of the page's properties,
+ * which it reads again with each reload; a chip opens block mode's property
+ * editor, the `+N` pill its drawer, and each, once closed, reads them again.
  *
  * Chips go where block mode's go (`useBlockNavigateToLink`, a block of this
  * page by moving the cursor to it), and each save's ops reach `UndoStore`
@@ -60,7 +63,8 @@ import {
   REMOTE_PATCH,
 } from '@/editor/page-mode/page-document'
 import { pageModeExtensions } from '@/editor/page-mode/page-mode-extensions'
-import { type PageModeBlocker, pageModeBlocker } from '@/editor/page-mode/page-mode-fit'
+import { type PageModeBlocker, readPageFit } from '@/editor/page-mode/page-mode-fit'
+import { commitPageProperties, PageProperties } from '@/editor/page-mode/page-properties'
 import {
   createSaveState,
   type PageSaveApi,
@@ -76,7 +80,7 @@ import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
-import { commands, type OpRef } from '@/lib/bindings'
+import { commands, type OpRef, type PropertyRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { newBlockId } from '@/lib/block-id'
 import { t } from '@/lib/i18n'
@@ -91,6 +95,11 @@ import { useSpaceStore } from '@/stores/space'
 
 const BlockDatePicker = lazy(() =>
   import('@/components/block-tree/BlockDatePicker').then((m) => ({ default: m.BlockDatePicker })),
+)
+const BlockPropertyDrawer = lazy(() =>
+  import('@/components/editor/BlockPropertyDrawer').then((m) => ({
+    default: m.BlockPropertyDrawer,
+  })),
 )
 
 /** The User Timing measure each save leaves, the latest only: the perf harness reads it. */
@@ -132,7 +141,10 @@ export function PageModeEditor({
   ref,
 }: PageModeEditorProps): React.ReactElement {
   const pageStore = usePageBlockStoreApi()
-  const [opened, setOpened] = useState<readonly FlatBlock[] | null>(null)
+  const [opened, setOpened] = useState<{
+    blocks: readonly FlatBlock[]
+    properties: Record<string, PropertyRow[]>
+  } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -143,14 +155,14 @@ export function PageModeEditor({
       if (store.loading && store.blocks.length === 0) await store.load()
       if (cancelled) return
       const { blocks, truncatedTotal } = pageStore.getState()
-      const blocker = await pageModeBlocker(blocks, truncatedTotal ?? blocks.length)
+      const { blocker, properties } = await readPageFit(blocks, truncatedTotal ?? blocks.length)
       if (cancelled) return
       if (blocker !== null) {
         onBlocked(blocker)
         return
       }
       await resolveLinks(blocks, () => cancelled)
-      if (!cancelled) setOpened(blocks)
+      if (!cancelled) setOpened({ blocks, properties })
     }
     open().catch((err: unknown) => {
       logger.error('PageModeEditor', 'Failed to open page mode', { pageId }, err)
@@ -165,7 +177,8 @@ export function PageModeEditor({
   return (
     <PageModeDocument
       pageId={pageId}
-      blocks={opened}
+      blocks={opened.blocks}
+      properties={opened.properties}
       onBlocked={onBlocked}
       onNavigateToPage={onNavigateToPage}
       cursorBlockId={cursorBlockId ?? null}
@@ -235,6 +248,8 @@ function cursorInto(editor: Editor, id: string): boolean {
 interface PageModeDocumentProps {
   pageId: string
   blocks: readonly FlatBlock[]
+  /** The blocks' properties, read with them. */
+  properties: Record<string, PropertyRow[]>
   onBlocked: (blocker: PageModeBlocker) => void
   onNavigateToPage?: NavigateToPageFn | undefined
   cursorBlockId: string | null
@@ -244,6 +259,7 @@ interface PageModeDocumentProps {
 function PageModeDocument({
   pageId,
   blocks,
+  properties: openedWith,
   onBlocked,
   onNavigateToPage,
   cursorBlockId,
@@ -256,6 +272,7 @@ function PageModeDocument({
   const { handleToggleTodo, handleTogglePriority } = useBlockProperties()
   const editorRef = useRef<Editor | null>(null)
   const flushRef = useRef<() => Promise<void>>(() => Promise.resolve())
+  const [properties] = useState(() => new PageProperties(openedWith))
   // What the checkbox, the badge, the chips and the task keys do, once the session runs.
   const actions = useRef<PageTaskActions & { pick: (step: () => Promise<void>) => void }>({
     cycle: () => {},
@@ -263,8 +280,11 @@ function PageModeDocument({
     setPriority: () => {},
     openDatePicker: () => {},
     openDateLinkPicker: () => {},
+    openPropertyDrawer: () => {},
+    propertiesEdited: () => {},
     pick: () => {},
   })
+  const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)
   // Block mode's chip navigation: another page opens; a block of this page takes the cursor.
   const noRovingEditor = useRef<RovingEditorHandle | null>(null)
   const handleFlushRef = useRef(() => {
@@ -294,13 +314,23 @@ function PageModeDocument({
       placeholder: t('pageMode.placeholder'),
       tasks: {
         blockOf: (id: string) => pageStore.getState().blocksById.get(id),
-        subscribe: (listener: () => void) => pageStore.subscribe(listener),
+        propertiesOf: (id: string) => properties.of(id),
+        subscribe: (listener: () => void) => {
+          const unsubscribeStore = pageStore.subscribe(listener)
+          const unsubscribeProperties = properties.subscribe(listener)
+          return () => {
+            unsubscribeStore()
+            unsubscribeProperties()
+          }
+        },
         cycle: (id: string) => actions.current.cycle(id),
         cyclePriority: (id: string) => actions.current.cyclePriority(id),
         setPriority: (id: string, level: '1' | '2' | '3') => actions.current.setPriority(id, level),
         openDatePicker: (id: string, mode: 'due' | 'schedule') =>
           actions.current.openDatePicker(id, mode),
         openDateLinkPicker: () => actions.current.openDateLinkPicker(),
+        openPropertyDrawer: (id: string) => actions.current.openPropertyDrawer(id),
+        propertiesEdited: () => actions.current.propertiesEdited(),
       },
     }),
     content: pageDocContent(blocks, newBlockId),
@@ -381,17 +411,16 @@ function PageModeDocument({
       fresh: readonly FlatBlock[],
       refused?: ReadonlySet<string>,
     ): Promise<void> => {
-      const blocker = await pageModeBlocker(
-        fresh,
-        pageStore.getState().truncatedTotal ?? fresh.length,
-      )
+      const fit = await readPageFit(fresh, pageStore.getState().truncatedTotal ?? fresh.length)
       if (editor.isDestroyed) return
-      if (blocker !== null) {
-        blocked(blocker)
+      if (fit.blocker !== null) {
+        blocked(fit.blocker)
         return
       }
       await resolveLinks(fresh, () => editor.isDestroyed)
       if (editor.isDestroyed) return
+      // Before the patch: a block it brings in draws its properties at once.
+      properties.take(fit.properties)
       const { keptAsNew } = applyRemote(editor.view, save, treeRows(fresh), newBlockId, refused)
       if (keptAsNew > 0) {
         notify.info(t('pageMode.keptAsNew', { count: keptAsNew }), {
@@ -401,8 +430,9 @@ function PageModeDocument({
     }
 
     /**
-     * Commit the task markers, then the tags, typed in the blocks changed and
-     * left, or in all of them when page mode closes.
+     * Commit the task markers, then the `key:: value` lines, then the tags,
+     * typed in the blocks changed and left, or in all of them when page mode
+     * closes.
      */
     const commitTyped = async (closing: boolean): Promise<OpRef[]> => {
       const refs: OpRef[] = []
@@ -413,7 +443,12 @@ function PageModeDocument({
         if (!closing && cursorBlock() === id) continue
         typedIn.delete(id)
         const task = await commitPageTask(id, loaded, save, api, pageStore)
-        refs.push(...task.refs, ...(await commitPageTags(id, save, api, task.markdown)))
+        const lines = await commitPageProperties(id, loaded, save, api, task.markdown)
+        refs.push(
+          ...task.refs,
+          ...lines.refs,
+          ...(await commitPageTags(id, save, api, lines.markdown)),
+        )
       }
       return refs
     }
@@ -482,6 +517,26 @@ function PageModeDocument({
         afterSave(id, () => setBlockPriority(pageStore, pageId, id, level)),
       openDatePicker,
       openDateLinkPicker,
+      // After the save, so the block exists: the drawer writes to it.
+      openPropertyDrawer: (id) =>
+        afterSave(id, () => {
+          setDrawerBlockId(id)
+          return Promise.resolve()
+        }),
+      // Read again in turn with the saves: the page, its properties among it.
+      propertiesEdited: () => {
+        void enqueue(async () => {
+          if (!editor.isDestroyed) await bringIn(await read())
+        })
+        // An editor closed by Enter or Escape left the focus nowhere: the caret goes
+        // back, once that key is done with, or the Enter would split the block.
+        setTimeout(() => {
+          const focused = document.activeElement
+          if (!editor.isDestroyed && (focused === null || focused === document.body)) {
+            editor.view.focus()
+          }
+        })
+      },
       // A date picked: written in turn with the saves, so no read of a save's overtakes it.
       pick: (step) => void enqueue(step),
     }
@@ -558,7 +613,7 @@ function PageModeDocument({
         if (savesInFlight.get(pageId) === leaving) savesInFlight.delete(pageId)
       })
     }
-  }, [editor, pageId, blocks, pageStore])
+  }, [editor, pageId, blocks, pageStore, properties])
 
   // The picker closed: the caret goes back where it was. The dialog's own
   // restore aims at its date field, which its autofocus took first.
@@ -607,6 +662,19 @@ function PageModeDocument({
               actions.current.pick(() => handleDatePick(day))
             }}
             onClose={() => setDatePickerOpen(false)}
+          />
+        </Suspense>
+      )}
+      {drawerBlockId !== null && (
+        <Suspense fallback={null}>
+          <BlockPropertyDrawer
+            blockId={drawerBlockId}
+            open
+            onOpenChange={(open) => {
+              if (open) return
+              setDrawerBlockId(null)
+              actions.current.propertiesEdited()
+            }}
           />
         </Suspense>
       )}

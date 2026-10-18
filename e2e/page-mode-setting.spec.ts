@@ -158,17 +158,17 @@ test.describe('page mode’s setting and switch (#5691)', () => {
     await expect(page.locator(EDITOR)).toHaveCount(0)
   })
 
-  test('a page whose block holds a property: the switch finds out when pointed at, and says why', async ({
+  test('a page holding a bullet block: the switch finds out when pointed at, and says why', async ({
     page,
   }) => {
-    const [block] = await seedPage(page, 'Has a property', ['alpha'])
+    const [block] = await seedPage(page, 'Has a bullet', ['alpha'])
     await page.evaluate(
       ({ id }) =>
         (window as unknown as MockWindow).__TAURI_INTERNALS__.invoke('set_property', {
           blockId: id,
-          key: 'effort',
+          key: 'listStyle',
           value: {
-            value_text: '1h',
+            value_text: 'bullet',
             value_num: null,
             value_date: null,
             value_ref: null,
@@ -177,13 +177,13 @@ test.describe('page mode’s setting and switch (#5691)', () => {
         }),
       { id: block as string },
     )
-    await openViaPalette(page, 'Has a property')
+    await openViaPalette(page, 'Has a bullet')
 
     await modeSwitch(page, 'Page').hover()
 
     await expect(modeSwitch(page, 'Page')).toHaveAttribute('aria-disabled', 'true')
     await expect(page.getByRole('tooltip')).toHaveText(
-      'Page mode can’t show block properties or repeating tasks yet.',
+      'Page mode can’t show bullet or numbered blocks yet.',
     )
   })
 

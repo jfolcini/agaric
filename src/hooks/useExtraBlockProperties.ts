@@ -62,7 +62,7 @@ export type BlockPropertiesMap = Record<string, Array<{ key: string; value: stri
  * Only handles the `{key, value}` shape this hook produces; we never
  * insert `undefined` elements, so a null-element guard is unnecessary.
  */
-function arraysShallowEqual(
+export function arraysShallowEqual(
   a: Array<{ key: string; value: string }> | undefined,
   b: Array<{ key: string; value: string }> | undefined,
 ): boolean {
@@ -85,7 +85,9 @@ function arraysShallowEqual(
  * shape: drop the built-in badge fields, flatten the typed value columns
  * (text → date → num), and drop empty values.
  */
-function mapRows(rows: readonly PropertyRow[]): Array<{ key: string; value: string }> {
+export function extraPropertiesOf(
+  rows: readonly PropertyRow[],
+): Array<{ key: string; value: string }> {
   return rows
     .filter((p) => !BUILTIN_PROPERTY_KEYS.has(p.key))
     .map((p) => ({
@@ -128,7 +130,7 @@ export function useExtraBlockProperties(blocks: ReadonlyArray<{ id: string }>): 
       // behaviorally equivalent to omitting the key for every downstream
       // consumer (both render zero rows).
       if (rows == null) continue
-      const mapped = mapRows(rows)
+      const mapped = extraPropertiesOf(rows)
       const prior = prev[id]
       if (arraysShallowEqual(prior, mapped)) {
         // Content unchanged — reuse the prior array reference so

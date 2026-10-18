@@ -1,9 +1,10 @@
 /**
  * Page mode end to end against the mock backend (#5691): a random run of
  * typing, Enter, Backspace, Tab, Shift+Tab, a copy pasted, blocks cut and
- * pasted, paragraphs pasted from outside, a `#name` or a task marker typed and
- * the caret moved to another block, a task's state cycled, a priority or a due
- * or scheduled date set or cleared (#5743), and undo, each step perhaps
+ * pasted, paragraphs pasted from outside, a `#name`, a task marker or a
+ * `key:: value` line typed and the caret moved to another block, a task's
+ * state cycled, a priority, a due or scheduled date or a property set or
+ * cleared (#5743), and undo, each step perhaps
  * followed by a peer's change (an edit, or a block created, moved or deleted) brought in
  * as a reload does, and perhaps by a save whose commands fail before a clean
  * one. After every clean save:
@@ -18,6 +19,10 @@
  *   by the todo-state command, and none other;
  * - each block holds the priority and dates last given it by their commands,
  *   and none other: no save writes over them;
+ * - each block holds the properties last given it, by a `key:: value` line
+ *   typed into it (`commitPageProperties`, which also takes the line out of
+ *   its text) unless the block held that key as text before it was changed,
+ *   or by the property commands, and none other;
  * - an id that survives a step stays on the text it was on: a step that only
  *   types keeps every id, Enter adds one new id beside the block it splits, a
  *   join drops only the joined block's, Tab keeps the order and Shift+Tab the
@@ -63,6 +68,7 @@ import {
   depthOf,
   REMOTE_PATCH,
 } from '@/editor/page-mode/page-document'
+import { commitPageProperties } from '@/editor/page-mode/page-properties'
 import {
   createSaveState,
   type PageSaveApi,
@@ -75,7 +81,8 @@ import { commitPageTask, leadingTask } from '@/editor/page-mode/page-tasks'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import { blockIdOf } from '@/editor/token-ids'
 import { commands } from '@/lib/bindings'
-import type { BlockRow, OpRef } from '@/lib/bindings'
+import type { BlockRow, OpRef, PropertyRow } from '@/lib/bindings'
+import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { nextTaskState, type TodoState } from '@/lib/task-states'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks as mockBlocks, seedBlocks } from '@/lib/tauri-mock/seed'
@@ -210,6 +217,8 @@ const rowsArb = fc
   })
 
 const at = fc.nat(1000)
+/** Text properties the mock defines (`seed.ts`). */
+const PROPERTY_KEYS = ['assignee', 'location'] as const
 const actionArb = fc.oneof(
   fc.record({
     kind: fc.constant('type' as const),
@@ -269,6 +278,19 @@ const actionArb = fc.oneof(
     field: fc.constantFrom('due_date' as const, 'scheduled_date' as const),
     date: fc.constantFrom('2026-10-20', '2026-11-01', null),
   }),
+  fc.record({
+    kind: fc.constant('setProperty' as const),
+    block: fc.nat(),
+    key: fc.constantFrom(...PROPERTY_KEYS),
+    value: fc.constantFrom('Ana', 'Bo', null),
+  }),
+  fc.record({
+    kind: fc.constant('propertyLine' as const),
+    block: fc.nat(),
+    key: fc.constantFrom(...PROPERTY_KEYS),
+    value: fc.constantFrom('Ana', 'Bo'),
+    to: fc.nat(),
+  }),
   fc.record({ kind: fc.constant('undo' as const) }),
 )
 type Action = typeof actionArb extends fc.Arbitrary<infer T> ? T : never
@@ -322,6 +344,10 @@ interface Acted {
   cycled?: string
   /** A priority or a date to give a block through its command; null clears it. */
   field?: { id: string; key: Field; value: string | null }
+  /** A property to give a block through its command; null deletes it. */
+  property?: { id: string; key: string; value: string | null }
+  /** The `key:: value` line typed into the block `tagged`. */
+  line?: { key: string; value: string }
 }
 
 const FIELDS = ['priority', 'due_date', 'scheduled_date'] as const
@@ -352,6 +378,23 @@ function apply(ed: Editor, action: Action): Acted | null {
   caret(ed, index, offset)
   if (action.kind === 'cycleTask')
     return { index, offset, cycled: blockIdOf(ed.state.doc.child(index)) as string }
+  if (action.kind === 'setProperty') {
+    const id = blockIdOf(ed.state.doc.child(index)) as string
+    return { index, offset, property: { id, key: action.key, value: action.value } }
+  }
+  if (action.kind === 'propertyLine') {
+    // Typed only where the caret can then leave the block, for the commit.
+    const others = Array.from({ length: count }, (_, i) => i).filter((i) => i !== index)
+    const to = others[action.to % Math.max(others.length, 1)]
+    if (to === undefined) return { index, offset }
+    const tagged = blockIdOf(ed.state.doc.child(index)) as string
+    const first = ed.state.doc.child(index).firstChild
+    ed.commands.setTextSelection(posIn(ed, index, first?.content.size ?? 0))
+    ed.commands.setHardBreak()
+    type(ed, `${action.key}:: ${action.value}`)
+    caret(ed, to, 0)
+    return { index, offset, tagged, line: { key: action.key, value: action.value } }
+  }
   if (action.kind === 'setPriority' || action.kind === 'setDate') {
     const id = blockIdOf(ed.state.doc.child(index)) as string
     const field =
@@ -596,6 +639,19 @@ function backendFields(page: MockPage): Map<string, string> {
   return held
 }
 
+/** Each live block's properties of `PROPERTY_KEYS` in the mock backend: `id:key`. */
+function backendProperties(page: MockPage): Map<string, string> {
+  const held = new Map<string, string>()
+  for (const [id] of page.live()) {
+    for (const row of dispatch('get_properties', { blockId: id }) as PropertyRow[]) {
+      if ((PROPERTY_KEYS as readonly string[]).includes(row.key)) {
+        held.set(`${id}:${row.key}`, row.value_text ?? '')
+      }
+    }
+  }
+  return held
+}
+
 /** The `#` rule's create: a tag in the mock backend. */
 function createTag(name: string): Promise<string> {
   const tag = dispatch('create_block', {
@@ -638,10 +694,11 @@ function trackLoaded(ed: Editor): Map<string, PMNode | null> {
 
 /**
  * As the editor does after a save: a block the caret left after typing in it
- * has its task marker and its tags committed, then the page is brought in; a
- * task cycled goes through the checkbox's command, and a priority or a date
- * through its own. `states` records the state each block was given, and
- * `fields` its priority and dates, by `id:field`.
+ * has its task marker, its `key:: value` lines and its tags committed, then
+ * the page is brought in; a task cycled goes through the checkbox's command,
+ * and a priority, a date or a property through its own. `states` records the
+ * state each block was given, `fields` its priority and dates, by
+ * `id:field`, and `props` its properties, by `id:key`.
  */
 async function commitAndCycle(
   ed: Editor,
@@ -650,6 +707,7 @@ async function commitAndCycle(
   acted: Acted | null,
   states: Map<string, string>,
   fields: Map<string, string>,
+  props: Map<string, string>,
   loaded: Map<string, PMNode | null>,
   mintKept: () => string,
 ): Promise<void> {
@@ -664,8 +722,21 @@ async function commitAndCycle(
     const typed = held ? null : leadingTask(left)
     if (typed !== null) states.set(tagged, typed.todoState)
     const task = await commitPageTask(tagged, unchanged, save, page.api, noStore)
-    await commitPageTags(tagged, save, page.api, task.markdown)
+    const lines = await commitPageProperties(tagged, unchanged, save, page.api, task.markdown)
+    await commitPageTags(tagged, save, page.api, lines.markdown)
     applyRemote(ed.view, save, page.rows(), mintKept)
+    if (acted?.line !== undefined && save.saved.has(tagged)) {
+      // A key the block held as a line before it was changed stays text.
+      const { key, value } = acted.line
+      const before = unchanged === null ? '' : markdownOf(unchanged)
+      const heldLine = parseInlineProperties(before).some((prop) => prop.key === key)
+      if (!heldLine) props.set(`${tagged}:${key}`, value)
+      const shown = page.live().find(([id]) => id === tagged)?.[2] ?? ''
+      const lineLeft = parseInlineProperties(shown).some(
+        (prop) => prop.key === key && prop.value === value,
+      )
+      expect(lineLeft).toBe(heldLine)
+    }
     const content = page.live().find(([id]) => id === tagged)?.[2] ?? ''
     expect(tagsWrittenAsText(content)).toEqual([])
     if (acted?.task !== undefined && !held) {
@@ -684,6 +755,23 @@ async function commitAndCycle(
     else states.set(cycled, next)
   }
   await setField(acted, save, fields)
+  const property = acted?.property
+  if (property !== undefined && save.saved.has(property.id)) {
+    const { id, key, value } = property
+    if (value === null) {
+      await commands.deleteProperty(id, key)
+      props.delete(`${id}:${key}`)
+    } else {
+      await commands.setProperty(id, key, {
+        value_text: value,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      })
+      props.set(`${id}:${key}`, value)
+    }
+  }
 }
 
 /** Give a block a priority or a date through its command, as the badge, the keys and the picker do. */
@@ -718,6 +806,8 @@ describe('page mode against the mock backend', () => {
           const states = new Map<string, string>()
           // The priority and dates each block was last given, by `id:field`.
           const fields = new Map<string, string>()
+          // The properties each block was last given, by `id:key`.
+          const props = new Map<string, string>()
           const loaded = trackLoaded(ed)
 
           for (const [stepIndex, { action, peer, failures }] of steps.entries()) {
@@ -759,7 +849,7 @@ describe('page mode against the mock backend', () => {
             // A block the save gave a new id: its old one was refused.
             for (const id of idsOf(ed.state.doc)) seen.add(id)
 
-            await commitAndCycle(ed, save, page, acted, states, fields, loaded, mintKept)
+            await commitAndCycle(ed, save, page, acted, states, fields, props, loaded, mintKept)
 
             expectBackendHoldsDoc(ed, page.live())
             expectPeersKept(ed, page, marks)
@@ -767,6 +857,9 @@ describe('page mode against the mock backend', () => {
             expect(backendStates(page)).toEqual(new Map([...states].filter(([id]) => live.has(id))))
             expect(backendFields(page)).toEqual(
               new Map([...fields].filter(([key]) => live.has(key.split(':')[0] as string))),
+            )
+            expect(backendProperties(page)).toEqual(
+              new Map([...props].filter(([key]) => live.has(key.split(':')[0] as string))),
             )
           }
         },
