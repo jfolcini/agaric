@@ -1,4 +1,4 @@
-# Session 2570 — Agenda mode lists the coming occurrences of repeating tasks (#5735)
+# Session 2572 — Agenda mode lists the coming occurrences of repeating tasks (#5735)
 
 #5735 asked for a real-backend spec of Agenda mode's projected occurrences (dashed,
 "Projected") stopping at `repeat-until` / `repeat-count`. Agenda mode showed none:
