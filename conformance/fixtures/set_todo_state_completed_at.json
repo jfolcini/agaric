@@ -1,5 +1,5 @@
 {
-  "description": "`completed_at` is present iff `todo_state = 'DONE'` on every path that writes the state (`write_todo_timestamp_transitions_in_tx`, #5074): stamped on an edge into DONE, cleared on an edge out of it and when a DONE block stops being a task, and never written for an open state. The stamp carries today's date, which the snapshot and the op digest drop, so the ops run through the command leg (`via: \"command\"`; the payload replay writes only the `todo_state` column) and a `query_by_property` step reads WHICH blocks hold one. Seed: S1 (Tasks) > S2 (DONE), S3 (DONE then TODO), S4 (DONE then cleared), S5 (DOING), S6 (DONE by `set_todo_state_batch`), S7 (DONE by `set_property_batch`), S8 (DONE by `set_property`). Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "`completed_at` is present iff `todo_state = 'DONE'` on every path that writes the state (`write_todo_timestamp_transitions_in_tx`, #5074): stamped on an edge into DONE, cleared on an edge out of it and when a DONE block stops being a task, and never written for an open state. `created_at` is stamped on an edge into an open state from none or DONE, and cleared when a block stops being a task. The stamp carries today's date, which the snapshot and the op digest drop, so the ops run through the command leg (`via: \"command\"`; the payload replay writes only the `todo_state` column) and a `query_by_property` step reads WHICH blocks hold one. Seed: S1 (Tasks) > S2 (DONE), S3 (DONE then TODO), S4 (DONE then cleared), S5 (DOING), S6 (DONE by `set_todo_state_batch`), S7 (DONE by `set_property_batch`), S8 (DONE by `set_property`), S9 (TODO then cleared). Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -106,11 +106,30 @@
         "priority": null,
         "scheduled_date": null,
         "todo_state": "DONE"
+      },
+      {
+        "block_type": "content",
+        "content": "stamp then untask",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B9",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 8,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
       }
     ],
     "op_log_digest": {
-      "count": 9,
+      "count": 11,
       "ops": [
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
         {
           "op_type": "set_todo_state"
         },
@@ -197,6 +216,18 @@
       "error": null,
       "name": "property_stamps",
       "returns": ["B8"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "stamp_created_first",
+      "returns": ["B9#todo_state=TODO"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "untask_clears_created",
+      "returns": ["B9#todo_state=null"]
     }
   ],
   "expected_queries": [
@@ -210,6 +241,17 @@
         "B6#parent_id=B1#page_id=B1#position=5#deleted_at=null",
         "B7#parent_id=B1#page_id=B1#position=6#deleted_at=null",
         "B8#parent_id=B1#page_id=B1#position=7#deleted_at=null"
+      ],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "created_at_marks_exactly_the_open_tasks",
+      "rows": [
+        "B3#parent_id=B1#page_id=B1#position=2#deleted_at=null",
+        "B5#parent_id=B1#page_id=B1#position=4#deleted_at=null"
       ],
       "total_count": null
     }
@@ -306,6 +348,25 @@
       "comment": "So does the generic property write (#5394).",
       "name": "property_stamps",
       "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "state": "TODO"
+      },
+      "command": "set_todo_state",
+      "name": "stamp_created_first",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockId": "S9",
+        "state": null
+      },
+      "command": "set_todo_state",
+      "comment": "A block that stops being a task loses `created_at`.",
+      "name": "untask_clears_created",
+      "via": "command"
     }
   ],
   "queries": [
@@ -323,6 +384,21 @@
       "command": "query_by_property",
       "comment": "Exactly the blocks that END in DONE hold a `completed_at` (S2, S6, S7, S8): S3 and S4 were stamped and cleared, S5 never was. No value predicate, so the token pins presence without the date.",
       "name": "completed_at_marks_exactly_the_done_blocks"
+    },
+    {
+      "args": {
+        "request": {
+          "key": "created_at",
+          "limit": 100
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "query_by_property",
+      "comment": "Exactly the blocks that END as an open task hold a `created_at` (S3 reopened from DONE, S5 from no state): S2, S6, S7 and S8 went straight to DONE, S4 was never open, S9 was stamped and cleared. No value predicate, so the token pins presence without the date.",
+      "name": "created_at_marks_exactly_the_open_tasks"
     }
   ],
   "seed": {
@@ -382,6 +458,13 @@
         "id": "S8",
         "parent_id": "S1",
         "position": 7
+      },
+      {
+        "block_type": "content",
+        "content": "stamp then untask",
+        "id": "S9",
+        "parent_id": "S1",
+        "position": 8
       }
     ],
     "properties": [],

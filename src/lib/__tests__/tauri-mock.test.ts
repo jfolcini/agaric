@@ -2177,7 +2177,8 @@ describe('completed_at follows todo_state', () => {
   })
 
   it('appends no clear for a block that holds no stamp', () => {
-    invoke('set_todo_state', { blockId: BLOCK, state: 'TODO' })
+    // CANCELLED holds neither stamp; a TODO block would also clear `created_at`.
+    invoke('set_todo_state', { blockId: BLOCK, state: 'CANCELLED' })
     const before = opLog.length
     invoke('set_todo_state', { blockId: BLOCK, state: null })
     expect(opLog.length).toBe(before + 1)
@@ -2190,6 +2191,38 @@ describe('completed_at follows todo_state', () => {
     expect(completedAt()).toBeNull()
     invoke('set_property_batch', { blockIds: [BLOCK], key: 'todo_state', value: 'DONE' })
     expect(completedAt()).toBe(todayDate())
+  })
+})
+
+describe('created_at follows todo_state', () => {
+  const BLOCK = SEED_IDS.BLOCK_GS_1
+  const createdAt = (): unknown => {
+    const row = invoke('get_property', { blockId: BLOCK, key: 'created_at' }) as Record<
+      string,
+      unknown
+    > | null
+    return row?.['value_date'] ?? null
+  }
+
+  it('is stamped today on an edge into an open state, kept between open states, and cleared on un-tasking', () => {
+    invoke('set_todo_state', { blockId: BLOCK, state: 'TODO' })
+    expect(createdAt()).toBe(todayDate())
+    invoke('set_property', {
+      blockId: BLOCK,
+      key: 'created_at',
+      value: { value_date: '2026-01-01' },
+    })
+    invoke('set_todo_state', { blockId: BLOCK, state: 'DOING' })
+    expect(createdAt()).toBe('2026-01-01')
+    invoke('set_todo_state', { blockId: BLOCK, state: null })
+    expect(createdAt()).toBeNull()
+  })
+
+  it('is not stamped by an edge into DONE, and is stamped again on reopening', () => {
+    invoke('set_todo_state', { blockId: BLOCK, state: 'DONE' })
+    expect(createdAt()).toBeNull()
+    invoke('set_todo_state', { blockId: BLOCK, state: 'TODO' })
+    expect(createdAt()).toBe(todayDate())
   })
 })
 

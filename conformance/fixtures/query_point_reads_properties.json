@@ -27,7 +27,7 @@
         "position": 1,
         "priority": null,
         "scheduled_date": null,
-        "todo_state": "TODO"
+        "todo_state": "CANCELLED"
       },
       {
         "block_type": "content",
@@ -199,10 +199,11 @@
         "blockId": "S2",
         "key": "todo_state",
         "value": {
-          "value_text": "TODO"
+          "value_text": "CANCELLED"
         }
       },
-      "command": "set_property"
+      "command": "set_property",
+      "comment": "CANCELLED, not an open state: a payload replay writes only the column, while the mock's handler also stamps `created_at` on an edge into an open one."
     },
     {
       "args": {

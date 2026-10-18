@@ -390,7 +390,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
       <div className="flex-1 min-w-0 flex flex-col">
         <div
           className={cn(
-            'min-w-0 transition-[text-decoration-color,opacity] duration-moderate',
+            'min-w-0 transition-[text-decoration-color,color] duration-moderate',
             // #1243: NO active-block highlight here. A focused block already
             // gets its own indicator — the `block-editor` box rendered by
             // EditableBlock (`ring-1 ring-border bg-accent/[0.06] shadow-sm`,
@@ -399,7 +399,8 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
             // top of that grey box and let the tint bleed to the left edge
             // behind the bar. Removing it leaves a single, calm focus
             // treatment and tightens the negative space left of the text.
-            isClosedTask && !isFocused ? 'line-through opacity-50' : 'no-underline opacity-100',
+            // Muted by the token, not by opacity: half opacity measures 3.4:1.
+            isClosedTask && !isFocused ? 'line-through text-muted-foreground' : 'no-underline',
           )}
           // #2770 — explicitly opt the editable text OUT of the row's native
           // reschedule-drag (see `rescheduleDragEnabled` on the outer row
