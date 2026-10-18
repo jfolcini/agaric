@@ -1146,11 +1146,26 @@
 .page-mode-editor [data-page-block] {
   @apply relative rounded-md px-3 py-1;
   min-height: 1.75rem;
+  /* Its own formatting context: a list marker's float stays inside it, so a
+     keystroke lays out its block, not every block after it. */
+  display: flow-root;
 }
 /* A task's checkbox (`page-tasks.ts`) sits in that slot, on the first line, as
    block mode's row places it. */
 .page-mode-editor .page-block-controls {
   @apply absolute top-0 right-full mr-1 select-none;
+}
+/* A bullet or numbered block's marker (`page-lists.ts`) leads the text's first
+   line, which wraps under it as block mode's does. It sits outside the
+   editable text, so it floats beside it rather than inline; a click on it
+   lands on that line. An empty block's paragraph sits beside it, so the
+   placeholder follows the marker rather than overlapping it. */
+.page-mode-editor [data-page-block] > .list-marker {
+  float: left;
+  pointer-events: none;
+}
+.page-mode-editor .list-marker + .page-block-content > p.is-editor-empty:first-child {
+  display: flow-root;
 }
 /* The priority badge and date chips sit under the text, as block mode's row
    does; the block's own inset already lines them up with it. */

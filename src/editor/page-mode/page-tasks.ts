@@ -6,8 +6,10 @@
  * draws block mode's own controls from them beside the editable text: the
  * checkbox (`BlockInlineControls`) before it, and under it the priority badge,
  * the due and scheduled chips, the repeat rule and the property chips
- * (`BlockMetadataRow`, in `PageBlockMetadata`). The checkbox and the
- * `cycleTaskState` key (Ctrl+Enter) cycle the state; the badge cycles the
+ * (`BlockMetadataRow`, in `PageBlockMetadata`). A bullet or numbered block's
+ * marker (`page-lists.ts`) leads its first line, plain DOM as block mode's
+ * `ListMarkerDecoration` draws it, redrawn only when it changes. The checkbox
+ * and the `cycleTaskState` key (Ctrl+Enter) cycle the state; the badge cycles the
  * priority and the `priority1`–`priority3` keys (Ctrl+Shift+1–3) set it; a
  * date chip opens block mode's date picker, and `openDatePicker`
  * (Ctrl+Shift+D) opens it to link a date at the caret; a property chip opens
@@ -44,6 +46,7 @@ import {
 } from '@/components/editor/BlockInlineControls'
 import { serialize } from '@/editor/markdown-serializer'
 import { blockDocJson, PageBlock } from '@/editor/page-mode/page-document'
+import type { PageLists } from '@/editor/page-mode/page-lists'
 import type { ShownProperty } from '@/editor/page-mode/page-properties'
 import type { PageSaveApi, PageSaveState } from '@/editor/page-mode/page-save'
 import {
@@ -232,6 +235,7 @@ class PageBlockView implements NodeView {
   readonly contentDOM = document.createElement('div')
   private checkbox: Control<BlockInlineControlsProps> | null = null
   private metadata: Control<PageBlockMetadataProps> | null = null
+  private marker: HTMLElement | null = null
   private shownState: string | null = null
   private shownMetadata: Metadata | null = null
   private revealed = false
@@ -240,12 +244,14 @@ class PageBlockView implements NodeView {
   private readonly tasks: PageTaskSource
   private readonly gate: ControlsGate
   private readonly unsubscribe: () => void
+  private readonly unsubscribeMarker: () => void
 
   constructor(
     node: PMNode,
     attributes: Record<string, unknown>,
     editor: Editor,
     tasks: PageTaskSource,
+    lists: PageLists | null,
   ) {
     this.node = node
     this.editor = editor
@@ -257,7 +263,31 @@ class PageBlockView implements NodeView {
     this.dom.append(this.contentDOM)
     this.show()
     this.unsubscribe = tasks.subscribe(() => this.show())
-    this.gate.watch(this.dom, blockIdOf(node), () => this.reveal())
+    const id = blockIdOf(node)
+    if (lists === null || id === null) this.unsubscribeMarker = () => {}
+    else {
+      this.showMarker(lists.markerOf(id))
+      this.unsubscribeMarker = lists.subscribe(id, () => this.showMarker(lists.markerOf(id)))
+    }
+    this.gate.watch(this.dom, id, () => this.reveal())
+  }
+
+  /** Block mode's list marker, before the text on its first line; none for a plain block. */
+  private showMarker(text: string): void {
+    if (text === '') {
+      this.marker?.remove()
+      this.marker = null
+      return
+    }
+    if (this.marker === null) {
+      this.marker = document.createElement('span')
+      this.marker.className = 'list-marker'
+      this.marker.contentEditable = 'false'
+      this.marker.setAttribute('aria-hidden', 'true')
+      this.marker.setAttribute('data-testid', 'list-marker')
+      this.dom.insertBefore(this.marker, this.contentDOM)
+    }
+    this.marker.textContent = text
   }
 
   /** Mount the controls, and from now on every control the block gains. */
@@ -379,6 +409,7 @@ class PageBlockView implements NodeView {
 
   destroy(): void {
     this.unsubscribe()
+    this.unsubscribeMarker()
     this.gate.unwatch(this.dom)
     this.checkbox?.destroy()
     this.metadata?.destroy()
@@ -457,14 +488,17 @@ const PageTaskKeys = Extension.create<{ tasks: PageTaskSource | null }>({
   },
 })
 
-/** Page mode's block, drawn with its task, priority and dates, and the keys that set them. */
-export function pageTasks(tasks: PageTaskSource) {
+/**
+ * Page mode's block, drawn with its task, priority, dates, properties and
+ * `lists`' marker, and the keys that set them.
+ */
+export function pageTasks(tasks: PageTaskSource, lists: PageLists | null) {
   return [
     PageBlock.extend({
       addNodeView:
         () =>
         ({ node, HTMLAttributes, editor }) =>
-          new PageBlockView(node, HTMLAttributes, editor, tasks),
+          new PageBlockView(node, HTMLAttributes, editor, tasks, lists),
     }),
     PageTaskKeys.configure({ tasks }),
   ]

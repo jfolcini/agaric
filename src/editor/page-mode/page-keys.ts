@@ -49,14 +49,14 @@ const pickerKeys = [
 ]
 
 /** Whether a picker is open in `state`: its Enter, Tab and Escape are its own. */
-function pickerOpen(state: EditorState): boolean {
+export function pickerOpen(state: EditorState): boolean {
   return pickerKeys.some(
     (key) => (key.getState(state) as { active?: boolean } | undefined)?.active === true,
   )
 }
 
 /** Whether `$pos` sits in one of its block's own textblocks, not one inside a list or table. */
-function inOwnTextblock($pos: ResolvedPos): boolean {
+export function inOwnTextblock($pos: ResolvedPos): boolean {
   return $pos.depth === 2 && $pos.parent.isTextblock && $pos.node(1).type.name === PAGE_BLOCK
 }
 

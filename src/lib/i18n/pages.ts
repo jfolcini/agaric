@@ -218,7 +218,6 @@ export const pages: Record<string, string> = {
   'pageMode.switchedToBlocks': '{{reason}} This page is back in block mode.',
   'pageMode.blocked.overCap':
     'Page mode opens pages of up to {{cap}} blocks; this one has {{blocks}}.',
-  'pageMode.blocked.listStyle': 'Page mode can’t show bullet or numbered blocks yet.',
   'pageMode.blocked.attachments': 'Page mode can’t show attachments yet.',
   'pageMode.blocked.queries': 'Page mode can’t show queries yet.',
   'pageMode.blocked.embeds': 'Page mode can’t show embedded blocks yet.',

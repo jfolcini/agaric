@@ -136,20 +136,20 @@ describe('pageModeBlocker', () => {
     })
   })
 
-  it('keeps out a bullet or numbered block, and says why (#5743)', async () => {
+  it('lets in bullet and numbered blocks, and hands their styles over (#5743)', async () => {
     const listStyle = (value: string) => ({ ...property, key: 'listStyle', value_text: value })
-    for (const style of ['bullet', 'ordered']) {
-      vi.mocked(invoke).mockImplementation(
-        mockInvokeCommands({
-          get_batch_properties: () => ({ B1: [property], B2: [listStyle(style)] }),
-          list_attachments_batch: () => ({}),
-        }),
-      )
-      expect(await pageModeBlocker([row(), row({ id: 'B2' })], 2)).toEqual({ kind: 'listStyle' })
-    }
-    expect(blockerMessage({ kind: 'listStyle' })).toBe(
-      'Page mode can’t show bullet or numbered blocks yet.',
+    const rows = { B1: [property, listStyle('bullet')], B2: [listStyle('ordered')] }
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        get_batch_properties: () => rows,
+        list_attachments_batch: () => ({}),
+      }),
     )
+
+    expect(await readPageFit([row(), row({ id: 'B2' })], 2)).toEqual({
+      blocker: null,
+      properties: rows,
+    })
   })
 
   it('keeps out a page whose block holds an attachment', async () => {
