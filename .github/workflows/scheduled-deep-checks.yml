@@ -2629,7 +2629,9 @@ jobs:
           retention-days: 90
 
       - name: Upload fuzz artifacts (crashes)
-        # The corpus is its own 90-day `fuzz-corpus` artifact, uploaded above.
+        # The corpus is its own 90-day `fuzz-corpus` artifact, uploaded above
+        # only by a `main` run whose restore succeeded and whose cmin did not
+        # collapse; a branch dispatch keeps no corpus.
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

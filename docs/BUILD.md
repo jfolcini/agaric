@@ -130,7 +130,7 @@ cargo tauri android dev --target x86_64   # Android emulator
 | Loop | Wall time / edit | Use it for |
 | --- | --- | --- |
 | `npm run dev` (Vite HMR) | ~50 ms | Pure UI work: component layout, styles, copy, interactions wired through `tauri-mock`. |
-| `cargo tauri dev` | Rust relink per Rust edit, ~50 ms (frontend edit) | Anything that hits real backend behaviour: sync, search, materializer, command handlers, sqlx queries, capability permissions. |
+| `cargo tauri dev` | Rust rebuild per Rust edit, ~50 ms (frontend edit) | Anything that hits real backend behaviour: sync, search, materializer, command handlers, sqlx queries, capability permissions. |
 | `cargo tauri android dev --target x86_64` | minutes (cold), ~20 s (incremental) | Mobile-specific layout, touch gestures, Android-only IPC paths, keystore-signed builds. |
 
 `cargo tauri dev` opens the real vault, because nothing sets `AGARIC_DATA_DIR`; export it to a scratch directory first when the session writes data you want to keep out of the vault. Its `beforeDevCommand` typechecks on every launch, so a type error stops the window from opening.
