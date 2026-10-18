@@ -6,6 +6,9 @@
   "platforms": ["linux", "macOS", "windows"],
   "permissions": [
     "core:webview:allow-set-webview-zoom",
+    "core:window:allow-unminimize",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
     "global-shortcut:default",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
