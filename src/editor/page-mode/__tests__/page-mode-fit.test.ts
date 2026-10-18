@@ -1,7 +1,7 @@
 /**
- * What keeps a page out of page mode (#5691): what its rows hold. Its blocks'
- * properties and attachments, read with one IPC each, are what page mode
- * draws of them.
+ * What keeps a page out of page mode (#5691): more blocks than its cap. Its
+ * blocks' properties and attachments, read with one IPC each, are what page
+ * mode draws of them.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -36,52 +36,12 @@ beforeEach(() => {
 })
 
 describe('blockerIn', () => {
-  it('keeps a page of plain text, headings, code and links in page mode', () => {
-    const blocks = [
-      row({ content: 'text' }),
-      row({ id: 'B2', content: '# heading' }),
-      row({ id: 'B3', content: '```js\nx\n```' }),
-      row({ id: 'B4', content: 'see [[01JAAAAAAAAAAAAAAAAAAAAAAA]]' }),
-    ]
-
-    expect(blockerIn(blocks, blocks.length)).toBeNull()
-  })
-
-  it('lets a page of tasks in, every state of them (#5743)', () => {
-    const blocks = [
-      row({ todo_state: 'TODO' }),
-      row({ id: 'B2', todo_state: 'DOING' }),
-      row({ id: 'B3', todo_state: 'DONE' }),
-      row({ id: 'B4', todo_state: 'CANCELLED' }),
-    ]
-
-    expect(blockerIn(blocks, blocks.length)).toBeNull()
-  })
-
-  it('lets a page of priorities and due and scheduled dates in, on tasks or not (#5743)', () => {
-    const blocks = [
-      row({ todo_state: 'TODO', priority: '1', due_date: '2026-10-20' }),
-      row({ id: 'B2', priority: '3' }),
-      row({ id: 'B3', due_date: '2026-10-21' }),
-      row({ id: 'B4', todo_state: 'DONE', scheduled_date: '2026-10-22' }),
-    ]
-
-    expect(blockerIn(blocks, blocks.length)).toBeNull()
-  })
-
-  it.each([
-    ['queries', { content: '{{query todo:TODO}}' }],
-    ['embeds', { content: '{{embed ((01JAAAAAAAAAAAAAAAAAAAAAAA))}}' }],
-  ] as const)('keeps a page holding %s out', (kind, fields) => {
-    expect(blockerIn([row(), row({ id: 'B2', ...fields })], 2)).toEqual({ kind })
-  })
-
   it('keeps a page over the cap out, counting the blocks the store did not load', () => {
-    expect(blockerIn([row()], PAGE_MODE_BLOCK_CAP + 1)).toEqual({
+    expect(blockerIn(PAGE_MODE_BLOCK_CAP + 1)).toEqual({
       kind: 'overCap',
       count: PAGE_MODE_BLOCK_CAP + 1,
     })
-    expect(blockerIn([row()], PAGE_MODE_BLOCK_CAP)).toBeNull()
+    expect(blockerIn(PAGE_MODE_BLOCK_CAP)).toBeNull()
   })
 })
 
@@ -116,6 +76,24 @@ describe('readPageFit', () => {
     )
 
     expect((await readPageFit([row({ todo_state: 'DONE' })], 1)).blocker).toBeNull()
+  })
+
+  it('lets in query and embed blocks, and reads theirs too (#5743)', async () => {
+    const getBatchProperties = vi.fn(() => ({}))
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        get_batch_properties: getBatchProperties,
+        list_attachments_batch: () => ({}),
+      }),
+    )
+    const blocks = [
+      row({ content: '{{query todo:TODO}}' }),
+      row({ id: 'B2', content: '{{embed ((01JAAAAAAAAAAAAAAAAAAAAAAA))}}' }),
+      row({ id: 'B3', content: '{{embed [[01JAAAAAAAAAAAAAAAAAAAAAAA]]}}' }),
+    ]
+
+    expect((await readPageFit(blocks, 3)).blocker).toBeNull()
+    expect(getBatchProperties).toHaveBeenCalledWith({ blockIds: ['B1', 'B2', 'B3'] })
   })
 
   it('lets in the user’s properties and a repeating task’s rule, and hands them over (#5743)', async () => {
@@ -182,12 +160,12 @@ describe('readPageFit', () => {
     })
   })
 
-  it('asks nothing of an empty page, or of one its rows already keep out', async () => {
+  it('asks nothing of an empty page, or of one over the cap', async () => {
     vi.mocked(invoke).mockImplementation(mockInvokeCommands({}))
 
     expect(await readPageFit([], 0)).toEqual({ blocker: null, properties: {}, attachments: {} })
-    expect(await readPageFit([row({ content: '{{query todo:TODO}}' })], 1)).toEqual({
-      blocker: { kind: 'queries' },
+    expect(await readPageFit([row()], PAGE_MODE_BLOCK_CAP + 1)).toEqual({
+      blocker: { kind: 'overCap', count: PAGE_MODE_BLOCK_CAP + 1 },
       properties: {},
       attachments: {},
     })
@@ -208,7 +186,6 @@ describe('readPageFit', () => {
 })
 
 it('blockerMessage says why in a sentence', () => {
-  expect(blockerMessage({ kind: 'queries' })).toBe(t('pageMode.blocked.queries'))
   expect(blockerMessage({ kind: 'overCap', count: PAGE_MODE_BLOCK_CAP + 1 })).toBe(
     t('pageMode.blocked.overCap', { cap: PAGE_MODE_BLOCK_CAP, blocks: PAGE_MODE_BLOCK_CAP + 1 }),
   )

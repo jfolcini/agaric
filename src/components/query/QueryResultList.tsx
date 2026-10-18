@@ -141,7 +141,7 @@ export function QueryResultList({
                 // listbox's roving `tabIndex={-1}` rows anyway. The row's own
                 // click/Enter handler already opens this same page via
                 // `handleBlockNavigation`, so the target stays reachable.
-                <span className="shrink-0 text-xs text-muted-foreground/60 truncate max-w-[120px]">
+                <span className="shrink-0 text-xs text-muted-foreground truncate max-w-[120px]">
                   {pageTitle}
                 </span>
               )}

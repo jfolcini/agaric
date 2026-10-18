@@ -30,11 +30,32 @@ import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { SYSTEM_MANAGED_PROPERTY_KEYS } from '@/lib/property-save-utils'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { seedBlocks } from '@/lib/tauri-mock/seed'
+import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
-import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
+import {
+  createPageBlockStore,
+  PageBlockContext,
+  PageBlockStoreProvider,
+} from '@/stores/page-blocks'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
+
+// Block mode's query builder, stood in as `QueryResult`'s own tests stand it in: Save hands back an expression.
+vi.mock('@/components/dialogs/QueryBuilderModal', () => ({
+  QueryBuilderModal: ({
+    open,
+    onSave,
+  }: {
+    open: boolean
+    onSave: (expression: string) => Promise<void>
+  }) =>
+    open ? (
+      <button type="button" onClick={() => void onSave('tag:personal')}>
+        save query
+      </button>
+    ) : null,
+}))
 
 const mockedInvoke = vi.mocked(invoke)
 const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' } as const
@@ -139,6 +160,18 @@ function liveControls(editor: Editor): number {
   const content = (editor as unknown as { contentComponent: { getSnapshot: () => object } })
     .contentComponent
   return Object.keys(content.getSnapshot()).length
+}
+
+/** How many times the app asked the backend for `cmd`. */
+function callsTo(cmd: string): number {
+  return mockedInvoke.mock.calls.filter(([name]) => name === cmd).length
+}
+
+/** The results block `id` draws of its query. */
+function resultsIn(container: HTMLElement, id: string): NodeListOf<Element> {
+  return container.querySelectorAll(
+    `[data-page-block-id="${id}"] .page-block-rendered [data-testid="query-result-item"]`,
+  )
 }
 
 function docTexts(editor: Editor): string[] {
@@ -415,18 +448,25 @@ describe('PageModeEditor', () => {
     expect(container.querySelector('[data-testid="page-mode-editor"]')).toBeNull()
   })
 
-  it('leaves page mode when a reload brings in what it cannot show', async () => {
-    const { pageId, ids } = seedPage(['first'])
+  it('leaves page mode when a reload brings the page over the cap', async () => {
+    const { pageId } = seedPage(['first'])
     const { container, store, onBlocked } = renderPageMode(pageId)
     await editorIn(container)
 
-    dispatch('edit_block', { blockId: ids[0], toText: '{{query todo:TODO}}' })
+    dispatch('create_blocks_batch', {
+      specs: Array.from({ length: PAGE_MODE_BLOCK_CAP }, (_, i) => ({
+        blockType: 'content',
+        content: `peer ${i}`,
+        parentId: pageId,
+        position: null,
+      })),
+    })
     await act(async () => {
       await store.getState().load()
     })
 
     await waitFor(() => {
-      expect(onBlocked).toHaveBeenCalledWith({ kind: 'queries' })
+      expect(onBlocked).toHaveBeenCalledWith({ kind: 'overCap', count: PAGE_MODE_BLOCK_CAP + 1 })
     })
   })
 })
@@ -2532,6 +2572,29 @@ describe('PageModeEditor mounts a block’s controls as it nears the viewport (#
     expect(inBlock(container, ids[1] as string, '[data-testid="attachment-badge"]')).not.toBeNull()
   })
 
+  it('a query or an embed asks for nothing until it nears the view, or the caret is in it', async () => {
+    const { pageId, ids } = seedPage([
+      'first',
+      '{{query tag:work}}',
+      `{{embed ((${SEED_IDS.BLOCK_GS_1}))}}`,
+    ])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const box = (id: string) => inBlock(container, id, '.page-block-rendered') as HTMLElement
+    const io = await observer()
+    expect(box(ids[1] as string).childElementCount).toBe(0)
+    expect(box(ids[2] as string).childElementCount).toBe(0)
+    expect(callsTo('run_advanced_query')).toBe(0)
+
+    report(io, blockEl(container, ids[1] as string), true)
+    caretTo(editor, 2)
+
+    await waitFor(() => {
+      expect(resultsIn(container, ids[1] as string)).toHaveLength(4)
+    })
+    expect(inBlock(container, ids[2] as string, '[data-testid="embed-container"]')).not.toBeNull()
+  })
+
   it('a runtime with no IntersectionObserver mounts every block’s controls at once', async () => {
     vi.stubGlobal('IntersectionObserver', undefined)
     const { pageId, ids } = seedPage(['one', 'two'])
@@ -2922,5 +2985,325 @@ describe('PageModeEditor lists (#5743)', () => {
     expect(docTexts(editor)).toEqual(['one!', 'two typed', 'dot'])
     expect(changes).toEqual([])
     expect([...container.querySelectorAll('[data-testid="list-marker"]')]).toEqual(drawn)
+  })
+})
+
+describe('PageModeEditor queries and embeds (#5743)', () => {
+  const WELCOME = 'Welcome to Agaric! This is your personal knowledge base.'
+  const embedOf = (id: string) => `{{embed ((${id}))}}`
+  const blockEl = (container: HTMLElement, id: string) =>
+    container.querySelector(`[data-page-block-id="${id}"]`) as HTMLElement
+  const inBlock = (container: HTMLElement, id: string) => within(blockEl(container, id))
+
+  /** Open the builder from block `id`'s query and press its Save. */
+  async function saveFromBuilder(container: HTMLElement, id: string): Promise<void> {
+    fireEvent.click(
+      inBlock(container, id).getByRole('button', { name: t('queryBuilder.editButton') }),
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'save query' }))
+  }
+
+  it('draws a query’s results and an embedded block as block mode does, outside the text, with no a11y violations', async () => {
+    const { pageId, ids } = seedPage(['first', '{{query tag:work}}', embedOf(SEED_IDS.BLOCK_GS_1)])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    await waitFor(() => {
+      expect(resultsIn(container, ids[1] as string)).toHaveLength(4)
+    })
+    const embed = await inBlock(container, ids[2] as string).findByTestId('embed-container')
+    await waitFor(() => {
+      expect(embed).toHaveTextContent(WELCOME)
+    })
+    for (const id of [ids[1], ids[2]] as string[]) {
+      const block = blockEl(container, id)
+      const drawn = block.querySelector('.page-block-rendered') as HTMLElement
+      expect(block).toHaveAttribute('data-rendered')
+      expect(drawn.contentEditable).toBe('false')
+      expect(block.querySelector('.page-block-content')?.contains(drawn)).toBe(false)
+    }
+    expect(blockEl(container, ids[0] as string)).not.toHaveAttribute('data-rendered')
+    expect(docTexts(editor)).toEqual(['first', '{{query tag:work}}', embedOf(SEED_IDS.BLOCK_GS_1)])
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
+  it('an embedded block’s link names its page, as block mode’s tree resolves it', async () => {
+    const other = seedPage(['elsewhere'], 'Other page')
+    const source = seedPage([`see [[${other.pageId}]]`], 'Source page')
+    const { pageId, ids } = seedPage(['first', embedOf(source.ids[0] as string)])
+    // The app's boot preload of the space's page titles.
+    useResolveStore.getState().set(other.pageId, 'Other page', false)
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+
+    const embed = await inBlock(container, ids[1] as string).findByTestId('embed-container')
+
+    await waitFor(() => {
+      expect(within(embed).getByTestId('block-link-chip')).toHaveTextContent('Other page')
+    })
+  })
+
+  it('the caret in a query shows its text to edit; the results follow the edit once the caret leaves', async () => {
+    const { pageId, ids } = seedPage(['first', '{{query tag:work}}'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(resultsIn(container, ids[1] as string)).toHaveLength(4)
+    })
+    act(() => {
+      editor.view.focus()
+    })
+    caretTo(editor, 1)
+    expect(blockEl(container, ids[1] as string)).toHaveClass('page-block-current')
+
+    act(() => {
+      editor
+        .chain()
+        .setTextSelection({ from: at(editor, 1, 12), to: at(editor, 1, 16) })
+        .insertContent('personal')
+        .run()
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    // Saved, and the caret still in it: the results are the ones it came with.
+    expect(backendText(ids[1] as string)).toBe('{{query tag:personal}}')
+    expect(blockEl(container, ids[1] as string)).toHaveTextContent('tag: work')
+    expect(resultsIn(container, ids[1] as string)).toHaveLength(4)
+
+    caretTo(editor, 0)
+
+    await waitFor(() => {
+      expect(resultsIn(container, ids[1] as string)).toHaveLength(2)
+    })
+    expect(blockEl(container, ids[1] as string)).toHaveTextContent('tag: personal')
+    expect(blockEl(container, ids[1] as string)).toHaveTextContent('Buy groceries')
+  })
+
+  it('a click on a query’s results puts the caret in its text; an embed’s Open source goes to its page', async () => {
+    const onNavigateToPage = vi.fn()
+    const { pageId, ids } = seedPage(['first', '{{query tag:work}}', embedOf(SEED_IDS.BLOCK_GS_1)])
+    const { container } = renderPageMode(pageId, { onNavigateToPage })
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(resultsIn(container, ids[1] as string)).toHaveLength(4)
+    })
+
+    fireEvent.click(resultsIn(container, ids[1] as string)[0] as Element)
+
+    expect(editor.state.selection.$head.index(0)).toBe(1)
+    expect(onNavigateToPage).not.toHaveBeenCalled()
+
+    await act(async () => {
+      fireEvent.click(
+        await inBlock(container, ids[2] as string).findByRole('button', {
+          name: t('embed.openSource'),
+        }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(onNavigateToPage.mock.calls[0]?.[0]).toBe(SEED_IDS.PAGE_GETTING_STARTED)
+    })
+  })
+
+  it('a query whose results cannot be read shows block mode’s error, and Retry reads them', async () => {
+    let refuse = true
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'run_advanced_query' && refuse) throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+    const { pageId, ids } = seedPage(['first', '{{query tag:work}}'])
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+
+    const alert = await inBlock(container, ids[1] as string).findByRole('alert')
+    refuse = false
+    fireEvent.click(within(alert).getByRole('button', { name: t('action.retry') }))
+
+    await waitFor(() => {
+      expect(resultsIn(container, ids[1] as string)).toHaveLength(4)
+    })
+  })
+
+  it('an embed of a missing block or of one that cannot be read, and a query that finds nothing, show block mode’s states', async () => {
+    const warn = vi.spyOn(logger, 'warn')
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'get_block' && (args as { blockId: string }).blockId === SEED_IDS.BLOCK_GS_1) {
+        throw new Error('database locked')
+      }
+      return dispatch(cmd, args)
+    })
+    const { pageId, ids } = seedPage([
+      embedOf('01JZZZZZZZZZZZZZZZZZZZZZZZ'),
+      embedOf(SEED_IDS.BLOCK_GS_1),
+      '{{query tag:nothing-has-it}}',
+    ])
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+
+    for (const id of [ids[0], ids[1]] as string[]) {
+      expect(await inBlock(container, id).findByTestId('embed-unresolved')).toHaveTextContent(
+        t('embed.unresolved'),
+      )
+    }
+    expect(warn).toHaveBeenCalledWith(
+      'EmbedContainer',
+      'embed target fetch failed',
+      { targetId: SEED_IDS.BLOCK_GS_1 },
+      expect.any(Error),
+    )
+    expect(
+      await inBlock(container, ids[2] as string).findByText(t('query.noResults')),
+    ).toBeVisible()
+  })
+
+  it('the query builder’s Save writes after the text is saved, and the page reads it back', async () => {
+    const { pageId, ids } = seedPage(['first', '{{query tag:work}}'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(resultsIn(container, ids[1] as string)).toHaveLength(4)
+    })
+    typeAt(editor, 0, 5, '!')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    // As the real backend can: a read of the page answered before an edit sent first commits.
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'edit_block') await new Promise((resolve) => setTimeout(resolve, 20))
+      return dispatch(cmd, args)
+    })
+
+    await saveFromBuilder(container, ids[1] as string)
+
+    await waitFor(() => {
+      expect(docTexts(editor)).toEqual(['first!', '{{query tag:personal}}'])
+    })
+    expect(backendText(ids[1] as string)).toBe('{{query tag:personal}}')
+    await waitFor(() => {
+      expect(resultsIn(container, ids[1] as string)).toHaveLength(2)
+    })
+    expect(screen.queryByRole('button', { name: 'save query' })).toBeNull()
+  })
+
+  it('a builder Save the backend refuses says so, and the builder and the text stay', async () => {
+    const { pageId, ids } = seedPage(['first', '{{query tag:work}}'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(resultsIn(container, ids[1] as string)).toHaveLength(4)
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'edit_block') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    await saveFromBuilder(container, ids[1] as string)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('error.saveFailed'))
+    })
+    expect(screen.getByRole('button', { name: 'save query' })).toBeInTheDocument()
+    expect(backendText(ids[1] as string)).toBe('{{query tag:work}}')
+    expect(docTexts(editor)).toEqual(['first', '{{query tag:work}}'])
+  })
+
+  it('typing elsewhere, the caret passing through, its save and a reload redraw no result or embed', async () => {
+    const { pageId, ids } = seedPage(['first', '{{query tag:work}}', embedOf(SEED_IDS.BLOCK_GS_1)])
+    const { container, handle, store } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(resultsIn(container, ids[1] as string)).toHaveLength(4)
+    })
+    const embed = await inBlock(container, ids[2] as string).findByTestId('embed-container')
+    await waitFor(() => {
+      expect(embed).toHaveTextContent(WELCOME)
+    })
+    const query = inBlock(container, ids[1] as string).getByTestId('query-result')
+    const asked = callsTo('run_advanced_query')
+    const draw = vi.spyOn(ReactRenderer.prototype, 'render')
+    // An earlier test's spy on the prototype is this one, and counted this page's first draws.
+    draw.mockClear()
+    act(() => {
+      editor.view.focus()
+    })
+
+    typeAt(editor, 0, 5, ' typed')
+    caretTo(editor, 1)
+    caretTo(editor, 2)
+    caretTo(editor, 0)
+    typeAt(editor, 0, 0, '!')
+    // Keys ask nothing; a save does, as block mode's does (`recordGraphStructureChange`).
+    expect(callsTo('run_advanced_query')).toBe(asked)
+    await act(async () => {
+      await handle.current?.flush()
+      await store.getState().load()
+      await handle.current?.flush()
+      await store.getState().load()
+    })
+
+    expect(backendText(ids[0] as string)).toBe('!first typed')
+    expect(draw).not.toHaveBeenCalled()
+    expect(inBlock(container, ids[1] as string).getByTestId('query-result')).toBe(query)
+    expect(inBlock(container, ids[2] as string).getByTestId('embed-container')).toBe(embed)
+  })
+
+  it('an embed of a block of this page shows its text as saved, read once a save, not in a loop', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    dispatch('edit_block', { blockId: ids[1], toText: embedOf(ids[0] as string) })
+    // Each answer in a task of its own, as the real IPC's: a loop of reads then shows as a count.
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      await new Promise((resolve) => setTimeout(resolve))
+      return dispatch(cmd, args)
+    })
+    const handle = createRef<PageModeEditorHandle>()
+    // Registered, as `PageEditor`'s is: the embed's own store of this page mirrors it.
+    const { container } = render(
+      <PageBlockStoreProvider pageId={pageId}>
+        <PageModeEditor pageId={pageId} onBlocked={vi.fn()} ref={handle} />
+      </PageBlockStoreProvider>,
+    )
+    const editor = await editorIn(container)
+    const embed = () => inBlock(container, ids[1] as string).getByTestId('embed-container')
+    await waitFor(() => {
+      expect(embed()).toHaveTextContent('first')
+    })
+
+    typeAt(editor, 0, 5, ' edited')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    await waitFor(() => {
+      expect(embed()).toHaveTextContent('first edited')
+    })
+    const reads = callsTo('load_page_subtree')
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    })
+    expect(callsTo('load_page_subtree')).toBe(reads)
+  })
+
+  it('a query of this page lists a block tagged here once the tag is saved, as block mode’s does', async () => {
+    const { pageId, ids } = seedPage(['first', 'second', '{{query tag:work}}'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(resultsIn(container, ids[2] as string)).toHaveLength(4)
+    })
+
+    typeAt(editor, 0, 5, ' #work')
+    caretTo(editor, 1)
+
+    await waitFor(() => {
+      expect(resultsIn(container, ids[2] as string)).toHaveLength(5)
+    })
+    expect(
+      [...resultsIn(container, ids[2] as string)].some((row) =>
+        row.textContent?.startsWith('first'),
+      ),
+    ).toBe(true)
   })
 })

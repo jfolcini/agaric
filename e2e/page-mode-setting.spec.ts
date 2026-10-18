@@ -1,10 +1,9 @@
 /**
  * Page mode's setting and switch (#5691) against the mock backend: Settings ›
  * Editor › *Edit pages as* opens pages in page mode; a page header's Blocks |
- * Page switch, and Ctrl+Shift+M, change only the page on screen; a page holding
- * what page mode cannot show yet, or over its cap, keeps block mode and the
- * switch says why; a phone offers neither. Axe on the settings row and the
- * switch.
+ * Page switch, and Ctrl+Shift+M, change only the page on screen; a page over
+ * page mode's cap keeps block mode and the switch says why; a phone offers
+ * neither. Axe on the settings row and the switch.
  */
 
 import { createRequire } from 'node:module'
@@ -136,56 +135,30 @@ test.describe('page mode’s setting and switch (#5691)', () => {
     await expect(page.locator('[data-testid="block-editor"]')).toBeVisible()
   })
 
-  test('a page holding a query keeps block mode, the switch saying why, even with the setting on Page', async ({
+  test('a page over the block cap keeps block mode, the switch saying why, even with the setting on Page', async ({
     page,
   }) => {
-    await seedPage(page, 'Has a query', ['{{query todo:TODO}}', 'plain'])
-    await chooseInSettings(page, 'Page')
-
-    await openViaPalette(page, 'Has a query')
-
-    await expect(page.locator('[data-testid="block-static"]').first()).toBeVisible()
-    await expect(page.locator(EDITOR)).toHaveCount(0)
-    const pageRadio = modeSwitch(page, 'Page')
-    await expect(pageRadio).toHaveAttribute('aria-disabled', 'true')
-    await expect(pageRadio).toHaveAccessibleDescription('Page mode can’t show queries yet.')
-    await pageRadio.hover()
-    await expect(page.getByRole('tooltip')).toHaveText('Page mode can’t show queries yet.')
-    expect(await axeViolations(page, '[role="radiogroup"]')).toEqual([])
-
-    await page.keyboard.press('Control+Shift+M')
-    await expect(page.getByText('Page mode can’t show queries yet.').last()).toBeVisible()
-    await expect(page.locator(EDITOR)).toHaveCount(0)
-  })
-
-  test('a page holding an embed keeps block mode, and the switch says why when pointed at', async ({
-    page,
-  }) => {
-    const [source] = await seedPage(page, 'Embedded from', ['shown elsewhere'])
-    await seedPage(page, 'Has an embed', [`{{embed ((${source}))}}`, 'plain'])
-    await openViaPalette(page, 'Has an embed')
-
-    await modeSwitch(page, 'Page').hover()
-
-    await expect(modeSwitch(page, 'Page')).toHaveAttribute('aria-disabled', 'true')
-    await expect(page.getByRole('tooltip')).toHaveText('Page mode can’t show embedded blocks yet.')
-    await page.keyboard.press('Control+Shift+M')
-    await expect(page.locator(EDITOR)).toHaveCount(0)
-  })
-
-  test('a page over the block cap keeps block mode, and the switch says why', async ({ page }) => {
     await seedPage(
       page,
       'Over the cap',
       Array.from({ length: 501 }, (_, i) => `block ${i}`),
     )
+    await chooseInSettings(page, 'Page')
+
     await openViaPalette(page, 'Over the cap')
 
-    await expect(modeSwitch(page, 'Page')).toHaveAttribute('aria-disabled', 'true')
-    await expect(modeSwitch(page, 'Page')).toHaveAccessibleDescription(
-      'Page mode opens pages of up to 500 blocks; this one has 501.',
-    )
+    const why = 'Page mode opens pages of up to 500 blocks; this one has 501.'
+    await expect(page.locator('[data-testid="block-static"]').first()).toBeVisible()
+    await expect(page.locator(EDITOR)).toHaveCount(0)
+    const pageRadio = modeSwitch(page, 'Page')
+    await expect(pageRadio).toHaveAttribute('aria-disabled', 'true')
+    await expect(pageRadio).toHaveAccessibleDescription(why)
+    await pageRadio.hover()
+    await expect(page.getByRole('tooltip')).toHaveText(why)
+    expect(await axeViolations(page, '[role="radiogroup"]')).toEqual([])
+
     await page.keyboard.press('Control+Shift+M')
+    await expect(page.getByText(why).last()).toBeVisible()
     await expect(page.locator(EDITOR)).toHaveCount(0)
     await expect(page.locator('[data-testid="block-static"]').first()).toBeVisible()
   })

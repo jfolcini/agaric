@@ -198,6 +198,12 @@ export interface QueryResultProps {
   onNavigate?: ((pageId: string) => void) | undefined
   /** Resolve block title by ID */
   resolveBlockTitle?: ((id: string) => string) | undefined
+  /**
+   * Write the expression the builder saved; resolves whether it did. The page
+   * store's `edit` of `blockId` when absent. Page mode writes it in turn with
+   * its saves (#5743).
+   */
+  onSave?: ((expression: string) => Promise<boolean>) | undefined
 }
 
 export function QueryResult({
@@ -205,6 +211,7 @@ export function QueryResult({
   blockId,
   onNavigate,
   resolveBlockTitle,
+  onSave,
 }: QueryResultProps): React.ReactElement {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState(false)
@@ -295,7 +302,8 @@ export function QueryResult({
       // refetches on its own — calling `fetchResults()` here would just
       // re-run the OLD expression from this closure before that prop
       // update lands.
-      const ok = await editPageBlock(blockId, `{{query ${newExpression}}}`)
+      const ok = await (onSave?.(newExpression) ??
+        editPageBlock(blockId, `{{query ${newExpression}}}`))
       if (!ok) return
       setBuilderOpen(false)
       // Edge case the prop-driven refetch above can't cover: if the saved
@@ -311,7 +319,7 @@ export function QueryResult({
       // call above had.
       if (newExpression === expression) fetchResults()
     },
-    [blockId, editPageBlock, expression, fetchResults],
+    [blockId, editPageBlock, expression, fetchResults, onSave],
   )
 
   return (
