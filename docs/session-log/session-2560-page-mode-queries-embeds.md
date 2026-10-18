@@ -1,4 +1,4 @@
-# Session 2548 — Page mode shows queries and embeds
+# Session 2560 — Page mode shows queries and embeds
 
 Slice 7 of #5743, after the attachments slice (#5837). A page holding a
 `{{query …}}` or an `{{embed …}}` block now opens in page mode. The `queries`
@@ -39,7 +39,13 @@ and `embeds` blockers and their `pageMode.blocked.*` strings are gone. The cap
   These are block mode's on-leave semantics.
 - The browser's caret skips hidden text, so a small plugin steps the arrows
   into such a block. Without it, ArrowDown from the block above went past two
-  hidden blocks (Playwright).
+  hidden blocks (Playwright). It runs at priority 99, behind every
+  default-priority extension. TipTap runs the last-registered of equal
+  priorities first, and this plugin came after the pickers. So in #5844's first
+  round, ↓ in a `#` picker open in the block above a query moved the caret into
+  the query instead of the highlight. The block then counted as left, and the
+  half-typed `#wo` became a new tag. The other page-mode key plugins already
+  check `pickerOpen`, or bind only chords no picker takes.
 - Page mode also gets block mode's `BlockResolversProvider` around the editor.
   Without it, a link in an embed's rows had no resolver and showed its
   `[[0000…]]` fallback, even for a title the cache held.
@@ -122,6 +128,11 @@ the same page. The fade is gone from `QueryResultList` and `QueryResultTable`.
 
   It needed `page-mode.spec`'s existing Escape-then-blur wait before the
   palette: without it Ctrl+K went to the editor (3 of 4).
+- Playwright `page-mode.spec.ts`, from #5844's review: ` #wo` typed above a
+  query, then ↓, moves the picker's highlight. The caret stays in that block,
+  the backend holds `first #wo`, and no `wo` tag exists. ↑ in a picker below
+  an embed likewise. Red: the plugin back at the default priority (the picker
+  closed, as the caret left the block).
 - `page-mode-setting.spec.ts`: the query and embed cases are folded into the
   over-cap test: the setting on Page, the tooltip, axe, and Ctrl+Shift+M's
   notice. Red: a cap that never blocks (the page opened in page mode).
