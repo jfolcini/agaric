@@ -24,12 +24,11 @@ jobs:
     permissions:
       actions: write
     steps:
-      # The Claude workflows are left running: the review judges the code, not
-      # CI, and a new push re-runs it anyway. So is DCO: it takes seconds, and
-      # a run cancelled while queued needs a manual re-run. Every API failure
-      # is a warning, never a failure: a fork or Dependabot PR's token is
-      # read-only, and a run may finish between the listing and its cancel.
-      # The failed job already carries the red.
+      # The Claude review is left running: it judges the code, not CI. So is
+      # DCO: it takes seconds, and a run cancelled while queued needs a manual
+      # re-run. Every API failure is a warning, never a failure: a fork or
+      # Dependabot PR's token is read-only, and a run may finish between the
+      # listing and its cancel. The failed job already carries the red.
       - name: Cancel the PR's unfinished workflow runs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -42,7 +41,7 @@ jobs:
           if ! runs=$(gh api "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100" --jq '
             .workflow_runs[]
             | select(.status != "completed" and (.id | tostring) != env.OWN_RUN)
-            | select(.path | test("/(claude|claude-code-review|dco)\\.yml(@|$)") | not)
+            | select(.path | test("/(claude-code-review|dco)\\.yml(@|$)") | not)
             | "\(.id) \(.name)"'); then
             echo "::warning::Could not list the workflow runs of $HEAD_SHA."
             runs=''

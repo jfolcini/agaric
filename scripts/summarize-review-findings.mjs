@@ -454,9 +454,10 @@ function renderVerdict({ state, findings, parts, perBody, shortfall, unbacked })
  * @param {{reviews?: object[], comments?: object[], headSha?: string, reviewerLogin?: string}} opts
  */
 export function summarize({ reviews = [], comments = [], headSha = '', reviewerLogin = '' }) {
-  // The reviewer re-reviews on every push, so the review that describes the
-  // code being merged is the one submitted AGAINST THIS COMMIT — not merely the
-  // most recent one on the PR. See `reviewsForCommit`.
+  // A PR can carry reviews of several pushes (each `re-review` label runs
+  // one), so the review that describes the code being merged is the one
+  // submitted AGAINST THIS COMMIT — not merely the most recent one on the PR.
+  // See `reviewsForCommit`.
   const configured = authoredByReviewer(reviewerLogin)
   const forCommit = reviewsForCommit(reviews, headSha, configured)
   const review = forCommit.at(-1) ?? null
