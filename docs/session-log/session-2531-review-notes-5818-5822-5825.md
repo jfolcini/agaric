@@ -71,6 +71,8 @@ while page mode treats a block made by Enter as all typed.
   numbered, not after any other block. `computeListOrdinals` groups blocks by
   parent, so children nested between two numbered siblings do not restart it.
 - `page-mode-fit.ts`'s header no longer breaks mid-sentence.
+- `page-lists.ts` uses `Pick<FlatBlock, 'id' | 'depth'>`, which `computeListOrdinals` takes, in place of its own `Item`.
+- A list style write settles once, with what was written or `null`, not a second time to redraw; no test counts redraws, because the extra one changed no marker and so notified nobody.
 
 **Gates:** `npx vitest run src/editor/page-mode src/components/pages`
 (1,080 tests), `npm run typecheck`, `npm run typecheck:e2e`,
