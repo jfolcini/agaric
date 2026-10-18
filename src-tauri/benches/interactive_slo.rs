@@ -1386,7 +1386,7 @@ fn bench_list_blocks(c: &mut Criterion) {
     assert_under_budget("list_blocks (paginated) @ 100K", &acc, BUDGET_MS);
 }
 
-/// `batch_resolve` — resolve 50 ids in a 100K DB. Budget: 5 ms.
+/// `batch_resolve` — resolve 50 ids in a 100K DB. Budget: 1 ms.
 ///
 /// SQL-review Phase 4 (commit `4a4128fd`) tightened the space filter
 /// from `COALESCE(b.page_id, b.id) IN (...)` to `b.page_id IN (...)`,
@@ -1399,7 +1399,7 @@ fn bench_list_blocks(c: &mut Criterion) {
 /// planner re-evaluates the unindexed `b.page_id IS NULL` filter for
 /// every `json_each(?1)` row.
 fn bench_batch_resolve(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 5.0;
+    const BUDGET_MS: f64 = 1.0;
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_batch_resolve"));
@@ -2193,10 +2193,9 @@ fn time_filtered_blocks_query(
 }
 
 /// `filtered_blocks_query` — the agenda / query-block filter on a key present
-/// on 20 of 100K blocks (#5426). Budget: 10 ms, provisional until a
-/// `bench-slo` run measures it.
+/// on 20 of 100K blocks (#5426). Budget: 1 ms.
 fn bench_filtered_blocks_query(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 10.0;
+    const BUDGET_MS: f64 = 1.0;
 
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
@@ -2244,10 +2243,9 @@ fn bench_filtered_blocks_query(c: &mut Criterion) {
 /// `list_pages_with_metadata` with `PathGlob "Notes/*"` — `PagesTreeSection`'s
 /// descendant lookup on every page open (no sort, so `Alphabetical`; the
 /// 100-row page limit), over 100K pages of which 20 sit under `Notes/`. The
-/// first page also runs the COUNT. Budget: 10 ms, provisional until a
-/// `bench-slo` run measures it (#5426).
+/// first page also runs the COUNT (#5426). Budget: 5 ms.
 fn bench_list_pages_with_metadata_namespace(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 10.0;
+    const BUDGET_MS: f64 = 5.0;
     const PAGE_SIZE: i64 = 100;
     const NAMESPACE_CHILDREN: usize = 20;
 
@@ -2357,9 +2355,9 @@ fn bench_list_pages_with_metadata_namespace(c: &mut Criterion) {
     );
 }
 
-/// `create_block` — one new content block on top of a 100K DB. Budget: 60 ms.
+/// `create_block` — one new content block on top of a 100K DB. Budget: 10 ms.
 fn bench_create_block(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 60.0;
+    const BUDGET_MS: f64 = 10.0;
     let rt = Rc::new(Runtime::new().unwrap());
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_create_block"));
@@ -3087,8 +3085,10 @@ fn bench_list_page_links(c: &mut Criterion) {
 /// today-anchored catch-up, 10K safety bound) is still stateful Rust and thus
 /// un-pushable into SQL; #2601's win is moving that expansion to write time
 /// behind a bounded horizon, not translating it to a CTE.
+///
+/// Budget: 10 ms at every size.
 fn bench_list_projected_agenda(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 200.0;
+    const BUDGET_MS: f64 = 10.0;
 
     // Near-term query window anchored at the device `today` the rebuild also
     // anchors to, so every seeded block's projected occurrences land in the
@@ -3189,9 +3189,9 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
 /// page (#5421). Before #5421 any `range_start < today` expanded every
 /// repeating block on the fly; the rebuild now also materializes the
 /// `BACKWARD_WINDOW_DAYS` before its reference date, so a day inside that
-/// window is the same index scan as the forward read above.
+/// window is the same index scan as the forward read above. Budget: 5 ms.
 fn bench_list_projected_agenda_past_day(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 200.0;
+    const BUDGET_MS: f64 = 5.0;
 
     // `seed_repeating_blocks` bases block `i` at `today - k`, `k = i % 30 + 1`,
     // weekly. `today - 10` is an occurrence of the bases `k = 17` and `k = 24`
@@ -3310,10 +3310,9 @@ async fn seed_query_by_property_fixture(pool: &SqlitePool) -> Vec<String> {
 }
 
 /// `query_by_property` — a key every one of 100K blocks carries, filtered to a
-/// value 20 of them hold (#5426). Budget: 5 ms, provisional until a
-/// `bench-slo` run measures it.
+/// value 20 of them hold (#5426). Budget: 1 ms.
 fn bench_query_by_property_selective_value(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 5.0;
+    const BUDGET_MS: f64 = 1.0;
 
     let rt = Runtime::new().unwrap();
     let dir = TempDir::new().unwrap();
@@ -3403,7 +3402,7 @@ fn bench_query_by_property_selective_value(c: &mut Criterion) {
 const TAGS_1K_BUDGET_MS: f64 = 30.0;
 const TAGS_10K_BUDGET_MS: f64 = 64.0;
 const SEARCH_SHORT_BUDGET_MS: f64 = 30.0;
-const SEARCH_WORD_BUDGET_MS: f64 = 30.0;
+const SEARCH_WORD_BUDGET_MS: f64 = 10.0;
 
 /// `list_all_tags_in_space` — the Tags view's open read of `tags_cache`, with
 /// `n_tags` tags spread round-robin over the 100K blocks (#5366).
@@ -4745,8 +4744,8 @@ mod mcp_reads {
     const TAG_COUNT: usize = 20;
     /// Every this-many seeded block is a `TODO`: the `query` probe's matches.
     const TODO_EVERY: usize = 100;
-    /// The 30 ms tier #5366 sets for interactive reads.
-    const BUDGET_MS: f64 = 30.0;
+    /// One budget for every MCP probe here, sized by the slowest of them.
+    const BUDGET_MS: f64 = 10.0;
 
     fn tag_id(i: usize) -> String {
         format!("01MCPTAG{i:018}")
@@ -5052,7 +5051,7 @@ criterion_group!(
     bench_move_block,
     // #2601 — graduated from the problem tier: the bounded-horizon
     // materialization makes the warm-cache read an O(window) index scan that
-    // clears the 200 ms budget with margin at every fixture size.
+    // clears its budget with margin at every fixture size.
     bench_list_projected_agenda,
     bench_list_projected_agenda_past_day,
     bench_query_by_property_selective_value,
