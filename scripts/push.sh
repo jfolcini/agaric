@@ -35,6 +35,9 @@
 #   scripts/push.sh -u origin my-branch   # set upstream + push
 #   scripts/push.sh --force-with-lease    # any git push flag is forwarded
 #
+# One leading `--` is dropped: `just push -- -u origin my-branch` forwards it,
+# and `git push -- -u …` would read `-u` as the repository.
+#
 # A plain `git push` still works and still auto-verifies (via the
 # pre-push hook) — it just risks the stale-connection failure above on a
 # slow verify. Prefer this wrapper for anything non-trivial.
@@ -114,8 +117,8 @@
 # THE PRE-PUSH HOOK IS NOT FULLY COVERED (#3883)
 # -----------------------------------------------
 # "Verifying (CI-equivalent)" above runs `verify-ci-equivalent.sh`, which
-# is Phase A of the real pre-push hook (`prek run --all-files --hook-stage
-# pre-commit`, plus vitest/nextest scoped to the push range) — deliberately
+# is Phase A of the real pre-push hook (`prek run --from-ref <merge-base>
+# --hook-stage pre-commit`, plus vitest/nextest scoped to the push range) — deliberately
 # only the SLOW checks, run once, before the connection opens. It is a
 # SUBSET: prek hooks staged `pre-push` in prek.toml (cargo-clippy,
 # cargo-fmt --check, better-npm-audit, knip, lychee, …) are NOT re-run by
@@ -554,6 +557,8 @@ verify_landed() {
 }
 
 ROOT="$(git rev-parse --show-toplevel)"
+
+[ "${1:-}" = "--" ] && shift
 
 # Resolve (and validate) the destination FIRST — it costs a git config
 # read, and an unpushable refspec is not worth an ~8-minute gate to

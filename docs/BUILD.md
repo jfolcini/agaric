@@ -8,7 +8,7 @@ Everything you need to build, test, and release Agaric. Self-contained.
 ```bash
 bash scripts/setup.sh                    # ONE command: Node + deps + .env + dev DB + prek hook toolchain
 cargo tauri dev                          # run the app
-prek run --all-files                     # run every CI gate locally (or: just check)
+prek run --all-files                     # every pre-commit-stage hook, whole tree (or: just check); not all of CI
 ```
 
 **`scripts/setup.sh` is the single canonical dev-environment setup — run it and it handles the repository-managed toolchain.** `npm run setup` and `just setup` are exact aliases for it (use whichever you have; `just` is optional). It is idempotent, so re-run it any time. It provisions the Node version pinned in [`.nvmrc`](../.nvmrc) via `nvm` when your active `node` does not satisfy the `engines.node` range, runs `npm ci`, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` at compile time), seeds the sidecar placeholder, provisions the local dev DB via `scripts/setup-dev-db.sh`, and installs the prek hook toolchain via `scripts/setup-hooks.sh` (see [Hook toolchain](#hook-toolchain) below). System package installation stays opt-in so normal local setup never invokes a privileged package manager; Claude's remote hook supplies `--install-system-deps` on its disposable Linux VM. The sidecar placeholder is also re-run automatically by `beforeDevCommand`, so `cargo tauri dev` needs no manual prep step after the platform prerequisites are present. On Claude's cloud VMs setup runs automatically — see [Claude Code on the web](#claude-code-on-the-web).

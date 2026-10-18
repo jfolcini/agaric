@@ -162,8 +162,8 @@ just setup                   # = npm run setup (full bootstrap, incl. hook toolc
 just install-hooks           # (re)install the prek toolchain + git hooks
 just dev                     # cargo tauri dev
 just test                    # Vitest + cargo nextest
-just check                   # prek run --all-files (local CI mirror)
-just verify                  # pre-push CI-equivalent verifier
+just check                   # prek run --all-files (pre-commit-stage hooks only, not all of CI)
+just verify                  # pre-push verifier (range-scoped tests; clippy/knip/lychee run in the pre-push hook)
 just push                    # verify-then-push (use instead of raw `git push`)
 ```
 
