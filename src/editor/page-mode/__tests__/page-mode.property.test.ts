@@ -343,7 +343,11 @@ const B2 = blockId(2)
  * before the save, so the block is kept under a new id and the line stays
  * text, then moved by Enter or a cut into a block that did not hold it, which
  * the caret then leaves; or left in that block, which a task marker then
- * changes, so the key it held stays text.
+ * changes, so the key it held stays text. And an undo of a cut pasted where a
+ * block starts, after a peer created a block just before it: the block kept the
+ * pasted block's id, whose text the next undo brought back under a new one
+ * (`prosemirror-transform` before 1.12.2 dropped an attribute step mapped over
+ * an insertion at its position).
  */
 const EXAMPLES: Array<[Row[], Step[]]> = [
   [
@@ -409,6 +413,23 @@ const EXAMPLES: Array<[Row[], Step[]]> = [
         peer: null,
         failures: null,
       },
+    ],
+  ],
+  [
+    [[B1, 0, 'alpha']],
+    [
+      {
+        action: { kind: 'paste', from: 0, count: 1, to: 0, at: 0 },
+        peer: { kind: 'create', parent: 0, at: 0, text: 'peer ' },
+        failures: null,
+      },
+      {
+        action: { kind: 'cutPaste', from: 1, count: 1, to: 0 },
+        peer: { kind: 'create', parent: 0, at: 0, text: 'peer ' },
+        failures: null,
+      },
+      { action: { kind: 'undo' }, peer: null, failures: null },
+      { action: { kind: 'undo' }, peer: null, failures: null },
     ],
   ],
 ]
