@@ -348,7 +348,9 @@ const B2 = blockId(2)
  * block starts, after a peer created a block just before it: the block kept the
  * pasted block's id, whose text the next undo brought back under a new one
  * (`prosemirror-transform` before 1.12.2 dropped an attribute step mapped over
- * an insertion at its position).
+ * an insertion at its position). The same undo after a peer rewrote the joined
+ * block: its first character, the peer's, held the pasted block's id, so the
+ * cut text came back under a new one (`restoredIds` in `page-block-ids.ts`).
  */
 const EXAMPLES: Array<[Row[], Step[]]> = [
   [
@@ -427,6 +429,22 @@ const EXAMPLES: Array<[Row[], Step[]]> = [
       {
         action: { kind: 'cutPaste', from: 1, count: 1, to: 0 },
         peer: { kind: 'create', parent: 0, at: 0, text: 'peer ' },
+        failures: null,
+      },
+      { action: { kind: 'undo' }, peer: null, failures: null },
+      { action: { kind: 'undo' }, peer: null, failures: null },
+    ],
+  ],
+  [
+    [
+      [B1, 0, 'alpha'],
+      [B2, 0, 'alpha'],
+    ],
+    [
+      { action: { kind: 'cutPaste', from: 1, count: 1, to: 0 }, peer: null, failures: null },
+      {
+        action: { kind: 'tab', block: 0 },
+        peer: { kind: 'edit', block: 0, text: 'peer ' },
         failures: null,
       },
       { action: { kind: 'undo' }, peer: null, failures: null },
@@ -1144,7 +1162,11 @@ describe('page mode against the mock backend', () => {
           }
         },
       ),
-      { numRuns: 150, examples: EXAMPLES },
+      // fast-check counts the examples in `numRuns`, so every one runs ahead of
+      // the random runs. A run is a real editor driven step by step, which is
+      // this test's cost. Each CI run draws a new seed, so the count sets how
+      // soon a rare sequence turns up; a deep search is a long local run.
+      { numRuns: EXAMPLES.length + 50, examples: EXAMPLES },
     )
   })
 })
