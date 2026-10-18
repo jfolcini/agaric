@@ -8,7 +8,8 @@
  *  - Vim keys (j/k) when vim: true (ignored in horizontal mode)
  *  - Home/End when homeEnd: true
  *  - PageUp/PageDown when pageUpDown: true
- *  - onSelect called on Enter / Space (skipped when onSelect not provided)
+ *  - onSelect called on Enter / Space (skipped when onSelect not provided or the key's
+ *    default is already prevented)
  *  - focusedIndex resets when itemCount changes
  *  - Every key returns false when itemCount === 0
  *  - Returns true for handled keys, false for unhandled
@@ -411,6 +412,23 @@ describe('useListKeyboardNavigation', () => {
       act(() => {
         handled = result.current.handleKeyDown(keyEvent(' '))
       })
+      expect(handled).toBe(false)
+    })
+
+    // A row that acted on the key itself has prevented its default; selecting the
+    // cursor row too would act twice.
+    it.each(['Enter', ' '])('does not call onSelect on %j once its default is prevented', (key) => {
+      const onSelect = vi.fn()
+      const { result } = renderHook(() => useListKeyboardNavigation({ itemCount: 5, onSelect }))
+      const event = new KeyboardEvent('keydown', { key, cancelable: true })
+      event.preventDefault()
+
+      let handled = true
+      act(() => {
+        handled = result.current.handleKeyDown(event)
+      })
+
+      expect(onSelect).not.toHaveBeenCalled()
       expect(handled).toBe(false)
     })
   })
