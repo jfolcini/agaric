@@ -14,10 +14,12 @@
  * document until it holds something (`page-save.ts`). Depth is kept a tree:
  * the first block at 0, each other at most one deeper than the block before.
  * A transaction marked `REMOTE_PATCH` brings in the backend's own ids
- * (`remote-patch.ts`), which these rules leave as they are.
+ * (`remote-patch.ts`), which these rules leave as they are. An undo or a redo
+ * puts back the ids its history recorded (`restoredIds`).
  */
 
 import { Extension } from '@tiptap/core'
+import { isHistoryTransaction } from '@tiptap/pm/history'
 import { Fragment, type Node as PMNode, type NodeType, Slice } from '@tiptap/pm/model'
 import { type EditorState, Plugin, PluginKey, type Transaction } from '@tiptap/pm/state'
 
@@ -112,6 +114,26 @@ function incoming(slice: Slice, state: EditorState, type: NodeType, known: Reado
   return asBlocks(slice, type, depthOf($from.node(1)))
 }
 
+/**
+ * The ids after an undo or a redo: each block keeps the id its steps put back,
+ * unless another block holds it too. History knows which text held which id;
+ * the rules (`ids`) follow first tokens, and a peer's text patched in since,
+ * outside history, can start a block with a token history never moved. Any
+ * other block takes its id by the rules, unless a block kept that id.
+ */
+function restoredIds(doc: PMNode, ids: ReadonlyArray<string | null>): Array<string | null> {
+  const held: Array<string | null> = []
+  doc.forEach((node) => held.push(blockIdOf(node)))
+  const sole = (id: string | null): id is string =>
+    id !== null && held.indexOf(id) === held.lastIndexOf(id)
+  const kept = new Set(held.filter(sole))
+  return held.map((id, i) => {
+    if (sole(id)) return id
+    const rule = ids[i] ?? null
+    return rule === null || kept.has(rule) ? null : rule
+  })
+}
+
 interface PageBlockIdsOptions {
   /** Mints a new block's id; a test passes a deterministic one. */
   mintId: () => string
@@ -141,9 +163,13 @@ export const PageBlockIds = Extension.create<PageBlockIdsOptions>({
           const remote = transactions.some((tr) => tr.getMeta(REMOTE_PATCH) === true)
           const structural = transactions.some((tr) => tr.docChanged && changesBlocks(tr, type))
           if (!remote && !structural && !takesIds(transactions)) return null
-          const ids = remote
+          const rules = remote
             ? null
             : idsAfter(transactions, oldState.doc, newState.doc, PAGE_BLOCK_TOKENS)
+          const ids =
+            rules !== null && transactions.some(isHistoryTransaction)
+              ? restoredIds(newState.doc, rules)
+              : rules
           const tr = newState.tr
           let previousDepth = -1
           newState.doc.forEach((node, offset, i) => {
