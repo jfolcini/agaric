@@ -53,6 +53,13 @@ export interface SlashCommandContext {
   openPropertyDrawer: (blockId: string) => void
   /** Open the voice-note recorder (#5364); the recording attaches to `blockId`. */
   openVoiceNoteRecorder: (blockId: string) => void
+  /**
+   * The block's text where the editor's document holds more than the block:
+   * page mode's is the page (#5743), so a content command reads the block's
+   * text there and writes it back into the document, which saves it. Block
+   * mode leaves it out: its document is the block, written with `edit_block`.
+   */
+  blockText?: { read: () => string; write: (markdown: string) => void }
 }
 
 export type SlashHandler = (ctx: SlashCommandContext, item: PickerItem) => Promise<void> | void

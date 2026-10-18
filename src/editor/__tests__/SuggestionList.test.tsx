@@ -481,27 +481,28 @@ describe('SuggestionList', () => {
     expect(categoryHeaders[1]).toHaveTextContent('Dates')
   })
 
-  it('category headers render as <h3> elements with implicit level=3', () => {
+  it('each category names its group of options, with no a11y violations', async () => {
     const command = vi.fn()
     const items: PickerItem[] = [
       { id: '1', label: 'TODO', category: 'slashCommand.categories.tasks' },
       { id: '2', label: 'DATE', category: 'slashCommand.categories.dates' },
     ]
 
-    render(<SuggestionList items={items} command={command} />)
+    const { container } = render(<SuggestionList items={items} command={command} />)
 
-    const headings = screen.getAllByRole('heading', { level: 3 })
-    expect(headings).toHaveLength(2)
-    expect(headings[0]).toHaveTextContent('Tasks')
-    expect(headings[1]).toHaveTextContent('Dates')
-
-    // Headings must be real <h3> elements (not divs with role="heading"),
-    // and must not be focusable: keyboard nav only iterates the interactive
-    // `role="option"` items.
-    for (const heading of headings) {
-      expect(heading.tagName).toBe('H3')
-      expect(heading).not.toHaveAttribute('tabindex')
+    // A listbox owns options and groups of options only: a heading in it is
+    // not one (`aria-required-children`), so the category is the group's name.
+    expect(screen.getByRole('group', { name: 'Tasks' })).toContainElement(
+      screen.getByRole('option', { name: 'TODO' }),
+    )
+    expect(screen.getByRole('group', { name: 'Dates' })).toContainElement(
+      screen.getByRole('option', { name: 'DATE' }),
+    )
+    // Keyboard nav only iterates the interactive `role="option"` items.
+    for (const header of screen.getAllByTestId('suggestion-category')) {
+      expect(header).not.toHaveAttribute('tabindex')
     }
+    expect(await axe(container)).toHaveNoViolations()
   })
 
   it('keyboard nav skips category headers and only iterates option items', () => {
@@ -610,11 +611,11 @@ describe('SuggestionList', () => {
       { id: '3', label: 'CODE', category: 'slashCommand.categories.structure' },
     ]
 
-    render(<SuggestionList items={items} command={command} />)
+    const { container } = render(<SuggestionList items={items} command={command} />)
 
-    const separators = screen.getAllByRole('separator')
-    // Should have separators between groups (2 separators for 3 groups)
-    expect(separators).toHaveLength(2)
+    // A rule between groups (2 for 3 groups), drawn only: a separator is no child of a listbox.
+    expect(container.querySelectorAll('hr')).toHaveLength(2)
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
   })
 
   it('does not render category headers for items without categories', () => {

@@ -79,11 +79,20 @@ export function mergeSlashHandlerTables(
   return { exact, prefix }
 }
 
-async function dispatchSlashCommand(
+/**
+ * Run the picked command on `ctx.blockId`, and record it in the slash menu's
+ * MRU (#1105, its own namespace) so an empty `/` can show a "Recent" band.
+ * Recorded before dispatch; the band join (in `searchSlashCommands`) skips ids
+ * absent from the base catalog, so recording expanded sub-option ids (e.g.
+ * `priority-high`) is harmless. Block mode and page mode (#5743) both run
+ * commands through here.
+ */
+export async function runSlashCommand(
   tables: SlashHandlerTables,
   ctx: SlashCommandContext,
   item: PickerItem,
 ): Promise<void> {
+  addRecentCommand(item.id, RECENT_SLASH_PREFIX)
   const exact = tables.exact[item.id]
   if (exact) {
     await exact(ctx, item)
@@ -95,6 +104,18 @@ async function dispatchSlashCommand(
       return
     }
   }
+}
+
+/** Every command's handler but `/template`'s, whose picker state is its caller's. */
+export function useSlashHandlers(): SlashHandlerTables {
+  const date = useSlashCommandDate()
+  const property = useSlashCommandProperty()
+  const structural = useSlashCommandStructural()
+  const marks = useSlashCommandMarks()
+  return useMemo(
+    () => mergeSlashHandlerTables(date, property, structural, marks),
+    [date, property, structural, marks],
+  )
 }
 
 export function useBlockSlashCommands({
@@ -114,10 +135,7 @@ export function useBlockSlashCommands({
   openVoiceNoteRecorder,
 }: UseBlockSlashCommandsParams): UseBlockSlashCommandsReturn {
   const template = useSlashCommandTemplate({ focusedBlockId, rootParentId, blocks, load, t })
-  const date = useSlashCommandDate()
-  const property = useSlashCommandProperty()
-  const structural = useSlashCommandStructural()
-  const marks = useSlashCommandMarks()
+  const handlers = useSlashHandlers()
 
   const handleCheckboxSyntax = useCheckboxSyntax({
     focusedBlockId,
@@ -130,8 +148,8 @@ export function useBlockSlashCommands({
   const openTablePicker = () => setTablePickerOpen(true)
 
   const tables = useMemo(
-    () => mergeSlashHandlerTables(template.tables, date, property, structural, marks),
-    [template.tables, date, property, structural, marks],
+    () => mergeSlashHandlerTables(template.tables, handlers),
+    [template.tables, handlers],
   )
 
   // Bundle every per-call dispatcher input into a single ref. This is what
@@ -177,15 +195,9 @@ export function useBlockSlashCommands({
   const handleSlashCommand = useCallback(
     async (item: PickerItem) => {
       if (!focusedBlockId) return
-      // #1105 — record the run into the slash-menu MRU (own namespace, no
-      // collision with palette command ids) so empty `/` can surface a
-      // "Recent" band. Recorded before dispatch; the band join (in
-      // `searchSlashCommands`) skips ids absent from the base catalog, so
-      // recording expanded sub-option ids (e.g. `priority-high`) is harmless.
-      addRecentCommand(item.id, RECENT_SLASH_PREFIX)
       const { tables: t_, ...rest } = inputsRef.current
       const ctx: SlashCommandContext = { blockId: focusedBlockId, ...rest }
-      await dispatchSlashCommand(t_, ctx, item)
+      await runSlashCommand(t_, ctx, item)
     },
     [focusedBlockId],
   )

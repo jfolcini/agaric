@@ -392,16 +392,24 @@ export const SuggestionList = ({
         >
           {groups
             ? groups.map((group, groupIdx) => (
-                <fieldset key={group.category || '__ungrouped__'} className="border-none p-0 m-0">
+                <fieldset
+                  key={group.category || '__ungrouped__'}
+                  className="border-none p-0 m-0"
+                  aria-labelledby={group.category ? `${listboxId}-group-${groupIdx}` : undefined}
+                >
                   {group.category && (
                     <>
-                      {groupIdx > 0 && <hr className="border-t border-border/50 my-1" />}
-                      <h3
+                      {groupIdx > 0 && (
+                        <hr role="none" className="border-t border-border/50 my-1" />
+                      )}
+                      <div
+                        role="none"
+                        id={`${listboxId}-group-${groupIdx}`}
                         className="px-2 pt-1.5 pb-1 text-xs font-medium text-muted-foreground"
                         data-testid="suggestion-category"
                       >
                         {t(group.category)}
-                      </h3>
+                      </div>
                     </>
                   )}
                   {group.items.map(({ item, flatIndex }) => renderItem(item, flatIndex))}
