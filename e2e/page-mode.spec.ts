@@ -708,6 +708,80 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     expect(violations).toEqual([])
   })
 
+  test('a page of tasks opens in page mode; a click, Ctrl+Enter and a typed marker set them, and they stay', async ({
+    page,
+  }) => {
+    // axe reads colours, which a fade in progress makes wrong.
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const { pageId, ids } = await seedRows(page, 'Page tasks', [
+      [0, 'buy milk'],
+      [0, 'call mom'],
+      [0, 'shipped'],
+      [0, 'plain'],
+    ])
+    await invoke(page, 'set_todo_state', { blockId: ids[0], state: 'TODO' })
+    await invoke(page, 'set_todo_state', { blockId: ids[2], state: 'DONE' })
+    await openInPageMode(page, 'Page tasks', 4)
+    const marker = (id: string | undefined) =>
+      page.locator(`${EDITOR} [data-page-block-id="${id}"] [data-testid="task-marker"]`)
+    const label = (state: string) => `Task: ${state}. Click to cycle.`
+    const state = async (id: string | undefined) =>
+      (await invoke<{ todo_state: string | null }>(page, 'get_block', { blockId: id })).todo_state
+
+    await expect(marker(ids[0])).toHaveAttribute('aria-label', label('TODO'))
+    await expect(marker(ids[2])).toHaveAttribute('aria-label', label('DONE'))
+    await expect(marker(ids[3])).toHaveCount(0)
+    await expect(
+      page.locator(`${EDITOR} [data-page-block-id="${ids[2]}"] .page-block-content`),
+    ).toHaveCSS('text-decoration-line', 'line-through')
+
+    await marker(ids[0]).click()
+    await expect(marker(ids[0])).toHaveAttribute('aria-label', label('DOING'))
+    await expect.poll(() => state(ids[0])).toBe('DOING')
+
+    await caret(page, 3, 'end')
+    await page.keyboard.press('Control+Enter')
+    await expect(marker(ids[3])).toHaveAttribute('aria-label', label('TODO'))
+    await expect.poll(() => state(ids[3])).toBe('TODO')
+
+    await caret(page, 1, 0)
+    await page.keyboard.type('[ ] ')
+    await expect.poll(async () => (await shown(page))[1]?.text).toBe('[ ] call mom')
+    await expect(marker(ids[1])).toHaveCount(0)
+    // An arrow pressed in the frame the last key is drawn in is taken back by ProseMirror's selection.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+    await page.keyboard.press('ArrowDown')
+    await expect(marker(ids[1])).toHaveAttribute('aria-label', label('TODO'))
+    await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('call mom')
+    expect((await shown(page))[1]?.text).toBe('call mom')
+    expect(await state(ids[1])).toBe('TODO')
+
+    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    await page.keyboard.press('Escape')
+    await expect(page.locator(EDITOR)).not.toBeFocused()
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Page tasks')
+    await expect(marker(ids[0])).toHaveAttribute('aria-label', label('DOING'))
+    await expect(marker(ids[1])).toHaveAttribute('aria-label', label('TODO'))
+    await expect(marker(ids[2])).toHaveAttribute('aria-label', label('DONE'))
+    await expect(marker(ids[3])).toHaveAttribute('aria-label', label('TODO'))
+    expect((await shown(page)).map((b) => b.text)).toEqual([
+      'buy milk',
+      'call mom',
+      'shipped',
+      'plain',
+    ])
+    await page.addScriptTag({ path: axePath })
+    const violations = await page.evaluate(async () => {
+      const { axe } = window as unknown as {
+        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
+      }
+      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
+      return found.map((v) => v.id)
+    })
+    expect(violations).toEqual([])
+  })
+
   test('/ and :: are plain text: no menu or picker takes Enter, which splits the block', async ({
     page,
   }) => {

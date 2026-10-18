@@ -136,33 +136,33 @@ test.describe('page mode’s setting and switch (#5691)', () => {
     await expect(page.locator('[data-testid="block-editor"]')).toBeVisible()
   })
 
-  test('a page holding a task keeps block mode, the switch saying why, even with the setting on Page', async ({
+  test('a page holding a priority keeps block mode, the switch saying why, even with the setting on Page', async ({
     page,
   }) => {
-    const [task] = await seedPage(page, 'Has a task', ['do it', 'plain'])
+    const [urgent] = await seedPage(page, 'Has a priority', ['do it', 'plain'])
     await page.evaluate(
       ({ id }) =>
-        (window as unknown as MockWindow).__TAURI_INTERNALS__.invoke('set_todo_state', {
+        (window as unknown as MockWindow).__TAURI_INTERNALS__.invoke('set_priority', {
           blockId: id,
-          state: 'TODO',
+          level: '1',
         }),
-      { id: task as string },
+      { id: urgent as string },
     )
     await chooseInSettings(page, 'Page')
 
-    await openViaPalette(page, 'Has a task')
+    await openViaPalette(page, 'Has a priority')
 
     await expect(page.locator('[data-testid="block-static"]').first()).toBeVisible()
     await expect(page.locator(EDITOR)).toHaveCount(0)
     const pageRadio = modeSwitch(page, 'Page')
     await expect(pageRadio).toHaveAttribute('aria-disabled', 'true')
-    await expect(pageRadio).toHaveAccessibleDescription('Page mode can’t show tasks yet.')
+    await expect(pageRadio).toHaveAccessibleDescription('Page mode can’t show priorities yet.')
     await pageRadio.hover()
-    await expect(page.getByRole('tooltip')).toHaveText('Page mode can’t show tasks yet.')
+    await expect(page.getByRole('tooltip')).toHaveText('Page mode can’t show priorities yet.')
     expect(await axeViolations(page, '[role="radiogroup"]')).toEqual([])
 
     await page.keyboard.press('Control+Shift+M')
-    await expect(page.getByText('Page mode can’t show tasks yet.').last()).toBeVisible()
+    await expect(page.getByText('Page mode can’t show priorities yet.').last()).toBeVisible()
     await expect(page.locator(EDITOR)).toHaveCount(0)
   })
 

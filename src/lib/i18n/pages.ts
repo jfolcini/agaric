@@ -218,7 +218,6 @@ export const pages: Record<string, string> = {
   'pageMode.switchedToBlocks': '{{reason}} This page is back in block mode.',
   'pageMode.blocked.overCap':
     'Page mode opens pages of up to {{cap}} blocks; this one has {{blocks}}.',
-  'pageMode.blocked.tasks': 'Page mode can’t show tasks yet.',
   'pageMode.blocked.priorities': 'Page mode can’t show priorities yet.',
   'pageMode.blocked.dates': 'Page mode can’t show due or scheduled dates yet.',
   'pageMode.blocked.properties': 'Page mode can’t show block properties yet.',

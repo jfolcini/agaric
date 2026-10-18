@@ -14,22 +14,23 @@ import { bumpFlushSeq, commitTypedTags } from '@/stores/inline-property-commit'
 import { tagsWrittenAsText } from '@/stores/unmount-flush'
 
 /**
- * Write the tags block `id` holds as text, as last saved, as the tags they
- * name. Resolves the edit's refs, none when nothing was written.
+ * Write the tags block `id` holds as text, as last saved or as `markdown` when
+ * a commit wrote it since, as the tags they name. Resolves the edit's refs,
+ * none when nothing was written.
  */
 export async function commitPageTags(
   id: string,
   save: PageSaveState,
   api: PageSaveApi,
+  markdown = save.saved.get(id)?.markdown,
 ): Promise<OpRef[]> {
-  const saved = save.saved.get(id)
-  if (saved === undefined) return []
-  const tags = tagsWrittenAsText(saved.markdown)
+  if (markdown === undefined) return []
+  const tags = tagsWrittenAsText(markdown)
   if (tags.length === 0) return []
   const refs: OpRef[] = []
   await commitTypedTags({
     blockId: id,
-    content: saved.markdown,
+    content: markdown,
     tags,
     textSaved: Promise.resolve(true),
     mySeq: bumpFlushSeq(id),

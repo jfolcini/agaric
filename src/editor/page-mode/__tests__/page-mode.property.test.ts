@@ -1,8 +1,9 @@
 /**
  * Page mode end to end against the mock backend (#5691): a random run of
  * typing, Enter, Backspace, Tab, Shift+Tab, a copy pasted, blocks cut and
- * pasted, paragraphs pasted from outside, a `#name` typed and the caret moved
- * to another block (#5743), and undo, each step perhaps followed
+ * pasted, paragraphs pasted from outside, a `#name` or a task marker typed and
+ * the caret moved to another block, a task's state cycled (#5743), and undo,
+ * each step perhaps followed
  * by a peer's change (an edit, or a block created, moved or deleted) brought in
  * as a reload does, and perhaps by a save whose commands fail before a clean
  * one. After every clean save:
@@ -12,6 +13,9 @@
  *   holds something);
  * - a block the caret left after a `#name` was typed in it holds that name as
  *   a tag, written by the editor's tag commit (`commitPageTags`) after the save;
+ * - each block holds the task state last given it, by a marker typed at its
+ *   start (`commitPageTask`, which also takes the marker out of its text) or
+ *   by the todo-state command, and none other;
  * - an id that survives a step stays on the text it was on: a step that only
  *   types keeps every id, Enter adds one new id beside the block it splits, a
  *   join drops only the joined block's, Tab keeps the order and Shift+Tab the
@@ -51,7 +55,12 @@ import {
   type Row,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
-import { blockDocJson, depthOf } from '@/editor/page-mode/page-document'
+import {
+  blockDocJson,
+  changedBlocks,
+  depthOf,
+  REMOTE_PATCH,
+} from '@/editor/page-mode/page-document'
 import {
   createSaveState,
   type PageSaveApi,
@@ -60,9 +69,12 @@ import {
   type TreeRow,
 } from '@/editor/page-mode/page-save'
 import { commitPageTags } from '@/editor/page-mode/page-tags'
+import { commitPageTask, leadingTask } from '@/editor/page-mode/page-tasks'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import { blockIdOf } from '@/editor/token-ids'
+import { commands } from '@/lib/bindings'
 import type { BlockRow, OpRef } from '@/lib/bindings'
+import { nextTaskState, type TodoState } from '@/lib/task-states'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks as mockBlocks, seedBlocks } from '@/lib/tauri-mock/seed'
 import { buildFlatTree } from '@/lib/tree-utils'
@@ -233,6 +245,17 @@ const actionArb = fc.oneof(
     name: fc.constantFrom('newtag', 'Work'),
     to: fc.nat(),
   }),
+  fc.record({
+    kind: fc.constant('taskMarker' as const),
+    block: fc.nat(),
+    marker: fc.constantFrom(
+      ['[ ] ', 'TODO'] as const,
+      ['- [x] ', 'DONE'] as const,
+      ['[/] ', 'DOING'] as const,
+    ),
+    to: fc.nat(),
+  }),
+  fc.record({ kind: fc.constant('cycleTask' as const), block: fc.nat() }),
   fc.record({ kind: fc.constant('undo' as const) }),
 )
 type Action = typeof actionArb extends fc.Arbitrary<infer T> ? T : never
@@ -278,8 +301,12 @@ interface Acted {
   offset: number
   /** The block a paste went into. */
   target?: string
-  /** The block a `#name` was typed into, which the caret then left. */
+  /** The block a `#name` or a task marker was typed into, which the caret then left. */
   tagged?: string
+  /** The marker typed, the state it gives the block, and the block's first text before it. */
+  task?: { marker: string; state: TodoState; before: string }
+  /** The block whose task state to cycle. */
+  cycled?: string
 }
 
 /** Apply `action`; resolves the block it acted on, if any. */
@@ -305,15 +332,27 @@ function apply(ed: Editor, action: Action): Acted | null {
   const index = action.block % count
   const offset = 'at' in action ? action.at % (firstTextLength(ed, index) + 1) : 0
   caret(ed, index, offset)
-  if (action.kind === 'tag') {
+  if (action.kind === 'cycleTask')
+    return { index, offset, cycled: blockIdOf(ed.state.doc.child(index)) as string }
+  if (action.kind === 'tag' || action.kind === 'taskMarker') {
     const tagged = blockIdOf(ed.state.doc.child(index)) as string
-    caret(ed, index, firstTextLength(ed, index))
-    type(ed, ` #${action.name}`)
+    const before = ed.state.doc.child(index).firstChild?.textContent ?? ''
+    if (action.kind === 'tag') {
+      caret(ed, index, firstTextLength(ed, index))
+      type(ed, ` #${action.name}`)
+    } else type(ed, action.marker[0])
     const others = Array.from({ length: count }, (_, i) => i).filter((i) => i !== index)
     const to = others[action.to % Math.max(others.length, 1)]
     if (to === undefined) return { index, offset }
     caret(ed, to, 0)
-    return { index, offset, tagged }
+    return action.kind === 'tag'
+      ? { index, offset, tagged }
+      : {
+          index,
+          offset,
+          tagged,
+          task: { marker: action.marker[0], state: action.marker[1], before },
+        }
   }
   if (action.kind === 'pasteOutside') {
     if (action.html) ed.view.pasteHTML('<p>from</p><p>outside</p>')
@@ -502,6 +541,22 @@ function expectPeersKept(ed: Editor, page: MockPage, marks: Map<string, PeerMark
 
 let editor: Editor | null = null
 
+/** No page store: the property reads the states back from the backend. */
+const noStore = {
+  setState: () => {},
+  getState: () => ({ load: () => Promise.resolve() }),
+}
+
+/** Each live block's task state in the mock backend, where it has one. */
+function backendStates(page: MockPage): Map<string, string> {
+  const states = new Map<string, string>()
+  for (const [id] of page.live()) {
+    const state = (dispatch('get_block', { blockId: id }) as BlockRow).todo_state
+    if (state !== null) states.set(id, state)
+  }
+  return states
+}
+
 /** The `#` rule's create: a tag in the mock backend. */
 function createTag(name: string): Promise<string> {
   const tag = dispatch('create_block', {
@@ -526,6 +581,69 @@ afterEach(() => {
   editor = null
 })
 
+/**
+ * Each block changed and not committed since, as it was before the change: the
+ * editor's record (`PageModeEditor`), kept from `ed`'s transactions.
+ */
+function trackLoaded(ed: Editor): Map<string, PMNode | null> {
+  const loaded = new Map<string, PMNode | null>()
+  ed.on('transaction', ({ transaction, appendedTransactions }) => {
+    if (!transaction.docChanged || transaction.getMeta(REMOTE_PATCH) === true) return
+    const maps = [transaction, ...appendedTransactions].flatMap((tr) => tr.mapping.maps)
+    for (const id of changedBlocks(ed.state.doc, maps)) {
+      if (!loaded.has(id)) loaded.set(id, nodeById(transaction.before, id))
+    }
+  })
+  return loaded
+}
+
+/**
+ * As the editor does after a save: a block the caret left after typing in it
+ * has its task marker and its tags committed, then the page is brought in; a
+ * task cycled goes through the checkbox's command. `states` records the state
+ * each block was given.
+ */
+async function commitAndCycle(
+  ed: Editor,
+  save: PageSaveState,
+  page: MockPage,
+  acted: Acted | null,
+  states: Map<string, string>,
+  loaded: Map<string, PMNode | null>,
+  mintKept: () => string,
+): Promise<void> {
+  const tagged = acted?.tagged
+  const left = tagged === undefined ? null : nodeById(ed.state.doc, tagged)
+  if (tagged !== undefined && left !== null) {
+    // A marker typed now, or by an earlier step that could not leave the block,
+    // but not one the block held before it was changed.
+    const unchanged = loaded.get(tagged) ?? null
+    loaded.delete(tagged)
+    const held = unchanged !== null && leadingTask(unchanged) !== null
+    const typed = held ? null : leadingTask(left)
+    if (typed !== null) states.set(tagged, typed.todoState)
+    const task = await commitPageTask(tagged, unchanged, save, page.api, noStore)
+    await commitPageTags(tagged, save, page.api, task.markdown)
+    applyRemote(ed.view, save, page.rows(), mintKept)
+    const content = page.live().find(([id]) => id === tagged)?.[2] ?? ''
+    expect(tagsWrittenAsText(content)).toEqual([])
+    if (acted?.task !== undefined && !held) {
+      // The marker left the text: it starts as it did before the marker was typed.
+      const { marker, state, before } = acted.task
+      expect(typed?.todoState).toBe(state)
+      const text = nodeById(ed.state.doc, tagged)?.firstChild?.textContent ?? ''
+      expect(text.startsWith(marker)).toBe(before.startsWith(marker))
+    }
+  }
+  const cycled = acted?.cycled
+  if (cycled !== undefined && save.saved.has(cycled)) {
+    const next = nextTaskState(states.get(cycled) ?? null)
+    await commands.setTodoState(cycled, next)
+    if (next === null) states.delete(cycled)
+    else states.set(cycled, next)
+  }
+}
+
 describe('page mode against the mock backend', () => {
   it('keeps the backend equal to the document, ids on their text, and peers’ changes', async () => {
     await fc.assert(
@@ -542,6 +660,9 @@ describe('page mode against the mock backend', () => {
           const nextPeerId = idMinter('01PEER')
           const mintKept = idMinter('01KEPT')
           const marks = new Map<string, PeerMark>()
+          // The task state each block was last given, by id.
+          const states = new Map<string, string>()
+          const loaded = trackLoaded(ed)
 
           for (const [stepIndex, { action, peer, failures }] of steps.entries()) {
             const before = idsOf(ed.state.doc)
@@ -582,17 +703,12 @@ describe('page mode against the mock backend', () => {
             // A block the save gave a new id: its old one was refused.
             for (const id of idsOf(ed.state.doc)) seen.add(id)
 
-            const tagged = acted?.tagged
-            if (tagged !== undefined && nodeById(ed.state.doc, tagged) !== null) {
-              // As the editor does once the caret left the block: commit, then bring the page in.
-              await commitPageTags(tagged, save, page.api)
-              applyRemote(ed.view, save, page.rows(), mintKept)
-              const content = page.live().find(([id]) => id === tagged)?.[2] ?? ''
-              expect(tagsWrittenAsText(content)).toEqual([])
-            }
+            await commitAndCycle(ed, save, page, acted, states, loaded, mintKept)
 
             expectBackendHoldsDoc(ed, page.live())
             expectPeersKept(ed, page, marks)
+            const live = new Set(page.live().map(([id]) => id))
+            expect(backendStates(page)).toEqual(new Map([...states].filter(([id]) => live.has(id))))
           }
         },
       ),
