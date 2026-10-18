@@ -574,13 +574,25 @@ export async function openContextMenu(element: ReturnType<typeof $>): Promise<vo
   )
 }
 
-/** Open block `id`'s property drawer from its row's context menu. */
+/**
+ * Open block `id`'s property drawer from its row's context menu, and wait for
+ * the sheet to finish sliding in. WebDriver clicks a centre it computed before
+ * the slide moved on, so a click on the moving sheet lands beside its target
+ * and does nothing: the Close button never closed the drawer, and "Add
+ * property" opened no picker.
+ */
 export async function openPropertyDrawer(id: string): Promise<void> {
   await openContextMenu($(`[data-testid="sortable-block"][data-block-id="${id}"]`))
   const item = $('[role="menuitem"]*=Properties')
   await item.waitForClickable({ timeout: ACTION_TIMEOUT })
   await item.click()
-  await $('[role="dialog"]*=Block Properties').waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  const drawer = $('[role="dialog"]*=Block Properties')
+  await drawer.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  const sheet = await drawer.getElement()
+  await browser.waitUntil(
+    () => browser.execute((el: HTMLElement) => el.getAnimations().length === 0, sheet),
+    { timeout: ACTION_TIMEOUT, timeoutMsg: 'the Block Properties sheet never finished sliding in' },
+  )
 }
 
 /**
