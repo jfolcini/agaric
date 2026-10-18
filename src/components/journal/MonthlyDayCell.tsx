@@ -99,7 +99,9 @@ export function MonthlyDayCell({
       {/* Date number */}
       <span
         className={cn(
-          'inline-flex items-center justify-center text-sm font-medium w-7 h-7 rounded-full [@media(pointer:coarse)]:w-11 [@media(pointer:coarse)]:h-11',
+          // The whole cell is the tap target, so the marker needs no 44 px size of
+          // its own; at 44 px it overflowed a phone-width cell (#5925).
+          'inline-flex items-center justify-center text-sm font-medium size-7 rounded-full',
           isToday && 'bg-brand text-brand-foreground font-bold',
         )}
       >
@@ -109,7 +111,7 @@ export function MonthlyDayCell({
       {/* Count dots — use the -foreground color tokens for WCAG contrast
           against the cell background in both light and dark modes. */}
       {totalCount > 0 && (
-        <div className="flex flex-wrap gap-0.5 mt-1">
+        <div className="flex flex-wrap items-center gap-0.5 mt-1">
           {agendaCountsBySource &&
             Object.entries(agendaCountsBySource).map(([source, count]) => {
               if (count <= 0) return null
@@ -135,14 +137,12 @@ export function MonthlyDayCell({
             // Full opacity muted-foreground so backlink dots are visible in both modes.
             <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" aria-hidden="true" />
           )}
+          {/* Total count, in flow below the date: pinned to the cell's corner it
+              sat under the date marker in a phone-width cell (#5925). */}
+          <span className="ml-auto text-xs [@media(pointer:coarse)]:text-sm text-muted-foreground">
+            {totalCount}
+          </span>
         </div>
-      )}
-
-      {/* Total count badge */}
-      {totalCount > 0 && (
-        <span className="absolute bottom-1 right-1.5 text-xs [@media(pointer:coarse)]:text-sm text-muted-foreground">
-          {totalCount}
-        </span>
       )}
     </div>
   )

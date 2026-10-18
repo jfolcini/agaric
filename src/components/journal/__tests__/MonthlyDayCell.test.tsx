@@ -323,20 +323,6 @@ describe('MonthlyDayCell', () => {
     expect(cell).toHaveAttribute('tabindex', '-1')
   })
 
-  // #2057: scale the inner clickable date circle on coarse pointers so the
-  // visible tap target meets the 44 px minimum (w-11 / h-11 = 44px).
-  it('inner date circle scales to 44 px on coarse pointers', () => {
-    const { container } = render(<MonthlyDayCell {...defaultProps} />)
-
-    // The date number span is the first <span> with the rounded-full class
-    const dateSpan = container.querySelector('span.rounded-full') as HTMLElement
-    expect(dateSpan).toBeInTheDocument()
-    expect(dateSpan.className).toContain('w-7')
-    expect(dateSpan.className).toContain('h-7')
-    expect(dateSpan.className).toContain('[@media(pointer:coarse)]:w-11')
-    expect(dateSpan.className).toContain('[@media(pointer:coarse)]:h-11')
-  })
-
   // #2057: the cell itself keeps its >=44px coarse-pointer floor.
   it('cell meets the 44px coarse-pointer minimum height', () => {
     render(<MonthlyDayCell {...defaultProps} />)

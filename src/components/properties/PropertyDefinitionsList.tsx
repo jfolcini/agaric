@@ -287,7 +287,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
           filteredDefs.length > 0 ? (
             <ul className="space-y-1">
               {filteredDefs.map((def) => (
-                <ListItem key={def.key}>
+                // Actions wrap under the name on a phone instead of running off the card (#5925).
+                <ListItem key={def.key} className="flex-wrap">
                   <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
                   <Badge tone="secondary">{def.value_type}</Badge>
                   {def.value_type === 'select' && LOCKED_PROPERTY_OPTIONS.has(def.key) && (
@@ -325,77 +326,78 @@ export function PropertyDefinitionsList(): React.ReactElement {
                       </TooltipContent>
                     </Tooltip>
                   )}
-                  {def.value_type === 'select' && !LOCKED_PROPERTY_OPTIONS.has(def.key) && (
-                    <Popover
-                      open={editingOptionsKey === def.key}
-                      onOpenChange={(open) => {
-                        if (open) {
-                          setEditingOptionsKey(def.key)
-                          setEditOptionsValue(def.options ?? '')
-                        } else {
-                          setEditingOptionsKey(null)
-                        }
-                      }}
-                    >
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="xs"
-                          aria-label={t('propertiesView.editOptionsTooltip')}
-                        >
-                          <Settings2 />
-                          {t('propertiesView.editOptions')}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent aria-label={t('propertiesView.editOptionsPopoverLabel')}>
-                        <div className="space-y-2">
-                          <Input
-                            value={editOptionsValue}
-                            onChange={(e) => setEditOptionsValue(e.target.value)}
-                            placeholder={t('propertiesView.optionsJsonPlaceholder')}
-                            aria-label={t('propertiesView.optionsJsonLabel')}
-                            aria-invalid={jsonError != null}
-                            aria-describedby={
-                              jsonError != null ? 'property-options-json-error' : undefined
-                            }
-                          />
-                          {jsonError && (
-                            <p
-                              id="property-options-json-error"
-                              className="text-xs text-destructive"
-                              role="alert"
-                            >
-                              {t('propertiesView.invalidJsonHint', { error: jsonError })}
-                            </p>
-                          )}
+                  <div className="ml-auto flex items-center gap-3">
+                    {def.value_type === 'select' && !LOCKED_PROPERTY_OPTIONS.has(def.key) && (
+                      <Popover
+                        open={editingOptionsKey === def.key}
+                        onOpenChange={(open) => {
+                          if (open) {
+                            setEditingOptionsKey(def.key)
+                            setEditOptionsValue(def.options ?? '')
+                          } else {
+                            setEditingOptionsKey(null)
+                          }
+                        }}
+                      >
+                        <PopoverTrigger asChild>
                           <Button
-                            size="sm"
-                            disabled={jsonError != null}
-                            onClick={() => handleSaveOptions(def.key)}
+                            variant="ghost"
+                            size="xs"
+                            aria-label={t('propertiesView.editOptionsTooltip')}
                           >
-                            {t('action.save')}
+                            <Settings2 />
+                            {t('propertiesView.editOptions')}
                           </Button>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  )}
-                  <div className="flex-1" />
-                  {NON_DELETABLE_PROPERTIES.has(def.key) ? (
-                    <Badge tone="outline" className="shrink-0 text-xs text-muted-foreground">
-                      {t('propertiesView.builtIn')}
-                    </Badge>
-                  ) : (
-                    <IconButton
-                      variant="ghost"
-                      size="icon-xs"
-                      tooltip={t('propertiesView.deleteTooltip')}
-                      ariaLabel={t('properties.deleteDefinition', { key: def.key })}
-                      className="text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                      onClick={() => setDeleteTarget(def.key)}
-                    >
-                      <Trash2 />
-                    </IconButton>
-                  )}
+                        </PopoverTrigger>
+                        <PopoverContent aria-label={t('propertiesView.editOptionsPopoverLabel')}>
+                          <div className="space-y-2">
+                            <Input
+                              value={editOptionsValue}
+                              onChange={(e) => setEditOptionsValue(e.target.value)}
+                              placeholder={t('propertiesView.optionsJsonPlaceholder')}
+                              aria-label={t('propertiesView.optionsJsonLabel')}
+                              aria-invalid={jsonError != null}
+                              aria-describedby={
+                                jsonError != null ? 'property-options-json-error' : undefined
+                              }
+                            />
+                            {jsonError && (
+                              <p
+                                id="property-options-json-error"
+                                className="text-xs text-destructive"
+                                role="alert"
+                              >
+                                {t('propertiesView.invalidJsonHint', { error: jsonError })}
+                              </p>
+                            )}
+                            <Button
+                              size="sm"
+                              disabled={jsonError != null}
+                              onClick={() => handleSaveOptions(def.key)}
+                            >
+                              {t('action.save')}
+                            </Button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    )}
+                    {NON_DELETABLE_PROPERTIES.has(def.key) ? (
+                      <Badge tone="outline" className="shrink-0 text-xs text-muted-foreground">
+                        {t('propertiesView.builtIn')}
+                      </Badge>
+                    ) : (
+                      <IconButton
+                        variant="ghost"
+                        size="icon-xs"
+                        tooltip={t('propertiesView.deleteTooltip')}
+                        ariaLabel={t('properties.deleteDefinition', { key: def.key })}
+                        className="text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                        onClick={() => setDeleteTarget(def.key)}
+                      >
+                        <Trash2 />
+                      </IconButton>
+                    )}
+                  </div>
                 </ListItem>
               ))}
             </ul>
