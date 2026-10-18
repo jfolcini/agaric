@@ -730,8 +730,17 @@ export interface RovingEditorHandle {
    * selection is a non-collapsed range. Does NOT mutate the document.
    */
   splitAtCaret: () => { before: string; after: string } | null
-  /** The markdown string that was passed to `mount()`. */
+  /**
+   * The text the leave-time flush classifies the edit against (#5160 D2): the
+   * stored text, or the one `readAsTyped` gave.
+   */
   originalMarkdown: string
+  /**
+   * The block's text as stored: what `mount()` was given or `markCommitted`
+   * recorded. `unmount()` reports a change against it, and against
+   * `originalMarkdown`.
+   */
+  storedMarkdown: string
   /**
    * Register a callback invoked on every TipTap `update` event while the editor
    * is mounted, as a pure change SIGNAL (no arguments). Pass `null` to
@@ -752,6 +761,14 @@ export interface RovingEditorHandle {
    * undo entry. No-op when the editor is unmounted (`activeBlockId === null`).
    */
   markCommitted: (markdown: string) => void
+  /**
+   * Read the mounted block's text as typed when it is left, as page mode reads
+   * a new block: `originalMarkdown` becomes `untyped`, a text holding nothing
+   * typed, while `storedMarkdown` keeps the stored text, so `unmount()` reports
+   * the text even untouched, and a cleared block as cleared. No-op when the
+   * editor is unmounted.
+   */
+  readAsTyped: (untyped: string) => void
 }
 
 /**
@@ -798,6 +815,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
 
   const activeBlockIdRef = useRef<string | null>(null)
   const originalMarkdownRef = useRef<string>('')
+  const storedMarkdownRef = useRef<string>('')
   // #2938 — a pure change SIGNAL fired on every TipTap `update` while mounted.
   // It carries NO serialized markdown: serializing per keystroke (previously
   // once per animation frame) is the typing-latency tax this issue removes.
@@ -1123,6 +1141,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // leaves the prior block's identity intact.
       activeBlockIdRef.current = blockId
       originalMarkdownRef.current = markdown
+      storedMarkdownRef.current = markdown
       // Clear undo history so previous block's edits don't leak into this one.
       // We reset the History plugin's internal state directly via setMeta,
       // which avoids state.reconfigure() — reconfigure creates a new plugins
@@ -1221,7 +1240,11 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     let delta: ContentDelta | null = null
     try {
       const json = editor.getJSON() as DocNode
-      delta = computeContentDelta(originalMarkdownRef.current, json)
+      delta = computeContentDelta(storedMarkdownRef.current, json)
+      // Read as typed: the text goes to the flush unchanged too, to be classified.
+      if (!delta.changed && originalMarkdownRef.current !== storedMarkdownRef.current) {
+        delta = computeContentDelta(originalMarkdownRef.current, json)
+      }
     } catch (err) {
       // Serialization failed — try plain text fallback to avoid data loss.
       // The editor state is about to be wiped in the finally block, so we
@@ -1231,11 +1254,11 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       })
       try {
         const plainText = editor.getText()
-        if (plainText && plainText !== originalMarkdownRef.current) {
+        if (plainText && plainText !== storedMarkdownRef.current) {
           delta = {
             newMarkdown: plainText,
             changed: true,
-            originalMarkdown: originalMarkdownRef.current,
+            originalMarkdown: storedMarkdownRef.current,
           }
         }
       } catch {
@@ -1247,6 +1270,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       replaceDocSilently(editor, { type: 'doc', content: [{ type: 'paragraph' }] })
       activeBlockIdRef.current = null
       originalMarkdownRef.current = ''
+      storedMarkdownRef.current = ''
     }
 
     logger.debug('editor', 'unmounted', {
@@ -1298,7 +1322,12 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const markCommitted = useCallback((markdown: string) => {
     if (activeBlockIdRef.current !== null) {
       originalMarkdownRef.current = markdown
+      storedMarkdownRef.current = markdown
     }
+  }, [])
+
+  const readAsTyped = useCallback((untyped: string) => {
+    if (activeBlockIdRef.current !== null) originalMarkdownRef.current = untyped
   }, [])
 
   return useMemo<RovingEditorHandle>(
@@ -1316,8 +1345,12 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       get originalMarkdown() {
         return originalMarkdownRef.current
       },
+      get storedMarkdown() {
+        return storedMarkdownRef.current
+      },
       setOnUpdate,
       markCommitted,
+      readAsTyped,
     }),
     [
       editor,
@@ -1329,6 +1362,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       splitAtCaret,
       setOnUpdate,
       markCommitted,
+      readAsTyped,
     ],
   )
 }

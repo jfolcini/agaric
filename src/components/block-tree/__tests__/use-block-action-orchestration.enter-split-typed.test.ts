@@ -2,9 +2,10 @@
  * A block Enter splits off is typed, as page mode reads a new block: the task
  * marker, `key:: value` line or `#name` it starts with is committed when the
  * caret leaves it. Real store over the real tauri mock; the roving editor is an
- * in-memory stand-in that keeps the baseline as the real one does (`mount`
- * sets it, `markCommitted` rebases it, `unmount` reports a change against it),
- * and `setFocused` runs EditableBlock's auto-mount, as the flushed commit does.
+ * in-memory stand-in that keeps its two baselines as the real one does: `mount`
+ * and `markCommitted` set the stored text and the classification baseline,
+ * `readAsTyped` moves only the latter, and `unmount` reports a change against
+ * either. `setFocused` runs EditableBlock's auto-mount, as the flushed commit does.
  * Leaving the block is the real imperative flush (`useBlockFlush`).
  */
 
@@ -34,20 +35,23 @@ const { BLOCK_GS_1, PAGE_GETTING_STARTED } = SEED_IDS
 function makeEditor(blockId: string, doc: string, split: { before: string; after: string }) {
   let active: string | null = blockId
   let text = doc
+  let stored = doc
   let baseline = doc
-  return {
+  const handle = {
     editor: null,
     mount: vi.fn((id: string, markdown: string) => {
       active = id
       text = markdown
+      stored = markdown
       baseline = markdown
     }),
     updateListMarker: vi.fn(),
     listMarker: vi.fn(() => ({ style: 'none' as const, ordinal: undefined })),
     unmount: vi.fn(() => {
-      const changed = active !== null && text !== baseline ? text : null
+      const changed = active !== null && (text !== stored || text !== baseline) ? text : null
       active = null
       text = ''
+      stored = ''
       baseline = ''
       return changed
     }),
@@ -59,19 +63,39 @@ function makeEditor(blockId: string, doc: string, split: { before: string; after
     get originalMarkdown() {
       return baseline
     },
+    get storedMarkdown() {
+      return stored
+    },
     setOnUpdate: vi.fn(),
     markCommitted: vi.fn((markdown: string) => {
-      if (active !== null) baseline = markdown
+      if (active === null) return
+      stored = markdown
+      baseline = markdown
     }),
-  } as unknown as RovingEditorHandle
+    readAsTyped: vi.fn((untyped: string) => {
+      if (active !== null) baseline = untyped
+    }),
+  }
+  /** What the user leaves in the mounted block. */
+  const type = (markdown: string) => {
+    text = markdown
+  }
+  return { handle: handle as unknown as RovingEditorHandle, type }
 }
 
-/** Split Getting Started's first block, holding `doc`, at the caret, then leave the new block. */
-async function splitAndLeave(doc: string, split: { before: string; after: string }) {
+/**
+ * Split Getting Started's first block, holding `doc`, at the caret, then leave
+ * the new block, holding `typed` when given.
+ */
+async function splitAndLeave(
+  doc: string,
+  split: { before: string; after: string },
+  typed?: string,
+) {
   dispatch('edit_block', { blockId: BLOCK_GS_1, toText: doc })
   const pageStore = createPageBlockStore(PAGE_GETTING_STARTED)
   await pageStore.getState().load()
-  const handle = makeEditor(BLOCK_GS_1, doc, split)
+  const { handle, type } = makeEditor(BLOCK_GS_1, doc, split)
   const rovingEditorRef = { current: handle as RovingEditorHandle | null }
   // EditableBlock's auto-mount effect, which the commit that focuses the block
   // runs: mount it with its stored content unless the editor is already there.
@@ -120,6 +144,7 @@ async function splitAndLeave(doc: string, split: { before: string; after: string
   expect(newId).not.toBeNull()
   expect(newId).not.toBe(BLOCK_GS_1)
   const editsBeforeLeave = editsOf(newId as string)
+  if (typed !== undefined) type(typed)
 
   await act(async () => {
     result.current.handleFlush()
@@ -133,6 +158,13 @@ function editsOf(blockId: string): number {
     ([cmd, args]) =>
       cmd === 'edit_block' &&
       (args as Record<string, unknown> | undefined)?.['blockId'] === blockId,
+  ).length
+}
+
+/** The live blocks of Getting Started in the mock. */
+function livePageBlocks(): number {
+  return [...mockBlocks.values()].filter(
+    (b) => b['parent_id'] === PAGE_GETTING_STARTED && b['deleted_at'] == null,
   ).length
 }
 
@@ -192,6 +224,34 @@ describe('a block Enter splits off commits what it holds as typed when the caret
 
     expect(editsOnLeave).toBe(0)
     expect(contentOf(newId)).toBe('world')
+  })
+
+  // As page mode keeps a block's paragraphs: the line becomes the property and
+  // the paragraphs stay one block.
+  it('a `key:: value` line in a tail of several paragraphs becomes the property', async () => {
+    const pageBlocksBefore = livePageBlocks()
+    const { newId } = await splitAndLeave('intro\n\nstatus:: done\n\nmore text', {
+      before: 'intro',
+      after: 'status:: done\n\nmore text',
+    })
+
+    const props = dispatch('get_properties', { blockId: newId }) as PropertyRow[]
+    expect(props.find((p) => p.key === 'status')?.value_text).toBe('done')
+    expect(contentOf(newId)).not.toContain('status::')
+    expect(contentOf(newId)).toContain('more text')
+    expect(livePageBlocks()).toBe(pageBlocksBefore + 1)
+  })
+
+  it('a cleared block is saved cleared', async () => {
+    const { newId } = await splitAndLeave(
+      'intro\nstatus:: done',
+      { before: 'intro', after: 'status:: done' },
+      '',
+    )
+
+    expect(contentOf(newId)).toBe('')
+    const props = dispatch('get_properties', { blockId: newId }) as PropertyRow[]
+    expect(props.some((p) => p.key === 'status')).toBe(false)
   })
 
   // Page mode keeps the id, and so the loaded text, with the half the split

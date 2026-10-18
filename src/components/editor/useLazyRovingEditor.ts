@@ -154,6 +154,9 @@ export function useLazyRovingEditor(options: RovingEditorOptions): UseLazyRoving
       get originalMarkdown() {
         return pendingMountRef.current?.markdown ?? ''
       },
+      get storedMarkdown() {
+        return pendingMountRef.current?.markdown ?? ''
+      },
       setOnUpdate(cb: (() => void) | null) {
         pendingOnUpdateRef.current = cb
       },
@@ -161,6 +164,9 @@ export function useLazyRovingEditor(options: RovingEditorOptions): UseLazyRoving
         if (pendingMountRef.current) {
           pendingMountRef.current = { ...pendingMountRef.current, markdown }
         }
+      },
+      readAsTyped() {
+        // Only Enter's caret split calls this, and the stub has no caret to split at.
       },
     }),
     [requestLoad],

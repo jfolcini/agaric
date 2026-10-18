@@ -17,10 +17,16 @@ vi.mock('@/lib/logger', () => ({
  * `getMarkdown()` returns at fire time (simulating the live editor content);
  * `markCommitted(md)` rebases `state.original` just like the real handle.
  */
-function makeHandle(init: { activeBlockId: string | null; markdown: string; original: string }) {
-  const state = { ...init }
+function makeHandle(init: {
+  activeBlockId: string | null
+  markdown: string
+  original: string
+  stored?: string
+}) {
+  const state = { ...init, stored: init.stored ?? init.original }
   const markCommitted = vi.fn((md: string) => {
     state.original = md
+    state.stored = md
   })
   const handle = {
     get activeBlockId() {
@@ -29,6 +35,9 @@ function makeHandle(init: { activeBlockId: string | null; markdown: string; orig
     getMarkdown: () => state.markdown,
     get originalMarkdown() {
       return state.original
+    },
+    get storedMarkdown() {
+      return state.stored
     },
     markCommitted,
     // Unused by the hook but required by the type.
@@ -154,6 +163,27 @@ describe('useDebouncedContentCommit (#2600 / #2938)', () => {
     expect(edit).not.toHaveBeenCalled()
     expect(markCommitted).not.toHaveBeenCalled()
     expect(state.original).toBe('')
+  })
+
+  // A block read as typed classifies against '' but is stored as mounted, so
+  // clearing it is a change to commit, though it equals the '' baseline.
+  it('commits a cleared block read as typed', async () => {
+    const { handle } = makeHandle({
+      activeBlockId: 'B1',
+      markdown: '',
+      original: '',
+      stored: 'status:: done',
+    })
+    const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
+    const rovingEditorRef = { current: handle }
+
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
+
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', '')
   })
 
   // #5160 D2 — the flush acts only on what the edit added, and so does this

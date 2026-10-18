@@ -48,7 +48,7 @@ export const EDITOR_PORTAL_SELECTOR = '[data-editor-portal]'
 export function useEditorBlur(params: {
   rovingEditor: Pick<
     RovingEditorHandle,
-    'activeBlockId' | 'originalMarkdown' | 'getMarkdown' | 'unmount'
+    'activeBlockId' | 'originalMarkdown' | 'storedMarkdown' | 'getMarkdown' | 'unmount'
   >
   blockId: string
   /** Store edit — resolves `false` when the backend write failed and the
@@ -126,7 +126,9 @@ export function useEditorBlur(params: {
       let earlyPersisted: string | null = null
       let earlyPersistOutcome: Promise<boolean> | void = undefined
       const loaded = rovingEditorRef.current.originalMarkdown
-      if (loaded === '' && rovingEditorRef.current.getMarkdown) {
+      // The stored text, not `loaded`: a block read as typed (`readAsTyped`)
+      // classifies against '' but already holds its text.
+      if (rovingEditorRef.current.storedMarkdown === '' && rovingEditorRef.current.getMarkdown) {
         const content = rovingEditorRef.current.getMarkdown()
         if (content && content !== '' && !shouldSplitOnBlur(content, loaded)) {
           earlyPersistOutcome = edit(blockId, content)
