@@ -7687,6 +7687,107 @@ async fn import_markdown_creates_page_and_blocks() {
     mat.shutdown();
 }
 
+/// Pages each test creates. One whose `space` stamp lands in its create's
+/// millisecond reads the same with or without the stamp's raise, so the test
+/// needs one of several to land later.
+const CREATED_PAGES: usize = 10;
+
+/// The `pages_cache.last_edited_ms` of every page titled `prefix…` is the
+/// newest op on it, the floor Settings › App health checks it against.
+async fn assert_last_edited_is_the_space_stamp(pool: &SqlitePool, prefix: &str) {
+    let rows: Vec<(String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT pc.title, pc.last_edited_ms, MIN(o.created_at), MAX(o.created_at) \
+           FROM pages_cache pc JOIN op_log o ON o.block_id = pc.page_id \
+          WHERE pc.title LIKE ?1 || '%' GROUP BY pc.page_id ORDER BY pc.title",
+    )
+    .bind(prefix)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), CREATED_PAGES, "one row per created page");
+    for (title, last_edited, _, newest) in &rows {
+        assert_eq!(last_edited, newest, "{title}: last edited at its newest op");
+    }
+    assert!(
+        rows.iter().any(|(_, _, first, newest)| newest > first),
+        "every `space` stamp landed in its create's millisecond, which proves nothing: {rows:?}"
+    );
+}
+
+/// The import creates a page for a `[[link]]` to a title the space lacks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_link_target_is_last_edited_at_its_space_stamp() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let links: String = (0..CREATED_PAGES)
+        .map(|i| format!(" [[Target {i:02}]]"))
+        .collect();
+
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        format!("- links{links}"),
+        Some("Source.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert_last_edited_is_the_space_stamp(&pool, "Target ").await;
+    mat.shutdown();
+}
+
+/// The editor's `[[New page]]` → Create page is `create_page_in_space`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_page_in_space_is_last_edited_at_its_space_stamp() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    for i in 0..CREATED_PAGES {
+        create_page_in_space_inner(
+            &pool,
+            DEV,
+            &mat,
+            None,
+            format!("Typed {i:02}"),
+            TEST_SPACE_ID.into(),
+        )
+        .await
+        .unwrap();
+    }
+    mat.flush_background().await.unwrap();
+
+    assert_last_edited_is_the_space_stamp(&pool, "Typed ").await;
+    mat.shutdown();
+}
+
+/// A day the journal opens and nothing is typed on yet.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn navigate_journal_day_is_last_edited_at_its_space_stamp() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    for day in 1..=CREATED_PAGES {
+        navigate_journal_inner(&pool, DEV, &mat, format!("2026-01-{day:02}"), TEST_SPACE_ID)
+            .await
+            .unwrap();
+    }
+    mat.flush_background().await.unwrap();
+
+    assert_last_edited_is_the_space_stamp(&pool, "2026-01-").await;
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_markdown_handles_properties() {
     let (pool, _dir) = test_pool().await;

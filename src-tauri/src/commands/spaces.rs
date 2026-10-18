@@ -280,7 +280,7 @@ pub async fn create_page_in_space_inner(
     //    order and never observes a page without its space property in
     //    steady state. Not dispatched: a fresh block has nothing to
     //    re-scope (#5275, the `space` arm of `push_property_op_invalidations`).
-    let (_block, _space_op_record) = set_property_in_tx(
+    let (_block, space_op_record) = set_property_in_tx(
         &mut tx,
         materializer.loro_state(),
         device_id,
@@ -293,6 +293,7 @@ pub async fn create_page_in_space_inner(
         None,
     )
     .await?;
+    tx.enqueue_without_dispatch(space_op_record);
 
     if let Some(date) = journal_day {
         // Boxed: inline, the template's future makes `create_block`'s too

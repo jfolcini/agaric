@@ -270,6 +270,9 @@ pub struct CommandTx {
     /// commits successfully. FIFO order — `commit_and_dispatch` drains
     /// them in enqueue order.
     pending: Vec<PendingDispatch>,
+    /// Op records this command commits without a dispatch, held so the commit
+    /// raises their pages' `pages_cache.last_edited_ms` as it does `pending`'s.
+    undispatched: Vec<agaric_store::op_log::OpRecord>,
     /// Set to `true` the instant `self.inner.commit()` returns `Ok` inside
     /// [`commit_and_dispatch`](Self::commit_and_dispatch) or
     /// [`commit_without_dispatch`](Self::commit_without_dispatch). It is
@@ -319,6 +322,7 @@ impl CommandTx {
         Ok(Self {
             inner: Some(inner),
             pending: Vec::new(),
+            undispatched: Vec::new(),
             committed: false,
             label,
             revert: None,
@@ -363,6 +367,13 @@ impl CommandTx {
     pub fn enqueue_background(&mut self, record: impl Into<Arc<agaric_store::op_log::OpRecord>>) {
         self.pending
             .push(PendingDispatch::Background(record.into()));
+    }
+
+    /// Queue an op record that needs no post-commit dispatch, such as the
+    /// `space` stamp on a block this command creates, so the commit still
+    /// raises its page's `pages_cache.last_edited_ms`.
+    pub fn enqueue_without_dispatch(&mut self, record: agaric_store::op_log::OpRecord) {
+        self.undispatched.push(record);
     }
 
     /// Queue an `edit_block` op record with a `block_type` hint for
@@ -465,9 +476,10 @@ impl CommandTx {
     /// issue #1316.)
     ///
     /// Before committing, raises `pages_cache.last_edited_ms` for the pages
-    /// the queued ops touched (#5371). Every local command commits its ops
-    /// here, undo and attachment ops included, so this is the one place the
-    /// LOCAL path keeps "Last edited" fresh; an error rolls the command back.
+    /// the queued ops touched, dispatched or not (#5371). Every local command
+    /// commits its ops here, undo and attachment ops included, so this is the
+    /// one place the LOCAL path keeps "Last edited" fresh; an error rolls the
+    /// command back.
     ///
     /// Returns the number of dispatches that fired. Dispatch failures
     /// are logged at warn level and do not surface here.
@@ -478,10 +490,9 @@ impl CommandTx {
         let touched: Vec<(&str, i64)> = self
             .pending
             .iter()
-            .filter_map(|entry| {
-                let record = entry.record();
-                record.block_id.as_deref().map(|b| (b, record.created_at))
-            })
+            .map(PendingDispatch::record)
+            .chain(&self.undispatched)
+            .filter_map(|record| record.block_id.as_deref().map(|b| (b, record.created_at)))
             .collect();
         if let Some(tx) = self.inner.as_mut() {
             agaric_store::cache::raise_pages_last_edited_ms(tx, &touched).await?;

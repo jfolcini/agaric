@@ -3361,10 +3361,10 @@ const PAGES_CACHE_SORT_KEY_OWNER: &str = "every pages_cache title writer must wr
      (insert_missing_pages_cache_rows), and the page-create INSERT in apply::pages_cache";
 
 const PAGES_CACHE_LAST_EDITED_OWNER: &str = "cache::raise_pages_last_edited_ms, called by every path \
-     that lands an op in op_log: CommandTx::commit_and_dispatch (local commands), \
-     apply_op_projected_with_mode and apply_records_in_tx (the materializer), \
-     dag::ingest_remote_record (a peer's replicated op); a row the rebuild or a restore \
-     inserts is born from the op log";
+     that lands an op in op_log: CommandTx::commit_and_dispatch (every op a local command \
+     queues, enqueue_without_dispatch's included), apply_op_projected_with_mode and \
+     apply_records_in_tx (the materializer), dag::ingest_remote_record (a peer's replicated \
+     op); a row the rebuild or a restore inserts is born from the op log";
 
 const PAGES_CACHE_SPACE_OWNER: &str = "the page-create INSERT in apply::pages_cache, \
      cache::sync_pages_cache_space_ids (a `space` op's projection, which the boot placement of \
