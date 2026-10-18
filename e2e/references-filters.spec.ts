@@ -1,6 +1,6 @@
 /**
  * The References panel's filters: the builder's Status, Priority, Has Tag and
- * Property, and the source-page popover's exclude.
+ * Property, and the source-page popover's include and exclude.
  *
  * A task's state and priority live in their `blocks` columns, so the builder
  * must send `TodoState` / `Priority`; a property filter on `todo` / `priority`
@@ -80,6 +80,26 @@ test.describe('References filters', () => {
     await references.getByRole('button', { name: 'Clear all filters and sort' }).click()
     await expect(rows).toHaveText([/task A/, /task B/, /task C/, /complement/])
     await expect(showing).toHaveCount(0)
+
+    await references.getByRole('button', { name: 'Filter by source page' }).click()
+    await activePopover(page).getByRole('button', { name: 'Clear all' }).click()
+    await expect(rows).toHaveText([/task D/, /task A/, /task B/, /task C/, /complement/])
+  })
+
+  test('a source-page include keeps only that page, until the popover clears it', async ({
+    page,
+  }) => {
+    await openPage(page, 'Getting Started')
+    const references = page.getByTestId('linked-references')
+    const rows = references.getByText(/Filter task [A-D]|complement the/)
+    await expect(rows).toHaveText([/task D/, /task A/, /task B/, /task C/, /complement/])
+
+    await references.getByRole('button', { name: 'Filter by source page' }).click()
+    await activePopover(page)
+      .getByRole('button', { name: /^Projects/ })
+      .click()
+    await page.keyboard.press('Escape')
+    await expect(rows).toHaveText([/task A/, /task B/, /task C/])
 
     await references.getByRole('button', { name: 'Filter by source page' }).click()
     await activePopover(page).getByRole('button', { name: 'Clear all' }).click()
