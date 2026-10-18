@@ -14,26 +14,20 @@
  *   - GROUPED: group headers (key label + count + per-group aggregate chips)
  *     over each bucket's previewed member rows.
  *
- * Saved views have shipped (#1460): `SavedViews` (mounted below) lists and
- * loads them, and `handleSaveView`'s dialog writes a marker block + its
- * serialized `query_spec` property (`serializeQuerySpec`,
- * `src/stores/advancedQuery.ts`) — see `docs/features/views.md`.
+ * Saved views (#1460): `SavedViews` (mounted below) lists and loads them, and
+ * `handleSaveView`'s dialog saves the serialized spec (`serializeQuerySpec`,
+ * `src/stores/advancedQuery.ts`) per space through `src/lib/saved-query-views.ts`.
  */
 
 import type React from 'react'
-import { useCallback, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { AggregateSummary } from '@/components/AdvancedQuery/AggregateSummary'
 import { FilterGroup } from '@/components/AdvancedQuery/FilterGroup'
 import { GroupedResults } from '@/components/AdvancedQuery/GroupedResults'
 import { QueryControlsBar } from '@/components/AdvancedQuery/QueryControlsBar'
-import {
-  QUERY_SPEC_KEY,
-  QUERY_VIEW_MARKER,
-  SavedViews,
-  VIEW_TYPE_KEY,
-} from '@/components/AdvancedQuery/SavedViews'
+import { SavedViews } from '@/components/AdvancedQuery/SavedViews'
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { RenameDialog } from '@/components/dialogs/RenameDialog'
@@ -41,11 +35,9 @@ import { QueryResultList } from '@/components/query/QueryResultList'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
-import { unwrap } from '@/lib/app-error'
 import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey } from '@/lib/bindings'
-import { commands } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import { requireActiveScope } from '@/lib/space-scope'
+import { saveQueryView } from '@/lib/saved-query-views'
 import { cn } from '@/lib/utils'
 import {
   type BuilderPath,
@@ -126,55 +118,19 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
   const handleAggregatesChange = (aggregates: AggregateSpec[]): void =>
     setAggregates(spaceKey, aggregates)
 
-  // #1460 saved-views: "Save view" prompts for a name, writes a marker block
-  // (content = name) + its serialized `query_spec`, then bumps the refresh
-  // token so the picker re-lists.
+  // #1460 saved-views: "Save view" prompts for a name and saves the current
+  // spec in this space; the picker re-reads on the broadcast write.
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
-  const [savedViewsRefresh, setSavedViewsRefresh] = useState(0)
 
-  const handleSaveView = useCallback(
-    async (name: string): Promise<void> => {
-      try {
-        const spec = serializeQuerySpec(builder, controls)
-        // #5415 — no active space means no space to save the view in; refuse
-        // through the catch below rather than create a space-less marker.
-        if (currentSpaceId == null) throw new Error('No active space; cannot save view')
-        const block = unwrap(
-          await commands.createBlock(
-            'content',
-            name,
-            null,
-            null,
-            requireActiveScope(currentSpaceId),
-            null,
-          ),
-        )
-        unwrap(
-          await commands.setProperty(block.id, VIEW_TYPE_KEY, {
-            value_text: QUERY_VIEW_MARKER,
-            value_num: null,
-            value_date: null,
-            value_ref: null,
-            value_bool: null,
-          }),
-        )
-        unwrap(
-          await commands.setProperty(block.id, QUERY_SPEC_KEY, {
-            value_text: JSON.stringify(spec),
-            value_num: null,
-            value_date: null,
-            value_ref: null,
-            value_bool: null,
-          }),
-        )
-        notify.success(t('advancedQuery.savedViews.saved', { name }))
-        setSavedViewsRefresh((n) => n + 1)
-      } catch {
-        notify.error(t('advancedQuery.savedViews.saveError'))
-      }
-    },
-    [builder, controls, currentSpaceId, t],
-  )
+  const handleSaveView = (name: string): void => {
+    // #5415 — no active space means no space to save the view in.
+    if (currentSpaceId == null) {
+      notify.error(t('advancedQuery.savedViews.saveError'))
+      return
+    }
+    saveQueryView(currentSpaceId, name, JSON.stringify(serializeQuerySpec(builder, controls)))
+    notify.success(t('advancedQuery.savedViews.saved', { name }))
+  }
 
   const isGrouped = groups != null
   // Empty when: flat mode with no rows, OR grouped mode with no groups.
@@ -231,17 +187,13 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
               {t('advancedQuery.savedViews.save')}
             </Button>
           </div>
-          <SavedViews
-            spaceKey={spaceKey}
-            spaceId={currentSpaceId}
-            refreshToken={savedViewsRefresh}
-          />
+          <SavedViews spaceKey={spaceKey} />
         </div>
 
         <RenameDialog
           open={saveDialogOpen}
           onOpenChange={setSaveDialogOpen}
-          onConfirm={(name) => void handleSaveView(name)}
+          onConfirm={handleSaveView}
           currentName=""
           title={t('advancedQuery.savedViews.save')}
           description={t('advancedQuery.savedViews.namePrompt')}

@@ -842,6 +842,46 @@ const SAVED_PAGES_VIEWS_PREFERENCE: PreferenceDefinition<SavedPagesViewsPayload>
 }
 
 /**
+ * A saved Advanced Query view (#5738). `spec` is the JSON of a `SavedQuerySpec`
+ * (`src/stores/advancedQuery.ts`), validated by `parseQuerySpec` when the view
+ * loads, because `lib/` may not import a store (`scripts/check-lib-layering.mjs`).
+ */
+export interface SavedQueryView {
+  /** Stable id (`crypto.randomUUID()`). */
+  id: string
+  name: string
+  spec: string
+}
+
+function isSavedQueryView(value: unknown): value is SavedQueryView {
+  if (value === null || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v['id'] === 'string' &&
+    v['id'] !== '' &&
+    typeof v['name'] === 'string' &&
+    typeof v['spec'] === 'string'
+  )
+}
+
+/**
+ * `agaric:advancedQuery:savedViews:<spaceId>` — Advanced Query saved views in
+ * creation order, per space because a view's leaves hold that space's ids.
+ */
+const SAVED_QUERY_VIEWS_PREFERENCE: PreferenceDefinition<SavedQueryView[]> = {
+  key: 'agaric:advancedQuery:savedViews',
+  scope: 'space',
+  version: 1,
+  defaultValue: [] as SavedQueryView[],
+  parse: (raw) => {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(isSavedQueryView)
+  },
+  serialize: jsonSerialize<SavedQueryView[]>,
+}
+
+/**
  * `agaric:quickCaptureShortcut` — user-configured global-shortcut
  * accelerator (`src/lib/quick-capture-shortcut.ts`). Empty string sentinel =
  * "not set".
@@ -1545,6 +1585,7 @@ export const PREFERENCES = {
   internetFacingBindAck: INTERNET_FACING_BIND_ACK_PREFERENCE,
   starredPages: STARRED_PAGES_PREFERENCE,
   savedPagesViews: SAVED_PAGES_VIEWS_PREFERENCE,
+  savedQueryViews: SAVED_QUERY_VIEWS_PREFERENCE,
   quickCaptureShortcut: QUICK_CAPTURE_SHORTCUT_PREFERENCE,
   sidebarWidth: SIDEBAR_WIDTH_PREFERENCE,
   filterSyntaxIntroToastShown: FILTER_SYNTAX_INTRO_TOAST_SHOWN_PREFERENCE,

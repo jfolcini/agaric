@@ -2,51 +2,28 @@
 // jsdom (not the default happy-dom): happy-dom's querySelectorAll throws on the
 // attribute selectors axe-core synthesizes from aria-labels that embed double
 // quotes (the view names `"My view"`), so the a11y audit must run under jsdom.
-import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import {
-  QUERY_SPEC_KEY,
-  QUERY_VIEW_MARKER,
-  SavedViews,
-  VIEW_TYPE_KEY,
-} from '@/components/AdvancedQuery/SavedViews'
-import type { BlockRow } from '@/lib/bindings'
+import { SavedViews } from '@/components/AdvancedQuery/SavedViews'
 import { t } from '@/lib/i18n'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
+import { saveQueryView } from '@/lib/saved-query-views'
 import {
   selectAdvancedQueryBuilderForSpace,
   selectAdvancedQueryControlsForSpace,
   useAdvancedQueryStore,
 } from '@/stores/advancedQuery'
 
-const mockedInvoke = vi.mocked(invoke)
 const mockedToastSuccess = vi.mocked(toast.success)
 const mockedToastError = vi.mocked(toast.error)
 
 const SPACE_ID = 'SPACE_A'
 
-function makeViewRow(over: Partial<BlockRow> = {}): BlockRow {
-  return {
-    id: 'VIEW1',
-    block_type: 'content',
-    content: 'My view',
-    parent_id: null,
-    position: 0,
-    deleted_at: null,
-    todo_state: null,
-    priority: null,
-    due_date: null,
-    scheduled_date: null,
-    page_id: null,
-    ...over,
-  }
-}
-
-/** A serialized query_spec used by the load path. */
+/** A serialized spec used by the load path. */
 const SAMPLE_SPEC = JSON.stringify({
   filter: { type: 'And', children: [{ type: 'Leaf', primitive: { type: 'Tag', tag: 'work' } }] },
   sort: [],
@@ -55,121 +32,56 @@ const SAMPLE_SPEC = JSON.stringify({
   aggregates: [],
 })
 
-/** Route IPC by command. Defaults: one saved view in the list. */
-function routeInvoke(
-  over: {
-    list?: BlockRow[]
-    spec?: string | null
-    onEdit?: () => void
-    onDelete?: () => void
-    fail?: 'list' | 'load' | 'rename' | 'delete' | null
-  } = {},
-): void {
-  const { list = [makeViewRow()], spec = SAMPLE_SPEC, fail = null } = over
-  mockedInvoke.mockImplementation(async (cmd, args) => {
-    if (cmd === 'query_by_property') {
-      if (fail === 'list') throw new Error('list boom')
-      return { items: list, next_cursor: null, has_more: false }
-    }
-    if (cmd === 'get_property') {
-      if (fail === 'load') throw new Error('load boom')
-      return spec == null
-        ? null
-        : {
-            key: QUERY_SPEC_KEY,
-            value_text: spec,
-            value_num: null,
-            value_date: null,
-            value_ref: null,
-            value_bool: null,
-          }
-    }
-    if (cmd === 'edit_block') {
-      if (fail === 'rename') throw new Error('rename boom')
-      over.onEdit?.()
-      const blockId = (args as { blockId: string }).blockId
-      const toText = (args as { toText: string }).toText
-      return makeViewRow({ id: blockId, content: toText })
-    }
-    if (cmd === 'delete_block') {
-      if (fail === 'delete') throw new Error('delete boom')
-      over.onDelete?.()
-      return { deleted: 1 }
-    }
-    return null
+function resetStore(): void {
+  useAdvancedQueryStore.setState({
+    filtersBySpace: {},
+    buildersBySpace: {},
+    controlsBySpace: {},
+    nextAddId: 0,
   })
 }
 
 function renderPicker(): ReturnType<typeof render> {
-  return render(<SavedViews spaceKey={SPACE_ID} spaceId={SPACE_ID} />)
+  return render(<SavedViews spaceKey={SPACE_ID} />)
+}
+
+function storedNames(): string[] {
+  return readPreference(PREFERENCES.savedQueryViews, SPACE_ID).map((v) => v.name)
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  useAdvancedQueryStore.setState({
-    filtersBySpace: {},
-    buildersBySpace: {},
-    controlsBySpace: {},
-    nextAddId: 0,
-  })
-  routeInvoke()
+  localStorage.clear()
+  resetStore()
+  saveQueryView(SPACE_ID, 'My view', SAMPLE_SPEC)
 })
 
-afterEach(() => {
-  useAdvancedQueryStore.setState({
-    filtersBySpace: {},
-    buildersBySpace: {},
-    controlsBySpace: {},
-    nextAddId: 0,
-  })
-})
+afterEach(resetStore)
 
 describe('SavedViews', () => {
-  it('lists saved views via queryByProperty with the view_type marker', async () => {
+  it("lists the space's saved views and not another space's", () => {
+    saveQueryView('SPACE_B', 'Other space view', SAMPLE_SPEC)
     renderPicker()
 
-    expect(await screen.findByText('My view')).toBeInTheDocument()
-    expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
-      request: {
-        key: VIEW_TYPE_KEY,
-        valueText: QUERY_VIEW_MARKER,
-        valueDate: null,
-        operator: null,
-        cursor: null,
-        limit: 50,
-        excludeParentId: null,
-        contentNonEmpty: null,
-        blockType: null,
-        valueTextIn: null,
-        valueDateRange: null,
-        excludeTodoStates: null,
-      },
-      scope: { kind: 'active', space_id: SPACE_ID },
-    })
+    expect(screen.getAllByTestId('saved-view-row').map((row) => row.textContent)).toEqual([
+      expect.stringContaining('My view'),
+    ])
   })
 
-  it('shows the empty state when no views exist', async () => {
-    routeInvoke({ list: [] })
+  it('shows the empty state when the space has no views', () => {
+    localStorage.clear()
     renderPicker()
-    expect(await screen.findByText(t('advancedQuery.savedViews.empty'))).toBeInTheDocument()
+    expect(screen.getByText(t('advancedQuery.savedViews.empty'))).toBeInTheDocument()
   })
 
-  it('shows an error + retry when the listing fails, then recovers on retry', async () => {
-    routeInvoke({ fail: 'list' })
+  it('lists a view saved while it is mounted', async () => {
     renderPicker()
-    expect(await screen.findByText(t('advancedQuery.savedViews.listError'))).toBeInTheDocument()
-
-    // Recover: next listing succeeds.
-    routeInvoke()
-    const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: t('action.retry') }))
-    expect(await screen.findByText('My view')).toBeInTheDocument()
+    saveQueryView(SPACE_ID, 'Saved later', SAMPLE_SPEC)
+    expect(await screen.findByText('Saved later')).toBeInTheDocument()
   })
 
-  it('loads a view: reads query_spec and hydrates the builder + controls', async () => {
+  it('loads a view: parses its spec and hydrates the builder + controls', async () => {
     renderPicker()
-    await screen.findByText('My view')
-
     const user = userEvent.setup()
     await user.click(
       screen.getByRole('button', {
@@ -177,49 +89,35 @@ describe('SavedViews', () => {
       }),
     )
 
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('get_property', {
-        blockId: 'VIEW1',
-        key: QUERY_SPEC_KEY,
-      })
-    })
-
-    // Builder tree hydrated from the spec's filter.
-    await waitFor(() => {
-      const builder = selectAdvancedQueryBuilderForSpace(useAdvancedQueryStore.getState(), SPACE_ID)
-      expect(builder.children).toHaveLength(1)
-    })
     const builder = selectAdvancedQueryBuilderForSpace(useAdvancedQueryStore.getState(), SPACE_ID)
+    expect(builder.children).toHaveLength(1)
     expect(builder.children[0]).toMatchObject({
       kind: 'leaf',
       primitive: { type: 'Tag', tag: 'work' },
     })
-    // Controls hydrated too.
     const controls = selectAdvancedQueryControlsForSpace(useAdvancedQueryStore.getState(), SPACE_ID)
     expect(controls.fulltext).toBe('hello')
-    expect(mockedToastSuccess).toHaveBeenCalled()
+    expect(mockedToastSuccess).toHaveBeenCalledTimes(1)
   })
 
-  it('surfaces a toast error when loading a view fails', async () => {
-    routeInvoke({ fail: 'load' })
+  it('surfaces a toast error and leaves the builder alone when the spec is invalid', async () => {
+    localStorage.clear()
+    saveQueryView(SPACE_ID, 'My view', JSON.stringify({ sort: [] }))
     renderPicker()
-    await screen.findByText('My view')
-
     const user = userEvent.setup()
     await user.click(
       screen.getByRole('button', {
         name: t('advancedQuery.savedViews.loadTitle', { name: 'My view' }),
       }),
     )
-    await waitFor(() => expect(mockedToastError).toHaveBeenCalled())
+
+    expect(mockedToastError).toHaveBeenCalledTimes(1)
+    const builder = selectAdvancedQueryBuilderForSpace(useAdvancedQueryStore.getState(), SPACE_ID)
+    expect(builder.children).toHaveLength(0)
   })
 
-  it('renames a view: edits the block content and updates the row', async () => {
-    const onEdit = vi.fn()
-    routeInvoke({ onEdit })
+  it('renames a view and keeps the new name', async () => {
     renderPicker()
-    await screen.findByText('My view')
-
     const user = userEvent.setup()
     await user.click(
       screen.getByRole('button', {
@@ -234,22 +132,12 @@ describe('SavedViews', () => {
     await user.type(input, 'Renamed view')
     await user.click(within(dialog).getByRole('button', { name: t('rename.save') }))
 
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-        blockId: 'VIEW1',
-        toText: 'Renamed view',
-      })
-    })
-    expect(onEdit).toHaveBeenCalledTimes(1)
     expect(await screen.findByText('Renamed view')).toBeInTheDocument()
+    expect(storedNames()).toEqual(['Renamed view'])
   })
 
-  it('deletes a view only after confirming, then removes the row', async () => {
-    const onDelete = vi.fn()
-    routeInvoke({ onDelete })
+  it('deletes a view only after confirming', async () => {
     renderPicker()
-    await screen.findByText('My view')
-
     const user = userEvent.setup()
     await user.click(
       screen.getByRole('button', {
@@ -263,17 +151,12 @@ describe('SavedViews', () => {
       within(dialog).getByRole('button', { name: t('advancedQuery.savedViews.delete') }),
     )
 
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'VIEW1' })
-    })
-    expect(onDelete).toHaveBeenCalledTimes(1)
-    await waitFor(() => expect(screen.queryByText('My view')).not.toBeInTheDocument())
+    expect(await screen.findByText(t('advancedQuery.savedViews.empty'))).toBeInTheDocument()
+    expect(storedNames()).toEqual([])
   })
 
   it('does not delete when the confirm dialog is cancelled', async () => {
     renderPicker()
-    await screen.findByText('My view')
-
     const user = userEvent.setup()
     await user.click(
       screen.getByRole('button', {
@@ -283,18 +166,12 @@ describe('SavedViews', () => {
     const dialog = await screen.findByRole('alertdialog')
     await user.click(within(dialog).getByRole('button', { name: t('dialog.cancel') }))
 
-    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
     expect(screen.getByText('My view')).toBeInTheDocument()
+    expect(storedNames()).toEqual(['My view'])
   })
 
   it('has no axe violations', async () => {
     const { container } = renderPicker()
-    await screen.findByText('My view')
-    await waitFor(
-      async () => {
-        expect(await axe(container)).toHaveNoViolations()
-      },
-      { timeout: 5000 },
-    )
+    expect(await axe(container)).toHaveNoViolations()
   })
 })

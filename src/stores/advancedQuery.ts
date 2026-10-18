@@ -156,8 +156,8 @@ export function filterExprToBuilderTree(expr: FilterExpr, allocId: () => number)
 }
 
 /**
- * #1460 saved-views — serialized shape stored in a saved view's `query_spec`
- * property (a JSON string). Captures everything the builder + D2 controls
+ * #1460 saved-views — the shape a saved view stores, as JSON
+ * (`PREFERENCES.savedQueryViews`). Captures everything the builder + D2 controls
  * produce EXCEPT pagination (cursor/limit), so a load fully reconstructs the
  * working state.
  */
@@ -176,7 +176,7 @@ export interface SavedQuerySpec {
 
 /**
  * Serialize the current builder tree + controls into a {@link SavedQuerySpec}
- * (ready to `JSON.stringify` into the `query_spec` property).
+ * (ready to `JSON.stringify` into a saved view).
  */
 export function serializeQuerySpec(
   builder: BuilderGroupNode,
@@ -192,7 +192,7 @@ export function serializeQuerySpec(
 }
 
 /**
- * Parse a persisted `query_spec` JSON string into a {@link SavedQuerySpec}.
+ * Parse a saved view's spec JSON into a {@link SavedQuerySpec}.
  * Throws on malformed JSON or a missing/invalid `filter` field so callers can
  * surface a load error toast rather than hydrate a half-built view.
  */
@@ -203,7 +203,7 @@ export function parseQuerySpec(raw: string): SavedQuerySpec {
   ) as Partial<SavedQuerySpec>
   const { filter } = spec
   if (!isFilterExpr(filter)) {
-    throw new Error('saved view query_spec is missing a valid filter expression')
+    throw new Error('saved view is missing a valid filter expression')
   }
   return {
     filter,

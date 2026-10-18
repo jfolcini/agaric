@@ -8,8 +8,9 @@ import { axe } from 'vitest-axe'
 import { AdvancedQueryView } from '@/components/AdvancedQuery/AdvancedQueryView'
 import type { ActiveBlockRow, AdvancedQueryResponse } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { queryClient } from '@/lib/query-client'
-import { useAdvancedQueryStore } from '@/stores/advancedQuery'
+import { parseQuerySpec, useAdvancedQueryStore } from '@/stores/advancedQuery'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -66,9 +67,6 @@ function routeInvoke(response: AdvancedQueryResponse): void {
   mockedInvoke.mockImplementation(async (cmd) => {
     if (cmd === 'run_advanced_query') return response
     if (cmd === 'batch_resolve') return [{ id: 'PAGE001', title: 'Parent page' }]
-    // The SavedViews picker lists views on mount; default to an empty list so
-    // it renders its empty state rather than a (second) error alert.
-    if (cmd === 'query_by_property') return { items: [], next_cursor: null, has_more: false }
     // The Tag facet is an id-emitting picker (#3339); serve the space's tags
     // so a leaf can be added by NAME and compiles to the tag's ULID.
     if (cmd === 'list_all_tags_in_space') return TAG_ROWS
@@ -115,8 +113,6 @@ describe('AdvancedQueryView', () => {
 
     const { container } = render(<AdvancedQueryView />)
 
-    // Scope to the results pane — SavedViews (out of scope for #2852) has its
-    // own unrelated loading spinner that's also pending in this test.
     const resultsPane = container.querySelector('.advanced-query-results')
     expect(resultsPane).toBeTruthy()
     const skeletons = resultsPane?.querySelectorAll('[data-slot="skeleton"]')
@@ -457,15 +453,13 @@ describe('AdvancedQueryView', () => {
 
   it('surfaces a backend error and retries', async () => {
     const user = userEvent.setup()
-    // Fail only the engine call on first run; the SavedViews picker's
-    // `query_by_property` must still resolve (else a second alert appears).
+    // Fail only the engine call on first run.
     let engineFailed = false
     mockedInvoke.mockImplementation(async (cmd) => {
       if (cmd === 'run_advanced_query' && !engineFailed) {
         engineFailed = true
         throw new Error('engine exploded')
       }
-      if (cmd === 'query_by_property') return { items: [], next_cursor: null, has_more: false }
       if (cmd === 'run_advanced_query') return makeResponse()
       return null
     })
@@ -824,76 +818,59 @@ describe('AdvancedQueryView', () => {
 })
 
 describe('AdvancedQueryView — saved views (#1460)', () => {
-  it('saves the current query as a named marker block + query_spec', async () => {
-    // Route: engine empty, no existing views, create_block + set_property OK.
-    const setPropertyCalls: Array<{ key: string; value_text: string | null }> = []
-    mockedInvoke.mockImplementation(async (cmd, args) => {
-      if (cmd === 'run_advanced_query') return makeResponse()
-      if (cmd === 'query_by_property') return { items: [], next_cursor: null, has_more: false }
-      if (cmd === 'create_block') return makeRow({ id: 'NEWVIEW', content: 'My saved query' })
-      if (cmd === 'set_property') {
-        const a = args as { key: string; value: { value_text: string | null } }
-        setPropertyCalls.push({ key: a.key, value_text: a.value.value_text })
-        return makeRow({ id: 'NEWVIEW' })
-      }
-      return null
-    })
-
-    render(<AdvancedQueryView />)
+  async function saveViewNamed(name: string): Promise<void> {
     const user = userEvent.setup()
-
-    // Open the Save-view dialog.
     await user.click(
       await screen.findByRole('button', { name: t('advancedQuery.savedViews.saveTitle') }),
     )
     const dialog = await screen.findByRole('dialog')
-    await user.type(within(dialog).getByRole('textbox'), 'My saved query')
+    await user.type(within(dialog).getByRole('textbox'), name)
     await user.click(within(dialog).getByRole('button', { name: t('rename.save') }))
+  }
 
-    // Created a content block whose content is the view name, in the space.
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-        blockType: 'content',
-        content: 'My saved query',
-        parentId: null,
-        index: null,
-        scope: { kind: 'active', space_id: SPACE_ID },
-        // #2849 PR2 — direct createBlock supplies no client id (null).
-        blockId: null,
-      })
+  it('saves the current query in this space and lists it after a remount', async () => {
+    localStorage.clear()
+    const { unmount } = render(<AdvancedQueryView />)
+    await saveViewNamed('My saved query')
+
+    const list = await screen.findByTestId('saved-views-list')
+    expect(within(list).getByText('My saved query')).toBeInTheDocument()
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1)
+    unmount()
+
+    render(<AdvancedQueryView />)
+    const rows = await screen.findAllByTestId('saved-view-row')
+    expect(rows.map((row) => row.querySelector('span')?.textContent)).toEqual(['My saved query'])
+    // The stored spec is the serialized filter + controls (no pagination).
+    const [view] = readPreference(PREFERENCES.savedQueryViews, SPACE_ID)
+    expect(parseQuerySpec(view?.spec ?? '')).toEqual({
+      filter: { type: 'And', children: [] },
+      sort: [],
+      fulltext: '',
+      group_by: null,
+      aggregates: [],
     })
-
-    // Set both marker + query_spec properties on the new block.
-    await waitFor(() => {
-      expect(setPropertyCalls.find((c) => c.key === 'view_type')?.value_text).toBe('query-view')
-    })
-    const specCall = setPropertyCalls.find((c) => c.key === 'query_spec')
-    expect(specCall).toBeDefined()
-    // The persisted query_spec is the serialized filter + controls (no pagination).
-    const spec = JSON.parse(specCall?.value_text ?? '{}') as { filter: unknown; fulltext: string }
-    expect(spec.filter).toEqual({ type: 'And', children: [] })
-    expect(spec.fulltext).toBe('')
-
-    expect(vi.mocked(toast.success)).toHaveBeenCalled()
   })
 
-  it('surfaces a toast error when saving the view fails', async () => {
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === 'run_advanced_query') return makeResponse()
-      if (cmd === 'query_by_property') return { items: [], next_cursor: null, has_more: false }
-      if (cmd === 'create_block') throw new Error('create boom')
-      return null
-    })
+  it("does not list another space's views", async () => {
+    localStorage.clear()
+    const { unmount } = render(<AdvancedQueryView />)
+    await saveViewNamed('Space A view')
+    await screen.findByText('Space A view')
+    unmount()
 
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
     render(<AdvancedQueryView />)
-    const user = userEvent.setup()
-    await user.click(
-      await screen.findByRole('button', { name: t('advancedQuery.savedViews.saveTitle') }),
-    )
-    const dialog = await screen.findByRole('dialog')
-    await user.type(within(dialog).getByRole('textbox'), 'Doomed view')
-    await user.click(within(dialog).getByRole('button', { name: t('rename.save') }))
+    expect(await screen.findByText(t('advancedQuery.savedViews.empty'))).toBeInTheDocument()
+  })
 
-    await waitFor(() => expect(vi.mocked(toast.error)).toHaveBeenCalled())
+  it('refuses to save with no active space', async () => {
+    localStorage.clear()
+    useSpaceStore.setState({ currentSpaceId: null })
+    render(<AdvancedQueryView />)
+    await saveViewNamed('Doomed view')
+
+    await waitFor(() => expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText('Doomed view')).not.toBeInTheDocument()
   })
 })

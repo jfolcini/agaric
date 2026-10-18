@@ -1,183 +1,57 @@
 /**
  * SavedViews — #1460 saved-views picker for the advanced-query surface.
  *
- * A saved view is a plain content block (the block's CONTENT is the view's
- * display name) carrying two properties set through the existing `setProperty`
- * wrapper:
- *   - `view_type = 'query-view'`  — the marker that makes it discoverable.
- *   - `query_spec = '<JSON>'`     — the serialized {@link SavedQuerySpec} (the
- *                                    compiled `FilterExpr` plus the D2 controls,
- *                                    minus pagination).
- *
- * No special parent and no new Tauri commands: views are created in the current
- * space via `createBlock`, listed via `queryByProperty({ key: 'view_type' })`,
- * loaded by reading the `query_spec` property + hydrating the builder store,
- * renamed via `editBlock` (block content), and deleted via `deleteBlock`. A
- * separate backend change hides these marker blocks from normal listings.
+ * Lists the active space's saved views (`PREFERENCES.savedQueryViews`, written
+ * through `src/lib/saved-query-views.ts`). Load parses the view's stored spec
+ * and hydrates the builder store; rename and delete rewrite the list.
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { RenameDialog } from '@/components/dialogs/RenameDialog'
 import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
-import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
-import { requireActiveScope } from '@/lib/space-scope'
+import { PREFERENCES, type SavedQueryView, usePreference } from '@/lib/preferences'
+import { deleteSavedQueryView, renameSavedQueryView } from '@/lib/saved-query-views'
 import { parseQuerySpec, useAdvancedQueryStore } from '@/stores/advancedQuery'
 
-/** Marker property key + value identifying a saved query view. */
-export const VIEW_TYPE_KEY = 'view_type'
-export const QUERY_VIEW_MARKER = 'query-view'
-/** Property key holding the serialized {@link SavedQuerySpec} JSON. */
-export const QUERY_SPEC_KEY = 'query_spec'
-
-/** A saved view as shown in the picker (block id + display name). */
-interface SavedViewItem {
-  id: string
-  name: string
-}
-
 export interface SavedViewsProps {
-  /** Active space key (`__legacy__` when no space). Loaded views hydrate here. */
+  /** Active space key (`__legacy__` when no space). Views are listed and loaded here. */
   spaceKey: string
-  /**
-   * The active space id (or `null`/`undefined` pre-bootstrap) used to scope the
-   * `queryByProperty` listing to the current space.
-   */
-  spaceId: string | null | undefined
-  /**
-   * Signals the picker to refresh its list (e.g. bumped after a save in the
-   * parent). Any change to this value re-runs the listing.
-   */
-  refreshToken?: number | undefined
 }
 
-export function SavedViews({
-  spaceKey,
-  spaceId,
-  refreshToken,
-}: SavedViewsProps): React.ReactElement {
+export function SavedViews({ spaceKey }: SavedViewsProps): React.ReactElement {
   const { t } = useTranslation()
   const loadView = useAdvancedQueryStore((s) => s.loadView)
+  const [views] = usePreference(PREFERENCES.savedQueryViews, spaceKey)
 
-  const [views, setViews] = useState<SavedViewItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [listError, setListError] = useState(false)
-  // Per-row in-flight ids (load / rename / delete) keep the relevant controls
-  // disabled while their IPC is outstanding.
-  const [busyId, setBusyId] = useState<string | null>(null)
-  const [renameTarget, setRenameTarget] = useState<SavedViewItem | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<SavedViewItem | null>(null)
+  const [renameTarget, setRenameTarget] = useState<SavedQueryView | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<SavedQueryView | null>(null)
 
-  const refresh = useCallback(async (): Promise<void> => {
-    setLoading(true)
-    setListError(false)
-    // #5415 — no active space: nothing to list, never dispatch.
-    if (spaceId == null) {
-      setViews([])
-      setLoading(false)
-      return
-    }
+  const handleLoad = (view: SavedQueryView): void => {
     try {
-      const resp = unwrap(
-        await commands.queryByProperty(
-          {
-            key: VIEW_TYPE_KEY,
-            valueText: QUERY_VIEW_MARKER,
-            valueDate: null,
-            operator: null,
-            cursor: null,
-            limit: PAGINATION_LIMIT,
-            excludeParentId: null,
-            contentNonEmpty: null,
-            blockType: null,
-            valueTextIn: null,
-            valueDateRange: null,
-            excludeTodoStates: null,
-          },
-          requireActiveScope(spaceId),
-        ),
-      )
-      setViews(
-        resp.items.map((row) => ({
-          id: row.id,
-          name: row.content?.trim() ? row.content : t('advancedQuery.savedViews.untitled'),
-        })),
-      )
-    } catch {
-      setListError(true)
-      setViews([])
-    } finally {
-      setLoading(false)
+      loadView(spaceKey, parseQuerySpec(view.spec))
+      notify.success(t('advancedQuery.savedViews.loaded', { name: view.name }))
+    } catch (err) {
+      notify.error(err instanceof Error ? err : t('advancedQuery.savedViews.loadError'))
     }
-  }, [spaceId, t])
+  }
 
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- `refresh` is an async `queryByProperty` load; its `setLoading(true)` runs synchronously here, and no saved-view list is derivable from props; see #4407
-    void refresh()
-  }, [refresh, refreshToken])
+  const handleRename = (name: string): void => {
+    if (renameTarget == null) return
+    renameSavedQueryView(spaceKey, renameTarget.id, name)
+    notify.success(t('advancedQuery.savedViews.renamed', { name }))
+  }
 
-  const handleLoad = useCallback(
-    async (view: SavedViewItem): Promise<void> => {
-      setBusyId(view.id)
-      try {
-        const prop = unwrap(await commands.getProperty(view.id, QUERY_SPEC_KEY))
-        if (prop?.value_text == null) {
-          throw new Error('saved view has no query_spec')
-        }
-        const spec = parseQuerySpec(prop.value_text)
-        loadView(spaceKey, spec)
-        notify.success(t('advancedQuery.savedViews.loaded', { name: view.name }))
-      } catch (err) {
-        notify.error(err instanceof Error ? err : t('advancedQuery.savedViews.loadError'))
-      } finally {
-        setBusyId(null)
-      }
-    },
-    [loadView, spaceKey, t],
-  )
-
-  const handleRename = useCallback(
-    async (name: string): Promise<void> => {
-      if (renameTarget == null) return
-      const target = renameTarget
-      setBusyId(target.id)
-      try {
-        unwrap(await commands.editBlock(target.id, name))
-        setViews((prev) => prev.map((v) => (v.id === target.id ? { ...v, name } : v)))
-        notify.success(t('advancedQuery.savedViews.renamed', { name }))
-      } catch {
-        notify.error(t('advancedQuery.savedViews.renameError'))
-      } finally {
-        setBusyId(null)
-      }
-    },
-    [renameTarget, t],
-  )
-
-  const handleDelete = useCallback(async (): Promise<void> => {
+  const handleDelete = (): void => {
     if (deleteTarget == null) return
-    const target = deleteTarget
-    setBusyId(target.id)
-    try {
-      unwrap(await commands.deleteBlock(target.id))
-      setViews((prev) => prev.filter((v) => v.id !== target.id))
-      notify.success(t('advancedQuery.savedViews.deleted', { name: target.name }))
-    } catch {
-      notify.error(t('advancedQuery.savedViews.deleteError'))
-      // Re-throw so ConfirmDialog stays open for the retry.
-      throw new Error('delete failed')
-    } finally {
-      setBusyId(null)
-    }
-  }, [deleteTarget, t])
+    deleteSavedQueryView(spaceKey, deleteTarget.id)
+    notify.success(t('advancedQuery.savedViews.deleted', { name: deleteTarget.name }))
+  }
 
   return (
     <section
@@ -189,32 +63,9 @@ export function SavedViews({
         {t('advancedQuery.savedViews.label')}
       </h3>
 
-      {loading && (
-        <div className="flex justify-center px-3 py-2">
-          <Spinner size="sm" />
-        </div>
-      )}
+      {views.length === 0 && <EmptyState message={t('advancedQuery.savedViews.empty')} compact />}
 
-      {!loading && listError && (
-        <div className="px-1 py-1 text-xs text-destructive" role="alert">
-          <span>{t('advancedQuery.savedViews.listError')}</span>
-          <Button
-            variant="outline"
-            size="xs"
-            className="ml-2"
-            onClick={() => void refresh()}
-            aria-label={t('action.retry')}
-          >
-            {t('action.retry')}
-          </Button>
-        </div>
-      )}
-
-      {!loading && !listError && views.length === 0 && (
-        <EmptyState message={t('advancedQuery.savedViews.empty')} compact />
-      )}
-
-      {!loading && !listError && views.length > 0 && (
+      {views.length > 0 && (
         <ul className="flex flex-col gap-1" data-testid="saved-views-list">
           {views.map((view) => (
             <li
@@ -227,8 +78,7 @@ export function SavedViews({
                 <Button
                   variant="ghost"
                   size="xs"
-                  onClick={() => void handleLoad(view)}
-                  disabled={busyId === view.id}
+                  onClick={() => handleLoad(view)}
                   aria-label={t('advancedQuery.savedViews.loadTitle', { name: view.name })}
                 >
                   {t('advancedQuery.savedViews.load')}
@@ -237,7 +87,6 @@ export function SavedViews({
                   variant="ghost"
                   size="xs"
                   onClick={() => setRenameTarget(view)}
-                  disabled={busyId === view.id}
                   aria-label={t('advancedQuery.savedViews.renameTitle', { name: view.name })}
                 >
                   {t('advancedQuery.savedViews.rename')}
@@ -246,7 +95,6 @@ export function SavedViews({
                   variant="ghost"
                   size="xs"
                   onClick={() => setDeleteTarget(view)}
-                  disabled={busyId === view.id}
                   aria-label={t('advancedQuery.savedViews.deleteTitle', { name: view.name })}
                 >
                   {t('advancedQuery.savedViews.delete')}
@@ -262,7 +110,7 @@ export function SavedViews({
         onOpenChange={(open) => {
           if (!open) setRenameTarget(null)
         }}
-        onConfirm={(name) => void handleRename(name)}
+        onConfirm={handleRename}
         currentName={renameTarget?.name ?? ''}
         title={t('advancedQuery.savedViews.rename')}
         description={t('advancedQuery.savedViews.renamePrompt')}

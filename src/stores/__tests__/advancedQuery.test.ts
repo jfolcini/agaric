@@ -432,7 +432,7 @@ describe('serializeQuerySpec / parseQuerySpec', () => {
     })
   })
 
-  it('parses a query_spec JSON string back into a SavedQuerySpec', () => {
+  it('parses a saved spec JSON string back into a SavedQuerySpec', () => {
     const raw = JSON.stringify({
       filter: { type: 'And', children: [] },
       sort,
@@ -460,7 +460,7 @@ describe('serializeQuerySpec / parseQuerySpec', () => {
     })
   })
 
-  it('throws on a query_spec missing its filter', () => {
+  it('throws on a spec missing its filter', () => {
     expect(() => parseQuerySpec(JSON.stringify({ sort: [] }))).toThrow(/filter/)
   })
 
@@ -477,7 +477,7 @@ describe('serializeQuerySpec / parseQuerySpec', () => {
       'a nested filter node without children',
       JSON.stringify({ filter: { type: 'And', children: [{ type: 'Or' }] } }),
     ],
-  ])('throws on a query_spec with %s', (_label, raw) => {
+  ])('throws on a spec with %s', (_label, raw) => {
     expect(() => parseQuerySpec(raw)).toThrow(/filter/)
   })
 })
