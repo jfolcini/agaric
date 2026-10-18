@@ -22,14 +22,19 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  cycleTaskTo,
+  editAtEnd,
   expectAbsent,
   navigateTo,
+  occurrenceIn,
   openPageSource,
   pageSourceButton,
   pageSourceLines,
+  pickRepeatCommand,
   reopenPageByTitle,
   runScopedMarker,
   setPageSourceLines,
+  taskRows,
   typeInputVerified,
   typeMarkerVerified,
   waitForAppReady,
@@ -38,8 +43,6 @@ import {
 } from './helpers'
 
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
-
-const rowsWith = (task: string) => $$(`[data-testid="sortable-block"]*=${task}`).getElements()
 
 /** Create page `title` in the New page dialog; it opens with its first block in the editor. */
 async function openNewPageTitled(title: string): Promise<void> {
@@ -58,68 +61,10 @@ async function reopen(title: string, task: string): Promise<void> {
 
 /** Wait until the page holds `count` occurrences of `task`. */
 async function waitForOccurrences(task: string, count: number): Promise<void> {
-  await browser.waitUntil(async () => (await rowsWith(task)).length === count, {
+  await browser.waitUntil(async () => (await taskRows(task)).length === count, {
     timeout: NAV_TIMEOUT,
     timeoutMsg: `the page does not hold ${count} occurrence(s) of the task`,
   })
-}
-
-/** The id of the occurrence of `task` whose task checkbox reads `state`. */
-async function occurrenceIn(task: string, state: string): Promise<string> {
-  let id: string | null = null
-  await browser.waitUntil(
-    async () => {
-      for (const row of await rowsWith(task)) {
-        const marker = row.$('[data-testid="task-marker"]')
-        if (!(await marker.isExisting())) continue
-        if (((await marker.getAttribute('aria-label')) ?? '').startsWith(`Task: ${state}.`)) {
-          id = await row.getAttribute('data-block-id')
-          return true
-        }
-      }
-      return false
-    },
-    { timeout: NAV_TIMEOUT, timeoutMsg: `no occurrence of the task reads ${state}` },
-  )
-  if (id === null) throw new Error(`no occurrence of the task reads ${state}`)
-  return id
-}
-
-/** Click the task checkbox of block `id` until it reports `state`. */
-async function cycleTaskTo(id: string, state: string): Promise<void> {
-  const marker = $(`[data-block-id="${id}"] [data-testid="task-marker"]`)
-  await marker.waitForExist({ timeout: NAV_TIMEOUT })
-  for (let click = 0; click < 5; click++) {
-    const label = (await marker.getAttribute('aria-label')) ?? ''
-    if (label.startsWith(`Task: ${state}.`)) return
-    await marker.moveTo()
-    await marker.click()
-    await browser.waitUntil(async () => (await marker.getAttribute('aria-label')) !== label, {
-      timeout: ACTION_TIMEOUT,
-      timeoutMsg: `the task checkbox stayed at ${JSON.stringify(label)}`,
-    })
-  }
-  throw new Error(`the task checkbox never reached ${state}`)
-}
-
-/** Open block `id` in the editor, the cursor after a space at its end. */
-async function editAtEnd(id: string): Promise<void> {
-  await $(`[data-testid="block-static"][data-block-id="${id}"]`).click()
-  await $(EDITOR).waitForDisplayed({ timeout: ACTION_TIMEOUT })
-  await browser.keys(['End'])
-  await browser.keys([' '])
-}
-
-/**
- * Type `/repeat` into the focused editor and pick `label`. One key per call:
- * WebKit coalesces identical adjacent keys sent together. A space ends the
- * slash query, so the item is clicked by its label.
- */
-async function pickRepeatCommand(label: string): Promise<void> {
-  for (const ch of '/repeat') await browser.keys([ch])
-  const item = $(`[data-testid="suggestion-item"]*=${label}`)
-  await item.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await item.click()
 }
 
 describe('Agaric real-backend /repeat remove (#5160)', () => {
@@ -150,7 +95,7 @@ describe('Agaric real-backend /repeat remove (#5160)', () => {
     await cycleTaskTo(id, 'DONE')
     await reopen(page, task)
     await occurrenceIn(task, 'DONE')
-    expect((await rowsWith(task)).length).toBe(1)
+    expect((await taskRows(task)).length).toBe(1)
   })
 
   it('a rule set again after /repeat remove makes the next occurrence', async () => {
@@ -201,6 +146,6 @@ describe('Agaric real-backend /repeat remove (#5160)', () => {
     await cycleTaskTo(next, 'DONE')
     await reopen(page, task)
     await waitForOccurrences(task, 3)
-    expect((await rowsWith(task)).length).toBe(3)
+    expect((await taskRows(task)).length).toBe(3)
   })
 })

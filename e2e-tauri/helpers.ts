@@ -78,8 +78,8 @@
 //     `[data-testid="search-results-count"]` reading "No results",
 //     `[data-testid="search-result-row-<id>"]`, `#journal-tab-daily` /
 //     `#journal-tab-weekly`, and a DaySection's "Open <date> in editor".
-//   - `[data-testid="suggestion-item"]`     an item of the open `[[` / `#` /
-//     `::` picker (SuggestionList.tsx), `aria-selected` on the one Enter
+//   - `[data-testid="suggestion-item"]`     an item of the open `/` / `[[` /
+//     `#` / `::` picker (SuggestionList.tsx), `aria-selected` on the one Enter
 //     picks; the create item's id is `suggestion-__create__`.
 //   - Settings › Data › "Open edit history" (`openEditHistory`):
 //     `#settings-tab-data`, `[data-testid="settings-panel-data"]`, and the
@@ -87,6 +87,11 @@
 //   - Settings › Data's markdown import (`importMarkdownPage`):
 //     `[data-testid="import-file-input"]` and `[data-testid="import-result"]`
 //     (ImportSection.tsx), whose summary reads `Imported “<title>”: N blocks`.
+//   - Repeating tasks (`taskRows`, `occurrenceIn`, `cycleTaskTo`,
+//     `pickRepeatCommand`): a `[data-testid="sortable-block"]` row per
+//     occurrence, its `[data-testid="task-marker"]` checkbox named
+//     `Task: <STATE>. Click to cycle.` (`block.taskCycle`), and the slash
+//     menu's `REPEAT …` items (slash-commands.ts).
 //   - A property chip's accessible name, `<Key>: <value>`
 //     (`property.selectValue`, PropertyChip.tsx), the slash item
 //     "LOCATION Office — Office" (slash-commands.ts) and its toast "Set
@@ -1019,6 +1024,71 @@ export async function importMarkdownPage(title: string, markdown: string): Promi
     timeoutMsg: `the import result never named ${title}`,
   })
   return result.getText()
+}
+
+/** The rows of the open page whose text holds `task`, one per occurrence of a repeating task. */
+export function taskRows(task: string) {
+  return $$(`[data-testid="sortable-block"]*=${task}`).getElements()
+}
+
+/** The id of the occurrence of `task` whose task checkbox reads `state`. */
+export async function occurrenceIn(task: string, state: string): Promise<string> {
+  let id: string | null = null
+  await browser.waitUntil(
+    async () => {
+      for (const row of await taskRows(task)) {
+        const marker = row.$('[data-testid="task-marker"]')
+        if (!(await marker.isExisting())) continue
+        if (((await marker.getAttribute('aria-label')) ?? '').startsWith(`Task: ${state}.`)) {
+          id = await row.getAttribute('data-block-id')
+          return true
+        }
+      }
+      return false
+    },
+    { timeout: NAV_TIMEOUT, timeoutMsg: `no occurrence of the task reads ${state}` },
+  )
+  if (id === null) throw new Error(`no occurrence of the task reads ${state}`)
+  return id
+}
+
+/** Click the task checkbox of block `id` until it reports `state`. */
+export async function cycleTaskTo(id: string, state: string): Promise<void> {
+  const marker = $(`[data-block-id="${id}"] [data-testid="task-marker"]`)
+  await marker.waitForExist({ timeout: NAV_TIMEOUT })
+  for (let click = 0; click < 5; click++) {
+    const label = (await marker.getAttribute('aria-label')) ?? ''
+    if (label.startsWith(`Task: ${state}.`)) return
+    await marker.moveTo()
+    await marker.click()
+    await browser.waitUntil(async () => (await marker.getAttribute('aria-label')) !== label, {
+      timeout: ACTION_TIMEOUT,
+      timeoutMsg: `the task checkbox stayed at ${JSON.stringify(label)}`,
+    })
+  }
+  throw new Error(`the task checkbox never reached ${state}`)
+}
+
+/** Open block `id` in the editor, the cursor after a space at its end. */
+export async function editAtEnd(id: string): Promise<void> {
+  await $(`[data-testid="block-static"][data-block-id="${id}"]`).click()
+  await $('[data-testid="block-editor"] [contenteditable="true"]').waitForDisplayed({
+    timeout: ACTION_TIMEOUT,
+  })
+  await browser.keys(['End'])
+  await browser.keys([' '])
+}
+
+/**
+ * Type `/repeat` into the focused editor and pick `label`. One key per call:
+ * WebKit coalesces identical adjacent keys sent together. A space ends the
+ * slash query, so the item is clicked by its label.
+ */
+export async function pickRepeatCommand(label: string): Promise<void> {
+  for (const ch of '/repeat') await browser.keys([ch])
+  const item = $(`[data-testid="suggestion-item"]*=${label}`)
+  await item.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await item.click()
 }
 
 /**
