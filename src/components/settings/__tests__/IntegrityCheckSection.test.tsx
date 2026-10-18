@@ -5,11 +5,13 @@
  * The load-bearing property is that the sweep is O(pages × blocks) and must
  * never run on its own: rendering the card has to leave
  * `compute_reconciliation_report` uncalled; the Run button is the opt-in.
- * Everything else — the clean result, the diverged result, the copy hand-off,
- * the rejection path — is what the user sees once they press Run.
+ * Everything else — the clean result, the diverged result, the copy and
+ * report-a-bug hand-offs, the rejection path — is what the user sees once they
+ * press Run.
  *
  * `SettingsView` owns the hook; the harness here does the same so the real
- * hook + IPC path runs.
+ * hook + IPC path runs. It also mounts the bug-report dialog the way `App`
+ * does, so the Report a bug test sees the dialog the user gets.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -20,9 +22,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { BugReportDialog } from '@/components/dialogs/BugReportDialog'
 import { IntegrityCheckSection } from '@/components/settings/IntegrityCheckSection'
+import { useAppDialogs } from '@/hooks/useAppDialogs'
 import { useReconciliationReport } from '@/hooks/useReconciliationReport'
-import type { ReconciliationReport } from '@/lib/bindings'
+import type { BugReport, ReconciliationReport } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 
@@ -58,17 +62,53 @@ const DIVERGED: ReconciliationReport = {
   ],
 }
 
+const METADATA: BugReport = {
+  app_version: '0.1.0',
+  os: 'linux',
+  arch: 'x86_64',
+  device_id: 'DEV-XYZ',
+  recent_errors: [],
+  retry_queue: { depth: 0, oldest_age_ms: null, max_attempts: 0, task_kinds: [] },
+}
+
+// The App shell's wiring from `BUG_REPORT_EVENT` to the dialog's props.
+function AppBugReportDialog() {
+  const { bugReportOpen, setBugReportOpen, bugReportPrefill } = useAppDialogs()
+  if (!bugReportOpen || bugReportPrefill == null) return null
+  return (
+    <BugReportDialog
+      open
+      onOpenChange={setBugReportOpen}
+      initialTitle={bugReportPrefill.message}
+      initialDescription={bugReportPrefill.stack ?? ''}
+      integrityReport={bugReportPrefill.integrityReport}
+    />
+  )
+}
+
 function Harness() {
   const integrity = useReconciliationReport('IntegrityCheckSection.test')
-  return <IntegrityCheckSection {...integrity} />
+  return (
+    <>
+      <IntegrityCheckSection {...integrity} />
+      <AppBugReportDialog />
+    </>
+  )
+}
+
+function mockReport(report: ReconciliationReport) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({
+      compute_reconciliation_report: () => report,
+      collect_bug_report_metadata: () => METADATA,
+    }),
+  )
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   mockedWriteText.mockResolvedValue(undefined)
-  mockedInvoke.mockImplementation(
-    mockInvokeCommands({ compute_reconciliation_report: () => CLEAN }),
-  )
+  mockReport(CLEAN)
 })
 
 describe('IntegrityCheckSection', () => {
@@ -155,6 +195,41 @@ describe('IntegrityCheckSection', () => {
     expect(mockedToastSuccess).toHaveBeenCalledWith(t('integrity.copied'))
   })
 
+  it('opens the bug report with a diverged result as its title and integrity section', async () => {
+    mockReport(DIVERGED)
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByTestId('integrity-run-button'))
+    await screen.findByTestId('integrity-summary')
+
+    await user.click(screen.getByTestId('integrity-report-bug-button'))
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByLabelText(t('bugReport.fieldTitleLabel'))).toHaveValue(
+      'Integrity check: 17 divergences',
+    )
+    const preview = screen.getByTestId('bug-report-preview')
+    await waitFor(() => {
+      expect(preview).toHaveTextContent('## Integrity check')
+    })
+    expect(preview).toHaveTextContent('17 divergences over 1200 blocks scanned, 2026-09-09.')
+    expect(preview).toHaveTextContent(
+      '`pages_cache.child_block_count` — 12 rows: 01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    )
+  })
+
+  it('offers no bug report on a clean result', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<Harness />)
+
+    await user.click(screen.getByTestId('integrity-run-button'))
+    await screen.findByText(t('integrity.cleanTitle'))
+
+    expect(screen.getByTestId('integrity-copy-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('integrity-report-bug-button')).not.toBeInTheDocument()
+    expect(await axe(container)).toHaveNoViolations()
+  })
+
   it('surfaces a clipboard failure instead of claiming the copy worked', async () => {
     const user = userEvent.setup()
     mockedWriteText.mockRejectedValue(new Error('clipboard unavailable'))
@@ -190,18 +265,17 @@ describe('IntegrityCheckSection', () => {
     expect(screen.queryByTestId('integrity-summary')).not.toBeInTheDocument()
     expect(screen.queryByText(t('integrity.cleanTitle'))).not.toBeInTheDocument()
     expect(screen.queryByTestId('integrity-copy-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('integrity-report-bug-button')).not.toBeInTheDocument()
     // The Run button comes back so the user can retry.
     expect(screen.getByTestId('integrity-run-button')).toBeEnabled()
   })
 
-  it('has no a11y violations with a result on screen', async () => {
-    mockedInvoke.mockImplementation(
-      mockInvokeCommands({ compute_reconciliation_report: () => DIVERGED }),
-    )
+  it('has no a11y violations with a diverged result and its Report a bug button', async () => {
+    mockReport(DIVERGED)
     const user = userEvent.setup()
     const { container } = render(<Harness />)
     await user.click(screen.getByTestId('integrity-run-button'))
-    await screen.findByTestId('integrity-summary')
+    await screen.findByTestId('integrity-report-bug-button')
 
     expect(await axe(container)).toHaveNoViolations()
   })

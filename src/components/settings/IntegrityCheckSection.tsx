@@ -10,11 +10,13 @@
  * The result is written for someone who is not us: a count and a table name
  * per artefact ("17 rows diverged in `pages_cache.child_block_count`"), with
  * the backend's sample keys underneath and a Copy button that produces the
- * Markdown section a GitHub issue wants. `SettingsView` owns the result so
- * Help's Report a bug button can hand the latest one to {@link BugReportDialog}.
+ * Markdown section a GitHub issue wants. A diverged result also gets a Report a
+ * bug button that opens the App-level bug-report dialog with the result in it.
+ * `SettingsView` owns the result so Help's Report a bug button can hand the
+ * latest one to {@link BugReportDialog} too.
  */
 
-import { Copy, ShieldCheck } from 'lucide-react'
+import { Bug, Copy, ShieldCheck } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -26,6 +28,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import type { UseReconciliationReportResult } from '@/hooks/useReconciliationReport'
 import { formatIntegrityReport } from '@/lib/bug-report'
+import { dispatchBugReport } from '@/lib/bug-report-events'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -118,17 +121,35 @@ export function IntegrityCheckSection({
           )}
 
           {report !== null && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                void handleCopy()
-              }}
-              data-testid="integrity-copy-button"
-            >
-              <Copy />
-              {t('integrity.copyButton')}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void handleCopy()
+                }}
+                data-testid="integrity-copy-button"
+              >
+                <Copy />
+                {t('integrity.copyButton')}
+              </Button>
+              {report.total_divergences > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    dispatchBugReport({
+                      message: t('integrity.reportTitle', { count: report.total_divergences }),
+                      integrityReport: report,
+                    })
+                  }}
+                  data-testid="integrity-report-bug-button"
+                >
+                  <Bug />
+                  {t('help.reportBugButton')}
+                </Button>
+              )}
+            </div>
           )}
         </output>
       </CardContent>
