@@ -38,8 +38,8 @@ setup-db:
 
 # Install the prek hook TOOLCHAIN (prek + every host binary the hooks call:
 # cargo-deny, sqruff, typos, zizmor, taplo, lychee, shellcheck, …) and wire
-# the git hooks (pre-commit, pre-push, commit-msg, …). Best-effort; re-run any
-# time. `just setup` already calls this — use it standalone to fill gaps.
+# the git hooks (pre-commit, pre-push, commit-msg, …).
+# Install the prek hook toolchain and wire the git hooks; best-effort, `just setup` already calls it.
 [group('bootstrap')]
 install-hooks:
     bash scripts/setup-hooks.sh
@@ -51,16 +51,6 @@ install-hooks:
 dev: _require-npm
     cargo tauri dev
 
-# Run the frontend only (Vite dev server, no Tauri shell).
-[group('develop')]
-web: _require-npm
-    npm run dev
-
-# Serve the production build locally (run `just build` first).
-[group('develop')]
-preview: _require-npm
-    npm run preview
-
 # Run the Android app in dev mode.
 [group('develop')]
 android: _require-npm
@@ -68,23 +58,30 @@ android: _require-npm
 
 # --- Test ------------------------------------------------------------------
 
-# Run the full test suite: frontend (Vitest) + backend (cargo nextest).
+# Run the full test suite: frontend (Vitest), backend (cargo nextest), and Rust doc-tests.
 [group('test')]
-test: test-fe test-be
+test: test-fe test-be test-doc
 
-# Frontend unit tests (Vitest, single run).
+# Frontend unit tests (Vitest, single run); extra args go to vitest, e.g. `just test-fe src/lib/foo.test.ts`.
 [group('test')]
-test-fe: _require-npm
-    npm run test
+[positional-arguments]
+test-fe *ARGS: _require-npm
+    npm run test -- "$@"
 
 # `--workspace` (#3212): bare `cargo nextest run` from `src-tauri/` (a workspace
 # ROOT that is also the `agaric` root package) resolves to the `agaric` package
 # ONLY — it silently skips agaric-core/store/engine/sync/observability/diagnostics
 # entirely (measured: 3359 vs 5446 tests, zero agaric-engine tests without this flag).
-# Backend tests (cargo nextest). Needs the sqlx dev DB — run `just setup-db` first.
+# Backend tests (cargo nextest --workspace); extra args go to nextest, e.g. `just test-be -E 'test(name)'`. Needs the sqlx dev DB — run `just setup-db` first.
 [group('test')]
-test-be:
-    cd src-tauri && cargo nextest run --workspace
+[positional-arguments]
+test-be *ARGS:
+    cd src-tauri && cargo nextest run --workspace "$@"
+
+# Rust doc-tests, which nextest does not run. Needs the sqlx dev DB, same as `test-be`.
+[group('test')]
+test-doc:
+    cd src-tauri && cargo test --doc --workspace
 
 # Reach for this after promoting a `debug_assert!` (#4638) or auditing arithmetic
 # on a trust boundary (#4640): the dev profile keeps assertions the shipped binary
@@ -98,21 +95,6 @@ test-be:
 test-be-release:
     cd src-tauri && cargo nextest run --workspace --cargo-profile release-test
 
-# Re-run frontend tests on change.
-[group('test')]
-test-watch: _require-npm
-    npm run test:watch
-
-# Frontend tests with coverage (feeds the coverage ratchet).
-[group('test')]
-coverage: _require-npm
-    npm run test:coverage
-
-# End-to-end tests (Playwright).
-[group('test')]
-test-e2e: _require-npm
-    npm run test:e2e
-
 # --- Lint & format ---------------------------------------------------------
 
 # Lint JS/TS (oxlint).
@@ -120,27 +102,22 @@ test-e2e: _require-npm
 lint: _require-npm
     npm run lint
 
-# Lint and auto-fix JS/TS (oxlint --fix).
-[group('lint')]
-lint-fix: _require-npm
-    npm run lint:fix
-
 # Typecheck every tsconfig project (tsc -b --noEmit). Bare `npx tsc --noEmit` checks NOTHING — see AGENTS.md.
 [group('lint')]
 typecheck: _require-npm
     npm run typecheck
 
-# Format files you changed vs HEAD: oxfmt (JS/TS/JSON) + taplo (TOML). See fmt-all for a whole-repo pass.
+# Format what you changed vs HEAD: oxfmt (JS/TS/JSON), taplo (TOML), and cargo fmt (all Rust).
 [group('lint')]
 fmt: _require-npm
     npm run format:changed
     npm run format:toml
+    cd src-tauri && cargo fmt --all
 
-# Format the entire repo (large diff — reserve for intentional repo-wide passes).
+# Clippy exactly as CI runs it. `--lib` skips test code and `-p` skips the other crates; neither is enough.
 [group('lint')]
-fmt-all: _require-npm
-    npm run format
-    npm run format:toml
+clippy:
+    cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings
 
 # --- Verify ----------------------------------------------------------------
 
@@ -157,28 +134,11 @@ verify:
 # Verify-then-push. Runs the CI-equivalent verifier BEFORE opening the push
 # connection, so a slow verify can't leave the SSH connection idle long enough
 # for GitHub to drop it ("Connection closed by remote host"). Prefer this over
-# raw `git push` for any .rs change. Forwards all args, e.g.
-# `just push -- -u origin my-branch` or `just push -- --force-with-lease`.
+# raw `git push` for any .rs change.
+# Verify, then push; extra args go to git push, e.g. `just push -- -u origin my-branch`.
 [group('verify')]
 push *ARGS:
     bash scripts/push.sh {{ARGS}}
-
-# --- Build -----------------------------------------------------------------
-
-# Type-check and build the frontend bundle.
-[group('build')]
-build: _require-npm
-    npm run build
-
-# Build the full desktop app — release bundle, slow.
-[group('build')]
-build-app: _require-npm
-    npm run tauri:build
-
-# Build the Android app (release).
-[group('build')]
-android-build: _require-npm
-    npm run android:build
 
 # --- Codegen ---------------------------------------------------------------
 
@@ -216,6 +176,7 @@ gen-bindings:
 # ../migrations` symlink lets `cargo sqlx migrate run` resolve the shared
 # workspace migrations. `-- --tests` (matches the CI lanes' default) so
 # test-only query drift is captured too.
+# Regenerate all four committed sqlx offline caches (root + agaric-store/engine/sync) after changing SQL.
 [group('codegen')]
 gen-sqlx:
     cd src-tauri && cargo sqlx prepare --workspace -- --workspace --tests
@@ -229,8 +190,3 @@ gen-sqlx:
         ) || exit 1; \
         rm -f "$db"; \
     done
-
-# Regenerate emoji data.
-[group('codegen')]
-gen-emoji: _require-npm
-    npm run gen:emoji
