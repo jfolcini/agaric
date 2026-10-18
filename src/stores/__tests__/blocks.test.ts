@@ -2,8 +2,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
+import { announce } from '@/lib/announcer'
+import { t } from '@/lib/i18n'
 import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
-import { useBlockStore } from '@/stores/blocks'
+import { selectCursorBlockId, useBlockStore } from '@/stores/blocks'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
@@ -22,6 +24,9 @@ import { useTabsStore } from '@/stores/tabs'
  */
 const mountScoped = (ids: readonly string[]): MountedIds => ids as MountedIds
 const selectAllScoped = (ids: readonly string[]): SelectAllScopeIds => ids as SelectAllScopeIds
+
+// The announcer is a singleton DOM node; store tests stay DOM-free.
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 
 // Opening a page stamps it for the Pages view's "Last opened" sort (#5371).
 beforeEach(() => {
@@ -257,6 +262,16 @@ describe('useBlockStore', () => {
       expect(useBlockStore.getState().selectionFocusId).toBeNull()
     })
 
+    it('clears a cursor left on a block toggled out of the selection (#5734)', () => {
+      useBlockStore.getState().toggleSelected('A1')
+      useBlockStore.getState().toggleSelected('A1')
+      expect(selectCursorBlockId(useBlockStore.getState())).toBe('A1')
+
+      useTabsStore.getState().navigateToPage('PAGE_B', 'Page B')
+
+      expect(selectCursorBlockId(useBlockStore.getState())).toBeNull()
+    })
+
     it('clears the selection when navigating back up the page stack', () => {
       useTabsStore.setState({
         tabs: [
@@ -398,16 +413,16 @@ describe('useBlockStore', () => {
       expect(useBlockStore.getState().selectedBlockIds).toEqual([])
     })
 
-    it('re-seeds the anchor after a toggle resets the keyboard range', () => {
+    it('re-seeds the anchor at the cursor after a toggle resets the keyboard range', () => {
       useBlockStore.setState({ selectedBlockIds: ['A'] })
       useBlockStore.getState().extendSelection('down', visible) // anchor A, focus B
-      // A discrete toggle clears the keyboard anchor.
+      // A discrete toggle clears the keyboard anchor; the cursor stays on B (#5734).
       useBlockStore.getState().toggleSelected('B') // now ['A'] (B removed)
       expect(useBlockStore.getState().selectionAnchorId).toBeNull()
-      // Next Shift+Arrow re-seeds from the last selected (A).
+      // Next Shift+Arrow re-seeds from the cursor (B), not the last selected (A).
       useBlockStore.getState().extendSelection('down', visible)
-      expect(useBlockStore.getState().selectionAnchorId).toBe('A')
-      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B'])
+      expect(useBlockStore.getState().selectionAnchorId).toBe('B')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B', 'C'])
     })
 
     it('setFocused / clearSelected / setSelected reset the keyboard anchor', () => {
@@ -428,6 +443,137 @@ describe('useBlockStore', () => {
       useBlockStore.getState().extendSelection('down', visible)
       useBlockStore.getState().setFocused('B')
       expect(useBlockStore.getState().selectionAnchorId).toBeNull()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // block-select cursor (#5734 — Ctrl+Arrow / Ctrl+Space)
+  // ---------------------------------------------------------------------------
+  describe('block-select cursor (#5734)', () => {
+    const visible = mountScoped(['A', 'B', 'C', 'D'])
+    const cursor = () => selectCursorBlockId(useBlockStore.getState())
+
+    beforeEach(() => {
+      useBlockStore.setState({
+        selectedBlockIds: [],
+        focusedBlockId: null,
+        selectionAnchorId: null,
+        selectionFocusId: null,
+      })
+    })
+
+    it('falls back to the last selected block until a key or click places it', () => {
+      expect(cursor()).toBeNull()
+      useBlockStore.getState().setSelected(['A', 'C'])
+      expect(cursor()).toBe('C')
+    })
+
+    it('moveCursor moves the cursor without changing the selection', () => {
+      useBlockStore.getState().setSelected(['A'])
+      useBlockStore.getState().moveCursor('down', visible)
+      useBlockStore.getState().moveCursor('down', visible)
+      expect(cursor()).toBe('C')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A'])
+      useBlockStore.getState().moveCursor('up', visible)
+      expect(cursor()).toBe('B')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A'])
+    })
+
+    it('moveCursor clamps at both list edges', () => {
+      useBlockStore.getState().setSelected(['D'])
+      useBlockStore.getState().moveCursor('down', visible)
+      expect(cursor()).toBe('D')
+      useBlockStore.getState().setSelected(['A'])
+      useBlockStore.getState().moveCursor('up', visible)
+      expect(cursor()).toBe('A')
+    })
+
+    it('moveCursor is a no-op with no cursor or a cursor outside the visible list', () => {
+      useBlockStore.getState().moveCursor('down', visible)
+      expect(cursor()).toBeNull()
+      useBlockStore.getState().setSelected(['HIDDEN'])
+      useBlockStore.getState().moveCursor('down', visible)
+      expect(cursor()).toBe('HIDDEN')
+    })
+
+    it('toggling the cursor block adds then removes it, and the cursor stays put', () => {
+      useBlockStore.getState().setSelected(['A'])
+      useBlockStore.getState().moveCursor('down', visible)
+      useBlockStore.getState().toggleSelected(cursor() as string)
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B'])
+      useBlockStore.getState().toggleSelected(cursor() as string)
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A'])
+      expect(cursor()).toBe('B')
+    })
+
+    it('keeps the cursor on a block toggled out of an emptied selection', () => {
+      useBlockStore.getState().toggleSelected('B')
+      useBlockStore.getState().toggleSelected('B')
+      expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+      expect(cursor()).toBe('B')
+      useBlockStore.getState().toggleSelected(cursor() as string)
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B'])
+    })
+
+    it('Shift+Arrow ranges from a moved cursor, replacing the selection', () => {
+      useBlockStore.getState().setSelected(['A'])
+      useBlockStore.getState().moveCursor('down', visible)
+      useBlockStore.getState().moveCursor('down', visible) // cursor C
+      useBlockStore.getState().extendSelection('down', visible)
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['C', 'D'])
+      expect(cursor()).toBe('D')
+    })
+
+    it('Shift+Click ranges from the cursor when no range is in progress', () => {
+      useBlockStore.getState().toggleSelected('A')
+      useBlockStore.getState().toggleSelected('C')
+      useBlockStore.getState().toggleSelected('C') // ['A'], cursor C
+      useBlockStore.getState().rangeSelect('D', visible)
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['C', 'D'])
+    })
+
+    it('clearSelected and setFocused drop the cursor', () => {
+      useBlockStore.getState().toggleSelected('B')
+      useBlockStore.getState().clearSelected()
+      expect(cursor()).toBeNull()
+      useBlockStore.getState().toggleSelected('B')
+      useBlockStore.getState().setFocused('B')
+      expect(cursor()).toBeNull()
+    })
+
+    it('selectAll keeps the cursor where it was, else lands on the first block', () => {
+      const all = selectAllScoped(['A', 'B', 'C', 'D'])
+      useBlockStore.getState().setSelected(['B'])
+      useBlockStore.getState().selectAll(all)
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'C', 'D'])
+      expect(cursor()).toBe('B')
+
+      useBlockStore.getState().setSelected(['ELSEWHERE'])
+      useBlockStore.getState().selectAll(all)
+      expect(cursor()).toBe('A')
+
+      useBlockStore.getState().clearSelected()
+      useBlockStore.getState().selectAll(all)
+      expect(cursor()).toBe('A')
+    })
+
+    it('announces each change of the selection count once, the first and the clear included', () => {
+      const { toggleSelected, moveCursor, clearSelected, setFocused } = useBlockStore.getState()
+      vi.mocked(announce).mockClear()
+
+      toggleSelected('A')
+      toggleSelected('B')
+      moveCursor('down', visible)
+      clearSelected()
+      setFocused('A')
+
+      expect(vi.mocked(announce).mock.calls).toEqual([
+        [t('announce.blocksSelected', { count: 1 })],
+        [t('announce.blocksSelected', { count: 2 })],
+        [t('announce.selectionCleared')],
+      ])
+      expect(t('announce.blocksSelected', { count: 1 })).toBe('1 block selected')
+      expect(t('announce.blocksSelected', { count: 2 })).toBe('2 blocks selected')
     })
   })
 })

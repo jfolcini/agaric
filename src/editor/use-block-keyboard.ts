@@ -428,6 +428,17 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onEscapeSave()
     },
   },
+  // `toggleBlockSelectionKbd` (default Ctrl/Cmd+Space): leave the block as
+  // Escape does, selected and with the block-select cursor on it (#5734). An
+  // open picker keeps the chord.
+  {
+    match: (e) =>
+      matchesShortcutBinding(e, 'toggleBlockSelectionKbd') && !isSuggestionPopupVisible(),
+    handle: (e, cb) => {
+      e.preventDefault()
+      cb.onEscapeSave()
+    },
+  },
   // ArrowUp / ArrowLeft at position 0 → previous block (suppressed when popup open).
   // #910 — `!e.shiftKey`: Shift+Arrow at a boundary must EXTEND the selection
   // (let ProseMirror/the browser handle it), not navigate to the adjacent block

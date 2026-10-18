@@ -13,6 +13,8 @@
 
 import { create } from 'zustand'
 
+import { announce } from '@/lib/announcer'
+import { t } from '@/lib/i18n'
 import type { FlatBlock } from '@/lib/tree-utils'
 import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
 import { useJournalStore } from '@/stores/journal'
@@ -43,9 +45,11 @@ interface BlockStore {
    */
   selectionAnchorId: string | null
   /**
-   * Moving end of a keyboard range selection (#922) — the block the last
-   * Shift+Arrow landed on. Pressing the opposite direction walks this back
-   * toward (and past) the anchor, shrinking then re-growing the range.
+   * Keyboard focus in block-select mode (#5734), separate from the selection as
+   * in a WAI-ARIA multi-select listbox: the block Ctrl+Arrow moves to, Ctrl+Click
+   * or Ctrl+Space toggles, and the moving end of a Shift+Arrow range (#922). Read
+   * it through {@link selectCursorBlockId}, which falls back to the last selected
+   * block while this is null.
    */
   selectionFocusId: string | null
 
@@ -77,14 +81,20 @@ interface BlockStore {
    * semantics (and the Shift+Click anchor model). `visibleIds` is the
    * tree's rendered order (collapsed/zoomed visibility already applied).
    *
-   * Seeds the anchor from the current selection on first use: a single
-   * selected block becomes both anchor and focus. No-ops when there is
-   * nothing to extend from (empty selection) or no further block in that
-   * direction (selection clamped at the list edge).
+   * Seeds the anchor from the cursor on first use, so the range starts at the
+   * cursor block. No-ops with no cursor or no further block in that direction
+   * (selection clamped at the list edge).
    *
    * Brand-gated for the same reason as `rangeSelect` (#3642).
    */
   extendSelection: (direction: ExtendDirection, visibleIds: MountedIds) => void
+  /**
+   * Move the cursor one visible block in `direction` without changing the
+   * selection (#5734 — Ctrl+ArrowUp / Ctrl+ArrowDown in block-select mode).
+   * Clamped at the list edges; a no-op while the cursor is not in `visibleIds`.
+   * Brand-gated like `extendSelection`: Ctrl+Space selects what it lands on.
+   */
+  moveCursor: (direction: ExtendDirection, visibleIds: MountedIds) => void
   /**
    * Select all blocks (Ctrl+A when not editing).
    * Requires the visible block IDs from the per-page store.
@@ -99,6 +109,17 @@ interface BlockStore {
   clearSelected: () => void
   /** Replace the selection with the given IDs. */
   setSelected: (ids: string[]) => void
+}
+
+/**
+ * The block-select cursor (#5734): `selectionFocusId`, else the last selected
+ * block, the block Shift+Arrow and Ctrl+Space acted on before the cursor
+ * existed. Null with nothing selected or toggled.
+ */
+export function selectCursorBlockId(
+  state: Pick<BlockStore, 'selectedBlockIds' | 'selectionFocusId'>,
+): string | null {
+  return state.selectionFocusId ?? state.selectedBlockIds.at(-1) ?? null
 }
 
 export const useBlockStore = create<BlockStore>((set) => ({
@@ -119,9 +140,9 @@ export const useBlockStore = create<BlockStore>((set) => ({
   toggleSelected: (blockId) => {
     set((state) => {
       const ids = state.selectedBlockIds
-      const idx = ids.indexOf(blockId)
-      // Toggling is a discrete mouse/keyboard action — reset the keyboard
-      // range so the next Shift+Arrow re-seeds its anchor from the result.
+      // The cursor stays on the toggled block, selected or not (#5734), so a
+      // second Ctrl+Space undoes the first. The keyboard range resets: the next
+      // Shift+Arrow anchors on the cursor.
       // #2465 — modes are mutually exclusive on purpose (docs/architecture/
       // frontend.md "Selector discipline" + editor-and-content.md "Multi-
       // selection"): entering block-select mode always clears an in-progress
@@ -129,18 +150,12 @@ export const useBlockStore = create<BlockStore>((set) => ({
       // direction. Callers already gate these actions behind `!focusedBlockId`
       // (see `useBlockTreeKeyboardShortcuts.ts`), so this is normally a no-op
       // — it exists so the invariant holds even for a direct store call.
-      if (idx >= 0) {
-        return {
-          selectedBlockIds: ids.filter((id) => id !== blockId),
-          selectionAnchorId: null,
-          selectionFocusId: null,
-          focusedBlockId: null,
-        }
-      }
       return {
-        selectedBlockIds: [...ids, blockId],
+        selectedBlockIds: ids.includes(blockId)
+          ? ids.filter((id) => id !== blockId)
+          : [...ids, blockId],
         selectionAnchorId: null,
-        selectionFocusId: null,
+        selectionFocusId: blockId,
         focusedBlockId: null,
       }
     })
@@ -167,13 +182,13 @@ export const useBlockStore = create<BlockStore>((set) => ({
           focusedBlockId: null,
         }
       }
-      // Anchor = the in-progress range anchor if still visible, else the last
-      // selected block (matches `extendSelection`'s seeding). The range is
-      // anchor→clicked and REPLACES the prior selection (not unioned).
+      // Anchor = the in-progress range anchor if still visible, else the cursor
+      // (matches `extendSelection`'s seeding). The range is anchor→clicked and
+      // REPLACES the prior selection (not unioned).
       const anchorId =
         selectionAnchorId && visibleIds.includes(selectionAnchorId)
           ? selectionAnchorId
-          : (selectedBlockIds.at(-1) as string)
+          : (selectCursorBlockId(state) as string)
       const anchorIdx = visibleIds.indexOf(anchorId)
       const targetIdx = visibleIds.indexOf(blockId)
       if (anchorIdx < 0 || targetIdx < 0) {
@@ -200,19 +215,17 @@ export const useBlockStore = create<BlockStore>((set) => ({
 
   extendSelection: (direction, visibleIds) => {
     set((state) => {
-      const { selectedBlockIds, selectionAnchorId, selectionFocusId } = state
-      // Nothing to extend from: keyboard range-select needs a starting block
-      // (a single selected block in block-select mode). Leave state untouched.
-      if (selectedBlockIds.length === 0) return state
+      const { selectionAnchorId, selectionFocusId } = state
+      // Nothing to extend from: keyboard range-select starts at the cursor.
+      const cursorId = selectCursorBlockId(state)
+      if (cursorId === null) return state
 
       // Seed the anchor/focus on first use. The anchor is the fixed end; we
-      // prefer an in-progress keyboard range, else fall back to the current
-      // selection's last block (matches the Shift+Click "last selected"
-      // anchor model). Both must still be visible to drive the range.
+      // prefer an in-progress keyboard range, else the cursor (the same
+      // anchor model as Shift+Click). Both must still be visible to drive the
+      // range.
       const anchorId =
-        selectionAnchorId && visibleIds.includes(selectionAnchorId)
-          ? selectionAnchorId
-          : (selectedBlockIds.at(-1) as string)
+        selectionAnchorId && visibleIds.includes(selectionAnchorId) ? selectionAnchorId : cursorId
       const focusId =
         selectionFocusId && visibleIds.includes(selectionFocusId) ? selectionFocusId : anchorId
 
@@ -239,21 +252,37 @@ export const useBlockStore = create<BlockStore>((set) => ({
     })
   },
 
+  moveCursor: (direction, visibleIds) => {
+    set((state) => {
+      const cursorId = selectCursorBlockId(state)
+      const idx = cursorId === null ? -1 : visibleIds.indexOf(cursorId)
+      const next = idx < 0 ? undefined : visibleIds[direction === 'down' ? idx + 1 : idx - 1]
+      return next === undefined ? state : { selectionFocusId: next }
+    })
+  },
+
   // #2465 — `selectAll` / `setSelected` also clear `focusedBlockId`: any
   // action that populates the multi-selection must exit edit mode (mutual
   // exclusivity, mirroring `setFocused`'s existing "focusing clears
   // selection" direction).
   selectAll: (visibleIds) => {
-    set((state) => ({
-      // Copied, not aliased: `visibleIds` is a memoized render projection and
-      // `selectedBlockIds` is mutable state.
-      selectedBlockIds: [...visibleIds],
-      selectionAnchorId: null,
-      selectionFocusId: null,
-      // Guard like `setSelected`: `selectAll([])` (empty page) selects
-      // nothing and must not disturb an unrelated in-progress edit.
-      focusedBlockId: visibleIds.length > 0 ? null : state.focusedBlockId,
-    }))
+    set((state) => {
+      // The cursor stays where it is, else lands on the first block (#5734): left
+      // to fall back to the last selected block it would be the page's last, and
+      // its row takes DOM focus, scrolling the page there.
+      const cursorId = selectCursorBlockId(state)
+      return {
+        // Copied, not aliased: `visibleIds` is a memoized render projection and
+        // `selectedBlockIds` is mutable state.
+        selectedBlockIds: [...visibleIds],
+        selectionAnchorId: null,
+        selectionFocusId:
+          cursorId !== null && visibleIds.includes(cursorId) ? cursorId : (visibleIds[0] ?? null),
+        // Guard like `setSelected`: `selectAll([])` (empty page) selects
+        // nothing and must not disturb an unrelated in-progress edit.
+        focusedBlockId: visibleIds.length > 0 ? null : state.focusedBlockId,
+      }
+    })
   },
 
   clearSelected: () => {
@@ -303,11 +332,23 @@ function clearSelectionOnPageContextChange(): void {
   const key = activePageContextKey()
   if (key === lastPageContextKey) return
   lastPageContextKey = key
-  const { selectedBlockIds, selectionAnchorId, clearSelected } = useBlockStore.getState()
-  if (selectedBlockIds.length > 0 || selectionAnchorId !== null) clearSelected()
+  const { selectedBlockIds, selectionAnchorId, selectionFocusId, clearSelected } =
+    useBlockStore.getState()
+  if (selectedBlockIds.length > 0 || selectionAnchorId !== null || selectionFocusId !== null) {
+    clearSelected()
+  }
 }
 
 useNavigationStore.subscribe(clearSelectionOnPageContextChange)
 useTabsStore.subscribe(clearSelectionOnPageContextChange)
 useJournalStore.subscribe(clearSelectionOnPageContextChange)
 useSpaceStore.subscribe(clearSelectionOnPageContextChange)
+
+// A screen reader hears each change of the selection count, the first selection
+// and the clear included: the batch toolbar that shows the count mounts and
+// unmounts with the selection, so a live region inside it would miss both.
+useBlockStore.subscribe((state, previous) => {
+  const count = state.selectedBlockIds.length
+  if (count === previous.selectedBlockIds.length) return
+  announce(count > 0 ? t('announce.blocksSelected', { count }) : t('announce.selectionCleared'))
+})

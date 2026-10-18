@@ -92,7 +92,10 @@ export const shortcuts: Record<string, string> = {
   'keyboard.rangeSelectBlocks': 'Range select blocks',
   'keyboard.extendSelectionDown': 'Extend block selection down',
   'keyboard.extendSelectionUp': 'Extend block selection up',
-  'keyboard.toggleBlockSelectionKbd': 'Toggle current block in selection',
+  'keyboard.blockCursorDown': 'Move to the next block without changing the selection',
+  'keyboard.blockCursorUp': 'Move to the previous block without changing the selection',
+  'keyboard.toggleBlockSelectionKbd':
+    'Toggle current block in selection (selects the block you are editing)',
   'keyboard.selectAllBlocks': 'Select all blocks',
   'keyboard.clearSelection': 'Clear selection',
   'keyboard.copyBlocks': 'Copy selected blocks (as markdown outline)',

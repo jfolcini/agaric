@@ -86,7 +86,7 @@ Suggestion-popup passthrough: when a picker is visible, `Enter / Tab / Escape / 
 
 ## Multi-selection
 
-`useBlockStore.selectedBlockIds: string[]` carries the selection set. `Shift+Click` extends, `Ctrl+Click` toggles, `Ctrl+A` selects all visible. Editing a block clears selection — modes are mutually exclusive on purpose (you're either editing one block or selecting many).
+`useBlockStore.selectedBlockIds: string[]` carries the selection set. `Shift+Click` extends, `Ctrl+Click` toggles, `Ctrl+A` selects all visible. Keyboard focus is kept apart from the selection, as in a WAI-ARIA multi-select listbox: `selectionFocusId` is the cursor (`selectCursorBlockId` falls back to the last selected block), `Ctrl+↑` / `Ctrl+↓` move it and `Ctrl+Space` toggles it, both only while focus is in the tree's rows, `Shift+Arrow` ranges from it and `Ctrl+A` leaves it where it is. The cursor row holds DOM focus, and every change of the selection count, the first selection and the clear included, is spoken through `announce()` (a subscription in `src/stores/blocks.ts`). Editing a block clears selection — modes are mutually exclusive on purpose (you're either editing one block or selecting many).
 
 ## Undo / redo
 

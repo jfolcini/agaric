@@ -14,13 +14,14 @@
  * from context.
  */
 
-import React, { useCallback, useSyncExternalStore } from 'react'
+import React, { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 
 import { HostRowAriaContext } from '@/components/editor/embed/host-row-aria'
 import { SortableBlock } from '@/components/editor/SortableBlock'
 import { useRowDragState } from '@/components/editor/use-row-drag-state'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
+import { isEditableTarget } from '@/lib/keyboard-config'
 import type { FlatBlock, Projection } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
 
@@ -37,6 +38,12 @@ export interface SortableBlockWrapperProps {
   isFocused: boolean
   /** True if this block is part of the active multi-selection. */
   isSelected: boolean
+  /**
+   * True for the block-select cursor (#5734): the row Ctrl+Arrow moves to and
+   * Ctrl+Space toggles. It holds DOM focus, which shows its focus ring and is
+   * what assistive tech follows.
+   */
+  isCursor: boolean
   /**
    * True for a row past `BlockListRenderer`'s initial window (#5329). Such a
    * row mounts as a placeholder of estimated height and renders its block only
@@ -91,6 +98,7 @@ function SortableBlockWrapperInner({
   block,
   isFocused,
   isSelected,
+  isCursor,
   pastInitialWindow,
   projected = null,
   activeId = null,
@@ -135,6 +143,25 @@ function SortableBlockWrapperInner({
   // renders for a given block.id, and unobserves the exact element
   // On unmount.
   const observeRef = viewport.createObserveRef(block.id)
+  const rowElement = useRef<HTMLLIElement | null>(null)
+  const rowRef = useCallback(
+    (node: HTMLLIElement | null) => {
+      rowElement.current = node
+      observeRef(node)
+    },
+    [observeRef],
+  )
+
+  // #5734 — the cursor row takes DOM focus when the cursor lands on it, from a
+  // block row or the page, never from a text field elsewhere: a reload that
+  // prunes the selection moves the cursor too.
+  useEffect(() => {
+    const row = rowElement.current
+    const active = document.activeElement
+    if (isCursor && row && (!isEditableTarget(active) || active?.closest('[data-block-id]'))) {
+      row.focus()
+    }
+  }, [isCursor])
 
   // #1067 — subscribe to THIS block's off-screen membership via a per-id
   // external-store source. The `viewport` object identity is now permanently
@@ -163,11 +190,11 @@ function SortableBlockWrapperInner({
     />
   ) : null
 
-  // Focused block is never virtualized — always render fully
-  if (!isFocused && offscreen) {
+  // The focused block and the cursor are never virtualized — always render fully
+  if (!isFocused && !isCursor && offscreen) {
     return (
       <li
-        ref={observeRef}
+        ref={rowRef}
         data-block-id={block.id}
         aria-level={block.depth + 1}
         aria-setsize={siblingSetsize}
@@ -196,7 +223,7 @@ function SortableBlockWrapperInner({
 
   return (
     <li
-      ref={observeRef}
+      ref={rowRef}
       data-block-id={block.id}
       aria-level={block.depth + 1}
       aria-setsize={siblingSetsize}
@@ -206,8 +233,14 @@ function SortableBlockWrapperInner({
       // BlockInlineControls.
       // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- see note above; canonical control lives in BlockInlineControls
       aria-expanded={hasChildren ? !isCollapsed : undefined}
+      // Focusable by script only, so Tab order is unchanged (#5734).
+      tabIndex={isCursor ? -1 : undefined}
       className={cn(
         'list-none m-0 p-0',
+        // The `focus-ring-visible` ring, on `:focus` rather than `:focus-visible`:
+        // Chromium does not count a Ctrl chord as keyboard use, so after a click
+        // into a block, Ctrl+Space and Ctrl+Arrow would move an unmarked cursor.
+        isCursor && 'rounded-md focus:outline-hidden focus:ring-[3px] focus:ring-ring',
         isAnimating && 'block-children-enter',
         // #991 — committed faint row-level drop-over tint so the whole
         // landing row reads as the target (Notion/Logseq idiom), not just the

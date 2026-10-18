@@ -60,7 +60,8 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 | `Ctrl+Shift+E` | Export current page as Markdown |
 | `Ctrl+Shift+G` | Show current page in the graph (local mode) |
 | `Ctrl+Shift+M` | Switch the page on screen between editing blocks and editing it as one document ([page mode](editor.md#page-mode)) |
-| `Ctrl+Space` | Toggle the focused block's selection |
+| `Ctrl+Space` | In a block: leave it, selected, with the selection cursor (a focus ring) on it. With blocks selected and focus in the block list: add or remove the block under the cursor |
+| `Ctrl+↑` / `Ctrl+↓` | With blocks selected and focus in the block list: move the cursor to the block above / below without changing the selection. `Shift+↑` / `Shift+↓` select a range from the cursor |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste the selected blocks as a markdown outline, keeping their task state, priority, dates, list style and properties |
 
 ## Edit as Markdown

@@ -652,6 +652,50 @@ describe('handleBlockKeyDown', () => {
     })
   })
 
+  // #5734 — Ctrl+Space in the editor leaves the block the way Escape does, which
+  // selects it and puts the block-select cursor on it.
+  describe('Ctrl+Space (toggleBlockSelectionKbd)', () => {
+    afterEach(() => {
+      document.querySelectorAll('.suggestion-popup').forEach((el) => {
+        el.remove()
+      })
+    })
+
+    it('Ctrl+Space calls onEscapeSave', () => {
+      const cbs = makeCallbacks()
+      const event = makeEvent(' ', { ctrlKey: true })
+
+      handleBlockKeyDown(event, makeEditor({}), cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls['onEscapeSave']).toBe(1)
+    })
+
+    it('bare Space is left to the editor', () => {
+      const cbs = makeCallbacks()
+      const event = makeEvent(' ')
+
+      handleBlockKeyDown(event, makeEditor({}), cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onEscapeSave']).toBeUndefined()
+    })
+
+    it('an open picker keeps Ctrl+Space', () => {
+      const popup = document.createElement('div')
+      popup.className = 'suggestion-popup'
+      popup.checkVisibility = () => true
+      document.body.append(popup)
+      const cbs = makeCallbacks()
+      const event = makeEvent(' ', { ctrlKey: true })
+
+      handleBlockKeyDown(event, makeEditor({}), cbs)
+
+      expect(event.preventDefault).not.toHaveBeenCalled()
+      expect(cbs._calls['onEscapeSave']).toBeUndefined()
+    })
+  })
+
   describe('unhandled keys', () => {
     it('regular character key does nothing', () => {
       const editor = makeEditor({})
