@@ -1,4 +1,4 @@
-# Session 2577 — CI logs cut to what a failure needs
+# Session 2588 — CI logs cut to what a failure needs
 
 The WebdriverIO job logged every WebDriver command at `logLevel: 'info'`: 290k of
 the lane's 294k lines. A sweep of one passing log per job type found the same shape
