@@ -12,8 +12,8 @@ output of `cargo tauri build -v`, accepted Android licence texts.
   command line brings the wire log back.
 - `playwright.config.ts`: under `CI`, `[['dot'], ['github']]`. Nothing downstream read
   the `list` output; the failure artifacts are `test-results/`.
-- `src-tauri/.config/nextest.toml` `[profile.ci]`: `status-level = "slow"`,
-  `final-status-level = "flaky"`. Failures (full output), retries and SLOW print as
+- `src-tauri/.config/nextest.toml` `[profile.ci]`: `status-level = "leak"`,
+  `final-status-level = "flaky"`. Failures (full output), retries, SLOW and LEAK print as
   they happen; a test that needed a retry stays in the closing summary.
 - `ci.yml` `build`: `cargo tauri build -v` keeps `-v`, but the linuxdeploy plugin
   stdout is filtered from the live log, tee'd to `tauri-build.log`, and a failing build
