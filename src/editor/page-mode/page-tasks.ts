@@ -1,15 +1,19 @@
 /**
- * Page mode's tasks (#5743): a block's task state, priority and dates are the
- * block commands', not the document's (#5691). The page store holds them, as
- * it does for block mode, and each block's node view draws block mode's own
- * controls from it beside the editable text: the checkbox
- * (`BlockInlineControls`) before it, and the priority badge and the due and
- * scheduled chips (`BlockMetadataRow`) under it. The checkbox and the
- * `cycleTaskState` key (Ctrl+Enter) cycle the state, the badge cycles the
- * priority and the `priority1`–`priority3` keys (Ctrl+Shift+1–3) set it, a
- * chip opens block mode's date picker, and `openDatePicker` (Ctrl+Shift+D)
- * opens it to link a date at the caret, all through block mode's commands. A
- * change made elsewhere reaches the controls with the store's reload, never
+ * Page mode's tasks (#5743): a block's task state, priority, dates and
+ * properties are the block commands', not the document's (#5691). The page
+ * store holds the first three, as it does for block mode, and page mode reads
+ * the properties with the page (`page-properties.ts`). Each block's node view
+ * draws block mode's own controls from them beside the editable text: the
+ * checkbox (`BlockInlineControls`) before it, and under it the priority badge,
+ * the due and scheduled chips, the repeat rule and the property chips
+ * (`BlockMetadataRow`, in `PageBlockMetadata`). The checkbox and the
+ * `cycleTaskState` key (Ctrl+Enter) cycle the state; the badge cycles the
+ * priority and the `priority1`–`priority3` keys (Ctrl+Shift+1–3) set it; a
+ * date chip opens block mode's date picker, and `openDatePicker`
+ * (Ctrl+Shift+D) opens it to link a date at the caret; a property chip opens
+ * block mode's property editor, and the `+N` pill and `openPropertiesDrawer`
+ * (Ctrl+Shift+P) its property drawer: all through block mode's commands. A
+ * change made elsewhere reaches the controls with the page's reload, never
  * through the document or its undo history. The controls follow the block's
  * id, so a split or a join that moves an id moves them with it.
  *
@@ -37,15 +41,18 @@ import type React from 'react'
 import {
   BlockInlineControls,
   type BlockInlineControlsProps,
-  BlockMetadataRow,
-  type BlockMetadataRowProps,
 } from '@/components/editor/BlockInlineControls'
 import { serialize } from '@/editor/markdown-serializer'
 import { blockDocJson, PageBlock } from '@/editor/page-mode/page-document'
+import type { ShownProperty } from '@/editor/page-mode/page-properties'
 import type { PageSaveApi, PageSaveState } from '@/editor/page-mode/page-save'
+import {
+  PageBlockMetadata,
+  type PageBlockMetadataProps,
+} from '@/editor/page-mode/PageBlockMetadata'
 import { blockIdOf } from '@/editor/token-ids'
 import type { OpRef } from '@/lib/bindings'
-import { processCheckboxSyntax } from '@/lib/block-utils'
+import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '@/lib/block-utils'
 import { t } from '@/lib/i18n'
 import { matchesShortcutBinding, tipTapShortcutMap } from '@/lib/keyboard-config'
 import { scrollParentY } from '@/lib/scroll-parent'
@@ -57,7 +64,7 @@ import {
   type PageBlockStoreLike,
 } from '@/stores/inline-property-commit'
 
-/** What page mode does to a block's task, priority and dates: block mode's commands. */
+/** What page mode does to a block's task, priority, dates and properties: block mode's commands. */
 export interface PageTaskActions {
   /** Cycle block `id`'s task state, as block mode's checkbox does. */
   cycle: (id: string) => void
@@ -69,13 +76,19 @@ export interface PageTaskActions {
   openDatePicker: (id: string, mode: 'due' | 'schedule') => void
   /** Open block mode's date picker to link a date's page at the caret. */
   openDateLinkPicker: () => void
+  /** Open block mode's property drawer on block `id`. */
+  openPropertyDrawer: (id: string) => void
+  /** Block `id`'s property editor closed: read its properties again. */
+  propertiesEdited: (id: string) => void
 }
 
 /** Where page mode reads block tasks, and what it does to them. */
 export interface PageTaskSource extends PageTaskActions {
   /** Block `id`'s row, as the page store holds it. */
   blockOf: (id: string) => FlatBlock | undefined
-  /** Call `listener` on every change of the page store. */
+  /** Block `id`'s properties, as block mode's row draws them. */
+  propertiesOf: (id: string) => ShownProperty[]
+  /** Call `listener` on every change of the page store or the properties. */
   subscribe: (listener: () => void) => () => void
 }
 
@@ -152,7 +165,7 @@ function gateOf(editor: Editor): ControlsGate {
  * Block mode's component, outside the block's editable text: its box at
  * once, the component in it from `mount` on.
  */
-class Control<P extends BlockInlineControlsProps | BlockMetadataRowProps> {
+class Control<P extends BlockInlineControlsProps | PageBlockMetadataProps> {
   readonly element = document.createElement('div')
   private renderer: ReactRenderer<unknown, P> | null = null
   private props: P
@@ -193,24 +206,31 @@ class Control<P extends BlockInlineControlsProps | BlockMetadataRowProps> {
   }
 }
 
-type Metadata = Pick<BlockMetadataRowProps, 'priority' | 'dueDate' | 'scheduledDate'>
+interface Metadata {
+  priority: string | null
+  dueDate: string | null
+  scheduledDate: string | null
+  properties: ShownProperty[]
+}
 
 const sameMetadata = (a: Metadata | null, b: Metadata): boolean =>
   a !== null &&
   a.priority === b.priority &&
   a.dueDate === b.dueDate &&
-  a.scheduledDate === b.scheduledDate
+  a.scheduledDate === b.scheduledDate &&
+  a.properties === b.properties
 
 /**
  * A block as a node view: its text; before it, outside the editable text,
  * block mode's checkbox while the block holds a task state; and under it the
- * priority badge and date chips while it holds any.
+ * priority badge, date chips, repeat rule and property chips while it holds
+ * any.
  */
 class PageBlockView implements NodeView {
   readonly dom = document.createElement('div')
   readonly contentDOM = document.createElement('div')
   private checkbox: Control<BlockInlineControlsProps> | null = null
-  private metadata: Control<BlockMetadataRowProps> | null = null
+  private metadata: Control<PageBlockMetadataProps> | null = null
   private shownState: string | null = null
   private shownMetadata: Metadata | null = null
   private revealed = false
@@ -255,6 +275,7 @@ class PageBlockView implements NodeView {
       priority: block?.priority ?? null,
       dueDate: block?.due_date ?? null,
       scheduledDate: block?.scheduled_date ?? null,
+      properties: id === null ? [] : this.tasks.propertiesOf(id),
     })
   }
 
@@ -288,36 +309,47 @@ class PageBlockView implements NodeView {
   private showMetadata(id: string | null, metadata: Metadata): void {
     if (sameMetadata(this.shownMetadata, metadata)) return
     this.shownMetadata = metadata
-    const { priority, dueDate, scheduledDate } = metadata
-    if (id === null || (priority === null && dueDate === null && scheduledDate === null)) {
+    const { priority, dueDate, scheduledDate, properties } = metadata
+    // As `SortableBlock` filters them: the repeat rule has its own chip, the rest are the app's.
+    const filteredProperties = properties.filter(({ key }) => !INTERNAL_PROPERTY_KEYS.has(key))
+    const repeats = properties.some(({ key }) => key === 'repeat')
+    const drawn =
+      priority !== null ||
+      dueDate !== null ||
+      scheduledDate !== null ||
+      repeats ||
+      filteredProperties.length > 0
+    if (id === null || !drawn) {
       this.metadata?.destroy()
       this.metadata = null
       return
     }
-    // Block mode's row, without what page mode does not show yet: properties and attachments.
-    const props: BlockMetadataRowProps = {
+    // Block mode's row, without what page mode does not show yet: attachments.
+    const props: PageBlockMetadataProps = {
       blockId: id,
-      ...metadata,
+      priority,
+      dueDate,
+      scheduledDate,
+      properties,
+      filteredProperties,
       onTogglePriority: this.tasks.cyclePriority,
       onOpenDatePicker: this.tasks.openDatePicker,
-      filteredProperties: [],
-      attachmentCount: 0,
-      showAttachments: false,
-      onToggleAttachments: () => {},
-      onEditProp: () => {},
-      onEditKey: () => {},
+      onShowProperties: this.tasks.openPropertyDrawer,
+      onEdited: this.tasks.propertiesEdited,
     }
     let row = this.metadata
     if (row === null) {
-      row = new Control(BlockMetadataRow, props, this.editor, 'page-block-metadata')
+      row = new Control(PageBlockMetadata, props, this.editor, 'page-block-metadata')
       this.metadata = row
       this.dom.append(row.element)
       if (this.revealed) row.mount()
     } else {
       row.update(props)
     }
-    // The badge is the row's tallest: its empty box keeps that height (`index.css`).
+    // The badge is the row's tallest, then a property chip: its empty box keeps that
+    // height (`index.css`).
     row.element.toggleAttribute('data-priority', priority !== null)
+    row.element.toggleAttribute('data-properties', filteredProperties.length > 0)
   }
 
   /** A new id or depth draws the block anew: its attributes, and the controls of that id. */
@@ -361,9 +393,9 @@ function caretBlockId(state: EditorState): string | null {
 /**
  * Block mode's task keys, on the block the caret is in: `cycleTaskState`
  * (Ctrl+Enter) cycles its task, `priority1`–`priority3` (Ctrl+Shift+1–3) set
- * its priority, bound as block mode's `PriorityShortcuts` binds them, and
+ * its priority, bound as block mode's `PriorityShortcuts` binds them,
  * `openDatePicker` (Ctrl+Shift+D) opens the date picker to link a date at the
- * caret.
+ * caret, and `openPropertiesDrawer` (Ctrl+Shift+P) opens its property drawer.
  */
 const PageTaskKeys = Extension.create<{ tasks: PageTaskSource | null }>({
   name: 'pageTaskKeys',
@@ -410,6 +442,10 @@ const PageTaskKeys = Extension.create<{ tasks: PageTaskSource | null }>({
             }
             if (matchesShortcutBinding(event, 'openDatePicker')) {
               tasks.openDateLinkPicker()
+              return true
+            }
+            if (matchesShortcutBinding(event, 'openPropertiesDrawer')) {
+              tasks.openPropertyDrawer(id)
               return true
             }
             return false

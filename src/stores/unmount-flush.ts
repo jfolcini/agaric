@@ -107,7 +107,7 @@ export type UnmountFlushClassification =
   | { kind: 'edit' }
 
 /** The `key:: value` lines of `changed` whose key `loaded` did not already carry. */
-function addedInlineProperties(loaded: string, changed: string): InlinePropertyLine[] {
+export function addedInlineProperties(loaded: string, changed: string): InlinePropertyLine[] {
   const added = parseInlineProperties(changed)
   if (added.length === 0) return added
   const loadedKeys = new Set(parseInlineProperties(loaded).map((prop) => prop.key))

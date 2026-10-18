@@ -5,7 +5,7 @@
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Editor } from '@tiptap/core'
 import { ReactRenderer } from '@tiptap/react'
 import { createRef } from 'react'
@@ -23,11 +23,12 @@ import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
 import { PageModeEditor, type PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import { blockIdOf } from '@/editor/token-ids'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
-import type { BlockRow } from '@/lib/bindings'
+import type { BlockRow, PropertyRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { SYSTEM_MANAGED_PROPERTY_KEYS } from '@/lib/property-save-utils'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
@@ -414,13 +415,13 @@ describe('PageModeEditor', () => {
     expect(container.querySelector('[data-testid="page-mode-editor"]')).toBeNull()
   })
 
-  it('does not open a page whose blocks hold a property', async () => {
+  it('does not open a page holding a bullet block', async () => {
     const { pageId, ids } = seedPage(['first'])
     dispatch('set_property', {
       blockId: ids[0],
-      key: 'effort',
+      key: 'listStyle',
       value: {
-        value_text: '1h',
+        value_text: 'bullet',
         value_num: null,
         value_date: null,
         value_ref: null,
@@ -430,7 +431,7 @@ describe('PageModeEditor', () => {
     const { container, onBlocked } = renderPageMode(pageId)
 
     await waitFor(() => {
-      expect(onBlocked).toHaveBeenCalledWith({ kind: 'properties' })
+      expect(onBlocked).toHaveBeenCalledWith({ kind: 'listStyle' })
     })
     expect(container.querySelector('[data-testid="page-mode-editor"]')).toBeNull()
   })
@@ -442,9 +443,9 @@ describe('PageModeEditor', () => {
 
     dispatch('set_property', {
       blockId: ids[0],
-      key: 'repeat',
+      key: 'listStyle',
       value: {
-        value_text: '+1w',
+        value_text: 'ordered',
         value_num: null,
         value_date: null,
         value_ref: null,
@@ -456,7 +457,7 @@ describe('PageModeEditor', () => {
     })
 
     await waitFor(() => {
-      expect(onBlocked).toHaveBeenCalledWith({ kind: 'properties' })
+      expect(onBlocked).toHaveBeenCalledWith({ kind: 'listStyle' })
     })
   })
 })
@@ -862,17 +863,32 @@ describe('PageModeEditor tasks (#5743)', () => {
     dispatch('set_priority', { blockId: ids[0], level: '1' })
     dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
     dispatch('set_scheduled_date', { blockId: ids[1], date: '2026-10-21' })
+    dispatch('set_property', {
+      blockId: ids[1],
+      key: 'assignee',
+      value: {
+        value_text: 'Ana',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
     const { container, handle, store } = renderPageMode(pageId)
     const editor = await editorIn(container)
     await checkbox(container, ids[1] as string)
     await waitFor(() => {
       expect(container.querySelectorAll('.block-metadata-row')).toHaveLength(2)
     })
+    expect(container.querySelectorAll('[data-testid="property-chip"]')).toHaveLength(1)
     const draw = vi.spyOn(ReactRenderer.prototype, 'render')
 
     typeAt(editor, 1, 6, ' typed')
     typeAt(editor, 0, 5, '!')
     await act(async () => {
+      await handle.current?.flush()
+      await store.getState().load()
+      // Once the reload's read of the properties has run, the next reload draws what it took.
       await handle.current?.flush()
       await store.getState().load()
     })
@@ -1366,6 +1382,410 @@ describe('PageModeEditor priorities and dates (#5743)', () => {
   })
 })
 
+describe('PageModeEditor properties (#5743)', () => {
+  function setProp(id: string, key: string, text: string): void {
+    dispatch('set_property', {
+      blockId: id,
+      key,
+      value: {
+        value_text: text,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+  }
+
+  /** Block `id`'s properties in the backend, the user's: the text of each, by key. */
+  function backendProps(id: string): Record<string, string | null> {
+    const rows = dispatch('get_properties', { blockId: id }) as PropertyRow[]
+    return Object.fromEntries(
+      rows
+        .filter((row) => !SYSTEM_MANAGED_PROPERTY_KEYS.has(row.key))
+        .map((row) => [row.key, row.value_text ?? row.value_date]),
+    )
+  }
+
+  /** What block `id`'s property chips say, in order. */
+  function chips(container: HTMLElement, id: string): Array<string | null> {
+    return [
+      ...container.querySelectorAll(`[data-page-block-id="${id}"] [data-testid="property-chip"]`),
+    ].map((chip) => chip.getAttribute('aria-label'))
+  }
+
+  const chip = (key: string, value: string) => t('property.selectValue', { key, value })
+
+  it('shows block mode’s property chips and repeat rule under the text, with no a11y violations', async () => {
+    const { pageId, ids } = seedPage(['water plants', 'call mom', 'plain'])
+    dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    setProp(ids[0] as string, 'repeat', '+1w')
+    setProp(ids[1] as string, 'assignee', 'Ana')
+    setProp(ids[1] as string, 'location', 'home')
+    const { container, onBlocked } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    await waitFor(() => {
+      expect(chips(container, ids[1] as string)).toEqual([
+        chip('Assignee', 'Ana'),
+        chip('Location', 'home'),
+      ])
+    })
+    expect(
+      container
+        .querySelector(`[data-page-block-id="${ids[0]}"] .repeat-indicator`)
+        ?.getAttribute('aria-label'),
+    ).toBe(t('block.repeats', { value: '+1w' }))
+    // The rule has its chip; the stamps the task's state wrote are the app's.
+    expect(chips(container, ids[0] as string)).toEqual([])
+    expect(
+      container.querySelector(`[data-page-block-id="${ids[2]}"] .block-metadata-row`),
+    ).toBeNull()
+    expect(container.querySelector('.page-block-content [data-testid="property-chip"]')).toBeNull()
+    expect(docTexts(editor)).toEqual(['water plants', 'call mom', 'plain'])
+    expect(onBlocked).not.toHaveBeenCalled()
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
+  it('a chip opens block mode’s property editor; the value given is the block’s, and the caret comes back', async () => {
+    const { pageId, ids } = seedPage(['first', 'call mom'])
+    setProp(ids[1] as string, 'assignee', 'Ana')
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.view.focus()
+    })
+    caretTo(editor, 0)
+
+    fireEvent.click(await screen.findByRole('button', { name: chip('Assignee', 'Ana') }))
+    const field = await screen.findByRole('textbox', { name: t('block.editProperty') })
+    expect(field.closest('[data-editor-portal]')).not.toBeNull()
+    fireEvent.change(field, { target: { value: 'Bo' } })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Enter' })
+    })
+
+    await waitFor(() => {
+      expect(backendProps(ids[1] as string)).toEqual({ assignee: 'Bo' })
+    })
+    await waitFor(() => {
+      expect(chips(container, ids[1] as string)).toEqual([chip('Assignee', 'Bo')])
+    })
+    await waitFor(() => {
+      expect(document.activeElement).toBe(editor.view.dom)
+    })
+    expect(editor.state.selection.from).toBe(at(editor, 0, 0))
+    expect(docTexts(editor)).toEqual(['first', 'call mom'])
+  })
+
+  it('a chip’s key opens block mode’s rename; the new key holds the value', async () => {
+    const { pageId, ids } = seedPage(['call mom'])
+    setProp(ids[0] as string, 'assignee', 'Ana')
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: t('property.editKeyLabel', { key: 'Assignee' }) }),
+    )
+    const field = await screen.findByRole('textbox', { name: t('block.editProperty') })
+    fireEvent.change(field, { target: { value: 'location' } })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Enter' })
+    })
+
+    await waitFor(() => {
+      expect(backendProps(ids[0] as string)).toEqual({ location: 'Ana' })
+    })
+    await waitFor(() => {
+      expect(chips(container, ids[0] as string)).toEqual([chip('Location', 'Ana')])
+    })
+  })
+
+  it('a chip emptied deletes the property, and its row goes', async () => {
+    const { pageId, ids } = seedPage(['call mom'])
+    setProp(ids[0] as string, 'assignee', 'Ana')
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+
+    fireEvent.click(await screen.findByRole('button', { name: chip('Assignee', 'Ana') }))
+    const field = await screen.findByRole('textbox', { name: t('block.editProperty') })
+    fireEvent.change(field, { target: { value: '' } })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Enter' })
+    })
+
+    await waitFor(() => {
+      expect(backendProps(ids[0] as string)).toEqual({})
+    })
+    await waitFor(() => {
+      expect(
+        container.querySelector(`[data-page-block-id="${ids[0]}"] .page-block-metadata`),
+      ).toBeNull()
+    })
+  })
+
+  it('a refused property write says so, and the chip keeps what the backend holds', async () => {
+    const { pageId, ids } = seedPage(['call mom'])
+    setProp(ids[0] as string, 'assignee', 'Ana')
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_property') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: chip('Assignee', 'Ana') }))
+    const field = await screen.findByRole('textbox', { name: t('block.editProperty') })
+    fireEvent.change(field, { target: { value: 'Bo' } })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Enter' })
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('property.saveFailed'))
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('textbox', { name: t('block.editProperty') })).toBeNull()
+    })
+    expect(chips(container, ids[0] as string)).toEqual([chip('Assignee', 'Ana')])
+    expect(backendProps(ids[0] as string)).toEqual({ assignee: 'Ana' })
+  })
+
+  it('the +N pill and Ctrl+Shift+P open block mode’s drawer; what it deletes goes once it closes', async () => {
+    const { pageId, ids } = seedPage(['call mom', 'plain'])
+    for (const [key, value] of [
+      ['assignee', 'Ana'],
+      ['location', 'home'],
+      ['context', '@phone'],
+      ['url', 'example'],
+    ] as const) {
+      setProp(ids[0] as string, key, value)
+    }
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: t('block.showAllProperties', { count: 4 }) }),
+    )
+    const drawer = await screen.findByRole('dialog', { name: t('property.drawerTitle') })
+    // Its rows in the block's order: the second is `location`'s.
+    await within(drawer).findByTestId('property-value-input-location')
+    fireEvent.click(
+      within(drawer).getAllByRole('button', { name: t('property.delete') })[1] as HTMLElement,
+    )
+    await waitFor(() => {
+      expect(backendProps(ids[0] as string)).not.toHaveProperty('location')
+    })
+    await act(async () => {
+      fireEvent.keyDown(drawer, { key: 'Escape' })
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: t('property.drawerTitle') })).toBeNull()
+    })
+    await waitFor(() => {
+      expect(chips(container, ids[0] as string)).toEqual([
+        chip('Assignee', 'Ana'),
+        chip('Context', '@phone'),
+        chip('Url', 'example'),
+      ])
+    })
+
+    // The key, on a block holding none yet: the drawer adds to it.
+    act(() => {
+      editor.view.focus()
+    })
+    caretTo(editor, 1)
+    expect(press(editor, 'P', { ctrlKey: true, shiftKey: true })).toBe(true)
+    await screen.findByRole('dialog', { name: t('property.drawerTitle') })
+  })
+
+  it('a typed `key:: value` line becomes the property once the caret leaves the block, not before', async () => {
+    const { pageId, ids } = seedPage(['first', 'call mom'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.view.focus()
+    })
+
+    act(() => {
+      editor
+        .chain()
+        .setTextSelection(at(editor, 1, 8))
+        .setHardBreak()
+        .insertContent('assignee:: Ana')
+        .run()
+    })
+    await act(async () => {
+      await flushActiveDraft()
+    })
+    expect(backendText(ids[1] as string)).toBe('call mom\nassignee:: Ana')
+    expect(backendProps(ids[1] as string)).toEqual({})
+    expect(chips(container, ids[1] as string)).toEqual([])
+
+    caretTo(editor, 0)
+    await waitFor(() => {
+      expect(backendProps(ids[1] as string)).toEqual({ assignee: 'Ana' })
+    })
+    await waitFor(() => {
+      expect(backendText(ids[1] as string)).toBe('call mom')
+    })
+    await waitFor(() => {
+      expect(chips(container, ids[1] as string)).toEqual([chip('Assignee', 'Ana')])
+    })
+    expect(docTexts(editor)).toEqual(['first', 'call mom'])
+  })
+
+  it('a `key:: value` line the block already held stays text when the block is edited and left', async () => {
+    const { pageId, ids } = seedPage(['first', 'note'])
+    dispatch('edit_block', { blockId: ids[1], toText: 'note\nassignee:: Ana' })
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeAt(editor, 1, 4, '!')
+    caretTo(editor, 0)
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect(backendText(ids[1] as string)).toBe('note!\nassignee:: Ana')
+    expect(backendProps(ids[1] as string)).toEqual({})
+    expect(chips(container, ids[1] as string)).toEqual([])
+  })
+
+  it('a typed line whose property write is refused stays text, and says so', async () => {
+    const { pageId, ids } = seedPage(['first', 'call mom'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_property') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    act(() => {
+      editor
+        .chain()
+        .setTextSelection(at(editor, 1, 8))
+        .setHardBreak()
+        .insertContent('assignee:: Ana')
+        .run()
+    })
+    caretTo(editor, 0)
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+      t('blockTree.propertyKeptAsText', { lines: 'assignee:: Ana' }),
+    )
+    expect(backendText(ids[1] as string)).toBe('call mom\nassignee:: Ana')
+    expect(backendProps(ids[1] as string)).toEqual({})
+    expect(chips(container, ids[1] as string)).toEqual([])
+  })
+
+  it('a peer’s properties, set or deleted, show on reload, outside the document and its undo', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    setProp(ids[0] as string, 'assignee', 'Ana')
+    const { container, store, onBlocked } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(chips(container, ids[0] as string)).toEqual([chip('Assignee', 'Ana')])
+    })
+
+    dispatch('delete_property', { blockId: ids[0], key: 'assignee' })
+    setProp(ids[1] as string, 'location', 'home')
+    await act(async () => {
+      await store.getState().load()
+    })
+
+    await waitFor(() => {
+      expect(chips(container, ids[1] as string)).toEqual([chip('Location', 'home')])
+    })
+    await waitFor(() => {
+      expect(
+        container.querySelector(`[data-page-block-id="${ids[0]}"] .page-block-metadata`),
+      ).toBeNull()
+    })
+    expect(liveControls(editor)).toBe(1)
+    expect(docTexts(editor)).toEqual(['first', 'second'])
+    expect(editor.can().undo()).toBe(false)
+    expect(onBlocked).not.toHaveBeenCalled()
+  })
+
+  it('completing a repeating task brings in its next occurrence, with its rule', async () => {
+    const { pageId, ids } = seedPage(['water plants', 'plain'])
+    const task = ids[0] as string
+    dispatch('set_todo_state', { blockId: task, state: 'DOING' })
+    dispatch('set_due_date', { blockId: task, date: '2026-10-20' })
+    setProp(task, 'repeat', '+1w')
+    // The mock has no recurrence: this is the backend's, the next occurrence
+    // made with the completion (`build_recurrence_sibling_in_tx`).
+    let next = ''
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      const answer = dispatch(cmd, args)
+      const { blockId, state } = (args ?? {}) as { blockId?: string; state?: string }
+      if (cmd === 'set_todo_state' && blockId === task && state === 'DONE') {
+        next = (
+          dispatch('create_block', {
+            blockType: 'content',
+            content: 'water plants',
+            parentId: pageId,
+            index: 1,
+            scope: SCOPE,
+            blockId: null,
+          }) as BlockRow
+        ).id
+        dispatch('set_todo_state', { blockId: next, state: 'TODO' })
+        dispatch('set_due_date', { blockId: next, date: '2026-10-27' })
+        setProp(next, 'repeat', '+1w')
+      }
+      return answer
+    })
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(
+        container.querySelector(`[data-page-block-id="${task}"] .repeat-indicator`),
+      ).not.toBeNull()
+    })
+
+    await act(async () => {
+      fireEvent.click(
+        container.querySelector(
+          `[data-page-block-id="${task}"] [data-testid="task-marker"]`,
+        ) as HTMLElement,
+      )
+    })
+
+    await waitFor(() => {
+      expect(editor.state.doc.childCount).toBe(3)
+    })
+    expect(blockIdOf(editor.state.doc.child(1))).toBe(next)
+    expect(docTexts(editor)).toEqual(['water plants', 'water plants', 'plain'])
+    await waitFor(() => {
+      expect(
+        container
+          .querySelector(`[data-page-block-id="${next}"] [data-testid="task-marker"]`)
+          ?.getAttribute('aria-label'),
+      ).toBe(t('block.taskCycle', { state: 'TODO' }))
+    })
+    expect(
+      container
+        .querySelector(`[data-page-block-id="${next}"] .due-date-chip`)
+        ?.getAttribute('aria-label'),
+    ).toBe(t('block.dueDate', { date: formatCompactDate('2026-10-27') }))
+    expect(
+      container.querySelector(`[data-page-block-id="${next}"] .repeat-indicator`),
+    ).not.toBeNull()
+    expect(
+      container.querySelector(`[data-page-block-id="${task}"]`)?.getAttribute('data-todo-state'),
+    ).toBe('DONE')
+    expect(editor.can().undo()).toBe(false)
+  })
+})
+
 describe('PageModeEditor mounts a block’s controls as it nears the viewport (#5743)', () => {
   beforeEach(() => {
     MockIntersectionObserver.instances = []
@@ -1579,6 +1999,34 @@ describe('PageModeEditor mounts a block’s controls as it nears the viewport (#
     expect(inBlock(container, ids[2], MARKER)).not.toBeNull()
     expect(inBlock(container, ids[2], BADGE)).not.toBeNull()
     expect(liveControls(editor)).toBe(2)
+  })
+
+  it('a block with properties keeps its row’s box, empty, until it nears the view', async () => {
+    const { pageId, ids } = seedPage(['first', 'call mom'])
+    dispatch('set_property', {
+      blockId: ids[1],
+      key: 'assignee',
+      value: {
+        value_text: 'Ana',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+    const io = await observer()
+
+    const box = inBlock(container, ids[1] as string, '.page-block-metadata') as HTMLElement
+    expect(box.childElementCount).toBe(0)
+    expect(box.hasAttribute('data-properties')).toBe(true)
+    expect(box.hasAttribute('data-priority')).toBe(false)
+
+    report(io, blockEl(container, ids[1] as string), true)
+    await waitFor(() => {
+      expect(inBlock(container, ids[1] as string, '[data-testid="property-chip"]')).not.toBeNull()
+    })
   })
 
   it('a runtime with no IntersectionObserver mounts every block’s controls at once', async () => {

@@ -77,11 +77,11 @@ describe('PropertyChip', () => {
     expect(chip?.className).not.toContain('mt-1')
   })
 
-  it('key label has opacity-60 class', () => {
-    render(<PropertyChip propKey="repeat" value="weekly" />)
+  it('key label is not faded below the chip’s muted text, which fails AA contrast (#5743)', () => {
+    render(<PropertyChip propKey="repeat" value="weekly" onKeyClick={() => {}} />)
 
-    const keySpan = screen.getByText('Repeat:')
-    expect(keySpan.className).toContain('opacity-60')
+    const keyLabel = screen.getByText('Repeat:')
+    expect(keyLabel.className).not.toMatch(/(^|\s)opacity-/)
   })
 
   it('has no a11y violations (default, non-interactive)', async () => {

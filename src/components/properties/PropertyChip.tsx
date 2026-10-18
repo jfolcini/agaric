@@ -61,7 +61,8 @@ export function PropertyChip({
     <button
       type="button"
       className={cn(
-        'property-key-label opacity-60 hover:underline cursor-pointer rounded-sm',
+        // Muted as the chip is, not faded further, which fails AA contrast (#5743).
+        'property-key-label hover:underline cursor-pointer rounded-sm',
         'focus-ring-visible',
         Icon && 'inline-flex items-center gap-0.5',
       )}
@@ -77,9 +78,7 @@ export function PropertyChip({
       {displayName}:
     </button>
   ) : (
-    <span
-      className={cn('property-key-label opacity-60', Icon && 'inline-flex items-center gap-0.5')}
-    >
+    <span className={cn('property-key-label', Icon && 'inline-flex items-center gap-0.5')}>
       {Icon && <Icon className="h-2.5 w-2.5 shrink-0" />}
       {displayName}:
     </span>

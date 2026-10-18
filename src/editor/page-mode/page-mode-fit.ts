@@ -1,22 +1,22 @@
 /**
  * What keeps a page out of page mode (#5691). Page mode shows a block's text,
- * its structure, and its task, priority and dates (`page-tasks.ts`); what else
- * block mode draws around the text it does not draw yet, so a page holding any
- * of it stays in block mode rather than hide it: properties, a repeating
- * task's rule among them, and attachments, and the `{{query …}}` and
- * `{{embed …}}` blocks block mode renders as results. A page longer than
- * `PAGE_MODE_BLOCK_CAP` stays too: ProseMirror renders the whole document.
- * Showing these in page mode is #5743.
+ * its structure, its task, priority and dates, and its properties
+ * (`page-tasks.ts`); what else block mode draws around the text it does not
+ * draw yet, so a page holding any of it stays in block mode rather than hide
+ * it: a bullet or numbered block's list marker, attachments, and the
+ * `{{query …}}` and `{{embed …}}` blocks block mode renders as results. A page
+ * longer than `PAGE_MODE_BLOCK_CAP` stays too: ProseMirror renders the whole
+ * document. Showing these in page mode is #5743.
  *
  * Collapse is block mode's view of the tree, not something blocks hold: page
  * mode shows every block, and the collapse state is there again in block mode.
  */
 
 import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
+import { commands, type PropertyRow } from '@/lib/bindings'
 import { parseEmbedToken } from '@/lib/embed-token'
 import { t } from '@/lib/i18n'
-import { SYSTEM_MANAGED_PROPERTY_KEYS } from '@/lib/property-save-utils'
+import { listStyleFromRows } from '@/lib/list-style'
 import type { FlatBlock } from '@/lib/tree-utils'
 
 /** The most blocks page mode opens; a longer page stays in block mode. */
@@ -24,7 +24,14 @@ export const PAGE_MODE_BLOCK_CAP = 500
 
 export type PageModeBlocker =
   | { kind: 'overCap'; count: number }
-  | { kind: 'properties' | 'attachments' | 'queries' | 'embeds' }
+  | { kind: 'listStyle' | 'attachments' | 'queries' | 'embeds' }
+
+/** What page mode reads of a page before it shows it. */
+export interface PageFit {
+  blocker: PageModeBlocker | null
+  /** Each block's properties, by id; none read when the rows already keep the page out. */
+  properties: Record<string, PropertyRow[]>
+}
 
 /** The cap, which only the perf harness's e2e build may raise (`e2e/perf.spec.ts`, `-g 'page mode'`). */
 function blockCap(): number {
@@ -48,30 +55,34 @@ export function blockerIn(blocks: readonly FlatBlock[], count: number): PageMode
 }
 
 /**
- * What keeps the page out of page mode, its blocks' properties and
- * attachments included: one read of each for the whole page. The stamps a
- * task's state writes (`created_at`, `completed_at`) are not the user's and
- * block mode's property row hides them (`INTERNAL_PROPERTY_KEYS`; only its
- * drawer lists them, read-only), so they keep nothing out. A repeating task's
- * `repeat` rule does: block mode draws it as a chip from the block's
- * properties, which page mode does not read yet.
+ * What keeps the page out of page mode, and its blocks' properties: one read
+ * of their properties and one of their attachments for the whole page. A
+ * bullet or numbered block keeps it out: block mode draws its marker, and
+ * Enter and Backspace continue and leave the list, which page mode does not.
  */
-export async function pageModeBlocker(
-  blocks: readonly FlatBlock[],
-  count: number,
-): Promise<PageModeBlocker | null> {
+export async function readPageFit(blocks: readonly FlatBlock[], count: number): Promise<PageFit> {
   const found = blockerIn(blocks, count)
-  if (found !== null || blocks.length === 0) return found
+  if (found !== null || blocks.length === 0) return { blocker: found, properties: {} }
   const ids = blocks.map((block) => block.id)
   const [properties, attachments] = await Promise.all([
     commands.getBatchProperties(ids).then(unwrap),
     commands.listAttachmentsBatch(ids).then(unwrap),
   ])
-  const drawn = (rows: readonly { key: string }[]) =>
-    rows.some((row) => !SYSTEM_MANAGED_PROPERTY_KEYS.has(row.key))
-  if (Object.values(properties).some(drawn)) return { kind: 'properties' }
-  if (Object.values(attachments).some((rows) => rows.length > 0)) return { kind: 'attachments' }
-  return null
+  if (Object.values(properties).some((rows) => listStyleFromRows(rows) !== 'none')) {
+    return { blocker: { kind: 'listStyle' }, properties }
+  }
+  if (Object.values(attachments).some((rows) => rows.length > 0)) {
+    return { blocker: { kind: 'attachments' }, properties }
+  }
+  return { blocker: null, properties }
+}
+
+/** What keeps the page out of page mode, read as `readPageFit` reads it. */
+export async function pageModeBlocker(
+  blocks: readonly FlatBlock[],
+  count: number,
+): Promise<PageModeBlocker | null> {
+  return (await readPageFit(blocks, count)).blocker
 }
 
 /** Why page mode is not offered, in a sentence. */

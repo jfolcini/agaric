@@ -1417,7 +1417,7 @@ describe('PageEditor page mode (#5691)', () => {
     expect(capturedPageHeaderProps?.editMode).toBe('blocks')
   })
 
-  it('pointing at the switch reads the blocks’ properties, and a page with one is blocked', async () => {
+  it('pointing at the switch reads the blocks’ properties, and a page with a bullet block is blocked', async () => {
     stubInvoke({
       load_page_subtree: () => ({
         blocks: [makeBlock({ id: 'B1', content: 'text', parent_id: 'PAGE_1' })],
@@ -1427,8 +1427,8 @@ describe('PageEditor page mode (#5691)', () => {
       get_batch_properties: () => ({
         B1: [
           {
-            key: 'effort',
-            value_text: '1h',
+            key: 'listStyle',
+            value_text: 'bullet',
             value_num: null,
             value_date: null,
             value_ref: null,
@@ -1446,23 +1446,23 @@ describe('PageEditor page mode (#5691)', () => {
     act(() => capturedPageHeaderProps?.onEditModeIntent?.())
 
     await waitFor(() => {
-      expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.properties'))
+      expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.listStyle'))
     })
   })
 
-  describe('a property found on a block and since removed', () => {
-    const effort: PropertyRow = {
-      key: 'effort',
-      value_text: '1h',
+  describe('a bullet block found and since made plain', () => {
+    const bullet: PropertyRow = {
+      key: 'listStyle',
+      value_text: 'bullet',
       value_num: null,
       value_date: null,
       value_ref: null,
       value_bool: null,
     }
 
-    /** A page whose one block holds a property until `clearProperty` is called, blocked once pointed at. */
+    /** A page whose one block is a bullet until `clearProperty` is called, blocked once pointed at. */
     async function blockedByProperty(): Promise<() => void> {
-      let properties: Record<string, PropertyRow[]> = { B1: [effort] }
+      let properties: Record<string, PropertyRow[]> = { B1: [bullet] }
       stubInvoke({
         load_page_subtree: () => ({
           blocks: [makeBlock({ id: 'B1', content: 'text', parent_id: 'PAGE_1' })],
@@ -1477,7 +1477,7 @@ describe('PageEditor page mode (#5691)', () => {
       await loadPage()
       act(() => capturedPageHeaderProps?.onEditModeIntent?.())
       await waitFor(() => {
-        expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.properties'))
+        expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.listStyle'))
       })
       return () => {
         properties = {}

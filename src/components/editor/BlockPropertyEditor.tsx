@@ -646,7 +646,7 @@ export function BlockPropertyEditor({
             try {
               // #3275 — read the OLD key's raw typed row instead of
               // re-writing `editingKey.value` (the already-flattened
-              // display string from `useExtraBlockProperties`'s `mapRows`,
+              // display string from `useExtraBlockProperties`'s `extraPropertiesOf`,
               // which collapses value_text/value_date/value_num into one
               // string and cannot tell them apart). Re-flattening it back
               // into `value_text` on rename is exactly what nulled

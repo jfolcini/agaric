@@ -860,17 +860,118 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     expect(violations).toEqual([])
   })
 
-  for (const width of [1280, 600]) {
-    test(`a long page mounts a block’s controls as it nears the view, and nothing moves as they do, ${width}px wide`, async ({
+  test('a page of properties and a repeating task opens in page mode; a chip and a typed line set them, and they stay', async ({
+    page,
+  }) => {
+    // axe reads colours, which a fade in progress makes wrong.
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const { pageId, ids } = await seedRows(page, 'Page properties', [
+      [0, 'water plants'],
+      [0, 'call mom'],
+      [0, 'plain'],
+    ])
+    const text = (value: string) => ({
+      value_text: value,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    })
+    await ipc(page, 'set_todo_state', { blockId: ids[0], state: 'TODO' })
+    await ipc(page, 'set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    await ipc(page, 'set_property', { blockId: ids[0], key: 'repeat', value: text('+1w') })
+    await ipc(page, 'set_property', { blockId: ids[1], key: 'assignee', value: text('Ana') })
+    await openInPageMode(page, 'Page properties', 3)
+    const inBlock = (id: string | undefined, selector: string) =>
+      page.locator(`${EDITOR} [data-page-block-id="${id}"] ${selector}`)
+    const chips = (id: string | undefined) => inBlock(id, '[data-testid="property-chip"]')
+    const props = async (id: string | undefined) =>
+      Object.fromEntries(
+        (
+          await ipc<Array<{ key: string; value_text: string | null }>>(page, 'get_properties', {
+            blockId: id,
+          })
+        )
+          .filter((row) => !['created_at', 'completed_at'].includes(row.key))
+          .map((row) => [row.key, row.value_text]),
+      )
+
+    await expect(inBlock(ids[0], '.repeat-indicator')).toHaveAttribute('aria-label', 'Repeats +1w')
+    await expect(inBlock(ids[0], '.due-date-chip')).toHaveText('Oct 20')
+    await expect(chips(ids[1])).toHaveAttribute('aria-label', 'Assignee: Ana')
+    await expect(inBlock(ids[2], '.block-metadata-row')).toHaveCount(0)
+
+    // A chip opens block mode's property editor; the value typed there is the block's.
+    await caret(page, 2, 'end')
+    await chips(ids[1]).getByRole('button', { name: 'Assignee: Ana' }).click()
+    const field = page.getByRole('textbox', { name: 'Edit property' })
+    await field.fill('Bo')
+    await page.keyboard.press('Enter')
+    await expect(field).toHaveCount(0)
+    await expect(chips(ids[1])).toHaveAttribute('aria-label', 'Assignee: Bo')
+    await expect.poll(() => props(ids[1])).toEqual({ assignee: 'Bo' })
+    await expect(page.locator(EDITOR)).toBeFocused()
+    expect(await cursor(page)).toEqual({ index: 2, offset: 5 })
+
+    // A `key:: value` line typed on a line of its own is the block's property once left.
+    await caret(page, 1, 'end')
+    await page.keyboard.press('Shift+Enter')
+    await page.keyboard.type('status:: done')
+    await expect.poll(async () => (await shown(page))[1]?.text).toBe('call momstatus:: done')
+    await expect(chips(ids[1])).toHaveCount(1)
+    // An arrow pressed in the frame the last key is drawn in is taken back by ProseMirror's selection.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+    await page.keyboard.press('ArrowDown')
+    await expect(chips(ids[1])).toHaveCount(2)
+    await expect(chips(ids[1]).nth(1)).toHaveAttribute('aria-label', 'Status: done')
+    await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('call mom')
+    expect((await shown(page))[1]?.text).toBe('call mom')
+    expect(await props(ids[1])).toEqual({ assignee: 'Bo', status: 'done' })
+
+    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    await page.keyboard.press('Escape')
+    await expect(page.locator(EDITOR)).not.toBeFocused()
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Page properties')
+    // The switch is the page on screen's: choose Page again.
+    await modeSwitch(page, 'Page').click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
+    await expect(chips(ids[1]).nth(0)).toHaveAttribute('aria-label', 'Assignee: Bo')
+    await expect(chips(ids[1]).nth(1)).toHaveAttribute('aria-label', 'Status: done')
+    await expect(inBlock(ids[0], '.repeat-indicator')).toHaveAttribute('aria-label', 'Repeats +1w')
+    expect(await backend(page, pageId)).toEqual(await shown(page))
+    await page.addScriptTag({ path: axePath })
+    const violations = await page.evaluate(async () => {
+      const { axe } = window as unknown as {
+        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
+      }
+      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
+      return found.map((v) => v.id)
+    })
+    expect(violations).toEqual([])
+  })
+
+  // Below 640px the priority badge pads taller; at a smaller font a date chip is shorter than a property chip.
+  for (const [width, fontSize] of [
+    [1280, '16px'],
+    [600, '16px'],
+    [1280, '14px'],
+  ] as const) {
+    test(`a long page mounts a block’s controls as it nears the view, and nothing moves as they do, ${width}px wide, ${fontSize} text`, async ({
       page,
     }) => {
-      // Below 640px the priority badge pads taller.
       await page.setViewportSize({ width, height: page.viewportSize()?.height ?? 720 })
+      // As Settings › Appearance sets it (`useFontSize`).
+      await page.evaluate((size) => {
+        document.documentElement.style.setProperty('--agaric-font-size', size)
+      }, fontSize)
       // axe reads colours, which a fade in progress makes wrong.
       await page.emulateMedia({ reducedMotion: 'reduce' })
       const count = 200
       const { ids } = await seedPage(page, 'Long tasks', count)
-      // Every block a task, TODO and DONE in turn, with a priority and a due date, a due and a scheduled date, a priority, or neither.
+      // Every block a task, TODO and DONE in turn, with a priority and a due date, a due and a
+      // scheduled date, a priority, or neither; every eighth from the first and the fourth with a
+      // property too.
       await page.evaluate(async (blockIds) => {
         const call = (cmd: string, args: Record<string, unknown>) =>
           (window as unknown as MockWindow).__TAURI_INTERNALS__.invoke(cmd, args)
@@ -879,6 +980,19 @@ test.describe('page mode behaves as block mode (#5691)', () => {
           if (i % 4 !== 1 && i % 4 !== 3) await call('set_priority', { blockId: id, level: '1' })
           if (i % 4 < 2) await call('set_due_date', { blockId: id, date: '2026-10-20' })
           if (i % 4 === 1) await call('set_scheduled_date', { blockId: id, date: '2026-10-21' })
+          if (i % 8 === 0 || i % 8 === 3) {
+            await call('set_property', {
+              blockId: id,
+              key: 'assignee',
+              value: {
+                value_text: 'Ana',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+                value_bool: null,
+              },
+            })
+          }
         }
       }, ids)
       await openInPageMode(page, 'Long tasks', count)
@@ -929,6 +1043,17 @@ test.describe('page mode behaves as block mode (#5691)', () => {
       await expect(block(last - 2).locator('[data-testid="priority-badge"]')).toHaveCount(0)
       await expect(block(last - 1).locator('[data-testid="priority-badge"]')).toHaveText('P1')
       await expect(block(last).locator('.page-block-metadata')).toHaveCount(0)
+      // A property alone, and with a priority and a due date.
+      await expect(block(last - 4).locator('[data-testid="property-chip"]')).toHaveAttribute(
+        'aria-label',
+        'Assignee: Ana',
+      )
+      await expect(block(last - 4).locator('[data-testid="priority-badge"]')).toHaveCount(0)
+      await expect(block(last - 7).locator('[data-testid="property-chip"]')).toHaveAttribute(
+        'aria-label',
+        'Assignee: Ana',
+      )
+      await expect(block(last - 7).locator('[data-testid="priority-badge"]')).toHaveText('P1')
       await expect(marker(count / 2)).toHaveCount(0)
 
       await page.addScriptTag({ path: axePath })

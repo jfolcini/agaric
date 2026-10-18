@@ -1,6 +1,7 @@
 /**
  * What keeps a page out of page mode (#5691): what its rows hold, read at
  * once, and its blocks' properties and attachments, read with one IPC each.
+ * The properties read is page mode's too: it draws them.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -13,6 +14,7 @@ import {
   blockerMessage,
   PAGE_MODE_BLOCK_CAP,
   pageModeBlocker,
+  readPageFit,
 } from '@/editor/page-mode/page-mode-fit'
 import { t } from '@/lib/i18n'
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -117,31 +119,40 @@ describe('pageModeBlocker', () => {
     expect(await pageModeBlocker([row({ todo_state: 'DONE' })], 1)).toBeNull()
   })
 
-  it('keeps out a repeating task, by its rule, with its dates and priority let in', async () => {
+  it('lets in the user’s properties and a repeating task’s rule, and hands them over (#5743)', async () => {
     const rule = { ...property, key: 'repeat', value_text: '+1w' }
+    const rows = { B1: [rule], B2: [property] }
     vi.mocked(invoke).mockImplementation(
       mockInvokeCommands({
-        get_batch_properties: () => ({ B1: [rule] }),
+        get_batch_properties: () => rows,
         list_attachments_batch: () => ({}),
       }),
     )
 
     const repeating = row({ todo_state: 'TODO', priority: '2', due_date: '2026-10-20' })
-    expect(await pageModeBlocker([repeating], 1)).toEqual({ kind: 'properties' })
-    expect(blockerMessage({ kind: 'properties' })).toBe(
-      'Page mode can’t show block properties or repeating tasks yet.',
+    expect(await readPageFit([repeating, row({ id: 'B2' })], 2)).toEqual({
+      blocker: null,
+      properties: rows,
+    })
+  })
+
+  it('keeps out a bullet or numbered block, and says why (#5743)', async () => {
+    const listStyle = (value: string) => ({ ...property, key: 'listStyle', value_text: value })
+    for (const style of ['bullet', 'ordered']) {
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          get_batch_properties: () => ({ B1: [property], B2: [listStyle(style)] }),
+          list_attachments_batch: () => ({}),
+        }),
+      )
+      expect(await pageModeBlocker([row(), row({ id: 'B2' })], 2)).toEqual({ kind: 'listStyle' })
+    }
+    expect(blockerMessage({ kind: 'listStyle' })).toBe(
+      'Page mode can’t show bullet or numbered blocks yet.',
     )
   })
 
-  it('keeps out a page whose block holds a property, or an attachment', async () => {
-    vi.mocked(invoke).mockImplementation(
-      mockInvokeCommands({
-        get_batch_properties: () => ({ B1: [property] }),
-        list_attachments_batch: () => ({}),
-      }),
-    )
-    expect(await pageModeBlocker([row()], 1)).toEqual({ kind: 'properties' })
-
+  it('keeps out a page whose block holds an attachment', async () => {
     vi.mocked(invoke).mockImplementation(
       mockInvokeCommands({
         get_batch_properties: () => ({ B1: [] }),
