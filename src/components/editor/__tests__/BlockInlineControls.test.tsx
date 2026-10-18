@@ -615,6 +615,22 @@ describe('BlockMetadataRow', () => {
     expect(screen.getByText('+1')).toBeInTheDocument()
   })
 
+  // #5736 — a ref and a boolean are chips too, and fold into `+N` like the rest.
+  it('counts ref and boolean chips toward the inline cap', () => {
+    const filtered = [
+      { key: 'owner', value: '00000000000000000000PAGE02', kind: 'ref' as const },
+      { key: 'billable', value: 'true', kind: 'boolean' as const },
+      { key: 'c', value: 'v3' },
+      { key: 'd', value: 'v4' },
+    ]
+    renderMetadata(makeMetaProps({ filteredProperties: filtered }))
+    expect(screen.getByTestId('property-chip-owner')).toBeInTheDocument()
+    expect(screen.getByTestId('property-chip-billable')).toBeInTheDocument()
+    expect(screen.getByTestId('property-chip-c')).toBeInTheDocument()
+    expect(screen.queryByTestId('property-chip-d')).not.toBeInTheDocument()
+    expect(screen.getByTestId('property-overflow')).toHaveTextContent('+1')
+  })
+
   describe('property overflow button', () => {
     const fourProps = [
       { key: 'a', value: 'v1' },

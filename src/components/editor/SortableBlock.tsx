@@ -54,6 +54,7 @@ import { EditableBlock } from '@/components/editor/EditableBlock'
 import { RESCHEDULE_DRAG_TYPE } from '@/components/journal/RescheduleDropZone'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useBatchAttachments } from '@/hooks/useBatchAttachments'
+import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
@@ -236,8 +237,8 @@ interface SortableBlockBodyProps extends ResolverProps, PropertyEditorProps {
   priority?: (string | null) | undefined
   dueDate?: (string | null) | undefined
   scheduledDate?: (string | null) | undefined
-  properties?: Array<{ key: string; value: string }> | undefined
-  filteredProperties: Array<{ key: string; value: string }>
+  properties?: InlineProperty[] | undefined
+  filteredProperties: InlineProperty[]
   maxInlineProperties: number
   isSelected?: boolean | undefined
   attachmentCount: number
@@ -441,6 +442,7 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
           onEditProp={onEditProp}
           onEditKey={onEditKey}
           onShowProperties={onShowProperties}
+          onNavigate={onNavigate}
         />
       </div>
 
@@ -485,7 +487,7 @@ interface SortableBlockProps {
   /** Scheduled date in YYYY-MM-DD format, or null/undefined if not set. */
   scheduledDate?: (string | null) | undefined
   /** Custom properties to display as inline chips. */
-  properties?: Array<{ key: string; value: string }> | undefined
+  properties?: InlineProperty[] | undefined
   /** Whether this block is part of a multi-selection. */
   isSelected?: boolean | undefined
 }

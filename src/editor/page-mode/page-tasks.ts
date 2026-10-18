@@ -18,7 +18,8 @@
  * date chip opens block mode's date picker, and `openDatePicker`
  * (Ctrl+Shift+D) opens it to link a date at the caret; a property chip opens
  * block mode's property editor, and the `+N` pill and `openPropertiesDrawer`
- * (Ctrl+Shift+P) its property drawer; the attachment badge opens block mode's
+ * (Ctrl+Shift+P) its property drawer, and a ref chip opens its target as a
+ * link chip does; the attachment badge opens block mode's
  * attachment list. A file pasted into a block, or dropped on one, is attached
  * to it as block mode attaches it: all through block mode's commands. A
  * change made elsewhere reaches the controls with the page's reload, never
@@ -113,6 +114,8 @@ export interface PageTaskSource extends PageTaskActions {
   propertiesOf: (id: string) => ShownProperty[]
   /** Block `id`'s attachments. */
   attachmentsOf: (id: string) => AttachmentRow[]
+  /** Follow a ref property's chip to block `id`, as block mode's link chips do. */
+  navigate: (id: string) => void
   /** Call `listener` on every change of the page store, the properties or the attachments. */
   subscribe: (listener: () => void) => () => void
   /** Where a query result, or an embed's open-source, goes: block mode's chip navigation. */
@@ -428,6 +431,7 @@ class PageBlockView implements NodeView {
       onTogglePriority: this.tasks.cyclePriority,
       onOpenDatePicker: this.tasks.openDatePicker,
       onShowProperties: this.tasks.openPropertyDrawer,
+      onNavigate: this.tasks.navigate,
       onEdited: this.tasks.propertiesEdited,
       onAttachmentsChanged: this.tasks.attachmentsChanged,
     }

@@ -148,10 +148,14 @@ describe('buildInitParams', () => {
 
   // The draft-row types have no valid initializer: an arm returning
   // `valueText: ''` here is the empty init the backend refuses, which is how
-  // a `url` property was declarable but never addable (#5142).
-  it.each(['text', 'select', 'url'])('returns null for the draft-row type %s', (valueType) => {
-    expect(buildInitParams('B1', makeDef('k', valueType))).toBeNull()
-  })
+  // a `url` property was declarable but never addable (#5142); a `valueRef:
+  // null` is a row with no value, refused the same way (#5736).
+  it.each(['text', 'select', 'url', 'ref'])(
+    'returns null for the draft-row type %s',
+    (valueType) => {
+      expect(buildInitParams('B1', makeDef('k', valueType))).toBeNull()
+    },
+  )
 
   it('returns valueNum 0 for number type', () => {
     const result = buildInitParams('B1', makeDef('weight', 'number'))
@@ -163,11 +167,6 @@ describe('buildInitParams', () => {
     // negative-offset timezones get tomorrow's date by default.
     const result = buildInitParams('B1', makeDef('due', 'date'))
     expect(result).toEqual({ blockId: 'B1', key: 'due', valueDate: getTodayString() })
-  })
-
-  it('returns valueRef null for ref type', () => {
-    const result = buildInitParams('B1', makeDef('parent', 'ref'))
-    expect(result).toEqual({ blockId: 'B1', key: 'parent', valueRef: null })
   })
 
   it('returns null for unknown types', () => {

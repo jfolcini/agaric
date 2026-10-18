@@ -40,7 +40,7 @@ import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/propert
 import { formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
-const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'url'] as const
+const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'] as const
 
 /** Every space block carries this key, so deleting its definition always fails. */
 const SPACE_MARKER_KEY = 'is_space'

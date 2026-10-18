@@ -381,6 +381,7 @@ function PageModeDocument({
           actions.current.openDatePicker(id, mode),
         openDateLinkPicker: () => actions.current.openDateLinkPicker(),
         openPropertyDrawer: (id: string) => actions.current.openPropertyDrawer(id),
+        navigate: (id: string) => handleNavigateRef.current(id),
         propertiesEdited: () => actions.current.propertiesEdited(),
         attachmentsChanged: () => actions.current.attachmentsChanged(),
         attach: (id: string, files: File[]) => actions.current.attach(id, files),

@@ -17,16 +17,13 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import { serialize } from '@/editor/markdown-serializer'
 import { blockDocJson } from '@/editor/page-mode/page-document'
 import type { PageSaveApi, PageSaveState } from '@/editor/page-mode/page-save'
-import { extraPropertiesOf } from '@/hooks/useExtraBlockProperties'
+import { extraPropertiesOf, type InlineProperty } from '@/hooks/useExtraBlockProperties'
 import type { OpRef, PropertyRow } from '@/lib/bindings'
 import { bumpFlushSeq, commitInlineProperties } from '@/stores/inline-property-commit'
 import { addedInlineProperties } from '@/stores/unmount-flush'
 
 /** A property as block mode's row draws it. */
-export interface ShownProperty {
-  key: string
-  value: string
-}
+export type ShownProperty = InlineProperty
 
 const NONE: ShownProperty[] = []
 
