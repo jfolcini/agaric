@@ -209,6 +209,9 @@ export function BacklinkFilterBuilder({
           size="xs"
           className="add-filter-button h-7 gap-1 text-xs"
           onClick={() => setShowAddRow(true)}
+          // Keeps the editor above focused: its blur unmounts the formatting toolbar, and this
+          // button moves out from under the click.
+          onMouseDown={(e) => e.preventDefault()}
           aria-label={t('backlink.addFilterLabel')}
         >
           {t('backlink.addFilterLabel')}
