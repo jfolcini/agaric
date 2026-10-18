@@ -32,14 +32,13 @@ import type { StoreApi } from 'zustand'
 
 import { pasteIntoBlock, type PastePayload } from '@/components/block-tree/paste-into-block'
 import type { DatePickerMode } from '@/components/block-tree/use-block-date-picker'
+import { setBlockPriority } from '@/components/block-tree/use-block-properties'
 import {
   applyContentEdit,
   readCurrentContent,
 } from '@/components/block-tree/use-block-slash-commands/helpers'
 import type { SlashCommandContext } from '@/components/block-tree/use-block-slash-commands/types'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
 import {
   type BlockTypeToken,
   convertBlockContent,
@@ -50,7 +49,6 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { type BlockCommandHandler, registerBlockCommandTarget } from '@/stores/block-command-bus'
 import type { PageBlockState } from '@/stores/page-blocks'
-import { useUndoStore } from '@/stores/undo'
 
 /** Known callout variants (mirrors `CALLOUT_CONFIG` in RichContentRenderer). */
 const CALLOUT_TYPES = new Set(['info', 'warning', 'tip', 'error', 'note'])
@@ -122,18 +120,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     const setPriorityHandler =
       (priority: '1' | '2' | '3'): BlockCommandHandler =>
       (blockId) => {
-        void (async () => {
-          try {
-            unwrap(await commands.setPriority(blockId, priority))
-            if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-            pageStore.setState((s) => ({
-              blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority } : b)),
-            }))
-          } catch (err) {
-            logger.error('BlockTree', 'Failed to set priority', { blockId, priority }, err)
-            notify.error(t('blockTree.setPriorityFailed'))
-          }
-        })()
+        void setBlockPriority(pageStore, rootParentId, blockId, priority)
       }
 
     // ── Toolbar date-picker commands (date / due / scheduled) ─────────

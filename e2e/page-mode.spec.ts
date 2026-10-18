@@ -113,13 +113,13 @@ interface DocBlock {
   text: string
 }
 
-/** The page-mode document as shown: each block's id, depth and text. */
+/** The page-mode document as shown: each block's id, depth and text, without its badge or chips. */
 function shown(page: Page): Promise<DocBlock[]> {
   return page.locator(`${EDITOR} [data-page-block]`).evaluateAll((els) =>
     els.map((el) => ({
       id: el.getAttribute('data-page-block-id') ?? '',
       depth: Number(el.getAttribute('data-depth')),
-      text: el.textContent ?? '',
+      text: el.querySelector('.page-block-content')?.textContent ?? '',
     })),
   )
 }
@@ -758,6 +758,97 @@ test.describe('page mode behaves as block mode (#5691)', () => {
       'shipped',
       'plain',
     ])
+    await page.addScriptTag({ path: axePath })
+    const violations = await page.evaluate(async () => {
+      const { axe } = window as unknown as {
+        axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
+      }
+      const { violations: found } = await axe.run(document.querySelector('.page-editor') as Element)
+      return found.map((v) => v.id)
+    })
+    expect(violations).toEqual([])
+  })
+
+  test('a page of priorities and dates opens in page mode; the keys, the badge and the picker set them, and they stay', async ({
+    page,
+  }) => {
+    // axe reads colours, which a fade in progress makes wrong.
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const { pageId, ids } = await seedRows(page, 'Page dates', [
+      [0, 'pay rent'],
+      [0, 'plan trip'],
+      [0, 'plain'],
+    ])
+    await invoke(page, 'set_todo_state', { blockId: ids[0], state: 'TODO' })
+    await invoke(page, 'set_priority', { blockId: ids[0], level: '1' })
+    await invoke(page, 'set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    await invoke(page, 'set_scheduled_date', { blockId: ids[1], date: '2026-11-01' })
+    await openInPageMode(page, 'Page dates', 3)
+    const inBlock = (id: string | undefined, selector: string) =>
+      page.locator(`${EDITOR} [data-page-block-id="${id}"] ${selector}`)
+    const badge = (id: string | undefined) => inBlock(id, '[data-testid="priority-badge"]')
+    const row = (id: string | undefined) =>
+      invoke<{ priority: string | null; due_date: string | null; scheduled_date: string | null }>(
+        page,
+        'get_block',
+        { blockId: id },
+      )
+
+    await expect(badge(ids[0])).toHaveText('P1')
+    await expect(inBlock(ids[0], '.due-date-chip')).toHaveText('Oct 20')
+    await expect(inBlock(ids[1], '.scheduled-chip')).toHaveText('Nov 1')
+    await expect(inBlock(ids[2], '.block-metadata-row')).toHaveCount(0)
+    // Under the text, lined up with it, as block mode draws the row.
+    const textBox = await inBlock(ids[0], '.page-block-content').boundingBox()
+    const rowBox = await inBlock(ids[0], '.block-metadata-row').boundingBox()
+    expect(rowBox?.x).toBe(textBox?.x)
+    expect(rowBox?.y).toBeGreaterThanOrEqual((textBox?.y ?? 0) + (textBox?.height ?? 0))
+
+    // The row is not text: the arrows step over it.
+    await caret(page, 0, 'end')
+    await page.keyboard.press('ArrowDown')
+    await expect.poll(async () => (await cursor(page)).index).toBe(1)
+    await page.keyboard.press('ArrowUp')
+    await expect.poll(async () => (await cursor(page)).index).toBe(0)
+
+    // The priority keys, on the block the caret is in.
+    await caret(page, 2, 'end')
+    await page.keyboard.press('Control+Shift+2')
+    await expect(badge(ids[2])).toHaveText('P2')
+    await expect.poll(async () => (await row(ids[2])).priority).toBe('2')
+
+    // The badge cycles, and the caret stays where it was.
+    await badge(ids[0]).click()
+    await expect(badge(ids[0])).toHaveText('P2')
+    await expect.poll(async () => (await row(ids[0])).priority).toBe('2')
+    expect(await cursor(page)).toEqual({ index: 2, offset: 5 })
+
+    // A chip opens block mode's date picker; the date typed there is the block's.
+    await inBlock(ids[0], '.due-date-chip').click()
+    const picker = page.getByTestId('date-picker-popup')
+    await picker.getByRole('textbox', { name: 'Type a date' }).fill('2026-12-24')
+    await page.keyboard.press('Enter')
+    await expect(picker).toHaveCount(0)
+    await expect(inBlock(ids[0], '.due-date-chip')).toHaveText('Dec 24')
+    await expect.poll(async () => (await row(ids[0])).due_date).toBe('2026-12-24')
+    await expect(page.locator(EDITOR)).toBeFocused()
+    expect(await cursor(page)).toEqual({ index: 2, offset: 5 })
+    expect((await shown(page)).map((b) => b.text)).toEqual(['pay rent', 'plan trip', 'plain'])
+
+    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    await page.keyboard.press('Escape')
+    await expect(page.locator(EDITOR)).not.toBeFocused()
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Page dates')
+    // The switch is the page on screen's: choose Page again.
+    await modeSwitch(page, 'Page').click()
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(3)
+    await expect(badge(ids[0])).toHaveText('P2')
+    await expect(badge(ids[2])).toHaveText('P2')
+    await expect(inBlock(ids[0], '.due-date-chip')).toHaveText('Dec 24')
+    await expect(inBlock(ids[1], '.scheduled-chip')).toHaveText('Nov 1')
+    expect(await row(ids[1])).toMatchObject({ priority: null, scheduled_date: '2026-11-01' })
+    expect(await backend(page, pageId)).toEqual(await shown(page))
     await page.addScriptTag({ path: axePath })
     const violations = await page.evaluate(async () => {
       const { axe } = window as unknown as {

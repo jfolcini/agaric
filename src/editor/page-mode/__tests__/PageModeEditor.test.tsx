@@ -21,6 +21,7 @@ import { blockIdOf } from '@/editor/token-ids'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import type { BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
+import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { dispatch } from '@/lib/tauri-mock/handlers'
@@ -108,6 +109,31 @@ function typeAt(editor: Editor, index: number, offset: number, text: string): vo
       .insertContent(text)
       .run()
   })
+}
+
+function caretTo(editor: Editor, index: number): void {
+  act(() => {
+    editor.commands.setTextSelection(at(editor, index, 0))
+  })
+}
+
+/** Press `key` in the editor; true when it took the key. */
+function press(editor: Editor, key: string, init: KeyboardEventInit = {}): boolean {
+  let taken = false
+  act(() => {
+    taken =
+      editor.view.someProp('handleKeyDown', (f) =>
+        f(editor.view, new KeyboardEvent('keydown', { key, ...init })),
+      ) ?? false
+  })
+  return taken
+}
+
+/** How many controls (checkboxes, badge and chip rows) React holds for the editor: one portal each. */
+function liveControls(editor: Editor): number {
+  const content = (editor as unknown as { contentComponent: { getSnapshot: () => object } })
+    .contentComponent
+  return Object.keys(content.getSnapshot()).length
 }
 
 function docTexts(editor: Editor): string[] {
@@ -407,13 +433,23 @@ describe('PageModeEditor', () => {
     const { container, store, onBlocked } = renderPageMode(pageId)
     await editorIn(container)
 
-    dispatch('set_priority', { blockId: ids[0], level: '1' })
+    dispatch('set_property', {
+      blockId: ids[0],
+      key: 'repeat',
+      value: {
+        value_text: '+1w',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
     await act(async () => {
       await store.getState().load()
     })
 
     await waitFor(() => {
-      expect(onBlocked).toHaveBeenCalledWith({ kind: 'priorities' })
+      expect(onBlocked).toHaveBeenCalledWith({ kind: 'properties' })
     })
   })
 })
@@ -430,12 +466,6 @@ describe('PageModeEditor typed tags (#5743)', () => {
       name: string
     }>
     return new Map(rows.map((row) => [row.name, row.tag_id]))
-  }
-
-  function caretTo(editor: Editor, index: number): void {
-    act(() => {
-      editor.commands.setTextSelection(at(editor, index, 0))
-    })
   }
 
   it('a #name typed and left for another block becomes the tag, its chip, and undoes', async () => {
@@ -601,24 +631,6 @@ describe('PageModeEditor tasks (#5743)', () => {
       if (found === null) throw new Error(`no checkbox on ${id}`)
       return found
     })
-  }
-
-  function caretTo(editor: Editor, index: number): void {
-    act(() => {
-      editor.commands.setTextSelection(at(editor, index, 0))
-    })
-  }
-
-  /** Press `key` in the editor; true when it took the key. */
-  function press(editor: Editor, key: string, init: KeyboardEventInit = {}): boolean {
-    let taken = false
-    act(() => {
-      taken =
-        editor.view.someProp('handleKeyDown', (f) =>
-          f(editor.view, new KeyboardEvent('keydown', { key, ...init })),
-        ) ?? false
-    })
-    return taken
   }
 
   it('opens a page of tasks, each with block mode’s checkbox, with no a11y violations', async () => {
@@ -836,27 +848,31 @@ describe('PageModeEditor tasks (#5743)', () => {
     expect(docTexts(editor)).toEqual(['first', '\\[ \\] buy milk'])
   })
 
-  it('typing in a block draws no checkbox again', async () => {
+  it('typing, its save and a reload draw no checkbox, badge or chip again', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
     dispatch('set_todo_state', { blockId: ids[1], state: 'DONE' })
-    const { container } = renderPageMode(pageId)
+    dispatch('set_priority', { blockId: ids[0], level: '1' })
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    dispatch('set_scheduled_date', { blockId: ids[1], date: '2026-10-21' })
+    const { container, handle, store } = renderPageMode(pageId)
     const editor = await editorIn(container)
     await checkbox(container, ids[1] as string)
+    await waitFor(() => {
+      expect(container.querySelectorAll('.block-metadata-row')).toHaveLength(2)
+    })
     const draw = vi.spyOn(ReactRenderer.prototype, 'render')
 
     typeAt(editor, 1, 6, ' typed')
     typeAt(editor, 0, 5, '!')
+    await act(async () => {
+      await handle.current?.flush()
+      await store.getState().load()
+    })
 
+    expect(backendText(ids[0] as string)).toBe('first!')
     expect(draw).not.toHaveBeenCalled()
   })
-
-  /** How many checkboxes React holds for the editor: one portal each. */
-  function liveCheckboxes(editor: Editor): number {
-    const content = (editor as unknown as { contentComponent: { getSnapshot: () => object } })
-      .contentComponent
-    return Object.keys(content.getSnapshot()).length
-  }
 
   it('Enter at the start of a task leaves the checkbox on the task, not on the new block', async () => {
     const { pageId, ids } = seedPage(['first', 'buy milk'])
@@ -872,7 +888,7 @@ describe('PageModeEditor tasks (#5743)', () => {
     expect(blockIdOf(editor.state.doc.child(2))).toBe(ids[1])
     await checkbox(container, ids[1] as string)
     expect(container.querySelectorAll('[data-testid="task-marker"]')).toHaveLength(1)
-    expect(liveCheckboxes(editor)).toBe(1)
+    expect(liveControls(editor)).toBe(1)
   })
 
   it('a checkbox goes with its block: deleted, brought back by undo, and page mode closed', async () => {
@@ -881,7 +897,7 @@ describe('PageModeEditor tasks (#5743)', () => {
     const { container, unmount } = renderPageMode(pageId)
     const editor = await editorIn(container)
     await checkbox(container, ids[1] as string)
-    expect(liveCheckboxes(editor)).toBe(1)
+    expect(liveControls(editor)).toBe(1)
     const portals = (editor as unknown as { contentComponent: { getSnapshot: () => object } })
       .contentComponent
 
@@ -890,7 +906,7 @@ describe('PageModeEditor tasks (#5743)', () => {
       editor.commands.deleteSelection()
     })
     await waitFor(() => {
-      expect(liveCheckboxes(editor)).toBe(0)
+      expect(liveControls(editor)).toBe(0)
     })
     expect(container.querySelector('.react-renderer')).toBeNull()
 
@@ -898,7 +914,7 @@ describe('PageModeEditor tasks (#5743)', () => {
       editor.commands.undo()
     })
     await checkbox(container, ids[1] as string)
-    expect(liveCheckboxes(editor)).toBe(1)
+    expect(liveControls(editor)).toBe(1)
     await act(async () => {
       await flushActiveDraft()
     })
@@ -973,5 +989,372 @@ describe('PageModeEditor tasks (#5743)', () => {
     })
     expect(docTexts(editor)).toEqual(['first', 'second'])
     expect(editor.can().undo()).toBe(false)
+  })
+})
+
+describe('PageModeEditor priorities and dates (#5743)', () => {
+  function backendRow(id: string): BlockRow {
+    return dispatch('get_block', { blockId: id }) as BlockRow
+  }
+
+  /** What `selector` finds in block `id`, once it shows. */
+  async function inBlock(container: HTMLElement, id: string, selector: string) {
+    return waitFor(() => {
+      const found = container.querySelector<HTMLElement>(`[data-page-block-id="${id}"] ${selector}`)
+      if (found === null) throw new Error(`no ${selector} in ${id}`)
+      return found
+    })
+  }
+
+  const BADGE = '[data-testid="priority-badge"]'
+  const badgeLabel = (level: string) => t('block.priorityCycle', { level: `P${level}` })
+
+  /** Type `text` into the open date picker's field and press Enter. */
+  async function pickDate(text: string): Promise<void> {
+    const field = await screen.findByRole('textbox', { name: t('journal.typeDateLabel') })
+    fireEvent.change(field, { target: { value: text } })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Enter' })
+    })
+  }
+
+  it('shows block mode’s badge and chips under the text, outside it, with no a11y violations', async () => {
+    const { pageId, ids } = seedPage(['pay rent', 'plan trip', 'plain'])
+    dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
+    dispatch('set_priority', { blockId: ids[0], level: '1' })
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    dispatch('set_scheduled_date', { blockId: ids[1], date: '2026-11-01' })
+    const { container, onBlocked } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    expect((await inBlock(container, ids[0] as string, BADGE)).getAttribute('aria-label')).toBe(
+      badgeLabel('1'),
+    )
+    expect(
+      (await inBlock(container, ids[0] as string, '.due-date-chip')).getAttribute('aria-label'),
+    ).toBe(t('block.dueDate', { date: formatCompactDate('2026-10-20') }))
+    expect(
+      (await inBlock(container, ids[1] as string, '.scheduled-chip')).getAttribute('aria-label'),
+    ).toBe(t('block.scheduledDate', { date: formatCompactDate('2026-11-01') }))
+    expect(
+      container.querySelector(`[data-page-block-id="${ids[2]}"] .block-metadata-row`),
+    ).toBeNull()
+    expect(container.querySelector('.page-block-content .block-metadata-row')).toBeNull()
+    expect(docTexts(editor)).toEqual(['pay rent', 'plan trip', 'plain'])
+    expect(onBlocked).not.toHaveBeenCalled()
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
+  it('a click on the badge cycles the priority through the command; a refusal says so', async () => {
+    const { pageId, ids } = seedPage(['pay rent'])
+    dispatch('set_priority', { blockId: ids[0], level: '1' })
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    await act(async () => {
+      fireEvent.click(await inBlock(container, ids[0] as string, BADGE))
+    })
+    await waitFor(() => {
+      expect(backendRow(ids[0] as string).priority).toBe('2')
+    })
+    await waitFor(async () => {
+      expect((await inBlock(container, ids[0] as string, BADGE)).getAttribute('aria-label')).toBe(
+        badgeLabel('2'),
+      )
+    })
+
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_priority') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+    await act(async () => {
+      fireEvent.click(await inBlock(container, ids[0] as string, BADGE))
+    })
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.setPriorityFailed'))
+    })
+    expect((await inBlock(container, ids[0] as string, BADGE)).getAttribute('aria-label')).toBe(
+      badgeLabel('2'),
+    )
+    expect(backendRow(ids[0] as string).priority).toBe('2')
+    expect(docTexts(editor)).toEqual(['pay rent'])
+  })
+
+  it('Ctrl+Shift+1–3 set the priority of the caret’s block, a new empty one too; a refusal says so', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    caretTo(editor, 1)
+    expect(press(editor, '3', { ctrlKey: true, shiftKey: true })).toBe(true)
+    await waitFor(() => {
+      expect(backendRow(ids[1] as string).priority).toBe('3')
+    })
+    expect((await inBlock(container, ids[1] as string, BADGE)).getAttribute('aria-label')).toBe(
+      badgeLabel('3'),
+    )
+    expect(backendRow(ids[0] as string).priority).toBeNull()
+
+    // A new block holds nothing yet: the change creates it to hold the priority.
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 1, 6))
+    })
+    press(editor, 'Enter')
+    const added = blockIdOf(editor.state.doc.child(2)) as string
+    press(editor, '1', { ctrlKey: true, shiftKey: true })
+    await waitFor(() => {
+      expect(backendPage(pageId)).toEqual([
+        [ids[0], 'first'],
+        [ids[1], 'second'],
+        [added, ''],
+      ])
+    })
+    await waitFor(() => {
+      expect(backendRow(added).priority).toBe('1')
+    })
+    await inBlock(container, added, BADGE)
+
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_priority') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+    caretTo(editor, 0)
+    press(editor, '2', { ctrlKey: true, shiftKey: true })
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.setPriorityFailed'))
+    })
+    expect(backendRow(ids[0] as string).priority).toBeNull()
+    expect(container.querySelector(`[data-page-block-id="${ids[0]}"] ${BADGE}`)).toBeNull()
+  })
+
+  it('a chip opens block mode’s date picker, and the date chosen is the block’s', async () => {
+    const { pageId, ids } = seedPage(['pay rent', 'plan trip'])
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    dispatch('set_scheduled_date', { blockId: ids[1], date: '2026-11-01' })
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    fireEvent.click(await inBlock(container, ids[0] as string, '.due-date-chip'))
+    expect(await screen.findByTestId('date-picker-popup')).toHaveAttribute('data-editor-portal')
+    await pickDate('2026-12-24')
+
+    await waitFor(() => {
+      expect(backendRow(ids[0] as string).due_date).toBe('2026-12-24')
+    })
+    await waitFor(async () => {
+      expect(
+        (await inBlock(container, ids[0] as string, '.due-date-chip')).getAttribute('aria-label'),
+      ).toBe(t('block.dueDate', { date: formatCompactDate('2026-12-24') }))
+    })
+    expect(screen.queryByTestId('date-picker-popup')).toBeNull()
+
+    fireEvent.click(await inBlock(container, ids[1] as string, '.scheduled-chip'))
+    await pickDate('2026-12-31')
+    await waitFor(() => {
+      expect(backendRow(ids[1] as string).scheduled_date).toBe('2026-12-31')
+    })
+    expect(backendRow(ids[1] as string).due_date).toBeNull()
+    expect(backendRow(ids[0] as string).scheduled_date).toBeNull()
+    expect(docTexts(editor)).toEqual(['pay rent', 'plan trip'])
+  })
+
+  it('a date the command refuses says so, and the chip keeps the date the backend holds', async () => {
+    const { pageId, ids } = seedPage(['pay rent'])
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_due_date') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    fireEvent.click(await inBlock(container, ids[0] as string, '.due-date-chip'))
+    await pickDate('2026-12-24')
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.setDueDateFailed'))
+    })
+    expect(backendRow(ids[0] as string).due_date).toBe('2026-10-20')
+    expect(
+      (await inBlock(container, ids[0] as string, '.due-date-chip')).getAttribute('aria-label'),
+    ).toBe(t('block.dueDate', { date: formatCompactDate('2026-10-20') }))
+  })
+
+  it('opening the picker neither leaves the block nor commits what is typed in it', async () => {
+    const { pageId, ids } = seedPage(['pay rent', 'buy milk'])
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.view.focus()
+    })
+    typeAt(editor, 1, 0, '[ ] ')
+    const caret = editor.state.selection.from
+
+    fireEvent.click(await inBlock(container, ids[0] as string, '.due-date-chip'))
+    const field = await screen.findByRole('textbox', { name: t('journal.typeDateLabel') })
+    await waitFor(() => {
+      expect(field).toHaveFocus()
+    })
+    // The blur's save has run: the text is saved, the marker not committed.
+    await waitFor(() => {
+      expect(backendText(ids[1] as string)).toBe('\\[ \\] buy milk')
+    })
+    expect(backendRow(ids[1] as string).todo_state).toBeNull()
+    expect(editor.state.selection.from).toBe(caret)
+
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Escape' })
+    })
+    await waitFor(() => {
+      expect(screen.queryByTestId('date-picker-popup')).toBeNull()
+    })
+    await waitFor(() => {
+      expect(editor.view.hasFocus()).toBe(true)
+    })
+    await act(async () => {
+      await flushActiveDraft()
+    })
+    expect(backendRow(ids[1] as string).todo_state).toBeNull()
+    expect(docTexts(editor)).toEqual(['pay rent', '\\[ \\] buy milk'])
+    expect(editor.state.selection.from).toBe(caret)
+  })
+
+  it('a block a peer adds above while the picker is open leaves the caret in its own block when it closes', async () => {
+    const { pageId, ids } = seedPage(['pay rent', 'buy milk'])
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    const { container, store } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 1, 3))
+      editor.view.focus()
+    })
+    fireEvent.click(await inBlock(container, ids[0] as string, '.due-date-chip'))
+    const field = await screen.findByRole('textbox', { name: t('journal.typeDateLabel') })
+
+    dispatch('create_block', {
+      blockType: 'content',
+      content: 'from a peer',
+      parentId: pageId,
+      index: 0,
+      scope: SCOPE,
+    })
+    await act(async () => {
+      await store.getState().load()
+    })
+    await waitFor(() => {
+      expect(docTexts(editor)).toEqual(['from a peer', 'pay rent', 'buy milk'])
+    })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Escape' })
+    })
+    await waitFor(() => {
+      expect(editor.view.hasFocus()).toBe(true)
+    })
+
+    const { $from } = editor.state.selection
+    expect(blockIdOf($from.node(1))).toBe(ids[1])
+    expect($from.parentOffset).toBe(3)
+  })
+
+  it('Ctrl+Shift+D opens the picker, and the date chosen is linked at the caret, as its page', async () => {
+    const { pageId, ids } = seedPage(['meet on '])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 8))
+      editor.view.focus()
+    })
+
+    expect(press(editor, 'D', { ctrlKey: true, shiftKey: true })).toBe(true)
+    await pickDate('2026-12-24')
+
+    const pages = () =>
+      dispatch('list_all_pages_in_space', { scope: SCOPE, aliases: null }) as Array<{
+        id: string
+        content: string | null
+      }>
+    await waitFor(() => {
+      expect(pages().some((p) => p.content === '2026-12-24')).toBe(true)
+    })
+    const datePage = pages().find((p) => p.content === '2026-12-24')?.id
+    await waitFor(() => {
+      expect(docTexts(editor)).toEqual([`meet on [[${datePage}]]`])
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(backendText(ids[0] as string)).toBe(`meet on [[${datePage}]]`)
+  })
+
+  it('a peer’s change to the block’s other fields redraws the checkbox alone; a date change, the row', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    dispatch('set_todo_state', { blockId: ids[0], state: 'TODO' })
+    dispatch('set_priority', { blockId: ids[0], level: '1' })
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    const { container, store } = renderPageMode(pageId)
+    await editorIn(container)
+    await inBlock(container, ids[0] as string, '.due-date-chip')
+    const redrawn = vi.spyOn(ReactRenderer.prototype, 'updateProps')
+    const rowsRedrawn = () =>
+      redrawn.mock.calls.filter(([props]) => props !== undefined && 'dueDate' in props).length
+
+    dispatch('set_todo_state', { blockId: ids[0], state: 'DOING' })
+    dispatch('edit_block', { blockId: ids[0], toText: 'first, from a peer' })
+    dispatch('set_priority', { blockId: ids[1], level: '3' })
+    await act(async () => {
+      await store.getState().load()
+    })
+    await waitFor(() => {
+      expect(container.querySelector(`[data-page-block-id="${ids[0]}"]`)).toHaveAttribute(
+        'data-todo-state',
+        'DOING',
+      )
+    })
+    await inBlock(container, ids[1] as string, BADGE)
+    expect(redrawn).toHaveBeenCalledTimes(1)
+    expect(rowsRedrawn()).toBe(0)
+
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-21' })
+    await act(async () => {
+      await store.getState().load()
+    })
+    await waitFor(() => {
+      expect(rowsRedrawn()).toBe(1)
+    })
+    expect(
+      (await inBlock(container, ids[0] as string, '.due-date-chip')).getAttribute('aria-label'),
+    ).toBe(t('block.dueDate', { date: formatCompactDate('2026-10-21') }))
+  })
+
+  it('a peer’s priority and dates, set or cleared, show on reload, outside the document and its undo', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    const { container, store, onBlocked } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await inBlock(container, ids[0] as string, '.due-date-chip')
+
+    dispatch('set_priority', { blockId: ids[1], level: '2' })
+    dispatch('set_scheduled_date', { blockId: ids[1], date: '2026-11-01' })
+    dispatch('set_due_date', { blockId: ids[0], date: null })
+    await act(async () => {
+      await store.getState().load()
+    })
+
+    expect((await inBlock(container, ids[1] as string, BADGE)).getAttribute('aria-label')).toBe(
+      badgeLabel('2'),
+    )
+    await inBlock(container, ids[1] as string, '.scheduled-chip')
+    await waitFor(() => {
+      expect(
+        container.querySelector(`[data-page-block-id="${ids[0]}"] .block-metadata-row`),
+      ).toBeNull()
+    })
+    expect(liveControls(editor)).toBe(1)
+    expect(docTexts(editor)).toEqual(['first', 'second'])
+    expect(editor.can().undo()).toBe(false)
+    expect(onBlocked).not.toHaveBeenCalled()
   })
 })

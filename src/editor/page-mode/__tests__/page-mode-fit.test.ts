@@ -57,19 +57,18 @@ describe('blockerIn', () => {
     expect(blockerIn(blocks, blocks.length)).toBeNull()
   })
 
-  it('keeps a task with a priority or a date out, by what else it holds', () => {
-    expect(blockerIn([row({ todo_state: 'TODO', priority: '1' })], 1)).toEqual({
-      kind: 'priorities',
-    })
-    expect(blockerIn([row({ todo_state: 'TODO', due_date: '2026-10-20' })], 1)).toEqual({
-      kind: 'dates',
-    })
+  it('lets a page of priorities and due and scheduled dates in, on tasks or not (#5743)', () => {
+    const blocks = [
+      row({ todo_state: 'TODO', priority: '1', due_date: '2026-10-20' }),
+      row({ id: 'B2', priority: '3' }),
+      row({ id: 'B3', due_date: '2026-10-21' }),
+      row({ id: 'B4', todo_state: 'DONE', scheduled_date: '2026-10-22' }),
+    ]
+
+    expect(blockerIn(blocks, blocks.length)).toBeNull()
   })
 
   it.each([
-    ['priorities', { priority: '1' }],
-    ['dates', { due_date: '2026-10-20' }],
-    ['dates', { scheduled_date: '2026-10-20' }],
     ['queries', { content: '{{query todo:TODO}}' }],
     ['embeds', { content: '{{embed ((01JAAAAAAAAAAAAAAAAAAAAAAA))}}' }],
   ] as const)('keeps a page holding %s out', (kind, fields) => {
@@ -118,6 +117,22 @@ describe('pageModeBlocker', () => {
     expect(await pageModeBlocker([row({ todo_state: 'DONE' })], 1)).toBeNull()
   })
 
+  it('keeps out a repeating task, by its rule, with its dates and priority let in', async () => {
+    const rule = { ...property, key: 'repeat', value_text: '+1w' }
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({
+        get_batch_properties: () => ({ B1: [rule] }),
+        list_attachments_batch: () => ({}),
+      }),
+    )
+
+    const repeating = row({ todo_state: 'TODO', priority: '2', due_date: '2026-10-20' })
+    expect(await pageModeBlocker([repeating], 1)).toEqual({ kind: 'properties' })
+    expect(blockerMessage({ kind: 'properties' })).toBe(
+      'Page mode can’t show block properties or repeating tasks yet.',
+    )
+  })
+
   it('keeps out a page whose block holds a property, or an attachment', async () => {
     vi.mocked(invoke).mockImplementation(
       mockInvokeCommands({
@@ -152,7 +167,9 @@ describe('pageModeBlocker', () => {
     vi.mocked(invoke).mockImplementation(mockInvokeCommands({}))
 
     expect(await pageModeBlocker([], 0)).toBeNull()
-    expect(await pageModeBlocker([row({ priority: '1' })], 1)).toEqual({ kind: 'priorities' })
+    expect(await pageModeBlocker([row({ content: '{{query todo:TODO}}' })], 1)).toEqual({
+      kind: 'queries',
+    })
   })
 
   it('rejects when a read fails, so the caller keeps the page in block mode', async () => {
@@ -170,7 +187,7 @@ describe('pageModeBlocker', () => {
 })
 
 it('blockerMessage says why in a sentence', () => {
-  expect(blockerMessage({ kind: 'priorities' })).toBe(t('pageMode.blocked.priorities'))
+  expect(blockerMessage({ kind: 'queries' })).toBe(t('pageMode.blocked.queries'))
   expect(blockerMessage({ kind: 'overCap', count: PAGE_MODE_BLOCK_CAP + 1 })).toBe(
     t('pageMode.blocked.overCap', { cap: PAGE_MODE_BLOCK_CAP, blocks: PAGE_MODE_BLOCK_CAP + 1 }),
   )

@@ -1152,6 +1152,14 @@
 .page-mode-editor .page-block-controls {
   @apply absolute top-0 right-full mr-1 select-none;
 }
+/* The priority badge and date chips sit under the text, as block mode's row
+   does; the block's own inset already lines them up with it. */
+.page-mode-editor .page-block-metadata {
+  @apply select-none;
+}
+.page-mode-editor .page-block-metadata .block-metadata-row {
+  @apply px-0;
+}
 /* A closed task reads as block mode's, struck and muted, but not while edited;
    muted by the token rather than by opacity, which leaves it 3.4:1. */
 .page-mode-editor
