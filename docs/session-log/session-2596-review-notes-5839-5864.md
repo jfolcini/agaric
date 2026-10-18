@@ -30,8 +30,10 @@ The non-blocking notes from this session's merged PRs, in one follow-up.
 and tested as intended).
 
 **Dropped, with the reason:** #5862's `ShownProperty` alias, `draftKeys` comment and the
-CodeQL duplicate `navigate` key were all fixed before it merged. The stall test's
-hand-built job could reuse `counter_job`; left as is, test-only duplication.
+CodeQL duplicate `navigate` key were all fixed before it merged.
+
+**Next PR:** the stall test's hand-built job could reuse `counter_job`; that rides the
+next PR, once its test has been shown red again.
 
 **Shown red:** each fix by reverting it, including the two cases a separate review found
 unpinned (a text draft's removal, Space on a handled event); the stall test at 10 runs

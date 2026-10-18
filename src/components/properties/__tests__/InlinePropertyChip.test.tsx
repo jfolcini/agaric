@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { InlinePropertyChip } from '@/components/properties/InlinePropertyChip'
 import { unresolvedBlockLabel } from '@/lib/block-title'
 import { t } from '@/lib/i18n'
@@ -124,7 +125,9 @@ describe('InlinePropertyChip', () => {
 
     it('keeps the id and logs when asking for the title fails', async () => {
       useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
-      vi.mocked(invoke).mockRejectedValue(new Error('resolve failed'))
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({ batch_resolve: () => Promise.reject(new Error('resolve failed')) }),
+      )
       const warn = vi.spyOn(logger, 'warn')
       renderChip({ key: 'owner', value: TARGET, kind: 'ref' }, { onNavigate: vi.fn() })
 
