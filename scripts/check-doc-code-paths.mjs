@@ -731,11 +731,11 @@ function extractCandidates(text) {
 // pretending to verify the PROSE matches the line, which no mechanical
 // check can do.
 //
-// Deliberately a WARNING, not a red: a citation can legitimately name a
-// line number past the file's CURRENT length on purpose — a historical
-// anchor a test asserts the ABSENCE of, say. A hard check would redden the
-// build on such a citation, which is correct as written. So a WARNING itself
-// never folds into `failed` — see `check()`.
+// A NEW one fails the run: CI hides a passing hook's output, so a warning
+// that exits 0 is never read there. A citation that names a line past the
+// file's current length on purpose (a historical anchor a test asserts the
+// ABSENCE of, say) goes in `KNOWN_INTENTIONAL_WARNINGS` below and keeps
+// printing as a warning — see `check()`.
 //
 // Known floor: the acknowledgment list below is EMPTY today. #2927 deleted
 // `src/lib/tauri.ts`, and with it the one deliberately-historical anchor
@@ -1438,18 +1438,19 @@ function check() {
   const acknowledgedKeys = new Set(acknowledged.map(warningKey))
   const warningKeysPresent = new Set(warnings.map(warningKey))
   const staleKnownWarnings = acknowledged.filter((e) => !warningKeysPresent.has(warningKey(e)))
-  // #4244 part (b) — `warnings` never joins this: it decides whether the
-  // run PRINTS, not whether it FAILS. A run with warnings and nothing else
-  // wrong must still exit 0 — see `extractLineCitations`'s header for why
-  // (the `tauri.ts:1871` historical citation must stay green). A STALE
-  // acknowledgment of a warning is different: `staleKnownWarnings` is not a
-  // warning, it is a rotted piece of THIS GUARD'S OWN CONFIG, exactly like a
-  // stale baseline entry — so it fails the same way `staleEntries` does.
+  // #4244 part (b) — a warning `KNOWN_INTENTIONAL_WARNINGS` acknowledges
+  // only prints; an unacknowledged one fails, because CI hides a passing
+  // hook's output. A STALE acknowledgment is a rotted piece of THIS GUARD'S
+  // OWN CONFIG, exactly like a stale baseline entry, so it fails the same way
+  // `staleEntries` does.
+  const acknowledgedWarningKeys = new Set(acknowledged.map(warningKey))
+  const unacknowledgedWarnings = warnings.filter((w) => !acknowledgedWarningKeys.has(warningKey(w)))
   const failed =
     newMisses.length > 0 ||
     staleEntries.length > 0 ||
     scanErrors.length > 0 ||
-    staleKnownWarnings.length > 0
+    staleKnownWarnings.length > 0 ||
+    unacknowledgedWarnings.length > 0
 
   if (!failed && warnings.length === 0) {
     return 0
@@ -1526,11 +1527,9 @@ function check() {
     }
   }
   if (warnings.length > 0) {
-    // #4244 part (b) — printed, never counted toward `failed`. A cited line
-    // number past the target's current length is USUALLY drift (the file
-    // shrank, or the section moved), but not always — see the
-    // `tauri.ts:1871` historical citation above — so this can only ever be
-    // a nudge to go look, not a gate.
+    // #4244 part (b) — a cited line number past the target's current length
+    // is usually drift (the file shrank, or the section moved); a new one
+    // fails the run above, an acknowledged one only prints.
     const newWarnings = warnings.filter((w) => !acknowledgedKeys.has(warningKey(w)))
     const knownWarnings = warnings.filter((w) => acknowledgedKeys.has(warningKey(w)))
     const knownCount = knownWarnings.length
@@ -1538,7 +1537,7 @@ function check() {
       `WARNING: citation(s) name a line number beyond the target file’s current length (${knownCount} known-intentional, ${newWarnings.length} new) —\n`,
     )
     process.stderr.write(
-      'the cited line may be stale (or deliberately historical). Not a build failure:\n',
+      'the cited line may be stale (or deliberately historical). A new one fails the run; a deliberate one goes in KNOWN_INTENTIONAL_WARNINGS:\n',
     )
     // #4264 — NEW-first, THEN known-intentional, so the cap below can only
     // ever truncate ACKNOWLEDGED warnings, never a genuinely new one. The

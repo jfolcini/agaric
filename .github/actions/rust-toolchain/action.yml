@@ -35,10 +35,18 @@ runs:
         args=(--profile minimal --no-self-update)
         for c in ${COMPONENTS//,/ }; do args+=(--component "$c"); done
         for t in ${TARGETS//,/ }; do args+=(--target "$t"); done
-        rustup toolchain install "$TOOLCHAIN" "${args[@]}"
-        rustup default "$TOOLCHAIN"
+        # `-q` drops rustup's `info:` lines and stdout its install summary;
+        # errors and warnings arrive on stderr.
+        rustup -q toolchain install "$TOOLCHAIN" "${args[@]}" >/dev/null
+        rustup -q default "$TOOLCHAIN" >/dev/null
+        # The repo's rust-toolchain.toml lists components this install did not
+        # add; rustup would fetch them, with `info:` lines, on the first cargo
+        # call. Doing it here keeps that quiet. `nightly` is not the pin and
+        # would only trigger an install of the pinned toolchain.
+        [ "$TOOLCHAIN" = nightly ] || rustup -q show active-toolchain >/dev/null
         # The replaced action's environment: no incremental artefacts in the
         # rust-cache entries, coloured cargo logs. A workflow's own value wins.
         [ -n "${CARGO_INCREMENTAL+set}" ] || echo CARGO_INCREMENTAL=0 >> "$GITHUB_ENV"
         [ -n "${CARGO_TERM_COLOR+set}" ] || echo CARGO_TERM_COLOR=always >> "$GITHUB_ENV"
-        rustc "+$TOOLCHAIN" --version --verbose
+        # Fails the step if the toolchain does not run; the version is the pin.
+        rustc "+$TOOLCHAIN" --version >/dev/null

@@ -85,19 +85,34 @@ runs:
           esac
         done
 
+        # apt's stdout (`Get:` / `Ign:` index lines, then dpkg's unpack and
+        # `Setting up` lines for every package) goes to this file and is
+        # printed only when the update or the install fails: that is the
+        # evidence a mirror stall needs (#4163). Its stderr (`W:` / `E:`) is
+        # not redirected and always prints.
+        apt_log="${RUNNER_TEMP}/apt-install.log"
+        print_apt_log() {
+          cat "${apt_log}"
+          cat "${RUNNER_TEMP}/apt-mirrors.diag" 2>/dev/null || true
+        }
+
         update_status=0
         for attempt in 1 2; do
           update_status=0
+          : >"${apt_log}"
           # -k is load-bearing, and was verified rather than assumed: with a
           # child that does not die on SIGTERM, plain `timeout N` SIGTERMs and
           # then waits on it forever (measured: an outer `timeout -k 1 8`
           # around `timeout 2` returned 124, i.e. the inner one never came
           # back). So `timeout` without -k is not a bound at all.
-          sudo timeout -k 30 "${APT_UPDATE_TIMEOUT}" apt-get update || update_status=$?
+          # shellcheck disable=SC2024 # the log is the runner's own file; sudo only elevates apt
+          sudo timeout -k 30 "${APT_UPDATE_TIMEOUT}" apt-get update >>"${apt_log}" || update_status=$?
 
           if [ "${update_status}" -eq 0 ]; then
             break
           fi
+
+          print_apt_log
 
           # 124 AND 137. `timeout -k` exits 124 when the child honours the
           # SIGTERM, but 137 when the SIGKILL is what ends it — measured on
@@ -138,14 +153,17 @@ runs:
         fi
 
         install_status=0
-        sudo apt-get install -y -qq "${pkgs[@]}" || install_status=$?
+        : >"${apt_log}"
+        # shellcheck disable=SC2024 # as above
+        sudo apt-get install -y -qq "${pkgs[@]}" >>"${apt_log}" || install_status=$?
 
+        # A stalled update already raised a `::warning::` above; the install
+        # succeeding needs no further line.
         if [ "${install_status}" -eq 0 ]; then
-          if [ "${update_status}" -ne 0 ]; then
-            echo "::notice::#4163: installed from the image's existing package lists after a mirror-bound apt-get update; job proceeds."
-          fi
           exit 0
         fi
+
+        print_apt_log
 
         if [ "${update_status}" -ne 0 ]; then
           # Distinct code, distinct marker — the #4163 ask, and the same

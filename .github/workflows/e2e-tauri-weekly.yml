@@ -94,6 +94,13 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # The live log carries warnings and errors only (`_validate.yml`'s env block
+  # says what each switch hides, and why cargo is not one of them).
+  NPM_CONFIG_LOGLEVEL: warn
+  NPM_CONFIG_FUND: 'false'
+  NPM_CONFIG_AUDIT: 'false'
+
 jobs:
   # Is this diff relevant to the lane? `scripts/classify-changes.sh`'s
   # `real_backend`: could the change alter what this lane BUILDS or RUNS (the
@@ -143,8 +150,8 @@ jobs:
       # Up to the Rust cache, these steps run in `actions/toolchain`'s order and
       # environment, so the restore computes `mcp-tests`' key: rust-cache hashes
       # `.cargo/config.toml` (the mold step) and every `CARGO*` / `RUST*`
-      # variable into it. Hence `CARGO_TERM_QUIET` is set on the cargo steps,
-      # not on the job.
+      # variable into it, so this job's `CARGO*` environment must stay equal to
+      # `_validate.yml`'s, which `mcp-tests` runs under.
       - name: Prepare apt (free dpkg lock, bound downloads)
         uses: ./.github/actions/prepare-apt
 
@@ -212,8 +219,6 @@ jobs:
       - name: Install tauri-driver
         # A cargo binary with no prebuilt release; the shards run this build of
         # it from the artifact below.
-        env:
-          CARGO_TERM_QUIET: 'true'
         run: cargo install tauri-driver --locked
 
       - name: Build the app, the sync peer and the agaric-mcp bridge
@@ -231,8 +236,6 @@ jobs:
         # the JS mock. `--config` narrows beforeBuildCommand to the vite build:
         # the default also runs prepare-external-bins.mjs, a RELEASE build of
         # the agaric-mcp sidecar that `--no-bundle` ships nowhere.
-        env:
-          CARGO_TERM_QUIET: 'true'
         run: >-
           npm run tauri -- build --debug --no-bundle
           --config '{"build":{"beforeBuildCommand":"npm run build"}}'

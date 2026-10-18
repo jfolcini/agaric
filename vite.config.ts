@@ -25,7 +25,7 @@ import { VENDOR_CHUNK_GROUPS } from './scripts/vendor-chunk-groups.ts'
 function e2ePdfjsPreviewAsset(): Plugin {
   const URL_PATH = '/node_modules/pdfjs-dist/build/pdf.min.mjs'
   const realFile = path.resolve(
-    realpathSync(path.resolve(__dirname, 'node_modules')),
+    realpathSync(path.resolve(import.meta.dirname, 'node_modules')),
     'pdfjs-dist/build/pdf.min.mjs',
   )
   return {
@@ -84,6 +84,8 @@ const e2e = !!process.env['VITE_E2E']
 const reactCompiler = process.env['REACT_COMPILER'] !== '0' && !process.env['VITEST']
 
 export default defineConfig({
+  // On CI the console carries warnings and errors only; the asset listing is info.
+  logLevel: process.env['CI'] ? 'warn' : 'info',
   plugins: [
     react(),
     // Scope babel (React Compiler) to component files only. The default
@@ -109,7 +111,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
     },
   },
   clearScreen: false,
@@ -125,7 +127,10 @@ export default defineConfig({
     // a normal checkout (the realpath is the project's own node_modules) and
     // dev-server-only (production bundles these fonts into `dist/assets`).
     fs: {
-      allow: [path.resolve(__dirname), realpathSync(path.resolve(__dirname, 'node_modules'))],
+      allow: [
+        path.resolve(import.meta.dirname),
+        realpathSync(path.resolve(import.meta.dirname, 'node_modules')),
+      ],
     },
   },
   envPrefix: ['VITE_', 'TAURI_'],
