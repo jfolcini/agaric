@@ -19,10 +19,11 @@ lane found the rest, and each is now quieted by the tool's own switch.
 - **Composites:** apt and `install-deps` output to a log printed on failure,
   with the mirror diagnostic; `rustup -q`; `sqlx migrate run` to a log
   printed on failure (its errors are on stdout too, so not `/dev/null`).
-- **Reporters and builds:** `node --test` and the vitest merge use dot
-  reporters, the vitest shards write coverage JSON only, Vite logs at `warn`
-  on CI (`vite.config.ts`; its asset listing was about 340 lines a build),
-  and the bundler's `-v` output is `tauri-build.log`, printed on failure and
+- **Reporters and builds:** `node --test` writes a `spec` report to a file
+  printed on failure, the vitest merge uses the dot reporter, the vitest
+  shards write coverage JSON only, Vite logs at `warn` on CI
+  (`vite.config.ts`; its asset listing was about 340 lines a build), and the
+  bundler's `-v` output is `tauri-build.log`, printed on failure and
   uploaded, replacing the `grep -v` filter.
 
 Left, with no quiet switch: `taiki-e/install-action`, `setup-android`'s

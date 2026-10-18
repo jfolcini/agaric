@@ -76,8 +76,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   # The live log carries warnings and errors only; the tools' own switches, as
-  # in `_validate.yml` (which sets the same for its jobs): cargo prints no
-  # `Compiling` or `Downloaded` lines, npm no notices, funding or audit summary.
+  # in `_validate.yml` (which sets the same for its jobs): npm prints no
+  # notices, funding or audit summary. Cargo is not quieted: its `-q` also
+  # drops cargo's own warnings.
   NPM_CONFIG_LOGLEVEL: warn
   NPM_CONFIG_FUND: 'false'
   NPM_CONFIG_AUDIT: 'false'
