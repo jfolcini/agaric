@@ -55,6 +55,12 @@ const application =
 const tauriDriverPath =
   process.env['TAURI_DRIVER_PATH'] ?? path.resolve(os.homedir(), '.cargo', 'bin', 'tauri-driver')
 
+// WDIO only logs an Error thrown from `onPrepare`, then runs the specs anyway.
+function failPrepare(message: string): never {
+  console.error(message)
+  process.exit(1)
+}
+
 // `tauri:options` is the Tauri WebDriver vendor-prefixed capability
 // tauri-driver reads to launch the app; @wdio/types doesn't ship it, so we
 // declaration-merge it onto the capability interface for a typed config.
@@ -998,41 +1004,50 @@ export const config: WebdriverIO.Config = {
   // tauri-driver lifecycle.
   //
   // The guide builds the app in `onPrepare`; the weekly workflow already builds
-  // the debug binary in a dedicated step (and sets WDIO_SKIP_TAURI_BUILD=1), so
-  // we only build here when that flag is absent — convenient for a local run,
-  // a no-op double build in CI. `beforeSession`/`afterSession` spawn and reap
-  // `tauri-driver` around each session, exactly as the current docs show.
+  // the binaries in a dedicated job (and sets WDIO_SKIP_TAURI_BUILD=1), so we
+  // only build here when that flag is absent. `beforeSession`/`afterSession`
+  // spawn and reap `tauri-driver` around each session, as the current docs show.
   // -------------------------------------------------------------------------
   onPrepare: () => {
     installShutdownGuard()
     // Litter control only, and age-filtered so it cannot reach a sandbox a
     // concurrent invocation is still using. Never the isolation itself.
     sweepStaleSandboxes()
-    if (process.env['WDIO_SKIP_TAURI_BUILD']) return
-    const result = spawnSync('npm', ['run', 'tauri', '--', 'build', '--debug', '--no-bundle'], {
-      cwd: rootDir,
-      stdio: 'inherit',
-      shell: true,
-    })
-    if (result.status !== 0) {
-      throw new Error(`tauri debug build failed with exit code ${String(result.status)}`)
+    if (!process.env['WDIO_SKIP_TAURI_BUILD']) {
+      // The workflow's build: every bin of both packages in one compile, so the
+      // sync peer (e2e-tauri/sync-peer.ts) and the `agaric-mcp` bridge
+      // (e2e-tauri/mcp-agent-token.e2e.ts) come with the app. The `--config`
+      // skips the sidecar release build, which `--no-bundle` ships nowhere.
+      const result = spawnSync(
+        'npm',
+        [
+          'run',
+          'tauri',
+          '--',
+          'build',
+          '--debug',
+          '--no-bundle',
+          '--config',
+          '{"build":{"beforeBuildCommand":"npm run build"}}',
+          '--',
+          '-p',
+          'agaric',
+          '-p',
+          'agaric-diagnostics',
+        ],
+        { cwd: rootDir, stdio: 'inherit' },
+      )
+      if (result.status !== 0) {
+        failPrepare(`tauri debug build failed with exit code ${String(result.status)}`)
+      }
     }
-    // The second device the sync specs pair the app with (e2e-tauri/sync-peer.ts).
-    const peer = spawnSync(
-      'cargo',
-      ['build', '-p', 'agaric-diagnostics', '--bin', 'e2e_sync_peer'],
-      { cwd: path.join(rootDir, 'src-tauri'), stdio: 'inherit' },
-    )
-    if (peer.status !== 0) {
-      throw new Error(`sync peer build failed with exit code ${String(peer.status)}`)
-    }
-    // The bridge an MCP client spawns (e2e-tauri/mcp-agent-token.e2e.ts).
-    const bridge = spawnSync('cargo', ['build', '-p', 'agaric', '--bin', 'agaric-mcp'], {
-      cwd: path.join(rootDir, 'src-tauri'),
-      stdio: 'inherit',
-    })
-    if (bridge.status !== 0) {
-      throw new Error(`agaric-mcp build failed with exit code ${String(bridge.status)}`)
+    // Only the Tauri CLI embeds `dist/`. Plain cargo relinks this path as a
+    // `devUrl` build, and `cargo nextest run --workspace` does so because it
+    // builds the package's bins with its integration tests (#5849).
+    if (!existsSync(application) || !readFileSync(application).includes('/assets/index-')) {
+      failPrepare(
+        `${application} is missing or embeds no frontend (plain cargo relinks it without one): unset WDIO_SKIP_TAURI_BUILD, or run \`just e2e-real <spec>\``,
+      )
     }
   },
 

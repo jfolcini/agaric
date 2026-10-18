@@ -9,8 +9,8 @@
 // app says where it listens, so a peer can pair without mDNS. The app's side of
 // the pairing (Settings › Sync & devices) is here too, for the specs that pair.
 //
-// The e2e-tauri workflow builds the peer, and so does `wdio.conf.ts`'s local
-// `onPrepare`: `cd src-tauri && cargo build -p agaric-diagnostics --bin e2e_sync_peer`.
+// The e2e-tauri workflow builds the peer in the same compile as the app, and
+// so does `wdio.conf.ts`'s local `onPrepare` (`-- -p agaric -p agaric-diagnostics`).
 // ---------------------------------------------------------------------------
 
 import { spawn } from 'node:child_process'
