@@ -77,10 +77,14 @@ describe('PropertyChip', () => {
     expect(chip?.className).not.toContain('mt-1')
   })
 
-  it('key label is not faded below the chip’s muted text, which fails AA contrast (#5743)', () => {
-    render(<PropertyChip propKey="repeat" value="weekly" onKeyClick={() => {}} />)
+  it.each([
+    ['a plain key', {}],
+    ['a key that renames', { onKeyClick: () => {} }],
+  ])('%s is set apart by weight, not faded, which fails AA contrast (#5743)', (_, props) => {
+    render(<PropertyChip propKey="repeat" value="weekly" {...props} />)
 
     const keyLabel = screen.getByText('Repeat:')
+    expect(keyLabel.className).toContain('font-normal')
     expect(keyLabel.className).not.toMatch(/(^|\s)opacity-/)
   })
 

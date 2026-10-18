@@ -51,6 +51,7 @@ import {
   type PageBlockMetadataProps,
 } from '@/editor/page-mode/PageBlockMetadata'
 import { blockIdOf } from '@/editor/token-ids'
+import { arraysShallowEqual } from '@/hooks/useExtraBlockProperties'
 import type { OpRef } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '@/lib/block-utils'
 import { t } from '@/lib/i18n'
@@ -78,8 +79,8 @@ export interface PageTaskActions {
   openDateLinkPicker: () => void
   /** Open block mode's property drawer on block `id`. */
   openPropertyDrawer: (id: string) => void
-  /** Block `id`'s property editor closed: read its properties again. */
-  propertiesEdited: (id: string) => void
+  /** A property editor or the drawer closed: read the page's properties again. */
+  propertiesEdited: () => void
 }
 
 /** Where page mode reads block tasks, and what it does to them. */
@@ -218,7 +219,7 @@ const sameMetadata = (a: Metadata | null, b: Metadata): boolean =>
   a.priority === b.priority &&
   a.dueDate === b.dueDate &&
   a.scheduledDate === b.scheduledDate &&
-  a.properties === b.properties
+  arraysShallowEqual(a.properties, b.properties)
 
 /**
  * A block as a node view: its text; before it, outside the editable text,

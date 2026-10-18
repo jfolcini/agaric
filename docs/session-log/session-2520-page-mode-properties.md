@@ -10,8 +10,9 @@ task's rule among them, now opens in page mode.
   from the read the blocker check already made: `readPageFit` returns the
   `getBatchProperties` rows with the blocker, at open and on every reload
   page mode brings in. No new IPC on open. Each block's list is block mode's
-  projection (`extraPropertiesOf`, exported from `useExtraBlockProperties`),
-  and keeps its identity while unchanged, so a reload draws nothing.
+  projection (`extraPropertiesOf`, exported from `useExtraBlockProperties`).
+  A node view redraws its row only when that list's content differs from what
+  it drew, so a reload that finds nothing new draws nothing.
 - The same `pageBlock` node view draws them. Its row is now
   `PageBlockMetadata`: block mode's `BlockMetadataRow` with the chips and the
   repeat rule, and `BlockPropertyEditor`, paired as `SortableBlock` pairs
@@ -88,8 +89,7 @@ task's rule among them, now opens in page mode.
   - The lazy gate keeps a properties-only row's empty box with
     `data-properties`. Red: the attribute not set.
   - The existing no-redraw test seeds a property and reloads twice: red with
-    `take` minting new arrays. With one reload it passed: the read lands after
-    that reload's redraw.
+    the row compared by reference, as the lists are new arrays at each read.
 - `page-mode-fit.test.ts`: user properties and a rule are let in and handed
   over. Bullet and numbered blocks are kept out with their message. Red:
   properties kept out again, and the `listStyle` check dropped.

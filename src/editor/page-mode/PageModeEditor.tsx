@@ -330,7 +330,7 @@ function PageModeDocument({
           actions.current.openDatePicker(id, mode),
         openDateLinkPicker: () => actions.current.openDateLinkPicker(),
         openPropertyDrawer: (id: string) => actions.current.openPropertyDrawer(id),
-        propertiesEdited: (id: string) => actions.current.propertiesEdited(id),
+        propertiesEdited: () => actions.current.propertiesEdited(),
       },
     }),
     content: pageDocContent(blocks, newBlockId),
@@ -673,7 +673,7 @@ function PageModeDocument({
             onOpenChange={(open) => {
               if (open) return
               setDrawerBlockId(null)
-              actions.current.propertiesEdited(drawerBlockId)
+              actions.current.propertiesEdited()
             }}
           />
         </Suspense>

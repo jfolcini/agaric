@@ -1481,6 +1481,31 @@ describe('PageModeEditor properties (#5743)', () => {
     expect(docTexts(editor)).toEqual(['first', 'call mom'])
   })
 
+  it('an editor closed with the focus already moved elsewhere does not take it back', async () => {
+    const { pageId, ids } = seedPage(['first', 'call mom'])
+    setProp(ids[1] as string, 'assignee', 'Ana')
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const elsewhere = document.createElement('button')
+    document.body.append(elsewhere)
+    fireEvent.click(await screen.findByRole('button', { name: chip('Assignee', 'Ana') }))
+    const field = await screen.findByRole('textbox', { name: t('block.editProperty') })
+
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Escape' })
+      elsewhere.focus()
+    })
+    // The timer the refocus waits on is set; it fires before this one.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve))
+    })
+
+    expect(screen.queryByRole('textbox', { name: t('block.editProperty') })).toBeNull()
+    expect(document.activeElement).toBe(elsewhere)
+    expect(editor.isFocused).toBe(false)
+    elsewhere.remove()
+  })
+
   it('a chip’s key opens block mode’s rename; the new key holds the value', async () => {
     const { pageId, ids } = seedPage(['call mom'])
     setProp(ids[0] as string, 'assignee', 'Ana')
@@ -1685,6 +1710,63 @@ describe('PageModeEditor properties (#5743)', () => {
     expect(chips(container, ids[1] as string)).toEqual([])
   })
 
+  it('a marker, a property line and a tag typed in one block each read the text the one before wrote', async () => {
+    const { pageId, ids } = seedPage(['first', 'call mom'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.view.focus()
+    })
+
+    typeAt(editor, 1, 8, ' #later')
+    act(() => {
+      editor
+        .chain()
+        .setTextSelection(at(editor, 1, 15))
+        .setHardBreak()
+        .insertContent('assignee:: Ana')
+        .run()
+    })
+    typeAt(editor, 1, 0, '[ ] ')
+    caretTo(editor, 0)
+
+    await waitFor(() => {
+      expect(backendText(ids[1] as string)).toMatch(/^call mom #\[[0-9A-Z]{26}\]$/)
+    })
+    expect((dispatch('get_block', { blockId: ids[1] }) as BlockRow).todo_state).toBe('TODO')
+    expect(backendProps(ids[1] as string)).toEqual({ assignee: 'Ana' })
+    await waitFor(() => {
+      expect(chips(container, ids[1] as string)).toEqual([chip('Assignee', 'Ana')])
+    })
+    expect(docTexts(editor)).toEqual(['first', backendText(ids[1] as string)])
+  })
+
+  it('a property line that is a task’s whole text leaves the task, empty', async () => {
+    const { pageId, ids } = seedPage(['first', 'x'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.view.focus()
+    })
+
+    act(() => {
+      editor
+        .chain()
+        .setTextSelection({ from: at(editor, 1, 0), to: at(editor, 1, 1) })
+        .insertContent('[ ] assignee:: Ana')
+        .run()
+    })
+    caretTo(editor, 0)
+
+    await waitFor(() => {
+      expect(backendProps(ids[1] as string)).toEqual({ assignee: 'Ana' })
+    })
+    expect((dispatch('get_block', { blockId: ids[1] }) as BlockRow).todo_state).toBe('TODO')
+    await waitFor(() => {
+      expect(backendText(ids[1] as string)).toBe('')
+    })
+  })
+
   it('a peer’s properties, set or deleted, show on reload, outside the document and its undo', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     setProp(ids[0] as string, 'assignee', 'Ana')
@@ -1712,6 +1794,25 @@ describe('PageModeEditor properties (#5743)', () => {
     expect(docTexts(editor)).toEqual(['first', 'second'])
     expect(editor.can().undo()).toBe(false)
     expect(onBlocked).not.toHaveBeenCalled()
+  })
+
+  it('a peer’s new value of the same length shows on reload', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    setProp(ids[0] as string, 'assignee', 'Ana')
+    const { container, store } = renderPageMode(pageId)
+    await editorIn(container)
+    await waitFor(() => {
+      expect(chips(container, ids[0] as string)).toEqual([chip('Assignee', 'Ana')])
+    })
+
+    setProp(ids[0] as string, 'assignee', 'Bob')
+    await act(async () => {
+      await store.getState().load()
+    })
+
+    await waitFor(() => {
+      expect(chips(container, ids[0] as string)).toEqual([chip('Assignee', 'Bob')])
+    })
   })
 
   it('completing a repeating task brings in its next occurrence, with its rule', async () => {

@@ -57,12 +57,12 @@ export function PropertyChip({
   const displayName = formatPropertyName(propKey)
   const chipLabel = t('property.selectValue', { key: displayName, value })
 
+  // The key is set apart from the value by weight: a fade (`opacity-60`) fails AA contrast (#5743).
   const keyLabel = onKeyClick ? (
     <button
       type="button"
       className={cn(
-        // Muted as the chip is, not faded further, which fails AA contrast (#5743).
-        'property-key-label hover:underline cursor-pointer rounded-sm',
+        'property-key-label font-normal hover:underline cursor-pointer rounded-sm',
         'focus-ring-visible',
         Icon && 'inline-flex items-center gap-0.5',
       )}
@@ -78,7 +78,9 @@ export function PropertyChip({
       {displayName}:
     </button>
   ) : (
-    <span className={cn('property-key-label', Icon && 'inline-flex items-center gap-0.5')}>
+    <span
+      className={cn('property-key-label font-normal', Icon && 'inline-flex items-center gap-0.5')}
+    >
       {Icon && <Icon className="h-2.5 w-2.5 shrink-0" />}
       {displayName}:
     </span>

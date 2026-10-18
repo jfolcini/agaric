@@ -17,7 +17,7 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import { serialize } from '@/editor/markdown-serializer'
 import { blockDocJson } from '@/editor/page-mode/page-document'
 import type { PageSaveApi, PageSaveState } from '@/editor/page-mode/page-save'
-import { arraysShallowEqual, extraPropertiesOf } from '@/hooks/useExtraBlockProperties'
+import { extraPropertiesOf } from '@/hooks/useExtraBlockProperties'
 import type { OpRef, PropertyRow } from '@/lib/bindings'
 import { bumpFlushSeq, commitInlineProperties } from '@/stores/inline-property-commit'
 import { addedInlineProperties } from '@/stores/unmount-flush'
@@ -30,11 +30,7 @@ export interface ShownProperty {
 
 const NONE: ShownProperty[] = []
 
-/**
- * The page's block properties as block mode's row draws them, by block id. A
- * block's list keeps its identity while what it holds does not change, so a
- * read that finds nothing new draws nothing.
- */
+/** The page's block properties as block mode's row draws them, by block id. */
 export class PageProperties {
   private shown = new Map<string, ShownProperty[]>()
   private readonly listeners = new Set<() => void>()
@@ -47,24 +43,14 @@ export class PageProperties {
     return this.shown.get(id) ?? NONE
   }
 
-  /** Hold what a read of the page found, and tell the listeners when it changed. */
+  /** Hold what a read of the page found, and tell the listeners. */
   take(rows: Record<string, PropertyRow[]>): void {
-    const next = new Map<string, ShownProperty[]>()
-    let changed = false
+    this.shown = new Map()
     for (const [id, list] of Object.entries(rows)) {
       const shown = extraPropertiesOf(list)
-      const prior = this.shown.get(id)
-      if (shown.length === 0) {
-        changed ||= prior !== undefined
-        continue
-      }
-      const same = arraysShallowEqual(prior, shown)
-      next.set(id, same ? (prior as ShownProperty[]) : shown)
-      changed ||= !same
+      if (shown.length > 0) this.shown.set(id, shown)
     }
-    for (const id of this.shown.keys()) changed ||= !next.has(id)
-    this.shown = next
-    if (changed) for (const listener of this.listeners) listener()
+    for (const listener of this.listeners) listener()
   }
 
   subscribe(listener: () => void): () => void {

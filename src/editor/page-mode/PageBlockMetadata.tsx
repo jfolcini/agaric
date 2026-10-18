@@ -21,7 +21,7 @@ export type PageBlockMetadataProps = Omit<
   'attachmentCount' | 'showAttachments' | 'onToggleAttachments' | 'onEditProp' | 'onEditKey'
 > & {
   /** The chip editor closed: what it may have written is read again. */
-  onEdited: (blockId: string) => void
+  onEdited: () => void
 }
 
 const noAttachments = (): void => {}
@@ -37,7 +37,7 @@ export function PageBlockMetadata({
     <T,>(set: (next: T | null) => void) =>
     (next: T | null): void => {
       set(next)
-      if (next === null) onEdited(row.blockId)
+      if (next === null) onEdited()
     }
   return (
     <>
