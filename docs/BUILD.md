@@ -174,12 +174,24 @@ npx playwright test                              # e2e (chromium)
 PW_PORT=5557 npx playwright test                 # e2e on its own port: one per git worktree, so each tests its own bundle
 npx vitest --changed origin/main                 # while iterating: the tests the branch can reach, committed or not
 just test-be -E 'test(name)'                     # one backend test, `--workspace` kept (args go to nextest)
+just test-be-related                             # tests of the crates your uncommitted work touches (`--dry` previews)
 just test-fe src/lib/foo.test.ts                 # one frontend file (args go to vitest)
 just test-doc                                    # Rust doc-tests: nextest does not run them (`just test` does)
 just clippy                                      # clippy as CI runs it: --workspace --all-targets -D warnings
 just test-be-release                             # backend under RELEASE semantics (#4677)
 cargo bench --bench interactive_slo              # warm latency mean budgets at 100K blocks
 ```
+
+- **`just test-be-related`** runs `scripts/test-related-rust.sh --worktree`. It maps each
+  staged, unstaged or untracked file to the workspace crate that owns it and runs
+  `cargo nextest run --workspace -E 'rdeps(=<crate>) + …'`: that crate's tests, those of
+  every crate depending on it, and the few tests that read its source files as data.
+  `src-tauri/{src,tests,benches}/**`, `build.rs` and any other `src-tauri/` file outside a
+  member crate belong to `agaric`, as do `conformance/**` and `src/lib/bindings.ts`, which
+  its tests read. Migrations, a `Cargo.toml` or `Cargo.lock`, `src-tauri/.config/nextest.toml`
+  and its setup scripts, and `rust-toolchain.toml` run the full suite. The diff is against
+  `HEAD`; pass `--range origin/main...HEAD` to cover a branch's commits too. Pre-push
+  Phase D runs the same selection over the push range.
 
 - **`just test-be-release`** runs the backend suite with `debug_assertions` OFF and
   `overflow-checks` ON, via `[profile.release-test]`. Use it after promoting a
@@ -230,7 +242,7 @@ The `prek.toml` file is the single source of truth for hooks. CI invokes the sam
 
 Pre-commit (every `git commit`): fast hooks only, staged-file-scoped — oxlint, oxfmt, tsc, cargo fmt (auto-fix), markdownlint, md-link-targets, doc-vs-code-paths, zizmor, sqruff, taplo, typos, snapshot redaction, IPC error-path, axe-presence, and so on. Per-commit overhead stays sub-30 s on a warm cache.
 
-**`vitest`, `cargo-test` (nextest), `cargo-clippy`, `cargo-fmt --check`, `knip`, `npm-audit`, and `lychee` are staged `pre-push` in `prek.toml`, not pre-commit** — they're either too slow (clippy compiles the whole workspace + all targets; nextest falls back to the full suite on a foundational-module touch), too whole-repo (knip is a whole-repo dead-code scan), or too network-dependent (lychee, npm-audit hit external endpoints) for the commit path. `cargo-fmt --check` is the odd one out: it's a read-only backstop re-verification for the case where the pre-commit `cargo-fmt` auto-fixer was bypassed (`--no-verify`, or hooks not yet installed). All of these run once at push time, inside the chokepoint hook below.
+**`vitest`, `cargo-test` (nextest), `cargo-clippy`, `cargo-fmt --check`, `knip`, `npm-audit`, and `lychee` are staged `pre-push` in `prek.toml`, not pre-commit** — they're either too slow (clippy compiles the whole workspace + all targets; a change to `agaric-core` selects every crate's tests), too whole-repo (knip is a whole-repo dead-code scan), or too network-dependent (lychee, npm-audit hit external endpoints) for the commit path. `cargo-fmt --check` is the odd one out: it's a read-only backstop re-verification for the case where the pre-commit `cargo-fmt` auto-fixer was bypassed (`--no-verify`, or hooks not yet installed). All of these run once at push time, inside the chokepoint hook below.
 
 Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — that runs [`scripts/verify-ci-equivalent.sh`](../scripts/verify-ci-equivalent.sh). Unlike CI, it is **range-scoped** to the commits being pushed (`@{upstream}..HEAD`, override with `PRE_PUSH_RANGE`) and runs its phases sequentially, not in parallel:
 

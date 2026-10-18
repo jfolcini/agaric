@@ -554,7 +554,10 @@ split-debuginfo = "unpacked"
 
 [lib]
 name = "agaric_lib"
-crate-type = ["lib", "cdylib", "staticlib"]
+# `cdylib` is the `.so` Android loads. No `staticlib`: only an iOS target links
+# one, there is none, and every lib build rewrote it as an archive of the whole
+# dependency graph.
+crate-type = ["lib", "cdylib"]
 
 # Benches (#2879): the 30 former single-`criterion_main!` bench crates were
 # consolidated into a handful of THEMED bench binaries to cut Rust build/link

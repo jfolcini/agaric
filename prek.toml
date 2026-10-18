@@ -1915,11 +1915,8 @@ types = ["rust"]
 stages = ["pre-push"]
 
 # Rust: smart related-only tests. Pre-push only (#817): the related-test
-# selector falls back to the FULL nextest suite whenever a foundational
-# module is touched (the app lib/main entry points or any file below its
-# db module, agaric-core's error.rs, agaric-store's op.rs, or any file below
-# its pagination module — see test-related-rust.sh), so at commit time this
-# routinely ran the entire suite and dominated commit latency. The pre-push
+# selector runs every crate that depends on a changed crate, so a change low in
+# the graph runs most of the suite, which dominated commit latency. The pre-push
 # verifier runs nextest once, scoped to the push range, in Phase D of
 # verify-ci-equivalent.sh;
 # Phase A passes SKIP=cargo-test so it is not re-run there. (As a
