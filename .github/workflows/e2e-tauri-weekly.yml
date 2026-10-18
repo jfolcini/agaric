@@ -6,7 +6,7 @@
 # regression is reported on the PR that introduces it instead of up to a week
 # later. It is still not part of the PR gate — not a job of `_validate.yml`,
 # not in `validate-all`'s `needs`, and not a required status-check context
-# (`branch-protection-assert.yml` pins those to `dco` + `validate-all`) — so a
+# (`branch-protection-assert.yml` pins those to `dco` + `validate / validate-all`) — so a
 # red run here never blocks a merge; it remains a high-fidelity canary. Its
 # `e2e-tauri-gate` job reports on every PR, so it can become one.
 #
