@@ -49,6 +49,21 @@ save-if: ${{ github.ref == 'refs/heads/main' }}
 
 `node scripts/ci-capacity-report.mjs --since 6h` reports, from the Actions API, the peak number of jobs running and waiting at one instant (the plan's concurrent-job cap applies across every workflow), the queue wait per event (median, p90 and max of a job's `started_at - created_at`), each cache key's restore outcomes (hit, partial, miss) on PR and `main` runs read from job logs, and each key's live entries and size. Run it before and after a change to what CI runs or caches (#5853). `--log-jobs '<regex>'` restricts the log reads to matching job names, which reaches further back for one family of keys; the script header lists the rest. Each run costs about one API request per workflow run plus one per log read, against the account's 5,000 an hour shared with every other `gh` call.
 
+## Log verbosity — warnings and errors only
+
+A passing step prints nothing a reader needs; the live log carries warnings, errors, and the closing summary of a test run. Each step uses the tool's own level or reporter setting, never a `grep` or `sed` over its output, so a tool's warnings and errors cannot be filtered out by accident. Detail goes to a file that the failing step prints or the job uploads.
+
+- **cargo, nextest:** cargo stays at its default level: `CARGO_TERM_QUIET` would also drop cargo's own warnings (an unused manifest key), so the `Compiling` lines stay. The nextest `ci` profile prints failures, retries, slow and leaky tests, and `flaky` in the summary.
+- **npm:** `NPM_CONFIG_LOGLEVEL=warn`, `NPM_CONFIG_FUND=false` and `NPM_CONFIG_AUDIT=false` in the workflow `env:`, not `.npmrc`, so local runs keep their output. `npm audit` ignores `audit=false`, so the `npm-audit` hook still runs. Vite logs at `warn` on CI (`vite.config.ts`), so a build lists no assets.
+- **prek:** `PREK_QUIET=1` lists failing hooks only. The `manual` stage step sets `PREK_QUIET=0` because it counts `Passed` and `Skipped` lines, and prints its log when it fails.
+- **vitest, Playwright:** the `dot` reporter, plus `--silent=passed-only` for vitest (#5871). A vitest shard sets `--coverage.reporter=json` so it prints no per-file table.
+- **node:test:** the `spec` report goes to a file in `$RUNNER_TEMP` that the step prints when it fails. The `dot` reporter drops a test file's stderr, which is the only diagnosis when the file fails to load.
+- **apt:** stdout goes to a log that `apt-install` and the Playwright system-deps step print when apt fails, with the mirror configuration `prepare-apt` recorded. apt's `-qq` hides progress, not dpkg's per-package unpack lines.
+- **Tauri bundle:** `tauri build -v` writes `tauri-build.log`, printed when the step fails and uploaded as the `tauri-build-log` artifact. The CLI has no quiet level, and `-v` is what makes a bundler failure name its tool.
+- **sqlx:** `sqlx migrate run` prints its `Applied` lines and its errors on stdout, so the log is printed when it fails.
+
+What stays: output of actions with no quiet input (`taiki-e/install-action`, `android-actions/setup-android`'s sdkmanager progress, `actions/cache` progress, the checkout's tag list, CodeQL's collapsed groups), and the closing line of a script that reports a result.
+
 ## Supply-chain posture
 
 Every remote `uses:` is SHA-pinned to a commit, not a tag — verified across the workflow set. Dependabot runs weekly for the GitHub Actions, npm, and cargo ecosystems — the npm and cargo ecosystems each carry grouping rules plus a 7-day cooldown (`.github/dependabot.yml`). Rust-based developer tools (cargo-deny, cargo-machete, cargo-audit, sqruff, typos, zizmor, taplo) install via `taiki-e/install-action` against upstream prebuilt binaries, side-stepping the cold-cache compile that previously dominated lint runs. Workflow-level permissions default to `contents: read`, with per-job write overrides only where genuinely required (`id-token: write` and `attestations: write` appear only on the attestation jobs). `zizmor` lints the workflow files themselves on a baseline-then-tighten posture; `actionlint` via prek closes the local-side gap so workflow regressions surface before the push.

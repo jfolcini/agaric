@@ -114,6 +114,19 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # The live log carries warnings and errors only; a passing step's detail goes
+  # to a file (an uploaded report, or a log the failing step prints). The
+  # tools' own switches, set once for every job and composite action here:
+  # - cargo is NOT quieted: its `-q` also drops cargo's own warnings (an
+  #   unused manifest key), and warnings must reach the log.
+  # - npm prints no notices, funding or audit summary; `npm warn` and `npm error`
+  #   still print. Advisories are the `npm-audit` step's job, and `npm audit`
+  #   ignores the `audit` setting.
+  # - prek lists only the hooks that fail, with their output.
+  PREK_QUIET: '1'
+  NPM_CONFIG_LOGLEVEL: warn
+  NPM_CONFIG_FUND: 'false'
+  NPM_CONFIG_AUDIT: 'false'
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -548,8 +561,14 @@ jobs:
         # ones needing a toolchain it does not install. Adding a line is the
         # deliberate act; the cost of forgetting is a test that runs nowhere,
         # which is the defect class #4544 itself is about.
+        #
+        # The report goes to a file that is printed when the run fails, not to
+        # the `dot` reporter: `dot` drops a test file's stderr, which is the
+        # only diagnosis when the file fails to load (a syntax error, a missing
+        # export).
         run: >-
-          node --test
+          node --test --test-reporter=spec
+          --test-reporter-destination="$RUNNER_TEMP/node-test.log"
           scripts/pr-diff-base.test.mjs
           scripts/check-workflow-liveness.test.mjs
           scripts/file-fuzz-findings.test.mjs
@@ -561,6 +580,7 @@ jobs:
           scripts/ci-capacity-report.test.mjs
           scripts/session-log-guards.test.mjs
           scripts/e2e-related.test.mjs
+          || { cat "$RUNNER_TEMP/node-test.log"; exit 1; }
 
       - name: Verify npm package provenance signatures
         # Requires Node 22.5+; fails on a package whose registry signature or
@@ -674,12 +694,12 @@ jobs:
           SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
           curl -fsSL -o /tmp/lychee.tar.gz \
             "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
-          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c -
+          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c --quiet -
           mkdir -p "${HOME}/.local/bin"
           tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
           install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
-          "${HOME}/.local/bin/lychee" --version
+          "${HOME}/.local/bin/lychee" --version >/dev/null
 
       - name: Restore lychee link-check cache
         # Persist the lychee URL cache across runs so we don't re-hit the
@@ -747,17 +767,23 @@ jobs:
         # would otherwise silently drop hooks from this run. Exact count, not
         # `> 0`, and no `Skipped`: a `files:`-scoped hook that matches nothing
         # reports Skipped and exits 0 (the knip false-green shape below).
+        #
+        # `PREK_QUIET` is off here: the count below reads the `Passed` and
+        # `Skipped` lines quiet mode omits. The log goes to a file and is
+        # printed only when the step fails.
         env:
           SKIP: ''
+          PREK_QUIET: '0'
         run: |
           set -euo pipefail
+          trap 'rc=$?; [ "$rc" -eq 0 ] || cat manual.log 2>/dev/null' EXIT
           # Counted from prek.toml at run time, the independent source: every
           # manual hook is that line. `|| true` because grep -c exits 1 on none.
           expected=$(grep -cE '^stages = \["manual"\]$' prek.toml || true)
           [ "$expected" -gt 0 ] || { echo "no manual-stage hooks found in prek.toml"; exit 1; }
           listed=$(prek list --hook-stage manual --output-format json | jq length)
           [ "$listed" -eq "$expected" ] || { echo "manual stage lists $listed hooks, expected $expected"; exit 1; }
-          prek run --all-files --hook-stage manual 2>&1 | tee manual.log
+          prek run --all-files --hook-stage manual > manual.log 2>&1
           passed=$(grep -c 'Passed$' manual.log || true)
           [ "$passed" -eq "$expected" ] || { echo "$passed of $expected manual hooks reported Passed"; exit 1; }
           if grep -q 'Skipped' manual.log; then echo "a manual-stage hook was Skipped"; exit 1; fi
@@ -1082,12 +1108,12 @@ jobs:
           SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
           curl -fsSL -o /tmp/lychee.tar.gz \
             "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
-          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c -
+          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c --quiet -
           mkdir -p "${HOME}/.local/bin"
           tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
           install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
-          "${HOME}/.local/bin/lychee" --version
+          "${HOME}/.local/bin/lychee" --version >/dev/null
 
       - name: Restore lychee link-check cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -1187,6 +1213,10 @@ jobs:
         # reachable — `vitest-coverage` re-reports it from the blob — but only
         # after that job installs and downloads the artifacts.
         #
+        # `--coverage.reporter=json`: the merged report below is the one that
+        # gates and publishes, so this shard prints no per-file coverage table
+        # (the config's `text` reporter prints one line per source file).
+        #
         # #749's coverage thresholds are DISABLED here and enforced on the
         # merged report instead. A shard sees only a share of the suite, so
         # leaving the thresholds on would fail every shard on arithmetic, not
@@ -1200,6 +1230,7 @@ jobs:
             --silent=passed-only \
             --outputFile=.vitest-reports/blob-${{ matrix.shard }}-3.json \
             --coverage \
+            --coverage.reporter=json \
             --coverage.thresholds.lines=0 \
             --coverage.thresholds.functions=0 \
             --coverage.thresholds.branches=0 \
@@ -1279,10 +1310,12 @@ jobs:
         #
         # A shard's test failure is recorded in its blob and re-reported here,
         # so this job reds too — but the shard itself is already red, and both
-        # are in the gate.
+        # are in the gate. `--reporter=dot` because the default reporter replays
+        # one line per passing test file; a failing test is still named in full.
         run: |
           npx vitest run \
             --mergeReports=.vitest-reports \
+            --reporter=dot \
             --silent=passed-only \
             --coverage \
             --coverage.reportsDirectory=coverage-merged \
@@ -1307,7 +1340,8 @@ jobs:
         # static import). Budgets are measured + 10% headroom; re-baseline
         # with `node scripts/check-bundle-budget.mjs --update`.
         run: |
-          node --test scripts/check-bundle-budget.test.mjs
+          node --test --test-reporter=spec --test-reporter-destination="$RUNNER_TEMP/node-test.log" \
+            scripts/check-bundle-budget.test.mjs || { cat "$RUNNER_TEMP/node-test.log"; exit 1; }
           node scripts/check-bundle-budget.mjs
 
       - name: Coverage summary
@@ -1377,7 +1411,7 @@ jobs:
         run: npm ci
 
       - name: Vitest (e2e-tauri only)
-        run: npx vitest run e2e-tauri
+        run: npx vitest run e2e-tauri --reporter=dot --silent=passed-only
 
   # ---------------------------------------------------------------------------
   # playwright — E2E browser tests, sharded 4 ways (#5848). Per-shard report

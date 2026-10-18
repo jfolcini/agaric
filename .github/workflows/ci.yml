@@ -75,6 +75,12 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # The live log carries warnings and errors only; the tools' own switches, as
+  # in `_validate.yml` (which sets the same for its jobs): cargo prints no
+  # `Compiling` or `Downloaded` lines, npm no notices, funding or audit summary.
+  NPM_CONFIG_LOGLEVEL: warn
+  NPM_CONFIG_FUND: 'false'
+  NPM_CONFIG_AUDIT: 'false'
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -153,23 +159,29 @@ jobs:
         # tauri-bundler, with no underlying error text. See the
         # equivalent comment in release.yml.
         #
-        # The linuxdeploy plugin chatter (`Copying plugin`, `Deploying`, ...)
-        # is dropped from the live log, kept in
-        # `tauri-build.log`, and printed in full by the next step when the
-        # build fails.
+        # The whole `-v` output (bundler and linuxdeploy chatter included, a
+        # few thousand lines) goes to `tauri-build.log`, which the next step
+        # prints when the build fails and the step after uploads.
         #
         # The CLI is the prebuilt `@tauri-apps/cli` that `npm ci` installed,
         # not a `cargo install tauri-cli` compile on every Rust-cache miss
         # (#5853).
         id: tauri-build
-        shell: bash
-        run: |
-          npm run tauri -- build -v 2>&1 | tee tauri-build.log \
-            | grep -vE '^\[(gstreamer|gtk|appimage)/stdout\]|^(Deploying|Copying|Calling|Setting|Skipping) '
+        run: npm run tauri -- build -v > tauri-build.log 2>&1
 
       - name: Full bundler log (build failed)
         if: failure() && steps.tauri-build.outcome == 'failure'
         run: cat tauri-build.log
+
+      - name: Upload bundler log
+        # The log holds the build's warnings (rustc, tauri, linuxdeploy), which
+        # a passing build no longer prints.
+        if: ${{ !cancelled() && steps.tauri-build.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tauri-build-log
+          path: tauri-build.log
+          retention-days: 7
 
       - name: Fix AppImage icon symlinks
         run: bash scripts/fix-appimage-icons.sh
@@ -244,18 +256,16 @@ jobs:
         # toolchains this job never uses BEFORE the SDK/NDK install and the
         # builds. The preinstalled Android NDKs are removed too — `setup-android`
         # below reinstalls the single pinned NDK this build needs. ~20-25 GB
-        # recovered; `|| true` so a missing path never fails the build.
+        # recovered; `|| true` so a missing path never fails the build. The
+        # "Disk usage" step at the end of the job prints `df` when it fails.
         run: |
-          set -x
-          df -h /
           sudo rm -rf /usr/share/dotnet || true
           sudo rm -rf /opt/ghc /usr/local/.ghcup || true
           sudo rm -rf /usr/local/share/powershell || true
           sudo rm -rf /usr/local/share/chromium || true
           sudo rm -rf /usr/local/lib/android/sdk/ndk || true
           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
-          sudo docker image prune --all --force || true
-          df -h /
+          sudo docker image prune --all --force >/dev/null || true
 
       - name: Install Rust toolchain
         uses: ./.github/actions/rust-toolchain
@@ -442,6 +452,12 @@ jobs:
           path: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
           if-no-files-found: error
           retention-days: 90
+
+      - name: Disk usage (job failed)
+        # The runner's disk is the known way this job dies ("No space left on
+        # device"); the cleanup step at the top no longer prints `df`.
+        if: failure()
+        run: df -h /
 
   # ---------------------------------------------------------------------------
   # Prune superseded Rust cache generations (#5853). A `Cargo.lock` change

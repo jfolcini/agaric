@@ -153,6 +153,11 @@ permissions:
   contents: read
 
 env:
+  # The live log carries warnings and errors only (`_validate.yml`'s env block
+  # says what each switch hides, and why cargo is not one of them).
+  NPM_CONFIG_LOGLEVEL: warn
+  NPM_CONFIG_FUND: 'false'
+  NPM_CONFIG_AUDIT: 'false'
   CARGO_TERM_COLOR: always
   # #3362 — the SINGLE source of truth for which benches the `bench-slo` job
   # warm-runs, and therefore which ones `bench-smoke` excludes from its shards.

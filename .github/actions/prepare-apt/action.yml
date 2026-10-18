@@ -103,17 +103,21 @@ runs:
         # here should second-guess it.
         #
         # What replaces the rewrite is a DIAGNOSTIC. It changes no apt state;
-        # it prints the mirror configuration so the next stall is readable
-        # straight from the job log instead of being re-derived from scratch —
-        # which is what the deleted self-check was for, except that this one
-        # looks in the file the hostnames are actually in.
-        echo "#4163: ubuntu mirror configuration apt will use —"
-        if [ -r /etc/apt/apt-mirrors.txt ]; then
-          sed 's|^|  apt-mirrors.txt: |' /etc/apt/apt-mirrors.txt || true
-        else
-          echo "  (no /etc/apt/apt-mirrors.txt — this image does not use a mirrorlist)"
-        fi
-        grep -rhoE 'https?://[A-Za-z0-9.-]*(archive|security)\.ubuntu\.com' \
-          /etc/apt/sources.list /etc/apt/sources.list.d/ \
-          /etc/apt/apt-mirrors.txt 2>/dev/null \
-          | sort | uniq -c | sed 's|^|  host: |' || true
+        # it records the mirror configuration so the next stall is readable
+        # from the job log instead of being re-derived from scratch — which is
+        # what the deleted self-check was for, except that this one looks in
+        # the file the hostnames are actually in. It goes to a file, not the
+        # live log: `apt-install` and the Playwright system-deps step print it
+        # when apt fails.
+        {
+          echo "#4163: ubuntu mirror configuration apt will use —"
+          if [ -r /etc/apt/apt-mirrors.txt ]; then
+            sed 's|^|  apt-mirrors.txt: |' /etc/apt/apt-mirrors.txt || true
+          else
+            echo "  (no /etc/apt/apt-mirrors.txt — this image does not use a mirrorlist)"
+          fi
+          grep -rhoE 'https?://[A-Za-z0-9.-]*(archive|security)\.ubuntu\.com' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/ \
+            /etc/apt/apt-mirrors.txt 2>/dev/null \
+            | sort | uniq -c | sed 's|^|  host: |' || true
+        } >"${RUNNER_TEMP}/apt-mirrors.diag"

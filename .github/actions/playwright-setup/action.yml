@@ -91,27 +91,31 @@ runs:
           bound="300"
         else
           bound=""
-          echo "::notice::apt .deb cache miss -- install-deps left unbounded (#4163)"
         fi
 
         # Sticky across attempts, so the exit code below can tell "the mirror
         # stalled" (infra) from "apt said no" (a real failure).
         timed_out=0
 
+        # apt's stdout (index fetches, then dpkg's unpack and `Setting up` line
+        # per package) goes here and is printed when an attempt fails, with the
+        # mirror diagnostic `prepare-apt` recorded. apt's stderr always prints.
+        log="${RUNNER_TEMP}/pw-install-deps.log"
+
         for attempt in 1 2; do
           status=0
+          : >"${log}"
           if [ -n "${bound}" ] && [ "${attempt}" -eq 1 ]; then
             # -k: plain `timeout` SIGTERMs and then waits on the child forever.
-            timeout -k 30 "${bound}" npx playwright install-deps chromium || status=$?
+            timeout -k 30 "${bound}" npx playwright install-deps chromium >>"${log}" || status=$?
           else
-            npx playwright install-deps chromium || status=$?
+            npx playwright install-deps chromium >>"${log}" || status=$?
           fi
           if [ "${status}" -eq 0 ]; then
-            if [ "${timed_out}" -eq 1 ]; then
-              echo "::notice::install-deps completed on the unbounded attempt; the mirror was slow, not the diff."
-            fi
             exit 0
           fi
+          cat "${log}"
+          cat "${RUNNER_TEMP}/apt-mirrors.diag" 2>/dev/null || true
           if [ -n "${bound}" ] && [ "${attempt}" -eq 1 ] \
              && { [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; }; then
             # 137 as well as 124: `timeout -k` exits 137 when the child needs
@@ -159,6 +163,9 @@ runs:
         status=0
         timeout -k 30 1500 bash "${RUNNER_TEMP}/pw-install-deps.sh" || status=$?
         if [ "${status}" -eq 124 ] || [ "${status}" -eq 137 ]; then
+          # The killed attempt never reached its own `cat` above, and its log
+          # is the only record of what apt was doing when it hung.
+          cat "${RUNNER_TEMP}/pw-install-deps.log" "${RUNNER_TEMP}/apt-mirrors.diag" 2>/dev/null || true
           echo "::error title=apt mirror (infra, not this diff)::AGARIC_APT_INFRA: playwright install-deps hung past its 25-minute bound. Rerun the job. (#4185)"
           exit 75
         fi

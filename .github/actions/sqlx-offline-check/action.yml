@@ -49,6 +49,9 @@ runs:
         PREPARE_ARGS: ${{ inputs.prepare-args }}
       run: |
         cargo sqlx database create
-        cargo sqlx migrate run
+        # One `Applied N/migrate …` line per migration, and a failing
+        # migration's error, both on stdout: print them only on failure.
+        migrate_log="${RUNNER_TEMP}/sqlx-migrate.log"
+        cargo sqlx migrate run >"${migrate_log}" 2>&1 || { cat "${migrate_log}"; exit 1; }
         read -r -a prepare_args <<< "$PREPARE_ARGS"
         cargo sqlx prepare --check "${prepare_args[@]}"
