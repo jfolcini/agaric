@@ -75,8 +75,11 @@
 # (`session-2563a-…`, `session-2563b-…`; docs/session-log/README.md). The
 # number is parsed without the letter, so `2569b` counts as 2569 everywhere.
 # Only that split rename may carry a suffix (`split` mode below); it skips
-# checks 1 and 2, as any number-preserving rename does, and its heading must
-# carry the same letter. A new log never takes one.
+# checks 1 and 2, as any number-preserving rename does, but its suffixed id
+# must be free on the branch, the merge target and among this commit's other
+# splits, and its heading must carry the same letter. A new log never takes
+# one. The immutability guard accepts the same renames and leaves the id to
+# this guard, which sees every staged split.
 #
 # WHY RENAMES ALSO HAVE TO BE SELECTED (#4527)
 # ---------------------------------------------
@@ -318,6 +321,12 @@ nums_in_ref() {
     | grep -oE 'session-[0-9]+' | grep -oE '[0-9]+' || true
 }
 
+# Suffixed ids (`2563a`) recorded in a ref's tree. Empty when there are none.
+split_ids_in_ref() {
+  git ls-tree -r --name-only "$1" -- "$LOG_DIR" 2>/dev/null \
+    | sed -nE 's#^.*/session-([0-9]+[a-z])-.*$#\1#p' || true
+}
+
 # The tree this commit is going to join. `origin/main` is the real merge
 # target; a bare local `main` is the fallback for a clone that has not
 # fetched. Empty when neither exists — the guard then degrades to the
@@ -343,7 +352,7 @@ heading_id_of() {
 
 run_guard() {
   local records existing_max expected max_allowed fail=0
-  local target_ref target_nums head_nums taken n id f mode heading
+  local target_ref target_nums head_nums taken n id f mode heading split_ids
   local total heading_count checked=0
 
   records="$(staged_targets)" || return 1
@@ -380,6 +389,9 @@ run_guard() {
   existing_max="$(printf '%s\n' "$taken" | tail -1)"
   existing_max="${existing_max:-0}"
   expected=$((existing_max + 1))
+  split_ids="$(split_ids_in_ref HEAD)"
+  [ -n "$target_ref" ] && split_ids="$split_ids
+$(split_ids_in_ref "$target_ref")"
 
   # Sort the staged additions numerically so a multi-file commit is checked
   # in the order the numbers must run. Paired and split on TAB, not SPACE
@@ -409,6 +421,16 @@ run_guard() {
       echo "  merged log holds $n. A new log takes a plain number (docs/session-log/README.md)." >&2
       fail=1
       continue
+    fi
+    # A split skips check 1, so its suffixed id gets its own: not already on
+    # this branch or the merge target, and not given to another split here.
+    if [ "$mode" = split ]; then
+      if printf '%s\n' "$split_ids" | grep -qx "$id"; then
+        echo "ERROR: $f — session $id is already taken; give this log the next free letter." >&2
+        fail=1
+      fi
+      split_ids="$split_ids
+$id"
     fi
 
     # Checks 1 and 2 ask "is this number free, and is it plausible?" —

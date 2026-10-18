@@ -70,7 +70,8 @@
 # Layout). `session-N-<slug>.md` → `session-N<letter>-<slug>.md`, with N
 # held by more than one log in the merge target or HEAD, and the body
 # identical except that the heading's number gains the same letter. See
-# `is_duplicate_split`; scripts/session-log-guards.test.mjs pins it.
+# `is_duplicate_split`; scripts/session-log-guards.test.mjs pins it. Whether
+# the suffixed id is free is the numbering guard's question.
 #
 # ─── always_run, not a `files:` key (prek.toml) ───────────────────────────
 #

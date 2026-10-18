@@ -35,3 +35,10 @@ list. End to end, in a shared clone with the four renames staged, both
 hooks pass, and fail on a changed body line or a new `session-2590a-x.md`.
 
 The README states the rule.
+
+**Review round (#5878):** a split could still give two logs one id, either
+two splits to the same letter in one commit or a split into a letter
+already merged. The numbering guard, which owns collisions, now rejects a
+split's `N<letter>` when HEAD, the merge target or an earlier split in the
+same commit holds it. Every split the immutability guard accepts takes that
+path. Two cases, each red with its half of the check removed.
