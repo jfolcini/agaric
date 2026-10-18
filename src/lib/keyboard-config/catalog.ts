@@ -351,17 +351,30 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     rebindable: false,
   },
   {
-    // #1733 — keyboard parity with the list views' Space-to-toggle. Adds/removes
-    // the anchor block (the last selected, the same block Shift+Arrow extends
-    // from) to/from the selection without the mouse. Routed through
-    // `matchesShortcutBinding` in `useBlockTreeKeyboardShortcuts` so it's
-    // genuinely rebindable (drift test pins this). Default Ctrl+Space avoids the
+    // #5734 — move the block-select cursor without changing the selection, as
+    // Ctrl+Arrow does in a multi-select list (WAI-ARIA APG, Windows list views).
+    id: 'blockCursorDown',
+    keys: 'Ctrl + Arrow Down',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.blockCursorDown',
+    condition: 'keyboard.condition.notEditing',
+  },
+  {
+    id: 'blockCursorUp',
+    keys: 'Ctrl + Arrow Up',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.blockCursorUp',
+    condition: 'keyboard.condition.notEditing',
+  },
+  {
+    // #1733 / #5734 — adds or removes the cursor block, the keyboard counterpart
+    // to Ctrl+Click; inside a block's editor it leaves the block selected with
+    // the cursor on it (`use-block-keyboard.ts`). Default Ctrl+Space avoids the
     // bare-Space collision with text input / scroll.
     id: 'toggleBlockSelectionKbd',
     keys: 'Ctrl + Space',
     category: 'keyboard.category.blockSelection',
     description: 'keyboard.toggleBlockSelectionKbd',
-    condition: 'keyboard.condition.withSelection',
   },
   {
     id: 'selectAllBlocks',

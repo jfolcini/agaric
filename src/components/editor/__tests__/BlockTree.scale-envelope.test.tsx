@@ -144,6 +144,7 @@ function makeProps(
     onExitZoom: noop,
     focusedBlockId: null,
     selectedBlockIds: [] as string[],
+    cursorBlockId: null,
     projected: null,
     activeId: null,
     overId: null,

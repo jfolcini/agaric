@@ -8,7 +8,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { fireEvent, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import type { UseBlockTreeKeyboardShortcutsOptions } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
@@ -113,6 +113,7 @@ function makeOptions(overrides: OptionOverrides = {}): UseBlockTreeKeyboardShort
     toggleCollapse: vi.fn(),
     rawSelectAll: vi.fn(),
     extendSelection: vi.fn(),
+    moveCursor: vi.fn(),
     toggleSelected: vi.fn(),
     clearSelected: vi.fn(),
     handleFlush: vi.fn(() => null),
@@ -135,7 +136,12 @@ beforeEach(() => {
   mockWriteText.mockReset()
   mockWriteText.mockResolvedValue(undefined)
   mockReadText.mockResolvedValue('')
-  useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
+  useBlockStore.setState({
+    focusedBlockId: null,
+    selectedBlockIds: [],
+    selectionAnchorId: null,
+    selectionFocusId: null,
+  })
   mountedStores.length = 0
   // #774 — clear the last-interacted-tree registry between tests so a
   // marker from a prior test can't leak into the tie-break assertions.
@@ -330,6 +336,16 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
       expect(opts.clearSelected).not.toHaveBeenCalled()
     })
+
+    it('#5734 — clears a cursor left on a block toggled out of the selection', () => {
+      const opts = makeOptions({ focusedBlockId: null, selectedBlockIds: [] })
+      useBlockStore.setState({ selectionFocusId: 'BLOCK_2' })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.clearSelected).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('Keyboard range-select (#922 — Shift+Arrow)', () => {
@@ -450,9 +466,19 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       // Non-owning tree must not swallow the chord.
       expect(e.defaultPrevented).toBe(false)
     })
+
+    it('#5734 — the cursor, not the last selected block, decides which tree extends', () => {
+      const opts = selectOpts({ selectedBlockIds: ['OTHER'] })
+      useBlockStore.setState({ selectionFocusId: 'B2' })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'ArrowDown', shiftKey: true })
+
+      expect(opts.extendSelection).toHaveBeenCalledWith('down', ['B1', 'B2', 'B3'])
+    })
   })
 
-  describe('Keyboard toggle selection (#1733 — Ctrl+Space)', () => {
+  describe('Block-select cursor (#1733, #5734 — Ctrl+Space, Ctrl+Arrow)', () => {
     /** Three owned, visible blocks; a single block pre-selected as the anchor. */
     function selectOpts(overrides: OptionOverrides = {}) {
       return makeOptions({
@@ -465,22 +491,221 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       })
     }
 
-    it('Ctrl+Space toggles the anchor (last selected) block', () => {
+    const press = (init: KeyboardEventInit): KeyboardEvent => {
+      const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+      document.dispatchEvent(e)
+      return e
+    }
+
+    // The chords act only while focus is in a row of the tree, so the rows are in the
+    // document and focus starts on the first.
+    const rowsInDocument: HTMLElement[] = []
+    function addRow(id: string): HTMLElement {
+      const li = document.createElement('li')
+      li.dataset['blockId'] = id
+      li.tabIndex = -1
+      document.body.append(li)
+      rowsInDocument.push(li)
+      return li
+    }
+    beforeEach(() => {
+      addRow('B1').focus()
+    })
+    afterEach(() => {
+      for (const el of rowsInDocument.splice(0)) el.remove()
+    })
+
+    it('Ctrl+Space toggles the cursor block, not the last selected one', () => {
+      const opts = selectOpts({ selectedBlockIds: ['B1', 'B2'] })
+      useBlockStore.setState({ selectionFocusId: 'B3' })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const e = press({ key: ' ', ctrlKey: true })
+
+      expect(opts.toggleSelected).toHaveBeenCalledWith('B3')
+      expect(e.defaultPrevented).toBe(true)
+    })
+
+    it('with no cursor placed, Ctrl+Space toggles the last selected block', () => {
       const opts = selectOpts({ selectedBlockIds: ['B1', 'B2'] })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
-      const e = new KeyboardEvent('keydown', {
-        key: ' ',
-        ctrlKey: true,
-        bubbles: true,
-        cancelable: true,
-      })
-      document.dispatchEvent(e)
+      press({ key: ' ', ctrlKey: true })
 
-      // Toggles the anchor — the last selected block (the same block
-      // Shift+Arrow extends from).
       expect(opts.toggleSelected).toHaveBeenCalledWith('B2')
-      expect(e.defaultPrevented).toBe(true)
+    })
+
+    it('Ctrl+Space re-adds a cursor block toggled out of an emptied selection', () => {
+      const opts = selectOpts({ selectedBlockIds: [] })
+      useBlockStore.setState({ selectionFocusId: 'B2' })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      press({ key: ' ', ctrlKey: true })
+
+      expect(opts.toggleSelected).toHaveBeenCalledWith('B2')
+    })
+
+    it('Ctrl+ArrowDown / Ctrl+ArrowUp move the cursor through the visible list', () => {
+      const opts = selectOpts()
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const down = press({ key: 'ArrowDown', ctrlKey: true })
+      const up = press({ key: 'ArrowUp', ctrlKey: true })
+
+      expect(opts.moveCursor).toHaveBeenNthCalledWith(1, 'down', ['B1', 'B2', 'B3'])
+      expect(opts.moveCursor).toHaveBeenNthCalledWith(2, 'up', ['B1', 'B2', 'B3'])
+      expect(down.defaultPrevented).toBe(true)
+      expect(up.defaultPrevented).toBe(true)
+      expect(opts.toggleSelected).not.toHaveBeenCalled()
+      expect(opts.extendSelection).not.toHaveBeenCalled()
+    })
+
+    it('leaves the block-move chord and bare arrows alone', () => {
+      const opts = selectOpts()
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      press({ key: 'ArrowDown', ctrlKey: true, shiftKey: true })
+      press({ key: 'ArrowDown' })
+
+      expect(opts.moveCursor).not.toHaveBeenCalled()
+    })
+
+    it('drives the real store: the cursor moves without selecting, Ctrl+Space adds and removes it', () => {
+      const { moveCursor, toggleSelected } = useBlockStore.getState()
+      const opts = selectOpts({ moveCursor, toggleSelected })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      press({ key: 'ArrowDown', ctrlKey: true })
+      press({ key: 'ArrowDown', ctrlKey: true })
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B1'])
+      expect(useBlockStore.getState().selectionFocusId).toBe('B3')
+
+      press({ key: ' ', ctrlKey: true })
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B1', 'B3'])
+
+      press({ key: ' ', ctrlKey: true })
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B1'])
+    })
+
+    describe('acts only while focus is in this tree’s rows', () => {
+      const chords = () => ({
+        space: press({ key: ' ', ctrlKey: true }),
+        down: press({ key: 'ArrowDown', ctrlKey: true }),
+      })
+
+      function realStoreOpts() {
+        const { moveCursor, toggleSelected } = useBlockStore.getState()
+        return selectOpts({ moveCursor, toggleSelected })
+      }
+
+      it('stands down, leaving the keys alone, with focus on a control outside the rows', () => {
+        const toolbarButton = document.createElement('button')
+        document.body.append(toolbarButton)
+        onTestFinished(() => toolbarButton.remove())
+        toolbarButton.focus()
+        const opts = realStoreOpts()
+        renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+        const { space, down } = chords()
+
+        expect(useBlockStore.getState().selectedBlockIds).toEqual(['B1'])
+        expect(useBlockStore.getState().selectionFocusId).toBeNull()
+        expect(space.defaultPrevented).toBe(false)
+        expect(down.defaultPrevented).toBe(false)
+      })
+
+      it('stands down with focus on the page', () => {
+        ;(document.activeElement as HTMLElement).blur()
+        expect(document.activeElement).toBe(document.body)
+        const opts = realStoreOpts()
+        renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+        const { space, down } = chords()
+
+        expect(useBlockStore.getState().selectedBlockIds).toEqual(['B1'])
+        expect(useBlockStore.getState().selectionFocusId).toBeNull()
+        expect(space.defaultPrevented).toBe(false)
+        expect(down.defaultPrevented).toBe(false)
+      })
+
+      it('stands down with focus in a row this tree does not own', () => {
+        addRow('OTHER_TREE_ROW').focus()
+        const opts = realStoreOpts()
+        renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+        const { space, down } = chords()
+
+        expect(useBlockStore.getState().selectedBlockIds).toEqual(['B1'])
+        expect(useBlockStore.getState().selectionFocusId).toBeNull()
+        expect(space.defaultPrevented).toBe(false)
+        expect(down.defaultPrevented).toBe(false)
+      })
+
+      it('acts with focus on the cursor row', () => {
+        const opts = realStoreOpts()
+        renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+        const { space, down } = chords()
+
+        // Space removed B1 and the cursor stayed; ArrowDown then moved it.
+        expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+        expect(useBlockStore.getState().selectionFocusId).toBe('B2')
+        expect(space.defaultPrevented).toBe(true)
+        expect(down.defaultPrevented).toBe(true)
+      })
+
+      it('acts with focus on a control inside a row', () => {
+        const handle = document.createElement('button')
+        rowsInDocument[0]?.append(handle)
+        handle.focus()
+        const opts = realStoreOpts()
+        renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+        press({ key: 'ArrowDown', ctrlKey: true })
+
+        expect(useBlockStore.getState().selectionFocusId).toBe('B2')
+      })
+    })
+
+    it('Ctrl+Space does not select a cursor block this tree no longer renders', () => {
+      const { toggleSelected } = useBlockStore.getState()
+      // B3 is this tree's own block, which a collapse has hidden.
+      const opts = selectOpts({ visibleIds: ['B1', 'B2'], toggleSelected })
+      useBlockStore.setState({ selectionFocusId: 'B3' })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const e = press({ key: ' ', ctrlKey: true })
+
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['B1'])
+      expect(e.defaultPrevented).toBe(false)
+    })
+
+    it('Ctrl+Arrow does nothing while editing or with no cursor', () => {
+      const editing = selectOpts({ focusedBlockId: 'B1' })
+      useBlockStore.setState({ focusedBlockId: 'B1' })
+      const { unmount } = renderHook(() => useBlockTreeKeyboardShortcuts(editing))
+      const whileEditing = press({ key: 'ArrowDown', ctrlKey: true })
+      unmount()
+
+      useBlockStore.setState({ focusedBlockId: null })
+      const idle = selectOpts({ selectedBlockIds: [] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(idle))
+      const noCursor = press({ key: 'ArrowDown', ctrlKey: true })
+
+      expect(editing.moveCursor).not.toHaveBeenCalled()
+      expect(idle.moveCursor).not.toHaveBeenCalled()
+      expect(whileEditing.defaultPrevented).toBe(false)
+      expect(noCursor.defaultPrevented).toBe(false)
+    })
+
+    it('#713 — Ctrl+Arrow moves only the cursor of the tree that owns it', () => {
+      const opts = selectOpts({ selectedBlockIds: ['OTHER'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const e = press({ key: 'ArrowDown', ctrlKey: true })
+
+      expect(opts.moveCursor).not.toHaveBeenCalled()
+      expect(e.defaultPrevented).toBe(false)
     })
 
     it('does nothing when an editor is focused', () => {
@@ -500,7 +725,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       expect(e.defaultPrevented).toBe(false)
     })
 
-    it('does nothing with no active selection (no anchor)', () => {
+    it('does nothing with no selection and no cursor', () => {
       const opts = selectOpts({ selectedBlockIds: [] })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
@@ -518,7 +743,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       expect(opts.toggleSelected).not.toHaveBeenCalled()
     })
 
-    it('#713 — toggles nothing when the GLOBAL anchor is in another tree', () => {
+    it('#713 — toggles nothing when the GLOBAL cursor is in another tree', () => {
       const opts = selectOpts({ selectedBlockIds: ['B1', 'OTHER'] })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
@@ -527,7 +752,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       expect(opts.toggleSelected).not.toHaveBeenCalled()
     })
 
-    it('#713 — only the tree owning the anchor acts (no double-toggle)', () => {
+    it('#713 — only the tree owning the cursor acts (no double-toggle)', () => {
       const opts = selectOpts({ selectedBlockIds: ['OTHER'] })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
@@ -1007,6 +1232,25 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       fireEvent.keyDown(document, { key: 'Escape' })
 
       expect(opts.zoomToRoot).not.toHaveBeenCalled()
+    })
+
+    it('#5734 — Escape clears a remaining cursor before zooming out, whichever listener runs first', () => {
+      const opts = makeOptions({
+        focusedBlockId: null,
+        selectedBlockIds: [],
+        zoomedBlockId: 'BLOCK_1',
+      })
+      useBlockStore.setState({ selectionFocusId: 'BLOCK_2' })
+      const { rerender } = renderHook((o) => useBlockTreeKeyboardShortcuts(o), {
+        initialProps: opts,
+      })
+      // A new `selectAllIds` re-registers the clear-selection listener after the zoom-out one.
+      rerender({ ...opts, selectAllIds: selectAllScoped(['BLOCK_1', 'BLOCK_2']) })
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.zoomToRoot).not.toHaveBeenCalled()
+      expect(opts.clearSelected).toHaveBeenCalledTimes(1)
     })
 
     it('does not call zoomToRoot when a different key is pressed', () => {

@@ -65,6 +65,7 @@ function makeStableBase() {
     isZoomed: false,
     onExitZoom: noop,
     selectedBlockIds: [] as string[],
+    cursorBlockId: null,
     projected: null,
     activeId: null,
     overId: null,

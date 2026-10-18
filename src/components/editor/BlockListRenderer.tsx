@@ -73,6 +73,8 @@ export interface BlockListRendererProps {
   focusedBlockId: string | null
   /** Currently selected block IDs. */
   selectedBlockIds: string[]
+  /** The block-select cursor (#5734), when it is one of this tree's blocks. */
+  cursorBlockId: string | null
 
   // ── DnD state ──────────────────────────────────────────────────────
   projected: Projection | null
@@ -119,6 +121,7 @@ export function BlockListRenderer({
   onExitZoom,
   focusedBlockId,
   selectedBlockIds,
+  cursorBlockId,
   projected,
   activeId,
   overId,
@@ -371,6 +374,7 @@ export function BlockListRenderer({
                       block={block}
                       isFocused={focusedBlockId === block.id}
                       isSelected={selectedSet.has(block.id)}
+                      isCursor={cursorBlockId === block.id}
                       pastInitialWindow={index >= INITIAL_WINDOW_ROWS}
                       viewport={viewport}
                       rovingEditor={rovingEditor}

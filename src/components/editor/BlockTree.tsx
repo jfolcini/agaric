@@ -98,7 +98,7 @@ import { searchPropertyKeys, searchSlashCommands } from '@/lib/slash-commands'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { mountedScopedIds } from '@/lib/zoom-scope'
-import { useBlockStore } from '@/stores/blocks'
+import { selectCursorBlockId, useBlockStore } from '@/stores/blocks'
 import { deleteBlockIfLeakedEmpty } from '@/stores/empty-block-cleanup'
 import { storeOwnsBlock, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
 import type { DeleteBlockOptions } from '@/stores/page-blocks-types'
@@ -252,6 +252,11 @@ export function BlockTree({
   const selectedBlockIds = useBlockStore(
     useShallow((s) => s.selectedBlockIds.filter((id) => blocksById.has(id))),
   )
+  // #5734 — the block-select cursor: only while no block is being edited.
+  const cursorBlockId = useBlockStore((s) => {
+    const id = s.focusedBlockId === null ? selectCursorBlockId(s) : null
+    return id !== null && blocksById.has(id) ? id : null
+  })
 
   // Per-page store API for imperative access
   const pageStore = usePageBlockStoreApi()
@@ -271,7 +276,7 @@ export function BlockTree({
   } = pageStore.getState()
   // Global focus/selection actions
   const { setFocused, setSelected, toggleSelected, clearSelected } = useBlockStore.getState()
-  // #3344/#3642 — the three selection entry points carry the zoom-scope brands
+  // #3344/#3642 — the selection entry points carry the zoom-scope brands
   // on the STORE primitives themselves (`@/lib/zoom-scope`), so every id that
   // can reach the batch delete / batch TODO handlers had to come out of the
   // active projection. The gate used to be a set of narrowing adapters right
@@ -280,6 +285,7 @@ export function BlockTree({
     rangeSelect: rawRangeSelect,
     selectAll: rawSelectAll,
     extendSelection,
+    moveCursor,
   } = useBlockStore.getState()
 
   // ── Editor-event dispatch (#1019) ──────────────────────────────────
@@ -1257,6 +1263,7 @@ export function BlockTree({
     toggleCollapse,
     rawSelectAll,
     extendSelection,
+    moveCursor,
     toggleSelected,
     clearSelected,
     handleFlush,
@@ -1570,6 +1577,7 @@ export function BlockTree({
                     onExitZoom={zoomToRoot}
                     focusedBlockId={focusedBlockId}
                     selectedBlockIds={selectedBlockIds}
+                    cursorBlockId={cursorBlockId}
                     projected={dnd.projected}
                     activeId={dnd.activeId}
                     overId={dnd.overId}

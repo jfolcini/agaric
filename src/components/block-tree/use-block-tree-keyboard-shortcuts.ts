@@ -31,7 +31,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { computeSelectionRoots } from '@/lib/tree-utils'
 import type { MountedIds, SelectAllScopeIds } from '@/lib/zoom-scope'
-import { useBlockStore } from '@/stores/blocks'
+import { selectCursorBlockId, useBlockStore } from '@/stores/blocks'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { addOwnedBlockListener, forEachPageStore, storeOwnsBlock } from '@/stores/page-blocks'
 
@@ -82,6 +82,8 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
   rawSelectAll: (ids: SelectAllScopeIds) => void
   /** Extend the block selection by one visible block (#922 — Shift+Arrow). */
   extendSelection: (direction: 'up' | 'down', visibleIds: MountedIds) => void
+  /** Move the block-select cursor one visible block (#5734 — Ctrl+Arrow). */
+  moveCursor: (direction: 'up' | 'down', visibleIds: MountedIds) => void
   /** Toggle a single block in/out of the selection (#1733 — keyboard toggle). */
   toggleSelected: (blockId: string) => void
   clearSelected: () => void
@@ -157,6 +159,17 @@ function selectionByPage(
   )
 }
 
+/**
+ * Whether keyboard focus is on, or inside, one of this tree's rows. The cursor
+ * chords act only then, as a list's keys belong to the list that has focus
+ * (WAI-ARIA); with focus on a toolbar button, the sidebar or the page, they
+ * keep their other meanings.
+ */
+function focusIsInRows(pageStore: StoreApi<PageBlockState>): boolean {
+  const rowId = document.activeElement?.closest('li[data-block-id]')?.getAttribute('data-block-id')
+  return storeOwnsBlock(pageStore, rowId ?? null)
+}
+
 export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShortcutsOptions): void {
   const {
     focusedBlockId,
@@ -167,6 +180,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     toggleCollapse,
     rawSelectAll,
     extendSelection,
+    moveCursor,
     toggleSelected,
     clearSelected,
     handleFlush,
@@ -224,27 +238,28 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // nothing here.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const { focusedBlockId: fid, selectedBlockIds: sel } = useBlockStore.getState()
+      const state = useBlockStore.getState()
       // `selectAllBlocks` (Ctrl/Cmd+A by default) — select all blocks (only
       // when not editing; in a text field such as the page title it selects
       // that field's text). Routed through matchesShortcutBinding (#724).
       if (
         !e.defaultPrevented &&
         matchesShortcutBinding(e, 'selectAllBlocks') &&
-        !fid &&
+        !state.focusedBlockId &&
         !isEditableTarget(e.target) &&
         isLastInteractedTree(pageStore)
       ) {
         e.preventDefault()
         rawSelectAll(selectAllIds)
       }
-      // `clearSelection` (Escape by default) — clear selection (when not
-      // editing and there's an active selection).
+      // `clearSelection` (Escape by default) — clear the selection and its
+      // cursor (when not editing and there is a cursor, which a selection
+      // always has, #5734).
       if (
         matchesShortcutBinding(e, 'clearSelection') &&
         !e.defaultPrevented &&
-        !fid &&
-        sel.length > 0
+        !state.focusedBlockId &&
+        selectCursorBlockId(state) !== null
       ) {
         e.preventDefault()
         clearSelected()
@@ -256,7 +271,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
 
   // ── Keyboard shortcut: extend selection (#922 — Shift+Arrow) ────────
   // Shift+ArrowDown / Shift+ArrowUp grow (or shrink) a contiguous block
-  // selection from a single selected block, the keyboard counterpart to
+  // selection from the cursor block, the keyboard counterpart to
   // Shift+Click. The built selection IS the same `selectedBlockIds` the
   // batch-action toolbar + Ctrl/Shift+Click drive, so the toolbar lights up
   // with no extra wiring.
@@ -267,19 +282,18 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   //
   // #713 ownership gate: each mounted tree (journal week/month) shares the
   // GLOBAL selection but renders its OWN `visibleIds`. Only the tree whose
-  // store owns the anchoring selected block may extend (and preventDefault);
-  // a non-owning tree falls through so the chord isn't double-handled.
+  // store owns the cursor block may extend (and preventDefault); a non-owning
+  // tree falls through so the chord isn't double-handled.
   //
-  // NOT routed through `addOwnedBlockListener`: the anchor is the last id of
-  // the GLOBAL selection, read at dispatch because BlockTree renders only on
-  // its own share of the selection (#5447). A null anchor (empty selection)
-  // fails the gate too.
+  // NOT routed through `addOwnedBlockListener`: the cursor is GLOBAL state,
+  // read at dispatch because BlockTree renders only on its own share of the
+  // selection (#5447). A null cursor (nothing selected) fails the gate too.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const { focusedBlockId: fid, selectedBlockIds: sel } = useBlockStore.getState()
-      if (!storeOwnsBlock(pageStore, sel.at(-1) ?? null)) return
+      const state = useBlockStore.getState()
+      if (!storeOwnsBlock(pageStore, selectCursorBlockId(state))) return
       // Editor active → browser owns Shift+Arrow text selection.
-      if (fid) return
+      if (state.focusedBlockId) return
       if (e.defaultPrevented) return
       if (!e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return
       const direction = e.key === 'ArrowDown' ? 'down' : e.key === 'ArrowUp' ? 'up' : null
@@ -291,30 +305,46 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     return () => document.removeEventListener('keydown', handler)
   }, [pageStore, visibleIds, extendSelection])
 
-  // ── Keyboard shortcut: toggle block selection (#1733 — Ctrl+Space) ──
-  // Keyboard parity with the list views' Space-to-toggle: add/remove the anchor
-  // block (the last selected — the same block Shift+Arrow extends from) to/from
-  // the selection without the mouse, the keyboard counterpart to Ctrl+Click.
-  // Only fires in BLOCK-SELECT mode (no focused block / active editor) and only
-  // with an active selection (the binding's `withSelection` condition), so the
-  // anchor is well-defined. #713 ownership gate mirrors extendSelection: only
-  // the tree whose store owns the anchoring block may handle (and
-  // preventDefault); other trees fall through so the chord isn't double-handled.
+  // ── Keyboard shortcuts: the block-select cursor (#1733, #5734) ──────
+  // Block-select mode follows the WAI-ARIA multi-select listbox: keyboard focus
+  // (the cursor) is separate from the selection. Ctrl+ArrowUp / Ctrl+ArrowDown
+  // move the cursor without changing the selection, and Ctrl+Space adds or
+  // removes the cursor block, the keyboard counterpart to Ctrl+Click. Inside a
+  // block's editor Ctrl+Space belongs to the editor keymap
+  // (`use-block-keyboard.ts`), which leaves the block selected with the cursor
+  // on it. #713 ownership gate mirrors extendSelection: only the tree whose
+  // store owns the cursor block may handle (and preventDefault); other trees
+  // fall through so the chord isn't double-handled. They act only while focus
+  // is in the tree's rows.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const { focusedBlockId: fid, selectedBlockIds: sel } = useBlockStore.getState()
-      const anchorId = sel.at(-1) ?? null
-      if (!storeOwnsBlock(pageStore, anchorId)) return
-      // Editor active → leave the chord to the editor / browser.
-      if (fid) return
+      const state = useBlockStore.getState()
+      const cursorId = selectCursorBlockId(state)
+      if (!storeOwnsBlock(pageStore, cursorId)) return
+      // Editor active → leave the chords to the editor / browser.
+      if (state.focusedBlockId) return
       if (e.defaultPrevented) return
-      if (!matchesShortcutBinding(e, 'toggleBlockSelectionKbd')) return
+      if (!focusIsInRows(pageStore)) return
+      if (matchesShortcutBinding(e, 'toggleBlockSelectionKbd')) {
+        // A cursor this tree no longer renders (a collapse hid it) selects nothing,
+        // or a batch action would act on a block the user cannot see.
+        if (!visibleIds.includes(cursorId)) return
+        e.preventDefault()
+        toggleSelected(cursorId)
+        return
+      }
+      const direction = matchesShortcutBinding(e, 'blockCursorDown')
+        ? 'down'
+        : matchesShortcutBinding(e, 'blockCursorUp')
+          ? 'up'
+          : null
+      if (direction === null) return
       e.preventDefault()
-      toggleSelected(anchorId)
+      moveCursor(direction, visibleIds)
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [pageStore, toggleSelected])
+  }, [pageStore, visibleIds, toggleSelected, moveCursor])
 
   // ── Keyboard shortcuts: block cut / copy / paste (#913) ─────────────
   // Copy/cut put the SELECTION ROOTS (+ subtrees) on the system clipboard as
@@ -425,7 +455,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // Fires only when:
   //   - the user is actually zoomed into a block (zoomedBlockId !== null)
   //   - no block is focused in the editor (Escape would blur the editor)
-  //   - no multi-selection is active (Escape clears selection)
+  //   - no selection or block-select cursor (Escape clears them first)
   //   - no popup/overlay is open (suggestion popups handle their own Escape)
   //
   // #2903 — NOT routed through `addOwnedBlockListener`: zoom-out Escape fires
@@ -441,9 +471,9 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
       // most-recently-interacted one claims Escape (others fall through). The
       // old `defaultPrevented` race let the earliest-MOUNTED zoomed tree win.
       if (!isLastInteractedTree(pageStore)) return
-      const { focusedBlockId: fid, selectedBlockIds: sel } = useBlockStore.getState()
-      if (fid) return
-      if (sel.length > 0) return
+      const state = useBlockStore.getState()
+      if (state.focusedBlockId) return
+      if (selectCursorBlockId(state) !== null) return
       // Respect open suggestion popups / overlays
       const popupOpen = document.querySelector(
         '.suggestion-renderer, [role="dialog"][data-state="open"], [data-radix-popper-content-wrapper]',

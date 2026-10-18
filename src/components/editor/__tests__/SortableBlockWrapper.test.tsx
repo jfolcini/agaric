@@ -23,7 +23,7 @@
  */
 
 import { render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
@@ -65,6 +65,7 @@ function makeProps(
     block: makeBlock({ id: 'BLK001', content: 'Hello', depth: 0 }),
     isFocused: false,
     isSelected: false,
+    isCursor: false,
     pastInitialWindow: false,
     projected: null,
     activeId: null,
@@ -543,5 +544,78 @@ describe('SortableBlockWrapper', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // #5734 — the block-select cursor row holds DOM focus (script-only, so Tab order
+  // is unchanged), which shows its focus ring and is what assistive tech follows.
+  describe('block-select cursor (#5734)', () => {
+    const rowLi = (container: HTMLElement, id: string) =>
+      container.querySelector(`li[data-block-id="${id}"]`) as HTMLElement
+
+    function renderTwoRows(cursor: 'BLK001' | 'BLK002' | null) {
+      const rows = (c: typeof cursor) => (
+        <ul>
+          <SortableBlockWrapper {...makeProps({ isCursor: c === 'BLK001' })} />
+          <SortableBlockWrapper
+            {...makeProps({
+              block: makeBlock({ id: 'BLK002', content: 'World', depth: 0 }),
+              isCursor: c === 'BLK002',
+            })}
+          />
+        </ul>
+      )
+      const view = render(rows(cursor))
+      return { ...view, moveCursor: (c: typeof cursor) => view.rerender(rows(c)) }
+    }
+
+    it('focuses the cursor row and moves focus with the cursor', () => {
+      const { container, moveCursor } = renderTwoRows('BLK001')
+      expect(rowLi(container, 'BLK001')).toHaveFocus()
+      expect(rowLi(container, 'BLK001')).toHaveAttribute('tabindex', '-1')
+      expect(rowLi(container, 'BLK002')).not.toHaveAttribute('tabindex')
+
+      moveCursor('BLK002')
+
+      expect(rowLi(container, 'BLK002')).toHaveFocus()
+      expect(rowLi(container, 'BLK001')).not.toHaveAttribute('tabindex')
+    })
+
+    it('does not take focus from a text field outside the tree', () => {
+      const input = document.createElement('input')
+      document.body.append(input)
+      onTestFinished(() => input.remove())
+      input.focus()
+
+      renderTwoRows('BLK001')
+
+      expect(input).toHaveFocus()
+    })
+
+    it('takes focus from a control inside a block row, as a click on its select checkbox does', () => {
+      const { container, moveCursor } = renderTwoRows(null)
+      const checkbox = document.createElement('input')
+      checkbox.type = 'checkbox'
+      rowLi(container, 'BLK002').append(checkbox)
+      checkbox.focus()
+
+      moveCursor('BLK001')
+
+      expect(rowLi(container, 'BLK001')).toHaveFocus()
+    })
+
+    it('renders the cursor row in full even when reported offscreen', () => {
+      const viewport = staticViewport({ isOffscreen: () => true, getHeight: () => 120 })
+      const { container } = renderInList(makeProps({ viewport, isCursor: true }))
+
+      expect(screen.getByTestId('sortable-block-BLK001')).toBeInTheDocument()
+      expect(rowLi(container, 'BLK001')).not.toHaveClass('block-placeholder')
+    })
+
+    it('has no a11y violations with the cursor shown', async () => {
+      const { container } = renderTwoRows('BLK001')
+      expect(rowLi(container, 'BLK001')).toHaveFocus()
+
+      expect(await axe(container)).toHaveNoViolations()
+    })
   })
 })

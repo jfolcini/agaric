@@ -97,6 +97,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
     onExitZoom: noop,
     focusedBlockId: null,
     selectedBlockIds: [] as string[],
+    cursorBlockId: null,
     projected: null,
     activeId: null,
     overId: null,
