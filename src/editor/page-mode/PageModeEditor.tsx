@@ -16,10 +16,10 @@
  *
  * A task marker, a `key:: value` line or a `#name` left as text in a block
  * becomes the block's task state, property or tag once the caret leaves that
- * block or page mode closes (`page-tasks.ts`, `page-properties.ts`,
- * `page-tags.ts`). The checkbox, the priority badge and the date chips show
- * what the page store holds, and change it through block mode's commands,
- * after the save, on the same chain; a chip opens block mode's date picker.
+ * block or page mode closes (`page-commit.ts`). The checkbox, the priority
+ * badge and the date chips show what the page store holds, and change it
+ * through block mode's commands, after the save, on the same chain; a chip
+ * opens block mode's date picker.
  * The property chips show what page mode last read of the page's properties,
  * which it reads again with each reload; a chip opens block mode's property
  * editor, the `+N` pill its drawer, and each, once closed, reads them again.
@@ -75,6 +75,7 @@ import { processFileAttachments } from '@/components/editor/EditableBlock'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
 import { PageAttachments } from '@/editor/page-mode/page-attachments'
+import { commitPageTyped } from '@/editor/page-mode/page-commit'
 import {
   changedBlocks,
   firstTokenPos,
@@ -97,7 +98,6 @@ import {
   searchPageSlashCommands,
   usePageSlashCommands,
 } from '@/editor/page-mode/page-slash-commands'
-import { commitPageTyped } from '@/editor/page-mode/page-tags'
 import type { PageTaskActions } from '@/editor/page-mode/page-tasks'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import type { PickerItem } from '@/editor/SuggestionList'

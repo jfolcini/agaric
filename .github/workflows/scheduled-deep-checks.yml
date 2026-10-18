@@ -43,10 +43,8 @@ name: Scheduled deep checks
 #   mutants-merge  — #3393: reassembles the shards into the single
 #                    `mutants-out` artifact + step summary the filer below
 #                    and every other reader have always consumed.
-#   mutants-frontend — #886: StrykerJS scoped to a handful of pure,
-#                    deterministic frontend libs (search-query's pure
-#                    modules, agenda-sort, filters/model, date-utils,
-#                    tree-utils — never components or Tauri IPC).
+#   mutants-frontend — #886: StrykerJS over the frontend modules
+#                    `stryker.modules.mjs` lists, each against its own tests.
 #                    Non-blocking, same triage-signal posture as `mutants`.
 #   file-mutation-survivors — #2947: push-based triage loop for the two
 #                    mutants lanes above. Runs the filer ONCE PER LANE that
@@ -1814,11 +1812,9 @@ jobs:
           done
 
   # ---------------------------------------------------------------------------
-  # mutants-frontend (#886) — StrykerJS scoped to a handful of pure,
-  # deterministic frontend libs (search-query's pure modules, agenda-sort,
-  # filters/model, date-utils, tree-utils — never components or Tauri IPC).
-  # Mirrors the `mutants` (Rust) lane above: non-blocking, survivor list is
-  # the deliverable to triage into tests. See `stryker.modules.mjs` /
+  # mutants-frontend (#886) — StrykerJS over the frontend modules
+  # `stryker.modules.mjs` lists. Mirrors the `mutants` (Rust) lane above:
+  # non-blocking, survivor list is the deliverable to triage into tests. See `stryker.modules.mjs` /
   # `stryker.config.mjs` / `stryker.vitest.config.mjs` and
   # `docs/BUILD.md`'s "Mutation testing (nightly)" section for the recipe
   # (why each module runs in its own Stryker invocation, scoped to just its

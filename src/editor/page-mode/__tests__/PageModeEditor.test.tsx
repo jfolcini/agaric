@@ -19,12 +19,17 @@ import {
 } from '@/__tests__/helpers/viewport-observer-mocks'
 import { getActiveEditor } from '@/editor/active-editor'
 import { markdownOf, type as typeText } from '@/editor/page-mode/__tests__/page-mode-fixtures'
+import {
+  editorIn,
+  renderPageMode,
+  SCOPE,
+  seedPage,
+} from '@/editor/page-mode/__tests__/page-node-view-fixtures'
 import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
 import { PageModeEditor, type PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import { blockIdOf } from '@/editor/token-ids'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import type { BlockRow, PropertyRow } from '@/lib/bindings'
-import type { NavigateToPageFn } from '@/lib/block-events'
 import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -32,11 +37,7 @@ import { SYSTEM_MANAGED_PROPERTY_KEYS } from '@/lib/property-save-utils'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
-import {
-  createPageBlockStore,
-  PageBlockContext,
-  PageBlockStoreProvider,
-} from '@/stores/page-blocks'
+import { PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
@@ -58,28 +59,6 @@ vi.mock('@/components/dialogs/QueryBuilderModal', () => ({
 }))
 
 const mockedInvoke = vi.mocked(invoke)
-const SCOPE = { kind: 'active', space_id: 'SPACE_PERSONAL' } as const
-
-/** A page in the mock backend holding `texts`, one top-level block each; resolves its id. */
-function seedPage(
-  texts: readonly string[],
-  title = 'Page mode',
-): { pageId: string; ids: string[] } {
-  const pageId = dispatch('create_page_in_space', {
-    parentId: null,
-    content: title,
-    spaceId: SCOPE.space_id,
-  }) as string
-  const created = dispatch('create_blocks_batch', {
-    specs: texts.map((content) => ({
-      blockType: 'content',
-      content,
-      parentId: pageId,
-      position: null,
-    })),
-  }) as { blocks: BlockRow[] }
-  return { pageId, ids: created.blocks.map((block) => block.id) }
-}
 
 function backendText(id: string): string | null {
   return (dispatch('get_block', { blockId: id }) as BlockRow).content
@@ -93,31 +72,6 @@ function backendPage(pageId: string): Array<[string, string]> {
   return blocks
     .toSorted((a, b) => (a.position ?? 0) - (b.position ?? 0))
     .map((block) => [block.id, block.content ?? ''])
-}
-
-function renderPageMode(
-  pageId: string,
-  props: { onNavigateToPage?: NavigateToPageFn; cursorBlockId?: string } = {},
-) {
-  const store = createPageBlockStore(pageId)
-  const handle = createRef<PageModeEditorHandle>()
-  const onBlocked = vi.fn()
-  const view = render(
-    <PageBlockContext.Provider value={store}>
-      <PageModeEditor pageId={pageId} onBlocked={onBlocked} ref={handle} {...props} />
-    </PageBlockContext.Provider>,
-  )
-  return { ...view, store, handle, onBlocked }
-}
-
-async function editorIn(container: HTMLElement): Promise<Editor> {
-  const dom = await waitFor(() => {
-    const found = container.querySelector('[data-testid="page-mode-editor"]')
-    if (found === null) throw new Error('page mode editor not mounted')
-    return found as HTMLElement & { editor?: Editor }
-  })
-  if (dom.editor === undefined) throw new Error('no editor on the page mode surface')
-  return dom.editor
 }
 
 /** The position `offset` characters into block `index`'s first textblock. */

@@ -220,7 +220,7 @@ npm run mutation                             # every module
 npm run mutation -- tokenize filters-model   # only named modules
 ```
 
-`#886` — [StrykerJS](https://stryker-mutator.io/) mutation testing, scoped to a handful of pure/deterministic frontend libs (see `stryker.modules.mjs` for the exact list) — never components or Tauri IPC. It mutates each source line (flip a `&&` to `||`, drop a branch, swap a string literal, …) and checks whether the test suite actually notices; a "survived" mutant is a gap in assertion *strength*, not line coverage — coverage can be high while the tests never distinguish the mutated behaviour from the original.
+`#886` — [StrykerJS](https://stryker-mutator.io/) mutation testing over the frontend modules `stryker.modules.mjs` lists. It mutates each source line (flip a `&&` to `||`, drop a branch, swap a string literal, …) and checks whether the test suite actually notices; a "survived" mutant is a gap in assertion *strength*, not line coverage — coverage can be high while the tests never distinguish the mutated behaviour from the original.
 
 `#5101` — on vitest 5 the runner's per-mutant test filter matched nothing and every mutant was reported survived. `stryker.vitest.config.mjs` carries the shim that widens that filter; delete it once [stryker-js#6214](https://github.com/stryker-mutator/stryker-js/pull/6214) ships and the two Stryker packages move past it.
 

@@ -16,6 +16,7 @@ import { blockDocJson, depthOf, pageDocContent } from '@/editor/page-mode/page-d
 import type { PageListSource } from '@/editor/page-mode/page-lists'
 import { pageModeExtensions } from '@/editor/page-mode/page-mode-extensions'
 import type { PageSaveApi, TreeRow } from '@/editor/page-mode/page-save'
+import type { PageTaskSource } from '@/editor/page-mode/page-tasks'
 import { blockIdOf } from '@/editor/token-ids'
 import type { OpRef } from '@/lib/bindings'
 
@@ -42,6 +43,7 @@ export function openPage(
   mintId: () => string = idMinter(),
   onCreateTag: (name: string) => Promise<string> = () => Promise.resolve(''),
   lists?: PageListSource,
+  tasks?: PageTaskSource,
 ): Editor {
   return new Editor({
     element: document.createElement('div'),
@@ -59,6 +61,7 @@ export function openPage(
       placeholder: '',
       mintId,
       ...(lists === undefined ? {} : { lists }),
+      ...(tasks === undefined ? {} : { tasks }),
     }),
     content: pageDocContent(
       rows.map(([id, depth, content]) => ({ id, depth, content })),

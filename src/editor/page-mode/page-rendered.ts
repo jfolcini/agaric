@@ -60,7 +60,8 @@ export const PageRenderedKeys = Extension.create({
             if (!selection.empty || !view.endOfTextblock(arrow.side)) return false
             const { $head } = selection
             const past = view.state.doc.resolve(arrow.dir > 0 ? $head.after() : $head.before())
-            const into = Selection.findFrom(past, arrow.dir, true)
+            // Not text only: a rule on the way is the next place, which the editor selects.
+            const into = Selection.findFrom(past, arrow.dir)
             if (into === null) return false
             const block = view.nodeDOM(into.$head.before(1))
             if (!(block instanceof HTMLElement) || !block.hasAttribute(RENDERED)) return false

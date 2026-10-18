@@ -151,17 +151,14 @@ function idsIn(state: EditorState): Set<string> {
   return ids
 }
 
-const PageListKeys = Extension.create<{ source: PageListSource | null }>({
+// Configured only through `pageListKeys`, so `source` is always set.
+const PageListKeys = Extension.create<{ source: PageListSource }>({
   name: 'pageListKeys',
   // Ahead of page mode's own Enter and Backspace (`PageKeys`).
   priority: 1001,
-  addOptions() {
-    return { source: null }
-  },
   addKeyboardShortcuts() {
     const { source } = this.options
     const { editor } = this
-    if (source === null) return {}
     return {
       Enter: () => {
         const { state, view } = editor
@@ -195,7 +192,6 @@ const PageListKeys = Extension.create<{ source: PageListSource | null }>({
   },
   addInputRules() {
     const { source } = this.options
-    if (source === null) return []
     // Block mode's `- ` and `1. ` (the stock list rules), then the character
     // its `ListStyleInputRule` waits for: a bullet's not `[`, a checkbox's start.
     // Not `\n` either: TipTap runs the rules on Enter with that text.
@@ -219,7 +215,6 @@ const PageListKeys = Extension.create<{ source: PageListSource | null }>({
   },
   addProseMirrorPlugins() {
     const { source } = this.options
-    if (source === null) return []
     return [
       new Plugin({
         view: (view) => {
