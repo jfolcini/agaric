@@ -10,17 +10,27 @@
 // them with a full-text term, groups by state and adds a Count, and reads the
 // headers and chips again after leaving the view and coming back.
 //
+// The same engine runs a block's `{{query …}}`. A second case writes
+// `{{query type:backlinks target:<page A>}}` on page C, whose results must be
+// page B's block that links to A, not A's own children, which it listed until
+// #5815; the links come from the materializer's `block_links`, which the mock
+// does not keep.
+//
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  blockStaticByMarker,
   chooseSelectOption,
   importMarkdownPage,
   navigateTo,
+  openNewPage,
+  reopenPageByTitle,
   runScopedMarker,
   typeInputVerified,
+  typeMarkerVerified,
   waitForAppReady,
 } from './helpers'
 
@@ -112,9 +122,74 @@ async function waitForGroups(groups: string[], global: string[], when: string): 
     })
 }
 
+const TARGET_PAGE = runScopedMarker('wdio-backlinks-target')
+const TARGET_CHILD = runScopedMarker('wdio-backlinks-child')
+const LINKING_PAGE = runScopedMarker('wdio-backlinks-source')
+const LINKING_BLOCK = runScopedMarker('wdio-backlinks-linker')
+const QUERY_PAGE = runScopedMarker('wdio-backlinks-query')
+const QUERY_BLOCK = runScopedMarker('wdio-backlinks-holder')
+
+interface Internals {
+  __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
+}
+
+/** Call the real backend as another surface does. */
+function invoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
+  return browser.execute(
+    (c: string, a: Record<string, unknown>) =>
+      (window as unknown as Internals).__TAURI_INTERNALS__.invoke(c, a),
+    cmd,
+    args,
+  ) as Promise<T>
+}
+
+/** Create page `title` holding one block `marker`; resolves to that block's id. */
+async function pageWithBlock(title: string, marker: string): Promise<string> {
+  await openNewPage(title)
+  await typeMarkerVerified(marker)
+  const id = await $('[data-testid="block-editor"]').getAttribute('data-block-id')
+  if (id === null) throw new Error(`the block typed on ${title} has no data-block-id`)
+  await browser.keys(['Escape'])
+  await blockStaticByMarker(marker).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  return id
+}
+
+/** The text of each result the query in block `holderId` draws. */
+function queryResults(holderId: string): Promise<string[]> {
+  return browser.execute(
+    (css: string) => [...document.querySelectorAll(css)].map((el) => el.textContent ?? ''),
+    `[data-testid="block-static"][data-block-id="${holderId}"] [data-testid="query-result-item"]`,
+  )
+}
+
+/**
+ * Wait until the query in block `holderId` lists the linking block and only
+ * it, opening the query's page again on each try while `reopen`: the
+ * materializer writes the link after the edit, and a query reads as it is drawn.
+ */
+async function waitForBacklinks(holderId: string, when: string, reopen: boolean): Promise<void> {
+  let seen: string[] = []
+  await browser
+    .waitUntil(
+      async () => {
+        if (reopen) {
+          await navigateTo('Journal')
+          await reopenPageByTitle(QUERY_PAGE)
+        }
+        seen = await queryResults(holderId)
+        return seen.length === 1 && seen[0]?.includes(LINKING_BLOCK) === true
+      },
+      { timeout: NAV_TIMEOUT * 2, interval: 3_000 },
+    )
+    .catch(() => {
+      throw new Error(`${when}, the backlinks query's results read ${JSON.stringify(seen)}`)
+    })
+}
+
+before(waitForAppReady)
+
 describe('Agaric real-backend Advanced Query grouping (#5738) @search', () => {
   it('groups the matches by state with per-group counts and a Count aggregate', async () => {
-    await waitForAppReady()
     const markdown = TASKS.map(([state, name]) => `- ${state} ${MARKER} ${name}`).join('\n')
     expect(await importMarkdownPage(TITLE, `${markdown}\n`)).toContain(`${TASKS.length} blocks`)
 
@@ -160,5 +235,29 @@ describe('Agaric real-backend Advanced Query grouping (#5738) @search', () => {
       'after navigating away and back',
     )
     await expect($('[data-testid="advanced-query-total"]')).toHaveText(grouped)
+  })
+})
+
+describe('Agaric real-backend backlinks query (#5815) @search @editor', () => {
+  it('lists the blocks that link to its target, not the target page’s children', async () => {
+    const childId = await pageWithBlock(TARGET_PAGE, TARGET_CHILD)
+    const targetId = (await invoke<{ parent_id: string }>('get_block', { blockId: childId }))
+      .parent_id
+    const linkerId = await pageWithBlock(LINKING_PAGE, LINKING_BLOCK)
+    const holderId = await pageWithBlock(QUERY_PAGE, QUERY_BLOCK)
+    // Written elsewhere, as Edit as Markdown or an import would: typed `[[` and `{{` open pickers.
+    await invoke('edit_block', { blockId: linkerId, toText: `${LINKING_BLOCK} [[${targetId}]]` })
+    await invoke('edit_block', {
+      blockId: holderId,
+      toText: `{{query type:backlinks target:${targetId}}}`,
+    })
+
+    await waitForBacklinks(holderId, 'on opening', true)
+    expect((await queryResults(holderId)).some((text) => text.includes(TARGET_CHILD))).toBe(false)
+
+    // Away and back: the query runs again against what the backend holds.
+    await navigateTo('Journal')
+    await reopenPageByTitle(QUERY_PAGE)
+    await waitForBacklinks(holderId, 'after navigating away and back', false)
   })
 })
