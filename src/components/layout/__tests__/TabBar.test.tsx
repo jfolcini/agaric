@@ -561,26 +561,30 @@ describe('TabBar', () => {
       expect(screen.queryByRole('tablist')).toBeNull()
     })
 
-    it('active tab uses filled/focused tokens while currentView === "page-editor"', () => {
+    // The tab covers the strip's hairline with the page background, and its
+    // one border is the square-cornered top bar (#5924).
+    const ATTACHED = ['bg-background', '-mb-px', 'border-t-2', 'border-t-tab-indicator']
+
+    it('active tab is attached to the content with ink text while currentView === "page-editor"', () => {
       setupThreeTabs('page-editor')
       render(<TabBar />)
 
-      const tabs = screen.getAllByRole('tab')
-      const active = tabs[0] as HTMLElement
-      expect(active).toHaveClass('bg-background')
-      expect(active).toHaveClass('border')
-      expect(active).toHaveClass('font-medium')
+      const [active, inactive] = screen.getAllByRole('tab') as HTMLElement[]
+      expect(screen.getByRole('tablist')).toHaveClass('border-b', 'border-border')
+      expect(active).toHaveClass(...ATTACHED, 'text-foreground', 'font-medium')
+      expect(active?.className).not.toMatch(/\brounded|\bborder(-[xyblr])?(-\d)?(?=\s|$)|shadow/)
+      expect(inactive).toHaveClass('border-t-transparent', 'text-muted-foreground')
+      expect(inactive).not.toHaveClass('bg-background')
     })
 
-    it('active tab uses muted/outlined sidebar-accent tokens while currentView !== "page-editor"', () => {
+    it('active tab keeps the attached shape with muted text while currentView !== "page-editor"', () => {
       setupThreeTabs('journal')
       render(<TabBar />)
 
-      const tabs = screen.getAllByRole('tab')
-      const active = tabs[0] as HTMLElement
-      expect(active).toHaveClass('bg-sidebar-accent')
-      expect(active).toHaveClass('text-sidebar-accent-foreground')
-      expect(active).not.toHaveClass('bg-background')
+      const active = screen.getAllByRole('tab')[0] as HTMLElement
+      expect(active).toHaveClass(...ATTACHED, 'text-muted-foreground')
+      expect(active).not.toHaveClass('font-medium')
+      expect(active.className).not.toMatch(/sidebar-accent|\brounded/)
     })
 
     it('clicking a non-active tab from a non-editor view switches tab and flips to page-editor', async () => {

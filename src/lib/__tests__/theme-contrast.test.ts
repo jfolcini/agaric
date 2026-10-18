@@ -397,6 +397,8 @@ const THEME_PAIRS = [
   // Graph nodes are the buttons you pick out; the accent marks the current page (#5429).
   { pair: 'graph node', fg: 'graph-node', bg: 'background', min: NON_TEXT },
   { pair: 'graph current-page accent', fg: 'graph-accent', bg: 'background', min: NON_TEXT },
+  // The selected tab's bar, on the document tab bar and every tab strip (#5924).
+  { pair: 'selected tab bar', fg: 'tab-indicator', bg: 'background', min: NON_TEXT },
   {
     pair: 'sidebar hover / active item',
     fg: 'sidebar-accent-foreground',

@@ -6,12 +6,13 @@
  * desktop-only affordance — mobile users navigate via sidebar + breadcrumbs).
  * Each tab shows the page title (label) and a close area (X icon).
  *
- * Active-tab styling depends on the current view (item 2):
- * - In `page-editor`: filled/focused look (`bg-background` + bordered bottom
- *   attachment) signalling the user is editing the tab's page.
- * - In any other view: muted/outlined look (`sidebar-accent` background +
- *   `sidebar-accent-foreground` text) mirroring `SidebarMenuButton`'s
- *   active-state tokens — reads as "these are your tabs; click to return".
+ * The strip is a recessed band that ends in a hairline. The active tab is
+ * attached to the content below it: it takes the page background, covers the
+ * hairline beneath itself, and carries a 2 px `tab-indicator` bar along its
+ * square top edge, with no other border. In `page-editor` its label is
+ * `text-foreground font-medium`; in any other view the same shape keeps
+ * `text-muted-foreground`, because the tab is selected but its page is not
+ * the one on screen. Inactive tabs are plain muted text on the strip.
  *
  * Clicking the active tab's label opens a dropdown switcher listing every
  * Open tab. The dropdown reuses the `Popover` primitive because the
@@ -33,6 +34,7 @@
  * actions via ArrowDown/ArrowUp on a single roving tabindex.
  */
 
+import { cva } from 'class-variance-authority'
 import { Check, ChevronDown, X } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
@@ -47,10 +49,25 @@ import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { formatJournalTitle, isDateFormattedPage } from '@/lib/date-utils'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { getPageDisplayName } from '@/lib/page-display'
-import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '@/stores/tabs'
+
+// Every tab overlaps the strip's hairline (`-mb-px`) so the active one's
+// background opens into the content. The strip's scroll viewport clips below
+// that line, so the focus ring is drawn inside the tab.
+const tabVariants = cva(
+  'group flex items-center gap-1 px-3 py-1 -mb-px border-t-2 text-sm truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none focus-ring-visible focus-visible:ring-inset',
+  {
+    variants: {
+      state: {
+        inactive: 'rounded-t-md border-t-transparent text-muted-foreground hover:bg-accent/50',
+        editing: 'border-t-tab-indicator bg-background font-medium text-foreground',
+        elsewhere: 'border-t-tab-indicator bg-background text-muted-foreground',
+      },
+    },
+  },
+)
 
 export function TabBar(): React.ReactElement | null {
   const { t } = useTranslation()
@@ -170,18 +187,9 @@ export function TabBar(): React.ReactElement | null {
     }
   }
 
-  // Item 2: the active-tab look depends on whether the user is in the
-  // page-editor view. In any other view we fall back to muted/outlined tokens
-  // borrowed from `SidebarMenuButton`'s active state so the visual reads as
-  // "you can click these to return to the editor".
-  const activeInEditorClass = 'bg-background border border-border font-medium shadow-xs'
-  const activeOutsideEditorClass =
-    'bg-sidebar-accent text-sidebar-accent-foreground border border-sidebar-border'
-  const inactiveClass = 'border border-transparent text-muted-foreground hover:bg-accent/50'
-
-  function tabClassName(i: number): string {
-    if (i !== activeTabIndex) return inactiveClass
-    return currentView === 'page-editor' ? activeInEditorClass : activeOutsideEditorClass
+  function tabState(i: number): 'inactive' | 'editing' | 'elsewhere' {
+    if (i !== activeTabIndex) return 'inactive'
+    return currentView === 'page-editor' ? 'editing' : 'elsewhere'
   }
 
   // ArrowDown / ArrowUp / Home / End rove focus across the doubled
@@ -228,13 +236,13 @@ export function TabBar(): React.ReactElement | null {
   }
 
   return (
-    <ScrollArea orientation="horizontal" className="border-b border-border bg-muted/30">
+    <ScrollArea orientation="horizontal" className="bg-muted/30">
       <div
         role="tablist"
         aria-label={t('tabs.tabList')}
         // Left edge matches the Recent / ViewHeaderOutletSlot rows below so the
         // chrome stack aligns vertically.
-        className="flex items-center gap-1 px-4 md:px-6 md:pointer-fine:pl-16 py-1 min-w-0"
+        className="flex items-end gap-1 border-b border-border px-4 md:px-6 md:pointer-fine:pl-16 pt-1 min-w-0"
       >
         <Popover open={dropdownOpen} onOpenChange={setDropdownOpen}>
           {tabs.map((tab, i) => {
@@ -269,13 +277,9 @@ export function TabBar(): React.ReactElement | null {
                   showDropdownHint ? t('tabs.switchTabsHint', { title: fullPath }) : undefined
                 }
                 title={fullPath}
-                className={cn(
-                  // `group` enables `group-hover:` on the chevron so
-                  // hovering the active tab intensifies the dropdown hint.
-                  'group flex items-center gap-1 px-3 py-1 text-sm rounded-md truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none',
-                  'focus-ring-visible',
-                  tabClassName(i),
-                )}
+                // `group` (in `tabVariants`) enables `group-hover:` on the
+                // chevron so hovering the active tab intensifies the dropdown hint.
+                className={tabVariants({ state: tabState(i) })}
                 onClick={(e) => handleTabClick(i, e)}
                 onKeyDown={(e) => handleTabKeyDown(i, e)}
               >
