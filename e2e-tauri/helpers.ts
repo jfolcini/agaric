@@ -98,7 +98,7 @@
 //     location to Office" (`blockTree.setLocationMessage`).
 // ---------------------------------------------------------------------------
 
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { type Socket, createConnection } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -1089,6 +1089,58 @@ export async function pickRepeatCommand(label: string): Promise<void> {
   const item = $(`[data-testid="suggestion-item"]*=${label}`)
   await item.waitForClickable({ timeout: ACTION_TIMEOUT })
   await item.click()
+}
+
+/** Text the clipboard plugin holds, read the way the paste chord reads it. */
+export async function clipboardText(): Promise<string> {
+  return await browser.execute(async () => {
+    const internals = (
+      window as unknown as {
+        __TAURI_INTERNALS__: { invoke: (cmd: string) => Promise<string | null> }
+      }
+    ).__TAURI_INTERNALS__
+    return (await internals.invoke('plugin:clipboard-manager|read_text')) ?? ''
+  })
+}
+
+/**
+ * The bytes of the file a WebView download (`downloadBlob`'s `<a download>`)
+ * wrote after `since` under a name `name` matches; the file is deleted once
+ * read. The app registers no download handler, so WebKitGTK picks the folder:
+ * with the sandbox's empty `XDG_CONFIG_HOME` there is no Downloads folder and
+ * it writes to the app's working directory, which is this worker's. The home
+ * folders are searched too. The size must hold still across two polls,
+ * because the success toast fires before the write ends.
+ */
+export async function takeDownload(name: RegExp, since: number): Promise<Buffer> {
+  const dirs = [process.cwd(), path.join(os.homedir(), 'Downloads'), os.homedir()]
+  const sizes = new Map<string, number>()
+  const settled = (): string | false => {
+    for (const dir of dirs) {
+      let entries: string[] = []
+      try {
+        entries = readdirSync(dir)
+      } catch {
+        continue
+      }
+      for (const entry of entries.filter((e) => name.test(e))) {
+        const file = path.join(dir, entry)
+        const { mtimeMs, size } = statSync(file)
+        if (mtimeMs < since - 2_000 || size === 0) continue
+        if (sizes.get(file) === size) return file
+        sizes.set(file, size)
+      }
+    }
+    return false
+  }
+  const file = await browser
+    .waitUntil(settled, { timeout: ACTION_TIMEOUT, interval: 500 })
+    .catch(() => {
+      throw new Error(`no download matching ${String(name)} landed in ${dirs.join(', ')}`)
+    })
+  const bytes = readFileSync(file)
+  rmSync(file)
+  return bytes
 }
 
 /**
