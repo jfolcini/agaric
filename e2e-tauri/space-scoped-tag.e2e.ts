@@ -25,6 +25,8 @@ import {
   navigateTo,
   openJournalBlockEditor,
   runScopedMarker,
+  switchToSpace,
+  switcherLabel,
   typeInputVerified,
   typeMarkerVerified,
   waitForAppReady,
@@ -34,26 +36,6 @@ const SPACE_B = runScopedMarker('wdio-space')
 const TAG = runScopedMarker('wdio-scoped')
 const SWITCHER = '[aria-label="Switch space"]'
 const TAG_ITEM = `[data-testid="tag-item-${TAG}"]`
-
-/**
- * The switcher trigger's label, read as DOM text rather than through
- * `getText()`.
- *
- * `getText()` returns "" for this button — run 34088762135 polled it for the
- * full 60 s while the failure screenshot shows the trigger plainly reading
- * "Personal". The label is not the button's own text: Radix's `SelectValue`
- * is a portal TARGET, and the selected `SelectItemText` renders into it from
- * a subtree the closed Select keeps hidden, which WebDriver's rendered-text
- * algorithm does not follow. `textContent` does, and it is unaffected by the
- * trigger's `text-overflow: ellipsis` truncation either.
- */
-async function switcherLabel(): Promise<string> {
-  const label = await browser.execute(
-    (selector: string) => document.querySelector(selector)?.textContent ?? '',
-    SWITCHER,
-  )
-  return label.trim()
-}
 
 /**
  * The active space's name, once the switcher has one to show. SpaceSwitcher
@@ -71,14 +53,6 @@ async function currentSpaceName(): Promise<string> {
     { timeout: NAV_TIMEOUT, timeoutMsg: 'the space switcher never showed an active space' },
   )
   return name
-}
-
-async function switchToSpace(name: string): Promise<void> {
-  await chooseSelectOption(SWITCHER, name)
-  await browser.waitUntil(async () => (await switcherLabel()).includes(name), {
-    timeout: ACTION_TIMEOUT,
-    timeoutMsg: `space switcher never showed ${JSON.stringify(name)}`,
-  })
 }
 
 describe('Agaric real-backend space-scoped tag (#4671 / #3081)', () => {

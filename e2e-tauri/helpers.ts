@@ -98,6 +98,9 @@
 //     (`property.selectValue`, PropertyChip.tsx), the slash item
 //     "LOCATION Office — Office" (slash-commands.ts) and its toast "Set
 //     location to Office" (`blockTree.setLocationMessage`).
+//   - The SpaceSwitcher (`switchToSpace`, `switcherLabel`): the Radix
+//     `Select` trigger `[aria-label="Switch space"]` (layout/SpaceSwitcher.tsx)
+//     and its `[role="option"]` items, one per space plus "Manage spaces…".
 // ---------------------------------------------------------------------------
 
 import {
@@ -794,6 +797,30 @@ export async function chooseSelectOption(
   await option.waitForClickable({ timeout: ACTION_TIMEOUT })
   await option.click()
   await option.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
+}
+
+const SPACE_SWITCHER = '[aria-label="Switch space"]'
+
+/**
+ * The SpaceSwitcher trigger's label, read as DOM text: `getText()` returns ""
+ * for it, because Radix's `SelectValue` is a portal target that the selected
+ * item's text renders into from a subtree the closed Select keeps hidden.
+ */
+export async function switcherLabel(): Promise<string> {
+  const label = await browser.execute(
+    (selector: string) => document.querySelector(selector)?.textContent ?? '',
+    SPACE_SWITCHER,
+  )
+  return label.trim()
+}
+
+/** Make `name` the active space through the SpaceSwitcher, and wait until the trigger shows it. */
+export async function switchToSpace(name: string): Promise<void> {
+  await chooseSelectOption(SPACE_SWITCHER, name)
+  await browser.waitUntil(async () => (await switcherLabel()).includes(name), {
+    timeout: ACTION_TIMEOUT,
+    timeoutMsg: `space switcher never showed ${JSON.stringify(name)}`,
+  })
 }
 
 /**
