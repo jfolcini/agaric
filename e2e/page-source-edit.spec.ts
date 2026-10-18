@@ -23,7 +23,9 @@ import {
  * page's markdown, a plain-text editor whose lines carry their block ids out
  * of sight, and Save writes the text and those ids back through
  * `apply_page_source`; Merge saves a stale buffer with the page's changes
- * folded in. Every edit is typed, cut or pasted with the keyboard, or dragged
+ * folded in, and Reload swaps it for the page as it is now; unsaved text
+ * left by leaving the page is a localStorage draft the buffer restores on
+ * reopening. Every edit is typed, cut or pasted with the keyboard, or dragged
  * with the mouse, and every assertion reads the block tree the save reloaded
  * from the mock. The Rust tests own the grammar; the real-backend twins are
  * `e2e-tauri/page-source-edit.e2e.ts`, `e2e-tauri/page-source-merge.e2e.ts`
@@ -44,6 +46,7 @@ const NOTES = 'Quick Notes'
 const QN1 = '0000000000000000000BLOCK08'
 const QN2 = '0000000000000000000BLOCK09'
 const JOT = 'Jot down quick thoughts'
+const DRAFT_RESTORED = 'Restored your unsaved edits.'
 
 /** The page kebab: it opens source mode, and closing source mode focuses it again. */
 function pageActions(page: Page): Locator {
@@ -417,6 +420,59 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
     await expect(pageActions(page)).toBeFocused()
     await expect.poll(() => blockIds(page)).toEqual([GS1, GS2, GS3, GS4, GS5])
     await expect(staticBlock(page, GS1)).toContainText(WELCOME)
+  })
+
+  test('text left unsaved by going to another page is restored on reopening, until Discard', async ({
+    page,
+  }) => {
+    const kept = 'knowledge base. Kept as a draft.'
+    const editor = await openSourceMode(page)
+    await caretAtEnd(page, editor, WELCOME)
+    await page.keyboard.type(' Kept as a draft.')
+
+    await openPage(page, NOTES)
+    await backTo(page, PAGE)
+    await expect(staticBlock(page, GS1)).toContainText(WELCOME)
+    await expect(staticBlock(page, GS1)).not.toContainText('Kept as a draft.')
+    const restored = await openSourceMode(page)
+
+    await expect(page.getByText(DRAFT_RESTORED, { exact: true })).toBeVisible()
+    await expect(sourceLine(restored, kept)).toHaveAttribute('data-block-id', GS1)
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await activeAlertDialog(page).getByRole('button', { name: 'Discard', exact: true }).click()
+    await expect(sourceEditor(page)).toHaveCount(0)
+
+    const reopened = await openSourceMode(page)
+    await expect(page.getByText(DRAFT_RESTORED, { exact: true })).toHaveCount(0)
+    await expect(sourceLine(reopened, WELCOME)).not.toContainText('Kept as a draft.')
+  })
+
+  test('Reload swaps the buffer for the page as changed elsewhere, saving nothing and leaving no draft', async ({
+    page,
+  }) => {
+    const elsewhere = 'Edited on another device'
+    const editor = await openSourceMode(page)
+    await editBlockElsewhere(page, GS3, elsewhere)
+    await selectLine(editor, WELCOME)
+    await page.keyboard.type(HELLO_LINE)
+
+    await saveButton(page).click()
+    await activeDialog(page).getByRole('button', { name: 'Reload', exact: true }).click()
+
+    await expect(activeDialog(page)).toHaveCount(0)
+    await expect(sourceLine(editor, elsewhere)).toHaveAttribute('data-block-id', GS3)
+    await expect(sourceLine(editor, WELCOME)).toHaveAttribute('data-block-id', GS1)
+    await expect(editor).not.toContainText('Hello, Agaric!')
+    await expect(saveButton(page)).toBeDisabled()
+
+    // Leaving with the buffer open stores whatever it last typed as a draft.
+    await reopenPage(page, PAGE)
+    await expect(staticBlock(page, GS1)).toContainText(WELCOME)
+    await expect(staticBlock(page, GS3)).toContainText(elsewhere)
+    const reopened = await openSourceMode(page, 'Use the sidebar')
+    await expect(page.getByText(DRAFT_RESTORED, { exact: true })).toHaveCount(0)
+    await expect(reopened).toContainText(WELCOME)
+    await expect(reopened).not.toContainText('Hello, Agaric!')
   })
 
   test('Ctrl+S saves, and the report lists what the save deleted and created', async ({ page }) => {
