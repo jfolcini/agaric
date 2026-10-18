@@ -623,6 +623,67 @@ describe('AttachmentRenderer', () => {
       expect(rowTouch).not.toHaveBeenCalled()
     })
 
+    /**
+     * jsdom has no media stack: stands in for the element's `duration`, and
+     * records every `currentTime` the player sets.
+     */
+    function fakeMedia(player: HTMLAudioElement, duration: number) {
+      const media = { duration, seeks: [] as number[], currentTime: 0 }
+      Object.defineProperty(player, 'duration', { get: () => media.duration })
+      Object.defineProperty(player, 'currentTime', {
+        get: () => media.currentTime,
+        set: (time: number) => {
+          media.seeks.push(time)
+          media.currentTime = time
+        },
+      })
+      return media
+    }
+
+    it('finds the length of a note whose header has none, then goes back to the start', async () => {
+      const { container } = render(<AttachmentRenderer {...baseProps} attachments={[audio()]} />)
+      const player = await findPlayer(container)
+      const media = fakeMedia(player, Infinity)
+
+      fireEvent(player, new Event('loadedmetadata'))
+      expect(media.seeks).toEqual([Number.MAX_SAFE_INTEGER])
+      fireEvent(player, new Event('durationchange'))
+      expect(media.seeks).toEqual([Number.MAX_SAFE_INTEGER])
+
+      media.duration = 3.2
+      fireEvent(player, new Event('durationchange'))
+      expect(media.seeks).toEqual([Number.MAX_SAFE_INTEGER, 0])
+
+      // A later length update, while the note plays, leaves the playhead alone.
+      media.currentTime = 1.5
+      fireEvent(player, new Event('durationchange'))
+      expect(media.seeks).toEqual([Number.MAX_SAFE_INTEGER, 0])
+    })
+
+    it('does not seek a note whose length is known', async () => {
+      const { container } = render(<AttachmentRenderer {...baseProps} attachments={[audio()]} />)
+      const player = await findPlayer(container)
+      const media = fakeMedia(player, 3.2)
+
+      fireEvent(player, new Event('loadedmetadata'))
+      expect(media.seeks).toEqual([])
+    })
+
+    it('stops waiting for the length once the player unmounts', async () => {
+      const { container, unmount } = render(
+        <AttachmentRenderer {...baseProps} attachments={[audio()]} />,
+      )
+      const player = await findPlayer(container)
+      const media = fakeMedia(player, Infinity)
+      fireEvent(player, new Event('loadedmetadata'))
+
+      unmount()
+      media.duration = 3.2
+      fireEvent(player, new Event('durationchange'))
+      fireEvent(player, new Event('loadedmetadata'))
+      expect(media.seeks).toEqual([Number.MAX_SAFE_INTEGER])
+    })
+
     it('has no a11y violations with a loaded player', async () => {
       const { container } = render(<AttachmentRenderer {...baseProps} attachments={[audio()]} />)
       await findPlayer(container)
