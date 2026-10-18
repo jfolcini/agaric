@@ -171,6 +171,7 @@ The active `.cargo/config.toml` is gitignored, so it never leaks into the tree â
 npx vitest run                                   # frontend
 cd src-tauri && cargo nextest run --workspace    # backend (bare form is package-scoped only, #3212)
 npx playwright test                              # e2e (chromium)
+PW_PORT=5557 npx playwright test                 # e2e on its own port: one per git worktree, so each tests its own bundle
 just test-be -E 'test(name)'                     # one backend test, `--workspace` kept (args go to nextest)
 just test-fe src/lib/foo.test.ts                 # one frontend file (args go to vitest)
 just test-doc                                    # Rust doc-tests: nextest does not run them (`just test` does)
