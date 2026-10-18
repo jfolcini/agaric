@@ -192,8 +192,20 @@ jobs:
       # key would let whichever lane saved first pin its own package set, so
       # a hit here could be missing exactly the .debs this lane adds. Bump
       # the `-vN` suffix when the package list below changes.
+      #
+      # Only `main` (the weekly schedule, or a dispatch on `main`) saves: a PR
+      # run's save is scoped to `refs/pull/<n>/merge`, which nothing else can
+      # restore, so PRs restore only (#5853).
       - name: Cache apt archives (Tauri system deps + WebDriver/Xvfb)
+        if: github.ref == 'refs/heads/main'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-e2e-${{ runner.os }}-v5
+
+      - name: Restore apt archives (Tauri system deps + WebDriver/Xvfb)
+        if: github.ref != 'refs/heads/main'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /var/cache/apt/archives/*.deb
           key: apt-tauri-e2e-${{ runner.os }}-v5
