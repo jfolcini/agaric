@@ -170,23 +170,6 @@ const HOUR_MS = 3600 * 1000
  *     tick and ~209h at the Tuesday one, so 200h trips one day after a missed
  *     week and keeps ~33h of headroom. A day of extra latency on a weekly job
  *     is worth more than the margin tightening to 180h would cost.
- *   * `fuzz-corpus-refresh.yml` (Thu 16:17) does NOT fit that pattern and
- *     needs its own derivation (#4529 review) rather than inheriting the
- *     ~161h/~167h figures above. Its tick-to-cron offset — 19:37 minus 16:17
- *     = 3h20m — is SMALLER than this repo's measured weekly-cron delivery lag
- *     (3.15h–6.25h, borrowed from `scheduled-deep-checks` for the reason
- *     stated in this workflow's own header), unlike the Monday/Tuesday lanes
- *     whose 13–15h offsets clear that range comfortably. So the run's actual
- *     start (16:17 + lag = 19:26–22:32) is routinely AFTER the same-day 19:37
- *     tick, and that tick reads the PREVIOUS week's run instead — the
- *     ordinary healthy case for this lane looks like the Monday lanes'
- *     SKIPPED-week case, every week. Worst-case age there: one period plus
- *     the tick offset, less how early last week's own run posted — using
- *     this repo's smallest measured lag (3.15h) for that reference run:
- *     168h + 3h20m − 3.15h ≈ 168.2h. That clears 200h with ~31.8h of
- *     headroom, in the same neighbourhood as the Monday/Tuesday lanes' ~33h,
- *     so the shared 200h value already covers it — nothing here changes
- *     `maxAgeHours`; only the reasoning for why it still holds is new.
  *   * The watchdog itself (daily, self-excluded — see below): the PREVIOUS run
  *     is normally 24h old — measured lag DIFFERENCE between consecutive daily
  *     runs is ≤1.3h, so 22.7–25.3h — and 48h after one skipped day. 44h fires
@@ -227,12 +210,6 @@ export const WATCHED = Object.freeze([
     periodHours: 168,
     maxAgeHours: 200,
     why: 'weekly Mon 02:43 UTC',
-  }),
-  Object.freeze({
-    workflow: 'fuzz-corpus-refresh.yml',
-    periodHours: 168,
-    maxAgeHours: 200,
-    why: 'weekly Thu 16:17 UTC; refreshes the fuzz-corpus-* cache entry access timestamp midway between fuzz lane runs so the 7-day eviction margin does not depend on the fuzz lane alone (#4504)',
   }),
   Object.freeze({
     workflow: 'scheduled-deep-checks.yml',

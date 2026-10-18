@@ -112,7 +112,7 @@ uploads any crash reproducer plus the minimised corpus.
 
 Seed corpora live under `corpus/<target>/`, one input per file.
 
-They are the **floor on a cache miss, not the working set**. Since #4496 the
+They are the **floor when no corpus is restored, not the working set**. Since #4496 the
 lane restores the accumulated corpus from the previous run, fuzzes, minimises
 with `cargo fuzz cmin`, and saves it again — so after the first run the seeds
 stop being the whole story. Before that change every weekly run started from
