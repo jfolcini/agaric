@@ -1518,8 +1518,6 @@ export function emitMockEvent(page: Page, event: string, payload: unknown): Prom
 /** Switch the active space through the sidebar SpaceSwitcher. */
 export async function switchToSpace(page: Page, name: string): Promise<void> {
   await page.getByRole('combobox', { name: 'Switch space', exact: true }).click()
-  // The trigger's hover tooltip can land on top of the option list.
-  await page.mouse.move(0, 0)
   await page.getByRole('option', { name, exact: true }).click()
 }
 

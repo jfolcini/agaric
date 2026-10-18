@@ -126,9 +126,11 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
 
     await createSpaceInSettings(page, 'Work')
 
-    // Selecting Work by name also proves the switcher lists it. No open,
-    // check and Escape first: the trigger's focus tooltip is still open after
-    // Settings, so the first Escape only closes the tooltip.
+    // The switcher trigger now lists Work as a selectable option.
+    await page.getByRole('combobox', { name: SWITCH_SPACE, exact: true }).click()
+    await expect(page.getByRole('option', { name: 'Work', exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+
     await switchToSpace(page, 'Work')
 
     // Top accent stripe now reflects the new active space, not the seed.
