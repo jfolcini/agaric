@@ -96,15 +96,13 @@ setup = "iroh-no-proxy-windows"
 #     import_and_project rounds (one per seeded inbox row, spanning 2 replay
 #     chunks); ~50s alone on a dev box, so full-suite CPU contention pushes it
 #     past the 60s kill on the first attempt.
-#   * issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path — pushes an
-#     oversized Loro snapshot through the full chunked-wire catch-up path
-#     (>30s under the full suite). It carried NO timeout override, so under the
-#     `cargo-coverage` build's llvm-cov instrumentation (2-3× slower) it could
-#     terminate on the first attempt and DROP the coverage of the large
-#     snapshot-transfer path it exercises — a spurious `cargo-coverage` ratchet
-#     failure whose likelihood shifts with nextest's per-run partition layout.
-#     Give it (and `replay_streams`, previously only covered in the default
-#     profile) the same extended leash under CI so coverage is stable.
+#   * a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761 — pushes a
+#     snapshot of about 100 MB of Loro state through a real QUIC session
+#     (#5761); 14-15s nominal in debug on a dev box, so contention and the
+#     `cargo-coverage` build's llvm-cov instrumentation (2-3× slower) reach the
+#     kill. A first-attempt termination there drops the coverage of the
+#     large-payload path, a spurious `cargo-coverage` ratchet failure; it
+#     replaces #611's oversized-snapshot test, which needed the same leash.
 #   * dag::proptest_b2::find_lca_terminates_on_any_graph (#3532) — drives an
 #     adversarial-graph strategy through LCA search. Measured 14.5s / 12.8s /
 #     18.3s in three targeted foreground repeats on an unloaded box, against the
@@ -132,7 +130,7 @@ setup = "iroh-no-proxy-windows"
 #     runs several pull sessions between them, and full-suite contention
 #     stretches it toward the default window.
 [[profile.default.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/mock_matches_backend_on_generated_op_chains_4669/) | test(/conformance_fixtures_match_backend/) | test(/move_sync_proptest::/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/mock_matches_backend_on_generated_op_chains_4669/) | test(/conformance_fixtures_match_backend/) | test(/move_sync_proptest::/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 # The weekly deep-checks lane (#4282). `scheduled-deep-checks.yml`'s `bench-slo`
@@ -213,14 +211,14 @@ leak-timeout = "30s"
 # llvm-cov `cargo-coverage` build (2-3× slower) can never terminate one on the
 # first attempt and lose its coverage: apply_reproject_proptest,
 # replay_streams_all_rows…_1574,
-# issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path,
+# a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761,
 # find_lca_terminates_on_any_graph,
 # n_way_concurrent_mixed_streams_all_to_all_converges (#4474), and
 # move_sync_proptest (#5712).
 # (perf26_draft_recovery dropped in #3612 — see the default-profile note above:
 # it runs in ~0.7s now, so even a 3× coverage build stays far under 30s.)
 [[profile.ci.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/move_sync_proptest::/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761/) | test(/find_lca_terminates_on_any_graph/) | test(/n_way_concurrent_mixed_streams_all_to_all_converges/) | test(/move_sync_proptest::/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 # The SQL-only-fallback / reproject / recompute observability counters

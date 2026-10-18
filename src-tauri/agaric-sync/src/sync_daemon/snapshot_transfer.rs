@@ -24,8 +24,8 @@
 //! message loop exits with `state == ResetRequired`:
 //!
 //! 1. The responder exports one full snapshot per registered space and
-//!    writes each as a framed `LoroSync` message on the same QUIC
-//!    bi-stream the session is already running on.
+//!    writes each as a `LoroSync` (a header frame and the snapshot's raw
+//!    bytes) on the same QUIC bi-stream the session is already running on.
 //! 2. The initiator reads them under an explicit [`RECV_TIMEOUT`] — QUIC
 //!    supplies no receive bound of its own (see
 //!    [`crate::transport::session::RECV_TIMEOUT`]) — merges each into its
@@ -58,7 +58,7 @@ use agaric_store::peer_refs;
 // Responder side — Loro-snapshot catch-up (#2503, production path)
 // ---------------------------------------------------------------------------
 
-/// Byte length of a [`LoroSyncMessage`]'s inline CRDT payload (for progress
+/// Byte length of a [`LoroSyncMessage`]'s CRDT payload (for progress
 /// / accounting). Both variants carry the raw Loro bytes.
 fn loro_msg_payload_len(msg: &LoroSyncMessage) -> u64 {
     match msg {
@@ -174,16 +174,8 @@ pub async fn try_offer_loro_snapshot_catchup(
     for (idx, msg) in messages.into_iter().enumerate() {
         let is_last = idx + 1 == total;
         bytes_sent += loro_msg_payload_len(&msg);
-        // One length-prefixed frame per space snapshot, however large: a
-        // QUIC stream has no message boundary and no 10 MB text-frame cap,
-        // so the #611 inline-vs-chunked split that `sync_daemon::wire`
-        // existed to make has nothing left to decide. The one bound that
-        // remains is `transport::session::MAX_FRAME_SIZE` (256 MB), and it
-        // still bites earlier than the payload size suggests: `bytes` is a
-        // `Vec<u8>` inside a serde-JSON enum, so a space snapshot costs ~4
-        // bytes on the wire per byte of CRDT state. That inflation is a
-        // property of `SyncMessage`'s shape, not of the transport — see the
-        // `transport::session` module docs.
+        // A header frame, then the snapshot's bytes raw, up to
+        // `MAX_LORO_SYNC_PAYLOAD_SIZE` (#5761, `transport::session`).
         send_sync_message(send, &SyncMessage::LoroSync { msg, is_last }).await?;
     }
 
@@ -326,12 +318,11 @@ pub async fn try_receive_snapshot_catchup(
     }
     let remote_device_id: &str = resolved_identity.unwrap_or_default();
 
-    // #2503: read the responder's first post-ResetRequired message. Under
-    // QUIC this is one length-prefixed frame however large — there is no
-    // chunked reassembly step, because there is no message-size cap to
-    // chunk around. Bounded by `RECV_TIMEOUT` because this runs AFTER the
-    // driver loop, on the same stream, and QUIC gives a receive no clock of
-    // its own.
+    // #2503: read the responder's first post-ResetRequired message: a
+    // header frame and the snapshot's raw bytes, which `recv_sync_message`
+    // returns as one `LoroSync`. Bounded by `RECV_TIMEOUT` because this runs
+    // AFTER the driver loop, on the same stream, and QUIC gives a receive no
+    // clock of its own.
     match recv_sync_message_within(recv, RECV_TIMEOUT).await? {
         SyncMessage::LoroSync { msg, is_last } => {
             receive_loro_snapshot_catchup(

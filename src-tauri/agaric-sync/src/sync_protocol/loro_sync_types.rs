@@ -53,15 +53,11 @@ pub type LoroVersionVector = Vec<u8>;
 /// fallback policy is wire-shape-orthogonal and lives in day-5's
 /// receiver dispatch.
 ///
-/// # Serde shape
+/// # On the wire
 ///
-/// `#[serde(tag = "kind", rename_all = "snake_case")]` produces
-/// JSON like
-/// `{"kind":"snapshot","protocol_version":1,"space_id":"01HZ…","bytes":[…]}`
-/// or
-/// `{"kind":"update","protocol_version":1,"space_id":"01HZ…","from_vv":[…],"bytes":[…]}`.
-/// The unit-tests below pin the round-trip; future variants must
-/// preserve this shape so day-1-protocol peers continue to decode.
+/// Never as JSON: `transport::session` sends it as its
+/// [`LoroSyncChunkedHeader`] frame followed by `bytes` raw (#5761). The serde
+/// derives are here because [`SyncMessage`](super::SyncMessage) derives them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LoroSyncMessage {
@@ -108,31 +104,8 @@ pub enum LoroSyncMessage {
     },
 }
 
-/// Header-only mirror of [`LoroSyncMessage`] for the chunked binary
-/// transport path (#611).
-///
-/// # Why it existed
-///
-/// `LoroSyncMessage.bytes` serialises as a JSON number array (~3.6×
-/// inflation, worst case 4 chars/byte), and the WebSocket transport
-/// capped a message at 10 MB — so any vault past ~2.5 MB of Loro state
-/// produced an over-cap message and sync broke permanently. Payloads
-/// larger than [`crate::sync_constants::LORO_INLINE_MAX_BYTES`] therefore
-/// travelled out-of-band: a `SyncMessage::LoroSyncChunked { header,
-/// is_last }` envelope carrying this header, followed by exactly
-/// `size_bytes` of raw Loro bytes in binary frames, reassembled before
-/// the orchestrator saw it.
-///
-/// # Why nothing sends it now
-///
-/// The iroh port (#3464) removed the chunking layer with the transport
-/// that needed it. A QUIC frame is bounded by
-/// [`MAX_FRAME_SIZE`](crate::transport::session::MAX_FRAME_SIZE) (256 MB),
-/// which the inflated encoding fits comfortably, so an over-threshold
-/// payload ships as one ordinary [`LoroSyncMessage`]. The type is kept
-/// because the variant is still on the wire: a peer running the chunking
-/// build can send one, and decoding it is what lets this side reject it
-/// with a diagnosis instead of an unknown-tag deserialize error.
+/// [`LoroSyncMessage`] without its bytes: what travels in the
+/// `SyncMessage::LoroSyncChunked` frame, with the bytes raw after it (#5761).
 ///
 /// Field-for-field this mirrors [`LoroSyncMessage`] minus `bytes`
 /// (replaced by `size_bytes`); `from_vv` stays inline in the header —
@@ -144,7 +117,7 @@ pub enum LoroSyncChunkedHeader {
     Snapshot {
         /// Wire envelope version; locked to
         /// [`LORO_SYNC_PROTOCOL_VERSION`] at send time. Validated by
-        /// `loro_sync::apply_remote` after reassembly (no separate
+        /// `loro_sync::apply_remote` once the bytes are read (no separate
         /// header-level check, so version-mismatch handling stays in
         /// exactly one place).
         protocol_version: u8,
@@ -169,8 +142,8 @@ pub enum LoroSyncChunkedHeader {
 }
 
 impl LoroSyncChunkedHeader {
-    /// Split a [`LoroSyncMessage`] into its chunked-transport header
-    /// and a borrow of the payload bytes (sender side).
+    /// Split a [`LoroSyncMessage`] into its header and a borrow of the
+    /// payload bytes (sender side).
     pub fn split(msg: &LoroSyncMessage) -> (Self, &[u8]) {
         match msg {
             LoroSyncMessage::Snapshot {
@@ -210,23 +183,9 @@ impl LoroSyncChunkedHeader {
         }
     }
 
-    /// Override the advertised wire byte count. Used by the transport
-    /// layer (#2200) after zstd-compressing the payload, so the header
-    /// reports the *compressed* length the receiver reads off the wire
-    /// rather than the raw length [`split`](Self::split) initialised it
-    /// with.
-    pub fn set_size_bytes(&mut self, n: u64) {
-        match self {
-            Self::Snapshot { size_bytes, .. } | Self::Update { size_bytes, .. } => *size_bytes = n,
-        }
-    }
-
     /// Reassemble the full [`LoroSyncMessage`] from this header plus
-    /// the received payload bytes (receiver side). The chunked receive that
-    /// guaranteed `bytes.len() == self.size_bytes()` went with the WebSocket
-    /// transport (#3464), so this has no production caller; it is retained
-    /// with the type as the inverse of [`Self::split`], which the round-trip
-    /// test pins.
+    /// the `size_bytes()` payload bytes read after it (receiver side); the
+    /// inverse of [`Self::split`].
     pub fn into_message(self, bytes: Vec<u8>) -> LoroSyncMessage {
         match self {
             Self::Snapshot {
@@ -267,53 +226,7 @@ mod tests {
         assert_eq!(LORO_SYNC_PROTOCOL_VERSION, 1);
     }
 
-    /// JSON serde round-trip preserves every field of a Snapshot
-    /// variant.  Locks the on-the-wire shape: any future field
-    /// rename / reorder that breaks this round-trip is a wire
-    /// format break — bump [`LORO_SYNC_PROTOCOL_VERSION`].
-    #[test]
-    fn loro_sync_message_snapshot_serde_roundtrip() {
-        let original = LoroSyncMessage::Snapshot {
-            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
-            space_id: SpaceId::from_trusted("01HZ00000000000000000000SP"),
-            bytes: vec![0x10, 0x20, 0x30, 0xff, 0x00, 0x7f],
-        };
-        let json = serde_json::to_string(&original).expect("LoroSyncMessage::Snapshot serialise");
-        let deser: LoroSyncMessage =
-            serde_json::from_str(&json).expect("LoroSyncMessage::Snapshot deserialise");
-        assert_eq!(original, deser);
-
-        // Sanity-check the wire shape itself (not just round-trip
-        // identity): the discriminant tag must be `"snapshot"`.
-        // Day-5 receiver dispatch reads this tag.
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(value["kind"], serde_json::json!("snapshot"));
-        assert_eq!(value["protocol_version"], serde_json::json!(1));
-    }
-
-    /// JSON serde round-trip preserves every field of an Update
-    /// variant — including the `from_vv` peer-VV bytes and the
-    /// payload `bytes`.  Same wire-format-pin contract as the
-    /// snapshot test.
-    #[test]
-    fn loro_sync_message_update_serde_roundtrip() {
-        let original = LoroSyncMessage::Update {
-            protocol_version: LORO_SYNC_PROTOCOL_VERSION,
-            space_id: SpaceId::from_trusted("01HZ00000000000000000000SP"),
-            from_vv: vec![0xde, 0xad, 0xbe, 0xef],
-            bytes: vec![0x01, 0x02, 0x03, 0x04, 0x05],
-        };
-        let json = serde_json::to_string(&original).expect("LoroSyncMessage::Update serialise");
-        let deser: LoroSyncMessage =
-            serde_json::from_str(&json).expect("LoroSyncMessage::Update deserialise");
-        assert_eq!(original, deser);
-
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(value["kind"], serde_json::json!("update"));
-        assert_eq!(value["protocol_version"], serde_json::json!(1));
-    }
-
-    /// #611: split → into_message must be a lossless round-trip for
+    /// split → into_message must be a lossless round-trip for
     /// both variants, and the header's `size_bytes` must equal the
     /// payload length (the receiver consumes exactly this many bytes
     /// off the wire).
@@ -341,9 +254,8 @@ mod tests {
         assert_eq!(header.into_message(payload.to_vec()), update);
     }
 
-    /// #611: pin the chunked header's JSON wire shape (same
-    /// wire-format-pin contract as the inline message tests above —
-    /// any rename/reorder that breaks this is a wire break).
+    /// Pin the header's JSON wire shape: any rename/reorder that
+    /// breaks this is a wire break.
     #[test]
     fn chunked_header_serde_shape_is_pinned() {
         let header = LoroSyncChunkedHeader::Update {

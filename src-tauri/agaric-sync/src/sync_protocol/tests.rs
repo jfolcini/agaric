@@ -1060,10 +1060,10 @@ async fn orchestrator_loro_sync_undecodable_snapshot_fails_session() {
 
 // ── State validation tests ──────────────────────────────────────────
 
-/// #611: `LoroSyncChunked` is a transport-internal encoding with no producer
-/// since the iroh port (#3464) removed the chunking layer. One reaching
-/// `handle_message` means a chunking-era peer sent it, or a dispatch
-/// regression; either way surface it as `AppError::InvalidOperation`.
+/// #5761: `transport::session` reads the Loro bytes after a `LoroSyncChunked`
+/// header and hands the orchestrator a `LoroSync`. A header reaching
+/// `handle_message` was read without its bytes, so it surfaces as
+/// `AppError::InvalidOperation`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() {
     use crate::sync_protocol::loro_sync_types::{
@@ -1091,7 +1091,6 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
                 size_bytes: 1024,
             },
             is_last: true,
-            compressed: false,
         })
         .await;
 
@@ -1099,9 +1098,8 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
         Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
         other => panic!(
             "LoroSyncChunked routed through handle_message must return \
-             AppError::InvalidOperation — nothing produces the variant, so \
-             the only way to see one is a peer that predates the QUIC port. \
-             got: {other:?}"
+             AppError::InvalidOperation — the transport turns it into a \
+             LoroSync, so one here was read without its bytes. got: {other:?}"
         ),
     };
     assert!(
@@ -1109,10 +1107,8 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
         "error message must name the offending variant, got: {err}"
     );
     assert!(
-        err.contains("inline"),
-        "error message must say where an oversized LoroSync goes instead, \
-         so the reader is not left looking for a reassembly layer that no \
-         longer exists, got: {err}"
+        err.contains("never read"),
+        "error message must say the frame's Loro bytes were never read, got: {err}"
     );
 
     materializer.shutdown();
@@ -2110,25 +2106,6 @@ fn head_exchange_deserializes_without_loro_vvs_field() {
 }
 
 #[test]
-fn loro_sync_chunked_deserializes_without_compressed_field() {
-    // #2200 wire back-compat: a #611 peer that predates the `compressed`
-    // flag sends `LoroSyncChunked` with no `compressed` field. `#[serde(
-    // default)]` must fill `false` (raw bytes) rather than failing to parse.
-    let json = r#"{"type":"LoroSyncChunked","header":{"kind":"snapshot","protocol_version":1,"space_id":"01HZ00000000000000000000SP","size_bytes":7},"is_last":true}"#;
-    let msg: SyncMessage = serde_json::from_str(json)
-        .expect("old-format LoroSyncChunked (no compressed) must deserialize");
-    match msg {
-        SyncMessage::LoroSyncChunked { compressed, .. } => {
-            assert!(
-                !compressed,
-                "a missing compressed field must default to false (#2200 old-peer → raw bytes)"
-            );
-        }
-        other => panic!("expected LoroSyncChunked, got {other:?}"),
-    }
-}
-
-#[test]
 fn json_shape_all_variants_have_type_tag() {
     use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 
@@ -2170,7 +2147,6 @@ fn json_shape_all_variants_have_type_tag() {
                     size_bytes: 0,
                 },
                 is_last: true,
-                compressed: false,
             },
         ),
         (
@@ -2640,8 +2616,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
 }
 
 /// End-to-end — orchestrator A prepares an outgoing `LoroSync` for a
-/// space whose engine has one block, the message is serde-round-tripped
-/// through JSON (the wire format), then applied via
+/// space whose engine has one block, then it is applied via
 /// `loro_sync::apply_remote` to a fresh registry B. Engine B's SQL
 /// projection of the block matches A's.
 ///
@@ -2680,31 +2655,12 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
             .expect("create");
     }
 
-    // Build outgoing LoroSync via the prepare helper. Wrap into the
-    // SyncMessage envelope (the wire shape).
-    let inner =
+    // Build outgoing LoroSync via the prepare helper.
+    let received_inner: LoroSyncMessage =
         loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
             .await
             .expect("prepare_outgoing")
             .expect("#1257 freshness gate must not refuse a consistent engine");
-    let outgoing = SyncMessage::LoroSync {
-        msg: inner,
-        is_last: true,
-    };
-
-    // Serde round-trip — this is what conn.send_json/conn.recv_json
-    // do on the actual transport.
-    let json = serde_json::to_string(&outgoing).expect("serialise SyncMessage::LoroSync");
-    let received: SyncMessage =
-        serde_json::from_str(&json).expect("deserialise SyncMessage::LoroSync");
-
-    let received_inner: LoroSyncMessage = match received {
-        SyncMessage::LoroSync { msg, is_last } => {
-            assert!(is_last, "wire must preserve is_last");
-            msg
-        }
-        other => panic!("expected SyncMessage::LoroSync after round-trip, got {other:?}"),
-    };
 
     // Apply on B (fresh registry, fresh DB).
     let registry_b = LoroEngineRegistry::new();
@@ -2879,33 +2835,15 @@ async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
             .expect("create y2");
     }
 
-    // Build + wire-roundtrip + apply one snapshot per space.
+    // Build + apply one snapshot per space.
     let registry_b = LoroEngineRegistry::new();
 
     for space in [&space_x, &space_y] {
-        let inner =
+        let received_inner: LoroSyncMessage =
             loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, space, "device-A", None)
                 .await
                 .expect("prepare_outgoing")
                 .expect("#1257 freshness gate must not refuse a consistent engine");
-
-        // Wrap in the day-5 wire envelope and JSON-roundtrip — this
-        // mirrors what `conn.send_json` / `conn.recv_json` do on the
-        // real transport.
-        let outgoing = SyncMessage::LoroSync {
-            msg: inner,
-            is_last: true,
-        };
-        let json = serde_json::to_string(&outgoing).expect("serialise SyncMessage::LoroSync");
-        let received: SyncMessage =
-            serde_json::from_str(&json).expect("deserialise SyncMessage::LoroSync");
-        let received_inner: LoroSyncMessage = match received {
-            SyncMessage::LoroSync { msg, is_last } => {
-                assert!(is_last, "wire must preserve is_last");
-                msg
-            }
-            other => panic!("expected SyncMessage::LoroSync, got {other:?}"),
-        };
 
         let returned_space =
             match loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
@@ -3050,22 +2988,11 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
             .expect("create X");
     }
     {
-        let inner =
+        let received_inner =
             loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
                 .await
                 .expect("prepare_outgoing snapshot")
                 .expect("#1257 freshness gate must not refuse a consistent engine");
-        // Round-trip via the SyncMessage envelope to mirror the wire.
-        let outgoing = SyncMessage::LoroSync {
-            msg: inner,
-            is_last: true,
-        };
-        let json = serde_json::to_string(&outgoing).expect("serialise");
-        let received: SyncMessage = serde_json::from_str(&json).expect("deserialise");
-        let received_inner = match received {
-            SyncMessage::LoroSync { msg, .. } => msg,
-            other => panic!("expected LoroSync, got {other:?}"),
-        };
         let outcome = loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
             .await
             .expect("apply snapshot");
@@ -3125,18 +3052,8 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
     );
     assert!(update_bytes_len > 0, "Update bytes must be non-empty");
 
-    // ── Step 3 — Wire-roundtrip + apply on B.
-    let outgoing = SyncMessage::LoroSync {
-        msg: update_msg,
-        is_last: true,
-    };
-    let json = serde_json::to_string(&outgoing).expect("serialise update envelope");
-    let received: SyncMessage = serde_json::from_str(&json).expect("deserialise update envelope");
-    let received_inner = match received {
-        SyncMessage::LoroSync { msg, .. } => msg,
-        other => panic!("expected LoroSync, got {other:?}"),
-    };
-    let outcome = loro_sync::apply_remote(&pool_b, &registry_b, "device-B", received_inner)
+    // ── Step 3 — Apply on B.
+    let outcome = loro_sync::apply_remote(&pool_b, &registry_b, "device-B", update_msg)
         .await
         .expect("apply update");
     assert!(
@@ -3223,42 +3140,16 @@ async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
     // writer of its own ops, a Snapshot is what `prepare_outgoing(None)`
     // would produce — and is the safe choice when neither peer has
     // observed the other yet.
-    let msg_from_a =
+    let inner_a_to_b =
         loro_sync::prepare_outgoing_for_pool(&pool_a, &registry_a, &space, "device-A", None)
             .await
             .expect("A prepare_outgoing")
             .expect("#1257 freshness gate must not refuse a consistent engine");
-    let msg_from_b =
+    let inner_b_to_a =
         loro_sync::prepare_outgoing_for_pool(&pool_b, &registry_b, &space, "device-B", None)
             .await
             .expect("B prepare_outgoing")
             .expect("#1257 freshness gate must not refuse a consistent engine");
-
-    // Wire-roundtrip both snapshots.
-    let wire_a: SyncMessage = {
-        let env = SyncMessage::LoroSync {
-            msg: msg_from_a,
-            is_last: true,
-        };
-        let json = serde_json::to_string(&env).expect("serialise A→B");
-        serde_json::from_str(&json).expect("deserialise A→B")
-    };
-    let wire_b: SyncMessage = {
-        let env = SyncMessage::LoroSync {
-            msg: msg_from_b,
-            is_last: true,
-        };
-        let json = serde_json::to_string(&env).expect("serialise B→A");
-        serde_json::from_str(&json).expect("deserialise B→A")
-    };
-    let inner_a_to_b = match wire_a {
-        SyncMessage::LoroSync { msg, .. } => msg,
-        other => panic!("expected LoroSync A→B, got {other:?}"),
-    };
-    let inner_b_to_a = match wire_b {
-        SyncMessage::LoroSync { msg, .. } => msg,
-        other => panic!("expected LoroSync B→A, got {other:?}"),
-    };
 
     // Mutual import: A applies B's snapshot, B applies A's snapshot.
     let outcome_ab = loro_sync::apply_remote(&pool_b, &registry_b, "device-B", inner_a_to_b)
@@ -3382,8 +3273,8 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
         e.apply_add_tag(c1, tagblk).expect("add tag to c1");
     }
 
-    // Helper: build outgoing sync (snapshot or update) from A, wire-roundtrip
-    // the envelope, then apply on a target registry+pool. Returns the outcome.
+    // Helper: build outgoing sync (snapshot or update) from A, then apply on a
+    // target registry+pool.
     async fn sync_a_to_target(
         pool_a: &SqlitePool,
         registry_a: &LoroEngineRegistry,
@@ -3393,21 +3284,11 @@ async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
         registry_t: &LoroEngineRegistry,
         device_t: &str,
     ) {
-        let inner =
+        let received_inner: LoroSyncMessage =
             loro_sync::prepare_outgoing_for_pool(pool_a, registry_a, space, "device-A", peer_vv)
                 .await
                 .expect("prepare_outgoing")
                 .expect("#1257 freshness gate must not refuse a consistent engine");
-        let outgoing = SyncMessage::LoroSync {
-            msg: inner,
-            is_last: true,
-        };
-        let json = serde_json::to_string(&outgoing).expect("serialise");
-        let received: SyncMessage = serde_json::from_str(&json).expect("deserialise");
-        let received_inner: LoroSyncMessage = match received {
-            SyncMessage::LoroSync { msg, .. } => msg,
-            other => panic!("expected LoroSync, got {other:?}"),
-        };
         let outcome = loro_sync::apply_remote(pool_t, registry_t, device_t, received_inner)
             .await
             .expect("apply_remote");

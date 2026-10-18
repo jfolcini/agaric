@@ -2636,9 +2636,6 @@ pub async fn run_sync_session(
 ) -> Result<(), AppError> {
     // Initiator sends first message
     //
-    // #611: all session-loop sends/recvs go through `wire::{send,recv}_sync_message`
-    // so over-threshold LoroSync payloads ride the chunked binary path instead of
-    // blowing the 10 MB JSON text-frame cap.
     // One driver, both roles. The loop this replaces was written twice — here and in
     // `server.rs` — and the only thing the two shared was the dispatch guard, whose own
     // doc called itself "the ONE guard shared by all three dispatch sites": an admission

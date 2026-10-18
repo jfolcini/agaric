@@ -25,7 +25,9 @@ Cache rebuild jobs (`tags_cache`, `pages_cache`, `agenda_cache`, `projected_agen
 
 ### Sync streaming over framed pull
 
-Both snapshot transfer (catch-up) and attachment file transfer stream on the same QUIC bi-stream the control messages use, copied through one fixed 5 MB buffer (`BULK_COPY_BYTES` in `src-tauri/agaric-sync/src/transport/bulk.rs`). Every read is sized from that buffer's own length rather than from the declared total, so allocation stays constant however large the transfer; the declared size is bounded against a caller-supplied cap *before* the first read. Sender holds open a producer task that pulls from a `BufReader`. Memory bounded; back-pressure comes from QUIC's flow-control windows rather than from a hand-rolled chunk loop.
+Attachment file transfer streams on the same QUIC bi-stream the control messages use, copied through one fixed 5 MB buffer (`BULK_COPY_BYTES` in `src-tauri/agaric-sync/src/transport/bulk.rs`). Every read is sized from that buffer's own length rather than from the declared total, so allocation stays constant however large the transfer; the declared size is bounded against a caller-supplied cap *before* the first read. Sender holds open a producer task that pulls from a `BufReader`. Memory bounded; back-pressure comes from QUIC's flow-control windows rather than from a hand-rolled chunk loop.
+
+Loro payloads, the catch-up's snapshots included, travel raw after a header frame on the same stream (`transport/session.rs`, #5761): the receiver bounds the announced size by `MAX_LORO_SYNC_PAYLOAD_SIZE` (256 MB) before reading, and reads it straight into the buffer the engine imports from, through one 5 MB read buffer. Each side holds the payload once, plus that buffer.
 
 ### Per-page block stores
 
