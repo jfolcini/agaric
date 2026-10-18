@@ -196,7 +196,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /var/cache/apt/archives/*.deb
-          key: apt-tauri-e2e-${{ runner.os }}-v3
+          key: apt-tauri-e2e-${{ runner.os }}-v4
 
       - name: Install system dependencies
         # The Tauri Linux build deps are copied verbatim from `_validate.yml`'s
@@ -209,6 +209,8 @@ jobs:
         #     `dpkg -S /usr/bin/dbus-run-session` on noble), for the launch
         #     step below (#4444).
         #   - openbox — a window manager, so the app window gets focus (#5457).
+        #   - gstreamer1.0-plugins-good — WebKitGTK's WAV demuxer (wavparse), so
+        #     `editor-durability.e2e.ts` can play an audio attachment (#5733).
         # #4163: `apt-get update` is ADVISORY inside this action -- a mirror
         # that cannot serve the index no longer reds this job as a code
         # failure; the INSTALL decides. Measured trace + exit codes in
@@ -227,6 +229,7 @@ jobs:
             xvfb
             dbus-daemon
             openbox
+            gstreamer1.0-plugins-good
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
         # Mirrors `_validate.yml`: the repo ships `.cargo/config.toml.example`

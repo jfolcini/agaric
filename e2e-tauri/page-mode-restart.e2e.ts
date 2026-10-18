@@ -6,23 +6,16 @@
 // the app process ends and a new one opens the same vault, so nothing the
 // webview held survives. The blocks must come back with their text, their
 // depth and the same ids, the ids every `((ref))` and `[[link]]` points at.
-//
-// The restart ends the WebDriver session and starts another: `tauri-driver`
-// keeps the sandbox's `AGARIC_DATA_DIR`, so the new app opens the same vault.
-// The old app must be gone first, or the new one hands its launch to it over
-// the single-instance D-Bus name and the session never starts (see
-// `reapSessionApp` in wdio.conf.ts).
+// `restartApp` in helpers.ts says how the restart keeps the vault.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
-
-import { readdirSync, readlinkSync, realpathSync } from 'node:fs'
-import path from 'node:path'
 
 import {
   NAV_TIMEOUT,
   openNewPage,
   reopenPageByTitle,
+  restartApp,
   runScopedMarker,
   typeMarkerVerified,
   waitForAppReady,
@@ -37,37 +30,6 @@ import {
 
 const FIRST = runScopedMarker('wdio-page-mode-first')
 const SECOND = runScopedMarker('wdio-page-mode-second')
-
-const APP =
-  process.env['TAURI_APP_BINARY'] ??
-  path.resolve(import.meta.dirname, '..', 'src-tauri', 'target', 'debug', 'agaric')
-
-/** PIDs of the app binary under test; the lane runs one spec file at a time. */
-function appPids(): number[] {
-  const binary = realpathSync(APP)
-  return readdirSync('/proc')
-    .filter((entry) => /^\d+$/.test(entry))
-    .filter((entry) => {
-      try {
-        return readlinkSync(`/proc/${entry}/exe`) === binary
-      } catch {
-        return false
-      }
-    })
-    .map(Number)
-}
-
-/** End the app and open it again on the same vault. */
-async function restartApp(): Promise<void> {
-  await browser.deleteSession()
-  await browser.waitUntil(() => Promise.resolve(appPids().length === 0), {
-    timeout: NAV_TIMEOUT,
-    interval: 200,
-    timeoutMsg: `the app (pid ${appPids().join(', ')}) outlived its session`,
-  })
-  await browser.reloadSession()
-  await waitForAppReady()
-}
 
 describe('Agaric real-backend page mode across a restart (#5691)', () => {
   it('keeps the text, depth and ids of blocks edited in page mode', async () => {
