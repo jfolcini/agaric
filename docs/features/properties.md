@@ -93,13 +93,12 @@ When a property value changes, downstream surfaces (DuePanel, DonePanel, LinkedR
 
 ## Where to manage definitions
 
-**Settings → Properties** lists every property definition with type, usage count, and edit affordances. From there you can rename a property key, change its type (with confirmation when destructive), or add / edit / remove select options. The same view is also reachable via the `agaric://settings/properties` deep link.
+**Settings → Properties** lists every property definition with its type. From there you can create a definition, delete one no block uses, and edit a select key's options as a JSON array. Built-in keys can't be deleted, and `todo_state`'s options are locked. Renaming a key, changing its type, renaming an option and a usage count are not built yet (#5841). The same view is also reachable via the `agaric://settings/properties` deep link.
 
 ## Pitfalls to know
 
-- **Type changes are destructive.** Switching a property from `text` to `number` can drop values that don't parse.
 - **A new definition can't contradict values you already have.** A definition is keyed by the property key alone, so it applies to every block in the vault — and it can't be removed again while any value under that key exists. Declaring `year` as `number` while some blocks hold `year = "circa 1920"` would therefore reject every later text edit of `year` anywhere, drop those values on the next sync, and leave you unable to withdraw the definition. So creating a definition is **refused** when values already stored under the key would not fit the type you picked; the message names the key, how many values are in the way, and what shape they are stored in. Declaring a type that every existing value already satisfies (all your `year` values are numbers) is allowed and does exactly what you'd expect. A bibliography import behaves differently on purpose: it leaves such a key undeclared and reports the skip in its warnings rather than refusing the whole import.
-- **Select options are part of the definition, not the value.** Renaming an option propagates to every existing value of that property.
+- **Select options are part of the definition, not the value.** Editing the option list leaves existing values alone: a value whose option you removed or renamed keeps its old text.
 - **Repeat with no `due_date` or `scheduled_date` doesn't project.** A repeat rule needs at least one anchor date to know where to start.
 - **`repeat-seq` is mutated automatically** when a task is DONE. Hand-editing it can confuse the projection.
 - **Natural-language date input** is local to the inline date editor; the underlying storage is always ISO-8601.
