@@ -28,7 +28,9 @@ const centreY = (element: Locator) =>
     return top + height / 2
   })
 
-test('icon buttons across the app render their icons at the asked size', async ({ page }) => {
+test('icon buttons across the app render their icons at the asked size @pages @settings', async ({
+  page,
+}) => {
   await waitForBoot(page)
   const back = page.getByRole('button', { name: 'Back', exact: true })
   await expect(back).toBeVisible()

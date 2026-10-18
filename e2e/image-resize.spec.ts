@@ -13,7 +13,7 @@ import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './he
 // Same-origin, so it loads, and 100×100, so the widths below are exact.
 const IMG_URL = '/agaric.svg'
 
-test.describe('inline image resize (#4712)', () => {
+test.describe('inline image resize (#4712) @attachments', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

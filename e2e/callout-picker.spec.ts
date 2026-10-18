@@ -7,7 +7,7 @@
  */
 import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
-test.describe('Callout type picker (#215)', () => {
+test.describe('Callout type picker (#215) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

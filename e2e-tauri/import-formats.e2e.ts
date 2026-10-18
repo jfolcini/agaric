@@ -158,7 +158,7 @@ function joplinItem(content: string, props: Record<string, string>): string {
   return [content, '', ...meta].join('\n')
 }
 
-describe('Agaric real-backend imports by format (#5740)', () => {
+describe('Agaric real-backend imports by format (#5740) @markdown', () => {
   it('imports a folder with the image its note references, rendered from the stored bytes', async () => {
     await waitForAppReady()
     const marker = runScopedMarker('wdio-folder')

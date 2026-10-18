@@ -34,7 +34,7 @@ async function createInOpenDialog(page: Page, title: string): Promise<void> {
   await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
 }
 
-test.describe('New page dialog (desktop)', () => {
+test.describe('New page dialog (desktop) @pages @mobile', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -141,7 +141,7 @@ test.describe('New page dialog (desktop)', () => {
   })
 })
 
-test.describe('New page dialog (phone)', () => {
+test.describe('New page dialog (phone) @pages @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,

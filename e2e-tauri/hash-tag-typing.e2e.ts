@@ -50,7 +50,7 @@ async function chipNames(root: string): Promise<string[]> {
   return names
 }
 
-describe('Agaric real-backend typed tags (#5160 N7)', () => {
+describe('Agaric real-backend typed tags (#5160 N7) @editor @pages', () => {
   it('stores #name and #[[multi word]] as the tags they name, with no stray bracket', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

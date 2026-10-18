@@ -76,7 +76,7 @@ function backendContents(ids: string[]): Promise<string[]> {
   }, ids)
 }
 
-describe('Agaric real-backend sync of Loro bytes sent raw after a header frame (#5761)', () => {
+describe('Agaric real-backend sync of Loro bytes sent raw after a header frame (#5761) @sync', () => {
   let peer: SyncPeer | undefined
 
   before(async () => {

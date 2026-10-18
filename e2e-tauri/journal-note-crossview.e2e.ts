@@ -25,7 +25,7 @@ import {
 // enforces that rule over the run suffix it appends (#3334).
 const MARKER = runScopedMarker('wdio-journal-viewhop')
 
-describe('Agaric real-backend cross-view durability (#3085)', () => {
+describe('Agaric real-backend cross-view durability (#3085) @journal', () => {
   it('keeps a Journal block after switching to Pages and back', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

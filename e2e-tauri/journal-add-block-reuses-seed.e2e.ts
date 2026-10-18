@@ -31,7 +31,7 @@ const STATIC = '[data-testid="block-static"]'
 // content (StaticBlock.tsx); a block with text never does.
 const BLANK_STATIC = `${STATIC} .block-placeholder`
 
-describe('Agaric real-backend Add block on a fresh day', () => {
+describe('Agaric real-backend Add block on a fresh day @editor @journal', () => {
   it('types into the empty seed block instead of adding a second one', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

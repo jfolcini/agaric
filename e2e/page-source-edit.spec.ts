@@ -197,7 +197,7 @@ async function editBlockElsewhere(page: Page, blockId: string, toText: string): 
   )
 }
 
-test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
+test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobile', () => {
   test.beforeEach(async ({ page, context }) => {
     // Cut and paste go through the system clipboard.
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
@@ -632,7 +632,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b)', () => {
   })
 })
 
-test.describe('Edit as Markdown on a 390 px phone', () => {
+test.describe('Edit as Markdown on a 390 px phone @editor @pages @markdown @mobile', () => {
   const iPhone13 = devices['iPhone 13']
   test.use({
     viewport: { width: 390, height: 844 },

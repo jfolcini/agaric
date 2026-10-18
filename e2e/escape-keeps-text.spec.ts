@@ -10,7 +10,7 @@ import { expect, focusBlock, openPage, reopenPage, test, waitForBoot } from './h
 const PAGE = 'Getting Started'
 const EDITED = 'Kept by Escape'
 
-test.describe('Escape keeps the text (#5160 D17)', () => {
+test.describe('Escape keeps the text (#5160 D17) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)

@@ -21,7 +21,7 @@
 
 import { dismissWelcomeModalIfPresent, openJournalBlockEditor, typeMarkerVerified } from './helpers'
 
-describe('Agaric real-backend smoke (#155)', () => {
+describe('Agaric real-backend smoke (#155) @boot', () => {
   it('boots the app, renders the Journal, and round-trips a block through the live backend', async () => {
     // 1. The app auto-loads its frontend when the WebKitWebView starts (no
     //    navigation needed). Wait for the desktop sidebar to mount — the first

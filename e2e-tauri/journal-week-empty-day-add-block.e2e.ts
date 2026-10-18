@@ -52,7 +52,7 @@ async function firstEmptyDayId(): Promise<string> {
   return found
 }
 
-describe('Agaric real-backend week view empty-day Add block', () => {
+describe('Agaric real-backend week view empty-day Add block @editor @journal', () => {
   it('creates and focuses one block in that day on a single click', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

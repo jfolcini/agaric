@@ -87,7 +87,7 @@ async function chooseInSettings(page: Page, mode: 'Blocks' | 'Page'): Promise<vo
   await expect(page.getByRole('combobox', { name: 'Edit pages as' })).toHaveText(mode)
 }
 
-test.describe('page mode’s setting and switch (#5691)', () => {
+test.describe('page mode’s setting and switch (#5691) @editor @pages @settings @mobile', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -164,7 +164,7 @@ test.describe('page mode’s setting and switch (#5691)', () => {
   })
 })
 
-test.describe('on a phone (#5691)', () => {
+test.describe('on a phone (#5691) @editor @pages @settings @mobile', () => {
   const iPhone13 = devices['iPhone 13']
   test.use({
     viewport: iPhone13.viewport,

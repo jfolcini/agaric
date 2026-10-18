@@ -44,7 +44,7 @@ async function reopenTheNewPage(marker: string): Promise<void> {
   await $(`[data-testid="sortable-block"]*=${marker}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
-describe('Agaric real-backend source mode (#5140 Phase 4b)', () => {
+describe('Agaric real-backend source mode (#5140 Phase 4b) @editor @pages @markdown', () => {
   it('one save reorders, edits and deletes blocks, durably', async () => {
     await waitForAppReady()
     await openNewPage()

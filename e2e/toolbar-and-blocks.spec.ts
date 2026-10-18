@@ -30,7 +30,7 @@ import {
 // 1. Toolbar visibility
 // ===========================================================================
 
-test.describe('Toolbar visibility', () => {
+test.describe('Toolbar visibility @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -59,7 +59,7 @@ test.describe('Toolbar visibility', () => {
 // 2. Formatting buttons
 // ===========================================================================
 
-test.describe('Formatting buttons — full cycle: edit → style → save → verify', () => {
+test.describe('Formatting buttons — full cycle: edit → style → save → verify @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -222,7 +222,7 @@ test.describe('Formatting buttons — full cycle: edit → style → save → ve
 // 3. Link buttons
 // ===========================================================================
 
-test.describe('Link buttons', () => {
+test.describe('Link buttons @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -372,7 +372,7 @@ test.describe('Link buttons', () => {
 // 4. Priority shortcuts
 // ===========================================================================
 
-test.describe('Priority shortcuts', () => {
+test.describe('Priority shortcuts @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -441,7 +441,7 @@ test.describe('Priority shortcuts', () => {
 // 5. Date button
 // ===========================================================================
 
-test.describe('Date button', () => {
+test.describe('Date button @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -462,7 +462,7 @@ test.describe('Date button', () => {
 // 6. Block interactions
 // ===========================================================================
 
-test.describe('Block interactions', () => {
+test.describe('Block interactions @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -612,7 +612,7 @@ test.describe('Block interactions', () => {
 // 7. Undo / Redo
 // ===========================================================================
 
-test.describe('Undo / Redo', () => {
+test.describe('Undo / Redo @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -686,7 +686,7 @@ test.describe('Undo / Redo', () => {
 // 8. Collapse / Expand
 // ===========================================================================
 
-test.describe('Collapse / Expand', () => {
+test.describe('Collapse / Expand @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -725,7 +725,7 @@ test.describe('Collapse / Expand', () => {
  * geometry (`getBoundingClientRect`, `scrollHeight` vs `clientHeight`)
  * instead, per the review finding on #4313 itself.
  */
-test.describe('Turn into popover — desktop collision-aware max-height (#4320)', () => {
+test.describe('Turn into popover — desktop collision-aware max-height (#4320) @editor', () => {
   test.use({ viewport: { width: 1280, height: 700 } })
 
   const SLACK = 1

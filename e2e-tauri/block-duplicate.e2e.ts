@@ -35,7 +35,7 @@ async function reopenTheNewPage(): Promise<void> {
   await blockStaticByMarker(SECOND).waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
-describe('Agaric real-backend Duplicate (#5140 Phase 3a)', () => {
+describe('Agaric real-backend Duplicate (#5140 Phase 3a) @editor', () => {
   it('copies a two-line code block as ONE code block', async () => {
     await waitForAppReady()
     await openNewPage()

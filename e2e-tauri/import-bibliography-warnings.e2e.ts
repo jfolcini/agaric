@@ -42,7 +42,7 @@ const BIBTEX = [
   '',
 ].join('\n')
 
-describe('Agaric real-backend bibliography import (#4671)', () => {
+describe('Agaric real-backend bibliography import (#4671) @markdown', () => {
   it('creates a page for the good entry and lists the malformed one as a warning', async () => {
     await waitForAppReady()
     await navigateTo('Settings')

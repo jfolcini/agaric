@@ -31,7 +31,7 @@ import {
 
 const REFERENCES = '[data-testid="linked-references"]'
 
-test.describe('Linked references follow the zoom', () => {
+test.describe('Linked references follow the zoom @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

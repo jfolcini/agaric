@@ -53,7 +53,7 @@ async function insertEmbedOfWelcomeBlock(page: Page): Promise<void> {
   await page.keyboard.press('Enter')
 }
 
-test.describe('embed edit-in-place', () => {
+test.describe('embed edit-in-place @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

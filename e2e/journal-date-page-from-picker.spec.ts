@@ -15,7 +15,9 @@ import { expect, focusBlock, test, typeSlashCommand, waitForBoot } from './helpe
 const NOW = new Date('2026-10-14T10:00:00')
 const TARGET = '2026-10-16'
 
-test('a date page created from the block date picker shows in Day mode', async ({ page }) => {
+test('a date page created from the block date picker shows in Day mode @editor @pages @journal', async ({
+  page,
+}) => {
   await page.clock.setFixedTime(NOW)
   await waitForBoot(page)
   await page.getByRole('tab', { name: 'Daily view' }).click()

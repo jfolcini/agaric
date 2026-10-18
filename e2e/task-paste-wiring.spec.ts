@@ -72,7 +72,7 @@ async function freshBlock(page: import('@playwright/test').Page): Promise<Editor
   return live
 }
 
-test.describe('Task-list editor paste wiring (#1481)', () => {
+test.describe('Task-list editor paste wiring (#1481) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

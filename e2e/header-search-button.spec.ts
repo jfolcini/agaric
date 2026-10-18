@@ -5,7 +5,7 @@
 
 import { expect, test, waitForBoot } from './helpers'
 
-test.describe('header search button (desktop)', () => {
+test.describe('header search button (desktop) @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

@@ -48,7 +48,7 @@ async function openSlashList(page: import('@playwright/test').Page, query: strin
   return list
 }
 
-test.describe('Slash-command property pickers (#1169)', () => {
+test.describe('Slash-command property pickers (#1169) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

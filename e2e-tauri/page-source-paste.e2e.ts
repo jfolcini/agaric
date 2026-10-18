@@ -92,7 +92,7 @@ async function saveSource(source: WebdriverIO.Element): Promise<void> {
   })
 }
 
-describe('Agaric real-backend source-mode cut, copy and paste (#5160 phase 5-5b)', () => {
+describe('Agaric real-backend source-mode cut, copy and paste (#5160 phase 5-5b) @editor @pages @markdown', () => {
   let firstId = ''
   let childId = ''
   let secondId = ''

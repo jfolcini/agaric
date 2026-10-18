@@ -39,7 +39,7 @@ import {
 // 1. Slash menu basics
 // ===========================================================================
 
-test.describe('Slash menu basics', () => {
+test.describe('Slash menu basics @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -81,7 +81,7 @@ test.describe('Slash menu basics', () => {
 // 2. Task commands
 // ===========================================================================
 
-test.describe('Task commands', () => {
+test.describe('Task commands @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -136,7 +136,7 @@ test.describe('Task commands', () => {
 // 3. Priority commands (progressive disclosure)
 // ===========================================================================
 
-test.describe('Priority commands', () => {
+test.describe('Priority commands @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -214,7 +214,7 @@ test.describe('Priority commands', () => {
 // 4. Heading commands (progressive disclosure)
 // ===========================================================================
 
-test.describe('Heading commands', () => {
+test.describe('Heading commands @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -270,7 +270,7 @@ test.describe('Heading commands', () => {
 // 5. Date command
 // ===========================================================================
 
-test.describe('Date command', () => {
+test.describe('Date command @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

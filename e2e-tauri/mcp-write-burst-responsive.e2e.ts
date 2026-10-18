@@ -55,7 +55,7 @@ function withinTimeout<T>(promise: Promise<T>, what: string): Promise<T> {
   ])
 }
 
-describe('Agaric real-backend MCP write burst', () => {
+describe('Agaric real-backend MCP write burst @mcp', () => {
   it('stays responsive while a burst of MCP writes reloads the open page', async () => {
     await waitForAppReady()
 

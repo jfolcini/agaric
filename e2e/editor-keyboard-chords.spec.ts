@@ -35,7 +35,7 @@ function editorOf(page: Page, blockId: string) {
   )
 }
 
-test.describe('Editor keyboard chords (#5733)', () => {
+test.describe('Editor keyboard chords (#5733) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)

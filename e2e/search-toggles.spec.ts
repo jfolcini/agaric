@@ -29,7 +29,7 @@ interface MockErrorWindow extends Window {
   __clearMockErrors?: () => void
 }
 
-test.describe('Search toggles (E2E-1)', () => {
+test.describe('Search toggles (E2E-1) @search', () => {
   /** Capitalised, lower-case TODO, and a longer word: each toggle drops a different one. */
   let capitalised: string
   let lowerTodo: string
@@ -98,7 +98,7 @@ test.describe('Search toggles (E2E-1)', () => {
   })
 })
 
-test.describe('Search backend-error surface (E2E-2)', () => {
+test.describe('Search backend-error surface (E2E-2) @search', () => {
   test.afterEach(async ({ page }) => {
     await page.evaluate(() => {
       ;(window as unknown as MockErrorWindow).__clearMockErrors?.()

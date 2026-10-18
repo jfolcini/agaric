@@ -151,7 +151,7 @@ async function reopenInPageMode(): Promise<void> {
   await chooseEditMode('Page')
 }
 
-describe('Agaric real-backend properties and repeating tasks in page mode (#5743)', () => {
+describe('Agaric real-backend properties and repeating tasks in page mode (#5743) @editor @pages', () => {
   it('a typed line sets a property, a repeating task brings in its next occurrence, and both stay', async () => {
     await waitForAppReady()
     const today = await dayFromToday(0)

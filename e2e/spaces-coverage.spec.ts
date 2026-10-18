@@ -45,7 +45,7 @@ async function openJournalView(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Journal', exact: true }).click()
 }
 
-test.describe('page creation routes through create_page_in_space', () => {
+test.describe('page creation routes through create_page_in_space @spaces', () => {
   test.beforeEach(async ({ page }) => {
     // Clear localStorage so the WelcomeModal is allowed to render in the
     // welcome-flow test, and so cross-test mutations cannot bleed.

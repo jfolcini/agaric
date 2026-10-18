@@ -150,7 +150,7 @@ async function placeCaret(offset: number): Promise<void> {
   )
 }
 
-describe('Agaric real-backend block structure keys (#5365)', () => {
+describe('Agaric real-backend block structure keys (#5365) @editor', () => {
   before(waitForAppReady)
 
   it('Enter mid-text splits a block and Backspace at its start merges it back, durably', async () => {

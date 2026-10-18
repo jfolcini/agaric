@@ -18,7 +18,7 @@ import {
 // E2E-3 — Add filter builder popover
 // ===========================================================================
 
-test.describe('Filter helper popover (E2E-3)', () => {
+test.describe('Filter helper popover (E2E-3) @search', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })
@@ -68,7 +68,7 @@ test.describe('Filter helper popover (E2E-3)', () => {
 // E2E-4 — chip lifecycle
 // ===========================================================================
 
-test.describe('Filter chip lifecycle (E2E-4)', () => {
+test.describe('Filter chip lifecycle (E2E-4) @search', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })
@@ -146,7 +146,7 @@ async function expectFilterKeeps(
   await expect.poll(() => searchResultIds(page)).toEqual(ids.slice(0, keep.length).toSorted())
 }
 
-test.describe('Structured DSL filters narrow the results (E2E-6)', () => {
+test.describe('Structured DSL filters narrow the results (E2E-6) @search', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })

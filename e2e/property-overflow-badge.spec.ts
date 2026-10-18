@@ -30,7 +30,9 @@ test.beforeEach(async ({ page }) => {
   await waitForBoot(page)
 })
 
-test('+N opens the drawer for its block while no block is being edited', async ({ page }) => {
+test('+N opens the drawer for its block while no block is being edited @editor', async ({
+  page,
+}) => {
   const [blockId] = await seedSearchBlocks(page, [EIGHT_PROPS])
   if (blockId === undefined) throw new Error('the seeded block has no id')
 
@@ -42,7 +44,7 @@ test('+N opens the drawer for its block while no block is being edited', async (
   await expect(activeSheet(page).getByRole('textbox', { name: 'k8 value' })).toHaveValue('v8')
 })
 
-test('+N opens the drawer for its block, not the one being edited', async ({ page }) => {
+test('+N opens the drawer for its block, not the one being edited @editor', async ({ page }) => {
   const [blockId, otherId] = await seedSearchBlocks(page, [
     EIGHT_PROPS,
     { content: 'No properties', parentId: QUICK_NOTES },

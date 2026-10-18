@@ -26,7 +26,7 @@ function iconColors(control: Locator) {
 }
 
 for (const theme of [...INK_THEMES, ...PALETTE_THEMES]) {
-  test.describe(`icon colors (${theme})`, () => {
+  test.describe(`icon colors (${theme}) @settings`, () => {
     test.use({ viewport: { width: 1440, height: 900 } })
 
     test.beforeEach(async ({ page }) => {

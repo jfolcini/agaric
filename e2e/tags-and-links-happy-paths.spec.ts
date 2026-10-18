@@ -40,7 +40,7 @@ async function createTag(page: Page, name: string): Promise<string> {
   return id
 }
 
-test.describe('Tag query composer', () => {
+test.describe('Tag query composer @editor @pages', () => {
   test('(alpha OR beta) AND NOT gamma lists exactly the blocks it admits', async ({ page }) => {
     await waitForBoot(page)
     const alpha = await createTag(page, 'alpha')
@@ -84,7 +84,7 @@ test.describe('Tag query composer', () => {
   })
 })
 
-test.describe('Linked references link kind', () => {
+test.describe('Linked references link kind @editor @pages', () => {
   test('All, Page links and Block refs narrow the list and the header count', async ({ page }) => {
     await waitForBoot(page)
     // Quick Notes' seeded QN_1 already page-links Getting Started; this adds
@@ -118,7 +118,7 @@ test.describe('Linked references link kind', () => {
   })
 })
 
-test.describe('Tag chip name', () => {
+test.describe('Tag chip name @editor @pages', () => {
   // The tag is made after boot, so the resolve store's preload never listed it, as the backend's
   // background-filled `tags_cache` misses a tag an import just created.
   test('a tag the resolve store never listed shows its name, not its id', async ({ page }) => {

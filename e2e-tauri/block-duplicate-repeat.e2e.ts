@@ -55,7 +55,7 @@ async function saveSource(source: WebdriverIO.Element): Promise<void> {
   })
 }
 
-describe('Agaric real-backend Duplicate of a repeating task (#5160 P4)', () => {
+describe('Agaric real-backend Duplicate of a repeating task (#5160 P4) @editor @journal', () => {
   it('the copy of a weekly task repeats weekly', async () => {
     await waitForAppReady()
     await openNewPage()

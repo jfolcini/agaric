@@ -30,7 +30,7 @@ async function tagNames(page: Page): Promise<Map<string, string>> {
   return new Map(rows.map((row) => [row.tag_id, row.name]))
 }
 
-test.describe('Typing # makes a tag (#5160 D8)', () => {
+test.describe('Typing # makes a tag (#5160 D8) @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await ipc(page, 'edit_block', { blockId: GS1, toText: 'Plan' })

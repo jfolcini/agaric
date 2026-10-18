@@ -122,7 +122,7 @@ async function exportOpenPage(): Promise<string> {
   return text
 }
 
-describe('Agaric real-backend export (#5740)', () => {
+describe('Agaric real-backend export (#5740) @markdown', () => {
   it('re-imports an exported page with its task, repeat rule, tag, labelled link and nesting', async () => {
     const marker = runScopedMarker('wdio-rt')
     const title = `${marker}-page`

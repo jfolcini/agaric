@@ -60,7 +60,7 @@ async function blockIds(page: import('@playwright/test').Page): Promise<string[]
     .evaluateAll((els) => els.map((el) => el.getAttribute('data-block-id') ?? ''))
 }
 
-test.describe('Touch block menus (iPhone viewport, #1171)', () => {
+test.describe('Touch block menus (iPhone viewport, #1171) @editor @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,

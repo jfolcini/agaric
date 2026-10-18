@@ -8,7 +8,7 @@
 
 import { expect, focusBlock, openPage, saveBlock, test, waitForBoot } from './helpers'
 
-test.describe('[[Page|label]] links (#5160 D9)', () => {
+test.describe('[[Page|label]] links (#5160 D9) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

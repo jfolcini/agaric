@@ -52,7 +52,7 @@ async function expectOneTwoLineBlock(expectedSecondLine: string): Promise<void> 
   expect(await secondLineRows[0]?.getText()).toContain(LINE1)
 }
 
-describe('Agaric real-backend line break inside a block (#5160 D2)', () => {
+describe('Agaric real-backend line break inside a block (#5160 D2) @editor', () => {
   it('keeps a two-line block as one block through a typo fix and a view round-trip', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

@@ -60,7 +60,7 @@ async function imageLine(id: string): Promise<string> {
   return line.text
 }
 
-describe('Agaric real-backend pasted image render (#5365)', () => {
+describe('Agaric real-backend pasted image render (#5365) @attachments', () => {
   it('renders a pasted PNG from its bytes, also after a source save of another line', async () => {
     await waitForAppReady()
     await openNewPage()

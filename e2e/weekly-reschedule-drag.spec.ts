@@ -49,7 +49,7 @@ function localDateStr(d: Date): string {
 // gives today's page task blocks with `due_date`.
 const BLOCK_DAILY_3 = '0000000000000000000BLOCK10'
 
-test.describe('WeeklyView — reschedule by drag (real gesture)', () => {
+test.describe('WeeklyView — reschedule by drag (real gesture) @journal', () => {
   test.beforeEach(async ({ page }) => {
     // DaySection lazy-mounts each day's BlockTree behind an
     // IntersectionObserver (WeeklyView passes `lazyMount`), UNLESS

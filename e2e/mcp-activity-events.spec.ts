@@ -37,7 +37,7 @@ async function openAgentAccessTab(page: import('@playwright/test').Page) {
   await expect(page.locator('[data-testid="settings-panel-agent"]')).toBeVisible()
 }
 
-test.describe('mcp:activity live events (#2683 / #2686)', () => {
+test.describe('mcp:activity live events (#2683 / #2686) @mcp', () => {
   test('a live mcp:activity event populates the previously-empty feed', async ({ page }) => {
     await openAgentAccessTab(page)
 

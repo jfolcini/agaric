@@ -5,7 +5,7 @@
 
 import { expect, focusBlock, openPage, selectEditorRange, test, waitForBoot } from './helpers'
 
-test('toolbar and selection bubble icons render at 16 px', async ({ page }) => {
+test('toolbar and selection bubble icons render at 16 px @editor', async ({ page }) => {
   // The bubble's zoom-in entry animation scales its icons until it settles.
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await waitForBoot(page)

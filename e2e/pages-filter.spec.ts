@@ -72,7 +72,7 @@ async function scrollGridToBottom(page: import('@playwright/test').Page): Promis
   })
 }
 
-test.describe('Pages compound-filter chip-row', () => {
+test.describe('Pages compound-filter chip-row @pages @search', () => {
   test('renders the chip row', async ({ page }) => {
     await bootPages(page)
     await expect(page.getByRole('button', { name: 'Add filter' })).toBeVisible()

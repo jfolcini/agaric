@@ -94,7 +94,7 @@ function listedRows(): Promise<string[]> {
   }, LISTBOX)
 }
 
-describe('Agaric real-backend search Load more (#5738)', () => {
+describe('Agaric real-backend search Load more (#5738) @search', () => {
   it('pages through every match with Load more and lists each block once', async () => {
     await waitForAppReady()
     const markdown = SEQS.map((seq) => `- ${WORD} seq-${seq}`).join('\n')

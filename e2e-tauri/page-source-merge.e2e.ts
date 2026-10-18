@@ -59,7 +59,7 @@ async function editBlockElsewhere(blockId: string, toText: string): Promise<void
   )
 }
 
-describe('Agaric real-backend source-mode Merge (#5140 Phase 5)', () => {
+describe('Agaric real-backend source-mode Merge (#5140 Phase 5) @pages @markdown', () => {
   it('Merge saves the buffer with a change made elsewhere folded in, durably', async () => {
     await waitForAppReady()
     await openNewPage()

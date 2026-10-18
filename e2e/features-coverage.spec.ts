@@ -30,7 +30,7 @@ import {
 // 1. Journal view modes
 // ===========================================================================
 
-test.describe('Journal view modes', () => {
+test.describe('Journal view modes @editor @pages @journal @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -77,7 +77,7 @@ test.describe('Journal view modes', () => {
 // 2. Search
 // ===========================================================================
 
-test.describe('Search', () => {
+test.describe('Search @editor @pages @journal @search', () => {
   test('search panel shows results for a query', async ({ page }) => {
     await waitForBoot(page)
 
@@ -106,7 +106,7 @@ test.describe('Search', () => {
 // 3. Page editor
 // ===========================================================================
 
-test.describe('Page editor', () => {
+test.describe('Page editor @editor @pages @journal @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -147,7 +147,7 @@ test.describe('Page editor', () => {
 // 4. Trash
 // ===========================================================================
 
-test.describe('Trash', () => {
+test.describe('Trash @editor @pages @journal @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -295,7 +295,7 @@ test.describe('Trash', () => {
 // 5. Sidebar collapse
 // ===========================================================================
 
-test.describe('Sidebar', () => {
+test.describe('Sidebar @editor @pages @journal @search', () => {
   test('sidebar collapse button hides sidebar labels', async ({ page }) => {
     await waitForBoot(page)
 
@@ -319,7 +319,7 @@ test.describe('Sidebar', () => {
 // 6. Context menu actions
 // ===========================================================================
 
-test.describe('Context menu actions', () => {
+test.describe('Context menu actions @editor @pages @journal @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -385,7 +385,7 @@ test.describe('Context menu actions', () => {
 // 7. External link editing and removal
 // ===========================================================================
 
-test.describe('External link editing and removal', () => {
+test.describe('External link editing and removal @editor @pages @journal @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -481,7 +481,7 @@ test.describe('External link editing and removal', () => {
 // 8. Undo/Redo
 // ===========================================================================
 
-test.describe('Undo/Redo', () => {
+test.describe('Undo/Redo @editor @pages @journal @search', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

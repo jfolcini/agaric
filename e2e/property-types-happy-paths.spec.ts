@@ -51,7 +51,7 @@ test.beforeEach(async ({ page }) => {
   await waitForBoot(page)
 })
 
-test.describe('Number property', () => {
+test.describe('Number property @editor', () => {
   test('12 set in the drawer shows on the chip after reopening; text is refused', async ({
     page,
   }) => {
@@ -125,7 +125,7 @@ test.describe('Number property', () => {
   })
 })
 
-test.describe('Boolean property', () => {
+test.describe('Boolean property @editor', () => {
   // The page Properties table is where a boolean renders as a checkbox; the
   // block drawer shows it as a text input.
   test('a toggled checkbox in the page Properties table stays checked after reopening', async ({
@@ -152,7 +152,7 @@ test.describe('Boolean property', () => {
   })
 })
 
-test.describe('URL-looking property value', () => {
+test.describe('URL-looking property value @editor', () => {
   test('its chip opens the URL; a plain value has no open-link control', async ({ page }) => {
     await ipc(page, 'set_property', {
       blockId: MTG_1,
@@ -178,7 +178,7 @@ test.describe('URL-looking property value', () => {
   })
 })
 
-test.describe('Chip row overflow', () => {
+test.describe('Chip row overflow @editor', () => {
   test('eight properties show the inline cap and fold the rest into +N', async ({ page }) => {
     await seedSearchBlocks(page, [
       {

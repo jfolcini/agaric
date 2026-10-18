@@ -76,7 +76,7 @@ function chipOf(id: string, name: string) {
   )
 }
 
-describe('Agaric real-backend key:: value lines (#5448, #2675)', () => {
+describe('Agaric real-backend key:: value lines (#5448, #2675) @editor', () => {
   it('control: Escape on a blank block an Enter created cleans it up', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

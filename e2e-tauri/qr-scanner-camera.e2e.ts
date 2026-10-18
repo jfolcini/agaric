@@ -14,7 +14,7 @@
 import { ACTION_TIMEOUT, waitForAppReady } from './helpers'
 import { openSyncSettings } from './sync-peer'
 
-describe('Agaric real-webview QR scanner (#5718)', () => {
+describe('Agaric real-webview QR scanner (#5718) @sync', () => {
   it('plays the camera in the viewfinder and shows no camera error', async () => {
     await waitForAppReady()
     await openSyncSettings()

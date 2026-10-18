@@ -32,7 +32,7 @@ const FILENAME = 'wdio-paste.png'
 const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 
-describe('Agaric real-backend attachment paste (#4671)', () => {
+describe('Agaric real-backend attachment paste (#4671) @editor @attachments', () => {
   it('lists a pasted PNG on its block after a view round-trip', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

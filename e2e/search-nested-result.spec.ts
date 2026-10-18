@@ -21,7 +21,9 @@ const PAGE = 'Nested Result Page'
 // `zircon` is in no seed block and not in the parent, so it finds only the child.
 const CHILD = 'Nested result child zircon'
 
-test('a result for an indented block opens its page with the block focused', async ({ page }) => {
+test('a result for an indented block opens its page with the block focused @search', async ({
+  page,
+}) => {
   await waitForBoot(page)
   await navigateToView(page, 'Pages')
   await createPageFromPagesView(page, PAGE)

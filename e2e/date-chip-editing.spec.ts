@@ -72,7 +72,7 @@ async function leaveAndReturnToAgenda(page: Page): Promise<void> {
   await openAgenda(page)
 }
 
-test.describe('Agenda due-date chip editor', () => {
+test.describe('Agenda due-date chip editor @editor @journal', () => {
   for (const { input, parsed, chip } of [
     { input: '+3d', parsed: '2026-03-14', chip: 'Mar 14' },
     { input: 'next monday', parsed: '2026-03-16', chip: 'Mar 16' },
@@ -106,7 +106,7 @@ test.describe('Agenda due-date chip editor', () => {
   })
 })
 
-test('toolbar Set scheduled date: the picked day becomes a scheduled chip that persists', async ({
+test('toolbar Set scheduled date: the picked day becomes a scheduled chip that persists @editor @journal', async ({
   page,
 }) => {
   await openPage(page, 'Getting Started')

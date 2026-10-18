@@ -26,7 +26,7 @@ async function stubMediaRecorder(page: Page, canRecord: boolean) {
   await focusBlock(page)
 }
 
-test.describe('/voice feature detection', () => {
+test.describe('/voice feature detection @attachments', () => {
   test('is not offered where MediaRecorder supports no format and AudioEncoder is missing', async ({
     page,
   }) => {

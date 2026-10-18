@@ -125,7 +125,7 @@ async function fillPassphrase(
 
 test.describe.configure({ mode: 'serial' })
 
-test.describe('Sync pairing flows', () => {
+test.describe('Sync pairing flows @sync', () => {
   // #3469 — this test used to end `await expect(activeDialog(page))
   // .toHaveCount(0)`: submit the passphrase, dialog closes. That assertion
   // WAS the bug. `confirm_pairing` only arms this device's local proof; it

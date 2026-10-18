@@ -69,7 +69,9 @@ function zoomSelect(page: Page) {
   return page.getByRole('combobox', { name: 'Zoom', exact: true })
 }
 
-test('the zoom shortcuts and the Appearance control set one saved level', async ({ page }) => {
+test('the zoom shortcuts and the Appearance control set one saved level @settings', async ({
+  page,
+}) => {
   await page.addInitScript(recordZoomFromLoad)
   await waitForBoot(page)
   // 100% is where the webview starts, so boot sends nothing.
@@ -112,7 +114,9 @@ const VIEWS = [
   'Trash',
 ] as const
 
-test('at the largest zoom the default window scrolls no view sideways', async ({ page }) => {
+test('at the largest zoom the default window scrolls no view sideways @settings', async ({
+  page,
+}) => {
   const conf = JSON.parse(
     readFileSync(join(import.meta.dirname, '..', 'src-tauri', 'tauri.conf.json'), 'utf8'),
   ) as { app: { windows: Array<{ width: number; height: number }> } }

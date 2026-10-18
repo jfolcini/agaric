@@ -27,7 +27,7 @@ type LatencyWindow = Window & {
 // pointer and hide the shift this spec is about.
 test.use({ viewport: { width: 1280, height: 1024 } })
 
-test('adds a block when the button is clicked while an empty block is being edited', async ({
+test('adds a block when the button is clicked while an empty block is being edited @editor @journal @mobile', async ({
   page,
 }) => {
   await waitForBoot(page)
@@ -94,7 +94,7 @@ test('adds a block when the button is clicked while an empty block is being edit
 
 const iPhone13 = devices['iPhone 13']
 
-test.describe('on touch', () => {
+test.describe('on touch @editor @journal @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     userAgent: iPhone13.userAgent,

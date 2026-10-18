@@ -86,7 +86,7 @@ async function saveMarkedBlock(
   })
 }
 
-describe('Agaric real-backend property lines in Edit as Markdown (#5365)', () => {
+describe('Agaric real-backend property lines in Edit as Markdown (#5365) @editor @pages @markdown', () => {
   it('a property line sets, edits and, left empty, deletes the property', async () => {
     await waitForAppReady()
     // The sidebar click commits the typed marker by blurring the editor.

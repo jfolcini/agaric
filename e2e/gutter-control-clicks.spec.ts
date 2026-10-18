@@ -20,7 +20,7 @@
 
 import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 
-test.describe('Gutter controls work with the editor open (#1498)', () => {
+test.describe('Gutter controls work with the editor open (#1498) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

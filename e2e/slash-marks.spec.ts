@@ -29,7 +29,7 @@ const MARKS = [
   { id: 'highlight', query: 'highlight', tag: 'mark' },
 ] as const
 
-test.describe('Slash mark commands', () => {
+test.describe('Slash mark commands @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

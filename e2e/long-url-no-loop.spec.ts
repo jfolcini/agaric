@@ -29,7 +29,7 @@ const PAGE = 'Getting Started'
 // timeout while still reliably reproducing the pre-fix loop.
 const LONG_URL = `https://example.com/${'a'.repeat(300)}?q=${'b'.repeat(120)}`
 
-test.describe('Long single-line URL does not loop the editor (#1489)', () => {
+test.describe('Long single-line URL does not loop the editor (#1489) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)

@@ -147,7 +147,7 @@ async function reminderSettingsShown(time: string): Promise<{ enabled: string | 
   return { enabled: await $(SWITCH).getAttribute('aria-checked') }
 }
 
-describe('Agaric real-backend due-task reminder (#5741)', () => {
+describe('Agaric real-backend due-task reminder (#5741) @journal', () => {
   before(async () => {
     await startNotifyMonitor()
     await waitForAppReady()

@@ -43,7 +43,7 @@ async function reopenAdvancedQuery(page: Page): Promise<void> {
 /** The tag `work` leaf keeps exactly the three seeded blocks tagged `work`. */
 const WORK_ROWS = [/Weekly standup notes/, /Fix login bug/, /Ship v2\.0 release/]
 
-test('a saved view is listed after leaving, loads, renames, deletes, and stays in its space', async ({
+test('a saved view is listed after leaving, loads, renames, deletes, and stays in its space @search @spaces', async ({
   page,
 }) => {
   await navigateToView(page, 'Advanced Query')

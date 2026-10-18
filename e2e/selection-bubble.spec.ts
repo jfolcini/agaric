@@ -24,7 +24,7 @@ import {
  * so ProseMirror (and therefore the BubbleMenu plugin) observes the selection.
  */
 
-test.describe('Selection bubble menu (#924)', () => {
+test.describe('Selection bubble menu (#924) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

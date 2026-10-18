@@ -64,7 +64,7 @@ async function answerUpdateCheck(page: Page, answer: Record<string, unknown> | n
   }, answer)
 }
 
-test.describe('Settings › Help', () => {
+test.describe('Settings › Help @settings', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

@@ -34,7 +34,7 @@ async function makeLinkedBlock(page: import('@playwright/test').Page, url: strin
   return link
 }
 
-test.describe('Open external link via block context menu (#924)', () => {
+test.describe('Open external link via block context menu (#924) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

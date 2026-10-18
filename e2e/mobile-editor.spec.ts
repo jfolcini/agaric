@@ -200,7 +200,7 @@ function reactContentHost(nodeView: ReturnType<Page['locator']>) {
   return nodeView.locator('[data-node-view-content-react]')
 }
 
-test.describe('Mobile editor (iPhone 13 viewport)', () => {
+test.describe('Mobile editor (iPhone 13 viewport) @editor @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,

@@ -50,7 +50,7 @@ async function waitForOccurrences(task: string, count: number): Promise<void> {
   })
 }
 
-describe('Agaric real-backend /repeat remove (#5160)', () => {
+describe('Agaric real-backend /repeat remove (#5160) @editor @journal', () => {
   before(waitForAppReady)
 
   it('removes a task’s repeat, so completing it makes no next occurrence', async () => {

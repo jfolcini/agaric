@@ -11,20 +11,19 @@ gh run list --workflow e2e-tauri-weekly.yml --branch <branch> --limit 3
 
 It also runs weekly and on every PR to `main`, where it is skipped unless the diff touches something the lane builds or runs (the `real_backend` output of `scripts/classify-changes.sh`; when the diff's only lane paths are specs, it runs just those, `real_backend_specs`); the `e2e-tauri-gate` job reports either way. It is not a required check (#4671), so read its result on the PR before merging; a new spec has shown nothing until its control case has run there.
 
-Locally you need Linux with `webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `openbox`, `xdotool`, and `cargo install tauri-driver --locked`. Build as the workflow does, then run under a window manager (without one `document.hasFocus()` stays false and `waitForAppReady` fails, #5457):
+Locally you need Linux with `webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `openbox`, `xdotool`, and `cargo install tauri-driver --locked`. Run one spec with:
 
 ```sh
-npm run tauri -- build --debug --no-bundle --config '{"build":{"beforeBuildCommand":"npm run build"}}' -- -p agaric -p agaric-diagnostics
-env -u WAYLAND_DISPLAY GDK_BACKEND=x11 WDIO_SKIP_TAURI_BUILD=1 xvfb-run -a dbus-run-session -- bash -c 'openbox & npm run test:e2e-tauri'
+just e2e-real e2e-tauri/<file>.e2e.ts
 ```
 
-On a Wayland desktop, `xvfb-run` sets only `DISPLAY`, so without the `env` prefix GTK opens the app on the desktop session instead of Xvfb, and the focus check fails.
-
-The CLI builds every bin of the packages after `--`, so the one compile also emits the `agaric-mcp` bridge `mcp-agent-token.e2e.ts` spawns and the `e2e_sync_peer` sync peer, and compiles `agaric` once. The `--config` skips `prepare-external-bins.mjs`'s release build of the `agaric-mcp` sidecar, which `--no-bundle` ships nowhere; `wdio.conf.ts`'s own build, when `WDIO_SKIP_TAURI_BUILD` is unset, passes neither and pays for both. A dev box without those runs nothing; `npm run typecheck:e2e-tauri` and `npx vitest run e2e-tauri` are the local checks.
+`scripts/e2e-tauri-local.sh` checks those tools but `xdotool`, which only the OS-chord specs call, then runs WDIO under Xvfb with openbox (without a window manager `document.hasFocus()` stays false and `waitForAppReady` fails, #5457) and with `WAYLAND_DISPLAY` unset (`xvfb-run` sets only `DISPLAY`, so GTK would open the app on the desktop session). `wdio.conf.ts`'s `onPrepare` builds as the workflow does, in one compile: the CLI builds every bin of `agaric` and `agaric-diagnostics`, so it also emits the `agaric-mcp` bridge `mcp-agent-token.e2e.ts` spawns and the `e2e_sync_peer` sync peer, and its `--config` skips `prepare-external-bins.mjs`'s release build of the `agaric-mcp` sidecar, which `--no-bundle` ships nowhere. `WDIO_SKIP_TAURI_BUILD=1` skips that build, as CI does with the binaries its `build` job uploads. Either way `onPrepare` refuses a missing `agaric` or one that embeds no `dist/`: plain cargo relinks that path as a `devUrl` build, and `cargo nextest run --workspace` does so too, because it builds the package's bins with its integration tests. A dev box without those tools runs nothing; `npm run typecheck:e2e-tauri` and `npx vitest run e2e-tauri` are the local checks.
 
 A failed job's log: [`.github/AGENTS.md`](../.github/AGENTS.md) § Reading a run. `gh run download <run_id> -p 'e2e-tauri-diagnostics-*'` fetches each shard's diagnostics (screenshots, app log, sync peer logs, the visibility verdict). The harness sets `AGARIC_STDERR_LOG=warn` for the app and the sync peer, so the console carries only their warnings and errors and the full `info` log is in that artifact; `AGARIC_STDERR_LOG=info` brings the stream back.
 
-Show a spec red here, not on a scratch branch: apply the break, rebuild, and run that spec alone (`npm run test:e2e-tauri -- --spec e2e-tauri/<file>.e2e.ts`). A branch pushed only to show red costs a full CI run and leaves a remote branch behind.
+`just e2e-related` prints the `--spec` list for the specs your change can affect, picked by the area tags each top-level `describe` title ends with (`… @editor @pages`).
+
+Show a spec red here, not on a scratch branch: apply the break and run that spec alone with `just e2e-real`, which rebuilds. A branch pushed only to show red costs a full CI run and leaves a remote branch behind.
 
 ## Rules
 

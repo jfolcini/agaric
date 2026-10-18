@@ -51,7 +51,7 @@ async function waitForWindowFocus(focused: boolean, why: string): Promise<void> 
   )
 }
 
-describe('Agaric real-backend Quick Capture and the journal template (#5395, #5735)', () => {
+describe('Agaric real-backend Quick Capture and the journal template (#5395, #5735) @editor @journal', () => {
   it('a day Quick Capture creates carries the journal template', async () => {
     await waitForAppReady()
 

@@ -201,7 +201,7 @@ async function scrollGridToBottom(page: Page) {
 // ===========================================================================
 // 0. Journal pages are hidden by default (#5370)
 // ===========================================================================
-test.describe('default journal chip', () => {
+test.describe('default journal chip @pages', () => {
   test('hides the daily page; removing the chip shows it and survives a reload', async ({
     page,
   }) => {
@@ -227,7 +227,7 @@ test.describe('default journal chip', () => {
 // ===========================================================================
 // 1. Each facet narrows
 // ===========================================================================
-test.describe('facet narrowing (each facet does the thing)', () => {
+test.describe('facet narrowing (each facet does the thing) @pages', () => {
   test('Orphan narrows to fully-isolated pages', async ({ page }) => {
     await bootPages(page)
     await expect(grid(page).getByText('Getting Started', { exact: true })).toBeVisible()
@@ -381,7 +381,7 @@ test.describe('facet narrowing (each facet does the thing)', () => {
 // ===========================================================================
 // 2. Compound filters
 // ===========================================================================
-test.describe('compound filters (AND-compose / widen / soft-cap)', () => {
+test.describe('compound filters (AND-compose / widen / soft-cap) @pages', () => {
   test('two chips AND-narrow; removing one widens', async ({ page }) => {
     await bootPages(page)
     // Orphan (4 pages) ∧ path "Meet" (2 pages) → only "Meeting Notes
@@ -443,7 +443,7 @@ test.describe('compound filters (AND-compose / widen / soft-cap)', () => {
 // ===========================================================================
 // 3. Zero-result state
 // ===========================================================================
-test.describe('zero-result state', () => {
+test.describe('zero-result state @pages', () => {
   test('a chip that empties the list shows no-match (not create-first) and recovers', async ({
     page,
   }) => {
@@ -469,7 +469,7 @@ test.describe('zero-result state', () => {
 // ===========================================================================
 // 4. Clear-all
 // ===========================================================================
-test.describe('clear-all', () => {
+test.describe('clear-all @pages', () => {
   test('clear-all removes every chip and restores the full list', async ({ page }) => {
     await bootPages(page)
     await addBooleanFacet(page, 'Orphan')
@@ -489,7 +489,7 @@ test.describe('clear-all', () => {
 // ===========================================================================
 // 5. Count chip
 // ===========================================================================
-test.describe('count chip', () => {
+test.describe('count chip @pages', () => {
   test('shows total with no filter, countMatching with chips, X-of-Y with text', async ({
     page,
   }) => {
@@ -515,7 +515,7 @@ test.describe('count chip', () => {
 // ===========================================================================
 // 6. Search box
 // ===========================================================================
-test.describe('search box', () => {
+test.describe('search box @pages', () => {
   test('text narrows by title and composes orthogonally with a chip', async ({ page }) => {
     await bootPages(page)
     const search = page.getByPlaceholder('Search pages...')
@@ -549,7 +549,7 @@ test.describe('search box', () => {
 // ===========================================================================
 // 7. Sort
 // ===========================================================================
-test.describe('sort', () => {
+test.describe('sort @pages', () => {
   test('the six modes reorder the list', async ({ page }) => {
     await bootPages(page)
     const daily = localDateStr(new Date())
@@ -713,7 +713,7 @@ test.describe('sort', () => {
 // ===========================================================================
 // 9. Pagination / virtualization (extends, doesn't duplicate, pages-filter)
 // ===========================================================================
-test.describe('pagination / virtualization', () => {
+test.describe('pagination / virtualization @pages', () => {
   test('load-more footer is a valid grid row (role=row > gridcell)', async ({ page }) => {
     await bootPages(page, { extraPages: 80 })
     await expect(grid(page).getByText('Bulk Page 001', { exact: true })).toBeVisible()
@@ -761,7 +761,7 @@ test.describe('pagination / virtualization', () => {
 // ===========================================================================
 // 10. CRUD + grooming
 // ===========================================================================
-test.describe('CRUD + grooming', () => {
+test.describe('CRUD + grooming @pages', () => {
   test('a page created with no chips active is listed and bumps the count', async ({ page }) => {
     await bootPages(page)
     await expect(countChip(page)).toHaveText('6 pages')
@@ -861,7 +861,7 @@ test.describe('CRUD + grooming', () => {
 // ===========================================================================
 // 11. Chip-row + page rows
 // ===========================================================================
-test.describe('chip-row + page rows', () => {
+test.describe('chip-row + page rows @pages', () => {
   test('renders the chip-row + page rows', async ({ page }) => {
     await bootPages(page)
     await expect(page.getByRole('button', { name: 'Add filter' })).toBeVisible()
@@ -872,7 +872,7 @@ test.describe('chip-row + page rows', () => {
 // ===========================================================================
 // 12. Metadata badges
 // ===========================================================================
-test.describe('metadata badges', () => {
+test.describe('metadata badges @pages', () => {
   test('inbound / children / last-modified render on page rows', async ({ page }) => {
     await bootPages(page)
     // Getting Started: 1 inbound link, 5 child blocks, a relative-time stamp.
@@ -910,7 +910,7 @@ test.describe('metadata badges', () => {
 // ===========================================================================
 // 13. Cursor robustness (sort change mid-session)
 // ===========================================================================
-test.describe('cursor robustness', () => {
+test.describe('cursor robustness @pages', () => {
   test('changing sort mid-session re-paginates without dupes or drops', async ({ page }) => {
     await bootPages(page, { extraPages: 80 })
     await expect(grid(page).getByText('Bulk Page 001', { exact: true })).toBeVisible()
@@ -1009,7 +1009,7 @@ function invokePages(
   }, args)
 }
 
-test.describe('cursor IPC contract (E12)', () => {
+test.describe('cursor IPC contract (E12) @pages', () => {
   test('first page carries total_count; cursor pages return null (D6)', async ({ page }) => {
     await bootPages(page, { extraPages: 80 })
     const first = (await invokePages(page, {
@@ -1077,7 +1077,7 @@ test.describe('cursor IPC contract (E12)', () => {
 // ===========================================================================
 // 14. a11y + keyboard
 // ===========================================================================
-test.describe('a11y + keyboard', () => {
+test.describe('a11y + keyboard @pages', () => {
   test('arrow keys move focus and update aria-activedescendant', async ({ page }) => {
     await bootPages(page)
     // Focus the grid, then arrow down — the grid's aria-activedescendant must
@@ -1141,7 +1141,7 @@ test.describe('a11y + keyboard', () => {
 // ===========================================================================
 // 15. Responsive
 // ===========================================================================
-test.describe('responsive', () => {
+test.describe('responsive @pages', () => {
   test('narrow viewport wraps the header controls instead of overflowing', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 900 })
     await bootPages(page)

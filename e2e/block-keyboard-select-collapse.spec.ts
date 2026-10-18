@@ -24,7 +24,7 @@ import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
 
 const PAGE = 'Getting Started'
 
-test.describe('Keyboard range selection across an ancestor collapse (#922)', () => {
+test.describe('Keyboard range selection across an ancestor collapse (#922) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)

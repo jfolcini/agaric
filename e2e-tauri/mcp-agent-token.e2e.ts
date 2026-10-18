@@ -131,7 +131,7 @@ async function addReadWriteAgent(name: string): Promise<void> {
   await waitForToast('Agent added')
 }
 
-describe('Agaric real-backend MCP agent token', () => {
+describe('Agaric real-backend MCP agent token @mcp', () => {
   it('serves an agent through agaric-mcp, and refuses it once revoked', async () => {
     await waitForAppReady()
     await openAgentAccess()

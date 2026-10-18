@@ -69,7 +69,7 @@ async function openHistoryDropdown(page: import('@playwright/test').Page) {
   return dropdown
 }
 
-test.describe('Search history (E2E-5)', () => {
+test.describe('Search history (E2E-5) @search @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)
   })
@@ -184,7 +184,7 @@ test.describe('Search history (E2E-5)', () => {
 // must be installed via `addInitScript` BEFORE boot so it lands before the
 // store hydrates.
 // ---------------------------------------------------------------------------
-test.describe('Search history — per-space isolation (E2E-A10)', () => {
+test.describe('Search history — per-space isolation (E2E-A10) @search @spaces', () => {
   const FOREIGN_SPACE = 'SPACE_OTHER'
   const FOREIGN_ENTRY = 'foreign-space-query'
 

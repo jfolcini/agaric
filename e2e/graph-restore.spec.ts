@@ -113,7 +113,7 @@ async function graphToPageAndBack(page: Page): Promise<void> {
   await expect(g).toHaveAttribute('transform', transform ?? '')
 }
 
-test.describe('Graph → page → Back restores the graph (#5434)', () => {
+test.describe('Graph → page → Back restores the graph (#5434) @graph', () => {
   test.slow()
 
   test('on the worker path', async ({ page }) => {

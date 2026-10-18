@@ -125,7 +125,7 @@ async function blockState(page: Page, blockId: string): Promise<string> {
   }
 }
 
-test.describe('A line break inside a block (#5160 D2)', () => {
+test.describe('A line break inside a block (#5160 D2) @editor @mobile', () => {
   test('a stored two-line block stays one block after a typo fix and a blur', async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -280,7 +280,7 @@ test.describe('A line break inside a block (#5160 D2)', () => {
 
 const iPhone13 = devices['iPhone 13']
 
-test.describe('The toolbar New line button (iPhone 13 viewport)', () => {
+test.describe('The toolbar New line button (iPhone 13 viewport) @editor @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,

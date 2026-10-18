@@ -60,7 +60,7 @@ async function waitForChip(blockId: string, when: string): Promise<void> {
     })
 }
 
-describe('Agaric real-backend typed tags in page mode (#5743)', () => {
+describe('Agaric real-backend typed tags in page mode (#5743) @editor @pages', () => {
   it('a #name typed and left with ArrowDown is the tag, which lists the block', async () => {
     await waitForAppReady()
     await openNewPage()

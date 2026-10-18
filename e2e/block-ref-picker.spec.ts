@@ -46,7 +46,7 @@ async function openBlockRefPicker(page: import('@playwright/test').Page, query: 
   return list
 }
 
-test.describe('Block ref picker — (( trigger', () => {
+test.describe('Block ref picker — (( trigger @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

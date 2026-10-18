@@ -4,7 +4,7 @@ import { expect, navigateToView, openSettingsTab, test, waitForBoot } from './he
 // describe block and are sensitive to parallel mock-state collisions.
 test.describe.configure({ mode: 'serial' })
 
-test.describe('Sync UI', () => {
+test.describe('Sync UI @sync', () => {
   // --- SyncStatusCard (top of Settings › Sync & devices, #5629) ----------
   test.describe('Sync status card', () => {
     test.beforeEach(async ({ page }) => {

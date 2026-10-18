@@ -85,7 +85,7 @@ const VIEWS = [
 ] as const
 
 for (const profile of PROFILES) {
-  test.describe(`mobile overflow sweep — ${profile.name}`, () => {
+  test.describe(`mobile overflow sweep — ${profile.name} @mobile`, () => {
     test.use(profile.use)
 
     for (const view of VIEWS) {

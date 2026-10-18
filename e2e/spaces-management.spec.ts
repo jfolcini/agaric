@@ -110,7 +110,7 @@ async function createSpaceInSettings(
   return panel
 }
 
-test.describe('Spaces — create, switch, content isolation', () => {
+test.describe('Spaces — create, switch, content isolation @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -254,7 +254,7 @@ test.describe('Spaces — create, switch, content isolation', () => {
   })
 })
 
-test.describe('Spaces — rename, recolour, delete', () => {
+test.describe('Spaces — rename, recolour, delete @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -337,7 +337,7 @@ test.describe('Spaces — rename, recolour, delete', () => {
 // #5362 — "Open on launch" is a device preference read by the first space
 // reconcile after boot. A reload re-seeds the mock, so the second space comes
 // from the `__mockWorkSpace` opt-in seed, not from the create form.
-test.describe('Spaces — open on launch', () => {
+test.describe('Spaces — open on launch @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => window.localStorage.setItem('__mockWorkSpace', 'true'))
     await waitForBoot(page)
@@ -366,7 +366,7 @@ test.describe('Spaces — open on launch', () => {
   })
 })
 
-test.describe('Spaces — move a page between spaces', () => {
+test.describe('Spaces — move a page between spaces @spaces', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

@@ -36,7 +36,7 @@ async function flipPreviewFetch(page: Page, on: boolean): Promise<void> {
 const chip = (page: Page) => page.locator(`[data-testid="external-link"][data-href="${LINK_URL}"]`)
 const tooltip = (page: Page) => page.getByTestId('link-preview-tooltip')
 
-test.describe('External link hover preview', () => {
+test.describe('External link hover preview @editor', () => {
   test.beforeEach(async ({ page }) => {
     await page.clock.install()
     await waitForBoot(page)

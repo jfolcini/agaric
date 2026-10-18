@@ -85,7 +85,7 @@ test.beforeEach(async ({ page }) => {
   await waitForBoot(page)
 })
 
-test('a boolean toggled in the drawer is checked and reads Yes after navigating away and back', async ({
+test('a boolean toggled in the drawer is checked and reads Yes after navigating away and back @editor', async ({
   page,
 }) => {
   await defineInSettings(page, 'billable', 'boolean')
@@ -106,7 +106,7 @@ test('a boolean toggled in the drawer is checked and reads Yes after navigating 
   ).toBeChecked()
 })
 
-test('a ref chip shows its page renamed after navigating away and back, and opens it', async ({
+test('a ref chip shows its page renamed after navigating away and back, and opens it @editor', async ({
   page,
 }) => {
   await defineInSettings(page, 'owner', 'ref')

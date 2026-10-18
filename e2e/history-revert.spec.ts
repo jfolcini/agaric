@@ -25,7 +25,7 @@ test.describe.configure({ mode: 'serial' })
 // Tests
 // ---------------------------------------------------------------------------
 
-test.describe('HistoryView batch revert', () => {
+test.describe('HistoryView batch revert @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

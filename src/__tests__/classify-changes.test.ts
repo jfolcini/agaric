@@ -61,6 +61,7 @@ const FULL_SET = {
   docs: 'true',
   frontend: 'true',
   backend: 'true',
+  rust_tests: 'true',
   ci: 'true',
   desktop: 'true',
   android: 'true',
@@ -78,6 +79,7 @@ const DOCS_ONLY = {
   docs: 'true',
   frontend: 'false',
   backend: 'false',
+  rust_tests: 'false',
   ci: 'false',
   desktop: 'false',
   android: 'false',
@@ -88,6 +90,19 @@ const DOCS_ONLY = {
   real_backend: 'false',
   real_backend_specs: '',
   codeql_languages: '[]',
+}
+
+const CI_ONLY = { ...DOCS_ONLY, docs_only: 'false', docs: 'false', ci: 'true' }
+
+// Backend paths only `lint` reads: its Rust half runs, nothing else does.
+const LINT_ONLY_RUST = {
+  backend: 'true',
+  rust_tests: 'false',
+  desktop: 'false',
+  android: 'false',
+  real_backend: 'false',
+  vitest: 'false',
+  playwright: 'false',
 }
 
 describe('classify-changes.sh', () => {
@@ -342,6 +357,7 @@ describe('classify-changes.sh', () => {
     ])
     expect(out).toMatchObject({
       backend: 'true',
+      rust_tests: 'true',
       desktop: 'false',
       android: 'false',
       real_backend: 'false',
@@ -349,6 +365,110 @@ describe('classify-changes.sh', () => {
       vitest_e2e_tauri: 'false',
       playwright: 'false',
       codeql_languages: '["rust"]',
+    })
+  })
+
+  it.each([
+    'src-tauri/.config/nextest.toml',
+    'src-tauri/agaric-engine/src/snapshots/agaric_engine__import__tests__corpus_agaric_export.snap',
+    'src-tauri/proptest-regressions/dag/proptest_b2.txt',
+    'src-tauri/agaric-sync/proptest-regressions/sync_protocol/protocol_proptest.txt',
+  ])('Rust test data %s runs the Rust suites and no build', (path) => {
+    expect(classify([path])).toMatchObject({
+      backend: 'true',
+      rust_tests: 'true',
+      desktop: 'false',
+      android: 'false',
+      real_backend: 'false',
+    })
+  })
+
+  it.each([
+    'src-tauri/benches/interactive_slo.rs',
+    'src-tauri/benches/groups/history_bench.rs',
+    'src-tauri/fuzz/fuzz_targets/fts_strip.rs',
+    'src-tauri/fuzz/Cargo.toml',
+    'src-tauri/clippy.toml',
+    'src-tauri/deny.toml',
+    'src-tauri/osv-scanner.toml',
+    'src-tauri/dynamic-sql-baseline.txt',
+    'src-tauri/migrations-test-coverage-baseline.txt',
+    'src-tauri/table-ownership-baseline.txt',
+    'src-tauri/unsafe-allowlist.txt',
+    'src-tauri/.env.example',
+    'src-tauri/.cargo/audit.toml',
+    'src-tauri/.cargo/mutants.toml',
+    'scripts/check-sqlx-cache-drift.sh',
+    'scripts/check-unsafe-allowlist.sh',
+    '.github/actions/sqlx-offline-check/action.yml',
+  ])('%s is read only by lint: no Rust suite, build or real lane', (path) => {
+    expect(classify([path])).toMatchObject(LINT_ONLY_RUST)
+  })
+
+  it('a lint-only path next to Rust source runs the Rust suites and both builds', () => {
+    expect(
+      classify([
+        'src-tauri/benches/interactive_slo.rs',
+        'src-tauri/src/lib.rs',
+        'src-tauri/deny.toml',
+      ]),
+    ).toMatchObject({
+      backend: 'true',
+      rust_tests: 'true',
+      desktop: 'true',
+      android: 'true',
+      real_backend: 'true',
+    })
+  })
+
+  it('the rest of src-tauri/.cargo/ is not lint-only: a config.toml there sets every build', () => {
+    expect(classify(['src-tauri/.cargo/config.toml'])).toMatchObject({
+      backend: 'true',
+      rust_tests: 'true',
+      desktop: 'true',
+      real_backend: 'true',
+    })
+  })
+
+  it.each(['justfile', '.editorconfig', '.vscode/extensions.json'])(
+    '%s alone is ci: no suite and no CodeQL language',
+    (path) => {
+      expect(classify([path])).toEqual(CI_ONLY)
+    },
+  )
+
+  it('justfile next to a manifest keeps the manifest backend', () => {
+    expect(classify(['justfile', 'src-tauri/Cargo.toml'])).toMatchObject({
+      backend: 'true',
+      rust_tests: 'true',
+      ci: 'true',
+      desktop: 'true',
+      android: 'true',
+    })
+  })
+
+  // `.gitattributes` sets eol on the shell scripts; `.gitignore` decides which files Tailwind's
+  // source scan and knip read, and `lint` runs knip only for `frontend`.
+  it.each(['.gitattributes', '.gitignore'])(
+    '%s steers tools in more than one lane, so it runs the full set',
+    (path) => {
+      expect(classify([path])).toMatchObject({
+        frontend: 'true',
+        backend: 'true',
+        rust_tests: 'true',
+        vitest: 'true',
+        playwright: 'true',
+        real_backend: 'true',
+        codeql_languages: '["actions","javascript-typescript","rust"]',
+      })
+    },
+  )
+
+  it('the playwright-setup composite runs every Playwright shard', () => {
+    expect(classify(['.github/actions/playwright-setup/action.yml'])).toMatchObject({
+      vitest: 'false',
+      playwright: 'true',
+      playwright_specs: '',
     })
   })
 
@@ -370,6 +490,7 @@ describe('classify-changes.sh', () => {
     expect(classify(['rust-toolchain.toml'])).toMatchObject({
       frontend: 'true',
       backend: 'true',
+      rust_tests: 'true',
       ci: 'true',
       vitest: 'true',
       playwright: 'true',
@@ -388,6 +509,12 @@ describe('classify-changes.sh', () => {
   it('a config no CodeQL language reads selects none, and index.html is JavaScript', () => {
     expect(classify(['prek.toml'])['codeql_languages']).toBe('[]')
     expect(classify(['index.html'])['codeql_languages']).toBe('["javascript-typescript"]')
+  })
+
+  it('CodeQL picks languages by extension, not by directory', () => {
+    expect(classify(['src-tauri/capabilities/desktop.json'])['codeql_languages']).toBe('[]')
+    expect(classify(['scripts/push.sh'])['codeql_languages']).toBe('[]')
+    expect(classify(['src-tauri/src/x.rs'])['codeql_languages']).toBe('["rust"]')
   })
 
   it.each([

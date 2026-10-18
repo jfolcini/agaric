@@ -117,7 +117,7 @@ async function seedAndOrder(
   return { first, anchor, otherBlock, otherFirst }
 }
 
-test.describe('Week view: block clipboard across two days', () => {
+test.describe('Week view: block clipboard across two days @editor @journal', () => {
   test.beforeEach(async ({ context, page }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write'])
     // Mount every day's tree at once instead of on scroll (DaySection).

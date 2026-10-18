@@ -239,6 +239,7 @@ The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained second i
 
 - Rust: `cd src-tauri && cargo nextest run --workspace -E 'test(name)'`. Use nextest, not `cargo test`, for anything that reads a process-global counter and asserts on the delta (`tests/command_integration/conformance.rs` does); see `src-tauri/tests/AGENTS.md` § "Process-global state".
 - TS: `npx vitest run <paths>`. Vitest does not type-check; run `npm run typecheck` too.
+- e2e: every top-level test or describe title in `e2e/` and `e2e-tauri/` ends with its area tags (`… @editor @pages`, vocabulary in `scripts/e2e-related.sh`); `node --test scripts/e2e-related.test.mjs` (run by `lint`) fails a spec without a known one. Before a push, `just e2e-related` (or `--range main...HEAD`) prints the command that runs the specs a change can affect, per lane. CI still runs both suites whole.
 - A filter that selects zero tests exits 0 (vitest `-t`; nextest under `--no-tests=pass`, as in `scripts/test-related-rust.sh`). Read the count on the summary line, never an exit code through a pipe.
 - A whole-workspace nextest run can outlast a foreground tool call: split it with `--partition count:1/2` and `count:2/2`, or run it in the background.
 - The hooks run fmt and oxlint at commit and clippy at push, and only when wired (cloud sessions can leave them unwired). Before handing off a Rust change, run `cd src-tauri && cargo clippy --workspace --all-targets -- -D warnings` yourself; `--lib` skips test code and `-p` skips the other crates.

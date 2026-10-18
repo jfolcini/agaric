@@ -11,7 +11,7 @@ import { activeAlertDialog, expect, navigateToView, openPage, test, waitForBoot 
  * notice and pops back to the page underneath.
  */
 
-test.describe('a trashed page in the recents (#5243)', () => {
+test.describe('a trashed page in the recents (#5243) @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

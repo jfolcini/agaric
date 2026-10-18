@@ -44,7 +44,9 @@ function recordIpcFromLoad(): void {
   })
 }
 
-test('boot sends each startup query once and skips closed panels (#5439)', async ({ page }) => {
+test('boot sends each startup query once and skips closed panels (#5439) @boot', async ({
+  page,
+}) => {
   await page.addInitScript(recordIpcFromLoad)
   await page.goto('/')
   await page.locator('[data-testid="block-static"]').first().waitFor()

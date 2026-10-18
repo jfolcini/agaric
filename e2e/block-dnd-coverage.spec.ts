@@ -28,7 +28,7 @@ async function handleFor(page: import('@playwright/test').Page, index: number) {
   return block.locator('[data-testid="drag-handle"]')
 }
 
-test.describe('Drag-layer edge cases (#923)', () => {
+test.describe('Drag-layer edge cases (#923) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await installIpcRecorder(page)

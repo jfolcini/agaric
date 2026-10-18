@@ -44,7 +44,7 @@ async function blockIds(page: import('@playwright/test').Page): Promise<string[]
     .evaluateAll((els) => els.map((el) => el.getAttribute('data-block-id') ?? ''))
 }
 
-test.describe('Touch gestures (iPhone viewport)', () => {
+test.describe('Touch gestures (iPhone viewport) @editor @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,

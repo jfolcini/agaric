@@ -42,7 +42,7 @@ async function editBlock(page: Page, blockId: string, text: string): Promise<voi
   await expect(staticBlock(page, blockId)).toHaveText(text)
 }
 
-test.describe('Page actions menu', () => {
+test.describe('Page actions menu @pages', () => {
   test('Undo twice then Redo walks two block edits back and forward', async ({ page }) => {
     // Edits less than `UNDO_GROUP_WINDOW_MS` apart join one undo entry; the
     // fast-forward below keeps the two edits two entries.

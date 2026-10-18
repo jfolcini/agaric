@@ -11,7 +11,7 @@ import { expect, navigateToView, seedSearchBlocks, test, waitForBoot } from './h
 const TASKS = 45
 const LAST_TASK = `long task ${TASKS - 1}`
 
-test.describe('Due panel keyboard jumps (#5302)', () => {
+test.describe('Due panel keyboard jumps (#5302) @journal', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await seedSearchBlocks(

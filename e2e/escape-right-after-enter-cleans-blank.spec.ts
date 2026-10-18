@@ -20,7 +20,7 @@ type HoldWindow = Window & {
 
 const TEXT = 'quick escape'
 
-test('Escape during the create of the block Enter made drops that blank block', async ({
+test('Escape during the create of the block Enter made drops that blank block @editor', async ({
   page,
 }) => {
   await waitForBoot(page)

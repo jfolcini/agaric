@@ -39,7 +39,9 @@ test.beforeEach(async ({ page }) => {
   await expect(historyDropdown(page)).toBeVisible()
 })
 
-test('one click on a Recent card opens its page while search history shows', async ({ page }) => {
+test('one click on a Recent card opens its page while search history shows @search', async ({
+  page,
+}) => {
   await recentCard(page, 'Getting Started').click()
   await expect(pageTitle(page)).toHaveText('Getting Started')
 
@@ -51,12 +53,12 @@ test('one click on a Recent card opens its page while search history shows', asy
   await expect(pageTitle(page)).toHaveText('Quick Notes')
 })
 
-test('one click on Add filter opens it while search history shows', async ({ page }) => {
+test('one click on Add filter opens it while search history shows @search', async ({ page }) => {
   await page.getByRole('button', { name: 'Add filter' }).click()
   await expect(activePopover(page)).toBeVisible()
 })
 
-test('one click on a chip remove or Clear all lands while a history recall shows', async ({
+test('one click on a chip remove or Clear all lands while a history recall shows @search', async ({
   page,
 }) => {
   const input = searchInput(page)

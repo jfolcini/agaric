@@ -50,7 +50,7 @@ function linkFailedToast(page: Page) {
   return page.locator('[data-sonner-toast]').getByText('Failed to link reference')
 }
 
-test.describe('Rename and create invalidation', () => {
+test.describe('Rename and create invalidation @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

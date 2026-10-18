@@ -49,7 +49,7 @@ async function storedContent(page: Page, token: string): Promise<string> {
   }, blockId)
 }
 
-test.describe('markdown links typed or pasted (#5160 N11)', () => {
+test.describe('markdown links typed or pasted (#5160 N11) @editor @markdown', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, PAGE)

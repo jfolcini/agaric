@@ -33,7 +33,7 @@ test.beforeEach(async ({ page }) => {
   await waitForBoot(page)
 })
 
-test("Ctrl+Shift+Y lists the focused block's edits and none of another block's", async ({
+test("Ctrl+Shift+Y lists the focused block's edits and none of another block's @editor @pages", async ({
   page,
 }) => {
   await openPage(page, 'Getting Started')

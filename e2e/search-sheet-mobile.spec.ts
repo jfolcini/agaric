@@ -26,7 +26,7 @@ import { expect, navigateMobile, test, waitForBoot } from './helpers'
 // viewport + touch / mobile flags — and leave the browser type alone.
 const iPhone13 = devices['iPhone 13']
 
-test.describe('Search sheet (mobile viewport)', () => {
+test.describe('Search sheet (mobile viewport) @search @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,
@@ -122,7 +122,7 @@ test.describe('Search sheet (mobile viewport)', () => {
   })
 })
 
-test.describe('Search sheet (desktop viewport)', () => {
+test.describe('Search sheet (desktop viewport) @search @mobile', () => {
   test('mobile trigger does not render', async ({ page }) => {
     await waitForBoot(page)
     // Default desktop viewport (1280×720) — useIsMobile() returns false,

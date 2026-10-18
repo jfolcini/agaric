@@ -80,7 +80,7 @@ async function waitForResults(
     })
 }
 
-describe('Agaric real-backend search after an edit (#5366)', () => {
+describe('Agaric real-backend search after an edit (#5366) @editor @search', () => {
   it('finds an edited block by its new word and not by its old one', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

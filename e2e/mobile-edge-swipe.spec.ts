@@ -23,7 +23,9 @@ test.use({
   userAgent: iPhone13.userAgent,
 })
 
-test('swiping from the left edge opens the drawer and a nav tap closes it', async ({ page }) => {
+test('swiping from the left edge opens the drawer and a nav tap closes it @mobile', async ({
+  page,
+}) => {
   await waitForBoot(page)
   const drawer = page.locator('[data-mobile="true"]')
   await expect(drawer).toHaveCount(0)

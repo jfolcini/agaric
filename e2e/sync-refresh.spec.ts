@@ -66,7 +66,7 @@ async function peerSyncComplete(page: Page, changedPageIds: string[], changedBlo
 // #5256 — task panels
 // ===========================================================================
 
-test.describe('task panels after a peer completes a task (#5256)', () => {
+test.describe('task panels after a peer completes a task (#5256) @sync', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -105,7 +105,7 @@ test.describe('task panels after a peer completes a task (#5256)', () => {
 // #5258 — Pages list and journal days
 // ===========================================================================
 
-test.describe('page lists after a peer creates or renames pages (#5258)', () => {
+test.describe('page lists after a peer creates or renames pages (#5258) @sync', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -164,7 +164,7 @@ test.describe('page lists after a peer creates or renames pages (#5258)', () => 
 // #5242 — the open page's title copies
 // ===========================================================================
 
-test.describe('open page after a peer renames it (#5242)', () => {
+test.describe('open page after a peer renames it (#5242) @sync', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -190,7 +190,7 @@ test.describe('open page after a peer renames it (#5242)', () => {
 // #5255 — a tag filter naming a tag that did not exist yet
 // ===========================================================================
 
-test.describe('tag search after a peer creates the tag (#5255)', () => {
+test.describe('tag search after a peer creates the tag (#5255) @sync', () => {
   test('tag:#foo finds the block once the peer creates and applies foo', async ({ page }) => {
     const input = await openSearchView(page)
     await input.fill('tag:#foo')

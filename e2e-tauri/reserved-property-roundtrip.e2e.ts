@@ -90,7 +90,7 @@ async function expectPickerShows(key: string, title: string): Promise<void> {
 const refChip = (id: string, title: string) =>
   blockRow(id).$(`[data-testid="property-chip"] button[aria-label="Open ${title}"]`)
 
-describe('Agaric real-backend block-property round-trips (#3085, #5862)', () => {
+describe('Agaric real-backend block-property round-trips (#3085, #5862) @editor', () => {
   it('persists a todo state set via the task checkbox across a navigation round-trip', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

@@ -51,7 +51,7 @@ function storedDefinition(page: Page, key: string): Promise<unknown> {
 // 1. Property chips visible on blocks
 // ===========================================================================
 
-test.describe('Property chips on blocks', () => {
+test.describe('Property chips on blocks @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -91,7 +91,7 @@ test.describe('Property chips on blocks', () => {
 // 2. Property drawer shows block properties
 // ===========================================================================
 
-test.describe('Property drawer', () => {
+test.describe('Property drawer @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -154,7 +154,7 @@ test.describe('Property drawer', () => {
 // 3. Set a new property on a block
 // ===========================================================================
 
-test.describe('Set property via drawer', () => {
+test.describe('Set property via drawer @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -212,7 +212,7 @@ test.describe('Set property via drawer', () => {
 // 4. Delete a property from a block
 // ===========================================================================
 
-test.describe('Delete property via drawer', () => {
+test.describe('Delete property via drawer @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -249,7 +249,7 @@ test.describe('Delete property via drawer', () => {
 // 5. Property definitions view (browse, create, delete)
 // ===========================================================================
 
-test.describe('Property definitions view', () => {
+test.describe('Property definitions view @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

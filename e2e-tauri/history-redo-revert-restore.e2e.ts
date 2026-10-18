@@ -109,7 +109,7 @@ async function expectTodoState(marker: string, set: boolean, what: string): Prom
   )
 }
 
-describe('Agaric real-backend history: redo, revert, restore (#4671)', () => {
+describe('Agaric real-backend history: redo, revert, restore (#4671) @editor @pages', () => {
   it('re-applies the todo state Ctrl+Y redid, durably', async () => {
     const page = runScopedMarker('wdio-redo-page')
     const marker = runScopedMarker('wdio-redo-task')

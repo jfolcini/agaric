@@ -90,6 +90,12 @@ test-be *ARGS:
 test-be-related *ARGS:
     bash scripts/test-related-rust.sh --worktree "$@"
 
+# The e2e specs your uncommitted work can affect, by area tag: prints one command per lane (Playwright, WebdriverIO) and runs neither; `--range main...HEAD` checks a branch.
+[group('test')]
+[positional-arguments]
+e2e-related *ARGS:
+    bash scripts/e2e-related.sh --worktree "$@"
+
 # Rust doc-tests, which nextest does not run. Needs the sqlx dev DB, same as `test-be`.
 [group('test')]
 test-doc:
@@ -106,6 +112,12 @@ test-doc:
 [group('test')]
 test-be-release:
     cd src-tauri && cargo nextest run --workspace --cargo-profile release-test
+
+# Build the embedded debug binary, then run one real-backend spec under Xvfb, e.g. `just e2e-real e2e-tauri/draft-blur-persist.e2e.ts`; deps in e2e-tauri/AGENTS.md § Running.
+[group('test')]
+[positional-arguments]
+e2e-real SPEC: _require-npm
+    bash scripts/e2e-tauri-local.sh "$1"
 
 # --- Lint & format ---------------------------------------------------------
 

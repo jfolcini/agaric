@@ -25,7 +25,7 @@ async function axeViolations(page: Page, selector: string): Promise<string[]> {
   }, selector)
 }
 
-test.describe('Agents card', () => {
+test.describe('Agents card @mcp', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()

@@ -112,7 +112,9 @@ const CONTROLS: Control[] = [
 ]
 
 for (const control of CONTROLS) {
-  test(`one click on ${control.name} lands while a block above is edited`, async ({ page }) => {
+  test(`one click on ${control.name} lands while a block above is edited @pages @search @mobile`, async ({
+    page,
+  }) => {
     await editTargetPage(page, openPage)
     await expect(page.getByTestId('formatting-toolbar')).toBeVisible()
 
@@ -128,7 +130,7 @@ for (const control of CONTROLS) {
   })
 }
 
-test.describe('mobile', () => {
+test.describe('mobile @pages @search @mobile', () => {
   test.use({
     viewport: devices['iPhone 13'].viewport,
     userAgent: devices['iPhone 13'].userAgent,

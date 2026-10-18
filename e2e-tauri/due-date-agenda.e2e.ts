@@ -116,7 +116,7 @@ async function openJournalMode(mode: 'daily' | 'weekly'): Promise<void> {
   })
 }
 
-describe('Agaric real-backend due date in the agenda (#5365)', () => {
+describe('Agaric real-backend due date in the agenda (#5365) @journal', () => {
   it('/due today on a TODO lists it in the Due panel and the week count', async () => {
     await waitForAppReady()
     today = await browser.execute(() => {

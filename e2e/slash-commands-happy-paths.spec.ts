@@ -38,7 +38,7 @@ test.beforeEach(async ({ page }) => {
   await focusBlockById(page, GS1)
 })
 
-test('/cancelled marks the block CANCELLED and it persists', async ({ page }) => {
+test('/cancelled marks the block CANCELLED and it persists @editor', async ({ page }) => {
   await typeSlashCommand(page, 'cancelled')
   await page.keyboard.press('Enter')
 
@@ -49,7 +49,9 @@ test('/cancelled marks the block CANCELLED and it persists', async ({ page }) =>
   await expect(marker).toBeVisible()
 })
 
-test('/schedule: the picked day becomes a scheduled chip that persists', async ({ page }) => {
+test('/schedule: the picked day becomes a scheduled chip that persists @editor', async ({
+  page,
+}) => {
   const list = await typeSlashCommand(page, 'schedule')
   await list.getByRole('option', { name: 'SCHEDULED — Set scheduled date on block' }).click()
 
@@ -64,7 +66,7 @@ test('/schedule: the picked day becomes a scheduled chip that persists', async (
   await expect(chip).toBeVisible()
 })
 
-test('/bullet-list gives the block a bullet marker that persists', async ({ page }) => {
+test('/bullet-list gives the block a bullet marker that persists @editor', async ({ page }) => {
   const list = await typeSlashCommand(page, 'bullet')
   await list.getByRole('option', { name: 'BULLET LIST — Insert unordered list' }).click()
 
@@ -74,7 +76,7 @@ test('/bullet-list gives the block a bullet marker that persists', async ({ page
   await expect(row(page, GS1).getByTestId('list-marker')).toHaveText('•')
 })
 
-test('/code turns the block into a code block that persists', async ({ page }) => {
+test('/code turns the block into a code block that persists @editor', async ({ page }) => {
   await replaceEditorText(page, 'let answer = 42')
   const list = await typeSlashCommand(page, 'code')
   await list.getByRole('option', { name: 'CODE — Insert code block' }).click()
@@ -90,7 +92,7 @@ test('/code turns the block into a code block that persists', async ({ page }) =
   )
 })
 
-test('/duplicate adds a second block with the just-typed text', async ({ page }) => {
+test('/duplicate adds a second block with the just-typed text @editor', async ({ page }) => {
   await replaceEditorText(page, 'copy this line')
   const list = await typeSlashCommand(page, 'duplicate')
   await list.getByRole('option', { name: 'DUPLICATE — Copy this block and its subtree' }).click()
@@ -102,7 +104,7 @@ test('/duplicate adds a second block with the just-typed text', async ({ page })
   ).toHaveCount(2)
 })
 
-test('a used command leads the empty-query menu in a Recent group', async ({ page }) => {
+test('a used command leads the empty-query menu in a Recent group @editor', async ({ page }) => {
   const list = await typeSlashCommand(page, 'quote')
   await list.getByRole('option', { name: 'QUOTE — Insert blockquote' }).click()
 

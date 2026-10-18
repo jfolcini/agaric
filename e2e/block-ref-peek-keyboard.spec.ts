@@ -48,7 +48,7 @@ async function chipOnQuickNotes(page: Page) {
   return chip
 }
 
-test.describe('Block-reference peek — keyboard', () => {
+test.describe('Block-reference peek — keyboard @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })

@@ -74,7 +74,7 @@ function firstLineCentre(text: Locator): Promise<number> {
   })
 }
 
-test.describe('Block rows on touch (iPhone viewport)', () => {
+test.describe('Block rows on touch (iPhone viewport) @editor @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,

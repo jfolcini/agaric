@@ -110,7 +110,7 @@ async function selectAcrossDays(...rows: [string, string][]): Promise<void> {
   )
 }
 
-describe('Agaric real-backend week-view clipboard across two days', () => {
+describe('Agaric real-backend week-view clipboard across two days @editor @journal', () => {
   it('copies, pastes and cuts a selection spanning two days as one', async () => {
     await waitForAppReady()
     await navigateTo('Journal')

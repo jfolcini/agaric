@@ -29,7 +29,7 @@ const phone = {
   userAgent: iPhone13.userAgent,
 }
 
-test.describe('Settings on a phone', () => {
+test.describe('Settings on a phone @mobile @settings', () => {
   test.use({ ...phone, viewport: { width: 390, height: 844 } })
 
   test('choosing a tab from the Select brings its panel on screen', async ({ page }) => {
@@ -66,7 +66,7 @@ test.describe('Settings on a phone', () => {
 
 // The device's own 390x664 viewport. Keyboard is the longest tab, so its last
 // control is the one that reaches the bottom of the scroll.
-test.describe('Settings on a phone, scrolled to the end', () => {
+test.describe('Settings on a phone, scrolled to the end @mobile @settings', () => {
   test.use({ ...phone, viewport: iPhone13.viewport })
 
   test('the last Keyboard control clears the quick-capture button', async ({ page }) => {
@@ -91,7 +91,7 @@ test.describe('Settings on a phone, scrolled to the end', () => {
   })
 })
 
-test.describe('Graph on a phone', () => {
+test.describe('Graph on a phone @mobile @settings', () => {
   test.use({ ...phone, viewport: iPhone13.viewport })
 
   test('the canvas still runs under the quick-capture button', async ({ page }) => {
@@ -110,7 +110,7 @@ test.describe('Graph on a phone', () => {
   })
 })
 
-test.describe('Settings on a touch tablet', () => {
+test.describe('Settings on a touch tablet @mobile @settings', () => {
   test.use({ hasTouch: true, viewport: { width: 820, height: 1180 } })
 
   test('the rail tabs are 44px touch targets', async ({ page }) => {
@@ -122,7 +122,9 @@ test.describe('Settings on a touch tablet', () => {
   })
 })
 
-test('Settings at a desktop width shows the tab rail, not the tab Select', async ({ page }) => {
+test('Settings at a desktop width shows the tab rail, not the tab Select @mobile @settings', async ({
+  page,
+}) => {
   await waitForBoot(page)
   await navigateToView(page, 'Settings')
 

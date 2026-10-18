@@ -24,7 +24,7 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  *     (single selection, no editor focused) — the anchor for Shift+Arrow.
  */
 
-test.describe('Keyboard block multi-selection (#922)', () => {
+test.describe('Keyboard block multi-selection (#922) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')

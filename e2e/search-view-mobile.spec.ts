@@ -21,7 +21,7 @@ import { expect, navigateMobile, test, waitForBoot } from './helpers'
 // describe.
 const iPhone13 = devices['iPhone 13']
 
-test.describe('Search view — full panel at mobile viewport (E2E-A9)', () => {
+test.describe('Search view — full panel at mobile viewport (E2E-A9) @search @mobile', () => {
   test.use({
     viewport: iPhone13.viewport,
     hasTouch: iPhone13.hasTouch,

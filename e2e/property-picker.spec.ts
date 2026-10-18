@@ -58,7 +58,7 @@ async function openPropertyPicker(page: import('@playwright/test').Page) {
 // Property picker — :: trigger
 // ===========================================================================
 
-test.describe('Property picker — :: trigger', () => {
+test.describe('Property picker — :: trigger @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
