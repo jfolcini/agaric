@@ -532,7 +532,8 @@ pub enum SyncMessage {
     /// advertised that the sender could zstd-inflate a compressed
     /// `LoroSyncChunked` payload. The compressor went with the WebSocket
     /// transport at the iroh cutover (#3464), leaving the flag write-only:
-    /// every build set it to `true` on send and discarded it on receive. Dropping it is wire-safe in both directions because this
+    /// every build set it to `true` on send and discarded it on receive.
+    /// Dropping it is wire-safe in both directions because this
     /// enum does **not** carry `deny_unknown_fields`: a build that still sends
     /// the key has it ignored here, and this build's omission deserializes on
     /// such a peer as its `#[serde(default)]` `false`, which no surviving code

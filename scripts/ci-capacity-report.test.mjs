@@ -71,16 +71,19 @@ void test('actions/cache: restore-key match is partial, exact is a hit, not foun
   ])
 })
 
-void test('setup-node prints no key input, so its restore counts as a hit', () => {
-  const key = `node-cache-Linux-x64-npm-${'4'.repeat(64)}`
+void test('setup-node prints no key input, so its restore is a hit, and its miss is a miss', () => {
+  const key = (h) => `node-cache-Linux-x64-npm-${h.repeat(64)}`
   const restores = parseCacheRestores(
     log(
       '##[group]Run actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1',
-      `Cache restored from key: ${key}`,
+      `Cache restored from key: ${key('4')}`,
+      '##[group]Run actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1',
+      'npm cache is not found',
     ),
   )
   assert.deepEqual(restores, [
     { family: 'node-cache-Linux-x64-npm', outcome: 'hit', sizeMb: undefined },
+    { family: 'node-cache-Linux-x64-npm', outcome: 'miss', sizeMb: undefined },
   ])
 })
 

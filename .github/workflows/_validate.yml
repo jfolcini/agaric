@@ -1,8 +1,9 @@
 name: Validate (prek-equivalent)
 
 # Reusable workflow that runs the same checks as `prek run --all-files`
-# locally, plus the full vitest + cargo nextest + Playwright suites and the
-# externalBin / sqlx-offline-cache smoke checks.
+# locally, plus the vitest + cargo nextest + Playwright suites the diff can
+# affect (each one whole, bar the spec-only narrowing) and the externalBin /
+# sqlx-offline-cache smoke checks.
 #
 # Invoked by ci.yml (every push/PR) and release.yml (every tag).
 #
@@ -53,7 +54,8 @@ name: Validate (prek-equivalent)
 #   - mcp-tests       — `agaric-mcp` sidecar release build + UDS smoke +
 #                        externalBin verify; gated on backend changes.
 #   - validate-all    — a trivial aggregate so branch-protection rules have
-#                        one stable check name to depend on; fail-closed
+#                        one stable check name to depend on (the required
+#                        context is `validate / validate-all`); fail-closed
 #                        per category (a skipped sibling job is accepted
 #                        only when its category was genuinely absent from
 #                        the diff).
@@ -80,7 +82,7 @@ name: Validate (prek-equivalent)
 #     (`github.event.before` is empty), so it would take the fail-closed
 #     `full_suite` branch every week — i.e. degrade to exactly what
 #     `full-suite` already does, minus the unskipped pre-push stage.
-#   * `validate-all` is a REQUIRED status-check context (asserted by
+#   * `validate / validate-all` is a REQUIRED status-check context (asserted by
 #     `branch-protection-assert.yml`). Emitting that context from a scheduled,
 #     non-PR event puts weekly pass/fail runs of a required check name onto
 #     `main`'s commits, where a red weekly canary is indistinguishable at a
@@ -565,7 +567,8 @@ jobs:
         # publishes no attestation at all is reported, not failed, so the
         # many transitive deps without provenance do not red the build.
         # Retried like `npm-audit`: it fetches from the registry, and one
-        # transient error must not red the required `validate-all` context.
+        # transient error must not red the required `validate / validate-all`
+        # context.
         run: bash scripts/npm-audit-retry.sh npm audit signatures
 
       - name: Prepare externalBin placeholder (FEAT-4f)
@@ -1379,8 +1382,9 @@ jobs:
   # ---------------------------------------------------------------------------
   playwright:
     needs: detect-changes
-    # Run the E2E browser suite iff the diff touches a frontend file this
-    # suite reads: not a vitest test file, nor anything under `e2e-tauri/`.
+    # Run the E2E browser suite iff the diff touches a file this suite reads:
+    # a frontend file that is not a vitest test file nor under `e2e-tauri/`,
+    # or `src-tauri/tauri.conf.json`, which a spec reads.
     # When every such path is an `e2e/*.spec.ts`, `playwright_specs` lists the
     # changed specs still on disk and one leg runs just those (#5853); any
     # other path empties it and the whole suite runs on four shards.

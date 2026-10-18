@@ -564,13 +564,12 @@ jobs:
       # #4078 — the typecheck half needs an install. It is done ONCE, here,
       # in the job checkout, and BORROWED by the merged worktree the script
       # builds (scripts/pr-merge-result-check.sh's `provision_node_modules`
-      # symlinks this install's top-level entries in, ~0.03 s). Installing
-      # inside the merged worktree instead would pay `npm ci` a second time
-      # for a tree that is, for a `pull_request` event, all but identical to
-      # this checkout: `actions/checkout` with no `ref:` gives us
-      # `refs/pull/N/merge`, and the script's tree is the same head merged
-      # onto a base fetched seconds later. The script compares the two
-      # lockfiles and re-installs itself in the rare case they disagree.
+      # symlinks it in). Installing inside the merged worktree instead would
+      # pay `npm ci` a second time for a tree that is, for a `pull_request`
+      # event, all but identical to this checkout: `actions/checkout` with no
+      # `ref:` gives us `refs/pull/N/merge`, and the script's tree is the same
+      # head merged onto a base fetched seconds later. The script compares the
+      # two lockfiles and re-installs itself in the rare case they disagree.
       - name: Install Node.js
         # Same pinned action and same Node major as every other lane in
         # _validate.yml — a merge-result typecheck that ran on a different

@@ -23,7 +23,7 @@ npm run typecheck:e2e                         # tsc for this directory only
 
 `reuseExistingServer` is on locally, so Playwright attaches to whatever already listens on its port: a leftover `npm run dev` or older `vite preview` means testing the wrong bundle, and a concurrent run shares or kills the first one's server. Give each worktree its own port (`PW_PORT=5557 npx playwright test …`). Before a run, kill the PID from `lsof -ti :$PW_PORT`, never `pkill -f`, which also matches unrelated shells.
 
-In CI, a PR whose only frontend changes are specs runs just those specs on one leg (`playwright_specs` from `scripts/classify-changes.sh`); any other frontend change, and the weekly full suite, run every shard.
+In CI, `scripts/classify-changes.sh` picks the lanes: a diff of only `e2e/*.spec.ts` runs just those specs on one leg (`playwright_specs`), a diff of only vitest tests or `e2e-tauri/` files runs no Playwright, and any other frontend change, like the weekly full suite, runs every shard.
 
 ## Mock backend
 

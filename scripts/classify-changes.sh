@@ -39,7 +39,8 @@ set -euo pipefail
 #   vitest_e2e_tauri  only `npx vitest run e2e-tauri`: the diff's vitest paths
 #                are all `e2e-tauri/` non-specs. Never true with `vitest`.
 #   playwright   the Playwright suite: any `frontend` path except vitest test
-#                files and `e2e-tauri/`.
+#                files and `e2e-tauri/`, and the non-frontend files a spec
+#                reads (`pw_reads_re`).
 #   playwright_specs  when non-empty, Playwright runs only these changed specs
 #                (space-separated); empty with `playwright` means every shard.
 #   real_backend a path the real-backend lane builds or runs.
@@ -209,17 +210,23 @@ test_only_exception_re='^src-tauri/src/commands/tests/'
 #     `helpers.ts` (or anything else not a spec) runs every shard.
 #   - A vitest test file under `src/` runs the whole vitest suite, whose
 #     coverage gate is a whole-suite number, and nothing else: test files are
-#     not bundled. Shared test infrastructure is not a test file and counts as
-#     product code: the `src/` modules below, and `src/lib/tauri-mock/`, the
-#     mock Playwright runs against. The root configs (`vitest.config.ts`,
-#     `playwright.config.ts`, `wdio.conf.ts`) are product code by default.
+#     not bundled. Every other `src/` file is product code, shared test
+#     infrastructure (`test-setup.ts`, `__tests__/mocks/`, …) included, and so
+#     is every test file under `src/lib/tauri-mock/`, the mock Playwright runs
+#     against. The root configs (`vitest.config.ts`, `playwright.config.ts`,
+#     `wdio.conf.ts`) are product code by default.
+# A spec list reaches Playwright as regexes and WebdriverIO as a word-split
+# list, so a spec named outside plain path characters runs its lane whole.
 e2e_tauri_re='^e2e-tauri/'
-wdio_spec_re='^e2e-tauri/.*\.e2e\.ts$'
+wdio_spec_re='^e2e-tauri/[A-Za-z0-9._/-]+\.e2e\.ts$'
 e2e_tauri_test_re='^e2e-tauri/.*\.test\.ts$'
 e2e_re='^e2e/'
-pw_spec_re='^e2e/.*\.spec\.ts$'
+pw_spec_re='^e2e/[A-Za-z0-9._/-]+\.spec\.ts$'
 vitest_test_re='^src/.*\.(test|spec)\.tsx?$'
-src_test_infra_re='^src/(test-setup\.ts$|__tests__/(mocks|helpers|fixtures)/|lib/tauri-mock/)'
+src_test_infra_re='^src/lib/tauri-mock/'
+# Files outside the frontend set that a Playwright spec reads from disk:
+# `e2e/interface-zoom.spec.ts` sizes its viewport from `tauri.conf.json`.
+pw_reads_re='^src-tauri/tauri\.conf\.json$'
 # Past this many changed specs Playwright runs every shard instead: the list
 # runs on one leg, which a sweep over most specs would hold past
 # `playwright.config.ts`'s `globalTimeout`.
@@ -291,11 +298,9 @@ for f in "${changed[@]}"; do
   if [[ "$f" =~ $e2e_tauri_re ]]; then
     if [[ "$f" =~ $wdio_spec_re ]]; then
       if [ -f "$f" ]; then real_specs+=("$f"); fi
-    elif [[ "$f" =~ $e2e_tauri_test_re ]]; then
-      vitest_e2e_tauri_hit=true
     else
       vitest_e2e_tauri_hit=true
-      real_full=true
+      if [[ ! "$f" =~ $e2e_tauri_test_re ]]; then real_full=true; fi
     fi
   elif [[ "$f" =~ $e2e_re ]]; then
     if [[ "$f" =~ $pw_spec_re ]]; then
@@ -307,6 +312,7 @@ for f in "${changed[@]}"; do
     vitest_full=true
   else
     if [[ "$f" =~ $frontend_re ]]; then vitest_full=true; pw_full=true; fi
+    if [[ "$f" =~ $pw_reads_re ]]; then pw_full=true; fi
     if [ "$test_only" = "false" ] && [[ "$f" =~ $real_backend_re ]]; then real_full=true; fi
   fi
   if [[ "$f" =~ $codeql_rust_re ]]; then lang_rust=true; fi

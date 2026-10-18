@@ -215,22 +215,18 @@ describe('classify-changes.sh', () => {
     })
   })
 
-  it.each([
-    'src/test-setup.ts',
-    'src/__tests__/mocks/sonner.ts',
-    'src/__tests__/helpers/axe.test.ts',
-    'src/__tests__/fixtures/index.ts',
-    'src/lib/tauri-mock/__tests__/conformance-coverage.test.ts',
-    'src/components/__tests__/_test-utils/TestBlockActionsOverride.tsx',
-  ])('shared test infrastructure %s runs every lane, whole', (path) => {
-    expect(classify([path])).toMatchObject({
-      vitest: 'true',
-      playwright: 'true',
-      playwright_specs: '',
-      real_backend: 'true',
-      real_backend_specs: '',
-    })
-  })
+  it.each(['src/test-setup.ts', 'src/lib/tauri-mock/__tests__/conformance-coverage.test.ts'])(
+    'shared test infrastructure %s runs every lane, whole',
+    (path) => {
+      expect(classify([path])).toMatchObject({
+        vitest: 'true',
+        playwright: 'true',
+        playwright_specs: '',
+        real_backend: 'true',
+        real_backend_specs: '',
+      })
+    },
+  )
 
   it.each(['vitest.config.ts', 'playwright.config.ts', 'wdio.conf.ts'])(
     'the test runner config %s runs vitest and Playwright whole',
@@ -262,6 +258,26 @@ describe('classify-changes.sh', () => {
     expect(classifyWith([], ['e2e/gone.spec.ts'])).toMatchObject({
       vitest: 'false',
       playwright: 'false',
+      playwright_specs: '',
+    })
+  })
+
+  it('a Playwright spec named outside plain path characters runs every shard', () => {
+    const spec = 'e2e/foo[1].spec.ts'
+    expect(classifyWith([spec], [spec])).toMatchObject({ playwright: 'true', playwright_specs: '' })
+  })
+
+  it('a real-backend spec named outside plain path characters runs every spec', () => {
+    const spec = 'e2e-tauri/foo bar.e2e.ts'
+    expect(classifyWith([spec], [spec])).toMatchObject({
+      real_backend: 'true',
+      real_backend_specs: '',
+    })
+  })
+
+  it('tauri.conf.json, which a Playwright spec reads, runs every shard', () => {
+    expect(classify(['src-tauri/tauri.conf.json'])).toMatchObject({
+      playwright: 'true',
       playwright_specs: '',
     })
   })

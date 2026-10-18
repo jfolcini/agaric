@@ -2660,8 +2660,8 @@ stages = ["pre-commit"]
 # being pushed (Phases C/D), re-runs the pre-commit-stage prek hooks
 # whole-tree but category-aware (Phase A), gates sqlx-prepare/MCP
 # phases on whether Rust/MCP paths changed (Phases E/F), and explicitly
-# SKIPS Playwright locally (CI still runs the full e2e suite on every
-# PR). See the script's own header comment for the full phase list and
+# SKIPS Playwright locally (CI runs it when the diff can affect it).
+# See the script's own header comment for the full phase list and
 # rationale.
 #
 # Sequential, not parallel (each phase can depend on the previous

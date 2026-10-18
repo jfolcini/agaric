@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # #5089 — one transient registry hiccup must not red `main`. `better-npm-audit
 # audit` is a single network round-trip to the registry advisory endpoint, and
-# the hook is a blocking step feeding the required `validate-all` context, so
-# one `read ECONNRESET` reddened `main` and every open PR with it.
+# the hook is a blocking step feeding the required `validate / validate-all`
+# context, so one `read ECONNRESET` reddened `main` and every open PR with it.
 #
 # 3 attempts, 5s then 15s: modest picks around that one data point, not a
 # measured optimum.

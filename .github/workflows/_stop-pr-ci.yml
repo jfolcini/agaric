@@ -2,10 +2,10 @@ name: Stop PR CI
 
 # Called by a `stop-after-<job>` job, which starts only once <job> has failed
 # on a pull request: cancels every unfinished workflow run of the PR's head
-# commit, the caller's own run last, so one red job stops the PR's other jobs
-# instead of letting them run to the end. A job of its own rather than a step
-# in the failing job, because cancelling the run from inside that job would
-# turn its red into `cancelled`.
+# commit, bar the ones named below, the caller's own run last, so one red job
+# stops the PR's other jobs instead of letting them run to the end. A job of
+# its own rather than a step in the failing job, because cancelling the run
+# from inside that job would turn its red into `cancelled`.
 
 on:
   workflow_call:
@@ -25,10 +25,11 @@ jobs:
       actions: write
     steps:
       # The Claude workflows are left running: the review judges the code, not
-      # CI, and a new push re-runs it anyway. Every API failure is a warning,
-      # never a failure: a fork or Dependabot PR's token is read-only, and a
-      # run may finish between the listing and its cancel. The failed job
-      # already carries the red.
+      # CI, and a new push re-runs it anyway. So is DCO: it takes seconds, and
+      # a run cancelled while queued needs a manual re-run. Every API failure
+      # is a warning, never a failure: a fork or Dependabot PR's token is
+      # read-only, and a run may finish between the listing and its cancel.
+      # The failed job already carries the red.
       - name: Cancel the PR's unfinished workflow runs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,7 +42,7 @@ jobs:
           if ! runs=$(gh api "repos/$REPO/actions/runs?head_sha=$HEAD_SHA&per_page=100" --jq '
             .workflow_runs[]
             | select(.status != "completed" and (.id | tostring) != env.OWN_RUN)
-            | select(.path | test("/(claude|claude-code-review)\\.yml(@|$)") | not)
+            | select(.path | test("/(claude|claude-code-review|dco)\\.yml(@|$)") | not)
             | "\(.id) \(.name)"'); then
             echo "::warning::Could not list the workflow runs of $HEAD_SHA."
             runs=''
