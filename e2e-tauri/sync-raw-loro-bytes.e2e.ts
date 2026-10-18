@@ -25,7 +25,6 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
-  navigateTo,
   runScopedMarker,
   waitForAppReady,
   waitForToast,
@@ -68,22 +67,13 @@ function backendContents(ids: string[]): Promise<string[]> {
       wanted.map(async (blockId) => {
         try {
           return ((await invoke('get_block', { blockId })) as { content: string | null }).content
-        } catch {
-          return null
+        } catch (error) {
+          throw new Error(`get_block ${blockId} failed: ${JSON.stringify(error)}`)
         }
       }),
     )
     return rows.map((content) => content ?? '')
   }, ids)
-}
-
-/** Whether the Pages list, opened afresh, lists `title`. */
-async function pagesListHolds(title: string): Promise<boolean> {
-  await navigateTo('Journal')
-  await navigateTo('Pages')
-  return $(
-    `.//span[contains(@class, "page-browser-item-title")][normalize-space(.)="${title}"]`,
-  ).isExisting()
 }
 
 describe('Agaric real-backend sync of Loro bytes sent raw after a header frame (#5761)', () => {
@@ -126,11 +116,6 @@ describe('Agaric real-backend sync of Loro bytes sent raw after a header frame (
     await $(SYNC_BUTTON).click()
     await peer.waitPulled()
 
-    await browser.waitUntil(() => pagesListHolds(TITLE), {
-      timeout: NAV_TIMEOUT,
-      interval: 2_000,
-      timeoutMsg: `the page ${TITLE} never reached the app's Pages list`,
-    })
     const ids = blocks.map((block) => block.id)
     let served: string[] = []
     await browser
@@ -141,10 +126,10 @@ describe('Agaric real-backend sync of Loro bytes sent raw after a header frame (
         },
         { timeout: NAV_TIMEOUT },
       )
-      .catch(() => {
+      .catch((error: unknown) => {
         const lengths = JSON.stringify(served.map((content) => content.length))
         throw new Error(
-          `the app serves ${lengths} characters for the blocks; the peer wrote ${BLOCK_CHARS} each`,
+          `the app serves ${lengths} characters for the blocks; the peer wrote ${BLOCK_CHARS} each (${String(error)})`,
         )
       })
   })

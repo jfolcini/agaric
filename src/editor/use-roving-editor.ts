@@ -35,7 +35,7 @@ import { DOMSerializer, type Node as PMNode } from '@tiptap/pm/model'
 import { type Editor, Extension, ReactNodeViewRenderer, useEditor } from '@tiptap/react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 
-import { computeContentDelta, shouldSplitOnBlur } from '@/editor/content-delta'
+import { computeContentDelta, computeLeaveDelta, shouldSplitOnBlur } from '@/editor/content-delta'
 import type { ContentDelta } from '@/editor/content-delta'
 import {
   AtTagPicker,
@@ -1258,11 +1258,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     let delta: ContentDelta | null = null
     try {
       const json = editor.getJSON() as DocNode
-      delta = computeContentDelta(storedMarkdownRef.current, json)
-      // Read as typed: the text goes to the flush unchanged too, to be classified.
-      if (!delta.changed && originalMarkdownRef.current !== storedMarkdownRef.current) {
-        delta = computeContentDelta(originalMarkdownRef.current, json)
-      }
+      delta = computeLeaveDelta(storedMarkdownRef.current, originalMarkdownRef.current, json)
     } catch (err) {
       // Serialization failed — try plain text fallback to avoid data loss.
       // The editor state is about to be wiped in the finally block, so we

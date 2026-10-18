@@ -136,9 +136,8 @@ elif [ -d node_modules ]; then
   # deliberately builds exactly the shape this branch refuses -- a REAL
   # node_modules directory, with only its top-level ENTRIES symlinked in, not
   # this whole-tree symlink. That is not the same bug: its worktree is
-  # disposable and its tsconfigs put tsBuildInfoFile under node_modules/.tmp/,
-  # so a whole-tree symlink there would write the merged tree's incremental
-  # state into the BORROWED install. Two different contexts, two different
+  # disposable and a tool that writes under node_modules/ (.vite, .vitest-cache)
+  # must not write into the BORROWED install. Two different contexts, two different
   # shapes; if you are reconciling them, read that function's own header first.
   PROBLEMS+=("node_modules is a real directory, not a symlink -- see message above")
 else

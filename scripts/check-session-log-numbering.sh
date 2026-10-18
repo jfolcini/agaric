@@ -71,6 +71,16 @@
 # Pre-existing duplicates (the fifteen session-1000 files, the two
 # session-1281 files) are history: only a STAGED addition or rename can fail.
 #
+# A merged duplicate is split by suffixing each log that holds the number
+# (`session-2563a-…`, `session-2563b-…`; docs/session-log/README.md). The
+# number is parsed without the letter, so `2569b` counts as 2569 everywhere.
+# Only that split rename may carry a suffix (`split` mode below); it skips
+# checks 1 and 2, as any number-preserving rename does, but its suffixed id
+# must be free on the branch, the merge target and among this commit's other
+# splits, and its heading must carry the same letter. A new log never takes
+# one. The immutability guard accepts the same renames and leaves the id to
+# this guard, which sees every staged split.
+#
 # WHY RENAMES ALSO HAVE TO BE SELECTED (#4527)
 # ---------------------------------------------
 # A renumber — the exact fix this guard's own "your base is stale" message
@@ -92,7 +102,32 @@ LOG_DIR="docs/session-log"
 # parallel work, so it stays a hard failure.
 GAP_BOUND=25
 
-num_of() { basename "$1" | sed -E 's/^session-([0-9]+)-.*$/\1/'; }
+num_of() { basename "$1" | sed -E 's/^session-([0-9]+)[a-z]?-.*$/\1/'; }
+# The number plus its split suffix, if any: what the heading must repeat.
+id_of() { basename "$1" | sed -E 's/^session-([0-9]+[a-z]?)-.*$/\1/'; }
+
+# How many logs in <ref>'s tree hold session number <n>, suffixed or not.
+logs_holding() {
+  git ls-tree -r --name-only "$1" -- "$LOG_DIR" 2>/dev/null \
+    | grep -cE "^$LOG_DIR/session-$2[a-z]?-" || true
+}
+
+# Whether a staged rename <src> -> <dst> is the one suffixed shape allowed:
+# `session-N-<slug>.md` -> `session-N<letter>-<slug>.md`, N held by more than
+# one log in the merge target or HEAD. The body is the immutability guard's
+# question; this one checks the heading like any other path.
+is_duplicate_split() {
+  local src dst n slug target_ref
+  src="$(basename "$1")"
+  dst="$(basename "$2")"
+  [[ "$src" =~ ^session-([0-9]+)-(.+)$ ]] || return 1
+  n="${BASH_REMATCH[1]}"
+  slug="${BASH_REMATCH[2]}"
+  [[ "$dst" =~ ^session-${n}[a-z]-(.+)$ ]] && [ "${BASH_REMATCH[1]}" = "$slug" ] || return 1
+  target_ref="$(merge_target_ref)"
+  { [ -n "$target_ref" ] && [ "$(logs_holding "$target_ref" "$n")" -gt 1 ]; } \
+    || [ "$(logs_holding HEAD "$n")" -gt 1 ]
+}
 
 # Staged files this guard must check: brand-new logs AND `git mv` renumbers,
 # resolved to their DESTINATION path (#4527).
@@ -187,6 +222,8 @@ freed_by_deletion() {
 #             `D`+`A` spelling of one). Checks 1 and 2 are skipped — the
 #             number is already in `HEAD`, as this same entry, so check 1
 #             would flag it as colliding with itself. Check 3 still runs.
+#   split   — a `heading` rename that splits a merged duplicate number
+#             (`is_duplicate_split`), the only path allowed a suffix.
 #
 # A TAB cannot appear in either mode token, so `cut -f2-` / `read -r mode
 # path` recover a path containing one.
@@ -257,7 +294,11 @@ staged_targets() {
         # the NUMBER checks for the same reason `M` is, and kept for the
         # heading check — see the header comment.
         if [ "$(num_of "$path1")" = "$(num_of "$path2")" ]; then
-          printf 'heading\t%s\n' "$path2"
+          if [[ "$status" == R* ]] && is_duplicate_split "$path1" "$path2"; then
+            printf 'split\t%s\n' "$path2"
+          else
+            printf 'heading\t%s\n' "$path2"
+          fi
           continue
         fi
         printf 'full\t%s\n' "$path2"
@@ -280,6 +321,12 @@ nums_in_ref() {
     | grep -oE 'session-[0-9]+' | grep -oE '[0-9]+' || true
 }
 
+# Suffixed ids (`2563a`) recorded in a ref's tree. Empty when there are none.
+split_ids_in_ref() {
+  git ls-tree -r --name-only "$1" -- "$LOG_DIR" 2>/dev/null \
+    | sed -nE 's#^.*/session-([0-9]+[a-z])-.*$#\1#p' || true
+}
+
 # The tree this commit is going to join. `origin/main` is the real merge
 # target; a bare local `main` is the fallback for a clone that has not
 # fetched. Empty when neither exists — the guard then degrades to the
@@ -295,17 +342,17 @@ merge_target_ref() {
   echo ""
 }
 
-# The `# Session NNNN` heading inside a staged file. Read from the INDEX,
-# not the worktree — the index is what is being committed.
-heading_num_of() {
+# The `# Session NNNN` heading inside a staged file, with any split suffix.
+# Read from the INDEX, not the worktree — the index is what is being committed.
+heading_id_of() {
   git show ":$1" 2>/dev/null \
-    | grep -m1 -oE '^#[[:space:]]+Session[[:space:]]+[0-9]+' \
-    | grep -oE '[0-9]+' || true
+    | grep -m1 -oE '^#[[:space:]]+Session[[:space:]]+[0-9]+[a-z]?' \
+    | grep -oE '[0-9]+[a-z]?$' || true
 }
 
 run_guard() {
   local records existing_max expected max_allowed fail=0
-  local target_ref target_nums head_nums taken n f mode heading
+  local target_ref target_nums head_nums taken n id f mode heading split_ids
   local total heading_count checked=0
 
   records="$(staged_targets)" || return 1
@@ -325,7 +372,7 @@ run_guard() {
   fi
 
   total="$(printf '%s\n' "$records" | grep -c . || true)"
-  heading_count="$(printf '%s\n' "$records" | grep -c $'^heading\t' || true)"
+  heading_count="$(printf '%s\n' "$records" | grep -cE $'^(heading|split)\t' || true)"
   if [ "$heading_count" -eq 0 ]; then
     echo "session-log-numbering: checking $total staged addition/rename(s)."
   else
@@ -342,6 +389,9 @@ run_guard() {
   existing_max="$(printf '%s\n' "$taken" | tail -1)"
   existing_max="${existing_max:-0}"
   expected=$((existing_max + 1))
+  split_ids="$(split_ids_in_ref HEAD)"
+  [ -n "$target_ref" ] && split_ids="$split_ids
+$(split_ids_in_ref "$target_ref")"
 
   # Sort the staged additions numerically so a multi-file commit is checked
   # in the order the numbers must run. Paired and split on TAB, not SPACE
@@ -359,10 +409,28 @@ run_guard() {
     [ -n "$f" ] || continue
     checked=$((checked + 1))
     n="$(num_of "$f")"
+    id="$(id_of "$f")"
     if ! [[ "$n" =~ ^[0-9]+$ ]]; then
       echo "ERROR: $f — cannot parse session number." >&2
       fail=1
       continue
+    fi
+    if [ "$id" != "$n" ] && [ "$mode" != split ]; then
+      echo "ERROR: $f — a letter after the session number only splits a merged duplicate:" >&2
+      echo "  a rename of session-$n-<slug>.md to session-$id-<slug>.md, where more than one" >&2
+      echo "  merged log holds $n. A new log takes a plain number (docs/session-log/README.md)." >&2
+      fail=1
+      continue
+    fi
+    # A split skips check 1, so its suffixed id gets its own: not already on
+    # this branch or the merge target, and not given to another split here.
+    if [ "$mode" = split ]; then
+      if printf '%s\n' "$split_ids" | grep -qx "$id"; then
+        echo "ERROR: $f — session $id is already taken; give this log the next free letter." >&2
+        fail=1
+      fi
+      split_ids="$split_ids
+$id"
     fi
 
     # Checks 1 and 2 ask "is this number free, and is it plausible?" —
@@ -422,13 +490,13 @@ run_guard() {
     #    still a file whose two copies of the number disagree, and the
     #    number not having changed is exactly why nothing else would
     #    catch it.
-    heading="$(heading_num_of "$f")"
+    heading="$(heading_id_of "$f")"
     if [ -z "$heading" ]; then
       echo "ERROR: $f — no '# Session NNNN' heading found." >&2
-      echo "  Every entry opens with '# Session $n — <title>'." >&2
+      echo "  Every entry opens with '# Session $id — <title>'." >&2
       fail=1
-    elif [ "$heading" != "$n" ]; then
-      echo "ERROR: $f — filename says session $n, heading inside says $heading." >&2
+    elif [ "$heading" != "$id" ]; then
+      echo "ERROR: $f — filename says session $id, heading inside says $heading." >&2
       echo "  The number is stored twice; a renumber has to update both." >&2
       fail=1
     fi

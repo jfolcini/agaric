@@ -246,10 +246,9 @@ function SortableBlockWrapperInner({
         // #991 — committed faint row-level drop-over tint so the whole
         // landing row reads as the target (Notion/Logseq idiom), not just the
         // 5px bar. Gated on the existing `showDropIndicator`, independent of
-        // `isFocused`. Static class (no transition) — reduced-motion safe; no
-        // `border-l-2` so it never collides with the focused block's
-        // `shadow-[inset_2px_0_0_var(--primary)]` left accent. Drop cues use
-        // the blue `--ring` family: an ink bar read as a divider (#5332).
+        // `isFocused`. Static class (no transition) — reduced-motion safe.
+        // Drop cues use the blue `--ring` family: an ink bar read as a
+        // divider (#5332).
         showDropIndicator && 'bg-ring/8',
       )}
     >

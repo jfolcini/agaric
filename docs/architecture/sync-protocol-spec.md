@@ -476,7 +476,9 @@ it, since its bytes were never read. `protocol_version` is validated by
 
 Every payload takes this path, `Update` deltas included; there is no size
 threshold. Why the bytes left the JSON is in the `transport::session` module
-docs, and `benches/groups/loro_wire_bench.rs` measures both encodings.
+docs, and `benches/groups/loro_wire_bench.rs` times one send and receive of a
+100K-block snapshot and of a one-edit update over loopback QUIC, and prints the
+peak heap of each.
 
 **Compatibility.** Engine format 5 (`ENGINE_FORMAT_VERSION`) marks the change.
 A format-4 peer would read this frame as an unsupported variant and the raw
@@ -852,8 +854,8 @@ Initiator                                  Responder
    │                                           │  for each registered space:
    │                                           │    prepare_outgoing(None) →
    │                                           │    LoroSyncMessage::Snapshot
-   │   LoroSync { Snapshot, is_last } × spaces │  send_sync_message (chunked
-   ◄──────────────────────────────────────────┤   binary path #611 for large)
+   │   LoroSync { Snapshot, is_last } × spaces │  send_sync_message (header
+   ◄──────────────────────────────────────────┤   frame, then raw bytes)
    │ apply_remote() per space:                 │
    │   engine.import(snapshot)  ← MERGE        │
    │   reproject changed blocks → SQL          │
@@ -874,10 +876,9 @@ Notes:
 - If the responder has no exportable space state, it sends a terminal
   `SyncComplete` and the session closes with no catch-up (a non-progress
   event; the next scheduled sync retries).
-- Large space snapshots used to ride the chunked-binary transport (#611) so that
-  no per-message cap applied on the Loro path; since the cutover they ride one
-  length-prefixed QUIC frame (`transport::session`) under `MAX_FRAME_SIZE`
-  (256 MB), which is the only bound left.
+- A snapshot is a `LoroSync` like any other: a `LoroSyncChunked` header frame
+  followed by the raw bytes (`transport::session`), bounded by
+  `MAX_LORO_SYNC_PAYLOAD_SIZE` (256 MB) on both ends.
 - No `op_log` wipe, no engine registry reload, no peer-epoch bump: the merge
   is applied against the live engines in place.
 

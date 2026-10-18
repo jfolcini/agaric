@@ -45,6 +45,22 @@ export function computeContentDelta(originalMarkdown: string, currentJson: DocNo
   return { newMarkdown, changed: newMarkdown !== canonicalOriginal, originalMarkdown }
 }
 
+/**
+ * What leaving the block reports: the doc against the stored text first, then,
+ * for a block read as typed (`readAsTyped`), against the text it classifies
+ * against, so an untouched block still reports its text for the flush to
+ * classify. `unmount()` and the held save on a mouse press share it.
+ */
+export function computeLeaveDelta(
+  storedMarkdown: string,
+  originalMarkdown: string,
+  currentJson: DocNode,
+): ContentDelta {
+  const delta = computeContentDelta(storedMarkdown, currentJson)
+  if (delta.changed || originalMarkdown === storedMarkdown) return delta
+  return computeContentDelta(originalMarkdown, currentJson)
+}
+
 // #1630 — parse memo for the blur hot path. The blur flush parses the same
 // markdown more than once (e.g. `useEditorBlur` Step 3's early-persist check
 // and Step 5's split decision both call `shouldSplitOnBlur` with the identical

@@ -66,6 +66,13 @@
 # existing file" in the same sentence as "never edit" it, so a rename is
 # its own violation of the rule this guard enforces.
 #
+# One rename is allowed: splitting a merged duplicate number (README.md,
+# Layout). `session-N-<slug>.md` → `session-N<letter>-<slug>.md`, with N
+# held by more than one log in the merge target or HEAD, and the body
+# identical except that the heading's number gains the same letter. See
+# `is_duplicate_split`; scripts/session-log-guards.test.mjs pins it. Whether
+# the suffixed id is free is the numbering guard's question.
+#
 # ─── always_run, not a `files:` key (prek.toml) ───────────────────────────
 #
 # The hook stanza uses `always_run = true` with no `files` regex, for the
@@ -96,17 +103,14 @@
 # negative claim over an empty set — the precise shape #4501 catalogues and
 # #4527 was filed about. It says so and exits 1.
 #
-# ─── No --self-test (#4536, per #4556's criterion) ────────────────────────
+# ─── Tests ────────────────────────────────────────────────────────────────
 #
-# #4536 scopes this guard without one, on #4556's criterion that a guard
-# earns a self-test only when it parses source text with its own parser.
-# This one does not parse anything. Note honestly what that criterion does
-# NOT cover, since this guard has already been bitten by it once: the
-# fail-open surface here is the SELECTOR, not a parser, and a wrong
-# letter-set fails silently and green, exactly as it did in #4527. The
-# four spellings enumerated above are the arms that matter; anyone editing
-# the `--diff-filter` below should re-drive all four in a throwaway repo
-# before trusting prose about which statuses git emits.
+# The duplicate-split exemption parses filenames and the heading, so it is
+# tested (scripts/session-log-guards.test.mjs). The rest of the guard parses
+# nothing: its fail-open surface is the SELECTOR, and a wrong letter-set
+# fails silently and green, exactly as it did in #4527. Anyone editing the
+# `--diff-filter` below should re-drive all four spellings above in a
+# throwaway repo before trusting prose about which statuses git emits.
 set -euo pipefail
 
 # Resolve the repo root and work from it. The pathspec below is
@@ -143,6 +147,34 @@ exists_in_target() {
   git cat-file -e "$1:$2" 2>/dev/null
 }
 
+# How many logs in <ref>'s tree hold session number <n>, suffixed or not.
+logs_holding() {
+  git ls-tree -r --name-only "$1" -- "$LOG_DIR" 2>/dev/null \
+    | grep -cE "^$LOG_DIR/session-$2[a-z]?-" || true
+}
+
+# Whether the staged rename <src> -> <dst> splits a merged duplicate number:
+# same number and slug, one lowercase letter added, a number more than one
+# log holds, and a body that differs from the merge target's only in that
+# letter on the first `# Session N` heading.
+is_duplicate_split() {
+  local target_ref="$1" src="$2" dst="$3" n slug letter
+  [[ "$src" =~ ^$LOG_DIR/session-([0-9]+)-(.+)$ ]] || return 1
+  n="${BASH_REMATCH[1]}"
+  slug="${BASH_REMATCH[2]}"
+  [[ "$dst" =~ ^$LOG_DIR/session-$n([a-z])-(.+)$ ]] || return 1
+  letter="${BASH_REMATCH[1]}"
+  [ "${BASH_REMATCH[2]}" = "$slug" ] || return 1
+  [ "$(logs_holding "$target_ref" "$n")" -gt 1 ] || [ "$(logs_holding HEAD "$n")" -gt 1 ] || return 1
+  git cat-file blob "$target_ref:$src" | awk -v n="$n" -v l="$letter" '
+    !done && match($0, "^#[ \t]+Session[ \t]+" n) && substr($0, RLENGTH + 1, 1) !~ /[0-9a-z]/ {
+      $0 = substr($0, 1, RLENGTH) l substr($0, RLENGTH + 1)
+      done = 1
+    }
+    { print }' >"$expected_file" || return 1
+  git cat-file blob ":$dst" | cmp -s - "$expected_file"
+}
+
 # KNOWN GAP, recorded rather than left implicit: this reads the STAGED INDEX
 # only. CI runs `prek run --all-files` with nothing staged, so the guard takes
 # its zero-records exit-0 path on every CI run — it is a commit-time hook and
@@ -169,7 +201,8 @@ exists_in_target() {
 # stream, which this guard would otherwise report as "0 … nothing to
 # check" — a clean run it never performed.
 records_file="$(mktemp)"
-trap 'rm -f "$records_file"' EXIT
+expected_file="$(mktemp)"
+trap 'rm -f "$records_file" "$expected_file"' EXIT
 # `T` (typechange) is in the set deliberately: replacing a merged
 # `session-*.md` with a symlink or a gitlink destroys the record just as an
 # edit does, and it is staged as neither M nor D. Omitting it would be the
@@ -237,6 +270,10 @@ for i in "${!statuses[@]}"; do
   src="${srcs[$i]}"
   dst="${dsts[$i]}"
   exists_in_target "$target_ref" "$src" || continue
+  if [[ "$status" == R* ]] && is_duplicate_split "$target_ref" "$src" "$dst"; then
+    echo "session-log-immutable: $src -> $dst splits a duplicate session number — allowed (docs/session-log/README.md)."
+    continue
+  fi
   case "$status" in
     M)
       echo "ERROR: $src — already merged into $target_name; a correction belongs in the NEW session's log with a back-reference (docs/session-log/README.md), not an edit to this file." >&2

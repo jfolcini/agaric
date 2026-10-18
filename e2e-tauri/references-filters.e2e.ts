@@ -1,14 +1,17 @@
 // ---------------------------------------------------------------------------
-// Real-backend References panel: Status, Priority and their `none` (#5736).
+// Real-backend References panel: Status, Priority, their `none`, and Created
+// Date (#5736).
 //
 // A task's state and priority live in `blocks.todo_state` / `blocks.priority`,
 // so the panel's builder sends `TodoState` / `Priority`, and `none` as
 // `Not(Or(<every state or level>))` (AddFilterRow.tsx). The backend compiles
 // `Not` as `NOT COALESCE((inner), 0)` (backlink/filters.rs), so a block whose
 // column is NULL joins the complement instead of dropping out; the mock
-// evaluates `Not` in JS, so only this lane shows the SQL. This spec imports
-// sources linking one page and reads the panel for each filter, the Priority
-// ones after leaving the page and coming back.
+// evaluates `Not` in JS, so only this lane shows the SQL. Created Date sends
+// `CreatedInRange`, which the backend compares against the time in each
+// block's ULID id, a bound being that day's UTC midnight, and which the mock
+// does not model at all. This spec imports sources linking one page and reads
+// the panel for each filter, some after leaving the page and coming back.
 //
 // Globals (`$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
@@ -98,16 +101,58 @@ async function openTarget(): Promise<void> {
   await waitForListed(ALL, '', 'with no filter')
 }
 
-/** Add one builder filter: `category`, then the option whose text holds `value`. */
-async function addFilter(category: 'Status' | 'Priority', value: string): Promise<void> {
+/** Add one builder filter: pick `category`, fill its form with `fill`, apply. */
+async function addFilterWith(category: string, fill: () => Promise<void>): Promise<void> {
   const add = $(PANEL).$('button[aria-label="Add filter"]')
   await add.waitForClickable({ timeout: ACTION_TIMEOUT })
   await add.click()
   await chooseSelectOption('[aria-label="Filter category"]', category)
-  await chooseSelectOption(`[aria-label="${category} value"]`, value)
+  await fill()
   const apply = $(PANEL).$('button[aria-label="Apply filter"]')
   await apply.waitForClickable({ timeout: ACTION_TIMEOUT })
   await apply.click()
+}
+
+/** Add a Status or Priority filter: the option whose text holds `value`. */
+async function addFilter(category: 'Status' | 'Priority', value: string): Promise<void> {
+  await addFilterWith(category, () => chooseSelectOption(`[aria-label="${category} value"]`, value))
+}
+
+/**
+ * `YYYY-MM-DD` of the UTC day `days` from now. The backend reads a bound as
+ * that day's UTC midnight, so two days either side of now brackets every block
+ * this run creates, in any time zone.
+ */
+function utcDay(days: number): string {
+  return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10)
+}
+
+/**
+ * Set a date input the way React reads it, the native setter and then an
+ * `input` event: WebKitGTK's date field takes no WebDriver keys and stays
+ * empty, as its time field does (reminder-due-task.e2e.ts).
+ */
+async function setDateInput(label: string, value: string): Promise<void> {
+  const selector = `${PANEL} input[aria-label="${label}"]`
+  await $(selector).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  await browser.execute(
+    (sel: string, date: string) => {
+      const input = document.querySelector<HTMLInputElement>(sel)
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, date)
+      input?.dispatchEvent(new Event('input', { bubbles: true }))
+    },
+    selector,
+    value,
+  )
+  expect(await $(selector).getValue()).toBe(value)
+}
+
+/** Add a Created Date filter; an omitted bound stays open. */
+async function addCreatedFilter(range: { after?: string; before?: string }): Promise<void> {
+  await addFilterWith('Created Date', async () => {
+    if (range.after) await setDateInput('Date after', range.after)
+    if (range.before) await setDateInput('Date before', range.before)
+  })
 }
 
 async function clearFilters(): Promise<void> {
@@ -117,7 +162,7 @@ async function clearFilters(): Promise<void> {
   await waitForListed(ALL, '', 'after Clear all')
 }
 
-describe('Agaric real-backend References Status / Priority filters (#5736)', () => {
+describe('Agaric real-backend References Status / Priority / Created Date filters (#5736)', () => {
   it('lists exactly the sources each Status, Priority and none filter selects', async () => {
     await waitForAppReady()
     const markdown = Object.values(SOURCES)
@@ -143,5 +188,18 @@ describe('Agaric real-backend References Status / Priority filters (#5736)', () 
     await clearFilters()
     await addFilter('Priority', 'None')
     await waitForListed(['todo-bare', 'plain'], 'Showing 2 of 5 backlinks', 'Priority none')
+  })
+
+  // Reads the sources the first `it` imported, all created during this run.
+  it('lists the sources created inside a Created Date range and none outside it', async () => {
+    await openTarget()
+    await addCreatedFilter({ after: utcDay(-2), before: utcDay(2) })
+    await waitForListed(ALL, 'Showing 5 of 5 backlinks', 'Created from two days ago to two ahead')
+    await clearFilters()
+    await addCreatedFilter({ before: utcDay(-2) })
+    await waitForListed([], 'Showing 0 of 5 backlinks', 'Created before two days ago')
+    await clearFilters()
+    await addCreatedFilter({ after: utcDay(2) })
+    await waitForListed([], 'Showing 0 of 5 backlinks', 'Created after two days ahead')
   })
 })

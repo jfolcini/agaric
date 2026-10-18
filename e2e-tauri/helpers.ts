@@ -103,6 +103,7 @@
 //     and its `[role="option"]` items, one per space plus "Manage spaces…".
 // ---------------------------------------------------------------------------
 
+import { execFileSync } from 'node:child_process'
 import {
   mkdtempSync,
   readFileSync,
@@ -629,6 +630,21 @@ export async function openNewPage(title?: string): Promise<void> {
   await $('[data-testid="block-editor"] [contenteditable="true"]').waitForDisplayed({
     timeout: ACTION_TIMEOUT,
   })
+}
+
+/**
+ * Press `chord` (xdotool's spelling) at the X server, where
+ * `tauri-plugin-global-shortcut` grabs the Quick Capture hotkey: WebDriver's
+ * keys go only to the focused webview.
+ */
+export function pressChord(chord: string): void {
+  try {
+    execFileSync('xdotool', ['key', chord])
+  } catch (err) {
+    throw new Error(
+      `xdotool key ${chord} failed; the lane needs xdotool to press OS chords: ${String(err)}`,
+    )
+  }
 }
 
 /** Confirm the open `[role="alertdialog"]` (ConfirmDialog) with its `label` button and wait for it to close. */

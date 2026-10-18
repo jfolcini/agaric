@@ -1,4 +1,4 @@
-# Session 2569 — frontend dev loop: related-test selection and a Playwright port per worktree
+# Session 2569b — frontend dev loop: related-test selection and a Playwright port per worktree
 
 **Gap (#5848, four items):** the related-test run before a push missed
 changes CI would catch, Playwright's port was fixed so a second worktree

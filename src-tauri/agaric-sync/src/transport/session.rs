@@ -1198,8 +1198,8 @@ mod tests {
     }
 
     /// The sizes the property below reaches only by chance: either side of
-    /// [`READ_CHUNK_BYTES`] and of its double, and the cap itself, which both ends
-    /// must accept.
+    /// [`READ_CHUNK_BYTES`], at and just past its double, and the cap itself, which
+    /// both ends must accept.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_loro_payload_at_each_boundary_arrives_as_sent() {
         let mut pair = quic_pair().await;
@@ -1213,8 +1213,7 @@ mod tests {
     }
 
     /// Whatever its size, a Loro payload arrives as it was sent. The sizes sit around
-    /// the old inline threshold (2,400,000 bytes), and [`READ_CHUNK_BYTES`] and its
-    /// double, where the read turns into several requests.
+    /// [`READ_CHUNK_BYTES`] and its double, where the read turns into several requests.
     #[test]
     fn a_loro_payload_of_any_size_arrives_as_sent() {
         use std::cell::RefCell;
@@ -1227,7 +1226,6 @@ mod tests {
         let around = |edge: usize| (edge - 64)..=(edge + 64);
         let size = prop_oneof![
             0..=4096_usize,
-            around(2_400_000),
             around(READ_CHUNK_BYTES),
             around(2 * READ_CHUNK_BYTES),
         ];

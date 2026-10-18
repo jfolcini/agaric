@@ -1,4 +1,4 @@
-# Session 2569 — clicking a broken `[[link]]` chip removes it, and Undo brings it back (#5736)
+# Session 2569a — clicking a broken `[[link]]` chip removes it, and Undo brings it back (#5736)
 
 #5736's last Tags & links item: a `[[link]]` whose target moved to another space
 renders as a broken chip; a click should remove the reference and Ctrl+Z restore

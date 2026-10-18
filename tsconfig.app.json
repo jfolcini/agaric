@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    /* Never put the buildinfo under node_modules: worktrees symlink it, and with `incremental` one worktree's buildinfo makes another's edited tree look up to date (#5848). */
+    "incremental": true,
+    "tsBuildInfoFile": "./.tsbuildinfo/tsconfig.app.tsbuildinfo",
     "target": "ES2023",
     "useDefineForClassFields": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"],

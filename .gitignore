@@ -8,6 +8,8 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+# tsc incremental buildinfo, one dir per checkout (tsconfig.app.json)
+.tsbuildinfo/
 dist
 dist-ssr
 *.local

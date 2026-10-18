@@ -327,7 +327,9 @@ export const LOG_DIR = 'docs/session-log'
 // would otherwise be echoed into the collision report as two lines, one of
 // which an author controls — and the verdict channel below is line-oriented.
 // Excluding it here means no path this script ever prints can forge a line.
-const SESSION_FILE_RE = /^docs\/session-log\/session-(\d+)-[^/\n]+\.md$/
+// `[a-z]?` reads a split duplicate (`session-2563a-…`, docs/session-log/
+// README.md) as its number; a rename into that shape is a same-number rename.
+const SESSION_FILE_RE = /^docs\/session-log\/session-(\d+)[a-z]?-[^/\n]+\.md$/
 
 /** See the exit-code table in this file's header (#4431). */
 export const EXIT_VERIFIED_CLEAN = 0
