@@ -99,7 +99,7 @@ const pageModeCursor = vi.fn((): string | null => null)
 vi.mock('@/editor/page-mode/PageModeSlot', async () => {
   const { useImperativeHandle } = await import('react')
   const { PAGE_MODE_BLOCK_CAP } = await import('@/editor/page-mode/page-mode-fit')
-  type Blocker = { kind: 'overCap'; count: number } | { kind: 'tasks' }
+  type Blocker = { kind: 'overCap'; count: number } | { kind: 'priorities' }
   return {
     PageModeSlot: (props: {
       pageId: string
@@ -126,8 +126,8 @@ vi.mock('@/editor/page-mode/PageModeSlot', async () => {
           >
             over the cap
           </button>
-          <button type="button" onClick={() => props.onBlocked({ kind: 'tasks' })}>
-            a task arrives
+          <button type="button" onClick={() => props.onBlocked({ kind: 'priorities' })}>
+            a priority arrives
           </button>
         </div>
       )
@@ -1395,12 +1395,10 @@ describe('PageEditor page mode (#5691)', () => {
     expect(readPreference(PREFERENCES.editMode)).toBe('page')
   })
 
-  it('a page whose blocks hold a task: Page is blocked with the reason, and choosing it says why', async () => {
+  it('a page whose blocks hold a priority: Page is blocked with the reason, and choosing it says why', async () => {
     stubInvoke({
       load_page_subtree: () => ({
-        blocks: [
-          makeBlock({ id: 'B1', content: 'do it', parent_id: 'PAGE_1', todo_state: 'TODO' }),
-        ],
+        blocks: [makeBlock({ id: 'B1', content: 'do it', parent_id: 'PAGE_1', priority: '1' })],
         truncated: false,
         total: 1,
       }),
@@ -1409,12 +1407,12 @@ describe('PageEditor page mode (#5691)', () => {
     await modeSwitch()
     await loadPage()
     await waitFor(() => {
-      expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.tasks'))
+      expect(capturedPageHeaderProps?.editModeBlocked).toBe(t('pageMode.blocked.priorities'))
     })
 
     act(() => capturedPageHeaderProps?.onEditModeChange?.('page'))
 
-    expect(vi.mocked(toast.info)).toHaveBeenCalledWith(t('pageMode.blocked.tasks'))
+    expect(vi.mocked(toast.info)).toHaveBeenCalledWith(t('pageMode.blocked.priorities'))
     expect(screen.getByTestId('block-tree')).toBeInTheDocument()
     expect(capturedPageHeaderProps?.editMode).toBe('blocks')
   })
@@ -1541,14 +1539,14 @@ describe('PageEditor page mode (#5691)', () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
     await modeSwitch()
 
-    await user.click(await screen.findByRole('button', { name: 'a task arrives' }))
+    await user.click(await screen.findByRole('button', { name: 'a priority arrives' }))
 
     await waitFor(() => {
       expect(screen.getByTestId('block-tree')).toBeInTheDocument()
     })
     expect(order).toEqual(['flush', 'load'])
     expect(vi.mocked(toast.info)).toHaveBeenCalledWith(
-      t('pageMode.switchedToBlocks', { reason: t('pageMode.blocked.tasks') }),
+      t('pageMode.switchedToBlocks', { reason: t('pageMode.blocked.priorities') }),
     )
   })
 

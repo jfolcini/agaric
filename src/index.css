@@ -1144,8 +1144,22 @@
   min-height: 0;
 }
 .page-mode-editor [data-page-block] {
-  @apply rounded-md px-3 py-1;
+  @apply relative rounded-md px-3 py-1;
   min-height: 1.75rem;
+}
+/* A task's checkbox (`page-tasks.ts`) sits in that slot, on the first line, as
+   block mode's row places it. */
+.page-mode-editor .page-block-controls {
+  @apply absolute top-0 right-full mr-1 select-none;
+}
+/* A closed task reads as block mode's, struck and muted, but not while edited;
+   muted by the token rather than by opacity, which leaves it 3.4:1. */
+.page-mode-editor
+  [data-page-block]:is([data-todo-state='DONE'], [data-todo-state='CANCELLED']):not(
+    .page-block-current
+  )
+  > .page-block-content {
+  @apply line-through text-muted-foreground;
 }
 .page-mode-editor .page-block-current {
   @apply ring-1 ring-border bg-accent/[0.06] shadow-(--shadow-resting);

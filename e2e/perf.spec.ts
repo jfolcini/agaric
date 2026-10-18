@@ -378,9 +378,11 @@ async function seedBigPage(
   linkTargets: string[],
   count = BIG_BLOCKS,
   title = BIG_TITLE,
+  /** Every block a task: TODO and DONE in turn. */
+  tasks = false,
 ): Promise<void> {
   await page.evaluate(
-    async ({ bigBlocks, bigTitle, linkTargets: targets }) => {
+    async ({ bigBlocks, bigTitle, linkTargets: targets, tasks: allTasks }) => {
       const internals = (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] as {
         invoke: (cmd: string, args: unknown) => Promise<unknown>
       }
@@ -393,7 +395,7 @@ async function seedBigPage(
         content: bigTitle,
         spaceId: 'SPACE_PERSONAL',
       })
-      await invoke('create_blocks_batch', {
+      const created = (await invoke('create_blocks_batch', {
         specs: Array.from({ length: bigBlocks }, (_, i) => {
           const target = targets[i % Math.max(1, targets.length)]
           const link = target ? ` [[${target}]]` : ''
@@ -404,9 +406,17 @@ async function seedBigPage(
             position: null,
           }
         }),
-      })
+      })) as { blocks: Array<{ id: string }> }
+      if (!allTasks) return
+      for (const [state, parity] of [
+        ['TODO', 0],
+        ['DONE', 1],
+      ] as const) {
+        const ids = created.blocks.filter((_, i) => i % 2 === parity).map((b) => b.id)
+        await invoke('set_todo_state_batch', { blockIds: ids, state })
+      }
     },
-    { bigBlocks: count, bigTitle: title, linkTargets },
+    { bigBlocks: count, bigTitle: title, linkTargets, tasks },
   )
 }
 
@@ -1443,7 +1453,8 @@ interface ModeSample {
 
 /**
  * #5691 — page mode against block mode on the same page, at 500, 2,000 and
- * 5,000 blocks (page mode's 500-block cap is lifted for the run). Each size
+ * 5,000 blocks (page mode's 500-block cap is lifted for the run), every block
+ * a task, so each carries its checkbox in both modes (#5743). Each size
  * runs `AGARIC_PERF_REPEATS` times (default 3) on a fresh vault, alternating
  * which mode opens the page first; each cell is the median with the band the
  * repeats fell in. Per mode: the open (block mode to its first block, page
@@ -1487,7 +1498,7 @@ test('perf: page mode next to block mode (#5691)', async ({ page }) => {
       await sidebar('Journal').click()
       await page.locator('[data-testid="block-static"]').first().waitFor()
       const title = `Perf modes ${size}`
-      await seedBigPage(page, [], size, title)
+      await seedBigPage(page, [], size, title, true)
       const order = repeat % 2 === 0 ? (['blocks', 'page'] as const) : (['page', 'blocks'] as const)
       for (const mode of order) {
         // From a view with no blocks, so the open's first block is this page's.

@@ -14,8 +14,10 @@
  * refused reads the page again and saves once more: a block deleted elsewhere
  * while edited here is then kept as a new block, with a notice.
  *
- * A `#name` typed into a block becomes the tag once the caret leaves that
- * block or page mode closes (`page-tags.ts`).
+ * A task marker or a `#name` left as text in a block becomes the block's task
+ * state or the tag once the caret leaves that block or page mode closes
+ * (`page-tasks.ts`, `page-tags.ts`); the checkbox shows the state the page
+ * store holds, and cycles it through the todo-state command.
  *
  * Chips go where block mode's go (`useBlockNavigateToLink`, a block of this
  * page by moving the cursor to it), and each save's ops reach `UndoStore`
@@ -23,6 +25,7 @@
  * dynamic import, so TipTap stays off the startup path.
  */
 
+import type { Node as PMNode } from '@tiptap/pm/model'
 import type { Transaction } from '@tiptap/pm/state'
 import { type Editor, EditorContent, useEditor } from '@tiptap/react'
 import type React from 'react'
@@ -34,11 +37,17 @@ import {
   fetchAndCacheLinks,
 } from '@/components/block-tree/use-block-link-resolve'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
+import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
 import { SelectionBubbleMenu } from '@/components/editor-toolbar/SelectionBubbleMenu'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
-import { firstTokenPos, pageDocContent, REMOTE_PATCH } from '@/editor/page-mode/page-document'
+import {
+  changedBlocks,
+  firstTokenPos,
+  pageDocContent,
+  REMOTE_PATCH,
+} from '@/editor/page-mode/page-document'
 import { pageModeExtensions } from '@/editor/page-mode/page-mode-extensions'
 import { type PageModeBlocker, pageModeBlocker } from '@/editor/page-mode/page-mode-fit'
 import {
@@ -48,6 +57,7 @@ import {
   type TreeRow,
 } from '@/editor/page-mode/page-save'
 import { commitPageTags } from '@/editor/page-mode/page-tags'
+import { commitPageTask } from '@/editor/page-mode/page-tasks'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import { blockIdOf } from '@/editor/token-ids'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -186,6 +196,15 @@ function commandsApi(read: () => Promise<TreeRow[]>): PageSaveApi {
   }
 }
 
+/** The block `id` of `doc`, or null. */
+function blockById(doc: PMNode, id: string): PMNode | null {
+  let found: PMNode | null = null
+  doc.forEach((node) => {
+    if (found === null && blockIdOf(node) === id) found = node
+  })
+  return found
+}
+
 /** Put the cursor at the start of block `id` and show it; false when the page has no such block. */
 function cursorInto(editor: Editor, id: string): boolean {
   let at = -1
@@ -219,8 +238,10 @@ function PageModeDocument({
   const resolve = useBlockResolve()
   const pageStore = usePageBlockStoreApi()
   const onTagClick = useTagClickHandler()
+  const { handleToggleTodo } = useBlockProperties()
   const editorRef = useRef<Editor | null>(null)
   const flushRef = useRef<() => Promise<void>>(() => Promise.resolve())
+  const cycleRef = useRef<(id: string) => void>(() => {})
   // Block mode's chip navigation: another page opens; a block of this page takes the cursor.
   const noRovingEditor = useRef<RovingEditorHandle | null>(null)
   const handleFlushRef = useRef(() => {
@@ -248,6 +269,11 @@ function PageModeDocument({
       onNavigate: (id: string) => handleNavigateRef.current(id),
       onTagClick,
       placeholder: t('pageMode.placeholder'),
+      tasks: {
+        stateOf: (id: string) => pageStore.getState().blocksById.get(id)?.todo_state ?? null,
+        subscribe: (listener: () => void) => pageStore.subscribe(listener),
+        cycle: (id: string) => cycleRef.current(id),
+      },
     }),
     content: pageDocContent(blocks, newBlockId),
     // Built in an effect: a lazily loaded editor built during render can be
@@ -270,6 +296,7 @@ function PageModeDocument({
   // The session reads these as they are when it needs them, not as it was built with.
   const blocked = useEffectEvent((blocker: PageModeBlocker) => onBlocked(blocker))
   const openingCursor = useEffectEvent(() => cursorBlockId)
+  const cycleTask = useEffectEvent((id: string) => handleToggleTodo(id))
 
   // Once per editor: the save state is built from the page as the document opened on it.
   useEffect(() => {
@@ -293,8 +320,9 @@ function PageModeDocument({
       const { $head } = editor.state.selection
       return $head.depth < 1 ? null : blockIdOf($head.node(1))
     }
-    // The blocks the caret changed whose `#name`s are not committed as tags yet, and its block.
-    const typedIn = new Set<string>()
+    // The blocks changed whose task markers and `#name`s are not committed yet,
+    // each as it was before (`commitPageTask`), and the caret's block.
+    const typedIn = new Map<string, PMNode | null>()
     let caretIn = cursorBlock()
 
     /** Bring the page as the store holds it into the document, unless it holds what page mode cannot show. */
@@ -321,16 +349,20 @@ function PageModeDocument({
       }
     }
 
-    /** Commit the typed tags of the blocks typed in and left, or of all of them when page mode closes. */
-    const commitTags = async (closing: boolean): Promise<OpRef[]> => {
+    /**
+     * Commit the task markers, then the tags, typed in the blocks changed and
+     * left, or in all of them when page mode closes.
+     */
+    const commitTyped = async (closing: boolean): Promise<OpRef[]> => {
       const refs: OpRef[] = []
       // A copy: a block typed in again while a commit awaits is for the next save, not this loop.
       const pending = [...typedIn]
-      for (const id of pending) {
-        // Never the caret's block: its name may still be being typed.
+      for (const [id, loaded] of pending) {
+        // Never the caret's block: its marker or name may still be being typed.
         if (!closing && cursorBlock() === id) continue
         typedIn.delete(id)
-        refs.push(...(await commitPageTags(id, save, api)))
+        const task = await commitPageTask(id, loaded, save, api, pageStore)
+        refs.push(...task.refs, ...(await commitPageTags(id, save, api, task.markdown)))
       }
       return refs
     }
@@ -351,10 +383,10 @@ function PageModeDocument({
       }
       performance.clearMeasures(SAVE_MEASURE)
       performance.measure(SAVE_MEASURE, { start })
-      const tagRefs = await commitTags(closing)
-      if (tagRefs.length > 0) {
-        result.refs.push(...tagRefs)
-        // The tags' `#[ULID]` text comes back as a change from elsewhere does.
+      const typedRefs = await commitTyped(closing)
+      if (typedRefs.length > 0) {
+        result.refs.push(...typedRefs)
+        // The text the commits wrote comes back as a change from elsewhere does.
         if (!editor.isDestroyed) await bringIn(await read())
       }
       const coalesce = result.structural ? undefined : `edit:${cursorBlock() ?? pageId}`
@@ -376,16 +408,41 @@ function PageModeDocument({
     }
     // Its callers close page mode: the mode switch, source mode, a blocker, a link away.
     flushRef.current = () => flush(true)
+    // After the save, so the block exists: an empty one is created for it (`keep`).
+    cycleRef.current = (id) => {
+      clearTimeout(timer)
+      void enqueue(async () => {
+        save.keep.add(id)
+        try {
+          await runSave(false)
+        } finally {
+          save.keep.delete(id)
+        }
+        if (editor.isDestroyed || !save.saved.has(id)) return
+        // A block created here since the store last loaded: the cycle reads its state there.
+        if (!pageStore.getState().blocksById.has(id)) await read()
+        await cycleTask(id)
+      })
+    }
 
-    const onTransaction = ({ transaction }: { transaction: Transaction }): void => {
+    const onTransaction = ({
+      transaction,
+      appendedTransactions,
+    }: {
+      transaction: Transaction
+      appendedTransactions: Transaction[]
+    }): void => {
       const was = caretIn
       caretIn = cursorBlock()
       if (transaction.docChanged && transaction.getMeta(REMOTE_PATCH) !== true) {
-        if (caretIn !== null) typedIn.add(caretIn)
+        const maps = [transaction, ...appendedTransactions].flatMap((tr) => tr.mapping.maps)
+        for (const id of changedBlocks(editor.state.doc, maps)) {
+          if (!typedIn.has(id)) typedIn.set(id, blockById(transaction.before, id))
+        }
         clearTimeout(timer)
         timer = setTimeout(() => void flush(), CONTENT_COMMIT_DEBOUNCE_MS)
       }
-      // Block mode commits a typed `#name` as the block is left: here, as the caret leaves it.
+      // Block mode commits what was typed as the block is left: here, as the caret leaves it.
       if (was !== caretIn && was !== null && typedIn.has(was)) void flush()
     }
     let unregisterDraft = (): void => {}

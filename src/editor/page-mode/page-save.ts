@@ -18,7 +18,8 @@
  * restored by id with `restore_block`, never created again, so references to
  * it keep working. A restore can bring back more than the block (its deleted
  * descendants and ancestors), so the save then rereads the page's tree. A new
- * block is created only once it holds something, or holds a block that does.
+ * block is created only once it holds something, or holds a block that does,
+ * or is about to take a task state (`keep`).
  *
  * `tree` mirrors the backend's tree of the page as far as page mode knows it,
  * for the sibling index each create and move takes. It also holds blocks the
@@ -56,6 +57,8 @@ export interface PageSaveState {
   deletedAt: Map<string, number>
   /** How many writes reached the backend: a read made while this moved may predate one. */
   writes: number
+  /** New blocks to create although empty: one about to take a task state. */
+  keep: Set<string>
 }
 
 /** One live block of the page, as the backend lists it: parents before children, siblings in order. */
@@ -113,7 +116,14 @@ export function createSaveState(
     const markdown = id === null ? undefined : content.get(id)
     if (id !== null && markdown !== undefined) saved.set(id, { node, markdown })
   })
-  return { pageId, saved, tree: treeFromRows(pageId, rows), deletedAt: new Map(), writes: 0 }
+  return {
+    pageId,
+    saved,
+    tree: treeFromRows(pageId, rows),
+    deletedAt: new Map(),
+    writes: 0,
+    keep: new Set(),
+  }
 }
 
 // ── The tree mirror ───────────────────────────────────────────────────────
@@ -196,7 +206,7 @@ interface DesiredBlock {
 /**
  * The blocks the backend should hold, in document order, under the parents
  * their depths give them: every block it knows, and each new block that holds
- * something or holds a block that does.
+ * something, holds a block that does, or is to be kept.
  */
 export function desiredBlocks(doc: PMNode, state: PageSaveState): DesiredBlock[] {
   const all: DesiredBlock[] = []
@@ -214,7 +224,8 @@ export function desiredBlocks(doc: PMNode, state: PageSaveState): DesiredBlock[]
   for (let i = all.length - 1; i >= 0; i -= 1) {
     const block = all[i] as DesiredBlock
     const known = state.saved.has(block.id) || state.deletedAt.has(block.id)
-    if (known || holdsKept.has(block.id) || markdownOf(block.node) !== '') {
+    const wanted = holdsKept.has(block.id) || state.keep.has(block.id)
+    if (known || wanted || markdownOf(block.node) !== '') {
       holdsKept.add(block.parentId)
       kept.push(block)
     }
