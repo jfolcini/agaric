@@ -500,3 +500,90 @@ for (const profile of PROFILES) {
     })
   })
 }
+
+// #5925 — three surfaces that drew past a 360 px screen without the document
+// ever scrolling, so `expectNoHorizontalOverflow(page)` stayed green: each is
+// measured against the viewport or its own cell instead.
+test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
+  test.use({ ...pick(iPhone13), viewport: { width: 360, height: 780 } })
+
+  test('the journal calendar fits the screen and pages to the next month', async ({ page }) => {
+    await waitForBoot(page)
+    await page.getByRole('button', { name: /Open calendar picker$/ }).click()
+    const picker = page.getByRole('dialog', { name: 'Date picker' })
+    await expect(picker).toBeVisible()
+    await picker.evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)))
+    const rect = await picker.evaluate((el) => el.getBoundingClientRect().toJSON())
+    expect(rect.left, 'calendar left edge').toBeGreaterThanOrEqual(0)
+    expect(rect.right, 'calendar right edge').toBeLessThanOrEqual(360)
+    expect(rect.top, 'calendar top edge').toBeGreaterThanOrEqual(0)
+    expect(rect.bottom, 'calendar bottom edge').toBeLessThanOrEqual(780)
+
+    const caption = picker.getByRole('button', { name: 'Go to monthly view' })
+    const month = await caption.textContent()
+    await picker.getByRole('button', { name: 'Go to the Next Month' }).click()
+    await expect(caption).not.toHaveText(month ?? '')
+  })
+
+  test('Settings › Properties rows keep their actions inside the row and the screen', async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    await navigateMobile(page, 'Settings')
+    await openSettingsTab(page, 'Properties')
+    const rows = page.getByTestId('settings-panel-properties').locator('[data-slot="list-item"]')
+    await expect(rows.getByRole('button', { name: 'Edit options' }).first()).toBeVisible()
+    const overflowing = await rows.evaluateAll((els) =>
+      els.flatMap((el) => {
+        // The row sits inside the card, so content past the row's own edge is
+        // past the card even while the viewport still has room.
+        const edge = Math.min(el.getBoundingClientRect().right, window.innerWidth)
+        const right = Math.max(
+          ...[...el.querySelectorAll('*')].map((n) => n.getBoundingClientRect().right),
+        )
+        return right > edge ? [`${el.textContent} ends at ${right}px, past ${edge}px`] : []
+      }),
+    )
+    expect(overflowing).toEqual([])
+  })
+
+  test("Month view's today marker stays inside its day cell and off its count", async ({
+    page,
+  }) => {
+    await waitForBoot(page)
+    const header = page.locator('header').first()
+    await header.getByRole('button', { name: /^Journal view mode/ }).click()
+    await page.getByRole('button', { name: 'Month', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Month', exact: true })).toHaveCount(0)
+    const today = await page.evaluate(() => {
+      const d = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    })
+    const cell = page
+      .getByRole('grid', { name: 'Monthly calendar' })
+      .locator(`[role="gridcell"][data-date="${today}"]`)
+    await expect(cell).toBeVisible()
+    const { marker, box, count } = await cell.evaluate((el) => {
+      const first = el.firstElementChild
+      const total = [...el.querySelectorAll('span')].find(
+        (n) => n !== first && /^\d+$/.test(n.textContent ?? ''),
+      )
+      // The seeded journal has items today, so there is a count to cover.
+      if (!first || !total) throw new Error('today cell lacks its marker or count')
+      return {
+        marker: first.getBoundingClientRect().toJSON(),
+        box: el.getBoundingClientRect().toJSON(),
+        count: total.getBoundingClientRect().toJSON(),
+      }
+    })
+    expect(
+      marker.right <= count.left || marker.bottom <= count.top,
+      `marker ${JSON.stringify(marker)} covers the count ${JSON.stringify(count)}`,
+    ).toBe(true)
+    expect(marker.left, 'marker left').toBeGreaterThanOrEqual(box.left)
+    expect(marker.right, 'marker right').toBeLessThanOrEqual(box.right)
+    expect(marker.top, 'marker top').toBeGreaterThanOrEqual(box.top)
+    expect(marker.bottom, 'marker bottom').toBeLessThanOrEqual(box.bottom)
+  })
+})

@@ -5,8 +5,10 @@ import type { CalendarDay, Modifiers } from 'react-day-picker'
 import { useTranslation } from 'react-i18next'
 
 import { Calendar } from '@/components/ui/calendar'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useCalendarPageDates } from '@/hooks/useCalendarPageDates'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -117,6 +119,7 @@ export function JournalCalendarDropdown({
 }: JournalCalendarDropdownProps): React.ReactElement {
   const { t } = useTranslation()
   const { weekStartsOn } = useWeekStart()
+  const isMobile = useIsMobile()
   const { invalidationKey } = useBlockPropertyEvents()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const calRef = useRef<HTMLDivElement>(null)
@@ -226,6 +229,78 @@ export function JournalCalendarDropdown({
     }
   }, [])
 
+  const content = (
+    <>
+      <Calendar
+        mode="single"
+        selected={currentDate}
+        onSelect={(day) => day && onSelectDate(day)}
+        month={displayedMonth}
+        onMonthChange={setDisplayedMonth}
+        weekStartsOn={weekStartsOn}
+        showWeekNumber
+        showOutsideDays
+        onWeekNumberClick={(_wn: number, dates: Date[]) => onSelectWeek(dates)}
+        onMonthClick={(month: Date) => onSelectMonth(month)}
+        modifiers={{
+          hasContent: highlightedDays,
+          hasDue: datesWithDue,
+          hasScheduled: datesWithScheduled,
+          hasProperty: datesWithProperty,
+        }}
+        components={{ DayButton: CalendarDayButton }}
+        className={cn(
+          'transition-opacity',
+          isMobile && 'mx-auto w-fit p-0',
+          loading && 'opacity-70',
+        )}
+      />
+      {/* Color dot legend */}
+      <ul
+        aria-label={t('journal.legendLabel')}
+        className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-2 text-xs text-muted-foreground"
+        data-testid="calendar-legend"
+      >
+        <li className="flex items-center gap-1">
+          <span aria-hidden="true" className="h-3 w-3 rounded-full bg-primary" />
+          {t('journal.legendPage')}
+        </li>
+        <li className="flex items-center gap-1">
+          <span aria-hidden="true" className="h-3 w-3 rounded-full bg-date-due-foreground" />
+          {t('journal.legendDue')}
+        </li>
+        <li className="flex items-center gap-1">
+          <span aria-hidden="true" className="h-3 w-3 rounded-full bg-date-scheduled-foreground" />
+          {t('journal.legendScheduled')}
+        </li>
+        <li className="flex items-center gap-1">
+          <span aria-hidden="true" className="h-3 w-3 rounded-full bg-date-property-foreground" />
+          {t('journal.legendProperty')}
+        </li>
+      </ul>
+    </>
+  )
+
+  // A phone is narrower than the anchored panel (#5925): it opens as a bottom
+  // sheet instead, edge to edge so the 44 px day cells still fit.
+  if (isMobile) {
+    return (
+      <Sheet open onOpenChange={(open) => !open && onClose()}>
+        <SheetContent
+          side="bottom"
+          className="px-2"
+          aria-busy={loading}
+          aria-describedby={undefined}
+        >
+          <SheetHeader className="px-4">
+            <SheetTitle>{t('journal.datePickerLabel')}</SheetTitle>
+          </SheetHeader>
+          {content}
+        </SheetContent>
+      </Sheet>
+    )
+  }
+
   return (
     <>
       <div role="presentation" className="fixed inset-0 z-40" onClick={onClose} />
@@ -245,52 +320,7 @@ export function JournalCalendarDropdown({
         )}
         style={shiftLeft > 0 ? { transform: `translateX(${shiftLeft}px)` } : undefined}
       >
-        <Calendar
-          mode="single"
-          selected={currentDate}
-          onSelect={(day) => day && onSelectDate(day)}
-          month={displayedMonth}
-          onMonthChange={setDisplayedMonth}
-          weekStartsOn={weekStartsOn}
-          showWeekNumber
-          showOutsideDays
-          onWeekNumberClick={(_wn: number, dates: Date[]) => onSelectWeek(dates)}
-          onMonthClick={(month: Date) => onSelectMonth(month)}
-          modifiers={{
-            hasContent: highlightedDays,
-            hasDue: datesWithDue,
-            hasScheduled: datesWithScheduled,
-            hasProperty: datesWithProperty,
-          }}
-          components={{ DayButton: CalendarDayButton }}
-          className={cn('transition-opacity', loading && 'opacity-70')}
-        />
-        {/* Color dot legend */}
-        <ul
-          aria-label={t('journal.legendLabel')}
-          className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-2 text-xs text-muted-foreground"
-          data-testid="calendar-legend"
-        >
-          <li className="flex items-center gap-1">
-            <span aria-hidden="true" className="h-3 w-3 rounded-full bg-primary" />
-            {t('journal.legendPage')}
-          </li>
-          <li className="flex items-center gap-1">
-            <span aria-hidden="true" className="h-3 w-3 rounded-full bg-date-due-foreground" />
-            {t('journal.legendDue')}
-          </li>
-          <li className="flex items-center gap-1">
-            <span
-              aria-hidden="true"
-              className="h-3 w-3 rounded-full bg-date-scheduled-foreground"
-            />
-            {t('journal.legendScheduled')}
-          </li>
-          <li className="flex items-center gap-1">
-            <span aria-hidden="true" className="h-3 w-3 rounded-full bg-date-property-foreground" />
-            {t('journal.legendProperty')}
-          </li>
-        </ul>
+        {content}
       </div>
     </>
   )

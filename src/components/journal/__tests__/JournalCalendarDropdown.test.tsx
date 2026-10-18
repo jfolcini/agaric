@@ -18,6 +18,7 @@ import { axe } from 'vitest-axe'
 
 import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { JournalCalendarDropdown } from '@/components/journal/JournalCalendarDropdown'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { logger } from '@/lib/logger'
 import { useSpaceStore } from '@/stores/space'
 
@@ -33,6 +34,8 @@ vi.mock('@/components/ui/calendar', () => ({
     </div>
   ),
 }))
+
+vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: vi.fn(() => false) }))
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -70,6 +73,7 @@ function Harness({ onClose }: { onClose?: () => void } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(useIsMobile).mockReturnValue(false)
   // #5415 — the agenda-count IPC carries the active space.
   useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   // The two reads the dropdown fires for the displayed month: per-date agenda
@@ -168,5 +172,66 @@ describe('JournalCalendarDropdown IPC error path (#1270)', () => {
     })
 
     warnSpy.mockRestore()
+  })
+})
+
+// #5925 — the anchored panel is wider than a 360 px phone, so a phone gets the
+// same picker as a bottom sheet.
+describe('JournalCalendarDropdown on a phone (#5925)', () => {
+  beforeEach(() => {
+    vi.mocked(useIsMobile).mockReturnValue(true)
+  })
+
+  it('opens as a bottom sheet titled Date picker', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+
+    await user.click(screen.getByRole('button', { name: /open calendar picker/i }))
+
+    const sheet = screen.getByRole('dialog', { name: 'Date picker' })
+    expect(sheet).toHaveAttribute('data-slot', 'sheet-content')
+    expect(sheet).toContainElement(screen.getByTestId('mock-calendar'))
+    expect(sheet).toContainElement(screen.getByTestId('calendar-legend'))
+  })
+
+  it('selects a date and closes, returning focus to the trigger', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<Harness onClose={onClose} />)
+
+    const trigger = screen.getByRole('button', { name: /open calendar picker/i })
+    await user.click(trigger)
+    await user.click(screen.getByRole('button', { name: 'pick-day' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+    expect(onClose).toHaveBeenCalled()
+    expect(trigger).toHaveFocus()
+  })
+
+  it("closes from the sheet's close button", async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<Harness onClose={onClose} />)
+
+    await user.click(screen.getByRole('button', { name: /open calendar picker/i }))
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('has no a11y violations while open', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+
+    await user.click(screen.getByRole('button', { name: /open calendar picker/i }))
+    const sheet = screen.getByRole('dialog', { name: 'Date picker' })
+    await waitFor(() => expect(sheet).toHaveAttribute('aria-busy', 'false'))
+
+    expect(await axe(sheet)).toHaveNoViolations()
   })
 })
