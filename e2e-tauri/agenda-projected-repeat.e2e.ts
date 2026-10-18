@@ -39,7 +39,7 @@ import {
   pageSourceButton,
   pageSourceLines,
   pickRepeatCommand,
-  reopenPageByTitle,
+  reopenPageHolding,
   runScopedMarker,
   type SourceLine,
   setPageSourceLines,
@@ -49,21 +49,7 @@ import {
 } from './helpers'
 
 const TASK = runScopedMarker('wdio-projected')
-const TASK_ROW = `[data-testid="sortable-block"]*=${TASK}`
-
-/** Leave the page editor and come back, so the task row is the backend's. */
-async function reopenTheNewPage(): Promise<void> {
-  await navigateTo('Journal')
-  await reopenPageByTitle('Untitled')
-  await $(TASK_ROW).waitForDisplayed({ timeout: NAV_TIMEOUT })
-}
-
-/** Leave page `title` and come back, so the rows holding `task` are the backend's. */
-async function reopen(title: string, task: string): Promise<void> {
-  await navigateTo('Journal')
-  await reopenPageByTitle(title)
-  await blockStaticByMarker(task).waitForDisplayed({ timeout: NAV_TIMEOUT })
-}
+const TASK_PAGE = runScopedMarker('wdio-projected-page')
 
 /** Local calendar days `from` to `from + count - 1` from today, as `YYYY-MM-DD`. */
 async function localDays(from: number, count: number): Promise<string[]> {
@@ -100,10 +86,10 @@ interface SeededTask {
 async function seedTasks(title: string, tasks: SeededTask[]): Promise<string[]> {
   const [first] = tasks
   if (first === undefined) throw new Error('no task to seed')
-  // The sidebar click in `reopen` commits the typed task by blurring the editor.
+  // The sidebar click in `reopenPageHolding` commits the typed task by blurring the editor.
   await openNewPage(title)
   await typeMarkerVerified(first.task)
-  await reopen(title, first.task)
+  await reopenPageHolding(title, first.task)
 
   const source = await openPageSource([first.task])
   const firstId = (await pageSourceLines()).find(({ text }) => text.includes(first.task))?.id
@@ -124,7 +110,7 @@ async function seedTasks(title: string, tasks: SeededTask[]): Promise<string[]> 
     timeoutMsg: 'Save did not close source mode',
   })
 
-  await reopen(title, first.task)
+  await reopenPageHolding(title, first.task)
   const ids: string[] = []
   for (const { task } of tasks) {
     const row = blockStaticByMarker(task)
@@ -256,9 +242,9 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736)', () 
     if (today === undefined || weekOut === undefined) throw new Error('no dates to step through')
 
     // The sidebar click commits the typed task by blurring the editor.
-    await openNewPage()
+    await openNewPage(TASK_PAGE)
     await typeMarkerVerified(TASK)
-    await reopenTheNewPage()
+    await reopenPageHolding(TASK_PAGE, TASK)
 
     const source = await openPageSource([TASK])
     const base = await pageSourceLines()
@@ -276,8 +262,8 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736)', () 
       timeout: ACTION_TIMEOUT,
       timeoutMsg: 'Save did not close source mode',
     })
-    await reopenTheNewPage()
-    await $(TASK_ROW).$('.repeat-indicator').waitForExist({
+    await reopenPageHolding(TASK_PAGE, TASK)
+    await $(`[data-testid="sortable-block"]*=${TASK}`).$('.repeat-indicator').waitForExist({
       timeout: NAV_TIMEOUT,
       timeoutMsg: 'the saved task shows no repeat chip',
     })
@@ -396,7 +382,7 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736)', () 
     }
     const [first] = modes
     if (first === undefined) throw new Error('no mode to check')
-    await reopen(page, first.task)
+    await reopenPageHolding(page, first.task)
     for (const id of ids) {
       await $(`[data-block-id="${id}"] .repeat-indicator`).waitForExist({
         timeout: NAV_TIMEOUT,
@@ -405,7 +391,7 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736)', () 
     }
 
     for (const id of ids) await cycleTaskTo(id, 'DONE')
-    await reopen(page, first.task)
+    await reopenPageHolding(page, first.task)
     for (const id of ids) await waitForTaskState(id, 'DONE')
 
     // Each next occurrence is the open TODO bullet of the task; its due date
@@ -461,7 +447,7 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736)', () 
     await setDrawerField('repeat-until', today)
     await closePropertyDrawer()
 
-    await reopen(page, ruled)
+    await reopenPageHolding(page, ruled)
     await openPropertyDrawer(ruledId)
     const ruledAfterReopen = await drawerValues(['repeat', 'repeat-count'])
     await closePropertyDrawer()
@@ -471,7 +457,7 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736)', () 
 
     await cycleTaskTo(ruledId, 'DONE')
     await cycleTaskTo(boundedId, 'DONE')
-    await reopen(page, ruled)
+    await reopenPageHolding(page, ruled)
     await waitForTaskState(ruledId, 'DONE')
     await waitForTaskState(boundedId, 'DONE')
     const boundedRows = (await taskRows(bounded)).length
@@ -483,7 +469,7 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736)', () 
     await closePropertyDrawer()
 
     await cycleTaskTo(nextId, 'DONE')
-    await reopen(page, ruled)
+    await reopenPageHolding(page, ruled)
     await waitForTaskState(nextId, 'DONE')
     const ruledRows = (await taskRows(ruled)).length
 

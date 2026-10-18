@@ -25,39 +25,22 @@ import {
   cycleTaskTo,
   editAtEnd,
   expectAbsent,
-  navigateTo,
   occurrenceIn,
   openPageSource,
   pageSourceButton,
   pageSourceLines,
   pickRepeatCommand,
-  reopenPageByTitle,
+  reopenPageHolding,
   runScopedMarker,
   setPageSourceLines,
   taskRows,
-  typeInputVerified,
   typeMarkerVerified,
   waitForAppReady,
   waitForToast,
-  openNewPageDialog,
+  openNewPage,
 } from './helpers'
 
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
-
-/** Create page `title` in the New page dialog; it opens with its first block in the editor. */
-async function openNewPageTitled(title: string): Promise<void> {
-  await openNewPageDialog()
-  await typeInputVerified('#new-page-name', title)
-  await browser.keys(['Enter'])
-  await $(EDITOR).waitForDisplayed({ timeout: ACTION_TIMEOUT })
-}
-
-/** Leave page `title` and come back, so the rows holding `task` are the backend's. */
-async function reopen(title: string, task: string): Promise<void> {
-  await navigateTo('Journal')
-  await reopenPageByTitle(title)
-  await blockStaticByMarker(task).waitForDisplayed({ timeout: NAV_TIMEOUT })
-}
 
 /** Wait until the page holds `count` occurrences of `task`. */
 async function waitForOccurrences(task: string, count: number): Promise<void> {
@@ -73,11 +56,11 @@ describe('Agaric real-backend /repeat remove (#5160)', () => {
   it('removes a task’s repeat, so completing it makes no next occurrence', async () => {
     const task = runScopedMarker('wdio-repeat-remove')
     const page = runScopedMarker('wdio-repeat-remove-page')
-    await openNewPageTitled(page)
+    await openNewPage(page)
     await $(EDITOR).click()
     await pickRepeatCommand('REPEAT DAILY — Every day')
     await typeMarkerVerified(task)
-    await reopen(page, task)
+    await reopenPageHolding(page, task)
     const id = await blockStaticByMarker(task).getAttribute('data-block-id')
     if (id === null) throw new Error('the task block has no id')
     await cycleTaskTo(id, 'TODO')
@@ -88,12 +71,12 @@ describe('Agaric real-backend /repeat remove (#5160)', () => {
     await waitForToast('Repeat removed')
 
     // The durable read: the page re-fetched from the backend has no repeat.
-    await reopen(page, task)
+    await reopenPageHolding(page, task)
     await expectAbsent(`[data-block-id="${id}"] .repeat-indicator`, 'the repeat indicator')
 
     // A repeating task would gain its next occurrence, a second row.
     await cycleTaskTo(id, 'DONE')
-    await reopen(page, task)
+    await reopenPageHolding(page, task)
     await occurrenceIn(task, 'DONE')
     expect((await taskRows(task)).length).toBe(1)
   })
@@ -101,9 +84,9 @@ describe('Agaric real-backend /repeat remove (#5160)', () => {
   it('a rule set again after /repeat remove makes the next occurrence', async () => {
     const task = runScopedMarker('wdio-repeat-readd')
     const page = runScopedMarker('wdio-repeat-readd-page')
-    await openNewPageTitled(page)
+    await openNewPage(page)
     await typeMarkerVerified(task)
-    await reopen(page, task)
+    await reopenPageHolding(page, task)
 
     // A daily task limited to one occurrence, written as its source lines.
     const source = await openPageSource([task])
@@ -125,26 +108,26 @@ describe('Agaric real-backend /repeat remove (#5160)', () => {
     })
 
     // Its one completion makes the next occurrence, at the limit.
-    await reopen(page, task)
+    await reopenPageHolding(page, task)
     await cycleTaskTo(await occurrenceIn(task, 'TODO'), 'DONE')
-    await reopen(page, task)
+    await reopenPageHolding(page, task)
     await waitForOccurrences(task, 2)
 
     const next = await occurrenceIn(task, 'TODO')
     await editAtEnd(next)
     await pickRepeatCommand('REPEAT REMOVE — Clear recurrence')
     await waitForToast('Repeat removed')
-    await reopen(page, task)
+    await reopenPageHolding(page, task)
     await editAtEnd(next)
     await pickRepeatCommand('REPEAT DAILY — Every day')
     await waitForToast('Set repeat to')
 
-    await reopen(page, task)
+    await reopenPageHolding(page, task)
     await $(`[data-block-id="${next}"] .repeat-indicator`).waitForDisplayed({
       timeout: NAV_TIMEOUT,
     })
     await cycleTaskTo(next, 'DONE')
-    await reopen(page, task)
+    await reopenPageHolding(page, task)
     await waitForOccurrences(task, 3)
     expect((await taskRows(task)).length).toBe(3)
   })
