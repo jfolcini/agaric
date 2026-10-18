@@ -23,6 +23,8 @@ npm run typecheck:e2e                         # tsc for this directory only
 
 `reuseExistingServer` is on locally, so Playwright attaches to whatever already listens on :5173: a leftover `npm run dev` or older `vite preview` means testing the wrong bundle, and a concurrent run shares or kills the first one's server. Before a run, kill the PID from `lsof -ti :5173`, never `pkill -f`, which also matches unrelated shells.
 
+In CI, a PR whose only frontend changes are specs runs just those specs on one leg (`playwright_specs` from `scripts/classify-changes.sh`); any other frontend change, and the weekly full suite, run every shard.
+
 ## Mock backend
 
 `src/lib/tauri-mock/` is an in-memory backend that activates when `window.__TAURI_INTERNALS__` is absent. It seeds fixed pages and blocks and exports `SEED_IDS` and `resetMock()`. `page.reload()` re-seeds it, so a spec verifies persistence by navigating away and back (`reopenPage`), never by reloading.

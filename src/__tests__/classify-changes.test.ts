@@ -25,10 +25,29 @@ function parse(stdout: string): Record<string, string> {
   )
 }
 
-function classify(paths: string[]): Record<string, string> {
-  const res = spawnSync('bash', [SCRIPT, '--stdin'], { input: paths.join('\n'), encoding: 'utf8' })
+function classify(paths: string[], cwd?: string): Record<string, string> {
+  const res = spawnSync('bash', [SCRIPT, '--stdin'], {
+    input: paths.join('\n'),
+    encoding: 'utf8',
+    ...(cwd === undefined ? {} : { cwd }),
+  })
   expect(res.status, res.stderr).toBe(0)
   return parse(res.stdout)
+}
+
+// A changed spec is listed only while it is on disk (a deleted spec cannot
+// fail), so these run in a tree holding exactly `onDisk`.
+function classifyWith(onDisk: string[], paths: string[]): Record<string, string> {
+  const root = mkdtempSync(join(tmpdir(), 'classify-specs-'))
+  try {
+    for (const file of onDisk) {
+      mkdirSync(join(root, file, '..'), { recursive: true })
+      writeFileSync(join(root, file), '')
+    }
+    return classify(paths, root)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 }
 
 function classifyEvent(cwd: string, env: NodeJS.ProcessEnv): Record<string, string> {
@@ -46,8 +65,11 @@ const FULL_SET = {
   desktop: 'true',
   android: 'true',
   vitest: 'true',
+  vitest_e2e_tauri: 'false',
   playwright: 'true',
+  playwright_specs: '',
   real_backend: 'true',
+  real_backend_specs: '',
   codeql_languages: '["actions","javascript-typescript","rust"]',
 }
 
@@ -60,8 +82,11 @@ const DOCS_ONLY = {
   desktop: 'false',
   android: 'false',
   vitest: 'false',
+  vitest_e2e_tauri: 'false',
   playwright: 'false',
+  playwright_specs: '',
   real_backend: 'false',
+  real_backend_specs: '',
   codeql_languages: '[]',
 }
 
@@ -104,26 +129,189 @@ describe('classify-changes.sh', () => {
     })
   })
 
-  it('real-backend specs alone skip Playwright and vitest but run the real lane', () => {
-    const out = classify(['docs/session-log/session-2.md', 'e2e-tauri/history.e2e.ts'])
+  it('real-backend specs alone run only those specs, and neither vitest nor Playwright', () => {
+    const out = classifyWith(
+      ['e2e-tauri/history.e2e.ts', 'e2e-tauri/smoke.e2e.ts'],
+      ['docs/session-log/session-2.md', 'e2e-tauri/history.e2e.ts', 'e2e-tauri/smoke.e2e.ts'],
+    )
     expect(out).toMatchObject({
       docs_only: 'false',
       frontend: 'true',
       vitest: 'false',
+      vitest_e2e_tauri: 'false',
       playwright: 'false',
       real_backend: 'true',
+      real_backend_specs: 'e2e-tauri/history.e2e.ts e2e-tauri/smoke.e2e.ts',
       codeql_languages: '["javascript-typescript"]',
     })
   })
 
-  it('an e2e-tauri helper runs vitest, which tests it, and still skips Playwright', () => {
-    const out = classify(['e2e-tauri/escape-property-line.e2e.ts', 'e2e-tauri/helpers.ts'])
-    expect(out).toMatchObject({ vitest: 'true', playwright: 'false', real_backend: 'true' })
+  it('a deleted real-backend spec is not passed, and alone runs nothing', () => {
+    const paths = ['e2e-tauri/gone.e2e.ts', 'e2e-tauri/smoke.e2e.ts']
+    expect(classifyWith(['e2e-tauri/smoke.e2e.ts'], paths)).toMatchObject({
+      real_backend: 'true',
+      real_backend_specs: 'e2e-tauri/smoke.e2e.ts',
+    })
+    expect(classifyWith([], ['e2e-tauri/gone.e2e.ts'])).toMatchObject({
+      vitest: 'false',
+      playwright: 'false',
+      real_backend: 'false',
+      real_backend_specs: '',
+    })
   })
 
-  it('e2e-tauri plus any app path runs both browser suites', () => {
-    const out = classify(['e2e-tauri/history.e2e.ts', 'src/lib/date-utils.ts'])
-    expect(out).toMatchObject({ vitest: 'true', playwright: 'true' })
+  it('an e2e-tauri helper runs its vitest files alone and every real-backend spec', () => {
+    const out = classifyWith(
+      ['e2e-tauri/escape-property-line.e2e.ts'],
+      ['e2e-tauri/escape-property-line.e2e.ts', 'e2e-tauri/helpers.ts'],
+    )
+    expect(out).toMatchObject({
+      vitest: 'false',
+      vitest_e2e_tauri: 'true',
+      playwright: 'false',
+      real_backend: 'true',
+      real_backend_specs: '',
+    })
+  })
+
+  it('an e2e-tauri vitest file runs those vitest files alone', () => {
+    expect(classify(['e2e-tauri/helpers.test.ts'])).toMatchObject({
+      vitest: 'false',
+      vitest_e2e_tauri: 'true',
+      playwright: 'false',
+      real_backend: 'false',
+    })
+  })
+
+  it('e2e-tauri plus any app path runs both browser suites whole', () => {
+    const out = classifyWith(
+      ['e2e-tauri/history.e2e.ts'],
+      ['e2e-tauri/history.e2e.ts', 'e2e-tauri/helpers.test.ts', 'src/lib/date-utils.ts'],
+    )
+    expect(out).toMatchObject({
+      vitest: 'true',
+      vitest_e2e_tauri: 'false',
+      playwright: 'true',
+      playwright_specs: '',
+      real_backend: 'true',
+      real_backend_specs: '',
+    })
+  })
+
+  it('a vitest test file runs the whole vitest suite and nothing else', () => {
+    const out = classify([
+      'src/lib/__tests__/date-utils.test.ts',
+      'src/components/__tests__/BlockTree.test.tsx',
+      'src/lib/search-query/parse.spec.ts',
+      'docs/session-log/session-4.md',
+    ])
+    expect(out).toMatchObject({
+      frontend: 'true',
+      vitest: 'true',
+      vitest_e2e_tauri: 'false',
+      playwright: 'false',
+      real_backend: 'false',
+      desktop: 'false',
+    })
+  })
+
+  it.each([
+    'src/test-setup.ts',
+    'src/__tests__/mocks/sonner.ts',
+    'src/__tests__/helpers/axe.test.ts',
+    'src/__tests__/fixtures/index.ts',
+    'src/lib/tauri-mock/__tests__/conformance-coverage.test.ts',
+    'src/components/__tests__/_test-utils/TestBlockActionsOverride.tsx',
+  ])('shared test infrastructure %s runs every lane, whole', (path) => {
+    expect(classify([path])).toMatchObject({
+      vitest: 'true',
+      playwright: 'true',
+      playwright_specs: '',
+      real_backend: 'true',
+      real_backend_specs: '',
+    })
+  })
+
+  it.each(['vitest.config.ts', 'playwright.config.ts', 'wdio.conf.ts'])(
+    'the test runner config %s runs vitest and Playwright whole',
+    (path) => {
+      expect(classify([path])).toMatchObject({
+        vitest: 'true',
+        playwright: 'true',
+        playwright_specs: '',
+      })
+    },
+  )
+
+  it('Playwright specs alone run only those specs, and no vitest', () => {
+    const specs = ['e2e/app-chrome.spec.ts', 'e2e/deep-link.spec.ts']
+    expect(classifyWith(specs, [...specs, 'docs/x.md'])).toMatchObject({
+      vitest: 'false',
+      vitest_e2e_tauri: 'false',
+      playwright: 'true',
+      playwright_specs: 'e2e/app-chrome.spec.ts e2e/deep-link.spec.ts',
+      real_backend: 'false',
+    })
+  })
+
+  it('a deleted Playwright spec is not passed, and alone runs nothing', () => {
+    const paths = ['e2e/gone.spec.ts', 'e2e/app-chrome.spec.ts']
+    expect(classifyWith(['e2e/app-chrome.spec.ts'], paths)['playwright_specs']).toBe(
+      'e2e/app-chrome.spec.ts',
+    )
+    expect(classifyWith([], ['e2e/gone.spec.ts'])).toMatchObject({
+      vitest: 'false',
+      playwright: 'false',
+      playwright_specs: '',
+    })
+  })
+
+  it('a Playwright helper runs every shard, and still no vitest', () => {
+    const out = classifyWith(
+      ['e2e/app-chrome.spec.ts'],
+      ['e2e/app-chrome.spec.ts', 'e2e/helpers.ts'],
+    )
+    expect(out).toMatchObject({ vitest: 'false', playwright: 'true', playwright_specs: '' })
+  })
+
+  it('a Playwright spec next to a vitest test file runs vitest whole and that spec', () => {
+    const out = classifyWith(
+      ['e2e/app-chrome.spec.ts'],
+      ['e2e/app-chrome.spec.ts', 'src/lib/__tests__/date-utils.test.ts'],
+    )
+    expect(out).toMatchObject({
+      vitest: 'true',
+      playwright: 'true',
+      playwright_specs: 'e2e/app-chrome.spec.ts',
+    })
+  })
+
+  it('a Playwright spec next to an app path runs every shard', () => {
+    const out = classifyWith(['e2e/app-chrome.spec.ts'], ['e2e/app-chrome.spec.ts', 'src/App.tsx'])
+    expect(out).toMatchObject({ vitest: 'true', playwright: 'true', playwright_specs: '' })
+  })
+
+  it('more than twenty changed specs run every shard', () => {
+    const specs = Array.from({ length: 21 }, (_, i) => `e2e/s${i}.spec.ts`)
+    expect(classifyWith(specs, specs)).toMatchObject({ playwright: 'true', playwright_specs: '' })
+    expect(classifyWith(specs.slice(1), specs.slice(1))['playwright_specs']).toBe(
+      specs.slice(1).join(' '),
+    )
+  })
+
+  it('an unclassifiable path next to specs runs every lane whole', () => {
+    const out = classifyWith(
+      ['e2e/app-chrome.spec.ts', 'e2e-tauri/smoke.e2e.ts'],
+      ['e2e/app-chrome.spec.ts', 'e2e-tauri/smoke.e2e.ts', 'rust-toolchain.toml'],
+    )
+    expect(out).toMatchObject({
+      vitest: 'true',
+      vitest_e2e_tauri: 'false',
+      playwright: 'true',
+      playwright_specs: '',
+      real_backend: 'true',
+      real_backend_specs: '',
+    })
   })
 
   it('Rust-test-only files skip both bundle builds and the real lane, not the Rust suites', () => {
@@ -142,6 +330,7 @@ describe('classify-changes.sh', () => {
       android: 'false',
       real_backend: 'false',
       vitest: 'false',
+      vitest_e2e_tauri: 'false',
       playwright: 'false',
       codeql_languages: '["rust"]',
     })

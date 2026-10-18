@@ -28,13 +28,18 @@ name: Validate (prek-equivalent)
 #                        ONLY on a docs-only diff (exactly one of
 #                        lint/docs-lint runs per push/PR).
 #   - vitest          — the frontend suite, sharded 3 ways; each shard emits a
-#                        blob report. Gated on frontend changes, minus a diff
-#                        of real-backend specs alone. Node 24 (primary).
+#                        blob report. Gated on the classifier's `vitest`:
+#                        frontend changes outside `e2e/` and `e2e-tauri/`.
+#                        Node 24 (primary).
 #   - vitest-coverage — replays all shard blobs into one report, gates the #749
 #                        coverage thresholds on it, and runs the production
 #                        build + bundle-size gate. Paired with vitest.
-#   - playwright      — the e2e suite, sharded 3 ways; gated on frontend
-#                        changes, minus a diff confined to `e2e-tauri/`.
+#   - vitest-e2e-tauri — `npx vitest run e2e-tauri` alone, for a diff whose
+#                        only vitest paths are `e2e-tauri/` non-specs.
+#   - playwright      — the e2e suite, sharded 4 ways, or one leg running only
+#                        the changed specs of a spec-only diff; gated on
+#                        frontend changes minus vitest test files and
+#                        `e2e-tauri/`.
 #   - cargo-tests     — backend `cargo nextest` + llvm-cov instrumentation,
 #                        sharded 2 ways; gated on backend changes.
 #   - cargo-coverage  — merges the cargo-tests shard coverage into one
@@ -128,7 +133,9 @@ jobs:
       desktop: ${{ steps.classify.outputs.desktop }}
       android: ${{ steps.classify.outputs.android }}
       vitest: ${{ steps.classify.outputs.vitest }}
+      vitest_e2e_tauri: ${{ steps.classify.outputs.vitest_e2e_tauri }}
       playwright: ${{ steps.classify.outputs.playwright }}
+      playwright_specs: ${{ steps.classify.outputs.playwright_specs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1109,14 +1116,14 @@ jobs:
   # ---------------------------------------------------------------------------
   vitest:
     needs: detect-changes
-    # Run the frontend unit/integration suite iff the diff touches frontend
-    # files (src/, e2e/, .ts/.tsx/.js/.jsx/.css, package[-lock].json, the
-    # vite/vitest/tailwind/postcss configs, tsconfig*.json, index.html), unless
-    # every changed path is docs or an `e2e-tauri/*.e2e.ts` spec, which only
-    # WebdriverIO runs. A changed `e2e-tauri/` helper still runs it: the
-    # `e2e-tauri/*.test.ts` files that test the helpers run here. Fail-open is
-    # impossible: the classifier fails CLOSED (vitest=true on any diff error),
-    # and a classifier failure fails the gate outright.
+    # Run the whole frontend unit/integration suite iff the diff touches
+    # frontend files (src/, .ts/.tsx/.js/.jsx/.css, package[-lock].json, the
+    # vite/vitest/tailwind/postcss configs, tsconfig*.json, index.html) outside
+    # `e2e/` and `e2e-tauri/`. A vitest test file alone still runs all of it:
+    # the coverage gate below is a whole-suite number. An `e2e-tauri/` helper
+    # runs `vitest-e2e-tauri` instead. Fail-open is impossible: the classifier
+    # fails CLOSED (vitest=true on any diff error), and a classifier failure
+    # fails the gate outright.
     if: needs.detect-changes.outputs.vitest == 'true'
     runs-on: ubuntu-24.04
     # #4818 — the one-job full suite outgrew its cap: observed on main
@@ -1329,17 +1336,48 @@ jobs:
           path: coverage-merged/
           if-no-files-found: error
           retention-days: 30
+
   # ---------------------------------------------------------------------------
-  # playwright — E2E browser tests, sharded 3-ways. Per-shard report uploaded
-  # on failure (artifact name includes the shard number so the shards don't
-  # collide). No merge step yet — deferred per the plan.
+  # vitest-e2e-tauri — the `e2e-tauri/*.test.ts` files alone, for a diff whose
+  # only vitest paths are under `e2e-tauri/` (#5853). Those tests cover the
+  # real-backend lane's harness, not `src/**`, so no coverage gate reads them
+  # and the sharded suite has nothing to add.
+  # ---------------------------------------------------------------------------
+  vitest-e2e-tauri:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.vitest_e2e_tauri == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: ./.github/actions/setup-node
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Vitest (e2e-tauri only)
+        run: npx vitest run e2e-tauri
+
+  # ---------------------------------------------------------------------------
+  # playwright — E2E browser tests, sharded 4 ways (#5848). Per-shard report
+  # uploaded on failure (artifact name includes the shard number so the shards
+  # don't collide). No merge step yet — deferred per the plan.
   # ---------------------------------------------------------------------------
   playwright:
     needs: detect-changes
-    # Run the E2E browser suite iff the diff touches frontend files (the
-    # `frontend` category), unless every changed path is docs or under
-    # `e2e-tauri/`, which this suite never reads. Fail-closed classifier — see
-    # detect-changes.
+    # Run the E2E browser suite iff the diff touches a frontend file this
+    # suite reads: not a vitest test file, nor anything under `e2e-tauri/`.
+    # When every such path is an `e2e/*.spec.ts`, `playwright_specs` lists the
+    # changed specs still on disk and one leg runs just those (#5853); any
+    # other path empties it and the whole suite runs on four shards.
+    # Fail-closed classifier — see detect-changes.
     if: needs.detect-changes.outputs.playwright == 'true'
     runs-on: ubuntu-24.04
     # 35 min = the measured 25-43s preamble + the install-deps step's
@@ -1350,7 +1388,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: ${{ fromJSON(needs.detect-changes.outputs.playwright_specs == '' && '[1, 2, 3, 4]' || '[1]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1359,9 +1397,19 @@ jobs:
       - name: Playwright setup (Node, npm ci, browsers, system deps)
         uses: ./.github/actions/playwright-setup
 
-      - name: Playwright E2E tests (shard ${{ matrix.shard }}/3)
+      - name: Playwright E2E tests (shard ${{ matrix.shard }})
         id: playwright
-        run: npx playwright test --shard ${{ matrix.shard }}/3
+        env:
+          SHARD: ${{ matrix.shard }}
+          SPECS: ${{ needs.detect-changes.outputs.playwright_specs }}
+        run: |
+          if [ -n "$SPECS" ]; then
+            # One path per word; the classifier lists only `e2e/*.spec.ts`.
+            # shellcheck disable=SC2086
+            npx playwright test $SPECS
+          else
+            npx playwright test --shard "$SHARD/4"
+          fi
 
       - name: Upload Playwright report (on failure)
         if: failure() && steps.playwright.outcome == 'failure'
@@ -1776,7 +1824,8 @@ jobs:
   #     true, docs_only=false and fail (fail-closed).
   #   - success always OK; failure/cancelled NEVER OK; skipped OK only when the
   #     job's category is absent — lint iff docs_only; vitest/vitest-coverage iff
-  #     !vitest; playwright iff !playwright; cargo-tests/cargo-coverage/mcp-tests
+  #     !vitest; vitest-e2e-tauri iff !vitest_e2e_tauri; playwright iff
+  #     !playwright; cargo-tests/cargo-coverage/mcp-tests
   #     iff !backend; docs-lint is the complement (success iff docs_only, else
   #     skipped).
   # INVARIANT: under classifier failure or any category true, that category's
@@ -1785,7 +1834,7 @@ jobs:
   # flips frontend). Full truth table in the PR body.
   # ---------------------------------------------------------------------------
   validate-all:
-    needs: [detect-changes, verify-version-agreement, verify-lockfiles, lint, docs-lint, vitest, vitest-coverage, playwright, cargo-tests, cargo-coverage, mcp-tests]
+    needs: [detect-changes, verify-version-agreement, verify-lockfiles, lint, docs-lint, vitest, vitest-coverage, vitest-e2e-tauri, playwright, cargo-tests, cargo-coverage, mcp-tests]
     if: always()
     runs-on: ubuntu-24.04
     # PEND-41 R1 — trivial jq/bash assertion (~2s observed); 5-min floor.
@@ -1805,6 +1854,7 @@ jobs:
           # playwright / no backend); the gate normalises them below.
           DOCS_ONLY: ${{ needs.detect-changes.outputs.docs_only }}
           VITEST: ${{ needs.detect-changes.outputs.vitest }}
+          VITEST_E2E_TAURI: ${{ needs.detect-changes.outputs.vitest_e2e_tauri }}
           PLAYWRIGHT: ${{ needs.detect-changes.outputs.playwright }}
           BACKEND: ${{ needs.detect-changes.outputs.backend }}
         run: |
@@ -1832,28 +1882,30 @@ jobs:
           }
 
           classifier="$(result_of detect-changes)"
-          echo "detect-changes result=$classifier docs_only=${DOCS_ONLY:-<empty>} vitest=${VITEST:-<empty>} playwright=${PLAYWRIGHT:-<empty>} backend=${BACKEND:-<empty>}"
+          echo "detect-changes result=$classifier docs_only=${DOCS_ONLY:-<empty>} vitest=${VITEST:-<empty>} vitest_e2e_tauri=${VITEST_E2E_TAURI:-<empty>} playwright=${PLAYWRIGHT:-<empty>} backend=${BACKEND:-<empty>}"
 
           # ---- Resolve category booleans, fail-closed -----------------------
           # On a SUCCESSFUL classifier, trust its outputs (normalised so only
           # the literal string "true" counts as present). Otherwise we cannot
-          # trust any category: PIN vitest=playwright=backend=true,
+          # trust any category: PIN vitest=vitest_e2e_tauri=playwright=backend=true,
           # docs_only=false (require/run everything) and fail the gate — a
           # classifier that did not succeed can never let a heavy job pass on a
           # skip.
           docs_only="false"
           vitest="true"
+          vitest_e2e_tauri="true"
           playwright="true"
           backend="true"
           if [ "$classifier" = "success" ]; then
             docs_only="false"; if [ "$DOCS_ONLY" = "true" ]; then docs_only="true"; fi
             vitest="false"; if [ "$VITEST" = "true" ]; then vitest="true"; fi
+            vitest_e2e_tauri="false"; if [ "$VITEST_E2E_TAURI" = "true" ]; then vitest_e2e_tauri="true"; fi
             playwright="false"; if [ "$PLAYWRIGHT" = "true" ]; then playwright="true"; fi
             backend="false"; if [ "$BACKEND" = "true" ]; then backend="true"; fi
           else
-            gate_fail "detect-changes did not succeed (result=$classifier) — failing gate (fail-closed); pinning vitest=playwright=backend=true, docs_only=false."
+            gate_fail "detect-changes did not succeed (result=$classifier) — failing gate (fail-closed); pinning vitest=vitest_e2e_tauri=playwright=backend=true, docs_only=false."
           fi
-          echo "resolved: docs_only=$docs_only vitest=$vitest playwright=$playwright backend=$backend"
+          echo "resolved: docs_only=$docs_only vitest=$vitest vitest_e2e_tauri=$vitest_e2e_tauri playwright=$playwright backend=$backend"
 
           # verify-version-agreement is always-on (#2975) — no category gates
           # it, so a skip is never acceptable.
@@ -1873,6 +1925,8 @@ jobs:
           # into this job when vitest was sharded, so it has to be gated for
           # the coverage floor to keep existing.
           check_job vitest-coverage "$vitest_skip_ok"
+          vet_skip_ok="false"; if [ "$vitest_e2e_tauri" != "true" ]; then vet_skip_ok="true"; fi
+          check_job vitest-e2e-tauri "$vet_skip_ok"
           pw_skip_ok="false"; if [ "$playwright" != "true" ]; then pw_skip_ok="true"; fi
           check_job playwright "$pw_skip_ok"
 
@@ -1905,4 +1959,4 @@ jobs:
             echo "::error::validate-all gate FAILED (see above)."
             exit 1
           fi
-          echo "validate-all gate PASSED (docs_only=$docs_only vitest=$vitest playwright=$playwright backend=$backend)."
+          echo "validate-all gate PASSED (docs_only=$docs_only vitest=$vitest vitest_e2e_tauri=$vitest_e2e_tauri playwright=$playwright backend=$backend)."

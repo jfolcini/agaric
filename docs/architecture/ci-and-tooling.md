@@ -21,7 +21,7 @@ Both `ci.yml` (every push, every PR) and `release.yml` (every tag) call the same
 
 ## Test sharding decisions
 
-Vitest runs as a single full-suite job (`_validate.yml` is canonical). It previously fanned out across a shard matrix, but each shard re-paid the happy-dom env-setup cost and the matrix needed a cross-shard coverage merge; consolidating to one job reads the coverage report directly for negligible wall-clock loss. Playwright fans out across a shard matrix with `fullyParallel: true` and a per-shard `workers` cap (`playwright.config.ts`) — effective CI parallelism is shards × workers. Radix and TipTap focus state is flaky under unbounded parallelism, so the focus-sharing specs are pinned serial per-suite rather than capping the whole run to a single worker. The cargo-tests job is itself sharded via nextest `--partition` because the llvm-cov-instrumented tree was the pipeline's critical-path long pole; each shard emits a partial lcov that the `cargo-coverage` job merges.
+Vitest runs as a three-way shard matrix (`_validate.yml` is canonical, #4818); each shard writes a blob report and raw coverage, and `vitest-coverage` merges them into the one report its gate reads. Playwright fans out across a shard matrix with `fullyParallel: true` and a per-shard `workers` cap (`playwright.config.ts`) — effective CI parallelism is shards × workers. Radix and TipTap focus state is flaky under unbounded parallelism, so the focus-sharing specs are pinned serial per-suite rather than capping the whole run to a single worker. The cargo-tests job is itself sharded via nextest `--partition` because the llvm-cov-instrumented tree was the pipeline's critical-path long pole; each shard emits a partial lcov that the `cargo-coverage` job merges.
 
 ## OS matrix — explicit pins, not floats
 
@@ -86,7 +86,7 @@ Vulnerability advisories filter through three rings of decreasing strictness. **
 - Deliberately **not** in the script: full Tauri bundle build, cross-OS builds, SLSA attestation — those are CI-only, with `scripts/verify-release-build.sh` available for a pre-tag smoke.
 - Escape hatch: `SKIP_CI_VERIFY='<reason>'` short-circuits the hook. The CI-R16 guard rejects a bare truthy flag (`SKIP_CI_VERIFY=1`) — the value must be a self-documenting reason of at least 8 characters, which is echoed into the push output so the skip leaves a trace on top of the git-history audit trail.
 
-Because CI still runs the full suites (vitest, nextest, and all Playwright shards) on every PR regardless of what pre-push scoped locally, this rescoping trades local wall-clock time for a narrower local signal — it does not weaken what actually gates a merge. "If CI diverges from local pre-push, fix the script" still applies to the phases the script does run; it is not a claim that the script's coverage equals CI's.
+Because CI still runs every suite a PR's diff can affect (whole vitest and nextest runs, and all Playwright shards unless the diff's only Playwright paths are specs, which then run alone) regardless of what pre-push scoped locally, this rescoping trades local wall-clock time for a narrower local signal — it does not weaken what actually gates a merge. "If CI diverges from local pre-push, fix the script" still applies to the phases the script does run; it is not a claim that the script's coverage equals CI's.
 
 ## JNI / Android `unsafe_code` reconciliation
 

@@ -7,7 +7,7 @@ export default defineConfig({
   // No retries, in CI or locally: a retry turns a flake into a green run and
   // hides it, so a flaky test must fail and get fixed.
   retries: 0,
-  // #1458: hard per-test ceiling. Healthy shards finish ~1/3 of the suite in
+  // #1458: hard per-test ceiling. Healthy shards finished ~1/3 of the suite in
   // ~7.5 min, so any single test taking a full minute is already pathological;
   // 60s fails such a test fast instead of letting it drift toward the job
   // cap. Generous enough for the heaviest legitimate spec.
@@ -18,7 +18,7 @@ export default defineConfig({
   // job — making any future cascade diagnosable instead of self-obscuring.
   // Sized for one shard under CI=1: 4–5 min of tests (2026-09-02) plus the
   // `webServer` build, so 25 min keeps a wide margin. Both CI lanes run the
-  // same three-way shard (`_validate.yml`, and since #4675 the weekly
+  // same four-way shard (`_validate.yml`, and since #4675 the weekly
   // `full-suite-playwright` in `scheduled-deep-checks.yml`). Unbounded locally.
   globalTimeout: process.env['CI'] ? 25 * 60_000 : 0,
   // File-level parallelism via `fullyParallel: true`, with
@@ -26,7 +26,7 @@ export default defineConfig({
   // the specs whose tests share global state (op-log, pairing mock, kebab
   // popover chains). The workers cap below is per-shard — the CI sharding
   // lives in `.github/workflows/_validate.yml`'s playwright job, so the
-  // effective parallelism in CI is `shards × workers` (3 × 2 today).
+  // effective parallelism in CI is `shards × workers` (4 × 2 today).
   //
   // Locally there is no sharding, so `'50%'` on a 16-core box spawned 8
   // browser contexts against ONE server, and the contention made
