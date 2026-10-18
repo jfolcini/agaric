@@ -45,7 +45,7 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
-import { useExtraBlockProperties } from '@/hooks/useExtraBlockProperties'
+import { extraPropertiesOf, useExtraBlockProperties } from '@/hooks/useExtraBlockProperties'
 import type { PropertyRow } from '@/lib/bindings'
 // The real vi.fn() behind the `@/lib/bindings` mock above.
 const mockedGetBatchProperties = mockGetBatchProperties
@@ -259,5 +259,24 @@ describe('useExtraBlockProperties (provider-projected, #2288)', () => {
       expect(captured.at(-1)?.['B1']).toEqual([{ key: 'effort', value: '4h' }])
     })
     expect(mockedGetBatchProperties).toHaveBeenCalledTimes(2)
+  })
+})
+
+// #5736 — a ref and a boolean are chips: the projection keeps them, with their kind.
+describe('extraPropertiesOf', () => {
+  it('keeps a ref as its target id and a boolean as true or false', () => {
+    expect(
+      extraPropertiesOf([
+        row({ key: 'owner', value_ref: 'PAGE_2' }),
+        row({ key: 'billable', value_bool: 1 }),
+        row({ key: 'archived', value_bool: 0 }),
+        row({ key: 'effort', value_text: '2h' }),
+      ]),
+    ).toEqual([
+      { key: 'owner', value: 'PAGE_2', kind: 'ref' },
+      { key: 'billable', value: 'true', kind: 'boolean' },
+      { key: 'archived', value: 'false', kind: 'boolean' },
+      { key: 'effort', value: '2h' },
+    ])
   })
 })

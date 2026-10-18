@@ -20,6 +20,7 @@ import { HostRowAriaContext } from '@/components/editor/embed/host-row-aria'
 import { SortableBlock } from '@/components/editor/SortableBlock'
 import { useRowDragState } from '@/components/editor/use-row-drag-state'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { isEditableTarget } from '@/lib/keyboard-config'
 import type { FlatBlock, Projection } from '@/lib/tree-utils'
@@ -91,7 +92,7 @@ export interface SortableBlockWrapperProps {
   siblingSetsize: number | undefined
   siblingPosinset: number | undefined
   /** Custom block properties to render as inline chips. */
-  properties: Array<{ key: string; value: string }> | undefined
+  properties: InlineProperty[] | undefined
 }
 
 function SortableBlockWrapperInner({

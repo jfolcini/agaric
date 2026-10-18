@@ -396,6 +396,41 @@ describe('PageModeEditor', () => {
     })
   })
 
+  // #5736 — a ref property's chip opens its target, as a page link's chip does.
+  it('opens a ref property’s chip as block mode does', async () => {
+    const other = seedPage(['elsewhere'], 'Other page')
+    const { pageId, ids } = seedPage(['task'])
+    dispatch('set_property', {
+      blockId: ids[0],
+      key: 'owner',
+      value: {
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: other.pageId,
+        value_bool: null,
+      },
+    })
+    const onNavigateToPage = vi.fn()
+    const { container } = renderPageMode(pageId, { onNavigateToPage })
+    await editorIn(container)
+
+    const value = await waitFor(() => {
+      const found = container.querySelector(
+        `[data-page-block-id="${ids[0]}"] button.property-chip-value`,
+      )
+      if (found === null) throw new Error('no ref chip')
+      return found
+    })
+    await act(async () => {
+      fireEvent.click(value)
+    })
+
+    await waitFor(() => {
+      expect(onNavigateToPage).toHaveBeenCalledWith(other.pageId, 'Other page')
+    })
+  })
+
   it('a block reference to a block of this page moves the cursor there', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     dispatch('edit_block', { blockId: ids[0], toText: `see ((${ids[1]}))` })

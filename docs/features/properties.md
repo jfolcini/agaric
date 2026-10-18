@@ -12,7 +12,7 @@ Every block in Agaric can carry typed properties. Some properties are built in (
 | **Date** | ISO-8601 date. Inline date editor accepts natural language (`today`, `+3d`, `Apr 15`, `next monday`). |
 | **Boolean** | Toggle. |
 | **Select** | Pick one of a fixed list of options; the option list lives on the property definition (edit via the property drawer). |
-| **Ref** | Reference to another page; resolved by ULID so renames don't break it. |
+| **Ref** | Reference to another page, picked from the page picker (it lists pages, not tags); resolved by ULID so renames don't break it. |
 | **URL** | Declares that a key holds a link. Stored and edited as text — that is all the engine enforces. Opening is decided by the value, not the declaration: any property value that parses as `http`, `https` or `mailto` gets an open-link control on its inline chip, whatever its declared type. |
 
 Properties are defined once (key + type + optional configuration like select options); thereafter you can set the property on any block via the **Property Drawer**, the slash menu, or by typing `key::` inline in the editor.
@@ -67,8 +67,9 @@ Opens via `Ctrl+Shift+P` or the toolbar's Properties button. A slide-out sheet (
 Set properties appear as chips on the block:
 
 - Up to a small handful of chips render inline; the rest collapse into a *"+N"* badge.
-- Click a chip to open the inline editor for that property.
-- Each property type has a dedicated chip: priority pip + label, date chip with overdue colour, ref chip with target title.
+- Click a chip's key to rename the key, and its value to open the inline editor for that property.
+- Priority, due and scheduled dates have their own chips: priority pip + label, date chip with overdue colour.
+- A ref chip shows its target's current title (a rename shows at once); clicking the title opens the target. A boolean chip says *Yes* or *No*; clicking it opens the Property Drawer, where the value is a checkbox.
 
 ## Inline syntax (`::`)
 

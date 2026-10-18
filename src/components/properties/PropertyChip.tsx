@@ -12,8 +12,10 @@ import { cn } from '@/lib/utils'
 interface PropertyChipProps {
   propKey: string
   value: string
+  /** The value button's name when it does more than edit the value (a ref chip opens its target). */
+  valueAriaLabel?: string | undefined
   className?: string
-  onClick?: () => void
+  onClick?: (() => void) | undefined
   onKeyClick?: () => void
 }
 
@@ -48,6 +50,7 @@ interface PropertyChipProps {
 export function PropertyChip({
   propKey,
   value,
+  valueAriaLabel,
   className,
   onClick,
   onKeyClick,
@@ -97,7 +100,7 @@ export function PropertyChip({
       // flow opens with the caret where it was (see the key-label note above).
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
-      aria-label={chipLabel}
+      aria-label={valueAriaLabel ?? chipLabel}
     >
       {value}
     </button>

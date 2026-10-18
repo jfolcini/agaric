@@ -48,12 +48,12 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
   const [showAddPopover, setShowAddPopover] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
-  // #2792 — keys of text/select properties added but not yet persisted.
-  // Mirrors `BlockPropertyDrawer`'s `draftKeys` (#2656): such properties
-  // cannot be created with an empty `value_text` (the real backend rejects
-  // it), so we render a local DRAFT row for value entry and only write on
-  // the first non-empty save. A draft is dropped (no backend call) if the
-  // user leaves it empty.
+  // #2792 — keys of `DRAFT_ROW_VALUE_TYPES` properties added but not yet
+  // persisted. Mirrors `BlockPropertyDrawer`'s `draftKeys` (#2656): such
+  // properties have no valid empty value (the real backend rejects it), so we
+  // render a local DRAFT row for value entry and only write on the first
+  // non-empty save. A draft is dropped (no backend call) if the user leaves it
+  // empty.
   const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set())
 
   const { data: storedRows, error: storedRowsError, isPending } = usePageProperties(pageId)
@@ -196,11 +196,11 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     }
   }, [deleteTarget, doDeleteProperty])
 
-  // #2792 / #2804 — text/select properties have no valid empty initializer
-  // (the backend rejects an empty `value_text` and, for select, any value
-  // outside the definition's options). Add a local draft row for value
-  // entry instead of persisting an invalid placeholder; it writes on the
-  // first non-empty save (see `doSaveProperty`). Shared by both
+  // #2792 / #2804 — `DRAFT_ROW_VALUE_TYPES` have no valid empty initializer
+  // (the backend rejects an empty `value_text`, a ref with no target and, for
+  // select, any value outside the definition's options). Add a local draft row
+  // for value entry instead of persisting an invalid placeholder; it writes on
+  // the first non-empty save (see `doSaveProperty`). Shared by both
   // `handleAddFromDef` (existing def) and `handleCreateDef` (brand-new
   // def, #2804) since both land on the same "just-added property with no
   // value yet" state.
@@ -263,8 +263,8 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         const newDef = unwrap(await commands.createPropertyDef(key, valueType, options))
         setDefinitions((prev) => [...prev, newDef])
         // #2804 — same rationale as `handleAddFromDef`: a brand-new
-        // text/select/url def has no valid empty initializer, so add a draft
-        // row instead of init-persisting an empty `value_text`.
+        // `DRAFT_ROW_VALUE_TYPES` def has no valid empty initializer, so add a
+        // draft row instead of init-persisting an empty value.
         if (DRAFT_ROW_VALUE_TYPES.has(newDef.value_type)) {
           addDraftRow(newDef)
           return

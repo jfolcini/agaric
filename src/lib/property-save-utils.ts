@@ -111,11 +111,13 @@ const DEFINABLE_VALUE_TYPES = new Set(['text', 'number', 'date', 'select', 'ref'
 
 /**
  * Types with no valid empty initializer: the backend refuses an empty
- * `value_text` (and, for `select`, any value outside the options), so adding
+ * `value_text` (and, for `select`, any value outside the options), and a
+ * `ref` with no target is a row with no value, which it refuses too. Adding
  * one opens a local draft row instead of init-persisting a placeholder
- * (#2656, #2792, #2804). `url` is text on the wire, so it is one of them.
+ * (#2656, #2792, #2804); a ref's draft writes once its picker picks a page.
+ * `url` is text on the wire, so it is one of them.
  */
-export const DRAFT_ROW_VALUE_TYPES: ReadonlySet<string> = new Set(['text', 'select', 'url'])
+export const DRAFT_ROW_VALUE_TYPES: ReadonlySet<string> = new Set(['text', 'select', 'url', 'ref'])
 
 /**
  * The `property_definitions` row a KEY RENAME should carry over to the new
@@ -270,11 +272,9 @@ export async function renameMayDeclareKey(newKey: string): Promise<boolean> {
 
 /**
  * Build the type-appropriate `setProperty` params for initializing a
- * newly-added property.  Ref properties are initialized with a null
- * ref — the UI shows the page picker immediately so the user can
- * select a target. The `DRAFT_ROW_VALUE_TYPES` have no valid initializer
- * and answer `null`: every caller opens a draft row for them first, and
- * an empty `value_text` here would be the init the backend refuses.
+ * newly-added property. The `DRAFT_ROW_VALUE_TYPES` have no valid initializer
+ * and answer `null`: every caller opens a draft row for them first, and an
+ * empty `value_text` or a null ref here would be the init the backend refuses.
  */
 export function buildInitParams(
   blockId: string,
@@ -289,9 +289,6 @@ export function buildInitParams(
       // everywhere else); `toISOString()` would be UTC → off-by-one for
       // users in negative-offset timezones.
       return { blockId, key: def.key, valueDate: getTodayString() }
-    }
-    case 'ref': {
-      return { blockId, key: def.key, valueRef: null }
     }
     case 'boolean': {
       // A freshly-added boolean property defaults to false.
