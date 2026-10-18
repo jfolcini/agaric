@@ -33,11 +33,21 @@ set -euo pipefail
 #                lychee.toml, .gitleaks.toml.
 #   desktop      a Linux-bundle-relevant path: `ci.yml`'s `build`.
 #   android      an Android-package-relevant path: `ci.yml`'s `android-build`.
-#   vitest       `frontend`, unless every path is a docs file or an
-#                `e2e-tauri/*.e2e.ts` spec, which only WebdriverIO runs.
-#   playwright   `frontend`, unless every path is docs or under `e2e-tauri/`.
+#   vitest       the whole sharded suite and its coverage gate: any `frontend`
+#                path outside the three lane-local trees below, or a vitest
+#                test file.
+#   vitest_e2e_tauri  only `npx vitest run e2e-tauri`: the diff's vitest paths
+#                are all `e2e-tauri/` non-specs. Never true with `vitest`.
+#   playwright   the Playwright suite: any `frontend` path except vitest test
+#                files and `e2e-tauri/`.
+#   playwright_specs  when non-empty, Playwright runs only these changed specs
+#                (space-separated); empty with `playwright` means every shard.
 #   real_backend a path the real-backend lane builds or runs.
+#   real_backend_specs  when non-empty, that lane runs only these changed
+#                `e2e-tauri/*.e2e.ts` specs; empty means every spec.
 #   codeql_languages  JSON list of the CodeQL languages the diff touches.
+# Run it from the repo root with the head checked out: a changed spec that is
+# not on disk was deleted, so it is never listed.
 # A backend change that regenerates src/lib/bindings.ts also flips frontend
 # (bindings-drift / mock-parity tests run); keep that.
 
@@ -45,15 +55,17 @@ emit() {
   printf '%s\n' \
     "docs_only=$docs_only" "docs=$docs" "frontend=$frontend" "backend=$backend" \
     "ci=$ci" "desktop=$desktop" "android=$android" "vitest=$vitest" \
-    "playwright=$playwright" "real_backend=$real_backend" \
-    "codeql_languages=$codeql_languages"
+    "vitest_e2e_tauri=$vitest_e2e_tauri" "playwright=$playwright" \
+    "playwright_specs=$playwright_specs" "real_backend=$real_backend" \
+    "real_backend_specs=$real_backend_specs" "codeql_languages=$codeql_languages"
 }
 
 # The "run everything" classification, then exit 0.
 full_suite() {
   echo "$1" >&2
   docs_only=false docs=true frontend=true backend=true ci=true desktop=true android=true
-  vitest=true playwright=true real_backend=true
+  vitest=true vitest_e2e_tauri=false playwright=true playwright_specs='' real_backend=true
+  real_backend_specs=''
   codeql_languages='["actions","javascript-typescript","rust"]'
   emit
   exit 0
@@ -185,11 +197,33 @@ real_backend_re='^(src/|src-tauri/|e2e-tauri/|public/|wdio\.conf\.ts$|index\.htm
 test_only_re='^src-tauri/(.*/)?(tests/.*|[^/]*_tests/.*|tests\.rs|[^/]*_tests\.rs)$'
 test_only_exception_re='^src-tauri/src/commands/tests/'
 
-# The two lane-only classes: `e2e-tauri/` is read only by the real-backend
-# lane and, for its non-spec `.ts` files, by vitest; a `*.e2e.ts` spec only by
-# WebdriverIO.
+# Test-only classes, which narrow the three frontend lanes. A test file can
+# break only itself and its own lane's coverage, so each lane sees a path as
+# one of: nothing it reads, one of its own specs (the lane may run just the
+# changed specs), or anything else (the lane runs whole).
+#   - `e2e-tauri/` is read only by the real-backend lane and by the
+#     `e2e-tauri/*.test.ts` vitest files: a `*.e2e.ts` spec only by
+#     WebdriverIO, a `*.test.ts` only by vitest, and the shared modules
+#     (`helpers.ts`, `sync-peer.ts`, …) by both, whole.
+#   - `e2e/` is read only by Playwright; no vitest test imports or reads it.
+#     `helpers.ts` (or anything else not a spec) runs every shard.
+#   - A vitest test file under `src/` runs the whole vitest suite, whose
+#     coverage gate is a whole-suite number, and nothing else: test files are
+#     not bundled. Shared test infrastructure is not a test file and counts as
+#     product code: the `src/` modules below, and `src/lib/tauri-mock/`, the
+#     mock Playwright runs against. The root configs (`vitest.config.ts`,
+#     `playwright.config.ts`, `wdio.conf.ts`) are product code by default.
 e2e_tauri_re='^e2e-tauri/'
 wdio_spec_re='^e2e-tauri/.*\.e2e\.ts$'
+e2e_tauri_test_re='^e2e-tauri/.*\.test\.ts$'
+e2e_re='^e2e/'
+pw_spec_re='^e2e/.*\.spec\.ts$'
+vitest_test_re='^src/.*\.(test|spec)\.tsx?$'
+src_test_infra_re='^src/(test-setup\.ts$|__tests__/(mocks|helpers|fixtures)/|lib/tauri-mock/)'
+# Past this many changed specs Playwright runs every shard instead: the list
+# runs on one leg, which a sweep over most specs would hold past
+# `playwright.config.ts`'s `globalTimeout`.
+pw_spec_list_max=20
 
 # CodeQL languages, by the code each extractor reads. A path no category
 # recognizes selects all three (the pin below), as do the CodeQL config and
@@ -204,16 +238,21 @@ codeql_all_re='^\.github/(codeql/|workflows/codeql\.yml$)'
 # `docs` and nothing else: no suite, build, lane or CodeQL language reads
 # Markdown, wherever it lives (`src/stores/AGENTS.md`, `.claude/skills/**.md`),
 # and the prek hooks that do are keyed on `docs` or run in every `lint`. Any
-# other path sticks the flags it matches; docs_only and the two lane-only flags
-# stay true only while EVERY path is docs or in their class.
+# other path sticks the flags it matches; docs_only stays true only while
+# EVERY path is docs.
+#
+# Each frontend lane takes a path through the test-only classes above: a path
+# the lane reads that is not one of its specs sticks `*_full` (run whole), and
+# a spec still on disk joins the lane's list. The list is emitted only while
+# no path set `*_full`.
 #
 # FAIL-CLOSED default for UNRECOGNIZED non-docs paths: a file that is neither
 # docs nor any known category (rust-toolchain.toml, .cargo/config.toml,
 # rustfmt.toml, a root Justfile / Dockerfile / *.sh) is a build/toolchain
-# change no single suite owns, so it pins frontend=backend=ci=true, the
-# real-backend lane and every CodeQL language. Recognized-but-unsuited
-# categories (a pure `ci` change like a workflow edit) do NOT trip this:
-# `lint` (incl. zizmor) covers them.
+# change no single suite owns, so it pins frontend=backend=ci=true, every
+# frontend lane whole, the real-backend lane whole and every CodeQL language.
+# Recognized-but-unsuited categories (a pure `ci` change like a workflow edit)
+# do NOT trip this: `lint` (incl. zizmor) covers them.
 docs_only=true
 docs=false
 frontend=false
@@ -221,9 +260,12 @@ backend=false
 ci=false
 desktop=false
 android=false
-real_backend=false
-real_lane_only=true
-wdio_specs_only=true
+vitest_full=false
+vitest_e2e_tauri_hit=false
+pw_full=false
+real_full=false
+pw_specs=()
+real_specs=()
 lang_rust=false
 lang_js=false
 lang_actions=false
@@ -245,30 +287,64 @@ for f in "${changed[@]}"; do
   if [ "$test_only" = "false" ]; then
     if [[ "$f" =~ $desktop_re ]]; then desktop=true; fi
     if [[ "$f" =~ $android_re ]]; then android=true; fi
-    if [[ "$f" =~ $real_backend_re ]]; then real_backend=true; fi
   fi
-  if [[ ! "$f" =~ $e2e_tauri_re ]]; then real_lane_only=false; fi
-  if [[ ! "$f" =~ $wdio_spec_re ]]; then wdio_specs_only=false; fi
+  if [[ "$f" =~ $e2e_tauri_re ]]; then
+    if [[ "$f" =~ $wdio_spec_re ]]; then
+      if [ -f "$f" ]; then real_specs+=("$f"); fi
+    elif [[ "$f" =~ $e2e_tauri_test_re ]]; then
+      vitest_e2e_tauri_hit=true
+    else
+      vitest_e2e_tauri_hit=true
+      real_full=true
+    fi
+  elif [[ "$f" =~ $e2e_re ]]; then
+    if [[ "$f" =~ $pw_spec_re ]]; then
+      if [ -f "$f" ]; then pw_specs+=("$f"); fi
+    else
+      pw_full=true
+    fi
+  elif [[ "$f" =~ $vitest_test_re ]] && [[ ! "$f" =~ $src_test_infra_re ]]; then
+    vitest_full=true
+  else
+    if [[ "$f" =~ $frontend_re ]]; then vitest_full=true; pw_full=true; fi
+    if [ "$test_only" = "false" ] && [[ "$f" =~ $real_backend_re ]]; then real_full=true; fi
+  fi
   if [[ "$f" =~ $codeql_rust_re ]]; then lang_rust=true; fi
   if [[ "$f" =~ $codeql_js_re ]]; then lang_js=true; fi
   if [[ "$f" =~ $codeql_actions_re ]]; then lang_actions=true; fi
   if [[ "$f" =~ $codeql_all_re ]]; then lang_rust=true; lang_js=true; lang_actions=true; fi
   if [ "$matched_cat" = "false" ]; then
-    echo "Unrecognized non-docs path: $f → pinning frontend=backend=ci=real_backend=true and every CodeQL language (fail-closed)." >&2
+    echo "Unrecognized non-docs path: $f → pinning frontend=backend=ci=true, every lane whole and every CodeQL language (fail-closed)." >&2
     frontend=true
     backend=true
     ci=true
-    real_backend=true
+    vitest_full=true
+    pw_full=true
+    real_full=true
     lang_rust=true
     lang_js=true
     lang_actions=true
   fi
 done
 
-vitest="$frontend"
-if [ "$wdio_specs_only" = "true" ]; then vitest=false; fi
-playwright="$frontend"
-if [ "$real_lane_only" = "true" ]; then playwright=false; fi
+vitest="$vitest_full"
+vitest_e2e_tauri=false
+if [ "$vitest_full" = "false" ] && [ "$vitest_e2e_tauri_hit" = "true" ]; then vitest_e2e_tauri=true; fi
+
+if [ "${#pw_specs[@]}" -gt "$pw_spec_list_max" ]; then pw_full=true; fi
+playwright="$pw_full"
+playwright_specs=''
+if [ "$pw_full" = "false" ] && [ "${#pw_specs[@]}" -gt 0 ]; then
+  playwright=true
+  playwright_specs="${pw_specs[*]}"
+fi
+
+real_backend="$real_full"
+real_backend_specs=''
+if [ "$real_full" = "false" ] && [ "${#real_specs[@]}" -gt 0 ]; then
+  real_backend=true
+  real_backend_specs="${real_specs[*]}"
+fi
 
 langs=()
 if [ "$lang_actions" = "true" ]; then langs+=('"actions"'); fi

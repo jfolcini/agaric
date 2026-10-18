@@ -134,7 +134,7 @@
 # is `true`, and the real configuration lives in a ruleset that
 # `.github/workflows/branch-protection-assert.yml` already asserts against
 # drift: enforcement active on the default branch, required status-check
-# contexts `validate-all` + `dco`, and — the relevant one —
+# contexts `validate / validate-all` + `dco`, and — the relevant one —
 # `strict_required_status_checks_policy: true`, which IS GitHub's "require
 # branches to be up to date before merging".
 #

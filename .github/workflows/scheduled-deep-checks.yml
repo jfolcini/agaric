@@ -3191,7 +3191,7 @@ jobs:
     needs: select-lanes
     if: needs.select-lanes.outputs.full_suite == 'true'
     runs-on: ubuntu-24.04
-    # Sharded three ways like `_validate.yml`'s playwright job (whose 35-minute
+    # Sharded four ways like `_validate.yml`'s playwright job (whose 35-minute
     # budget this mirrors; most of it is the browser + apt install on a cold
     # mirror). The composite action carries the `.deb` cache the old
     # single-job lane lacked (#4115).
@@ -3201,7 +3201,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -3210,8 +3210,8 @@ jobs:
       - name: Playwright setup (Node, npm ci, browser, system deps)
         uses: ./.github/actions/playwright-setup
 
-      - name: Playwright E2E tests (shard ${{ matrix.shard }}/3)
-        run: npx playwright test --shard ${{ matrix.shard }}/3
+      - name: Playwright E2E tests (shard ${{ matrix.shard }}/4)
+        run: npx playwright test --shard ${{ matrix.shard }}/4
 
   full-suite-nextest:
     needs: select-lanes

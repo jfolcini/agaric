@@ -11,7 +11,7 @@
 #    "required_signatures", "required_status_checks"]
 #
 # Beyond rule types, the job also asserts the required status-check
-# CONTEXTS (`dco`, `validate-all`), the strict up-to-date-branch flag
+# CONTEXTS (`dco`, `validate / validate-all`), the strict up-to-date-branch flag
 # (#819 (1)), and the `pull_request` rule's four review parameters —
 # type-only asserting passed even after a context removal, and passes with
 # every review toggle off.
