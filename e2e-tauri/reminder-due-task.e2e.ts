@@ -26,6 +26,7 @@ import { type ChildProcess, spawn } from 'node:child_process'
 
 import {
   ACTION_TIMEOUT,
+  isoDay,
   NAV_TIMEOUT,
   navigateTo,
   openNewPage,
@@ -50,10 +51,6 @@ let monitor: ChildProcess | undefined
 let monitorLog = ''
 let monitorExit = ''
 let today = ''
-
-function localDate(at: Date): string {
-  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`
-}
 
 /** Start `dbus-monitor` on the session bus and resolve once it is monitoring. */
 function startNotifyMonitor(): Promise<void> {
@@ -165,7 +162,7 @@ describe('Agaric real-backend due-task reminder (#5741)', () => {
     if (24 * 60 - (now.getHours() * 60 + now.getMinutes()) < 15) {
       throw new Error('the run starts within 15 minutes of local midnight: "due today" would roll')
     }
-    today = localDate(now)
+    today = isoDay(now)
     const next = new Date(now.getTime() + 60_000)
     const time = `${String(next.getHours()).padStart(2, '0')}:${String(next.getMinutes()).padStart(2, '0')}`
 
@@ -208,6 +205,6 @@ describe('Agaric real-backend due-task reminder (#5741)', () => {
     await waitForReminder(TASK_B)
     expect(notifiedCount(TASK_B)).toBe(1)
     expect(notifiedCount(TASK_A)).toBe(1)
-    expect(localDate(new Date())).toBe(today)
+    expect(isoDay(new Date())).toBe(today)
   })
 })

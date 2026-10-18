@@ -18,7 +18,7 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
-  pageSourceButton,
+  clickPageSourceButton,
   pageSourceLines,
   reopenPageByTitle,
   runScopedMarker,
@@ -79,9 +79,7 @@ describe('Agaric real-backend source-mode Merge (#5140 Phase 5)', () => {
     const base = await pageSourceLines()
     await editBlockElsewhere(secondId, ELSEWHERE)
     await setPageSourceLines(base.map(({ text, id }) => ({ id, text: text.replace(FIRST, MINE) })))
-    const save = pageSourceButton('Save')
-    await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await save.click()
+    await clickPageSourceButton('Save')
     const merge = $('[data-slot="dialog-content"]').$('button=Merge')
     await merge.waitForClickable({ timeout: ACTION_TIMEOUT })
     await merge.click()

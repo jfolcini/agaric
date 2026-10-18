@@ -24,7 +24,7 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
-  pageSourceButton,
+  clickPageSourceButton,
   pageSourceLines,
   pageSourceText,
   reopenPageByTitle,
@@ -47,9 +47,7 @@ async function reopenTheNewPage(): Promise<void> {
 
 /** Save the open source buffer and wait for the block tree to come back. */
 async function saveSource(source: WebdriverIO.Element): Promise<void> {
-  const save = pageSourceButton('Save')
-  await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await save.click()
+  await clickPageSourceButton('Save')
   await source.waitForExist({
     reverse: true,
     timeout: ACTION_TIMEOUT,

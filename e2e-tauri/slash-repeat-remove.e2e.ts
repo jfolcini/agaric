@@ -27,7 +27,7 @@ import {
   expectAbsent,
   occurrenceIn,
   openPageSource,
-  pageSourceButton,
+  clickPageSourceButton,
   pageSourceLines,
   pickRepeatCommand,
   reopenPageHolding,
@@ -98,9 +98,7 @@ describe('Agaric real-backend /repeat remove (#5160)', () => {
         .map(({ text, id }) => ({ id, text: text.replace(`- ${task}`, `- [ ] ${task}`) })),
       ...rule.split('\n').map((text) => ({ text, id: null })),
     ])
-    const save = pageSourceButton('Save')
-    await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await save.click()
+    await clickPageSourceButton('Save')
     await source.waitForExist({
       reverse: true,
       timeout: ACTION_TIMEOUT,

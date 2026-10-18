@@ -28,6 +28,7 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   expectAbsent,
+  isoDay,
   navigateTo,
   openNewPage,
   pressChord,
@@ -42,13 +43,6 @@ const TEMPLATE = runScopedMarker('wdio-jtpl-template')
 const CAPTURE = runScopedMarker('wdio-jtpl-capture')
 const TEMPLATE_BLOCK = `[data-testid="block-static"]*=${TEMPLATE}`
 const HOTKEY_NOTE = runScopedMarker('wdio-jtpl-hotkey')
-
-/** Today as the local `YYYY-MM-DD` the journal names a day by. */
-function todayIso(): string {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
 
 async function waitForWindowFocus(focused: boolean, why: string): Promise<void> {
   await browser.waitUntil(
@@ -144,7 +138,7 @@ describe('Agaric real-backend Quick Capture and the journal template (#5395, #57
 
     await navigateTo('Pages')
     await navigateTo('Journal')
-    const today = $(`section[id="journal-${todayIso()}"]`)
+    const today = $(`section[id="journal-${isoDay(new Date())}"]`)
     await today.$(`[data-testid="block-static"]*=${HOTKEY_NOTE}`).waitForDisplayed({
       timeout: NAV_TIMEOUT,
     })

@@ -22,7 +22,7 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
-  pageSourceButton,
+  clickPageSourceButton,
   pageSourceLines,
   pageSourceText,
   reopenPageByTitle,
@@ -69,9 +69,7 @@ function editMarkedBlock(
 /** Write `lines` into the open buffer and press Save. */
 async function saveLines(lines: SourceLine[]): Promise<void> {
   await setPageSourceLines(lines)
-  const save = pageSourceButton('Save')
-  await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await save.click()
+  await clickPageSourceButton('Save')
 }
 
 /** Edit the marked block in Edit as Markdown and save it, closing the buffer. */
@@ -118,7 +116,7 @@ describe('Agaric real-backend property lines in Edit as Markdown (#5365)', () =>
     const source = await openPageSource([MARKER])
     expect(await pageSourceText()).not.toContain(KEY)
     // An unchanged buffer closes on Cancel without asking.
-    await pageSourceButton('Cancel').click()
+    await clickPageSourceButton('Cancel')
     await source.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
   })
 
@@ -138,9 +136,7 @@ describe('Agaric real-backend property lines in Edit as Markdown (#5365)', () =>
     expect(await refusal.getText()).toMatch(/^line \d+: /)
     await expect(source).toBeExisting()
 
-    const cancel = pageSourceButton('Cancel')
-    await cancel.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await cancel.click()
+    await clickPageSourceButton('Cancel')
     const discard = $('[role="alertdialog"]').$('button=Discard')
     await discard.waitForClickable({ timeout: ACTION_TIMEOUT })
     await discard.click()

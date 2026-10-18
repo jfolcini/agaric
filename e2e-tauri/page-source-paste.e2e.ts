@@ -19,7 +19,7 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
-  pageSourceButton,
+  clickPageSourceButton,
   pageSourceClipboard,
   pageSourceLines,
   reopenPageByTitle,
@@ -84,9 +84,7 @@ async function reopenPage(title: string, marker: string): Promise<void> {
 
 /** Save the open source buffer and wait for source mode to close. */
 async function saveSource(source: WebdriverIO.Element): Promise<void> {
-  const save = pageSourceButton('Save')
-  await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await save.click()
+  await clickPageSourceButton('Save')
   await source.waitForExist({
     reverse: true,
     timeout: ACTION_TIMEOUT,
@@ -202,9 +200,7 @@ describe('Agaric real-backend source-mode cut, copy and paste (#5160 phase 5-5b)
       { line: one + 2, offset: 0 },
     )
     expect(copied['text/html']).toContain(otherIds[0])
-    const cancel = pageSourceButton('Cancel')
-    await cancel.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await cancel.click()
+    await clickPageSourceButton('Cancel')
     await otherSource.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
 
     await reopenPage('Untitled', THIRD)

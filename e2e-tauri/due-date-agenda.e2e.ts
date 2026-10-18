@@ -24,7 +24,7 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
-  pageSourceButton,
+  clickPageSourceButton,
   pageSourceLines,
   pageSourceText,
   reopenPageByTitle,
@@ -188,9 +188,7 @@ describe('Agaric real-backend due date in the agenda (#5365)', () => {
         text: line.includes(TASK) ? line.replace('- [ ] ', '- [/] ') : line,
       })),
     )
-    const save = pageSourceButton('Save')
-    await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await save.click()
+    await clickPageSourceButton('Save')
     await source.waitForExist({
       reverse: true,
       timeout: ACTION_TIMEOUT,

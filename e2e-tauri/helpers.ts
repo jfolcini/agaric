@@ -251,6 +251,12 @@ export function runScopedMarker(base: string): string {
   return `${base}-${RUN_ID}`.replace(/(.)\1+/g, '$1')
 }
 
+/** `d` as the local `YYYY-MM-DD` the journal names a day by. */
+export function isoDay(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 /**
  * Locate a committed block row by a substring of its text. A non-focused block
  * renders as StaticBlock (`data-testid="block-static"`); `*=` matches its text.
@@ -383,14 +389,18 @@ export async function typeInputVerified(selector: string, text: string): Promise
  * pasted image's static render resolving its bytes, the attachment badge), and
  * a click at a centre WebDriver computed before the shift lands on what moved
  * there: the formatting toolbar's "Set due date" opened the date picker, which
- * took the rest of the keystrokes and covered the sidebar.
+ * took the rest of the keystrokes and covered the sidebar. The click waits
+ * for nothing to cover the box: a menu that opened it (the page kebab's "Add
+ * alias") still covers it while it animates out, and that click is refused.
  */
 async function focusForTyping(selector: string): Promise<void> {
   const focused = await browser.execute(
     (sel: string) => document.activeElement === document.querySelector(sel),
     selector,
   )
-  if (!focused) await $(selector).click()
+  if (focused) return
+  await $(selector).waitForClickable({ timeout: ACTION_TIMEOUT })
+  await $(selector).click()
 }
 
 /**
@@ -562,6 +572,15 @@ export async function openContextMenu(element: ReturnType<typeof $>): Promise<vo
     },
     await element.getElement(),
   )
+}
+
+/** Open block `id`'s property drawer from its row's context menu. */
+export async function openPropertyDrawer(id: string): Promise<void> {
+  await openContextMenu($(`[data-testid="sortable-block"][data-block-id="${id}"]`))
+  const item = $('[role="menuitem"]*=Properties')
+  await item.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await item.click()
+  await $('[role="dialog"]*=Block Properties').waitForDisplayed({ timeout: ACTION_TIMEOUT })
 }
 
 /**
@@ -1111,12 +1130,19 @@ export async function pageSourceClipboard(
 }
 
 /**
- * The source editor's button whose text holds `name`: Save reads
- * `Save (2 changes)` once the buffer changed. The buffer sits in TipTap's own
- * wrapper, inside the div that also holds its toolbar.
+ * Click the source editor's button whose text holds `name` (Save reads
+ * `Save (2 changes)` once the buffer changed; the buffer sits in TipTap's own
+ * wrapper, inside the div that also holds its toolbar), then move the pointer
+ * off it. The "Markdown saved" toast slides in under a pointer left on Save,
+ * WebKit reports that as the pointer entering it, and sonner then expands the
+ * stack and holds every toast open: two saves later the stack covers Save and
+ * Cancel for good.
  */
-export function pageSourceButton(name: string) {
-  return $(PAGE_SOURCE).parentElement().parentElement().parentElement().$(`button*=${name}`)
+export async function clickPageSourceButton(name: string): Promise<void> {
+  const button = $(PAGE_SOURCE).parentElement().parentElement().parentElement().$(`button*=${name}`)
+  await button.waitForClickable({ timeout: ACTION_TIMEOUT })
+  await button.click()
+  await browser.action('pointer').move({ x: 2, y: 2, origin: 'viewport' }).perform()
 }
 
 /**
