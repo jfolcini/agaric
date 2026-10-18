@@ -210,7 +210,8 @@ test.describe('A line break inside a block (#5160 D2)', () => {
     await expect(row.getByTestId('property-chip').filter({ hasText: 'done' })).toBeVisible()
     await expect(row.getByTestId('block-static')).toHaveText('more text')
     await expect(rows).toHaveCount(rowCount + 1)
-    expect(await blockContent(page, splitId)).not.toContain('status::')
+    // No blank first line is left where the property paragraph was.
+    expect(await blockContent(page, splitId)).toBe('more text')
   })
 
   for (const leave of ['a click on another block', 'Escape'] as const) {
