@@ -52,6 +52,8 @@ name: Validate (prek-equivalent)
 #                        per category (a skipped sibling job is accepted
 #                        only when its category was genuinely absent from
 #                        the diff).
+#   - stop-after-<job> — on a PR, once <job> has failed, cancels the PR's
+#                        other CI (`_stop-pr-ci.yml`); gates nothing.
 # Per-job timeout ceilings run 3-35 min, sized for slow-mirror apt/runner
 # variance rather than typical run time — `cargo-tests` and `playwright`
 # are usually the long poles (see each job's own comments for observed
@@ -1136,7 +1138,8 @@ jobs:
     # — the cap this lane had before, now with real headroom under it.
     timeout-minutes: 20
     strategy:
-      fail-fast: false
+      # On a PR, a red shard stops the rest (see the stop-after-* jobs below).
+      fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
         shard: [1, 2, 3]
     steps:
@@ -1348,7 +1351,8 @@ jobs:
     # itself, ~13% headroom.
     timeout-minutes: 35
     strategy:
-      fail-fast: false
+      # On a PR, a red shard stops the rest (see the stop-after-* jobs below).
+      fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
         shard: [1, 2, 3]
     steps:
@@ -1405,7 +1409,8 @@ jobs:
     # generous 35-min budget until we have instrumented per-shard samples.
     timeout-minutes: 35
     strategy:
-      fail-fast: false
+      # On a PR, a red shard stops the rest (see the stop-after-* jobs below).
+      fail-fast: ${{ github.event_name == 'pull_request' }}
       matrix:
         shard: [1, 2]
     steps:
@@ -1906,3 +1911,110 @@ jobs:
             exit 1
           fi
           echo "validate-all gate PASSED (docs_only=$docs_only vitest=$vitest playwright=$playwright backend=$backend)."
+
+  # ---------------------------------------------------------------------------
+  # stop-after-<job> — on a pull request, once a job validate-all gates on has
+  # failed, `_stop-pr-ci.yml` cancels the PR's other workflow runs and then
+  # this one, instead of letting them run to the end. `needs:` on a matrix job
+  # waits for every shard, which is why the matrix jobs above fail fast on a
+  # PR. Kept out of validate-all's needs: it runs `if: always()` after the
+  # cancel and fails closed on the cancelled jobs.
+  # ---------------------------------------------------------------------------
+  stop-after-detect-changes:
+    needs: detect-changes
+    if: failure() && needs.detect-changes.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: detect-changes
+
+  stop-after-verify-version-agreement:
+    needs: verify-version-agreement
+    if: failure() && needs.verify-version-agreement.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: verify-version-agreement
+
+  stop-after-verify-lockfiles:
+    needs: verify-lockfiles
+    if: failure() && needs.verify-lockfiles.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: verify-lockfiles
+
+  stop-after-lint:
+    needs: lint
+    if: failure() && needs.lint.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: lint
+
+  stop-after-docs-lint:
+    needs: docs-lint
+    if: failure() && needs.docs-lint.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: docs-lint
+
+  stop-after-vitest:
+    needs: vitest
+    if: failure() && needs.vitest.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: vitest
+
+  stop-after-vitest-coverage:
+    needs: vitest-coverage
+    if: failure() && needs.vitest-coverage.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: vitest-coverage
+
+  stop-after-playwright:
+    needs: playwright
+    if: failure() && needs.playwright.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: playwright
+
+  stop-after-cargo-tests:
+    needs: cargo-tests
+    if: failure() && needs.cargo-tests.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: cargo-tests
+
+  stop-after-cargo-coverage:
+    needs: cargo-coverage
+    if: failure() && needs.cargo-coverage.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: cargo-coverage
+
+  stop-after-mcp-tests:
+    needs: mcp-tests
+    if: failure() && needs.mcp-tests.result == 'failure' && github.event_name == 'pull_request'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: mcp-tests

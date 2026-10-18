@@ -86,6 +86,11 @@ jobs:
   # docs-only PRs still benefit from.
   # ---------------------------------------------------------------------------
   validate:
+    # `actions: write` is for _validate.yml's stop-after-* jobs alone; its
+    # other jobs keep its own read-only `permissions:`.
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/_validate.yml
 
   # ---------------------------------------------------------------------------
