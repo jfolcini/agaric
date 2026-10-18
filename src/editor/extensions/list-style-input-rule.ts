@@ -16,8 +16,9 @@
  * `[` appears, it is clear the user is not building a `- [ ] ` / `- [x] `
  * checkbox trigger, so this rule collapses the transient list into the new
  * `listStyle` block-property model: it replaces the whole (single-item)
- * list with a plain paragraph carrying the just-typed character, sets the
- * selection after it, and fires `onListStyle` so the caller persists the
+ * list with a plain paragraph holding the item's content (the just-typed
+ * character and any text that followed the caret), keeps the caret after the
+ * typed character, and fires `onListStyle` so the caller persists the
  * block's `listStyle` property (`setListStyle`, `src/lib/list-style.ts`).
  * The list marker itself is drawn separately (`ListMarker.tsx` /
  * `list-marker-decoration.ts`) from that property, not from document
@@ -62,7 +63,7 @@ export const ListStyleInputRule = Extension.create<ListStyleInputRuleOptions>({
     ): InputRule =>
       new InputRule({
         find,
-        handler: ({ state, match }) => {
+        handler: ({ state }) => {
           const { $from } = state.selection
           const listItem = $from.node(-1)
           const list = $from.node(-2)
@@ -72,14 +73,11 @@ export const ListStyleInputRule = Extension.create<ListStyleInputRuleOptions>({
           const paragraphType = state.schema.nodes['paragraph']
           if (!paragraphType) return null
 
-          const typed = match[0] ?? ''
-          const content = typed ? [state.schema.text(typed)] : []
-
           const listDepth = $from.depth - 2
           const from = $from.before(listDepth)
           const to = $from.after(listDepth)
-          state.tr.replaceRangeWith(from, to, paragraphType.create(null, content))
-          state.tr.setSelection(TextSelection.create(state.tr.doc, from + 1 + typed.length))
+          state.tr.replaceRangeWith(from, to, paragraphType.create(null, $from.parent.content))
+          state.tr.setSelection(TextSelection.create(state.tr.doc, from + 1 + $from.parentOffset))
           fire(style)
           return undefined
         },
@@ -87,8 +85,9 @@ export const ListStyleInputRule = Extension.create<ListStyleInputRuleOptions>({
 
     return [
       // Bullet: any single character EXCEPT `[` — see the file doc comment
-      // for why `[` is left for CheckboxInputRule to claim.
-      unwrapRule(/^[^[]$/, 'bulletList', 'bullet'),
+      // for why `[` is left for CheckboxInputRule to claim — and `\n`, the
+      // text TipTap runs input rules with on Enter.
+      unwrapRule(/^[^[\n]$/, 'bulletList', 'bullet'),
       // Ordered lists have no checkbox-syntax counterpart, so any next
       // character finalizes the conversion.
       unwrapRule(/^.$/, 'orderedList', 'ordered'),
