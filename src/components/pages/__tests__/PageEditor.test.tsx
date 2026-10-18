@@ -66,7 +66,6 @@ interface CapturedPageHeaderProps {
   editMode?: 'blocks' | 'page'
   onEditModeChange?: (mode: 'blocks' | 'page') => void
   editModeBlocked?: string | null
-  onEditModeIntent?: () => void
 }
 let capturedPageHeaderProps: CapturedPageHeaderProps | null = null
 vi.mock('@/components/pages/PageHeader', () => ({
@@ -1325,8 +1324,6 @@ describe('PageEditor page mode (#5691)', () => {
     })
   }
 
-  const emptyPage = () => ({ blocks: [], truncated: false, total: 0 })
-
   it('with the setting on Blocks, shows the block tree and a switch on Blocks', async () => {
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
     await modeSwitch()
@@ -1394,21 +1391,20 @@ describe('PageEditor page mode (#5691)', () => {
     expect(readPreference(PREFERENCES.editMode)).toBe('page')
   })
 
+  const overCapPage = () => ({
+    blocks: Array.from({ length: PAGE_MODE_BLOCK_CAP + 1 }, (_, i) =>
+      makeBlock({ id: `B${i}`, content: `block ${i}`, parent_id: 'PAGE_1', position: i }),
+    ),
+    truncated: false,
+    total: PAGE_MODE_BLOCK_CAP + 1,
+  })
   const overCap = t('pageMode.blocked.overCap', {
     cap: PAGE_MODE_BLOCK_CAP,
     blocks: PAGE_MODE_BLOCK_CAP + 1,
   })
 
   it('a page over the cap: Page is blocked with the reason, and choosing it says why', async () => {
-    stubInvoke({
-      load_page_subtree: () => ({
-        blocks: Array.from({ length: PAGE_MODE_BLOCK_CAP + 1 }, (_, i) =>
-          makeBlock({ id: `B${i}`, content: `block ${i}`, parent_id: 'PAGE_1', position: i }),
-        ),
-        truncated: false,
-        total: PAGE_MODE_BLOCK_CAP + 1,
-      }),
-    })
+    stubInvoke({ load_page_subtree: overCapPage })
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
     await modeSwitch()
     await loadPage()
@@ -1423,63 +1419,7 @@ describe('PageEditor page mode (#5691)', () => {
     expect(capturedPageHeaderProps?.editMode).toBe('blocks')
   })
 
-  describe('a page found over the cap while open, back under it since', () => {
-    /** Page mode open on a page of one block, found over the cap by it, back in block mode. */
-    async function blockedOverCap(): Promise<void> {
-      const user = userEvent.setup()
-      writePreference(PREFERENCES.editMode, 'page')
-      stubInvoke({
-        load_page_subtree: () => ({
-          blocks: [makeBlock({ id: 'B1', content: 'text', parent_id: 'PAGE_1' })],
-          truncated: false,
-          total: 1,
-        }),
-      })
-      render(<PageEditor pageId="PAGE_1" title="My Page" />)
-      await modeSwitch()
-      await user.click(await screen.findByRole('button', { name: 'over the cap' }))
-      await waitFor(() => {
-        expect(capturedPageHeaderProps?.editModeBlocked).toBe(overCap)
-      })
-      expect(screen.getByTestId('block-tree')).toBeInTheDocument()
-    }
-
-    it('pointing at the switch looks again, and Page is offered, with no read', async () => {
-      await blockedOverCap()
-      mockedInvoke.mockClear()
-
-      act(() => capturedPageHeaderProps?.onEditModeIntent?.())
-
-      expect(capturedPageHeaderProps?.editModeBlocked).toBeNull()
-      expect(mockedInvoke).not.toHaveBeenCalled()
-    })
-
-    it('choosing Page looks again, and opens page mode', async () => {
-      await blockedOverCap()
-      vi.mocked(toast.info).mockClear()
-
-      act(() => capturedPageHeaderProps?.onEditModeChange?.('page'))
-
-      expect(await screen.findByTestId('page-mode')).toBeInTheDocument()
-      expect(vi.mocked(toast.info)).not.toHaveBeenCalled()
-    })
-  })
-
-  it('keeps a page over the cap in block mode, and the switch says why', async () => {
-    const user = userEvent.setup()
-    writePreference(PREFERENCES.editMode, 'page')
-    stubInvoke({ load_page_subtree: emptyPage })
-    render(<PageEditor pageId="PAGE_1" title="My Page" />)
-    await modeSwitch()
-
-    await user.click(await screen.findByRole('button', { name: 'over the cap' }))
-
-    expect(screen.getByTestId('block-tree')).toBeInTheDocument()
-    expect(capturedPageHeaderProps?.editMode).toBe('blocks')
-    expect(capturedPageHeaderProps?.editModeBlocked).toBe(overCap)
-  })
-
-  it('leaving page mode for what it cannot show saves, reloads, and says so', async () => {
+  it('page mode finding the page over the cap saves, reloads, says so, and the switch says why', async () => {
     const user = userEvent.setup()
     writePreference(PREFERENCES.editMode, 'page')
     const order: string[] = []
@@ -1490,7 +1430,7 @@ describe('PageEditor page mode (#5691)', () => {
     stubInvoke({
       load_page_subtree: () => {
         order.push('load')
-        return emptyPage()
+        return overCapPage()
       },
     })
     render(<PageEditor pageId="PAGE_1" title="My Page" />)
@@ -1505,6 +1445,8 @@ describe('PageEditor page mode (#5691)', () => {
     expect(vi.mocked(toast.info)).toHaveBeenCalledWith(
       t('pageMode.switchedToBlocks', { reason: overCap }),
     )
+    expect(capturedPageHeaderProps?.editMode).toBe('blocks')
+    expect(capturedPageHeaderProps?.editModeBlocked).toBe(overCap)
   })
 
   it('saves page mode’s text before Edit as Markdown loads the page', async () => {

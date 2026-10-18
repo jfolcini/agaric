@@ -337,7 +337,7 @@ interface TranslatedFilters {
  * This month / Last N days) covers today, so any subset overlaps at
  * today and its union is the single span `[min(start), max(end)]`.
  */
-function unionRanges(
+export function unionRanges(
   ranges: Array<{ start: string; end: string }>,
 ): { start: string; end: string } | null {
   const first = ranges[0]

@@ -19,6 +19,9 @@ import { canSplit } from '@tiptap/pm/transform'
 import { atTagPickerPluginKey, hashTagPickerPluginKey } from '@/editor/extensions/at-tag-picker'
 import { blockLinkPickerPluginKey } from '@/editor/extensions/block-link-picker'
 import { blockRefPickerPluginKey } from '@/editor/extensions/block-ref-picker'
+import { propertyPickerPluginKey } from '@/editor/extensions/property-picker'
+import { queryPickerPluginKey } from '@/editor/extensions/query-picker'
+import { slashCommandPluginKey } from '@/editor/extensions/slash-command'
 import {
   depthOf,
   insideListOrTable,
@@ -46,6 +49,9 @@ const pickerKeys = [
   hashTagPickerPluginKey,
   blockLinkPickerPluginKey,
   blockRefPickerPluginKey,
+  slashCommandPluginKey,
+  propertyPickerPluginKey,
+  queryPickerPluginKey,
 ]
 
 /** Whether a picker is open in `state`: its Enter, Tab and Escape are its own. */

@@ -86,6 +86,11 @@ jobs:
   # docs-only PRs still benefit from.
   # ---------------------------------------------------------------------------
   validate:
+    # `actions: write` is for _validate.yml's stop-after-* jobs alone; its
+    # other jobs keep its own read-only `permissions:`.
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/_validate.yml
 
   # ---------------------------------------------------------------------------
@@ -165,7 +170,20 @@ jobs:
         # generic `failed to run <tool>` wrapper from `output_ok()` in
         # tauri-bundler, with no underlying error text. See the
         # equivalent comment in release.yml.
-        run: cargo tauri build -v
+        #
+        # The linuxdeploy plugin chatter (`Copying plugin`, `Deploying`, ...)
+        # is dropped from the live log, kept in
+        # `tauri-build.log`, and printed in full by the next step when the
+        # build fails.
+        id: tauri-build
+        shell: bash
+        run: |
+          cargo tauri build -v 2>&1 | tee tauri-build.log \
+            | grep -vE '^\[(gstreamer|gtk|appimage)/stdout\]|^(Deploying|Copying|Calling|Setting|Skipping) '
+
+      - name: Full bundler log (build failed)
+        if: failure() && steps.tauri-build.outcome == 'failure'
+        run: cat tauri-build.log
 
       - name: Fix AppImage icon symlinks
         run: bash scripts/fix-appimage-icons.sh
@@ -293,6 +311,8 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
+          # Do not print the accepted licence texts.
+          log-accepted-android-sdk-licenses: false
           packages: >
             platforms;android-36
             build-tools;36.0.0

@@ -6,6 +6,7 @@
  */
 
 import type {
+  ActiveProjectedAgendaEntry,
   BlockRow,
   HistoryEntry,
   PageHeading,
@@ -98,6 +99,28 @@ export function makeBlockRow(overrides: Partial<BlockRow> & Pick<BlockRow, 'id'>
     scheduled_date: null,
     page_id: null,
     ...overrides,
+  }
+}
+
+/** A projected occurrence of a weekly TODO, as `list_projected_agenda` returns it. */
+export function makeProjectedEntry(
+  overrides: Partial<Omit<ActiveProjectedAgendaEntry, 'block'>> & {
+    block?: Partial<BlockRow>
+  } = {},
+): ActiveProjectedAgendaEntry {
+  const { block, ...entry } = overrides
+  return {
+    block: makeBlockRow({
+      id: 'REPEAT1',
+      content: 'Water plants',
+      todo_state: 'TODO',
+      due_date: '2026-10-11',
+      page_id: 'PAGE1',
+      ...block,
+    }),
+    projected_date: '2026-10-18',
+    source: 'due_date',
+    ...entry,
   }
 }
 

@@ -105,6 +105,12 @@ jobs:
   validate:
     needs: verify-version
     if: ${{ !cancelled() && needs.verify-version.result == 'success' }}
+    # Only so the file validates: GitHub rejects a caller that grants less
+    # than _validate.yml's stop-after-* jobs ask for, even though those jobs
+    # run on pull requests alone and are skipped here.
+    permissions:
+      contents: read
+      actions: write
     uses: ./.github/workflows/_validate.yml
 
   build-and-release:

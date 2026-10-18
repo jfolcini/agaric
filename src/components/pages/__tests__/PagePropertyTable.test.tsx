@@ -1476,7 +1476,9 @@ describe('PagePropertyTable task-only property filtering', () => {
     expect(screen.getByText('Notes')).toBeInTheDocument()
   })
 
-  it('clicking a ref definition initializes with valueRef: null', async () => {
+  // #5736 — a ref with no target is a row with no value, which the backend
+  // refuses (`validate_set_property`): the row is a draft until a page is picked.
+  it('clicking a ref definition opens a draft row with its page picker and writes nothing', async () => {
     const user = userEvent.setup()
     setupMock([], [makeDef('linked_page', 'ref')])
 
@@ -1488,19 +1490,12 @@ describe('PagePropertyTable task-only property filtering', () => {
 
     await user.click(screen.getByText('Linked Page'))
 
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
-        blockId: 'PAGE_1',
-        key: 'linked_page',
-        value: {
-          value_ref: null,
-          value_text: null,
-          value_num: null,
-          value_date: null,
-          value_bool: null,
-        },
-      })
-    })
+    expect(
+      await screen.findByRole('button', {
+        name: t('pageProperty.valueLabel', { key: 'linked_page' }),
+      }),
+    ).toBeInTheDocument()
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 })
 

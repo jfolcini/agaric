@@ -23,7 +23,8 @@
  *
  * Built-in fields are filtered out because they already render via the
  * dedicated badges (TodoToggle, PriorityBadge, DueChip, ScheduleChip).
- * Empty values are dropped so the row UI doesn't render empty rows.
+ * Empty values are dropped so the row UI doesn't render empty rows. A ref or
+ * boolean value carries its `kind`, which its chip draws (`InlinePropertyChip`).
  *
  * Identity invariants (PEND/perf): the derived map keeps prior per-block
  * array references when their content is unchanged so downstream
@@ -51,7 +52,17 @@ const BUILTIN_PROPERTY_KEYS: ReadonlySet<string> = new Set([
   LIST_STYLE_KEY,
 ])
 
-export type BlockPropertiesMap = Record<string, Array<{ key: string; value: string }>>
+/**
+ * A property as the row's chip draws it. `value` is the text, date or number;
+ * for a `ref`, the target's block id; for a `boolean`, `'true'` or `'false'`.
+ */
+export interface InlineProperty {
+  key: string
+  value: string
+  kind?: 'ref' | 'boolean' | undefined
+}
+
+export type BlockPropertiesMap = Record<string, InlineProperty[]>
 
 /**
  * True iff two `{ key, value }` arrays are element-wise equal. Used to
@@ -63,8 +74,8 @@ export type BlockPropertiesMap = Record<string, Array<{ key: string; value: stri
  * insert `undefined` elements, so a null-element guard is unnecessary.
  */
 export function arraysShallowEqual(
-  a: Array<{ key: string; value: string }> | undefined,
-  b: Array<{ key: string; value: string }> | undefined,
+  a: InlineProperty[] | undefined,
+  b: InlineProperty[] | undefined,
 ): boolean {
   if (a === b) return true
   if (a == null || b == null) return false
@@ -75,25 +86,29 @@ export function arraysShallowEqual(
     // a/b non-null + index < length means element is defined; the
     // non-null check satisfies TS without runtime cost.
     if (ae == null || be == null) return false
-    if (ae.key !== be.key || ae.value !== be.value) return false
+    if (ae.key !== be.key || ae.value !== be.value || ae.kind !== be.kind) return false
   }
   return true
 }
 
 /**
- * Reshape a block's raw `PropertyRow[]` into the row-UI `{ key, value }[]`
- * shape: drop the built-in badge fields, flatten the typed value columns
- * (text → date → num), and drop empty values.
+ * Reshape a block's raw `PropertyRow[]` into the row-UI shape: drop the
+ * built-in badge fields, flatten the typed value columns, and drop empty
+ * values.
  */
-export function extraPropertiesOf(
-  rows: readonly PropertyRow[],
-): Array<{ key: string; value: string }> {
+export function extraPropertiesOf(rows: readonly PropertyRow[]): InlineProperty[] {
   return rows
     .filter((p) => !BUILTIN_PROPERTY_KEYS.has(p.key))
-    .map((p) => ({
-      key: p.key,
-      value: p.value_text ?? p.value_date ?? (p.value_num != null ? String(p.value_num) : '') ?? '',
-    }))
+    .map((p): InlineProperty => {
+      if (p.value_ref != null) return { key: p.key, value: p.value_ref, kind: 'ref' }
+      if (p.value_bool != null) {
+        return { key: p.key, value: p.value_bool === 0 ? 'false' : 'true', kind: 'boolean' }
+      }
+      return {
+        key: p.key,
+        value: p.value_text ?? p.value_date ?? (p.value_num != null ? String(p.value_num) : ''),
+      }
+    })
     .filter((p) => p.value !== '')
 }
 

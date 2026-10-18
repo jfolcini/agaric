@@ -135,7 +135,7 @@ The cross-feature primitives most worth knowing (not exhaustive — see `src/com
 - **Block zoom-in.** Title is a text link in a breadcrumb (`Page › Section › Block`), not a pill — the breadcrumb implies "you're inside this".
 - **Inline query blocks.** `{{query: …}}` blocks render a filtered list inline. Edit-on-click; the body is the query, not the results.
 - **Conflict resolution.** UI offers Keep / Discard per conflict, or batch operations. Devices are shown by name (not ULID) for the user to disambiguate.
-- **Agenda projection.** The agenda view dedupes overdue tasks against the projected (cached) view. `DeadlineWarningSection` surfaces near-future tasks that may slip.
+- **Agenda projection.** Agenda mode lists the projected occurrences of repeating tasks below the committed ones, leaving out an occurrence on its task's own date. `DeadlineWarningSection` surfaces near-future tasks that may slip.
 - **Templates.** Template-tagged pages (`template = true` property). The template picker (slash command + button) inserts the template's child blocks under the current block; dynamic variables substitute on insertion.
 - **Property drawer.** Sheet slide-in (or popover on desktop) with one `PropertyRowEditor` per property + the built-in date fields at the top. Blur-to-save semantics; add via `AddPropertyPopover`.
 - **Kebab menu.** `PageHeaderMenu` is the canonical placement for page-level actions (Undo, Redo, Outline, Insert emoji, Move to space, Add alias, Add tag, Export, Trash, Template). Don't sprinkle these actions elsewhere.
@@ -182,7 +182,7 @@ The non-obvious ones — duplicates of rules stated above are intentionally omit
 - **Hover-reveal buttons block clicks underneath** when `opacity-0` — toggle `pointer-events-{none,auto}` on every visibility trigger.
 - **DnD mobile sensor.** The long-press delay is deliberate. Don't switch mobile to the distance sensor — every scroll would become a drag.
 - **Map merge order.** `new Map([...stale, ...fresh])` — fresh must spread last so it wins on conflict.
-- **Property type initialisation must be type-aware.** Use `buildInitParams()` in `property-save-utils.ts`. It returns `null` for the `DRAFT_ROW_VALUE_TYPES` (text / select / url), which have no valid empty initializer, so the caller opens a draft row instead of sending `valueText: ''`, which the backend refuses.
+- **Property type initialisation must be type-aware.** Use `buildInitParams()` in `property-save-utils.ts`. It returns `null` for the `DRAFT_ROW_VALUE_TYPES` (text / select / url / ref), which have no valid empty initializer, so the caller opens a draft row instead of sending `valueText: ''` or a null ref, which the backend refuses.
 - **Filters use names, not ULIDs.** Resolve via `TagValuePicker` / `queryTag()`.
 - **SVG interactive elements need explicit keyboard support.** `tabindex="0"`, `role="button"`, `keydown` handlers for Enter / Space. For touch, add an invisible larger hit area.
 - **Dynamic `aria-label` on toggle buttons.** Expand/collapse icons change meaning; the label must reflect the current state.

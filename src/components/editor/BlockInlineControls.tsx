@@ -3,9 +3,10 @@ import { Calendar, CalendarDays, Check, ChevronRight, Paperclip, Repeat, X } fro
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { PropertyChip } from '@/components/properties/PropertyChip'
+import { InlinePropertyChip } from '@/components/properties/InlinePropertyChip'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { dueDateColor, formatCompactDate } from '@/lib/date-utils'
@@ -162,8 +163,8 @@ export interface BlockMetadataRowProps {
    * whichever block is being edited, or for none (#5736).
    */
   onOpenDatePicker?: ((blockId: string, mode: 'due' | 'schedule') => void) | undefined
-  properties?: Array<{ key: string; value: string }> | undefined
-  filteredProperties: Array<{ key: string; value: string }>
+  properties?: InlineProperty[] | undefined
+  filteredProperties: InlineProperty[]
   /**
    * A3 (#1021) — max number of property chips to render inline before the `+N`
    * overflow pill. When omitted, falls back to `getInlinePropertyLimit(isMobile)`
@@ -183,6 +184,8 @@ export interface BlockMetadataRowProps {
    * would open the drawer for whichever block is being edited, or for none.
    */
   onShowProperties?: ((blockId: string) => void) | undefined
+  /** Follows a ref property's chip to its target. */
+  onNavigate?: ((id: string) => void) | undefined
 }
 
 export interface BlockCollapseControlProps {
@@ -404,24 +407,28 @@ function InlineProperties({
   onEditProp,
   onEditKey,
   onShowProperties,
+  onNavigate,
 }: {
   blockId: string
-  filteredProperties: Array<{ key: string; value: string }>
+  filteredProperties: InlineProperty[]
   inlinePropLimit: number
   onEditProp: (prop: { key: string; value: string }) => void
   onEditKey: (keyInfo: { oldKey: string; value: string }) => void
   onShowProperties?: ((blockId: string) => void) | undefined
+  onNavigate?: ((id: string) => void) | undefined
 }): React.ReactElement {
   const { t } = useTranslation()
   return (
     <>
       {filteredProperties.slice(0, inlinePropLimit).map((p) => (
-        <PropertyChip
+        <InlinePropertyChip
           key={p.key}
-          propKey={p.key}
-          value={p.value}
-          onClick={() => onEditProp({ key: p.key, value: p.value })}
-          onKeyClick={() => onEditKey({ oldKey: p.key, value: p.value })}
+          blockId={blockId}
+          property={p}
+          onEditProp={onEditProp}
+          onEditKey={onEditKey}
+          onNavigate={onNavigate}
+          onShowProperties={onShowProperties}
         />
       ))}
       {filteredProperties.length > inlinePropLimit && (
@@ -575,6 +582,7 @@ export const BlockMetadataRow = React.memo(
     onEditProp,
     onEditKey,
     onShowProperties,
+    onNavigate,
   }: BlockMetadataRowProps): React.ReactElement | null => {
     // #217 C2 / A3 (#1021): cap how many property chips render inline before the
     // `+N` overflow pill, relieving chip density on narrow viewports. The parent
@@ -685,6 +693,7 @@ export const BlockMetadataRow = React.memo(
             onEditProp={onEditProp}
             onEditKey={onEditKey}
             onShowProperties={onShowProperties}
+            onNavigate={onNavigate}
           />
         )}
 

@@ -8,7 +8,7 @@
  *  - Has no a11y violations (axe)
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
@@ -20,6 +20,8 @@ import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinit
 import type { AppError, PageResponse, PropertyDefinition } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { propertyDefs, seedBlocks } from '@/lib/tauri-mock/seed'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
@@ -224,6 +226,22 @@ describe('PropertyDefinitionsList', () => {
       key: 'size',
       valueType: 'select',
       options: '["small","large"]',
+    })
+  })
+
+  // #5736 — a boolean key is declarable here too, not only from a page's Properties table.
+  it('creates a boolean definition', async () => {
+    const user = userEvent.setup()
+    seedBlocks()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    render(<PropertyDefinitionsList />)
+    await user.type(await screen.findByPlaceholderText('Property key'), 'billable')
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Type' }), 'boolean')
+    await user.click(screen.getByRole('button', { name: /Create/i }))
+
+    await waitFor(() => {
+      expect(propertyDefs.get('billable')?.['value_type']).toBe('boolean')
     })
   })
 

@@ -35,6 +35,7 @@ export function notifyUndo(rootParentId: string | null, opRefs?: OpRef[]): void 
 }
 
 export function readCurrentContent(ctx: SlashCommandContext): string {
+  if (ctx.blockText) return ctx.blockText.read()
   if (ctx.rovingEditor.editor) {
     const json = ctx.rovingEditor.editor.getJSON() as DocNode
     return serialize(json, notifyUnknownNodeTypeToast)
@@ -48,6 +49,10 @@ export async function applyContentEdit(
   newContent: string,
   failKey: string,
 ): Promise<void> {
+  if (ctx.blockText) {
+    ctx.blockText.write(newContent)
+    return
+  }
   try {
     const resp = unwrap(await commands.editBlock(ctx.blockId, newContent))
     // #4963 — bypasses the store reducer that bumps the counter; a `[[link]]`

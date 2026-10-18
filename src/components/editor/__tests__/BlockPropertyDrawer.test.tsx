@@ -20,11 +20,13 @@ import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { t } from '@/lib/i18n'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { dispatch } from '@/lib/tauri-mock/handlers'
-import { properties, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
+import { properties, propertyDefs, SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 
 // Wrap `reportIpcError` in a spy that delegates to the real implementation.
 // Lets FE-H-17 partial-failure assertions inspect call arguments while
@@ -113,6 +115,7 @@ function setupMock(
 beforeEach(() => {
   vi.clearAllMocks()
   pageStore = createPageBlockStore('PAGE_1')
+  useSpaceStore.setState({ currentSpaceId: null })
   useBlockStore.setState({
     focusedBlockId: null,
     selectedBlockIds: [],
@@ -1083,6 +1086,97 @@ describe('BlockPropertyDrawer', () => {
       expect(screen.queryByTestId('property-value-input-assignee')).not.toBeInTheDocument()
     })
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+  })
+
+  // #5736 — a boolean row is the page Properties table's checkbox, not a text box.
+  describe('boolean property', () => {
+    const blockId = SEED_IDS.BLOCK_GS_1
+    const checkbox = () =>
+      screen.findByRole('checkbox', { name: t('property.booleanToggle', { key: 'billable' }) })
+
+    function seedBillable(valueBool: number) {
+      seedBlocks()
+      propertyDefs.set('billable', {
+        key: 'billable',
+        value_type: 'boolean',
+        options: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+      })
+      properties.set(
+        blockId,
+        new Map([['billable', makeProp('billable', { value_bool: valueBool })]]),
+      )
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    }
+
+    it('toggles to true against the real mock and is checked when the drawer opens again', async () => {
+      const user = userEvent.setup()
+      seedBillable(0)
+      const { unmount } = renderWithProvider(
+        <BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />,
+      )
+      expect(await checkbox()).not.toBeChecked()
+      const sheet = document.querySelector('[data-slot="sheet-content"]') as HTMLElement
+      expect(await axe(sheet)).toHaveNoViolations()
+
+      await user.click(await checkbox())
+
+      await waitFor(() => {
+        expect(properties.get(blockId)?.get('billable')?.['value_bool']).toBe(1)
+      })
+      unmount()
+      renderWithProvider(<BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />)
+      expect(await checkbox()).toBeChecked()
+    })
+
+    it('stays unchecked and says so when the write is refused', async () => {
+      const user = userEvent.setup()
+      setupMock([makeProp('billable', { value_bool: 0 })], [makeDef('billable', 'boolean')], {
+        set_property: () => Promise.reject(new Error('refused')),
+      })
+      renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+      await user.click(await checkbox())
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(t('property.saveFailed'))
+      })
+      expect(await checkbox()).not.toBeChecked()
+    })
+  })
+
+  // #5736 — a ref with no target is a row with no value, which the backend
+  // refuses (`validate_set_property`), so adding one writes nothing until a page is picked.
+  it('adds a ref property as a draft and writes it only once a page is picked', async () => {
+    const user = userEvent.setup()
+    const blockId = SEED_IDS.BLOCK_GS_1
+    seedBlocks()
+    propertyDefs.set('owner', {
+      key: 'owner',
+      value_type: 'ref',
+      options: null,
+      created_at: '2026-01-01T00:00:00.000Z',
+    })
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    renderWithProvider(<BlockPropertyDrawer blockId={blockId} open onOpenChange={vi.fn()} />)
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Add property' }))
+    await user.click(await screen.findByText('Owner'))
+    const picker = await screen.findByRole('button', {
+      name: t('pageProperty.valueLabel', { key: 'owner' }),
+    })
+    expect(properties.get(blockId)?.has('owner') ?? false).toBe(false)
+
+    await user.click(picker)
+    await user.click(await screen.findByRole('button', { name: 'Quick Notes' }))
+
+    await waitFor(() => {
+      expect(properties.get(blockId)?.get('owner')?.['value_ref']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
+    })
   })
 
   it('does not crash when reloading properties after ref save fails', async () => {

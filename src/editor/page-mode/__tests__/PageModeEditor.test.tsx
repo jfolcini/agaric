@@ -396,6 +396,41 @@ describe('PageModeEditor', () => {
     })
   })
 
+  // #5736 — a ref property's chip opens its target, as a page link's chip does.
+  it('opens a ref property’s chip as block mode does', async () => {
+    const other = seedPage(['elsewhere'], 'Other page')
+    const { pageId, ids } = seedPage(['task'])
+    dispatch('set_property', {
+      blockId: ids[0],
+      key: 'owner',
+      value: {
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: other.pageId,
+        value_bool: null,
+      },
+    })
+    const onNavigateToPage = vi.fn()
+    const { container } = renderPageMode(pageId, { onNavigateToPage })
+    await editorIn(container)
+
+    const value = await waitFor(() => {
+      const found = container.querySelector(
+        `[data-page-block-id="${ids[0]}"] button.property-chip-value`,
+      )
+      if (found === null) throw new Error('no ref chip')
+      return found
+    })
+    await act(async () => {
+      fireEvent.click(value)
+    })
+
+    await waitFor(() => {
+      expect(onNavigateToPage).toHaveBeenCalledWith(other.pageId, 'Other page')
+    })
+  })
+
   it('a block reference to a block of this page moves the cursor there', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     dispatch('edit_block', { blockId: ids[0], toText: `see ((${ids[1]}))` })
@@ -2214,6 +2249,38 @@ describe('PageModeEditor attachments (#5743)', () => {
     expect(backendFiles(ids[1] as string)).toEqual([])
   })
 
+  it('an export during a pasted file’s upload saves the typing before it reads', async () => {
+    const { pageId, ids } = seedPage(['notes', 'other'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    // The focus registers page mode's flush, which an export asks for (`flushActiveDraft`).
+    act(() => {
+      editor.view.dom.dispatchEvent(new FocusEvent('focus'))
+    })
+    let answer = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'add_attachment_with_bytes') await held
+      return dispatch(cmd, args)
+    })
+    caretTo(editor, 0)
+    pasteFiles(editor, [new File(['pasted text'], 'clip.txt', { type: 'text/plain' })])
+    await waitFor(() => {
+      expect(callsTo('add_attachment_with_bytes')).toBe(1)
+    })
+
+    typeAt(editor, 1, 5, ' typed')
+    const exported = flushActiveDraft()
+    answer()
+    await act(async () => {
+      await exported
+    })
+    expect(backendText(ids[1] as string)).toBe('other typed')
+    expect(backendFiles(ids[0] as string)).toEqual(['clip.txt'])
+  })
+
   it('a paste the backend refuses says so, and attaches nothing', async () => {
     const { pageId, ids } = seedPage(['notes'])
     const { container } = renderPageMode(pageId)
@@ -3305,5 +3372,404 @@ describe('PageModeEditor queries and embeds (#5743)', () => {
         row.textContent?.startsWith('first'),
       ),
     ).toBe(true)
+  })
+})
+
+describe('PageModeEditor slash menu and pickers (#5743)', () => {
+  beforeEach(() => {
+    // The menu's "Recent" band reads what earlier picks recorded.
+    localStorage.clear()
+  })
+
+  function backendRow(id: string): BlockRow {
+    return dispatch('get_block', { blockId: id }) as BlockRow
+  }
+
+  function backendProps(id: string): Record<string, string | null> {
+    const rows = dispatch('get_properties', { blockId: id }) as PropertyRow[]
+    return Object.fromEntries(
+      rows
+        .filter((row) => !SYSTEM_MANAGED_PROPERTY_KEYS.has(row.key))
+        .map((row) => [row.key, row.value_text ?? row.value_date]),
+    )
+  }
+
+  /** Type `text` after `offset` characters of block `index`, as the keyboard does. */
+  function typeIn(editor: Editor, index: number, offset: number, text: string): void {
+    act(() => {
+      editor.view.focus()
+      editor.commands.setTextSelection(at(editor, index, offset))
+      typeText(editor, text)
+    })
+  }
+
+  /** Click the open menu's option named `name`. */
+  async function pick(name: RegExp): Promise<void> {
+    const option = await screen.findByRole('option', { name })
+    await act(async () => {
+      fireEvent.click(option)
+    })
+  }
+
+  /** What `selector` finds in block `id`, once it shows. */
+  async function inBlock(container: HTMLElement, id: string, selector: string) {
+    return waitFor(() => {
+      const found = container.querySelector<HTMLElement>(`[data-page-block-id="${id}"] ${selector}`)
+      if (found === null) throw new Error(`no ${selector} in ${id}`)
+      return found
+    })
+  }
+
+  const checkboxIn = (container: HTMLElement, id: string) =>
+    inBlock(container, id, '[data-testid="task-marker"]')
+
+  it('`/` opens block mode’s menu less the commands that write blocks, with no a11y violations', async () => {
+    const { pageId } = seedPage(['first'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeIn(editor, 0, 5, ' /')
+    const listbox = await screen.findByRole('listbox')
+    const offered = within(listbox)
+      .getAllByRole('option')
+      .map((option) => option.getAttribute('data-item-id') ?? option.textContent)
+    expect(offered.some((name) => name?.startsWith('TODO — Mark as to-do'))).toBe(true)
+    expect(offered.some((name) => name?.startsWith('DUE — Set due date on block'))).toBe(true)
+    expect(offered.some((name) => name?.startsWith('QUERY — Insert embedded query block'))).toBe(
+      true,
+    )
+    expect(offered.some((name) => name?.startsWith('DUPLICATE'))).toBe(false)
+    expect(offered.some((name) => name?.startsWith('TEMPLATE'))).toBe(false)
+    expect(editor.view.dom).toHaveAttribute('role', 'combobox')
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+    await waitFor(async () => {
+      expect(await axe(screen.getByTestId('suggestion-popup'))).toHaveNoViolations()
+    })
+  })
+
+  it('Enter picks from the open menu, not a split; Escape closes it and writes nothing', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeIn(editor, 1, 6, ' /tod')
+    await screen.findByRole('option', { name: /TODO — Mark as to-do/ })
+    expect(press(editor, 'Escape')).toBe(true)
+    await waitFor(() => {
+      expect(screen.queryByRole('listbox')).toBeNull()
+    })
+    expect(editor.isFocused).toBe(true)
+    expect(docTexts(editor)).toEqual(['first', 'second /tod'])
+
+    typeIn(editor, 0, 5, ' /todo')
+    await screen.findByRole('option', { name: /TODO — Mark as to-do/ })
+    expect(press(editor, 'Enter')).toBe(true)
+    await waitFor(() => {
+      expect(backendRow(ids[0] as string).todo_state).toBe('TODO')
+    })
+    expect(docTexts(editor)).toEqual(['first ', 'second /tod'])
+    await waitFor(() => {
+      expect(backendText(ids[1] as string)).toBe('second /tod')
+    })
+    expect(backendRow(ids[1] as string).todo_state).toBeNull()
+    expect(callsTo('set_todo_state')).toBe(1)
+  })
+
+  it('a task command writes the caret’s block, a new empty one too, and its checkbox shows', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeIn(editor, 1, 6, ' /doing')
+    await pick(/DOING — Mark as in progress/)
+    await waitFor(() => {
+      expect(backendRow(ids[1] as string).todo_state).toBe('DOING')
+    })
+    expect((await checkboxIn(container, ids[1] as string)).getAttribute('aria-label')).toBe(
+      t('block.taskCycle', { state: 'DOING' }),
+    )
+    expect(backendRow(ids[0] as string).todo_state).toBeNull()
+
+    // A new block holding only the command: the save creates it, empty, for the state.
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 1, 7))
+    })
+    press(editor, 'Enter')
+    const added = blockIdOf(editor.state.doc.child(2)) as string
+    // The save the caret's move started, done before the command is typed: it creates nothing.
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(backendPage(pageId)).toHaveLength(2)
+    typeIn(editor, 2, 0, '/todo')
+    await pick(/TODO — Mark as to-do/)
+    await waitFor(() => {
+      expect(backendRow(added).todo_state).toBe('TODO')
+    })
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'first'],
+      [ids[1], 'second '],
+      [added, ''],
+    ])
+    await checkboxIn(container, added)
+  })
+
+  it('a refused command says so, as block mode’s does, and nothing shows', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_todo_state' || cmd === 'set_property') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    typeIn(editor, 0, 5, ' /todo')
+    await pick(/TODO — Mark as to-do/)
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.setTaskStateFailed'))
+    })
+    expect(backendRow(ids[0] as string).todo_state).toBeNull()
+    expect(
+      container.querySelector(`[data-page-block-id="${ids[0]}"] [data-testid="task-marker"]`),
+    ).toBeNull()
+
+    typeIn(editor, 0, 6, '/effort')
+    await pick(/EFFORT 1h/)
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('slash.effortFailed'))
+    })
+    expect(backendProps(ids[0] as string)).toEqual({})
+  })
+
+  it('a property command writes the block, and its chip shows once the page is read again', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeIn(editor, 1, 6, ' /effort')
+    await pick(/EFFORT 1h/)
+    await waitFor(() => {
+      expect(backendProps(ids[1] as string)).toEqual({ effort: '1h' })
+    })
+    await waitFor(() => {
+      expect(
+        container
+          .querySelector(`[data-page-block-id="${ids[1]}"] [data-testid="property-chip"]`)
+          ?.getAttribute('aria-label'),
+      ).toBe(t('property.selectValue', { key: 'Effort', value: '1h' }))
+    })
+    expect(backendProps(ids[0] as string)).toEqual({})
+  })
+
+  it('a list command styles the caret’s block, and its marker shows', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeIn(editor, 1, 6, ' /numbered')
+    await pick(/NUMBERED LIST/)
+    await waitFor(() => {
+      expect(
+        container.querySelector(`[data-page-block-id="${ids[1]}"] > [data-testid="list-marker"]`)
+          ?.textContent,
+      ).toBe('1.')
+    })
+    const styles = dispatch('get_properties', { blockId: ids[1] }) as PropertyRow[]
+    expect(styles.find((row) => row.key === 'listStyle')?.value_text).toBe('ordered')
+  })
+
+  it('/due gives an undated block its date through block mode’s picker; the drawer clears it', async () => {
+    const { pageId, ids } = seedPage(['pay rent', 'plan trip'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeIn(editor, 0, 8, ' /due')
+    await pick(/DUE — Set due date on block/)
+    const field = await screen.findByRole('textbox', { name: t('journal.typeDateLabel') })
+    fireEvent.change(field, { target: { value: '2026-12-24' } })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Enter' })
+    })
+    await waitFor(() => {
+      expect(backendRow(ids[0] as string).due_date).toBe('2026-12-24')
+    })
+    expect(
+      (await inBlock(container, ids[0] as string, '.due-date-chip')).getAttribute('aria-label'),
+    ).toBe(t('block.dueDate', { date: formatCompactDate('2026-12-24') }))
+    expect(backendRow(ids[1] as string).due_date).toBeNull()
+
+    caretTo(editor, 0)
+    expect(press(editor, 'P', { ctrlKey: true, shiftKey: true })).toBe(true)
+    const drawer = await screen.findByRole('dialog', { name: t('property.drawerTitle') })
+    await act(async () => {
+      fireEvent.click(
+        await within(drawer).findByRole('button', { name: t('property.clearDueDate') }),
+      )
+    })
+    await waitFor(() => {
+      expect(backendRow(ids[0] as string).due_date).toBeNull()
+    })
+    await waitFor(() => {
+      expect(container.querySelector(`[data-page-block-id="${ids[0]}"] .due-date-chip`)).toBeNull()
+    })
+  })
+
+  it('a text command edits the document alone, which the save writes; a mark carries to the next text', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(callsTo('list_attachments_batch')).toBe(1)
+    })
+    const reads = callsTo('load_page_subtree')
+
+    typeIn(editor, 1, 6, ' /h2')
+    await pick(/Heading 2/)
+    expect(docTexts(editor)).toEqual(['first', '## second '])
+    await waitFor(() => {
+      expect(backendText(ids[1] as string)).toBe('## second ')
+    })
+    expect(callsTo('edit_block')).toBe(1)
+
+    typeIn(editor, 0, 5, ' /bold')
+    await pick(/BOLD — Bold text/)
+    act(() => {
+      typeText(editor, 'loud')
+    })
+    expect(docTexts(editor)).toEqual(['first **loud**', '## second '])
+    await waitFor(() => {
+      expect(backendText(ids[0] as string)).toBe('first **loud**')
+    })
+    // Neither waited for a save, nor read the page again after it.
+    expect(callsTo('load_page_subtree')).toBe(reads)
+  })
+
+  it('`::` lists the property keys, and the pick is a `key:: ` line that becomes the property once left', async () => {
+    const { pageId, ids } = seedPage(['first', 'call mom'])
+    dispatch('set_property', {
+      blockId: ids[0],
+      key: 'assignee',
+      value: {
+        value_text: 'Bo',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    act(() => {
+      editor.view.focus()
+      editor.commands.setTextSelection(at(editor, 1, 8))
+      editor.commands.setHardBreak()
+      typeText(editor, '::assi')
+    })
+    await pick(/^assignee$/)
+    act(() => {
+      typeText(editor, 'Ana')
+    })
+    expect(docTexts(editor)[1]).toBe('call mom\nassignee:: Ana')
+    caretTo(editor, 0)
+    await waitFor(() => {
+      expect(backendProps(ids[1] as string)).toEqual({ assignee: 'Ana' })
+    })
+    await waitFor(() => {
+      expect(backendText(ids[1] as string)).toBe('call mom')
+    })
+  })
+
+  it('`{{` opens block mode’s builder, whose Save writes the query to the caret’s block', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    typeIn(editor, 1, 6, ' {{')
+    await pick(/Insert query/)
+    await act(async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'save query' }))
+    })
+    await waitFor(() => {
+      expect(backendText(ids[1] as string)).toBe('{{query tag:personal}}')
+    })
+    await waitFor(() => {
+      expect(docTexts(editor)).toEqual(['first', '{{query tag:personal}}'])
+    })
+    expect(screen.queryByRole('button', { name: 'save query' })).toBeNull()
+    caretTo(editor, 0)
+    await waitFor(() => {
+      expect(resultsIn(container, ids[1] as string)).toHaveLength(2)
+    })
+  })
+
+  it('/attach opens the file dialog inside the pick, and the file chosen is attached once the block is saved', async () => {
+    const { pageId } = seedPage(['first'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 5))
+    })
+    press(editor, 'Enter')
+    const added = blockIdOf(editor.state.doc.child(1)) as string
+    // WebKit opens a file dialog only inside the key or click that asked for it,
+    // so the dialog cannot wait for the save that creates the block: hold that save.
+    let answer = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'create_block') await held
+      return dispatch(cmd, args)
+    })
+    const opened: HTMLInputElement[] = []
+    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (
+      this: HTMLInputElement,
+    ) {
+      opened.push(this)
+    })
+
+    typeIn(editor, 1, 0, '/attach')
+    const option = await screen.findByRole('option', { name: /ATTACH — Attach file to block/ })
+    act(() => {
+      fireEvent.click(option)
+    })
+    expect(opened.map((input) => input.type)).toEqual(['file'])
+    click.mockRestore()
+
+    const file = new File(['picked text'], 'picked.txt', { type: 'text/plain' })
+    Object.defineProperty(opened[0], 'files', { value: [file] })
+    act(() => {
+      opened[0]?.dispatchEvent(new Event('change'))
+    })
+    answer()
+    await waitFor(() => {
+      const rows = dispatch('list_attachments', { blockId: added }) as Array<{ filename: string }>
+      expect(rows.map((row) => row.filename)).toEqual(['picked.txt'])
+    })
+    expect(backendPage(pageId)).toEqual([
+      [backendPage(pageId)[0]?.[0], 'first'],
+      [added, ''],
+    ])
+  })
+
+  it('a command after typing saves the typing first, with the editor’s own flush registered', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    // The focus registers page mode's flush, which block mode's handlers call first.
+    act(() => {
+      editor.view.dom.dispatchEvent(new FocusEvent('focus'))
+    })
+
+    typeIn(editor, 0, 5, ' typed /priority')
+    await pick(/PRIORITY 1/)
+    await waitFor(() => {
+      expect(backendRow(ids[0] as string).priority).toBe('1')
+    })
+    expect(backendText(ids[0] as string)).toBe('first typed ')
+    await flushActiveDraft()
   })
 })

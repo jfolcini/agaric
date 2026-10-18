@@ -138,3 +138,12 @@ jobs:
           fi
 
           echo "All ${#commits[@]} commit(s) carry a valid Signed-off-by trailer."
+
+  stop-after-dco:
+    needs: dco
+    if: failure()
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: dco

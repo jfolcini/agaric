@@ -59,11 +59,11 @@ export function BlockPropertyDrawer({
   const [loading, setLoading] = useState(true)
   const [properties, setProperties] = useState<PropertyRow[]>([])
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
-  // #2656 — keys of text/select properties added but not yet persisted. Such
-  // properties cannot be created with an empty `value_text` (the real backend
+  // #2656 — keys of `DRAFT_ROW_VALUE_TYPES` properties added but not yet
+  // persisted. Such properties have no valid empty value (the real backend
   // rejects it), so we render a local DRAFT row for value entry and only write
-  // on the first non-empty save. A draft is dropped (no backend call) if the
-  // user leaves it empty.
+  // on the first non-empty save; a ref draft is written by its page picker
+  // instead. A draft is dropped (no backend call) if the user leaves it empty.
   const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set())
   const { setDueDate: setDueDateCmd, setScheduledDate: setScheduledDateCmd } = useBlockReschedule()
   const { getProperties, listPropertyDefs, setProperty } = useBlockPropertyIpc()
@@ -220,11 +220,12 @@ export function BlockPropertyDrawer({
   const handleAddFromDef = useCallback(
     async (def: PropertyDefinition) => {
       if (!blockId) return
-      // #2656 — text/select/url properties have no valid empty initializer:
-      // the backend rejects an empty `value_text` and, for select, any value
-      // outside the definition's options. Add a local draft row for value
-      // entry instead of persisting an invalid placeholder; it writes on the
-      // first non-empty save (see handleSaveField).
+      // #2656 — `DRAFT_ROW_VALUE_TYPES` have no valid empty initializer: the
+      // backend rejects an empty `value_text`, a ref with no target and, for
+      // select, any value outside the definition's options. Add a local draft
+      // row for value entry instead of persisting an invalid placeholder; it
+      // writes on the first non-empty save (see handleSaveField), or, for a
+      // ref, once its picker picks a page.
       if (DRAFT_ROW_VALUE_TYPES.has(def.value_type)) {
         setDraftKeys((prev) => {
           if (prev.has(def.key)) return prev
@@ -341,8 +342,8 @@ export function BlockPropertyDrawer({
             ) : (
               properties.map((prop) => {
                 const propType = getType(prop.key)
-                // Use PropertyRowEditor for ref-type properties (includes page picker)
-                if (propType === 'ref' && blockId) {
+                // A ref's page picker and a boolean's checkbox are the page Properties table's.
+                if ((propType === 'ref' || propType === 'boolean') && blockId) {
                   const def = definitions.find((d) => d.key === prop.key)
                   return (
                     <PropertyRowEditor

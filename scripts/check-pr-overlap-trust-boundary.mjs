@@ -173,11 +173,10 @@
 //      "not a general-purpose linter" scoping). No single-file textual check
 //      can decide what an opaque `uses:` target does, so this does not try
 //      to decide it — it refuses to run unreviewed code in a write-scoped
-//      job at all, the same shape `pr-overlap.yml` uses no local action and
-//      no action outside the allowlist today, so this check starts GREEN on
-//      the real file (see `findWriteScopedUntrustedActions`'s own docstring
-//      and its self-test fixture, which is the falsifiable half of that
-//      claim).
+//      job at all. `pr-overlap.yml` uses no action outside the allowlist
+//      today, so this check starts GREEN on the real file (see
+//      `findWriteScopedUntrustedActions`'s own docstring and its self-test
+//      fixture, which is the falsifiable half of that claim).
 //
 // (1 AND (2 OR 5)) is one failure mode; 3, 4 and 6 are three more, each
 // independent of it and of each other. Any of them firing is a violation.
@@ -328,23 +327,28 @@ const RUN_STEP_CHECKOUT_PATTERNS = [
 ]
 
 // #4183 condition 6 — the actions a job holding a write permission scope may
-// `uses:` at all. Deliberately an ALLOWLIST of exact `owner/repo` action
-// identifiers (the part of a `uses:` value before the `@`), not a denylist
-// or a heuristic: the whole point of condition 6 is that this guard cannot
-// read what an arbitrary action does (see the header's condition-6 section),
-// so the only textually-honest rule is "known-safe, reviewed once by a
-// person" rather than "doesn't LOOK like a checkout".
+// `uses:` at all. Deliberately an ALLOWLIST of exact action identifiers (the
+// part of a `uses:` value before the `@`), not a denylist or a heuristic:
+// the whole point of condition 6 is that this guard cannot read what an
+// arbitrary action does (see the header's condition-6 section), so the only
+// textually-honest rule is "known-safe, reviewed once by a person" rather
+// than "doesn't LOOK like a checkout".
 //
-// This is exactly the set `pr-overlap.yml`'s own write-scoped job (`post`)
-// uses TODAY: `actions/checkout` (with a `ref:` condition 3 already pins to
+// `post` uses `actions/checkout` (with a `ref:` condition 3 already pins to
 // the PR base — this allowlist is a SEPARATE, independent gate, not a
 // replacement for that check) and `actions/download-artifact` (pulling the
 // `compute` job's own upload, never external input — see `post`'s own
 // comment on why that artifact is data, not code, and lands under
-// `artifact/`, never `scripts/`). Adding a THIRD action here is a conscious,
-// reviewed edit to this list — which is the point: an allowlist that grows
-// itself silently is not an allowlist.
-const TRUSTED_WRITE_SCOPED_ACTIONS = new Set(['actions/checkout', 'actions/download-artifact'])
+// `artifact/`, never `scripts/`). The `stop-after-*` jobs use
+// `_stop-pr-ci.yml`, which checks out nothing and only cancels workflow runs;
+// a checkout added there would be invisible to this guard. Adding an entry
+// here is a conscious, reviewed edit to this list — which is the point: an
+// allowlist that grows itself silently is not an allowlist.
+const TRUSTED_WRITE_SCOPED_ACTIONS = new Set([
+  'actions/checkout',
+  'actions/download-artifact',
+  './.github/workflows/_stop-pr-ci.yml',
+])
 
 // Any reference to the `secrets` context BY ACCESSOR: `secrets.GITHUB_TOKEN`,
 // `secrets.A_PAT`, or the index form `secrets['A_PAT']`. Condition 4 (below)
@@ -911,8 +915,8 @@ export function findWriteScopedUnsafeCheckouts(src, jobs = splitJobs(src)) {
  * every condition the same map) whose action identifier (the `uses:` value
  * up to the first `@`) is not a member of `TRUSTED_WRITE_SCOPED_ACTIONS`.
  * That covers a LOCAL composite action (`uses: ./.github/actions/<x>`, whose
- * "identifier" is the literal `./…` path — never a member of the allowlist,
- * by construction, since every allowlist entry is an `owner/repo` form) and
+ * "identifier" is the literal `./…` path — not a member of the allowlist,
+ * whose one local entry is the reusable `_stop-pr-ci.yml` workflow) and
  * an unreviewed third-party action alike; both are the same "this guard
  * cannot see what runs here" shape.
  *

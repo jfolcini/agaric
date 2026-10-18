@@ -1355,3 +1355,24 @@ jobs:
             echo "::error::session-log-pr-collision: could not verify (exit=$rc, verdict=${verdict:-<none>}) — the guard did not reach a verdict, so NO collision was observed and none is being reported. Likely causes: the guard is missing or unreadable in the base checkout, a syntax error or uncaught exception in it, node itself crashing or being killed, or the guard refusing to trust its own open-PR payload (its own message is above). Treated as a failure, never a pass (#3933)."
             exit 1
           fi
+
+  # Only the two jobs that check something stop the PR's CI when they fail;
+  # `compute` and `post` are informational. The stop jobs run no PR code and
+  # hold no `pull-requests` scope.
+  stop-after-merge-result:
+    needs: merge-result
+    if: failure() && needs.merge-result.result == 'failure'
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: merge-result
+
+  stop-after-session-log-pr-collision:
+    needs: session-log-pr-collision
+    if: failure()
+    permissions:
+      actions: write
+    uses: ./.github/workflows/_stop-pr-ci.yml
+    with:
+      failed-job: session-log-pr-collision

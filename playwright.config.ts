@@ -1,5 +1,11 @@
 import { defineConfig, devices } from '@playwright/test'
 
+// Parallel worktrees set `PW_PORT` so each one tests its own bundle: with the
+// default port and `reuseExistingServer`, a second worktree would silently run
+// against the first one's server.
+const PORT = process.env['PW_PORT'] ?? '5173'
+const ORIGIN = `http://localhost:${PORT}`
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -35,7 +41,9 @@ export default defineConfig({
   // responsive; the suite stays comfortably parallel without thrashing.
   // (#1458: the server is now a static `vite preview` build, not dev+HMR.)
   workers: process.env['CI'] ? 2 : 4,
-  reporter: 'list',
+  // CI: one dot per test, full error and stack for each failure, plus GitHub
+  // annotations. `list` printed one line per passing test (hundreds per shard).
+  reporter: process.env['CI'] ? [['dot'], ['github']] : 'list',
   expect: {
     // Overlay mounts (popover/dialog/suggestion portals) can take a beat to
     // appear under parallel-context load; 8s occasionally clipped them. 15s
@@ -44,7 +52,7 @@ export default defineConfig({
     timeout: 15000,
   },
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: ORIGIN,
     trace: 'on-first-retry',
     // #1458: fail-fast navigation/action bounds. Against the static `vite
     // preview` build (no on-the-fly HMR transform), a `page.goto` resolves in
@@ -60,7 +68,7 @@ export default defineConfig({
       cookies: [],
       origins: [
         {
-          origin: 'http://localhost:5173',
+          origin: ORIGIN,
           localStorage: [
             { name: 'agaric-onboarding-done', value: 'true' },
             // #1422: pre-dismiss the first-run mobile gesture coach-mark so its
@@ -87,13 +95,17 @@ export default defineConfig({
     // infra/dev-server flake, not a bad spec). A pre-built static bundle has
     // no on-the-fly compilation, so there is nothing to stall.
     //
-    // `build:e2e` builds with `VITE_E2E=1`, which keeps the tauri IPC mock in
+    // The build runs with `VITE_E2E=1`, which keeps the tauri IPC mock in
     // the bundle (main.tsx gates the mock on `import.meta.env.VITE_E2E`); the
     // suite depends on that mock, and a plain prod build would tree-shake it
-    // out. `preview:e2e` serves `dist/` on :5173 with `--strictPort` so the
-    // baseURL/storageState origin stay unchanged.
-    command: 'npm run build:e2e && npm run preview:e2e',
-    url: 'http://localhost:5173',
+    // out. `preview:e2e` serves `dist/` with `--strictPort` so the
+    // baseURL/storageState origin stay unchanged; the trailing `--port` is
+    // `PW_PORT`. The build skips `tsc -b` (`build:e2e` has it): the lint job's
+    // `tsc` hook already type-checks `e2e/` on every frontend change. `npx`
+    // finds vite where `node_modules/.bin` is not on PATH: a bare
+    // `playwright test`, or an editor's test runner.
+    command: `VITE_E2E=1 npx vite build && npm run preview:e2e -- --port ${PORT}`,
+    url: ORIGIN,
     // #1458: bound server readiness. The build (~30-60s) + preview boot must
     // finish well within this; 180s absorbs a cold CI build + a slow mirror
     // without letting a wedged build hang the run indefinitely. Locally,

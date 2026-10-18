@@ -3,7 +3,7 @@
  * with its reason where page mode cannot show the page.
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -68,17 +68,6 @@ describe('EditModeSwitch', () => {
     await user.click(radio(t('pageMode.blocks')))
     await user.click(radio(t('pageMode.page')))
     expect(onChange).not.toHaveBeenCalled()
-  })
-
-  it('tells when the pointer or focus reaches it, so the page can be checked before a choice', () => {
-    const onIntent = vi.fn()
-    render(<EditModeSwitch mode="blocks" onChange={() => {}} onIntent={onIntent} />)
-    const group = screen.getByRole('radiogroup', { name: t('pageMode.switchLabel') })
-
-    fireEvent.pointerEnter(group)
-    fireEvent.focus(radio(t('pageMode.blocks')))
-
-    expect(onIntent).toHaveBeenCalledTimes(2)
   })
 
   it('has no a11y violations, offered or blocked', async () => {

@@ -108,6 +108,6 @@ test('a used command leads the empty-query menu in a Recent group', async ({ pag
 
   await typeSlashCommand(page, '')
   const recent = list.getByRole('group').first()
-  await expect(recent.getByRole('heading')).toHaveText('Recent')
+  await expect(recent).toHaveAccessibleName('Recent')
   await expect(recent.getByRole('option')).toHaveText(['QUOTE — Insert blockquote'])
 })
