@@ -19,11 +19,14 @@ import {
  *   - the Tags view's nested tag-query composer (`query_by_tag_expr`, pinned by
  *     `conformance/fixtures/query_tag_and_property_boundaries.json`);
  *   - the linked-references link-kind toggle (`list_backlinks_grouped`'s
- *     `kind`, pinned by `conformance/fixtures/block_ref_kind.json`).
+ *     `kind`, pinned by `conformance/fixtures/block_ref_kind.json`);
+ *   - a tag chip whose tag the resolve store never listed reading its name
+ *     (`batch_resolve`, pinned by its `queries` step).
  */
 
 /** `SEED_IDS` in `src/lib/tauri-mock/seed.ts`. */
 const GETTING_STARTED = '00000000000000000000PAGE01'
+const GS1 = '0000000000000000000BLOCK01'
 
 async function createTag(page: Page, name: string): Promise<string> {
   const { id } = await ipc<{ id: string }>(page, 'create_block', {
@@ -112,5 +115,20 @@ test.describe('Linked references link kind', () => {
     await kind('All').click()
     await expect(header).toHaveText('2 References')
     await expect(rows).toHaveText([/^Block ref note/, /^These notes complement/])
+  })
+})
+
+test.describe('Tag chip name', () => {
+  // The tag is made after boot, so the resolve store's preload never listed it, as the backend's
+  // background-filled `tags_cache` misses a tag an import just created.
+  test('a tag the resolve store never listed shows its name, not its id', async ({ page }) => {
+    await waitForBoot(page)
+    const tagId = await createTag(page, 'fresh-tag')
+    await ipc(page, 'edit_block', { blockId: GS1, toText: `see #[${tagId}]` })
+    await openPage(page, 'Getting Started')
+
+    await expect(page.locator(`[data-block-id="${GS1}"] [data-testid="tag-ref-chip"]`)).toHaveText(
+      'fresh-tag',
+    )
   })
 })

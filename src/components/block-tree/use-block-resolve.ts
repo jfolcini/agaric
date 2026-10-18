@@ -786,10 +786,10 @@ export function useBlockResolve(): UseBlockResolveReturn {
           // exist before — every tag this function could return used to come
           // from a fill that had persisted AND seeded. A `tag_ref` chip
           // resolves its name ONLY through the resolve store
-          // (`useRichContentCallbacks.resolveTagName`; `#[ULID]` has no lazy
-          // per-id fallback the way `[[ULID]]` has `fetchAndCacheLinks`), so
-          // a tag picked out of the loser's list would render as
-          // `#01ABCDE...`. "The winner will seed it" is not a guarantee —
+          // (`useRichContentCallbacks.resolveTagName`; `useBlockLinkResolve`
+          // scans a block's `#[ULID]` only once the block is saved), so a tag
+          // picked out of the loser's list would render as `#01ABCDE...`.
+          // "The winner will seed it" is not a guarantee —
           // the winner can itself be rejected by a bus event landing while
           // IT is in flight, and then nothing seeds the tag at all. This
           // also restores the mirror with the pages side, where

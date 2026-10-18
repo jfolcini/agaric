@@ -1,12 +1,14 @@
 /**
- * useBlockLinkResolve — scans loaded blocks for `[[ULID]]` page-link and
- * `((ULID))` block-ref tokens and batch-resolves any ids not yet in the
- * resolve cache.
+ * useBlockLinkResolve — scans loaded blocks for `[[ULID]]` page-link,
+ * `((ULID))` block-ref and `#[ULID]` tag-ref tokens and batch-resolves any ids
+ * not yet in the resolve cache.
  *
  * Pages + tags are preloaded by App.tsx via `useResolveStore.preload()`;
  * this hook fills the gap for block-link references (e.g. links to
- * Content blocks). `spaceId` is threaded through both the
- * cache-membership check and the `batchResolve` IPC so foreign-space
+ * Content blocks) and for tags the preload missed: its tag half reads
+ * `tags_cache`, which the materializer fills in the background, so a tag an
+ * import just created can be absent from it. `spaceId` is threaded through
+ * both the cache-membership check and the `batchResolve` IPC so foreign-space
  * targets are filtered out and rendered as broken-link chips. Extracted
  * From BlockTree.tsx for.
  */
@@ -22,8 +24,8 @@ import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
 /**
- * Matches BOTH the `[[ULID]]` page-link token and the `((ULID))`
- * block-ref token in one pass, mirroring the backend's own `ULID_LINK_RE`
+ * Matches the `[[ULID]]` page-link token and the `((ULID))`
+ * block-ref token in one pass (group 1), mirroring the backend's own `ULID_LINK_RE`
  * (`src-tauri/agaric-store/src/cache/mod.rs`), which the link reindexer
  * uses to populate `block_links` for either delimiter. #4551 — before this,
  * `((ULID))` references were never scanned on load: a page whose refs are
@@ -32,12 +34,13 @@ import { useSpaceStore } from '@/stores/space'
  * just-inserted picker seed) would have already been in the cache. Widened
  * to one shared regex rather than adding a second scan pass so the two
  * token shapes cannot drift out of sync with each other or with the
- * backend's.
+ * backend's. Group 2 is the `#[ULID]` tag ref, whose chip otherwise reads its
+ * name only from the preload.
  */
-const ULID_LINK_RE = /(?:\[\[|\(\()([0-9A-Z]{26})(?:\|[^\]\n]*)?(?:\]\]|\)\))/g
+const ULID_LINK_RE = /(?:\[\[|\(\()([0-9A-Z]{26})(?:\|[^\]\n]*)?(?:\]\]|\)\))|#\[([0-9A-Z]{26})\]/g
 
 /**
- * Scan the provided blocks for `[[ULID]]` / `((ULID))` tokens whose ids are
+ * Scan the provided blocks for `[[ULID]]` / `((ULID))` / `#[ULID]` tokens whose ids are
  * not yet cached for the active space. The cache is keyed by
  * `${spaceId}::${ulid}` so the membership check has to use
  * the same composite key — a bare-id lookup would treat a previous-
@@ -53,7 +56,7 @@ export function collectUncachedLinkIds(
   for (const b of blocks) {
     if (!b.content) continue
     for (const m of b.content.matchAll(ULID_LINK_RE)) {
-      const id = m[1] as string
+      const id = (m[1] ?? m[2]) as string
       if (!currentCache.has(keyFor(spaceId, id))) uncached.add(id)
     }
   }
@@ -128,7 +131,7 @@ export async function fetchAndCacheLinks(
 
 /**
  * Effect-only hook: scans loaded blocks for uncached `[[ULID]]` /
- * `((ULID))` references and triggers a batch resolve. Returns nothing — results
+ * `((ULID))` / `#[ULID]` references and triggers a batch resolve. Returns nothing — results
  * land in `useResolveStore` and are read by chip renderers.
  *
  * Identity invariants (#1266): the effect re-fires only when the
