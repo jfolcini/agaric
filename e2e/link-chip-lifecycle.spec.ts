@@ -110,7 +110,7 @@ async function moveGettingStartedTo(page: Page, space: string): Promise<void> {
 
 /** The newest "Broken link removed" toast. */
 function removedToast(page: Page) {
-  return page.locator('[data-sonner-toast]').filter({ hasText: 'Broken link removed' }).last()
+  return page.locator('[data-sonner-toast]').filter({ hasText: 'Broken link removed' }).first()
 }
 
 /** QN_1's content as the backend holds it. */
