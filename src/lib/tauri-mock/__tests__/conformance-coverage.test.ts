@@ -441,22 +441,6 @@ const READ_NO_QUERY_ALLOWLIST: Readonly<Record<string, string>> = {
  * PARTIALLY covered.
  */
 const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
-  // `list_blocks`'s single-date agenda arm (#3878, found while fixing #3877's
-  // review notes). Not a structural blocker on the query SIDE —
-  // `list_blocks_inner` takes an explicit `agenda_date` argument, so that is
-  // trivially seedable as an ARG. The blocker is the DATA the arm reads: it
-  // goes through `pagination::list_agenda`, which reads the `agenda_cache`
-  // table, not `blocks` directly. A fixture `seed` only inserts into
-  // `blocks`/`properties`/`tags` — populating `agenda_cache` needs
-  // `set_due_date` / `set_scheduled_date` OPS run first, i.e. an ops-then-
-  // query fixture shape. Its sibling `agenda-range` arm got exactly that
-  // shape in `query_list_blocks_pagination_id_keyset.json`'s
-  // `agenda_range_page_1`/`_2` steps (#3942 review note 7); this waiver is
-  // what remains once that one lifted.
-  'list_blocks::agenda-date':
-    'agenda_cache rows require set_due_date/set_scheduled_date OPS before the ' +
-    'query step, not just a seed — no query_*.json fixture does that yet (#3878)',
-
   // #3927 — the arms of the three commands added by that issue that a query
   // step cannot express. The blocker is in the HARNESS, not in the fixture
   // seed, which is why it does not read "fixture candidate".
@@ -477,20 +461,16 @@ const READ_QUERY_BRANCH_ALLOWLIST: Readonly<Record<string, string>> = {
     'first (#3927)',
 }
 
-// NOTE for whoever lifts the remaining agenda-date waiver above (and for
-// `agenda-range`'s own steps, added by #3942 review note 7): `list_blocks_inner`'s
-// `agenda-range` and `agenda-date` arms both sub-dispatch a SECOND time on
-// `agenda_source` (`pagination::list_agenda[_range](…, agenda_source.as_deref(), …)`
-// in `queries.rs`, keyed on `due_date` / `scheduled_date` / no source) once
-// inside `pagination::list_agenda[_range]`. This manifest only models the
-// top-level exclusive-filter chain, so a single query step with ANY
-// `agenda_source` value will credit the WHOLE arm the moment it gets a query
-// step — exactly the branch-invisible-coverage shape #3878 exists to catch,
-// one level down. `agenda_range_page_1`/`_2` pass no `source` (the "no
-// source" case), so `agenda-range`'s `due_date`/`scheduled_date`-source
-// sub-arms are credited but not actually exercised — the SAME residual gap
-// this note already named, now realised on the arm that lifted first.
-// Closing it needs `agenda_source` modelled as its own sub-branch (e.g.
+// NOTE: `list_blocks_inner`'s `agenda-range` and `agenda-date` arms both
+// sub-dispatch a SECOND time on `agenda_source`
+// (`pagination::list_agenda[_range](…, agenda_source.as_deref(), …)` in
+// `queries.rs`, keyed on `due_date` / `scheduled_date` / no source). This
+// manifest only models the top-level exclusive-filter chain, so a single query
+// step with ANY `agenda_source` value credits the WHOLE arm — the
+// branch-invisible-coverage shape #3878 exists to catch, one level down. Every
+// agenda step today passes no `source`, so both arms' `due_date` /
+// `scheduled_date`-source sub-arms are credited but not exercised. Closing it
+// needs `agenda_source` modelled as its own sub-branch (e.g.
 // `list_blocks::agenda-date::due_date`), not just a step with a non-null
 // `date`/`dateRange`.
 

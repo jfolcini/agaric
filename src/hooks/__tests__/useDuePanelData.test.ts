@@ -526,7 +526,7 @@ describe('useDuePanelData', () => {
   // reads. A canned response would answer the same rows however the hook
   // asked, and would still be green with the filter removed entirely.
   it('drops DONE blocks from the fetched list and the count (#5074)', async () => {
-    seedAgendaListBlocks(mockedListBlocks, [
+    seedAgendaListBlocks(mockedListBlocks, 'SPACE_1', [
       makeBlock({ id: 'B1', todo_state: 'TODO', content: 'still open', due_date: '2025-06-15' }),
       makeBlock({
         id: 'B2',

@@ -1,0 +1,334 @@
+{
+  "description": "`list_blocks` scopes EVERY dispatch branch to the asked space (`b.space_id = ?`), not only the by-type one: `list_by_tag`, `list_agenda`, `list_agenda_range` and `list_children` each carry the same space predicate. The seed puts two pages in the harness space, `Home` with a child `here` and `Away` with a child `there`; both children carry the tag `topic` and the due date 2026-01-01. The ops then create a second space and move `Away` into it, so `there` keeps its tag, its agenda date and its parent but no longer belongs to the harness space. Each read asks the harness space and names only `here`, or nothing: an unscoped branch answers `there` as well.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B2",
+        "tag_id": "B5"
+      },
+      {
+        "block_id": "B4",
+        "tag_id": "B5"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "here",
+        "deleted_at": null,
+        "due_date": "2026-01-01",
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B3",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "there",
+        "deleted_at": null,
+        "due_date": "2026-01-01",
+        "id": "B4",
+        "page_id": "B3",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "topic",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B5",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Work",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B6",
+        "page_id": "B6",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 7,
+      "ops": [
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "key": "is_space",
+          "op_type": "set_property"
+        },
+        {
+          "key": "space",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B6",
+        "key": "is_space",
+        "value": "true",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "expected_ops": [
+    {
+      "code": null,
+      "error": null,
+      "name": "a_second_space",
+      "returns": ["create_space#space_id=B6"]
+    },
+    {
+      "code": null,
+      "error": null,
+      "name": "away_moves_to_the_second_space",
+      "returns": ["move_blocks_to_space#moved=1"]
+    }
+  ],
+  "expected_queries": [
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "by_tag_names_only_the_spaces_own_block",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "by_agenda_date_names_only_the_spaces_own_block",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "by_agenda_range_names_only_the_spaces_own_block",
+      "rows": ["B2#parent_id=B1#page_id=B1#position=1#deleted_at=null"],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": false,
+      "name": "children_of_a_page_in_another_space_are_empty_here",
+      "rows": [],
+      "total_count": null
+    }
+  ],
+  "name": "query_list_blocks_space_scope",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S5"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "tagId": "S5"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2026-01-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S4",
+        "date": "2026-01-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "accentColor": null,
+        "name": "Work"
+      },
+      "command": "create_space",
+      "comment": "The second space, `C1`.",
+      "name": "a_second_space",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S3"],
+        "spaceId": "C1"
+      },
+      "command": "move_blocks_to_space",
+      "comment": "`Away` and its child `there` leave the harness space; the tag and the agenda date ride along.",
+      "name": "away_moves_to_the_second_space",
+      "via": "command"
+    }
+  ],
+  "queries": [
+    {
+      "args": {
+        "request": {
+          "tagId": "S5"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "`list_by_tag`: both children carry the tag, only `here` is in the asked space.",
+      "name": "by_tag_names_only_the_spaces_own_block"
+    },
+    {
+      "args": {
+        "request": {
+          "date": "2026-01-01"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "`list_agenda`: both children are due that day, only `here` is in the asked space.",
+      "name": "by_agenda_date_names_only_the_spaces_own_block"
+    },
+    {
+      "args": {
+        "request": {
+          "dateRange": {
+            "end": "2026-01-01",
+            "start": "2026-01-01"
+          }
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "`list_agenda_range`: the same split over a one-day range.",
+      "name": "by_agenda_range_names_only_the_spaces_own_block"
+    },
+    {
+      "args": {
+        "request": {
+          "parentId": "S3"
+        },
+        "scope": {
+          "kind": "active",
+          "space_id": "$SPACE"
+        }
+      },
+      "command": "list_blocks",
+      "comment": "`list_children`: `Away` moved out of the asked space with its child, so its children listed in the harness space are none. The empty answer is the negative this step pins: an unscoped branch answers `there`.",
+      "expect_empty": true,
+      "name": "children_of_a_page_in_another_space_are_empty_here"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "here",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Away",
+        "id": "S3",
+        "parent_id": null,
+        "position": 2
+      },
+      {
+        "block_type": "content",
+        "content": "there",
+        "id": "S4",
+        "parent_id": "S3",
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "topic",
+        "id": "S5",
+        "parent_id": null,
+        "position": 3
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

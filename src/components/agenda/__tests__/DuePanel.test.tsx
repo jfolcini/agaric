@@ -230,7 +230,7 @@ describe('DuePanel', () => {
   // end — filtered out of the fetched blocks, so it leaves the header
   // count too and the two stay in agreement.
   it('renders a CANCELLED group so the header count matches visible rows (#738)', async () => {
-    seedAgendaListBlocks(mockedListBlocks, [
+    seedAgendaListBlocks(mockedListBlocks, 'SPACE_1', [
       makeBlock({ id: 'B1', todo_state: 'TODO', content: 'todo block', due_date: DATE }),
       makeBlock({ id: 'B2', todo_state: 'DONE', content: 'done block', due_date: DATE }),
       makeBlock({ id: 'B3', todo_state: 'CANCELLED', content: 'cancelled block', due_date: DATE }),
@@ -274,7 +274,7 @@ describe('DuePanel', () => {
         due_date: DATE,
       }),
     )
-    seedAgendaListBlocks(mockedListBlocks, [
+    seedAgendaListBlocks(mockedListBlocks, 'SPACE_1', [
       ...doneRows,
       makeBlock({ id: 'Z1', todo_state: 'DOING', content: 'doing block', due_date: DATE }),
       makeBlock({ id: 'Z2', todo_state: 'TODO', content: 'todo block', due_date: DATE }),
