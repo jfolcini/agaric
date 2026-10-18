@@ -2628,21 +2628,20 @@ jobs:
           # The lineage survives this long without a successful upload.
           retention-days: 90
 
-      - name: Upload fuzz artifacts (crashes / corpus)
+      - name: Upload fuzz artifacts (crashes)
+        # The corpus is its own 90-day `fuzz-corpus` artifact, uploaded above.
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-artifacts
-          path: |
-            src-tauri/fuzz/artifacts/
-            src-tauri/fuzz/corpus/
+          path: src-tauri/fuzz/artifacts/
           if-no-files-found: ignore
           retention-days: 30
 
       - name: Upload per-target fuzz status (#3169)
         # Separate from `fuzz-artifacts` above on purpose: adding a workspace-
-        # root path to that multi-path upload would move its least-common-
-        # ancestor and reshuffle the existing artifact's layout.
+        # root path to that upload would move its root and reshuffle the
+        # artifact's layout.
         #
         # `if-no-files-found: ignore` stays (#3360): a lane that died before it
         # could write anything is already red, and turning that into a second

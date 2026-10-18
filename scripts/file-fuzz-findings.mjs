@@ -296,7 +296,7 @@ export function buildFindings(results, jobStatus) {
           for (const repro of repros) {
             findings.push({
               id: `[crash] ${r.target}: ${repro}`,
-              detail: `Reproducer \`src-tauri/fuzz/artifacts/${r.target}/${repro}\` (download the \`fuzz-artifacts\` artifact from the run, then \`cargo +nightly fuzz run ${r.target} artifacts/${r.target}/${repro}\`).\n\n${excerptFromLog(r.log)}`,
+              detail: `Reproducer \`src-tauri/fuzz/artifacts/${r.target}/${repro}\` (\`gh run download <run> -n fuzz-artifacts -D src-tauri/fuzz/artifacts\`, then, in \`src-tauri/fuzz\`, \`cargo +nightly fuzz run ${r.target} artifacts/${r.target}/${repro}\`).\n\n${excerptFromLog(r.log)}`,
             })
           }
         }
