@@ -51,10 +51,13 @@ describe('Agaric real-webview voice note (#5730)', () => {
     await record.waitForClickable({ timeout: ACTION_TIMEOUT })
     await record.click()
     const timer = dialog.$('[role="timer"]')
-    await browser.waitUntil(async () => (await timer.getText()) === '0:03', {
-      timeout: ACTION_TIMEOUT,
-      timeoutMsg: 'the recording never reached three seconds',
-    })
+    await browser.waitUntil(
+      async () => {
+        const [minutes = 0, seconds = 0] = (await timer.getText()).split(':').map(Number)
+        return minutes * 60 + seconds >= 3
+      },
+      { timeout: ACTION_TIMEOUT, timeoutMsg: 'the recording never reached three seconds' },
+    )
     await dialog.$('button=Stop and save').click()
     await waitForToast('Voice note attached')
 

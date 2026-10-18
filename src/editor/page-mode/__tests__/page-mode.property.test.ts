@@ -342,7 +342,8 @@ const B2 = blockId(2)
  * Found once each: a `key:: value` line typed into a block a peer deletes
  * before the save, so the block is kept under a new id and the line stays
  * text, then moved by Enter or a cut into a block that did not hold it, which
- * the caret then leaves.
+ * the caret then leaves; or left in that block, which a task marker then
+ * changes, so the key it held stays text.
  */
 const EXAMPLES: Array<[Row[], Step[]]> = [
   [
@@ -383,6 +384,24 @@ const EXAMPLES: Array<[Row[], Step[]]> = [
       {
         action: { kind: 'cutPaste', from: 561348579, count: 1, to: 0 },
         peer: null,
+        failures: null,
+      },
+      {
+        action: { kind: 'taskMarker', block: 0, marker: ['[ ] ', 'TODO'], to: 0 },
+        peer: null,
+        failures: null,
+      },
+    ],
+  ],
+  [
+    [
+      [B1, 0, ''],
+      [B2, 0, ''],
+    ],
+    [
+      {
+        action: { kind: 'propertyLine', block: 0, key: 'assignee', value: 'Ana', to: 0 },
+        peer: { kind: 'delete', block: 0 },
         failures: null,
       },
       {
@@ -1044,7 +1063,8 @@ describe('page mode against the mock backend', () => {
             expectIdsKept(action, acted, before, after, seen, emptyBefore, emptyAfter)
             for (const id of after) seen.add(id)
             // A `#name` typing went on after became a tag as typed (`at-tag-picker.ts`): let it land.
-            await new Promise((resolve) => setTimeout(resolve, 0))
+            // Its promises settle before the next macrotask; a timer would sleep the worker as well.
+            await new Promise((resolve) => setImmediate(resolve))
 
             if (peer !== null) {
               const textOnly = action.kind === 'type'

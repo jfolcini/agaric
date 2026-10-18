@@ -19,6 +19,7 @@ import {
   FakeAudioContext,
   FakeAudioEncoder,
   FakeAudioWorkletNode,
+  FLUSHED_PACKET,
   OPUS_HEAD,
   fakeMicrophone,
   installWebAudioFakes,
@@ -470,6 +471,7 @@ describe('VoiceNoteDialog on WebKitGTK, encoding Ogg Opus itself (#5730)', () =>
     const expected = new OggOpusWriter(OPUS_HEAD)
     expected.addPacket(audioPacket(1))
     expected.addPacket(audioPacket(2))
+    expected.addPacket(FLUSHED_PACKET)
     const bytes = dispatch('read_attachment', { attachmentId: row?.['id'] }) as ArrayBuffer
     expect([...new Uint8Array(bytes)]).toEqual([
       ...new Uint8Array(await expected.finish().arrayBuffer()),

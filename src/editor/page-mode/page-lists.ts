@@ -31,10 +31,9 @@ import { computeListOrdinals } from '@/lib/list-ordinals'
 import { type ListStyle, listStyleFromRows } from '@/lib/list-style'
 import type { FlatBlock } from '@/lib/tree-utils'
 
-const sameItems = (
-  a: readonly Pick<FlatBlock, 'id' | 'depth'>[],
-  b: readonly Pick<FlatBlock, 'id' | 'depth'>[],
-): boolean =>
+type OutlineItem = Pick<FlatBlock, 'id' | 'depth'>
+
+const sameItems = (a: readonly OutlineItem[], b: readonly OutlineItem[]): boolean =>
   a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
 
 /** The page's list styles, as last read or as given since, and the marker each block shows. */
@@ -43,15 +42,12 @@ export class PageLists {
   /** Styles given here whose write has not settled, with the number of that write. */
   private readonly wanted = new Map<string, { style: ListStyle; seq: number }>()
   private seq = 0
-  private items: Pick<FlatBlock, 'id' | 'depth'>[]
+  private items: OutlineItem[]
   private markers = new Map<string, string>()
   private readonly listeners = new Map<string, Set<() => void>>()
 
   /** `blocks` are the page's blocks in order, as its document opens on them. */
-  constructor(
-    rows: Record<string, PropertyRow[]>,
-    blocks: readonly Pick<FlatBlock, 'id' | 'depth'>[],
-  ) {
+  constructor(rows: Record<string, PropertyRow[]>, blocks: readonly OutlineItem[]) {
     this.items = blocks.map(({ id, depth }) => ({ id, depth }))
     this.take(rows)
   }
@@ -93,7 +89,7 @@ export class PageLists {
 
   /** Take the blocks' order and depths from `doc`: the ordinals follow them. */
   layout(doc: PMNode): void {
-    const items: Pick<FlatBlock, 'id' | 'depth'>[] = []
+    const items: OutlineItem[] = []
     doc.forEach((node) => items.push({ id: blockIdOf(node) ?? '', depth: depthOf(node) }))
     if (sameItems(items, this.items)) return
     this.items = items

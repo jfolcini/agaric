@@ -12,6 +12,7 @@ import type { AdvancedQueryResponse, BlockRow } from '@/lib/bindings'
 import { EMBED_MOUNT_LIMIT } from '@/lib/embed-token'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
+import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
 import { queryClient } from '@/lib/query-client'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
@@ -113,6 +114,9 @@ const blocksPanel = () => screen.getByRole('region', { name: 'Blocks' })
 beforeEach(() => {
   vi.clearAllMocks()
   queryClient.clear()
+  // A row's hover prefetch outlives its test under load, and the next test to
+  // expand a row of that page would load the previous test's outline from it.
+  _resetPrefetchPageSubtreeForTest()
   useSpaceStore.setState({ currentSpaceId: 'SPACE_1' })
   useResolveStore.setState({ cache: new Map(), version: 0 })
 })

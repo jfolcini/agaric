@@ -24,6 +24,9 @@ export const OPUS_HEAD = new Uint8Array([
   0,
 ])
 
+/** The packet the encoder still holds when it is flushed: one 20 ms CELT frame. */
+export const FLUSHED_PACKET = new Uint8Array([19 << 3, 7, 7, 7])
+
 export class FakeAudioContext {
   static instances: FakeAudioContext[] = []
   /** What `audioWorklet.addModule` rejects with, as the CSP refusing the module would. */
@@ -102,7 +105,11 @@ export class FakeAudioEncoder {
   state: CodecState = 'unconfigured'
   config: AudioEncoderConfig | null = null
   readonly encoded: AudioDataInit[] = []
-  readonly flush = vi.fn(async () => {})
+  /** Hands over the held packet asynchronously and then resolves, as a real flush does. */
+  readonly flush = vi.fn(async () => {
+    await Promise.resolve()
+    this.emit(FLUSHED_PACKET)
+  })
   private emitted = 0
   private readonly init: AudioEncoderInit
 

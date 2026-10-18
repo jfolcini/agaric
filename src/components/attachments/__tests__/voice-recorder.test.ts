@@ -11,6 +11,7 @@ import {
   FakeAudioContext,
   FakeAudioEncoder,
   FakeAudioWorkletNode,
+  FLUSHED_PACKET,
   OPUS_HEAD,
   fakeMicrophone,
   installWebAudioFakes,
@@ -126,6 +127,7 @@ describe('the Opus recorder', () => {
 
     const blob = await recorder.recording
     expect(blob.type).toBe('audio/ogg')
+    expected.addPacket(FLUSHED_PACKET)
     expect(await bytesOf(blob)).toEqual(await bytesOf(expected.finish()))
     expect(encoder.state).toBe('closed')
   })

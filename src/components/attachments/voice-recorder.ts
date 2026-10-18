@@ -10,10 +10,7 @@ import workletUrl from '@/components/attachments/voice-capture-worklet?worker&ur
 import { supportedRecordingType } from '@/components/attachments/voice-recording'
 import { logger } from '@/lib/logger'
 
-/**
- * Opus at this rate is about 15 MB an hour. WebKitGTK's encoder overshoots it
- * by about half; the size cap counts the bytes actually recorded.
- */
+/** WebKitGTK's encoder overshoots this rate; the size cap counts the bytes actually recorded. */
 export const RECORDING_BITS_PER_SECOND = 32_000
 /** How often `MediaRecorder` hands over a chunk, and so how often the size cap is checked. */
 const CHUNK_INTERVAL_MS = 1000

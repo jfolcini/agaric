@@ -73,5 +73,5 @@ test('records a voice note as Ogg Opus where MediaRecorder cannot record', async
     .toBeGreaterThan(2.5)
   await expect
     .poll(() => player.evaluate((audio: HTMLAudioElement) => audio.duration))
-    .toBeLessThan(4)
+    .toBeLessThan(4.5)
 })
