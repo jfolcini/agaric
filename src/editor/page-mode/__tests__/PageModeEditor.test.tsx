@@ -504,6 +504,67 @@ describe('PageModeEditor', () => {
       expect(onBlocked).toHaveBeenCalledWith({ kind: 'overCap', count: PAGE_MODE_BLOCK_CAP + 1 })
     })
   })
+
+  it.each(['get_batch_properties', 'list_attachments_batch'])(
+    'a page whose %s read fails says so, and opens no editor that could save',
+    async (refused) => {
+      const { pageId } = seedPage(['first'])
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+        if (cmd === refused) throw new Error('database locked')
+        return dispatch(cmd, args)
+      })
+      const { container, handle, onBlocked } = renderPageMode(pageId)
+
+      await waitFor(() => {
+        expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('error.loadBlocksFailed'))
+      })
+      expect(container.querySelector('[data-testid="page-mode-editor"]')).toBeNull()
+      expect(handle.current).toBeNull()
+      expect(onBlocked).not.toHaveBeenCalled()
+    },
+  )
+
+  it('a reload whose read fails leaves the document as it was, writes no peer’s change back over, and the next reload brings it in', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, store, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const error = vi.spyOn(logger, 'error')
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'get_batch_properties') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    dispatch('edit_block', { blockId: ids[0], toText: 'first, from a peer' })
+    await act(async () => {
+      await store.getState().load()
+    })
+    await waitFor(() => {
+      expect(error).toHaveBeenCalledWith(
+        'PageModeEditor',
+        'Page mode save threw',
+        { pageId },
+        expect.any(Error),
+      )
+    })
+    expect(docTexts(editor)).toEqual(['first', 'second'])
+
+    mockedInvoke.mockImplementation(passThrough)
+    typeAt(editor, 1, 6, '!')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'first, from a peer'],
+      [ids[1], 'second!'],
+    ])
+
+    await act(async () => {
+      await store.getState().load()
+    })
+    await waitFor(() => {
+      expect(docTexts(editor)).toEqual(['first, from a peer', 'second!'])
+    })
+  })
 })
 
 describe('PageModeEditor typed tags (#5743)', () => {
@@ -520,7 +581,7 @@ describe('PageModeEditor typed tags (#5743)', () => {
     return new Map(rows.map((row) => [row.name, row.tag_id]))
   }
 
-  it('a #name typed and left for another block becomes the tag, its chip, and undoes', async () => {
+  it('a #name typed and left for another block becomes the tag, its chip with no a11y violations, and undoes', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     const { container, handle } = renderPageMode(pageId)
     const editor = await editorIn(container)
@@ -539,6 +600,9 @@ describe('PageModeEditor typed tags (#5743)', () => {
     expect(
       container.querySelector(`[data-page-block-id="${ids[0]}"] [data-testid="tag-ref-chip"]`),
     ).not.toBeNull()
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
 
     act(() => {
       editor.commands.undo()
@@ -666,6 +730,67 @@ describe('PageModeEditor typed tags (#5743)', () => {
     expect(backendText(ids[0] as string)).toBe('first #newtag')
     expect(docTexts(editor)).toEqual(['first #newtag', 'second'])
     expect(tagIds().has('newtag')).toBe(false)
+  })
+
+  it('a tag lookup that fails leaves the name as text, creates no tag, and logs why', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const warn = vi.spyOn(logger, 'warn')
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'list_all_tags_in_space') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    typeAt(editor, 0, 5, ' #newtag')
+    caretTo(editor, 1)
+
+    await waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(
+        'unmount-flush',
+        'tag lookup failed, the tags stay text',
+        { spaceId: SCOPE.space_id },
+        expect.any(Error),
+      )
+    })
+    // Queued behind the commit: once it has run, so has everything the commit does.
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(backendText(ids[0] as string)).toBe('first #newtag')
+    expect(docTexts(editor)).toEqual(['first #newtag', 'second'])
+    expect(tagIds().has('newtag')).toBe(false)
+  })
+
+  it('a tag whose write into the text is refused leaves the name as text, and logs why', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const warn = vi.spyOn(logger, 'warn')
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'edit_block' && TAG_REF.test((args as { toText: string }).toText)) {
+        throw new Error('database locked')
+      }
+      return dispatch(cmd, args)
+    })
+
+    typeAt(editor, 0, 5, ' #Work')
+    caretTo(editor, 1)
+
+    await waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(
+        'unmount-flush',
+        'content edit rejected',
+        { blockId: ids[0] },
+        expect.any(Error),
+      )
+    })
+    // Queued behind the commit: once it has run, so has everything the commit does.
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(backendText(ids[0] as string)).toBe('first #Work')
+    expect(docTexts(editor)).toEqual(['first #Work', 'second'])
   })
 })
 
@@ -1256,6 +1381,66 @@ describe('PageModeEditor priorities and dates (#5743)', () => {
     ).toBe(t('block.dueDate', { date: formatCompactDate('2026-10-20') }))
   })
 
+  it('a scheduled date the command refuses says so, and the chip keeps the date the backend holds', async () => {
+    const { pageId, ids } = seedPage(['plan trip'])
+    dispatch('set_scheduled_date', { blockId: ids[0], date: '2026-11-01' })
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_scheduled_date') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    fireEvent.click(await inBlock(container, ids[0] as string, '.scheduled-chip'))
+    await pickDate('2026-12-31')
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.setScheduledDateFailed'))
+    })
+    expect(backendRow(ids[0] as string).scheduled_date).toBe('2026-11-01')
+    expect(
+      (await inBlock(container, ids[0] as string, '.scheduled-chip')).getAttribute('aria-label'),
+    ).toBe(t('block.scheduledDate', { date: formatCompactDate('2026-11-01') }))
+  })
+
+  it('a clear in the drawer the command refuses says so, and the chip keeps the date', async () => {
+    const { pageId, ids } = seedPage(['pay rent'])
+    dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await inBlock(container, ids[0] as string, '.due-date-chip')
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_due_date') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    act(() => {
+      editor.view.focus()
+    })
+    caretTo(editor, 0)
+    expect(press(editor, 'P', { ctrlKey: true, shiftKey: true })).toBe(true)
+    const drawer = await screen.findByRole('dialog', { name: t('property.drawerTitle') })
+    await act(async () => {
+      fireEvent.click(
+        await within(drawer).findByRole('button', { name: t('property.clearDueDate') }),
+      )
+    })
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('property.saveFailed'))
+    })
+    await act(async () => {
+      fireEvent.keyDown(drawer, { key: 'Escape' })
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: t('property.drawerTitle') })).toBeNull()
+    })
+
+    expect(backendRow(ids[0] as string).due_date).toBe('2026-10-20')
+    expect(
+      (await inBlock(container, ids[0] as string, '.due-date-chip')).getAttribute('aria-label'),
+    ).toBe(t('block.dueDate', { date: formatCompactDate('2026-10-20') }))
+  })
+
   it('opening the picker neither leaves the block nor commits what is typed in it', async () => {
     const { pageId, ids } = seedPage(['pay rent', 'buy milk'])
     dispatch('set_due_date', { blockId: ids[0], date: '2026-10-20' })
@@ -1361,6 +1546,36 @@ describe('PageModeEditor priorities and dates (#5743)', () => {
       await handle.current?.flush()
     })
     expect(backendText(ids[0] as string)).toBe(`meet on [[${datePage}]]`)
+  })
+
+  it('a date page that cannot be created says so, and links nothing', async () => {
+    const { pageId, ids } = seedPage(['meet on '])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'create_page_in_space') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 8))
+      editor.view.focus()
+    })
+
+    expect(press(editor, 'D', { ctrlKey: true, shiftKey: true })).toBe(true)
+    await pickDate('2026-12-24')
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.insertDateLinkFailed'))
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    const pages = dispatch('list_all_pages_in_space', { scope: SCOPE, aliases: null }) as Array<{
+      content: string | null
+    }>
+    expect(pages.filter((p) => p.content === '2026-12-24')).toEqual([])
+    expect(docTexts(editor)).toEqual(['meet on '])
+    expect(backendText(ids[0] as string)).toBe('meet on ')
   })
 
   it('a peer’s change to the block’s other fields redraws the checkbox alone; a date change, the row', async () => {
@@ -1628,6 +1843,71 @@ describe('PageModeEditor properties (#5743)', () => {
     })
     expect(chips(container, ids[0] as string)).toEqual([chip('Assignee', 'Ana')])
     expect(backendProps(ids[0] as string)).toEqual({ assignee: 'Ana' })
+  })
+
+  it('a chip emptied whose delete is refused says so, and the chip stays', async () => {
+    const { pageId, ids } = seedPage(['call mom'])
+    setProp(ids[0] as string, 'assignee', 'Ana')
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'delete_property') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: chip('Assignee', 'Ana') }))
+    const field = await screen.findByRole('textbox', { name: t('block.editProperty') })
+    fireEvent.change(field, { target: { value: '' } })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Enter' })
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('property.saveFailed'))
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('textbox', { name: t('block.editProperty') })).toBeNull()
+    })
+    expect(chips(container, ids[0] as string)).toEqual([chip('Assignee', 'Ana')])
+    expect(backendProps(ids[0] as string)).toEqual({ assignee: 'Ana' })
+  })
+
+  it('a delete in the drawer the command refuses says so, and the chip stays once it closes', async () => {
+    const { pageId, ids } = seedPage(['call mom'])
+    setProp(ids[0] as string, 'assignee', 'Ana')
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(chips(container, ids[0] as string)).toEqual([chip('Assignee', 'Ana')])
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'delete_property') throw new Error('database locked')
+      return dispatch(cmd, args)
+    })
+
+    act(() => {
+      editor.view.focus()
+    })
+    caretTo(editor, 0)
+    expect(press(editor, 'P', { ctrlKey: true, shiftKey: true })).toBe(true)
+    const drawer = await screen.findByRole('dialog', { name: t('property.drawerTitle') })
+    await within(drawer).findByTestId('property-value-input-assignee')
+    await act(async () => {
+      fireEvent.click(within(drawer).getByRole('button', { name: t('property.delete') }))
+    })
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('property.deleteFailed'))
+    })
+    expect(within(drawer).getByTestId('property-value-input-assignee')).toBeInTheDocument()
+    await act(async () => {
+      fireEvent.keyDown(drawer, { key: 'Escape' })
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: t('property.drawerTitle') })).toBeNull()
+    })
+
+    expect(backendProps(ids[0] as string)).toEqual({ assignee: 'Ana' })
+    expect(chips(container, ids[0] as string)).toEqual([chip('Assignee', 'Ana')])
   })
 
   it('the +N pill and Ctrl+Shift+P open block mode’s drawer; what it deletes goes once it closes', async () => {
@@ -3143,7 +3423,7 @@ describe('PageModeEditor queries and embeds (#5743)', () => {
 
   it('draws a query’s results and an embedded block as block mode does, outside the text, with no a11y violations', async () => {
     const { pageId, ids } = seedPage(['first', '{{query tag:work}}', embedOf(SEED_IDS.BLOCK_GS_1)])
-    const { container } = renderPageMode(pageId)
+    const { container, onBlocked } = renderPageMode(pageId)
     const editor = await editorIn(container)
 
     await waitFor(() => {
@@ -3162,6 +3442,7 @@ describe('PageModeEditor queries and embeds (#5743)', () => {
     }
     expect(blockEl(container, ids[0] as string)).not.toHaveAttribute('data-rendered')
     expect(docTexts(editor)).toEqual(['first', '{{query tag:work}}', embedOf(SEED_IDS.BLOCK_GS_1)])
+    expect(onBlocked).not.toHaveBeenCalled()
     expect(await axe(container)).toHaveNoViolations()
   })
 
@@ -3685,6 +3966,51 @@ describe('PageModeEditor slash menu and pickers (#5743)', () => {
     await waitFor(() => {
       expect(container.querySelector(`[data-page-block-id="${ids[0]}"] .due-date-chip`)).toBeNull()
     })
+  })
+
+  it('/repeat-until’s date the command refuses says so, and the block keeps its rule alone', async () => {
+    const { pageId, ids } = seedPage(['water plants'])
+    dispatch('set_property', {
+      blockId: ids[0],
+      key: 'repeat',
+      value: {
+        value_text: '+1w',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const row = await inBlock(container, ids[0] as string, '.block-metadata-row')
+    const shown = row.textContent
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_property' && (args as { key: string }).key === 'repeat-until') {
+        throw new Error('database locked')
+      }
+      return dispatch(cmd, args)
+    })
+
+    typeIn(editor, 0, 12, ' /until')
+    await pick(/REPEAT UNTIL — Stop repeating after a date/)
+    const field = await screen.findByRole('textbox', { name: t('journal.typeDateLabel') })
+    fireEvent.change(field, { target: { value: '2026-12-24' } })
+    await act(async () => {
+      fireEvent.keyDown(field, { key: 'Enter' })
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('blockTree.setRepeatEndDateFailed'))
+    })
+    expect(backendProps(ids[0] as string)).toEqual({ repeat: '+1w' })
+    // Queued behind the read the pick asks for: once it has run, the row shows that read.
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect((await inBlock(container, ids[0] as string, '.block-metadata-row')).textContent).toBe(
+      shown,
+    )
   })
 
   it('a text command edits the document alone, which the save writes; a mark carries to the next text', async () => {

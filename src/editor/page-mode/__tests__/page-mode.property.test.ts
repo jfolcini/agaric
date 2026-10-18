@@ -94,6 +94,7 @@ import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { listMarkerText } from '@/lib/list-marker-glyph'
 import { computeListOrdinals } from '@/lib/list-ordinals'
 import { asListStyle, type ListStyle, setListStyle } from '@/lib/list-style'
+import type { TagToken } from '@/lib/name-tokens'
 import { nextTaskState, type TodoState } from '@/lib/task-states'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { blocks as mockBlocks, seedBlocks } from '@/lib/tauri-mock/seed'
@@ -883,6 +884,16 @@ async function writeListStyles(
   }
 }
 
+/** `content` holds each name as the space's one tag of that name, in any case. */
+function expectTagsHeld(named: readonly TagToken[], content: string): void {
+  const rows = dispatch('list_all_tags_in_space', { scope: SCOPE }) as Array<{
+    tag_id: string
+    name: string
+  }>
+  const ids = new Map(rows.map((row) => [row.name.toLowerCase(), row.tag_id]))
+  for (const { name } of named) expect(content).toContain(`#[${ids.get(name.toLowerCase())}]`)
+}
+
 /** The `#` rule's create: a tag in the mock backend. */
 function createTag(name: string): Promise<string> {
   const tag = dispatch('create_block', {
@@ -963,6 +974,7 @@ async function commitAndCycle(
       if (read && !heldKeys.has(key)) props.set(`${tagged}:${key}`, value)
     }
     const lines = await commitPageProperties(tagged, unchanged, save, page.api, task.markdown)
+    const named = tagsWrittenAsText(lines.markdown ?? '')
     await commitPageTags(tagged, save, page.api, lines.markdown)
     applyRemote(ed.view, save, page.rows(), mintKept)
     if (acted?.line !== undefined && save.saved.has(tagged)) {
@@ -977,6 +989,7 @@ async function commitAndCycle(
     }
     const content = page.live().find(([id]) => id === tagged)?.[2] ?? ''
     expect(tagsWrittenAsText(content)).toEqual([])
+    expectTagsHeld(named, content)
     if (acted?.task !== undefined && !held) {
       // The marker left the text: it starts as it did before the marker was typed.
       const { marker, state, before } = acted.task
