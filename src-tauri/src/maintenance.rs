@@ -688,6 +688,9 @@ pub fn spawn_daemon(jobs: Vec<MaintenanceJob>, shutdown_flag: Arc<AtomicBool>) {
     let _handle = spawn_fn(async move {
         let mut jobs = jobs;
         let mut ticker = tokio::time::interval(TICK_INTERVAL);
+        // After a long stall (a system suspend), run once rather than once
+        // per missed tick, and stay on the TICK_INTERVAL grid.
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         // skip the immediate first tick — match the
         // spawn_orphan_drafts_sweeper convention so cold-start doesn't
         // double-fire a job that the surrounding boot sequence may
@@ -977,6 +980,47 @@ mod tests {
             calls.load(Ordering::Relaxed),
             2,
             "a TICK_INTERVAL job must run on the very next tick"
+        );
+    }
+
+    /// A stall of ten ticks (the clock jumps while the daemon cannot run, as
+    /// across a suspend) runs a TICK_INTERVAL job once, not once per missed
+    /// tick.
+    #[tokio::test(start_paused = true)]
+    async fn spawn_daemon_runs_a_job_once_after_a_stall() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let job = MaintenanceJob {
+            name: "minute_job",
+            interval: TICK_INTERVAL,
+            last_run: None,
+            predicate: dummy_predicate_true(),
+            run: {
+                let calls = calls.clone();
+                Box::new(move || {
+                    let calls = calls.clone();
+                    Box::pin(async move {
+                        calls.fetch_add(1, Ordering::Relaxed);
+                        Ok(())
+                    })
+                })
+            },
+        };
+        let shutdown = Arc::new(AtomicBool::new(false));
+        spawn_daemon(vec![job], shutdown.clone());
+        // Let the daemon start its ticker and park on the first real tick.
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+
+        tokio::time::advance(TICK_INTERVAL * 10).await;
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
+        shutdown.store(true, Ordering::Release);
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "missed ticks must collapse into one run"
         );
     }
 
