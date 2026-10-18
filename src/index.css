@@ -30,6 +30,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-tab-indicator: var(--tab-indicator);
   /* Icons in ghost / outline buttons and sidebar nav rows (#5368). */
   --color-icon: var(--icon);
   --color-chart-1: var(--chart-1);
@@ -201,6 +202,9 @@
   --graph-node: oklch(0.6 0.01 70);
   --graph-edge: var(--graph-node);
   --graph-accent: var(--brand);
+  /* The selected tab's 2 px bar, shared by every tab strip: ink, not the
+   * today red or the focus blue, and 3:1 or more on each theme's --background. */
+  --tab-indicator: var(--primary);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.714);
   --chart-3: oklch(0.398 0.07 227.392);
