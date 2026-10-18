@@ -248,13 +248,12 @@ export function useBlockDatePicker({
     setOpen(true)
   }, [])
 
-  // Invariant — `rovingEditor` is stable across the lifetime
-  // of the BlockTree mount (the hook only ever runs inside a BlockTree
-  // where the editor handle is created once and kept). Mirroring it
-  // into a ref so `handleDatePick` reads the latest object without
-  // listing it as a dependency is safe under that invariant. If a
-  // future caller mounts this hook outside BlockTree (or recreates
-  // the editor mid-mount), this assumption breaks.
+  // Invariant — `handleDatePick` reads the editor through this ref, so it is not
+  // rebuilt whenever the handle changes. Block mode's handle is created once per
+  // BlockTree mount. Page mode passes a fresh `{ editor }` every render, and its
+  // `editor` is replaced when the editor instance changes (`null` until the
+  // first). The layout effect below re-mirrors it after every render, so a pick
+  // sees the editor of the last commit.
   const rovingEditorRef = useRef(rovingEditor)
 
   const tRef = useRef(t)
@@ -264,7 +263,7 @@ export function useBlockDatePicker({
     tRef.current = t
   })
 
-  // `t` is read via `tRef` (invariant above) so it is intentionally not listed. `pageStore` (a Zustand StoreApi) and `registerCreatedPage` (a `useCallback` with an empty dep list, #4319) are stable across renders, so listing them is safe and adds no extra runs — `handleDatePick` is only consumed as an event handler (BlockTree onSelect), never as another hook's dependency.
+  // `t` is read via `tRef` (invariant above) so it is intentionally not listed. `pageStore` (a Zustand StoreApi) and `registerCreatedPage` (a `useCallback` with an empty dep list, #4319) are stable across renders, so listing them is safe and adds no extra runs — `handleDatePick` is only consumed as an event handler (the picker's `onSelect` in BlockTree and in page mode), never as another hook's dependency.
   const handleDatePick = useCallback(
     async (d: Date) => {
       setDatePickerOpen(false)

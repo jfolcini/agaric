@@ -37,10 +37,11 @@ function resetMockState(): void {
 }
 
 /** The most recent op_log entry's parsed payload. */
-function lastPayload(): Record<string, unknown> {
-  const last = opLog.at(-1)
+function lastPayload(key?: string): Record<string, unknown> {
+  const payloads = opLog.map((op) => JSON.parse(op.payload) as Record<string, unknown>)
+  const last = key === undefined ? payloads.at(-1) : payloads.findLast((p) => p['key'] === key)
   if (!last) throw new Error('test setup: expected an op_log entry')
-  return JSON.parse(last.payload) as Record<string, unknown>
+  return last
 }
 
 describe('tauri-mock set_property_batch', () => {
@@ -56,7 +57,8 @@ describe('tauri-mock set_property_batch', () => {
     })
 
     expect(updated).toBe(2)
-    const payload = lastPayload()
+    // The edge into an open state also stamps `created_at`, after the state.
+    const payload = lastPayload('todo_state')
     expect(payload).toMatchObject({ key: 'todo_state', value_text: 'TODO' })
     expect(payload).not.toHaveProperty('value_date')
     expect(blocks.get(A)?.['todo_state']).toBe('TODO')

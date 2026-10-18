@@ -85,12 +85,59 @@ function deletePropertyRow(blockId: string, key: string): { device_id: string; s
   return { device_id: op.device_id, seq: op.seq }
 }
 
+/** Stamp `key` with today's date, appending the op with the value its undo restores. */
+function stampToday(blockId: string, key: string): void {
+  const prior = properties.get(blockId)?.get(key)
+  if (!properties.has(blockId)) properties.set(blockId, new Map())
+  properties.get(blockId)?.set(key, {
+    key,
+    value_text: null,
+    value_num: null,
+    value_date: todayDate(),
+    value_ref: null,
+    value_bool: null,
+  })
+  pushOp('set_property', {
+    block_id: blockId,
+    key,
+    from_value: prior ? typedValueOf(prior) : null,
+  })
+}
+
 /**
- * The `completed_at` half of `write_todo_timestamp_transitions_in_tx`
- * (`commands/properties.rs`), which every `todo_state` writer runs: present
- * iff `todo_state = 'DONE'` (#5074). Stamped today on an edge into DONE;
- * cleared on an edge out of it, or when a block stops being a task, and only
- * when the block holds one.
+ * `write_todo_timestamp_transitions_in_tx` (`commands/properties.rs`), which
+ * every `todo_state` writer runs: `created_at` first, then `completed_at`.
+ */
+function writeTaskStampTransitions(
+  blockId: string,
+  fromState: string | null,
+  toState: string | null,
+): void {
+  writeCreatedAtTransition(blockId, fromState, toState)
+  writeCompletedAtTransition(blockId, fromState, toState)
+}
+
+/**
+ * The `created_at` half: stamped today when a block becomes an open task (from
+ * no state or DONE), cleared when it stops being a task, and only when the
+ * block holds one.
+ */
+function writeCreatedAtTransition(
+  blockId: string,
+  fromState: string | null,
+  toState: string | null,
+): void {
+  if ((fromState === null || fromState === 'DONE') && (toState === 'TODO' || toState === 'DOING')) {
+    stampToday(blockId, 'created_at')
+  } else if (fromState !== null && toState === null && properties.get(blockId)?.has('created_at')) {
+    deletePropertyRow(blockId, 'created_at')
+  }
+}
+
+/**
+ * The `completed_at` half: present iff `todo_state = 'DONE'` (#5074). Stamped
+ * today on an edge into DONE; cleared on an edge out of it, or when a block
+ * stops being a task, and only when the block holds one.
  */
 function writeCompletedAtTransition(
   blockId: string,
@@ -101,20 +148,7 @@ function writeCompletedAtTransition(
   const isDone = toState === 'DONE'
   const prior = properties.get(blockId)?.get('completed_at')
   if (isDone && !wasDone) {
-    if (!properties.has(blockId)) properties.set(blockId, new Map())
-    properties.get(blockId)?.set('completed_at', {
-      key: 'completed_at',
-      value_text: null,
-      value_num: null,
-      value_date: todayDate(),
-      value_ref: null,
-      value_bool: null,
-    })
-    pushOp('set_property', {
-      block_id: blockId,
-      key: 'completed_at',
-      from_value: prior ? typedValueOf(prior) : null,
-    })
+    stampToday(blockId, 'completed_at')
   } else if (!isDone && prior && (wasDone || (fromState !== null && toState === null))) {
     deletePropertyRow(blockId, 'completed_at')
   }
@@ -145,7 +179,7 @@ function setReservedColumnProperty(
   if (b) b[key] = channelValue
   const op = pushOp('set_property', { block_id: blockId, key, from_value: null })
   // #5394 — `set_property_inner` routes `todo_state` through `set_todo_state_inner`.
-  if (b && key === 'todo_state') writeCompletedAtTransition(blockId, fromValue, channelValue)
+  if (b && key === 'todo_state') writeTaskStampTransitions(blockId, fromValue, channelValue)
   return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
 }
 
@@ -416,7 +450,7 @@ export const propertiesHandlers = {
       if (b) b[key] = null
       const op = pushOp('delete_property', { block_id: blockId, key, from_value: null })
       // #5378 — `delete_property_core` clears the task stamps with the state.
-      if (b && key === 'todo_state') writeCompletedAtTransition(blockId, fromValue, null)
+      if (b && key === 'todo_state') writeTaskStampTransitions(blockId, fromValue, null)
       return {
         block_id: blockId,
         key,
@@ -524,7 +558,7 @@ export const propertiesHandlers = {
       state: b['todo_state'],
       from_state: fromState,
     })
-    writeCompletedAtTransition(a['blockId'] as string, fromState, b['todo_state'] as string | null)
+    writeTaskStampTransitions(a['blockId'] as string, fromState, b['todo_state'] as string | null)
     return { ...b }
   },
 
@@ -551,7 +585,7 @@ export const propertiesHandlers = {
         key: 'todo_state',
         value_text: newState,
       })
-      writeCompletedAtTransition(id, fromState, newState)
+      writeTaskStampTransitions(id, fromState, newState)
       updated++
     }
     return updated
@@ -601,7 +635,7 @@ export const propertiesHandlers = {
       // `null` → clear: emit no `value_*` field (single-row clear parity).
       if (value !== null) op[column] = value
       pushOp('set_property', op)
-      if (key === 'todo_state') writeCompletedAtTransition(id, prior, value)
+      if (key === 'todo_state') writeTaskStampTransitions(id, prior, value)
       updated++
     }
     return updated

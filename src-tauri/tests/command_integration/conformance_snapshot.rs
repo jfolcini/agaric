@@ -82,12 +82,12 @@ impl RawOp {
     /// normalization rules. Returns `None` for ops that are dropped from the
     /// digest (auto-derived timestamp property writes and their clears).
     pub fn canonicalize(op_type: &str, key: Option<&str>) -> Option<Self> {
-        // Auto-derived timestamp property ops — they carry today's date, and
-        // the mock does not model `created_at`. Drop from the digest, in BOTH
-        // directions: `write_todo_timestamp_transitions_in_tx` emits a
-        // `DeleteProperty` on the edges that clear `created_at` /
-        // `completed_at`, so dropping only the writes would leave a
-        // backend-only op in the digest the mock can never match (#5074).
+        // Auto-derived timestamp property ops — they carry today's date. Drop
+        // from the digest, in BOTH directions:
+        // `write_todo_timestamp_transitions_in_tx` emits a `DeleteProperty` on
+        // the edges that clear `created_at` / `completed_at`, so dropping only
+        // the writes would leave a backend-only op in the digest the mock can
+        // never match (#5074).
         if matches!(op_type, "set_property" | "delete_property")
             && matches!(key, Some("created_at" | "completed_at"))
         {

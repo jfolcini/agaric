@@ -950,7 +950,7 @@ describe('SortableBlock task marker', () => {
     expect(checkbox?.getAttribute('data-testid')).toBe('task-checkbox-cancelled')
   })
 
-  it('applies line-through and opacity-50 to content when CANCELLED', () => {
+  it('applies line-through and the muted text token to content when CANCELLED', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -963,7 +963,8 @@ describe('SortableBlock task marker', () => {
 
     const contentWrapper = container.querySelector('.line-through')
     expect(contentWrapper).toBeInTheDocument()
-    expect(contentWrapper?.getAttribute('class')).toContain('opacity-50')
+    expect(contentWrapper?.getAttribute('class')).toContain('text-muted-foreground')
+    expect(contentWrapper?.getAttribute('class')).not.toContain('opacity-')
   })
 
   it('does not apply CANCELLED strikethrough when block is focused', () => {
@@ -980,10 +981,10 @@ describe('SortableBlock task marker', () => {
     const editableBlock = screen.getByTestId('editable-block-B1')
     const contentWrapper = editableBlock.parentElement
     expect(contentWrapper?.className).not.toContain('line-through')
-    expect(contentWrapper?.className).not.toContain('opacity-50')
+    expect(contentWrapper?.className).not.toContain('text-muted-foreground')
   })
 
-  it('applies line-through and opacity-50 to content when DONE', () => {
+  it('applies line-through and the muted text token to content when DONE', () => {
     const { container } = render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -994,10 +995,11 @@ describe('SortableBlock task marker', () => {
       />,
     )
 
-    // The content wrapper div should have line-through and opacity-50
+    // The content wrapper div should have line-through and the muted token
     const contentWrapper = container.querySelector('.line-through')
     expect(contentWrapper).toBeInTheDocument()
-    expect(contentWrapper?.getAttribute('class')).toContain('opacity-50')
+    expect(contentWrapper?.getAttribute('class')).toContain('text-muted-foreground')
+    expect(contentWrapper?.getAttribute('class')).not.toContain('opacity-')
   })
 
   it('applies transition classes to task content wrapper', () => {
@@ -1031,7 +1033,7 @@ describe('SortableBlock task marker', () => {
     expect(container.querySelector('.line-through')).not.toBeInTheDocument()
   })
 
-  it('does not apply DONE strikethrough/opacity when block is focused', () => {
+  it('does not apply DONE strikethrough/muting when block is focused', () => {
     render(
       <SortableBlock
         blockId="B1"
@@ -1046,13 +1048,13 @@ describe('SortableBlock task marker', () => {
     const editableBlock = screen.getByTestId('editable-block-B1')
     const contentWrapper = editableBlock.parentElement
     expect(contentWrapper?.className).not.toContain('line-through')
-    expect(contentWrapper?.className).not.toContain('opacity-50')
+    expect(contentWrapper?.className).not.toContain('text-muted-foreground')
     // Transition classes should still be present
     expect(contentWrapper?.className).toContain('transition-')
     expect(contentWrapper?.className).toContain('duration-moderate')
   })
 
-  it('applies DONE strikethrough/opacity when block is not focused', () => {
+  it('applies DONE strikethrough/muting when block is not focused', () => {
     render(
       <SortableBlock
         blockId="B1"
@@ -1066,7 +1068,7 @@ describe('SortableBlock task marker', () => {
     const editableBlock = screen.getByTestId('editable-block-B1')
     const contentWrapper = editableBlock.parentElement
     expect(contentWrapper?.className).toContain('line-through')
-    expect(contentWrapper?.className).toContain('opacity-50')
+    expect(contentWrapper?.className).toContain('text-muted-foreground')
     // Transition classes should be present
     expect(contentWrapper?.className).toContain('transition-')
     expect(contentWrapper?.className).toContain('duration-moderate')

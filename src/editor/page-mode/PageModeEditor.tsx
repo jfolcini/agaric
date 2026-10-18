@@ -601,6 +601,8 @@ function PageModeDocument({
           <BlockDatePicker
             onSelect={(day) => {
               if (day === undefined) return
+              // Closes now: the pick waits its turn behind the saves, and
+              // `handleDatePick` closes the picker only when it runs.
               setDatePickerOpen(false)
               actions.current.pick(() => handleDatePick(day))
             }}
