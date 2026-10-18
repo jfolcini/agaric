@@ -113,6 +113,14 @@ jobs:
       actions: write
     uses: ./.github/workflows/_validate.yml
 
+  # The real-backend WebdriverIO lane over every spec: a tag has no diff, so
+  # its classifier selects the whole set. It needs only `verify-version`, so it
+  # runs beside the desktop matrix instead of ahead of it.
+  e2e-tauri:
+    needs: verify-version
+    if: ${{ !cancelled() && needs.verify-version.result == 'success' }}
+    uses: ./.github/workflows/e2e-tauri-weekly.yml
+
   build-and-release:
     needs: [verify-version, validate]
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' }}
@@ -1734,7 +1742,7 @@ jobs:
   # Android — separate job because tauri-action@v0 has no Android support.
   # Mirrors the structure of ci.yml's `android-build` (same scaffold-reset
   # + override-restore + patch-android-build + aarch64 release build), but
-  # uploads the resulting unsigned APK to the GitHub Release as a permanent
+  # signs the resulting APK and uploads it to the GitHub Release as a permanent
   # asset (instead of as a 90-day workflow artifact). The desktop matrix
   # above creates the draft release first via tauri-action; we attach the
   # APK to that same release with `gh release upload`.
@@ -1997,14 +2005,11 @@ jobs:
           esac
 
       - name: Sign Android APK
-        # If the four ANDROID_KEYSTORE_* secrets are configured, this step
-        # zipaligns and signs the APK with apksigner (APK signing scheme
+        # Zipaligns and signs the APK with apksigner (APK signing scheme
         # v2/v3 + v4 idsig) and stages it as agaric-<tag>-android-aarch64.apk.
-        # If the secrets are NOT set, it stages the unsigned APK as
-        # agaric-<tag>-android-aarch64-unsigned.apk so the workflow keeps
-        # working before the keystore is provisioned. See BUILD.md →
-        # "Release signing in CI" for the keystore generation + secret
-        # setup steps.
+        # Without the keystore secret the step fails: a release never ships an
+        # unsigned APK. See BUILD.md → "Android release signing" for the
+        # keystore generation + secret setup steps.
         #
         # The destination path is emitted as the `apk` step output so the
         # downstream attest + upload steps can reference the same file —
@@ -2063,43 +2068,28 @@ jobs:
             # is ephemeral, but no reason to leave the .jks readable for
             # the rest of the job.
             shred -u "$keystore" 2>/dev/null || rm -f "$keystore"
-            stage=post-zipalign
           else
-            echo "ANDROID_KEYSTORE_BASE64 secret is not set — staging unsigned APK."
-            echo "Add ANDROID_KEYSTORE_BASE64 / _PASSWORD / KEY_ALIAS / KEY_PASSWORD"
-            echo "secrets in repo Settings → Secrets and variables → Actions to enable signing."
-            dest="$RUNNER_TEMP/agaric-${GITHUB_REF_NAME}-android-aarch64-unsigned.apk"
-            cp "$src" "$dest"
-            # No keystore secret means no zipalign either — `$dest` above is
-            # a byte-for-byte copy of the pre-signing `$src`, so the guard
-            # below is looking at the SAME pre-zipalign bytes as the check
-            # above, not a signed/aligned asset (#4425 review notes 2 and 3).
-            stage=pre-zipalign
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set, so the release APK cannot be signed. Set ANDROID_KEYSTORE_BASE64 / _PASSWORD / KEY_ALIAS / KEY_PASSWORD (docs/BUILD.md § Android release signing) and re-run this job."
+            exit 1
           fi
 
           echo "apk=$dest" >> "$GITHUB_OUTPUT"
-          echo "stage=$stage" >> "$GITHUB_OUTPUT"
 
       # #4425 — second alignment assertion, on the EXACT bytes that get
       # attested and uploaded. The pre-signing check above cannot cover
       # zipalign + apksigner, which run after it and are what decide where the
       # stored .so lands inside the archive; this one re-reads the staged file
       # so neither half of 16 KB compatibility can be lost between the link and
-      # the release asset. `$STAGE` (from the "Sign Android APK" step's
-      # `stage` output) tells the guard whether that step actually zipaligned
-      # this file (keystore secret present) or only copied the unsigned,
-      # pre-zipalign bytes through unchanged (no keystore secret) — the two
-      # branches leave the guard looking at different artifacts, and the
-      # remediation text needs to know which (#4425 review notes 2 and 3).
+      # the release asset. `--stage=post-zipalign`: the signing step zipaligned
+      # this file, so the remediation text points at that step.
       - name: Assert 16 KB page alignment of the release asset (#4425)
         shell: bash
         env:
           APK: ${{ steps.sign_apk.outputs.apk }}
-          STAGE: ${{ steps.sign_apk.outputs.stage }}
         run: |
           set -uo pipefail
           rc=0
-          node scripts/check-android-so-alignment.mjs "--stage=$STAGE" "$APK" || rc=$?
+          node scripts/check-android-so-alignment.mjs --stage=post-zipalign "$APK" || rc=$?
           case "$rc" in
             0) ;;
             2) echo "::error::The staged release APK is NOT 16 KB-aligned (#4425) — see the guard output above. It must not be published."
@@ -2133,8 +2123,8 @@ jobs:
           upload-release-assets: false
 
       # PEND-40 #5: SLSA build provenance attestation for the Android APK.
-      # Runs against the final signed (or unsigned) APK emitted by the
-      # previous step, BEFORE the asset is uploaded to the release —
+      # Runs against the final signed APK emitted by the previous step,
+      # BEFORE the asset is uploaded to the release —
       # downstream consumers (Play Store reviewer per PEND-36, end users
       # sideloading directly) can verify provenance via
       # `gh attestation verify <apk> --repo jfolcini/agaric`.
@@ -2709,6 +2699,7 @@ jobs:
         generate-vex,
         generate-latest-json,
         finalize-release-notes,
+        e2e-tauri,
       ]
     # Every terminal job named DIRECTLY (not just transitively via
     # finalize-release-notes) so this release-critical publish gate is
@@ -2716,7 +2707,7 @@ jobs:
     # even if finalize's own guard is later loosened. A skipped dependency
     # has result 'skipped' (not 'success'), so `== 'success'` catches it;
     # `!cancelled()` only lets the job evaluate its guard, it does not relax it.
-    if: ${{ !cancelled() && needs.build-and-release.result == 'success' && needs.android-build-and-release.result == 'success' && needs.generate-vex.result == 'success' && needs.generate-latest-json.result == 'success' && needs.finalize-release-notes.result == 'success' }}
+    if: ${{ !cancelled() && needs.build-and-release.result == 'success' && needs.android-build-and-release.result == 'success' && needs.generate-vex.result == 'success' && needs.generate-latest-json.result == 'success' && needs.finalize-release-notes.result == 'success' && needs.e2e-tauri.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write # gh release edit --draft=false publishes the release
