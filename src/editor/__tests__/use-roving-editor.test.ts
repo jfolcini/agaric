@@ -1550,6 +1550,40 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
+  // A block read as typed classifies against a text holding nothing typed but
+  // is stored as mounted: left untouched it reports its text for the flush to
+  // classify, and cleared it reports the clear, which equals that baseline.
+  it('readAsTyped() moves only the classification baseline', async () => {
+    const { result, unmount: unmountHook } = await setup()
+    const mountTyped = () => {
+      act(() => {
+        result.current.mount('block-typed', 'status:: done')
+        result.current.readAsTyped('')
+      })
+    }
+    let delta: string | null = null
+
+    mountTyped()
+    expect(result.current.originalMarkdown).toBe('')
+    expect(result.current.storedMarkdown).toBe('status:: done')
+    act(() => {
+      delta = result.current.unmount()
+    })
+    expect(delta).toBe('status:: done')
+
+    mountTyped()
+    act(() => {
+      ;(result.current.editor as Editor).commands.clearContent()
+    })
+    act(() => {
+      delta = result.current.unmount()
+    })
+    expect(delta).toBe('')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
   it('mount() clears previous undo history (cannot undo after mount)', async () => {
     const { result, unmount: unmountHook } = await setup()
 

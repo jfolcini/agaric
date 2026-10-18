@@ -83,7 +83,7 @@ export function useDraftAutosave(
     [rovingEditorRef],
   )
   const readBaseline = useCallback(
-    (): string | undefined => rovingEditorRef.current?.originalMarkdown,
+    (): string | undefined => rovingEditorRef.current?.storedMarkdown,
     [rovingEditorRef],
   )
   const isEditorEmpty = useCallback(

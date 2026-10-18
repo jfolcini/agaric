@@ -125,7 +125,8 @@ function makeDefaultParams(
       getMarkdown: vi.fn(() => null as string | null),
       originalMarkdown: '' as string,
       splitAtCaret: vi.fn(() => null as { before: string; after: string } | null),
-      markCommitted: vi.fn(),
+      storedMarkdown: '' as string,
+      readAsTyped: vi.fn(),
     },
     setFocused: vi.fn(),
     setSelected: vi.fn(),
@@ -2204,6 +2205,22 @@ describe('useBlockActionOrchestration handleDiscard', () => {
   it('does not show toast when no changes', () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => null)
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    act(() => {
+      result.current.handleDiscard()
+    })
+
+    expect(params.setFocused).toHaveBeenCalledWith(null)
+    expect(vi.mocked(toast)).not.toHaveBeenCalled()
+  })
+
+  // A block Enter split off is read as typed, so unmount reports its text even
+  // untouched; that text is what it holds, so there is nothing discarded.
+  it('does not show toast for a block read as typed and left untouched', () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.storedMarkdown = 'status:: done'
+    params.rovingEditor.unmount = vi.fn(() => 'status:: done')
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {

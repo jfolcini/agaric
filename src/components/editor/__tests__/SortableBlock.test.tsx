@@ -345,6 +345,8 @@ function makeRovingEditor() {
     originalMarkdown: '',
     setOnUpdate: vi.fn(),
     markCommitted: vi.fn(),
+    storedMarkdown: '',
+    readAsTyped: vi.fn(),
   }
 }
 

@@ -106,7 +106,7 @@ export function useDebouncedContentCommit(params: {
     const md = re.getMarkdown()
     if (md === null) return
     // Nothing new since the last commit (or since mount) — skip.
-    if (md === re.originalMarkdown) return
+    if (md === re.storedMarkdown) return
     // Defer to the blur flush for all of its classifications (#2675 inline
     // `key:: value` lines, #4957 multi-block content, a leading GFM task
     // marker, and a `#name` still text, which the flush makes a tag once it is

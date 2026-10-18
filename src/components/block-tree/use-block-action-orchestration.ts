@@ -23,23 +23,33 @@ import type { DeleteBlockOptions } from '@/stores/page-blocks-types'
 import { classifyUnmountFlush } from '@/stores/unmount-flush'
 
 /**
+ * A text holding nothing typed, in as many top-level blocks as `markdown`.
+ * Against it the leave-time flush commits the task marker, `key:: value` lines
+ * and `#name`s `markdown` holds, and finds no block added, so its paragraphs
+ * stay one block.
+ */
+function untypedBaseline(markdown: string): string {
+  const blocks = parse(markdown).content?.length ?? 1
+  return Array.from({ length: blocks }, () => '.').join('\n\n')
+}
+
+/**
  * Read the block Enter split off, holding `split.after`, as typed, as page mode
- * reads a new block: an empty baseline commits the task marker, `key:: value`
- * line or `#name` it holds when the caret leaves it. Plain text and several
- * paragraphs keep the loaded baseline, so leaving writes nothing and the
- * paragraphs stay one block, as page mode keeps them. So does the whole block
- * moved by Enter at its start: page mode keeps that text in the block it was
- * loaded in.
+ * reads a new block: the task marker, `key:: value` lines or `#name` it holds
+ * are committed when the caret leaves it, and its paragraphs stay one block, as
+ * page mode keeps them. Plain text keeps the stored baseline, so leaving writes
+ * nothing. So does the whole block moved by Enter at its start: page mode keeps
+ * that text in the block it was loaded in.
  */
 function readSplitOffAsTyped(
-  editor: Pick<RovingEditorHandle, 'activeBlockId' | 'markCommitted'>,
+  editor: Pick<RovingEditorHandle, 'activeBlockId' | 'readAsTyped'>,
   blockId: string,
   split: { before: string; after: string },
 ): void {
   if (split.before.trim() === '') return
-  const { kind } = classifyUnmountFlush('', split.after)
-  if (kind !== 'checkbox' && kind !== 'property' && kind !== 'tag') return
-  if (editor.activeBlockId === blockId) editor.markCommitted('')
+  const untyped = untypedBaseline(split.after)
+  if (classifyUnmountFlush(untyped, split.after).kind === 'edit') return
+  if (editor.activeBlockId === blockId) editor.readAsTyped(untyped)
 }
 
 /**
@@ -255,7 +265,8 @@ export interface UseBlockActionOrchestrationParams {
     | 'getMarkdown'
     | 'originalMarkdown'
     | 'splitAtCaret'
-    | 'markCommitted'
+    | 'storedMarkdown'
+    | 'readAsTyped'
   >
   setFocused: (id: string | null) => void
   /** Replace the block selection; a non-empty one also leaves editing. */
@@ -1293,8 +1304,10 @@ export function useBlockActionOrchestration({
     // Discard any persisted draft BEFORE unmounting so the autosave
     // cleanup cannot flush stale content to the database.
     discardDraft(focusedBlockId)
+    const stored = rovingEditorRef.current.storedMarkdown
     const changed = rovingEditorRef.current.unmount()
-    if (changed !== null) {
+    // A block read as typed reports its text untouched; that is no change to discard.
+    if (changed !== null && changed !== stored) {
       notify(t('blockTree.changesDiscarded'), { duration: 2000 })
     }
     // An untouched stub left behind by Enter is not deleted here: unfocusing

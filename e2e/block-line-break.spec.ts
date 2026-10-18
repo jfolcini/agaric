@@ -57,6 +57,63 @@ async function reopenGettingStarted(page: Page): Promise<void> {
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
 }
 
+/**
+ * Getting Started's first block as `stored`, `intro` then a `status:: done`
+ * line, split with Enter at the start of that line; the caret is in the new
+ * block.
+ */
+async function splitOffStatusLine(page: Page, stored = 'intro\nstatus:: done') {
+  const shown = (text: string) => text.replaceAll('\n', '')
+  await waitForBoot(page)
+  await openPage(page, 'Getting Started')
+  await invokeIn(page)('edit_block', { blockId: BLOCK_GS_1, toText: stored })
+  await reopenGettingStarted(page)
+
+  const rows = page.locator('[data-testid="sortable-block"]')
+  const rowCount = await rows.count()
+  const editor = await focusBlock(page, 0)
+  await expect(editor).toHaveText(shown(stored))
+  // The caret at the start of the second line, after the break.
+  await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="block-editor"] [contenteditable="true"]')
+    const walker = document.createTreeWalker(root as Node, NodeFilter.SHOW_TEXT)
+    let line = walker.nextNode()
+    while (line !== null && line.textContent !== 'status:: done') line = walker.nextNode()
+    if (line === null) throw new Error('second line not found')
+    const range = document.createRange()
+    range.setStart(line, 0)
+    range.collapse(true)
+    window.getSelection()?.removeAllRanges()
+    window.getSelection()?.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+  })
+  await page.keyboard.press('Enter')
+  await expect(rows).toHaveCount(rowCount + 1)
+  const split = rows.nth(1)
+  const splitId = (await split.getAttribute('data-block-id')) as string
+  // The caret moved into the new block with the line.
+  const splitEditor = split.locator('[data-testid="block-editor"] [contenteditable="true"]')
+  await expect(splitEditor).toHaveText(shown(stored.slice(stored.indexOf('status::'))))
+  await expect(splitEditor).toBeFocused()
+  return { rows, rowCount, splitId, splitEditor }
+}
+
+/** What leaving a cleared block does: the empty-block cleanup deletes it. */
+const CLEARED = 'deleted'
+
+/** The block's content, or `deleted` once it is soft-deleted or gone. */
+async function blockState(page: Page, blockId: string): Promise<string> {
+  try {
+    const row = (await invokeIn(page)('get_block', { blockId })) as {
+      content: string
+      deleted_at: unknown
+    }
+    return row.deleted_at == null ? row.content : 'deleted'
+  } catch {
+    return 'deleted'
+  }
+}
+
 test.describe('A line break inside a block (#5160 D2)', () => {
   test('a stored two-line block stays one block after a typo fix and a blur', async ({ page }) => {
     await waitForBoot(page)
@@ -113,37 +170,7 @@ test.describe('A line break inside a block (#5160 D2)', () => {
   test('a `key:: value` line Enter splits off becomes the property once the caret leaves it', async ({
     page,
   }) => {
-    await waitForBoot(page)
-    await openPage(page, 'Getting Started')
-    await invokeIn(page)('edit_block', { blockId: BLOCK_GS_1, toText: 'intro\nstatus:: done' })
-    await reopenGettingStarted(page)
-
-    const rows = page.locator('[data-testid="sortable-block"]')
-    const rowCount = await rows.count()
-    const editor = await focusBlock(page, 0)
-    await expect(editor).toHaveText('introstatus:: done')
-    // The caret at the start of the second line, after the break.
-    await page.evaluate(() => {
-      const root = document.querySelector('[data-testid="block-editor"] [contenteditable="true"]')
-      const walker = document.createTreeWalker(root as Node, NodeFilter.SHOW_TEXT)
-      let line = walker.nextNode()
-      while (line !== null && line.textContent !== 'status:: done') line = walker.nextNode()
-      if (line === null) throw new Error('second line not found')
-      const range = document.createRange()
-      range.setStart(line, 0)
-      range.collapse(true)
-      window.getSelection()?.removeAllRanges()
-      window.getSelection()?.addRange(range)
-      document.dispatchEvent(new Event('selectionchange'))
-    })
-    await page.keyboard.press('Enter')
-    await expect(rows).toHaveCount(rowCount + 1)
-    const split = rows.nth(1)
-    const splitId = (await split.getAttribute('data-block-id')) as string
-    // The caret moved into the new block with the line.
-    const splitEditor = split.locator('[data-testid="block-editor"] [contenteditable="true"]')
-    await expect(splitEditor).toHaveText('status:: done')
-    await expect(splitEditor).toBeFocused()
+    const { rows, splitId } = await splitOffStatusLine(page)
 
     // Leave the new block for another block.
     await rows.nth(2).locator('[data-testid="block-static"]').click()
@@ -156,6 +183,46 @@ test.describe('A line break inside a block (#5160 D2)', () => {
     expect(await blockContent(page, splitId)).toBe('')
     expect(await blockContent(page, BLOCK_GS_1)).not.toContain('status::')
   })
+
+  // Page mode keeps a block's paragraphs one block and makes the line a chip.
+  test('a `key:: value` line in a tail of several paragraphs becomes the property, the tail one block', async ({
+    page,
+  }) => {
+    const { rows, rowCount, splitId } = await splitOffStatusLine(
+      page,
+      'intro\n\nstatus:: done\n\nmore text',
+    )
+
+    await rows.nth(2).locator('[data-testid="block-static"]').click()
+    await expect.poll(() => blockContent(page, splitId)).not.toContain('status::')
+
+    await reopenPage(page, 'Getting Started')
+    const row = page.locator(`[data-testid="sortable-block"][data-block-id="${splitId}"]`)
+    await expect(row.getByTestId('property-chip').filter({ hasText: 'done' })).toBeVisible()
+    await expect(row.getByTestId('block-static')).toHaveText('more text')
+    await expect(rows).toHaveCount(rowCount + 1)
+    expect(await blockContent(page, splitId)).not.toContain('status::')
+  })
+
+  for (const leave of ['a click on another block', 'Escape'] as const) {
+    test(`clearing the block Enter split off, then ${leave}, leaves it cleared`, async ({
+      page,
+    }) => {
+      const { rows, splitId, splitEditor } = await splitOffStatusLine(page)
+      await page.keyboard.press('ControlOrMeta+a')
+      await page.keyboard.press('Backspace')
+      await expect(splitEditor).toHaveText('')
+
+      if (leave === 'Escape') await page.keyboard.press('Escape')
+      else await rows.nth(2).locator('[data-testid="block-static"]').click()
+
+      await expect.poll(() => blockState(page, splitId)).toBe(CLEARED)
+      await reopenPage(page, 'Getting Started')
+      await expect(page.locator(`[data-block-id="${splitId}"]`)).toHaveCount(0)
+      expect(await blockState(page, splitId)).toBe(CLEARED)
+      expect(await blockContent(page, BLOCK_GS_1)).not.toContain('status::')
+    })
+  }
 })
 
 const iPhone13 = devices['iPhone 13']

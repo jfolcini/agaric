@@ -47,6 +47,8 @@ function makeLiveHandle(overrides: Partial<RovingEditorHandle> = {}): RovingEdit
     originalMarkdown: '',
     setOnUpdate: vi.fn(),
     markCommitted: vi.fn(),
+    storedMarkdown: '',
+    readAsTyped: vi.fn(),
     ...overrides,
   }
 }

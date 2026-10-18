@@ -64,7 +64,12 @@ const mockedDeleteDraft = mockDeleteDraft
  * `activeBlockId` gates cross-block fires/flushes.
  */
 function makeEditor(
-  init: { activeBlockId?: string | null; markdown?: string; originalMarkdown?: string } = {},
+  init: {
+    activeBlockId?: string | null
+    markdown?: string
+    originalMarkdown?: string
+    storedMarkdown?: string
+  } = {},
 ) {
   const getSpy = vi.fn(() => state.markdown)
   const state = {
@@ -84,6 +89,7 @@ function makeEditor(
     mount: vi.fn(),
     unmount: vi.fn(() => null),
     originalMarkdown: init.originalMarkdown ?? '',
+    storedMarkdown: init.storedMarkdown ?? init.originalMarkdown ?? '',
     splitAtCaret: vi.fn(() => null),
     setOnUpdate: vi.fn(),
     markCommitted: vi.fn(),
@@ -528,6 +534,24 @@ describe('useDraftAutosave', () => {
       expect(mockedFlushDraft).not.toHaveBeenCalled()
       expect(mockedDeleteDraft).toHaveBeenCalledTimes(1)
       expect(mockedDeleteDraft).toHaveBeenCalledWith('BLOCK_1')
+    })
+
+    // A block Enter split off is read as typed: its classification baseline is
+    // '' but its stored text is what it was mounted with, which is what counts.
+    it('a block read as typed and left untouched deletes the draft row on unmount', async () => {
+      const { ref } = makeEditor({
+        markdown: 'status:: done',
+        originalMarkdown: '',
+        storedMarkdown: 'status:: done',
+      })
+      const { unmount } = renderAutosave(ref)
+
+      unmount()
+      await flushMicrotasks()
+
+      expect(mockedSaveDraft).not.toHaveBeenCalled()
+      expect(mockedFlushDraft).not.toHaveBeenCalled()
+      expect(mockedDeleteDraft).toHaveBeenCalledExactlyOnceWith('BLOCK_1')
     })
 
     it('unmount save respects #1065 (a discarded block is not resurrected)', async () => {

@@ -112,6 +112,7 @@ function makeRovingEditor(
   overrides: Partial<{
     activeBlockId: string | null
     originalMarkdown: string
+    storedMarkdown: string
     getMarkdown: () => string | null
     unmount: () => string | null
   }> = {},
@@ -119,6 +120,7 @@ function makeRovingEditor(
   return {
     activeBlockId: overrides.activeBlockId ?? null,
     originalMarkdown: overrides.originalMarkdown ?? 'existing content',
+    storedMarkdown: overrides.storedMarkdown ?? overrides.originalMarkdown ?? 'existing content',
     getMarkdown: overrides.getMarkdown ?? vi.fn<() => string | null>(() => null),
     unmount: overrides.unmount ?? vi.fn<() => string | null>(() => null),
   }
@@ -1681,6 +1683,39 @@ describe('useEditorBlur', () => {
       ]
       expect(failedContent).toBe('context:: home')
       await expect(outcome).resolves.toBe(true)
+    })
+
+    // A block Enter split off is read as typed: it classifies against '' but
+    // already holds its text, so the early persist for new blocks must not
+    // re-save that text before the property commit.
+    it('commits a block read as typed without re-saving its unchanged text first', async () => {
+      const mockEdit = vi.fn(() => Promise.resolve(true))
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        originalMarkdown: '',
+        storedMarkdown: 'context:: home',
+        getMarkdown: vi.fn<() => string | null>(() => 'context:: home'),
+        unmount: vi.fn<() => string | null>(() => 'context:: home'),
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: vi.fn(),
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+      await flushMicrotasks()
+
+      expect(mockSetProperty).toHaveBeenCalledTimes(1)
+      expect(mockEdit).toHaveBeenCalledExactlyOnceWith('B1', '')
     })
 
     it('on a REJECTED property write keeps the line literal (no strip, nothing lost)', async () => {
