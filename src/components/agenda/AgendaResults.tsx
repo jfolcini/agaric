@@ -567,6 +567,7 @@ export function AgendaResults({
           focusedIndex={focusedIndex}
           onNavigateToPage={onNavigateToPage}
           showDate
+          headingLevel="h2"
         />
         {projected && (
           <LoadMoreButton

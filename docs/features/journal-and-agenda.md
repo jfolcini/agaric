@@ -58,7 +58,7 @@ You can stack any combination of:
 
 - **Status** (TODO / DOING / DONE / CANCELLED)
 - **Priority** (the configured levels plus none; defaults P1 / P2 / P3)
-- **Due date** preset (overdue, today, this week, this month, no date, custom range)
+- **Due date** preset (today, this week, this month, overdue, next 7 / 14 / 30 days)
 - **Scheduled date** preset (same shape as due-date)
 - **Completed date** preset
 - **Created date** preset

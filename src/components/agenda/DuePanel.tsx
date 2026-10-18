@@ -433,6 +433,7 @@ export function DuePanel({
                   firstFlatIndex={groupedCount}
                   focusedIndex={focusedIndex}
                   onNavigateToPage={onNavigateToPage}
+                  headingLevel="h4"
                 />
 
                 {/* Load more */}

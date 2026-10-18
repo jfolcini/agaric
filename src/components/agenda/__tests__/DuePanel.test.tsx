@@ -1043,10 +1043,10 @@ describe('DuePanel', () => {
 
       render(<DuePanel date="2026-04-13" />)
 
-      // "Projected" appears in both the section header and the per-entry badge
-      // So use getAllByText.
-      const projectedLabels = await screen.findAllByText('Projected')
-      expect(projectedLabels.length).toBeGreaterThanOrEqual(1)
+      // An h4, beside the Overdue / Upcoming section titles.
+      expect(
+        await screen.findByRole('heading', { level: 4, name: t('due.projected') }),
+      ).toBeInTheDocument()
       expect(screen.getByText(/Projected task/)).toBeInTheDocument()
     })
 
