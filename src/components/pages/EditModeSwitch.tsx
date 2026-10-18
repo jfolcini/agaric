@@ -20,15 +20,12 @@ export interface EditModeSwitchProps {
   onChange: (mode: EditMode) => void
   /** Why page mode is not offered for this page, or nothing. */
   blocked?: string | null | undefined
-  /** The pointer or focus reached the switch: the moment to find out whether page mode fits. */
-  onIntent?: (() => void) | undefined
 }
 
 export function EditModeSwitch({
   mode,
   onChange,
   blocked,
-  onIntent,
 }: EditModeSwitchProps): React.ReactElement {
   const { t } = useTranslation()
   const reasonId = useId()
@@ -53,8 +50,6 @@ export function EditModeSwitch({
         if (next === 'blocks' || (next === 'page' && !blocked)) onChange(next)
       }}
       aria-label={t('pageMode.switchLabel')}
-      onPointerEnter={onIntent}
-      onFocus={onIntent}
     >
       <ToggleGroupItem value="blocks">{t('pageMode.blocks')}</ToggleGroupItem>
       {/* One tooltip throughout: a reason found while it is open replaces the hint. */}

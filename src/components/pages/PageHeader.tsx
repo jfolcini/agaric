@@ -62,8 +62,6 @@ export interface PageHeaderProps {
   onEditModeChange?: ((mode: EditMode) => void) | undefined
   /** Why page mode is not offered for this page. */
   editModeBlocked?: string | null | undefined
-  /** The switch was reached: find out whether page mode fits the page. */
-  onEditModeIntent?: (() => void) | undefined
 }
 
 export function PageHeader({
@@ -74,7 +72,6 @@ export function PageHeader({
   editMode,
   onEditModeChange,
   editModeBlocked,
-  onEditModeIntent,
 }: PageHeaderProps) {
   const { t } = useTranslation()
   const ownKebabRef = useRef<HTMLButtonElement>(null)
@@ -565,7 +562,6 @@ export function PageHeader({
                 mode={editMode ?? 'blocks'}
                 onChange={onEditModeChange}
                 blocked={editModeBlocked}
-                onIntent={onEditModeIntent}
               />
             )}
             <PageQuickActions
