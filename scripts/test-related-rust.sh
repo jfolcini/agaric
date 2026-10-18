@@ -51,8 +51,8 @@ while [ $# -gt 0 ]; do
     --cached)
       SOURCE="cached"; LABEL="staged"; shift ;;
     --range)
-      SOURCE="range"; RANGE="${2:-}"; LABEL="range $RANGE"; shift 2
-      [ -z "$RANGE" ] && { echo "ERROR: --range requires a revspec" >&2; exit 2; } ;;
+      [ -n "${2:-}" ] || { echo "ERROR: --range requires a revspec" >&2; exit 2; }
+      SOURCE="range"; RANGE="$2"; LABEL="range $RANGE"; shift 2 ;;
     --worktree)
       SOURCE="worktree"; LABEL="working tree"; shift ;;
     --dry)
