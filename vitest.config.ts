@@ -12,11 +12,12 @@ export default defineConfig({
     // `vi.mock(..., () => import(...))` or a dynamic `import()`: the `sonner` and
     // `ui-select` mocks select nothing and `helpers/invoke.ts` (the strict
     // global `invoke`) selects a fraction of the tests it affects. The other
-    // helpers are imported by the tests that use them, so the graph is right
-    // and they stay out.
+    // mocks and helpers are imported by the tests that use them, so the graph
+    // is right and they stay out.
     forceRerunTriggers: [
       ...configDefaults.forceRerunTriggers,
-      '**/src/__tests__/mocks/**',
+      '**/src/__tests__/mocks/sonner.ts',
+      '**/src/__tests__/mocks/ui-select.tsx',
       '**/src/__tests__/helpers/invoke.ts',
     ],
     // Emit a warning when a single test exceeds 2 seconds.
