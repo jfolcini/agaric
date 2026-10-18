@@ -13,6 +13,13 @@
  * through the document or its undo history. The controls follow the block's
  * id, so a split or a join that moves an id moves them with it.
  *
+ * A block's controls mount the first time it comes within a screen of the
+ * viewport or the caret enters it, and then stay (`ControlsGate`): mounting a
+ * long page's all at once held the frame it opened in. Until then each
+ * control's box is there, empty: the row's as tall as the row, so nothing moves
+ * as it mounts, and the checkbox's naming the task state to assistive
+ * technology.
+ *
  * A task marker typed or pasted at the start of a block, `- [ ] ` or a bare
  * `[ ] ` (`[/]`, `[x]`, `[-]`), becomes the block's state once the caret has
  * left the block: block mode's own commit (`commitCheckboxState`) writes the
@@ -39,7 +46,9 @@ import type { PageSaveApi, PageSaveState } from '@/editor/page-mode/page-save'
 import { blockIdOf } from '@/editor/token-ids'
 import type { OpRef } from '@/lib/bindings'
 import { processCheckboxSyntax } from '@/lib/block-utils'
+import { t } from '@/lib/i18n'
 import { matchesShortcutBinding, tipTapShortcutMap } from '@/lib/keyboard-config'
+import { scrollParentY } from '@/lib/scroll-parent'
 import type { TodoState } from '@/lib/task-states'
 import type { FlatBlock } from '@/lib/tree-utils'
 import {
@@ -70,24 +79,116 @@ export interface PageTaskSource extends PageTaskActions {
   subscribe: (listener: () => void) => () => void
 }
 
-/** Block mode's component, mounted outside the block's editable text. */
+/**
+ * When the blocks' controls mount: one `IntersectionObserver` per editor, whose
+ * root is the scroller the page is in, mounts a block's the first time it
+ * comes within a screen of the viewport. The caret's block mounts at once,
+ * and so does a block drawn anew (a new depth) whose id has mounted before. A
+ * runtime without the observer mounts everything.
+ */
+class ControlsGate {
+  private readonly waiting = new Map<Element, () => void>()
+  private readonly shown = new Set<string>()
+  private observer: IntersectionObserver | null = null
+  private readonly editor: Editor
+
+  constructor(editor: Editor) {
+    this.editor = editor
+  }
+
+  /** Call `reveal` once `dom`, block `id`'s, nears the viewport. */
+  watch(dom: Element, id: string | null, reveal: () => void): void {
+    if (typeof IntersectionObserver === 'undefined' || (id !== null && this.shown.has(id))) {
+      reveal()
+      return
+    }
+    this.waiting.set(dom, () => {
+      if (id !== null) this.shown.add(id)
+      reveal()
+    })
+    if (this.observer !== null) {
+      this.observer.observe(dom)
+      return
+    }
+    // Not before the editor is in the page: its scroller is the root.
+    // `EditorContent` builds the node views again once it is.
+    const host = this.editor.options.element
+    if (!(host instanceof HTMLElement) || !host.isConnected) return
+    this.observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) if (entry.isIntersecting) this.reveal(entry.target)
+      },
+      { root: scrollParentY(host), rootMargin: '100% 0px' },
+    )
+    for (const waiting of this.waiting.keys()) this.observer.observe(waiting)
+  }
+
+  reveal(dom: Node | null): void {
+    if (!(dom instanceof Element)) return
+    const reveal = this.waiting.get(dom)
+    if (reveal === undefined) return
+    this.unwatch(dom)
+    reveal()
+  }
+
+  unwatch(dom: Element): void {
+    this.waiting.delete(dom)
+    this.observer?.unobserve(dom)
+  }
+}
+
+const gates = new WeakMap<Editor, ControlsGate>()
+
+function gateOf(editor: Editor): ControlsGate {
+  let gate = gates.get(editor)
+  if (gate === undefined) {
+    gate = new ControlsGate(editor)
+    gates.set(editor, gate)
+  }
+  return gate
+}
+
+/**
+ * Block mode's component, outside the block's editable text: its box at
+ * once, the component in it from `mount` on.
+ */
 class Control<P extends BlockInlineControlsProps | BlockMetadataRowProps> {
   readonly element = document.createElement('div')
-  private readonly renderer: ReactRenderer<unknown, P>
+  private renderer: ReactRenderer<unknown, P> | null = null
+  private props: P
+  private readonly component: React.ComponentType<P>
+  private readonly editor: Editor
 
   constructor(component: React.ComponentType<P>, props: P, editor: Editor, className: string) {
-    this.renderer = new ReactRenderer(component, { editor, props })
+    this.component = component
+    this.props = props
+    this.editor = editor
     this.element.contentEditable = 'false'
     this.element.className = className
+  }
+
+  /** What the empty box says to assistive technology, until the component says it. */
+  label(text: string): void {
+    if (this.renderer !== null) return
+    this.element.setAttribute('role', 'img')
+    this.element.setAttribute('aria-label', text)
+  }
+
+  mount(): void {
+    if (this.renderer !== null) return
+    this.renderer = new ReactRenderer(this.component, { editor: this.editor, props: this.props })
+    this.element.removeAttribute('role')
+    this.element.removeAttribute('aria-label')
     this.element.append(this.renderer.element)
   }
 
   update(props: P): void {
-    this.renderer.updateProps(props)
+    this.props = props
+    this.renderer?.updateProps(props)
   }
 
   destroy(): void {
-    this.renderer.destroy()
+    this.renderer?.destroy()
     this.element.remove()
   }
 }
@@ -112,9 +213,11 @@ class PageBlockView implements NodeView {
   private metadata: Control<BlockMetadataRowProps> | null = null
   private shownState: string | null = null
   private shownMetadata: Metadata | null = null
+  private revealed = false
   private node: PMNode
   private readonly editor: Editor
   private readonly tasks: PageTaskSource
+  private readonly gate: ControlsGate
   private readonly unsubscribe: () => void
 
   constructor(
@@ -126,12 +229,21 @@ class PageBlockView implements NodeView {
     this.node = node
     this.editor = editor
     this.tasks = tasks
+    this.gate = gateOf(editor)
     this.dom.setAttribute('data-page-block', '')
     for (const [key, value] of Object.entries(attributes)) this.dom.setAttribute(key, String(value))
     this.contentDOM.className = 'page-block-content'
     this.dom.append(this.contentDOM)
     this.show()
     this.unsubscribe = tasks.subscribe(() => this.show())
+    this.gate.watch(this.dom, blockIdOf(node), () => this.reveal())
+  }
+
+  /** Mount the controls, and from now on every control the block gains. */
+  private reveal(): void {
+    this.revealed = true
+    this.checkbox?.mount()
+    this.metadata?.mount()
   }
 
   /** Draw what the store holds for the block, where it is not what is drawn. */
@@ -156,13 +268,21 @@ class PageBlockView implements NodeView {
       return
     }
     this.dom.setAttribute('data-todo-state', state)
-    const props = { blockId: id, todoState: state, onToggleTodo: this.tasks.cycle }
-    if (this.checkbox !== null) {
-      this.checkbox.update(props)
-      return
+    const props: BlockInlineControlsProps = {
+      blockId: id,
+      todoState: state,
+      onToggleTodo: this.tasks.cycle,
     }
-    this.checkbox = new Control(BlockInlineControls, props, this.editor, 'page-block-controls')
-    this.dom.prepend(this.checkbox.element)
+    let checkbox = this.checkbox
+    if (checkbox === null) {
+      checkbox = new Control(BlockInlineControls, props, this.editor, 'page-block-controls')
+      this.checkbox = checkbox
+      this.dom.prepend(checkbox.element)
+      if (this.revealed) checkbox.mount()
+    } else {
+      checkbox.update(props)
+    }
+    checkbox.label(t('block.todoCycleTip', { state }))
   }
 
   private showMetadata(id: string | null, metadata: Metadata): void {
@@ -187,12 +307,17 @@ class PageBlockView implements NodeView {
       onEditProp: () => {},
       onEditKey: () => {},
     }
-    if (this.metadata !== null) {
-      this.metadata.update(props)
-      return
+    let row = this.metadata
+    if (row === null) {
+      row = new Control(BlockMetadataRow, props, this.editor, 'page-block-metadata')
+      this.metadata = row
+      this.dom.append(row.element)
+      if (this.revealed) row.mount()
+    } else {
+      row.update(props)
     }
-    this.metadata = new Control(BlockMetadataRow, props, this.editor, 'page-block-metadata')
-    this.dom.append(this.metadata.element)
+    // The badge is the row's tallest: its empty box keeps that height (`index.css`).
+    row.element.toggleAttribute('data-priority', priority !== null)
   }
 
   /** A new id or depth draws the block anew: its attributes, and the controls of that id. */
@@ -221,6 +346,7 @@ class PageBlockView implements NodeView {
 
   destroy(): void {
     this.unsubscribe()
+    this.gate.unwatch(this.dom)
     this.checkbox?.destroy()
     this.metadata?.destroy()
   }
@@ -264,8 +390,16 @@ const PageTaskKeys = Extension.create<{ tasks: PageTaskSource | null }>({
   },
   addProseMirrorPlugins() {
     const { tasks } = this.options
+    const gate = gateOf(this.editor)
     return [
       new Plugin({
+        // The caret's block shows its controls at once, which its keys change.
+        view: () => ({
+          update: (view) => {
+            const { $head } = view.state.selection
+            if ($head.depth >= 1) gate.reveal(view.nodeDOM($head.before(1)))
+          },
+        }),
         props: {
           handleKeyDown(view, event) {
             const id = caretBlockId(view.state)

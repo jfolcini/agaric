@@ -860,6 +860,91 @@ test.describe('page mode behaves as block mode (#5691)', () => {
     expect(violations).toEqual([])
   })
 
+  for (const width of [1280, 600]) {
+    test(`a long page mounts a block’s controls as it nears the view, and nothing moves as they do, ${width}px wide`, async ({
+      page,
+    }) => {
+      // Below 640px the priority badge pads taller.
+      await page.setViewportSize({ width, height: page.viewportSize()?.height ?? 720 })
+      // axe reads colours, which a fade in progress makes wrong.
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      const count = 200
+      const { ids } = await seedPage(page, 'Long tasks', count)
+      // Every block a task, TODO and DONE in turn, with a priority and a due date, a due and a scheduled date, a priority, or neither.
+      await page.evaluate(async (blockIds) => {
+        const call = (cmd: string, args: Record<string, unknown>) =>
+          (window as unknown as MockWindow).__TAURI_INTERNALS__.invoke(cmd, args)
+        for (const [i, id] of blockIds.entries()) {
+          await call('set_todo_state', { blockId: id, state: i % 2 === 0 ? 'TODO' : 'DONE' })
+          if (i % 4 !== 1 && i % 4 !== 3) await call('set_priority', { blockId: id, level: '1' })
+          if (i % 4 < 2) await call('set_due_date', { blockId: id, date: '2026-10-20' })
+          if (i % 4 === 1) await call('set_scheduled_date', { blockId: id, date: '2026-10-21' })
+        }
+      }, ids)
+      await openInPageMode(page, 'Long tasks', count)
+      const block = (i: number) => page.locator(`${EDITOR} [data-page-block-id="${ids[i]}"]`)
+      const marker = (i: number) => block(i).locator('[data-testid="task-marker"]')
+      const label = (state: string) => `Task: ${state}. Click to cycle.`
+      const last = count - 1
+
+      await expect(marker(0)).toHaveAttribute('aria-label', label('TODO'))
+      // The bottom is pages away: its controls are empty boxes, the checkbox's naming the state.
+      await expect(marker(last)).toHaveCount(0)
+      await expect(block(last).locator('.page-block-controls')).toHaveAttribute(
+        'aria-label',
+        'DONE (Ctrl+Enter to cycle)',
+      )
+      // Where the last blocks sit in the document, and how tall each is, before they mount.
+      const from = count - 20
+      const geometry = () =>
+        page.evaluate(
+          ({ selector, from: f }) => {
+            const editor = document.querySelector(selector) as HTMLElement
+            const top = editor.getBoundingClientRect().top
+            return [...editor.querySelectorAll(':scope > [data-page-block]')].slice(f).map((el) => {
+              const box = el.getBoundingClientRect()
+              return { top: box.top - top, height: box.height }
+            })
+          },
+          { selector: EDITOR, from },
+        )
+      const before = await geometry()
+
+      await block(last).scrollIntoViewIfNeeded()
+
+      await expect(marker(last)).toHaveAttribute('aria-label', label('DONE'))
+      // Above the view, inside the screen of lead the scroller gives as the observer's root.
+      await expect(marker(from)).toHaveAttribute('aria-label', label('TODO'))
+      await expect(
+        page.locator(
+          `${EDITOR} > [data-page-block]:nth-child(n+${from + 1}) .page-block-metadata:empty`,
+        ),
+      ).toHaveCount(0)
+      expect(await geometry()).toEqual(before)
+      // Each as the backend holds it; a block in the middle is still not mounted.
+      await expect(block(last - 3).locator('[data-testid="priority-badge"]')).toHaveText('P1')
+      await expect(block(last - 3).locator('.due-date-chip')).toHaveText('Oct 20')
+      await expect(block(last - 2).locator('.due-date-chip')).toHaveText('Oct 20')
+      await expect(block(last - 2).locator('.scheduled-chip')).toHaveText('Oct 21')
+      await expect(block(last - 2).locator('[data-testid="priority-badge"]')).toHaveCount(0)
+      await expect(block(last - 1).locator('[data-testid="priority-badge"]')).toHaveText('P1')
+      await expect(block(last).locator('.page-block-metadata')).toHaveCount(0)
+      await expect(marker(count / 2)).toHaveCount(0)
+
+      await page.addScriptTag({ path: axePath })
+      const violations = await page.evaluate(async () => {
+        const { axe } = window as unknown as {
+          axe: { run: (el: Element) => Promise<{ violations: Array<{ id: string }> }> }
+        }
+        const { violations: found } = await axe.run(
+          document.querySelector('.page-editor') as Element,
+        )
+        return found.map((v) => v.id)
+      })
+      expect(violations).toEqual([])
+    })
+  }
+
   test('/ and :: are plain text: no menu or picker takes Enter, which splits the block', async ({
     page,
   }) => {

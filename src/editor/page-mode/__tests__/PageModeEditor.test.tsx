@@ -13,6 +13,10 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import {
+  EnteringIntersectionObserver,
+  MockIntersectionObserver,
+} from '@/__tests__/helpers/viewport-observer-mocks'
 import { getActiveEditor } from '@/editor/active-editor'
 import { markdownOf } from '@/editor/page-mode/__tests__/page-mode-fixtures'
 import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
@@ -146,6 +150,8 @@ const passThrough = async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // jsdom lays nothing out: every block is in view.
+  vi.stubGlobal('IntersectionObserver', EnteringIntersectionObserver)
   seedBlocks()
   useSpaceStore.setState({ currentSpaceId: SCOPE.space_id })
   useUndoStore.setState({ pages: new Map() })
@@ -155,6 +161,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
 
 describe('PageModeEditor', () => {
@@ -1356,5 +1363,248 @@ describe('PageModeEditor priorities and dates (#5743)', () => {
     expect(docTexts(editor)).toEqual(['first', 'second'])
     expect(editor.can().undo()).toBe(false)
     expect(onBlocked).not.toHaveBeenCalled()
+  })
+})
+
+describe('PageModeEditor mounts a block’s controls as it nears the viewport (#5743)', () => {
+  beforeEach(() => {
+    MockIntersectionObserver.instances = []
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+  })
+
+  const MARKER = '[data-testid="task-marker"]'
+  const BADGE = '[data-testid="priority-badge"]'
+  const blockEl = (container: HTMLElement, id: string) =>
+    container.querySelector(`[data-page-block-id="${id}"]`) as HTMLElement
+  const inBlock = (container: HTMLElement, id: string, selector: string) =>
+    container.querySelector(`[data-page-block-id="${id}"] ${selector}`)
+
+  /** The editor's one observer, once it watches the blocks. */
+  async function observer(): Promise<MockIntersectionObserver> {
+    return waitFor(() => {
+      expect(MockIntersectionObserver.instances).toHaveLength(1)
+      const found = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+      expect(found.observed.size).toBeGreaterThan(0)
+      return found
+    })
+  }
+
+  function report(io: MockIntersectionObserver, el: Element, isIntersecting: boolean): void {
+    act(() => {
+      io.trigger([{ target: el, isIntersecting }])
+    })
+  }
+
+  /**
+   * A page whose first block, the caret's, is plain, then three tasks out of
+   * view, the last with a priority and a due date. Resolves the tasks' ids.
+   */
+  async function openOffscreen() {
+    const { pageId, ids: all } = seedPage(['first', 'one', 'two', 'three'])
+    const ids = all.slice(1) as [string, string, string]
+    for (const id of ids) dispatch('set_todo_state', { blockId: id, state: 'TODO' })
+    dispatch('set_priority', { blockId: ids[2], level: '1' })
+    dispatch('set_due_date', { blockId: ids[2], date: '2026-10-20' })
+    const view = renderPageMode(pageId)
+    const editor = await editorIn(view.container)
+    const io = await observer()
+    return { ...view, pageId, ids, editor, io }
+  }
+
+  it('an off-screen task shows its state in an empty box, and its controls once near', async () => {
+    const { container, editor, io, ids } = await openOffscreen()
+    expect(io.rootMargin).toBe('100% 0px')
+    // Every block but the caret's.
+    expect(io.observed.size).toBe(3)
+
+    expect(container.querySelector(MARKER)).toBeNull()
+    expect(liveControls(editor)).toBe(0)
+    const box = blockEl(container, ids[2]).querySelector('.page-block-controls') as HTMLElement
+    expect(box.getAttribute('role')).toBe('img')
+    expect(box.getAttribute('aria-label')).toBe(t('block.todoCycleTip', { state: 'TODO' }))
+    expect(
+      blockEl(container, ids[2]).querySelector('.page-block-metadata')?.childElementCount,
+    ).toBe(0)
+    await waitFor(async () => {
+      expect(await axe(container)).toHaveNoViolations()
+    })
+
+    report(io, blockEl(container, ids[2]), true)
+    await waitFor(() => {
+      expect(inBlock(container, ids[2], MARKER)?.getAttribute('aria-label')).toBe(
+        t('block.taskCycle', { state: 'TODO' }),
+      )
+    })
+    expect(inBlock(container, ids[2], BADGE)).not.toBeNull()
+    expect(box.hasAttribute('role')).toBe(false)
+    expect(inBlock(container, ids[0], MARKER)).toBeNull()
+
+    // Scrolled away again, they stay.
+    report(io, blockEl(container, ids[2]), false)
+    await act(async () => {})
+    expect(inBlock(container, ids[2], MARKER)).not.toBeNull()
+    expect(liveControls(editor)).toBe(2)
+  })
+
+  it('the caret entering a block mounts its controls', async () => {
+    const { container, editor, io, ids } = await openOffscreen()
+
+    caretTo(editor, 2)
+
+    await waitFor(() => {
+      expect(inBlock(container, ids[1], MARKER)).not.toBeNull()
+    })
+    expect(inBlock(container, ids[0], MARKER)).toBeNull()
+    expect(liveControls(editor)).toBe(1)
+    expect(io.observed.size).toBe(2)
+  })
+
+  it('Ctrl+Enter makes an off-screen block a task, and its checkbox shows', async () => {
+    const { pageId, ids } = seedPage(['one', 'two'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await observer()
+
+    caretTo(editor, 1)
+    expect(press(editor, 'Enter', { ctrlKey: true })).toBe(true)
+
+    await waitFor(() => {
+      expect((dispatch('get_block', { blockId: ids[1] }) as BlockRow).todo_state).toBe('TODO')
+    })
+    await waitFor(() => {
+      expect(inBlock(container, ids[1] as string, MARKER)?.getAttribute('aria-label')).toBe(
+        t('block.taskCycle', { state: 'TODO' }),
+      )
+    })
+  })
+
+  it('a peer’s change to a block not mounted yet is what it shows once mounted', async () => {
+    const { container, store, io, ids } = await openOffscreen()
+
+    dispatch('set_todo_state', { blockId: ids[2], state: 'DONE' })
+    dispatch('set_priority', { blockId: ids[2], level: '3' })
+    await act(async () => {
+      await store.getState().load()
+    })
+    await waitFor(() => {
+      expect(
+        blockEl(container, ids[2])
+          .querySelector('.page-block-controls')
+          ?.getAttribute('aria-label'),
+      ).toBe(t('block.todoCycleTip', { state: 'DONE' }))
+    })
+    expect(blockEl(container, ids[2]).getAttribute('data-todo-state')).toBe('DONE')
+
+    report(io, blockEl(container, ids[2]), true)
+
+    await waitFor(() => {
+      expect(inBlock(container, ids[2], '[data-testid="task-checkbox-done"]')).not.toBeNull()
+    })
+    expect(inBlock(container, ids[2], BADGE)?.textContent).toBe('P3')
+  })
+
+  it('a block that gains a task and a priority unmounted shows empty boxes, then its controls', async () => {
+    const { pageId, ids } = seedPage(['first', 'plain', 'loses'])
+    dispatch('set_todo_state', { blockId: ids[2], state: 'TODO' })
+    dispatch('set_priority', { blockId: ids[2], level: '1' })
+    const { container, store } = renderPageMode(pageId)
+    await editorIn(container)
+    const io = await observer()
+
+    dispatch('set_todo_state', { blockId: ids[1], state: 'DONE' })
+    dispatch('set_priority', { blockId: ids[1], level: '2' })
+    dispatch('set_todo_state', { blockId: ids[2], state: null })
+    dispatch('set_priority', { blockId: ids[2], level: null })
+    await act(async () => {
+      await store.getState().load()
+    })
+
+    const box = await waitFor(() => {
+      const found = inBlock(container, ids[1] as string, '.page-block-controls')
+      if (found === null) throw new Error('no checkbox box yet')
+      return found
+    })
+    expect(box.getAttribute('aria-label')).toBe(t('block.todoCycleTip', { state: 'DONE' }))
+    const row = inBlock(container, ids[1] as string, '.page-block-metadata') as HTMLElement
+    expect(row.childElementCount).toBe(0)
+    expect(row.hasAttribute('data-priority')).toBe(true)
+    expect(container.querySelector(MARKER)).toBeNull()
+    // The block that lost both has neither box.
+    expect(inBlock(container, ids[2] as string, '.page-block-controls')).toBeNull()
+    expect(inBlock(container, ids[2] as string, '.page-block-metadata')).toBeNull()
+
+    report(io, blockEl(container, ids[1] as string), true)
+    await waitFor(() => {
+      expect(
+        inBlock(container, ids[1] as string, '[data-testid="task-checkbox-done"]'),
+      ).not.toBeNull()
+    })
+    expect(inBlock(container, ids[1] as string, BADGE)?.textContent).toBe('P2')
+  })
+
+  it('a block deleted before it nears the view is no longer observed', async () => {
+    const { container, store, io, ids } = await openOffscreen()
+    const gone = blockEl(container, ids[1])
+    expect(io.observed.has(gone)).toBe(true)
+
+    dispatch('delete_block', { blockId: ids[1] })
+    await act(async () => {
+      await store.getState().load()
+    })
+
+    await waitFor(() => {
+      expect(container.querySelector(`[data-page-block-id="${ids[1]}"]`)).toBeNull()
+    })
+    expect(io.observed.has(gone)).toBe(false)
+    expect(io.observed.size).toBe(2)
+  })
+
+  it('a mounted block drawn anew, at a new depth, keeps its controls mounted', async () => {
+    const { container, editor, store, io, ids } = await openOffscreen()
+    report(io, blockEl(container, ids[2]), true)
+    await waitFor(() => {
+      expect(inBlock(container, ids[2], MARKER)).not.toBeNull()
+    })
+    const drawn = blockEl(container, ids[2])
+
+    dispatch('move_block', { blockId: ids[2], newParentId: ids[1], newIndex: 0 })
+    await act(async () => {
+      await store.getState().load()
+    })
+
+    await waitFor(() => {
+      expect(blockEl(container, ids[2])).not.toBe(drawn)
+    })
+    expect(blockEl(container, ids[2]).getAttribute('data-depth')).toBe('1')
+    expect(inBlock(container, ids[2], MARKER)).not.toBeNull()
+    expect(inBlock(container, ids[2], BADGE)).not.toBeNull()
+    expect(liveControls(editor)).toBe(2)
+  })
+
+  it('a runtime with no IntersectionObserver mounts every block’s controls at once', async () => {
+    vi.stubGlobal('IntersectionObserver', undefined)
+    const { pageId, ids } = seedPage(['one', 'two'])
+    for (const id of ids) dispatch('set_todo_state', { blockId: id, state: 'TODO' })
+    const { container } = renderPageMode(pageId)
+    await editorIn(container)
+
+    await waitFor(() => {
+      expect(container.querySelectorAll(MARKER)).toHaveLength(2)
+    })
+  })
+
+  it('leaving page mode leaves no control mounted and no block observed', async () => {
+    const { container, editor, io, ids, unmount } = await openOffscreen()
+    report(io, blockEl(container, ids[2]), true)
+    await waitFor(() => {
+      expect(liveControls(editor)).toBe(2)
+    })
+    const portals = (editor as unknown as { contentComponent: { getSnapshot: () => object } })
+      .contentComponent
+
+    unmount()
+
+    expect(Object.keys(portals.getSnapshot())).toHaveLength(0)
+    expect(io.observed.size).toBe(0)
   })
 })
