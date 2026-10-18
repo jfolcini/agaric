@@ -69,7 +69,11 @@ The *Clear all filters* button resets to defaults. Sort / group preferences pers
 
 ### Projected (future-occurrence) entries
 
-For repeating tasks, Agenda mode projects future occurrences within the viewed date range. They render with a dashed border and a *"Projected"* label so you don't mistake them for committed tasks. The projection respects all three end-conditions:
+For repeating tasks, Agenda mode lists the future occurrences, from today on, in a *Projected* list below the committed tasks, as the Due Panel does for its day. Each row is dashed, carries a *"Projected"* label and shows its date; the list keeps its date order whatever the sort and grouping, has its own *Load more*, and stays out of the result count. A row opens its task's page; it has no task actions, since it is not a block of its own. The arrow keys reach the rows after the committed tasks.
+
+With no due-date or scheduled-date filter, the range is the next 7 days: today and the six days after. Otherwise it is the span of those filters from today on (an occurrence projected from the due date is judged by the due-date filter, one from the scheduled date by the scheduled-date filter). The status and priority filters apply to the task the occurrence repeats. Under a tag, property, completed-date or created-date filter, or an *Overdue*-only date filter, no occurrence is listed: nothing about an occurrence can answer those. An occurrence on its task's own date is left out, since the task itself is listed.
+
+The projection respects all three end-conditions:
 
 - **`repeat-until`** — stop at a date.
 - **`repeat-count`** — stop after N occurrences total.
