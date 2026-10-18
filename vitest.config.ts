@@ -81,7 +81,7 @@ export default defineConfig({
       // coverage that a real regression goes unnoticed. Raise a gate as
       // observed coverage rises; do not lower one without surfacing a
       // deliberate decision. Branches (>=80% is the explicit OSPS Silver
-      // floor; this repo currently gates it higher, at 82%).
+      // floor; this repo gates it higher).
       //
       // #3258: this comment previously hardcoded a specific measured
       // snapshot (exact percentages, "statements gated at 88") that drifted
@@ -92,10 +92,10 @@ export default defineConfig({
       // derived from this file via `scripts/print-coverage-thresholds.mjs`
       // so it can't go stale the same way) rather than a comment here.
       thresholds: {
-        lines: 91,
-        functions: 90,
-        branches: 82,
-        statements: 89,
+        lines: 95,
+        functions: 93,
+        branches: 87,
+        statements: 93,
       },
     },
     // `e2e-tauri/**/*.test.ts` is NOT the WebdriverIO suite — `wdio.conf.ts`
