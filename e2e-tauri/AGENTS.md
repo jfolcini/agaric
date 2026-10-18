@@ -11,7 +11,7 @@ gh run list --workflow e2e-tauri-weekly.yml --branch <branch> --limit 3
 
 It also runs weekly and on every PR to `main`, where it is skipped unless the diff touches something the lane builds or runs (the `real_backend` output of `scripts/classify-changes.sh`); the `e2e-tauri-gate` job reports either way. It is not a required check (#4671), so read its result on the PR before merging; a new spec has shown nothing until its control case has run there.
 
-Locally you need Linux with `webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `openbox`, and `cargo install tauri-driver --locked`. Build as the workflow does, then run under a window manager (without one `document.hasFocus()` stays false and `waitForAppReady` fails, #5457):
+Locally you need Linux with `webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `openbox`, `xdotool`, and `cargo install tauri-driver --locked`. Build as the workflow does, then run under a window manager (without one `document.hasFocus()` stays false and `waitForAppReady` fails, #5457):
 
 ```sh
 npm run tauri -- build --debug --no-bundle --config '{"build":{"beforeBuildCommand":"npm run build"}}'

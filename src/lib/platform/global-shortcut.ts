@@ -49,17 +49,3 @@ export async function unregisterGlobalShortcut(accelerator: string): Promise<voi
   const { unregister } = await import('@tauri-apps/plugin-global-shortcut')
   await unregister(accelerator)
 }
-
-/**
- * Probe whether `accelerator` is currently registered by *this*
- * application. Returns `false` for both "not registered by us" and
- * "registered by another app" cases — the plugin can't distinguish OS-
- * level conflicts from a clean unbound state.
- *
- * Desktop-only; resolves to `false` on mobile.
- */
-export async function isGlobalShortcutRegistered(accelerator: string): Promise<boolean> {
-  if (isMobilePlatform()) return false
-  const { isRegistered } = await import('@tauri-apps/plugin-global-shortcut')
-  return isRegistered(accelerator)
-}

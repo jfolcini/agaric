@@ -184,7 +184,6 @@ export const PLUGIN_HANDLERS: Record<string, Handler> = {
   // browser dev.
   'plugin:global-shortcut|register': returnNull,
   'plugin:global-shortcut|unregister': returnNull,
-  'plugin:global-shortcut|is_registered': () => false,
 }
 
 /**

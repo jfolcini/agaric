@@ -98,12 +98,6 @@ describe('dispatch — modeled plugin:* commands resolve (#760)', () => {
     expect(vi.mocked(logger.warn)).not.toHaveBeenCalled()
   })
 
-  it('plugin:global-shortcut|is_registered resolves false (no chord ever bound in the mock)', () => {
-    expect(dispatch('plugin:global-shortcut|is_registered', { shortcut: 'CmdOrCtrl+Alt+N' })).toBe(
-      false,
-    )
-  })
-
   it('every PLUGIN_HANDLERS key is plugin:-prefixed (app commands belong in HANDLERS)', () => {
     for (const key of Object.keys(PLUGIN_HANDLERS)) {
       expect(key.startsWith('plugin:')).toBe(true)
