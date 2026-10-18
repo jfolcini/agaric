@@ -1020,10 +1020,6 @@ export async function focusBlock(page: Page, index = 0) {
  *     `nth(n)` no longer maps to the n-th sibling in document order).
  *   - The test needs to focus a specific block by its ULID rather than by
  *     visual position.
- *
- * To move from an editor in another mounted tree (another journal day), send
- * `Escape` first: the press blurs that editor, its block collapses, and the
- * rows below move under the pointer before the release, so the click can miss.
  */
 export async function focusBlockById(page: Page, blockId: string) {
   await clickIntoStaticBlock(

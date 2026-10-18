@@ -59,9 +59,9 @@ export function DateChip({
       )}
       title={label}
       aria-label={label}
-      // #1498: keep editor focus on click so the picker opens (a blur would
-      // flush/remount the block and swallow the click). See the
-      // collapse-toggle note in BlockInlineControls for the full rationale.
+      // #1498: keep the editor focused, its caret where it was, through the
+      // click: the picker opens for the block being edited. See the
+      // collapse-toggle note below.
       onMouseDown={(e) => e.preventDefault()}
       onClick={onOpen}
     >
@@ -261,12 +261,10 @@ export function BlockCollapseControl({
           // The context menu's `handleCloseWithFocus` falls back to this marker;
           // on touch the chevron is the row's only persistent button.
           {...(isTouch ? { 'data-context-trigger': 'true' } : {})}
-          // #1498: the gutter controls live OUTSIDE the contenteditable. With
-          // the block's ProseMirror editor focused, a plain click would first
-          // blur the editor (flush → re-render/remount) and the pending click
-          // gets swallowed — the control does nothing. preventDefault on
-          // mousedown retains editor focus (no blur → no flush) so the click
-          // fires and the caret stays put. Mirrors the Mermaid toggle (#1438).
+          // #1498: the gutter controls live OUTSIDE the contenteditable, so a
+          // plain press would blur the block's editor and end the edit.
+          // preventDefault on mousedown keeps the editor focused and the caret
+          // where it was through the click. Mirrors the Mermaid toggle (#1438).
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => onToggleCollapse?.(blockId)}
           aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}

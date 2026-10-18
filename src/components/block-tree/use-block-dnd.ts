@@ -324,16 +324,12 @@ export function useBlockDnD({
 
       // #923 — capture the pre-drag focused block so a cancel/no-op can restore it.
       //
-      // #966 — for a HANDLE-initiated drag, the handle's `pointerdown` already
-      // blurred the contenteditable and `useEditorBlur` tore the editor down
-      // (`activeBlockId` → null, `setFocused(null)`) BEFORE this `handleDragStart`
-      // runs past the 8px threshold. So `rovingEditor.activeBlockId` is already
-      // null here and #923 had nothing to restore. The drag handle snapshots the
-      // focus in its `pointerdown` (before that blur) via `capturePreDragFocus`;
-      // consume it as the fallback. The live `activeBlockId` is still preferred
-      // (keyboard-initiated drags keep focus and never press the handle), and we
-      // ALWAYS consume so a handle press that never became a drag can't leak a
-      // stale id into a later keyboard drag.
+      // #966 — a handle press blurs the editor before this runs, but
+      // `useEditorBlur` keeps a mouse press's block in edit mode until the press
+      // ends, so the live `activeBlockId` still names it here. The handle's own
+      // snapshot (`capturePreDragFocus`) covers a press whose blur already
+      // cleared the focus. ALWAYS consume it, so a handle press that never became
+      // a drag can't leak a stale id into a later keyboard drag.
       const liveFocus = rovingEditorRef.current.activeBlockId
       const capturedFocus = consumePreDragFocus()
       preDragFocusedIdRef.current = liveFocus ?? capturedFocus

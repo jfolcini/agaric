@@ -1,4 +1,13 @@
-import { expect, getInvokeCalls, installIpcRecorder, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlockById,
+  getInvokeCalls,
+  installIpcRecorder,
+  navigateToView,
+  replaceEditorText,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E tests for journal daily-view panels that agenda-advanced.spec.ts never
@@ -219,4 +228,30 @@ test.describe('Projected repeat occurrences', () => {
     expect(calls.length).toBeGreaterThanOrEqual(1)
     await expect(page.getByTestId('projected-entry')).toHaveCount(0)
   })
+})
+
+// ===========================================================================
+// 5. Due panel header below an edited block (#5807)
+// ===========================================================================
+
+// Seed id — BLOCK_DAILY_1 "Morning standup notes", the first block of today.
+const BLOCK_DAILY_1 = '0000000000000000000BLOCK06'
+
+test('one click on the Due panel header lands while a block above is edited', async ({ page }) => {
+  await waitForBoot(page)
+  const header = page.getByTestId('due-panel-header')
+  await expect(header).toHaveAttribute('aria-expanded', 'true')
+  await focusBlockById(page, BLOCK_DAILY_1)
+  await replaceEditorText(page, 'saved on the press')
+  await expect(page.getByTestId('formatting-toolbar')).toBeVisible()
+
+  await header.click()
+
+  await expect(header).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.locator('[data-testid="block-editor"]')).toHaveCount(0)
+  await navigateToView(page, 'Pages')
+  await navigateToView(page, 'Journal')
+  await expect(
+    page.locator(`[data-testid="block-static"][data-block-id="${BLOCK_DAILY_1}"]`),
+  ).toHaveText('saved on the press')
 })

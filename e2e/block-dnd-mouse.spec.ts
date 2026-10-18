@@ -3,6 +3,7 @@ import {
   dragBlock,
   dragBlockWithOffset,
   expect,
+  focusBlockById,
   getInvokeCalls,
   installIpcRecorder,
   openPage,
@@ -215,26 +216,26 @@ test.describe('Drag visual layer (#923 f2)', () => {
     await page.waitForTimeout(200)
     expect((await getInvokeCalls(page, 'move_block')).length).toBe(0)
     expect(await blockIds(page)).toEqual(before)
+  })
 
-    // NOTE — the original spec also asserted "Esc restores focus to the block
-    // that was being edited pre-drag" (#923). That assertion does not hold when
-    // the drag is initiated by grabbing the handle with a real pointer, and is
-    // intentionally dropped here rather than skipped, because the abort/no-move
-    // contract above is the meaningful, emulatable part:
-    //
-    //   `useBlockDnD.handleDragStart` captures the pre-drag focused block from
-    //   `rovingEditor.activeBlockId`. But the drag handle is a real <button>
-    //   (BlockGutterControls' `GutterButton`) WITHOUT `data-editor-portal`, so
-    //   the `mousedown` that begins the drag moves DOM focus to that button and
-    //   the roving editor's blur path (useEditorBlur Step 4a only spares
-    //   portal-tagged targets) unmounts the editor and calls `setFocused(null)`
-    //   FIRST. By the time `handleDragStart` runs (after the 8px sensor
-    //   threshold), `activeBlockId` is already null, so there is nothing for
-    //   `handleDragCancel` to restore. Verified via DOM inspection: post-Esc the
-    //   active element is the drag-handle button and no `block-editor` is
-    //   mounted. The pre-emptive blur is inherent to handle-initiated drags, so
-    //   no Playwright pointer sequence can keep the editor focused into
-    //   `handleDragStart` — this is a real product behaviour, not a harness gap.
+  test('Escape after a handle drag gives the focus back to the block being edited (#923)', async ({
+    page,
+  }) => {
+    await openPage(page, PAGE)
+    const edited = (await blockIds(page))[2] as string
+    await focusBlockById(page, edited)
+
+    await beginDrag(page, 0) // lift GS_1
+    await expect(page.locator('[data-testid="sortable-block-overlay"]')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await page.mouse.up()
+
+    await expect(page.locator('[data-testid="sortable-block-overlay"]')).toHaveCount(0)
+    await expect(
+      page.locator(
+        `[data-testid="block-editor"][data-block-id="${edited}"] [contenteditable="true"]`,
+      ),
+    ).toBeFocused()
   })
 
   test('the drop indicator renders at the projected depth when nudged right', async ({ page }) => {

@@ -138,15 +138,11 @@ export const BlockGutterControls = React.memo(
     // common hover state — it only earns a place once you're actually selecting.
     const hasSelection = useBlockStore((s) => s.selectedBlockIds.length > 0)
 
-    // #966 — a handle-initiated drag blurs the contenteditable on `pointerdown`,
-    // and `useEditorBlur` tears the editor down (unmount + setFocused(null))
-    // BEFORE dnd-kit's 8px threshold fires `handleDragStart`. So the focus is
-    // already gone by the time #923 tries to capture it for restore-on-cancel.
-    // This `onPointerDown` runs in the same `pointerdown` BEFORE that blur, so it
-    // is the last instant the pre-drag focus is still live — snapshot it now.
-    // We compose with dnd-kit's own `pointerdown` listener so the drag still
-    // activates. `getState()` (not a reactive subscription) reads the value at
-    // press time without re-rendering the gutter on every focus change.
+    // #966 — snapshot the focus for #923's restore-on-cancel before this press
+    // blurs the editor (`pre-drag-focus.ts` says when it is used). We compose
+    // with dnd-kit's own `pointerdown` listener so the drag still activates.
+    // `getState()` (not a reactive subscription) reads the value at press time
+    // without re-rendering the gutter on every focus change.
     const handleDragHandlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
       capturePreDragFocus(useBlockStore.getState().focusedBlockId)
       dragListeners?.['onPointerDown']?.(e)
@@ -225,7 +221,7 @@ export const BlockGutterControls = React.memo(
         draggable={false}
         {...dragAttributes}
         {...dragListeners}
-        // #966 — capture pre-drag focus before the press-blur clears it. Must
+        // #966 — capture pre-drag focus before the press blurs the editor. Must
         // come AFTER `{...dragListeners}` so it wins the `onPointerDown` slot;
         // it re-invokes dnd-kit's own listener so the drag still activates.
         onPointerDown={handleDragHandlePointerDown}

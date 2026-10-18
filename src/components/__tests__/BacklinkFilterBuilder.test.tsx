@@ -147,27 +147,6 @@ describe('BacklinkFilterBuilder', () => {
     expect(screen.getByRole('button', { name: /Add filter/i })).toBeInTheDocument()
   })
 
-  // In a browser, blurring the block editor above moves the button from under
-  // the pointer before the release.
-  it('pressing "Add filter" keeps focus where it was, and the release opens the row', async () => {
-    const user = userEvent.setup()
-    render(
-      <>
-        <input aria-label="Block editor" />
-        <BacklinkFilterBuilder {...defaultProps} />
-      </>,
-    )
-    const editor = screen.getByRole('textbox', { name: 'Block editor' })
-    editor.focus()
-
-    const button = screen.getByRole('button', { name: /Add filter/i })
-    await user.pointer({ keys: '[MouseLeft>]', target: button })
-    expect(editor).toHaveFocus()
-
-    await user.pointer({ keys: '[/MouseLeft]', target: button })
-    expect(await screen.findByLabelText('Filter category')).toBeInTheDocument()
-  })
-
   it('renders group with proper aria-label', () => {
     renderBuilder()
     expect(screen.getByRole('group', { name: /Backlink filters/i })).toBeInTheDocument()

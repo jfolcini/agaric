@@ -82,7 +82,7 @@ test('edits a block', async ({ page }) => {
 - Assert the thing under test before any remount or navigation, which re-fetch and hide stale UI; a persistence round-trip is a separate assertion. `toContainText` passes with extra text, and a negative matcher (`toBeHidden`, `not.toBeVisible`) passes for unrelated reasons; see either go red without the fix.
 - Click a block through `focusBlock` / `focusBlockById`, which hit a corner: a centre click lands on a chip or link.
 - `dispatchEvent('click')` where `.click()` cannot land: an atomic inline NodeView (headless Chromium delivers no DOM `click`, see `inner-links.spec.ts`), or a button that scroll auto-load unmounts mid-click (`pages-view.spec.ts`).
-- A button beside the focused editor that loses clicks moved when the editor blurred. Fix the product with `onMouseDown={(e) => e.preventDefault()}` (`AddBlockButton.tsx`), not the spec.
+- A control that loses its first click moved between the press and the release. Fix the product, not the spec. A mouse press that blurs the block editor already holds its row in edit mode until the press ends (`useEditorBlur`), so a control below it needs nothing. A control whose press blurs another input that reshapes the layout (the Search input's history dropdown), or that must act on the edited block (gutter controls), keeps that focus with `onMouseDown={(e) => e.preventDefault()}`.
 
 ## Portal-scoped helpers
 

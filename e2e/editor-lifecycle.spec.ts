@@ -4,12 +4,18 @@ import {
   createPageFromPagesView,
   deleteBlockViaContextMenu,
   expect,
+  focusBlockById,
   navigateToView,
   openPageMobile,
   replaceEditorText,
   test,
   waitForBoot,
 } from './helpers'
+
+const SEED_GS_1 = '0000000000000000000BLOCK01'
+const SEED_GS_2 = '0000000000000000000BLOCK02'
+const SEED_GS_3 = '0000000000000000000BLOCK03'
+const SEED_GS_4 = '0000000000000000000BLOCK04'
 
 /**
  * Editor lifecycle: CRUD operations, navigation, persistence.
@@ -134,6 +140,40 @@ test.describe('Editor lifecycle', () => {
     await expect(editor).toHaveText('typed after moving')
   })
 
+  // The press blurs the editor; had its block left edit mode then, the rows
+  // below would move up by the toolbar's height before the release.
+  for (const chip of [
+    {
+      kind: 'link',
+      edited: SEED_GS_1,
+      below: SEED_GS_2,
+      testId: 'block-link-chip',
+      to: 'Quick Notes',
+    },
+    { kind: 'tag', edited: SEED_GS_3, below: SEED_GS_4, testId: 'tag-ref-chip', to: 'work' },
+  ]) {
+    test(`a click on a ${chip.kind} chip in the block below the edited one follows it`, async ({
+      page,
+    }) => {
+      await openGettingStarted(page)
+      await focusBlockById(page, chip.edited)
+      await replaceEditorText(page, 'saved before following')
+      await expect(page.getByTestId('formatting-toolbar')).toBeVisible()
+
+      await page
+        .locator(`[data-testid="block-static"][data-block-id="${chip.below}"]`)
+        .getByTestId(chip.testId)
+        .filter({ hasText: chip.to })
+        .click()
+
+      await expect(page.locator('[aria-label="Page title"]')).toHaveText(chip.to)
+      await openGettingStarted(page)
+      await expect(
+        page.locator(`[data-testid="block-static"][data-block-id="${chip.edited}"]`),
+      ).toHaveText('saved before following')
+    })
+  }
+
   test('deletes a block via the delete button', async ({ page }) => {
     await openGettingStarted(page)
 
@@ -235,6 +275,117 @@ test.describe('Editor lifecycle', () => {
     await expect(page.getByText('Session block')).not.toBeVisible()
     // But seed blocks should be back
     await expect(page.locator('[data-testid="sortable-block"]').first()).toBeVisible()
+  })
+})
+
+// A mouse press that blurs the editor keeps its block in edit mode until the
+// press ends, so the click lands where it was pressed (#5807); a key leaves at
+// once.
+test.describe('Editor blur by a press or a key', () => {
+  const editorRow = (page: import('@playwright/test').Page) =>
+    page.locator('[data-testid="block-editor"]')
+  const staticRow = (page: import('@playwright/test').Page, blockId: string) =>
+    page.locator(`[data-testid="block-static"][data-block-id="${blockId}"]`)
+
+  test.beforeEach(async ({ page }) => {
+    // Tab moves focus instead of indenting, so it can leave the editor.
+    await page.addInitScript(() => localStorage.setItem('agaric-tab-indents-blocks', 'false'))
+    await waitForBoot(page)
+  })
+
+  test('Tab leaves the editor at once, and the edit is saved', async ({ page }) => {
+    await openGettingStarted(page)
+    await focusBlockById(page, SEED_GS_1)
+    await replaceEditorText(page, 'left by Tab')
+
+    await page.keyboard.press('Tab')
+
+    await expect(editorRow(page)).toHaveCount(0)
+    await openGettingStarted(page)
+    await expect(staticRow(page, SEED_GS_1)).toHaveText('left by Tab')
+  })
+
+  test('a drag-select from inside the editor that ends outside it keeps the editor', async ({
+    page,
+  }) => {
+    await openGettingStarted(page)
+    const editor = await focusBlockById(page, SEED_GS_1)
+    await replaceEditorText(page, 'selected by dragging')
+    const from = await editor.boundingBox()
+    const to = await staticRow(page, SEED_GS_3).boundingBox()
+    if (!from || !to) throw new Error('no layout box')
+
+    // From before the first character to a block below: the whole text.
+    await page.mouse.move(from.x + 2, from.y + from.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 5 })
+    await page.mouse.up()
+
+    await expect(editor).toBeFocused()
+    await page.keyboard.insertText('replaced')
+    await expect(editor).toHaveText('replaced')
+    // The press ended with the release: a key still leaves at once.
+    await page.keyboard.press('Tab')
+    await expect(editorRow(page)).toHaveCount(0)
+    await expect(staticRow(page, SEED_GS_1)).toHaveText('replaced')
+  })
+
+  test('a press released outside the window ends the edit', async ({ page }) => {
+    await openGettingStarted(page)
+    await focusBlockById(page, SEED_GS_1)
+    await replaceEditorText(page, 'released outside')
+    const chip = await staticRow(page, SEED_GS_2).getByTestId('block-link-chip').boundingBox()
+    if (!chip) throw new Error('no layout box')
+
+    await page.mouse.move(chip.x + chip.width / 2, chip.y + chip.height / 2)
+    await page.mouse.down()
+    await expect(editorRow(page)).toHaveCount(1)
+    await page.mouse.move(-20, -20, { steps: 3 })
+    await page.mouse.up()
+
+    await expect(editorRow(page)).toHaveCount(0)
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Getting Started')
+    await expect(staticRow(page, SEED_GS_1)).toHaveText('released outside')
+  })
+
+  test('a click on a block in another journal day moves the editor there, and typing lands', async ({
+    page,
+  }) => {
+    await page.getByRole('tab', { name: 'Weekly view' }).click()
+    const emptyDays = page.locator('section[id^="journal-"]', { hasText: 'No blocks for' })
+    const [upperId, lowerId] = await Promise.all([
+      emptyDays.nth(0).getAttribute('id'),
+      emptyDays.nth(1).getAttribute('id'),
+    ])
+    const upper = page.locator(`section[id="${upperId}"]`)
+    const lower = page.locator(`section[id="${lowerId}"]`)
+
+    await lower.getByRole('button', { name: 'Add block', exact: true }).click()
+    await expect(lower.getByRole('textbox', { name: 'Block editor' })).toBeFocused()
+    await page.keyboard.insertText('lower day')
+    await page.keyboard.press('Escape')
+    const lowerBlock = lower.locator('[data-testid="block-static"]')
+    await expect(lowerBlock).toHaveText('lower day')
+
+    await upper.scrollIntoViewIfNeeded()
+    await upper.getByRole('button', { name: 'Add block', exact: true }).click()
+    await expect(upper.getByRole('textbox', { name: 'Block editor' })).toBeFocused()
+    await page.keyboard.insertText('upper day')
+    await expect(upper.getByTestId('formatting-toolbar')).toBeVisible()
+
+    await lowerBlock.click()
+
+    const lowerEditor = lower.getByRole('textbox', { name: 'Block editor' })
+    await expect(lowerEditor).toBeFocused()
+    await replaceEditorText(page, 'typed after moving')
+    await expect(lowerEditor).toHaveText('typed after moving')
+    await expect(upper.locator('[data-testid="block-static"]')).toHaveText('upper day')
+    await page.keyboard.press('Escape')
+    await navigateToView(page, 'Pages')
+    await navigateToView(page, 'Journal')
+    await page.getByRole('tab', { name: 'Weekly view' }).click()
+    await expect(lower.locator('[data-testid="block-static"]')).toHaveText('typed after moving')
+    await expect(upper.locator('[data-testid="block-static"]')).toHaveText('upper day')
   })
 })
 
