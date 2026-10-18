@@ -27,7 +27,7 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
-  pageSourceButton,
+  clickPageSourceButton,
   pageSourceLines,
   pasteFileIntoFocusedBlock,
   reopenPageByTitle,
@@ -85,9 +85,7 @@ describe('Agaric real-backend pasted image render (#5365) @attachments', () => {
         text: text.replace(BELOW, BELOW_EDITED),
       })),
     )
-    const save = pageSourceButton('Save')
-    await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await save.click()
+    await clickPageSourceButton('Save')
     await source.waitForExist({
       reverse: true,
       timeout: ACTION_TIMEOUT,

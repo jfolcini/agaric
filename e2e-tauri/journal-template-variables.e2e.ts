@@ -18,6 +18,7 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  isoDay,
   navigateTo,
   openNewPage,
   runScopedMarker,
@@ -31,12 +32,6 @@ const TEMPLATE_LINE = `${MARK} <% weekday %> <% date+1 %> <% today:EEEE, MMMM d,
 // Far enough back that `date+1` is not today either, so every variable tells
 // the day from the clock.
 const DAYS_BACK = 3
-
-/** `d` as the local `YYYY-MM-DD` the journal names a day by. */
-function isoDay(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
 
 function daysFrom(d: Date, days: number): Date {
   const at = new Date(d)

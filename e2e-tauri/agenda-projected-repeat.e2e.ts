@@ -35,10 +35,10 @@ import {
   editAtEnd,
   navigateTo,
   occurrenceIn,
-  openContextMenu,
+  openPropertyDrawer,
   openNewPage,
   openPageSource,
-  pageSourceButton,
+  clickPageSourceButton,
   pageSourceLines,
   pickRepeatCommand,
   reopenPageHolding,
@@ -103,9 +103,7 @@ async function seedTasks(title: string, tasks: SeededTask[]): Promise<string[]> 
   }
   lines.push({ text: '', id: null })
   await setPageSourceLines(lines)
-  const save = pageSourceButton('Save')
-  await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await save.click()
+  await clickPageSourceButton('Save')
   await source.waitForExist({
     reverse: true,
     timeout: ACTION_TIMEOUT,
@@ -195,15 +193,6 @@ async function nextJournalDay(day: string): Promise<void> {
   await $(`section[id="journal-${day}"]`).waitForExist({ timeout: NAV_TIMEOUT })
 }
 
-/** Open block `id`'s property drawer from its context menu. */
-async function openPropertyDrawer(id: string): Promise<void> {
-  await openContextMenu($(`[data-testid="block-static"][data-block-id="${id}"]`))
-  const item = $('[role="menuitem"]*=Properties')
-  await item.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await item.click()
-  await $('[role="dialog"]*=Block Properties').waitForDisplayed({ timeout: ACTION_TIMEOUT })
-}
-
 /** Close the open property drawer. */
 async function closePropertyDrawer(): Promise<void> {
   await browser.keys(['Escape'])
@@ -268,9 +257,7 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736) @jour
         .map(({ text, id }) => ({ id, text: text.replace(`- ${TASK}`, `- [ ] ${TASK}`) })),
       ...[`  due_date:: ${today}`, '  repeat:: +1w', ''].map((text) => ({ text, id: null })),
     ])
-    const save = pageSourceButton('Save')
-    await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await save.click()
+    await clickPageSourceButton('Save')
     await source.waitForExist({
       reverse: true,
       timeout: ACTION_TIMEOUT,
@@ -423,9 +410,7 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736) @jour
       return 'no due date'
     }
     const next = Object.fromEntries(modes.map(({ command, task }) => [command, nextDue(task)]))
-    const cancel = pageSourceButton('Cancel')
-    await cancel.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await cancel.click()
+    await clickPageSourceButton('Cancel')
     await source.waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
 
     expect(next).toEqual({

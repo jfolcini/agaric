@@ -18,7 +18,7 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
-  pageSourceButton,
+  clickPageSourceButton,
   pageSourceLines,
   pageSourceText,
   reopenPageByTitle,
@@ -67,9 +67,7 @@ describe('Agaric real-backend labelled link (#5160 D9) @editor @markdown', () =>
     await setPageSourceLines(
       base.map(({ text, id }) => ({ id, text: text.replace(`|${LABEL}]]`, `|${EDITED}]]`) })),
     )
-    const save = pageSourceButton('Save')
-    await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await save.click()
+    await clickPageSourceButton('Save')
     await source.waitForExist({
       reverse: true,
       timeout: ACTION_TIMEOUT,

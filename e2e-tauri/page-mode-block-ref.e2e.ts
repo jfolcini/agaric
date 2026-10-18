@@ -23,7 +23,7 @@ import {
   navigateTo,
   openNewPage,
   openPageSource,
-  pageSourceButton,
+  clickPageSourceButton,
   pageSourceLines,
   reopenPageByTitle,
   runScopedMarker,
@@ -58,9 +58,7 @@ describe('Agaric real-backend block refs to a page-mode edit (#5691) @editor @pa
         text: text.includes(REF) ? `${text} ((${targetId}))` : text,
       })),
     )
-    const save = pageSourceButton('Save')
-    await save.waitForClickable({ timeout: ACTION_TIMEOUT })
-    await save.click()
+    await clickPageSourceButton('Save')
     await source.waitForExist({
       reverse: true,
       timeout: ACTION_TIMEOUT,

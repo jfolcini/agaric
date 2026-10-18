@@ -41,7 +41,7 @@ import {
   blockStaticByMarker,
   chooseSelectOption,
   navigateTo,
-  openContextMenu,
+  openPropertyDrawer,
   openNewPage,
   openSettingsTab,
   reopenPageByTitle,
@@ -66,15 +66,6 @@ const DRAWER = '[role="dialog"]*=Block Properties'
 
 /** Block `id`'s row, static or holding the editor (coming back to a page can refocus its block). */
 const blockRow = (id: string) => $(`[data-testid="sortable-block"][data-block-id="${id}"]`)
-
-/** Open block `id`'s property drawer from its row's context menu. */
-async function openPropertyDrawer(id: string): Promise<void> {
-  await openContextMenu(blockRow(id))
-  const item = $('[role="menuitem"]*=Properties')
-  await item.waitForClickable({ timeout: ACTION_TIMEOUT })
-  await item.click()
-  await $(DRAWER).waitForDisplayed({ timeout: ACTION_TIMEOUT })
-}
 
 /** Close the open property drawer with its Close button. */
 async function closePropertyDrawer(): Promise<void> {
