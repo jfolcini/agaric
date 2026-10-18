@@ -45,7 +45,6 @@ const mockShortcutUnregister = vi.fn()
 vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
   register: mockShortcutRegister,
   unregister: mockShortcutUnregister,
-  isRegistered: vi.fn(),
 }))
 
 const MOCK_SHORTCUTS: (ShortcutBinding & { isCustom: boolean })[] = [

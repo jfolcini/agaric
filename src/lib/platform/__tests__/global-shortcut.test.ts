@@ -4,18 +4,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // Global-shortcut wrappers
 // ---------------------------------------------------------------------------
 //
-// `registerGlobalShortcut` / `unregisterGlobalShortcut` /
-// `isGlobalShortcutRegistered` use a dynamic
+// `registerGlobalShortcut` / `unregisterGlobalShortcut` use a dynamic
 // `import('@tauri-apps/plugin-global-shortcut')` internally, so we mock the
 // module factory at the file scope and import the wrappers separately.
 
 const mockRegister = vi.fn()
 const mockUnregister = vi.fn()
-const mockIsRegistered = vi.fn()
 vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
   register: mockRegister,
   unregister: mockUnregister,
-  isRegistered: mockIsRegistered,
 }))
 
 // Defer the import so the vi.mock above hoists ahead of it. Using a dynamic
@@ -29,7 +26,6 @@ describe('registerGlobalShortcut', () => {
   beforeEach(() => {
     mockRegister.mockReset()
     mockUnregister.mockReset()
-    mockIsRegistered.mockReset()
   })
 
   it('forwards the accelerator to the plugin and only fires the user callback on Pressed events', async () => {
@@ -117,49 +113,6 @@ describe('unregisterGlobalShortcut', () => {
     try {
       await unregisterGlobalShortcut('Ctrl+Alt+N')
       expect(mockUnregister).not.toHaveBeenCalled()
-    } finally {
-      Object.defineProperty(navigator, 'userAgent', {
-        configurable: true,
-        get: () => originalUA,
-      })
-    }
-  })
-})
-
-describe('isGlobalShortcutRegistered', () => {
-  beforeEach(() => {
-    mockIsRegistered.mockReset()
-  })
-
-  it('forwards the accelerator and returns the plugin response', async () => {
-    const { isGlobalShortcutRegistered } = await importGlobalShortcutWrappers()
-    mockIsRegistered.mockResolvedValueOnce(true)
-
-    const result = await isGlobalShortcutRegistered('Ctrl+Alt+N')
-
-    expect(mockIsRegistered).toHaveBeenCalledOnce()
-    expect(mockIsRegistered).toHaveBeenCalledWith('Ctrl+Alt+N')
-    expect(result).toBe(true)
-  })
-
-  it('propagates errors from the plugin', async () => {
-    const { isGlobalShortcutRegistered } = await importGlobalShortcutWrappers()
-    mockIsRegistered.mockRejectedValueOnce(new Error('plugin unavailable'))
-
-    await expect(isGlobalShortcutRegistered('Ctrl+Alt+N')).rejects.toThrow('plugin unavailable')
-  })
-
-  it('returns false on mobile without invoking the plugin', async () => {
-    const { isGlobalShortcutRegistered } = await importGlobalShortcutWrappers()
-    const originalUA = navigator.userAgent
-    Object.defineProperty(navigator, 'userAgent', {
-      configurable: true,
-      get: () => 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0',
-    })
-    try {
-      const result = await isGlobalShortcutRegistered('Ctrl+Alt+N')
-      expect(mockIsRegistered).not.toHaveBeenCalled()
-      expect(result).toBe(false)
     } finally {
       Object.defineProperty(navigator, 'userAgent', {
         configurable: true,

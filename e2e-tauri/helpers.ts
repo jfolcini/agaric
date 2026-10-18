@@ -81,6 +81,8 @@
 //   - `[data-testid="suggestion-item"]`     an item of the open `/` / `[[` /
 //     `#` / `::` picker (SuggestionList.tsx), `aria-selected` on the one Enter
 //     picks; the create item's id is `suggestion-__create__`.
+//   - A Settings tab (`openSettingsTab`): `#settings-tab-<id>` and its
+//     `[data-testid="settings-panel-<id>"]` (pages/SettingsView.tsx).
 //   - Settings › Data › "Open edit history" (`openEditHistory`):
 //     `#settings-tab-data`, `[data-testid="settings-panel-data"]`, and the
 //     History view's `[role="grid"][aria-label="History entries"]`.
@@ -1044,6 +1046,19 @@ export async function pageSourceClipboard(
  */
 export function pageSourceButton(name: string) {
   return $(PAGE_SOURCE).parentElement().parentElement().parentElement().$(`button*=${name}`)
+}
+
+/**
+ * Open the Settings tab `tab` (its `SettingsTab` id), ready once its panel
+ * shows. Leaving Settings and calling this again remounts the panel, so it
+ * re-reads what the tab displays.
+ */
+export async function openSettingsTab(tab: string): Promise<void> {
+  await navigateTo('Settings')
+  const button = $(`#settings-tab-${tab}`)
+  await button.waitForClickable({ timeout: NAV_TIMEOUT })
+  await button.click()
+  await $(`[data-testid="settings-panel-${tab}"]`).waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
 /** Settings › Data › "Open edit history", ready once the entries grid shows. */
