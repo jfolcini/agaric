@@ -139,19 +139,19 @@ export function renderConfigButton(
     )
   }
 
-  return (
-    <Tip label={tooltip}>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label={t(btn.label)}
-        aria-pressed={btn.activeKey ? isActive : undefined}
-        disabled={disabled}
-        className={cn(isActive && toolbarActiveClass)}
-        {...toolbarPressHandlers(btn.action)}
-      >
-        <btn.icon />
-      </Button>
-    </Tip>
+  const button = (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      aria-label={t(btn.label)}
+      aria-pressed={btn.activeKey ? isActive : undefined}
+      disabled={disabled}
+      className={cn(isActive && toolbarActiveClass)}
+      {...toolbarPressHandlers(btn.action)}
+    >
+      <btn.icon />
+    </Button>
   )
+  // The sentinel is only measured, and a tooltip adds no width.
+  return mode === 'sentinel' ? button : <Tip label={tooltip}>{button}</Tip>
 }

@@ -5,6 +5,9 @@
  * is read back from the mock. The mock models no task checkbox, list marker
  * or property line in a save (the Rust tests own that grammar), so for those
  * the re-read buffer line is what a test checks.
+ *
+ * Its time is its test count: each test mounts the real buffer and toolbar,
+ * and every press renders the toolbar's tooltip-wrapped buttons again.
  */
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
@@ -155,7 +158,10 @@ async function saveAndClose(onClose: () => void): Promise<void> {
 describe('the toolbar', () => {
   it('shows the block editor’s buttons the buffer does, in their order, then the block menu', async () => {
     renderEditor()
-    await loadedEditor()
+    const ed = await loadedEditor()
+    // `PageSourceEditor.test.tsx` stubs the toolbar, so this is where it is
+    // shown not to take the focus the buffer opens with.
+    await waitFor(() => expect(ed.view.dom).toHaveFocus())
 
     const names = within(toolbar())
       .getAllByRole('button')
