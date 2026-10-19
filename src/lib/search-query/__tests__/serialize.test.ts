@@ -1,3 +1,9 @@
+/**
+ * Equivalent mutant, accepted: `rest.length === 0` forced true in
+ * `quoteValueIfNeeded`: a value that tokenizes to several words never has a
+ * first word equal to the whole glued text.
+ */
+
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
@@ -233,6 +239,26 @@ describe('serialize round-trip', () => {
     // is quote-surrounded and must be re-quoted. A `length > 2` guard
     // would exclude this exact length and leave it bare.
     expect(quoteValueIfNeeded('""')).toBe('""""')
+  })
+
+  it('quoteValueIfNeeded: a lone `"` is left bare when the prefix closes it', () => {
+    expect(quoteValueIfNeeded('"', 'prop:k="')).toBe('"')
+  })
+
+  it('quoteValueIfNeeded: a value ending in a doubled `"` stays bare behind a quote-free prefix', () => {
+    expect(quoteValueIfNeeded('a""')).toBe('a""')
+  })
+
+  it('quoteValueIfNeeded: a value that only starts with `"` is not quote-surrounded', () => {
+    expect(quoteValueIfNeeded('"a', '')).toBe('"a')
+  })
+
+  it('quoteValueIfNeeded: a value that only ends with `"` is not quote-surrounded', () => {
+    expect(quoteValueIfNeeded('a"', '"')).toBe('"a""')
+  })
+
+  it('quoteValueIfNeeded: an empty value behind an empty prefix is quoted', () => {
+    expect(quoteValueIfNeeded('', '')).toBe('""')
   })
 
   it('#718 — a pathInclude token with spaces survives serialize → parse', () => {

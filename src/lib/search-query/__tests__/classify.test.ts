@@ -1,3 +1,15 @@
+/**
+ * Equivalent mutants, accepted:
+ * - The bare-`#tag` alias's `if (tag)` forced true: `recognise('tag:…')` always
+ *   matches, since `tag:` is registered; the check is only for the type.
+ * - `buildFreeText`: `qi < quotedOrdered.length` as `<=` and `?.[1]` dropped
+ *   (`quotedOrdered[length]` is read as `undefined`, never past it);
+ *   `q[1] < to` as `<=` (a span ending at `to` is skipped by the next call's
+ *   `<= from` loop); `cursor < input.length` as `<=` (`append(len, len)` adds
+ *   nothing); a seeded `quotedOut` (its string entry destructures to `NaN`
+ *   slice bounds that read as `0`).
+ */
+
 import { describe, expect, it } from 'vitest'
 
 import { i18n } from '@/lib/i18n'

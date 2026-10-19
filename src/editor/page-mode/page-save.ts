@@ -149,15 +149,12 @@ function detach(tree: PageTree, id: string): void {
   const children = childrenOf(tree, parentId)
   const at = children.indexOf(id)
   if (at !== -1) children.splice(at, 1)
-  tree.parentOf.delete(id)
 }
 
 /** `id` and every block under it, parents first. */
 function subtreeOf(tree: PageTree, id: string): string[] {
   const out = [id]
-  for (let i = 0; i < out.length; i += 1) {
-    out.push(...(tree.children.get(out[i] as string) ?? []))
-  }
+  for (const member of out) out.push(...(tree.children.get(member) ?? []))
   return out
 }
 
@@ -338,15 +335,13 @@ export function planDeletes(desired: readonly DesiredBlock[], state: PageSaveSta
   const gone = [...state.saved.keys()].filter((id) => !shown.has(id))
   const going = new Set(gone)
   return gone
-    .filter((id) => !going.has(state.tree.parentOf.get(id) ?? ''))
+    .filter((id) => !going.has(state.tree.parentOf.get(id) as string))
     .map((id) => ({ kind: 'delete', id }))
 }
 
-function applyToTree(tree: PageTree, op: SaveOp): void {
-  if (op.kind === 'create' || op.kind === 'move') {
-    detach(tree, op.id)
-    insertChild(tree, op.parentId, op.id, op.index)
-  }
+function applyToTree(tree: PageTree, op: Extract<SaveOp, { kind: 'create' | 'move' }>): void {
+  detach(tree, op.id)
+  insertChild(tree, op.parentId, op.id, op.index)
 }
 
 // ── Running a save ────────────────────────────────────────────────────────
@@ -376,8 +371,7 @@ async function run(op: SaveOp, state: PageSaveState, api: PageSaveApi): Promise<
       return refs
     }
     case 'settle': {
-      const saved = state.saved.get(op.id)
-      if (saved !== undefined) saved.node = op.node
+      ;(state.saved.get(op.id) as SavedBlock).node = op.node
       return []
     }
     case 'delete': {

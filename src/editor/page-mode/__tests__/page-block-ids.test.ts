@@ -3,11 +3,29 @@
  * extensions; keys go through ProseMirror's `handleKeyDown` and the clipboard
  * through the view's own copy and paste. A peer's change is the transaction a
  * remote patch dispatches.
+ *
+ * Equivalent mutants, accepted:
+ * - `changesBlocks` made true more often (a step's `attr` or `pos` check, its
+ *   `from` or `to` check, the `nodeAt` test, its `?.`, the same-block test,
+ *   `false` → `true`, and `structural` or `!remote` in `appendTransaction`
+ *   widened or dropped): each only runs the id rules over a change that moves
+ *   no id, which appends nothing. A step with a `pos` and no `attr`, or the
+ *   reverse, is not one an editor makes. `from` and `to` come with any `slice`.
+ * - `rule === null` in `restoredIds`, `id !== null` where `known` is filled,
+ *   and `rules !== null` before `restoredIds`: a `null` is never a held id, and
+ *   a peer's patch is never in one pass with a history step.
+ * - `$from.index(1) === 0` and `$from.parentOffset === 0` in `handlePaste`: a
+ *   block whose start did not move keeps its id by the rules, whatever the
+ *   paste set it to.
+ * - `!holdsPageBlock` in `handlePaste` made false: the default paste sets the
+ *   same marks on the same transaction.
+ * - The extension's name and the plugin key's: nothing looks either up.
  */
 
 import type { Editor } from '@tiptap/core'
 import { closeHistory } from '@tiptap/pm/history'
-import type { Transaction } from '@tiptap/pm/state'
+import { Fragment, type NodeType, Slice } from '@tiptap/pm/model'
+import type { EditorState, Plugin, Transaction } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
@@ -21,7 +39,9 @@ import {
   rowsOf,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
+import { PageBlockIds, pageBlockIdsKey } from '@/editor/page-mode/page-block-ids'
 import { REMOTE_PATCH, startOf } from '@/editor/page-mode/page-document'
+import { newBlockId } from '@/lib/block-id'
 
 const A = blockId(1)
 const B = blockId(2)
@@ -820,4 +840,128 @@ it('select all, then one block’s text cut from this page pasted, brings it bac
   ed.view.pasteHTML(html)
 
   expect(rowsOf(ed.state.doc)).toEqual([[B, 0, 'two']])
+})
+
+describe('what a paste brings in', () => {
+  function transformed(ed: Editor, slice: Slice): Slice {
+    return ed.view.someProp('transformPasted', (f) => f(slice, ed.view, false)) as Slice
+  }
+
+  function pageBlocks(ed: Editor, depths: number[]): Slice {
+    const pageBlock = ed.schema.nodes['pageBlock'] as NodeType
+    const paragraph = ed.schema.nodes['paragraph'] as NodeType
+    const nodes = depths.map((depth) =>
+      pageBlock.create({ blockId: null, depth }, paragraph.create(null, ed.schema.text('x'))),
+    )
+    return new Slice(Fragment.from(nodes), 0, 0)
+  }
+
+  it('over select all, several blocks with no id stay as they are', () => {
+    const ed = build([[A, 0, 'one']])
+    ed.commands.selectAll()
+
+    const slice = transformed(ed, pageBlocks(ed, [0, 0]))
+
+    expect(slice.content.childCount).toBe(2)
+  })
+
+  it('inside a block, one block with no id keeps its depth and its closed edges', () => {
+    const ed = build([[A, 0, 'one']])
+    caret(ed, 0, 1)
+
+    const slice = transformed(ed, pageBlocks(ed, [1]))
+
+    expect([slice.openStart, slice.content.child(0).attrs['depth']]).toEqual([0, 1])
+  })
+
+  it('over select all, a slice of no blocks stays as it is', () => {
+    const ed = build([[A, 0, 'one']])
+    ed.commands.selectAll()
+    const slice = new Slice(
+      Fragment.from((ed.schema.nodes['paragraph'] as NodeType).create()),
+      0,
+      0,
+    )
+
+    expect(transformed(ed, slice)).toBe(slice)
+  })
+
+  it('a paste of blocks from this page is marked as a paste', () => {
+    const ed = build([
+      [A, 0, 'one'],
+      [B, 0, 'two'],
+    ])
+    const html = cut(ed, posIn(ed, 1, 0), posIn(ed, 1, 3))
+    caret(ed, 0, 0)
+    const metas: unknown[] = []
+    ed.on('transaction', ({ transaction }) =>
+      metas.push([transaction.getMeta('paste'), transaction.getMeta('uiEvent')]),
+    )
+
+    ed.view.pasteHTML(html)
+
+    expect(metas[0]).toEqual([true, 'paste'])
+  })
+})
+
+describe('the plugin over several transactions', () => {
+  function bare(ed: Editor): { state: EditorState; append: PluginAppend } {
+    const plugin = ed.state.plugins.find((p) => p.spec.key === pageBlockIdsKey) as Plugin
+    return {
+      state: ed.state.reconfigure({ plugins: [] }),
+      append: (trs, oldState, newState) => plugin.spec.appendTransaction?.(trs, oldState, newState),
+    }
+  }
+  type PluginAppend = (
+    trs: Transaction[],
+    oldState: EditorState,
+    newState: EditorState,
+  ) => Transaction | null | undefined
+
+  it('one that splits a block counts, though a later one only types', () => {
+    const ed = build([[A, 0, 'foo bar']])
+    const { state, append } = bare(ed)
+    const split = state.tr.split(posIn(ed, 0, 3), 2)
+    const s1 = state.apply(split)
+    const typed = s1.tr.insertText('z', posIn(ed, 0, 1))
+    const s2 = s1.apply(typed)
+
+    const fixed = append([split, typed], state, s2)
+
+    expect(fixed?.doc.child(1).attrs['blockId']).toBe(NEW_1)
+  })
+
+  it('one that is a peer’s patch keeps the backend’s ids, though a later one is not', () => {
+    const ed = build([[A, 0, 'one']])
+    const { state, append } = bare(ed)
+    const patch = state.tr.setNodeAttribute(0, 'blockId', B).setMeta(REMOTE_PATCH, true)
+    const s1 = state.apply(patch)
+    const typed = s1.tr.insertText('z', posIn(ed, 0, 1))
+    const s2 = s1.apply(typed)
+
+    expect(append([patch, typed], state, s2)).toBeNull()
+  })
+
+  it('one that is an undo puts back its ids, though a later one is not', () => {
+    const ed = build([[A, 0, 'one']])
+    const { state, append } = bare(ed)
+    const undone = state.tr.setNodeAttribute(0, 'blockId', B).setMeta('history$', { redo: false })
+    const s1 = state.apply(undone)
+    const typed = s1.tr.insertText('z', posIn(ed, 0, 1))
+    const s2 = s1.apply(typed)
+
+    expect(append([undone, typed], state, s2)).toBeNull()
+  })
+
+  it('a change that leaves every id and depth as they are appends nothing', () => {
+    const ed = build([[A, 0, 'one']])
+
+    const { transactions } = ed.state.applyTransaction(ed.state.tr.setNodeAttribute(0, 'depth', 0))
+
+    expect(transactions).toHaveLength(1)
+  })
+})
+
+it('mints ids with newBlockId unless told otherwise', () => {
+  expect(PageBlockIds.options.mintId).toBe(newBlockId)
 })

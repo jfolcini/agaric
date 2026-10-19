@@ -54,15 +54,13 @@ export function vaultRelativePath(webkitRelativePath: string | undefined): strin
   // jsdom (and a plain `.md` pick) may leave `webkitRelativePath` empty or
   // undefined; treat both as the file's own basename-less root.
   const slashed = (webkitRelativePath ?? '').replace(/\\/g, '/').replace(/^\.\//, '')
-  const firstSlash = slashed.indexOf('/')
-  // No slash ⇒ a top-level file with no folder prefix; keep as-is.
-  return firstSlash === -1 ? slashed : slashed.slice(firstSlash + 1)
+  // No slash ⇒ a top-level file with no folder prefix; `indexOf` is -1 and it is kept as-is.
+  return slashed.slice(slashed.indexOf('/') + 1)
 }
 
 /** Final path segment (basename) of a `/`-separated path. */
 export function basename(path: string): string {
-  const i = path.lastIndexOf('/')
-  return i === -1 ? path : path.slice(i + 1)
+  return path.slice(path.lastIndexOf('/') + 1)
 }
 
 /**
@@ -122,7 +120,6 @@ export async function collectVaultFiles(
   index: VaultIndex,
 ): Promise<VaultFile[] | null> {
   const refs = scanAttachmentRefs(content)
-  if (refs.length === 0) return null
 
   // Resolve refs to distinct files (a ref may resolve to a file already picked
   // up by another ref — dedup by the file object so we read each once).
@@ -157,7 +154,7 @@ export function sanitizeSpaceNameForFilename(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/^-|-$/g, '')
 }
 
 /**
@@ -217,8 +214,10 @@ const WIKILINK_NAME_RE = /\[\[([^\]|#\n]+)/g
  */
 function linkedNotePaths(content: string, notesByName: Map<string, string[]>): string[] | null {
   const paths = new Set<string>()
-  for (const [, name = ''] of content.matchAll(WIKILINK_NAME_RE)) {
-    for (const path of notesByName.get(name.trim().toLowerCase()) ?? []) paths.add(path)
+  for (const match of content.matchAll(WIKILINK_NAME_RE)) {
+    for (const path of notesByName.get((match[1] as string).trim().toLowerCase()) ?? []) {
+      paths.add(path)
+    }
   }
   return paths.size > 0 ? [...paths] : null
 }

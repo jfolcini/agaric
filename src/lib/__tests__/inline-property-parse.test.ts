@@ -353,6 +353,18 @@ describe('stripPropertyLines', () => {
   it('keeps the blank line after a paragraph whose last line was the property', () => {
     expect(stripPropertyLines('a\nk:: v\n\nb', new Set([1]))).toBe('a\n\nb')
   })
+
+  it('keeps the blank line before a property that starts a paragraph with more text after it', () => {
+    expect(stripPropertyLines('a\n\nk:: v\nb', new Set([2]))).toBe('a\n\nb')
+  })
+
+  it('keeps the line before a property that sits inside a paragraph', () => {
+    expect(stripPropertyLines('a\nk:: v\nb', new Set([1]))).toBe('a\nb')
+  })
+
+  it('treats a whitespace-only line as blank around a property paragraph', () => {
+    expect(stripPropertyLines('a\n  \nk:: v\n  \nb', new Set([2]))).toBe('a\n  \nb')
+  })
 })
 
 describe('buildInlinePropertySetParams', () => {

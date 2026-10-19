@@ -98,6 +98,35 @@ describe('commitPageProperties', () => {
     expect(save.writes).toBe(1)
   })
 
+  it('lets a commit that has no line to write leave one in flight to finish', async () => {
+    let finishSet: () => void = () => {}
+    const setPropertyStarted = new Promise<void>((started) => {
+      vi.mocked(invoke).mockImplementation(
+        mockInvokeCommands({
+          get_property_def: () => null,
+          list_property_defs: () => NO_DEFS,
+          set_property: async () => {
+            started()
+            await new Promise<void>((finish) => {
+              finishSet = finish
+            })
+            return withOps(makeBlock({ id: B1 }))
+          },
+        }),
+      )
+    })
+    const { backend, save } = savedNew('buy milk\nassignee:: Ana')
+
+    const inFlight = commitPageProperties(B1, null, save, backend)
+    await setPropertyStarted
+    await commitPageProperties(B1, null, save, backend, 'buy milk')
+    finishSet()
+    const result = await inFlight
+
+    expect(result.markdown).toBe('buy milk')
+    expect(backend.live()).toEqual([[B1, 0, 'buy milk']])
+  })
+
   it('writes nothing when every line is refused: the text stays as saved', async () => {
     vi.mocked(invoke).mockImplementation(
       mockInvokeCommands({

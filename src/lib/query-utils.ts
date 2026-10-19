@@ -81,7 +81,7 @@ export function parseQueryExpression(expr: string): {
   // breaks property-shorthand parsing (`property:key=value`). Unescape the
   // Common single-char escapes before tokenising.
   const unescaped = expr.replace(/\\([\\*`~=[\]#])/g, '$1')
-  const parts = unescaped.trim().split(/\s+/)
+  const parts = unescaped.split(/\s/)
   const params: Record<string, string> = {}
   const propertyFilters: PropertyFilter[] = []
   const tagFilters: string[] = []
@@ -92,9 +92,9 @@ export function parseQueryExpression(expr: string): {
       const prefix = part.slice(0, colonIdx)
       const rest = part.slice(colonIdx + 1)
 
-      if (prefix === 'property' && /[><=!]/.test(rest)) {
+      if (prefix === 'property') {
         // Shorthand: property:key{op}value  (>=, <=, != matched before >, <, =)
-        const opMatch = rest.match(/^(\w+)(>=|<=|!=|>|<|=)(.+)$/)
+        const opMatch = rest.match(/^(\w+)(>=|<=|!=|>|<|=)(.+)/)
         if (opMatch) {
           propertyFilters.push({
             key: opMatch[1] as string,

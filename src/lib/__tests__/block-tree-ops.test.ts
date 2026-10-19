@@ -3,6 +3,9 @@
  * actions (`splitBlock` and `indent`). Each helper takes its inputs as
  * parameters and returns a result — no store access, no IO, no async — so
  * they are tested in isolation here without a Zustand instance or mocks.
+ *
+ * Equivalent mutant, accepted: the `'doc'` type string in `serializeSingleBlock`
+ * emptied: `serialize` reads only `doc.content`, never `doc.type`.
  */
 
 import { describe, expect, it, vi } from 'vitest'
@@ -510,6 +513,31 @@ describe('computeDedentedBlocks', () => {
     ])
   })
 
+  it('lands after a parent that is not the first block', () => {
+    const blocks = tree([
+      ['X', 0],
+      ['A', 0],
+      ['B', 1],
+      ['C', 1],
+    ])
+
+    expect(computeDedentedBlocks(blocks, 'B', 'A', null).map((b) => [b.id, b.depth])).toEqual([
+      ['X', 0],
+      ['A', 0],
+      ['C', 1],
+      ['B', 0],
+    ])
+  })
+
+  it('puts the moved block first when the parent is not in the list', () => {
+    const blocks = tree([
+      ['X', 0],
+      ['B', 1],
+    ])
+
+    expect(computeDedentedBlocks(blocks, 'B', 'missing', null).map((b) => b.id)).toEqual(['B', 'X'])
+  })
+
   it('leaves a block that is its parent’s last child where it is, a level up', () => {
     const blocks = tree([
       ['A', 0],
@@ -540,6 +568,32 @@ describe('indentTooDeep', () => {
       { id: 'X', depth: MAX_BLOCK_DEPTH - 1, parent_id: `N${MAX_BLOCK_DEPTH - 2}` },
     ]
     expect(indentTooDeep(deeper, 'N0', sibling)).toBe(true)
+  })
+
+  it('counts only the indented block’s own descendants, relative to its own depth', () => {
+    const blocks = tree([
+      ['P', 0],
+      ['A', 1],
+      ['A1', 2],
+      ['Z', 0],
+      ['Z1', 1],
+      ['Z2', 2],
+      ['Z3', 3],
+    ])
+    const sibling = { id: 'S', depth: MAX_BLOCK_DEPTH - 3, parent_id: null }
+
+    expect(indentTooDeep(blocks, 'A', sibling)).toBe(false)
+    expect(indentTooDeep(blocks, 'A', { ...sibling, depth: MAX_BLOCK_DEPTH - 2 })).toBe(true)
+  })
+
+  it('is false for an unknown id even when the list has a second block and the sibling is deep', () => {
+    const blocks = tree([
+      ['A', 0],
+      ['B', 0],
+    ])
+    const deep = { id: 'S', depth: MAX_BLOCK_DEPTH - 1, parent_id: null }
+
+    expect(indentTooDeep(blocks, 'missing', deep)).toBe(false)
   })
 
   it('is false for a block it cannot find', () => {
