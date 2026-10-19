@@ -1,7 +1,8 @@
 /**
  * The Markdown markers MarkdownReveal (`extensions/markdown-reveal.ts`, #5689)
  * draws for an editor state: the delimiters of bold, italic, strikethrough,
- * code and external links, and a heading's `#` run. Kept free of ProseMirror
+ * code and external links, and a heading's `#` run; and the syntax drawn
+ * around a page, tag or block-ref chip (`revealedChipMarkers`). Kept free of ProseMirror
  * values so `useBlockKeyboard`, on the cold-start path (#2939), can ask whether
  * a marker sits beside the caret without loading the editor chunk.
  */
@@ -291,4 +292,52 @@ export function markerBesideCaret(state: EditorState, side: 'before' | 'after'):
     if (!nearest || (side === 'before' ? m.side > nearest.side : m.side < nearest.side)) nearest = m
   }
   return nearest
+}
+
+/** The syntax a chip is written with, as the serializer writes it, around its label. */
+const CHIP_SYNTAX: Readonly<Record<string, { open: string; close: string }>> = {
+  block_link: { open: '[[', close: ']]' },
+  tag_ref: { open: '#', close: '' },
+  block_ref: { open: '((', close: '))' },
+}
+
+/** Drawn after a caret at its position, past any mark delimiter there: the syntax of the chip itself is innermost. */
+const CHIP_OPEN_SIDE = 100
+/** Drawn before a caret at its position, ahead of any mark delimiter there. */
+const CHIP_CLOSE_SIDE = -200
+
+/** A chip's syntax, drawn beside the chip as a widget. Read-only: not part of the selection, so Backspace and Delete never see it. */
+export interface ChipMarker {
+  pos: number
+  text: string
+  side: number
+}
+
+/**
+ * The syntax of the chips the selection is at: a selected chip, or the chips
+ * right before and after a caret. The caret stays outside the syntax, as it is
+ * outside the chip's token. Not `revealedMarkers`: those are one unit with the
+ * caret's Backspace, Delete and arrows, and a chip, whose id is not editable
+ * text, is deleted as an atom.
+ */
+export function revealedChipMarkers(state: EditorState): ChipMarker[] {
+  if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
+  const { selection } = state
+  const chips: Array<{ node: PMNode; pos: number }> = []
+  if ('node' in selection) {
+    chips.push({ node: selection.node as PMNode, pos: selection.from })
+  } else if (selection.empty) {
+    const { $from } = selection
+    if ($from.nodeBefore)
+      chips.push({ node: $from.nodeBefore, pos: $from.pos - $from.nodeBefore.nodeSize })
+    if ($from.nodeAfter) chips.push({ node: $from.nodeAfter, pos: $from.pos })
+  }
+  return chips.flatMap(({ node, pos }) => {
+    const syntax = CHIP_SYNTAX[node.type.name]
+    if (!syntax) return []
+    const out: ChipMarker[] = [{ pos, text: syntax.open, side: CHIP_OPEN_SIDE }]
+    if (syntax.close)
+      out.push({ pos: pos + node.nodeSize, text: syntax.close, side: CHIP_CLOSE_SIDE })
+    return out
+  })
 }

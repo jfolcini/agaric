@@ -9,6 +9,11 @@
 // run and draw a link's brackets and URL, leave the view and come back: the
 // stored blocks hold the formatting, the level and the link, and no marker.
 //
+// The syntax drawn beside a page link chip (#5974) is a widget next to a
+// contenteditable=false atom, where WebKitGTK places the caret and the typed
+// text: text typed right of the chip must reach the stored block after the
+// token, never inside the drawn `]]`.
+//
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
@@ -16,6 +21,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  invoke,
   navigateTo,
   openJournalBlockEditor,
   runScopedMarker,
@@ -26,6 +32,7 @@ import {
 const MARKER = runScopedMarker('wdio-reveal')
 const HEADING = runScopedMarker('wdio-level')
 const LINKED = runScopedMarker('wdio-url')
+const CHIPPED = runScopedMarker('wdio-chip')
 const HREF = 'https://example.com'
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 const TYPED = `${MARKER} **bold** and *it* end`
@@ -181,5 +188,52 @@ describe('Markdown syntax revealed around the cursor on the real backend (#5689)
     await linked.waitForDisplayed({ timeout: NAV_TIMEOUT })
     expect(await linked.getText()).not.toContain('](')
     await expect(linked.$('[data-testid="external-link"]')).toHaveAttribute('data-href', HREF)
+  })
+
+  it('draws a page link chip’s syntax, and text typed right of the chip is saved after its token', async () => {
+    await waitForAppReady()
+    await turnRevealOn()
+    const spaces = await invoke<{ id: string; name: string }[]>('list_spaces')
+    const space = spaces.find((s) => s.name === 'Personal') ?? spaces[0]
+    const target = await invoke<string>('create_page_in_space', {
+      parentId: null,
+      content: runScopedMarker('wdio-target'),
+      spaceId: space?.id,
+    })
+    await navigateTo('Journal')
+
+    await openJournalBlockEditor()
+    await typeVerified(EDITOR, `${CHIPPED} see`, typedMarkdown, 'block editor')
+    // The chip goes in at the end of the text, with the caret right of it.
+    await browser.execute(
+      (sel: string, id: string) => {
+        const el = document.querySelector(sel) as HTMLElement & {
+          editor: { chain: () => { insertBlockLink: (id: string) => { run: () => boolean } } }
+        }
+        el.editor.chain().insertBlockLink(id).run()
+      },
+      EDITOR,
+      target,
+    )
+    await browser.waitUntil(
+      async () => (await $$('[data-testid="md-reveal-chip-marker"]').getElements()).length === 2,
+      {
+        timeout: ACTION_TIMEOUT,
+        timeoutMsg: 'the caret beside a page link chip drew no `[[` `]]`',
+      },
+    )
+    const drawn = await $$('[data-testid="md-reveal-chip-marker"]').map((el) => el.getText())
+    expect(drawn).toEqual(['[[', ']]'])
+    await browser.keys(['x'])
+    await browser.keys(['Escape'])
+
+    await navigateTo('Pages')
+    await navigateTo('Journal')
+    const stored = blockStaticByMarker(CHIPPED)
+    await stored.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const blockId = await stored.getAttribute('data-block-id')
+    const { content } = await invoke<{ content: string }>('get_block', { blockId })
+    expect(content).toContain(`[[${target}]]`)
+    expect(content.replace(`[[${target}]]`, '')).toBe(`${CHIPPED} seex`)
   })
 })

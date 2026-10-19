@@ -1105,32 +1105,133 @@ describe('MarkdownReveal beside a list marker', () => {
   })
 })
 
-describe('MarkdownReveal beside page, tag and block-ref chips', () => {
+describe('MarkdownReveal beside page, tag and block-ref chips (#5974)', () => {
   beforeEach(() => {
     writePreference(PREFERENCES.revealMarkdownSyntax, true)
   })
 
   const TAG = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
   const PAGE = '01ARZ3NDEKTSV4RRFFQ69G5FAW'
+  const SOURCE = `a #[${TAG}] [[${PAGE}]] ((${PAGE})) b`
 
-  it('draws no marker beside a chip, and leaves the arrows and Backspace over it to the editor', () => {
+  function chipEditor(source = SOURCE): Editor {
     // `a ` 1..3, the tag chip 3..4, ` ` 4..5, the page chip 5..6, ` ` 6..7, the block ref 7..8, ` b` 8..10.
-    const ed = createEditor(`a #[${TAG}] [[${PAGE}]] ((${PAGE})) b`, [
+    const ed = createEditor(source, [
       TagRef.configure({ resolveName: () => 'work' }),
       BlockLink.configure({ resolveTitle: () => 'Plan' }),
       BlockRef.configure({ resolveContent: () => 'A block' }),
     ])
+    return ed
+  }
+
+  /** The editor's text as the user reads it, the chip syntax drawn included. */
+  const shown = (ed: Editor): string => ed.view.dom.textContent ?? ''
+
+  it('parses the layout the positions below assume', () => {
+    const ed = chipEditor()
     expect(ed.state.doc.nodeAt(3)?.type.name).toBe('tag_ref')
     expect(ed.state.doc.nodeAt(5)?.type.name).toBe('block_link')
     expect(ed.state.doc.nodeAt(7)?.type.name).toBe('block_ref')
-    for (const pos of [3, 4, 5, 6, 7, 8]) {
+  })
+
+  it.each([
+    [1, 'a work Plan A block b'],
+    [2, 'a work Plan A block b'],
+    // Beside a chip, both of its sides are drawn, whichever side the caret is on.
+    [3, 'a #work Plan A block b'],
+    [4, 'a #work Plan A block b'],
+    [5, 'a work [[Plan]] A block b'],
+    [6, 'a work [[Plan]] A block b'],
+    [7, 'a work Plan ((A block)) b'],
+    [8, 'a work Plan ((A block)) b'],
+    [9, 'a work Plan A block b'],
+  ])('a caret at %i shows %j', (pos, expected) => {
+    const ed = chipEditor()
+    ed.commands.setTextSelection(pos)
+    expect(shown(ed)).toBe(expected)
+  })
+
+  it('shows the syntax of a selected chip, and only the `#` of a tag', () => {
+    const ed = chipEditor()
+    ed.commands.setNodeSelection(3)
+    expect(shown(ed)).toBe('a #work Plan A block b')
+    ed.commands.setNodeSelection(5)
+    expect(shown(ed)).toBe('a work [[Plan]] A block b')
+    ed.commands.setNodeSelection(7)
+    expect(shown(ed)).toBe('a work Plan ((A block)) b')
+  })
+
+  it('shows the syntax of both chips a caret sits between', () => {
+    const ed = chipEditor(`#[${TAG}][[${PAGE}]]`)
+    ed.commands.setTextSelection(2)
+    expect(shown(ed)).toBe('#work[[Plan]]')
+    ed.commands.setTextSelection(1)
+    expect(shown(ed)).toBe('#workPlan')
+  })
+
+  it('draws nothing with the setting off, away from a chip, or for a range', () => {
+    const ed = chipEditor()
+    ed.commands.setTextSelection({ from: 3, to: 9 })
+    expect(shown(ed)).toBe('a work Plan A block b')
+    ed.commands.setNodeSelection(5)
+    expect(shown(ed)).toBe('a work [[Plan]] A block b')
+    writePreference(PREFERENCES.revealMarkdownSyntax, false)
+    ed.view.dispatch(ed.state.tr)
+    expect(shown(ed)).toBe('a work Plan A block b')
+  })
+
+  it('draws it aria-hidden, out of find and out of the document', () => {
+    const ed = chipEditor()
+    ed.commands.setNodeSelection(5)
+    const drawn = [...ed.view.dom.querySelectorAll('.md-reveal-chip-marker')]
+    expect(drawn.map((el) => el.textContent)).toEqual(['[[', ']]'])
+    expect(drawn.map((el) => el.getAttribute('aria-hidden'))).toEqual(['true', 'true'])
+    expect(drawn.map((el) => el.hasAttribute('data-find-skip'))).toEqual([true, true])
+    expect(markdown(ed)).toBe(SOURCE)
+    expect(markers(ed)).toEqual([])
+  })
+
+  it('leaves the arrows, Backspace and Delete at a chip as they are with the setting off', () => {
+    const outcome = (on: boolean, pos: number, key: string) => {
+      writePreference(PREFERENCES.revealMarkdownSyntax, on)
+      const ed = chipEditor()
       ed.commands.setTextSelection(pos)
-      expect(markers(ed)).toEqual([])
-      expect(pressKey(ed, 'ArrowLeft')).toBe(false)
-      expect(pressKey(ed, 'ArrowRight')).toBe(false)
+      const handled = pressKey(ed, key)
+      const { from, to } = ed.state.selection
+      return { handled, from, to, md: markdown(ed) }
     }
-    ed.commands.setTextSelection(4)
-    expect(markerBesideCaret(ed.state, 'before')).toBeNull()
-    expect(markdown(ed)).toBe(`a #[${TAG}] [[${PAGE}]] ((${PAGE})) b`)
+    for (const pos of [3, 4, 5, 6, 7, 8]) {
+      for (const key of ['ArrowLeft', 'ArrowRight', 'Backspace', 'Delete']) {
+        expect(outcome(true, pos, key)).toEqual(outcome(false, pos, key))
+      }
+    }
+    // Backspace right of the page chip takes the chip whole.
+    expect(outcome(true, 6, 'Backspace').md).toBe(`a #[${TAG}]  ((${PAGE})) b`)
+  })
+
+  it('does not change the document, the selection or the history when the syntax is drawn', () => {
+    const ed = chipEditor()
+    const doc = ed.state.doc
+    ed.commands.setTextSelection(6)
+    expect(ed.state.selection.from).toBe(6)
+    expect(ed.state.selection.empty).toBe(true)
+    expect(ed.state.doc.eq(doc)).toBe(true)
+    expect(undoDepth(ed.state)).toBe(0)
+  })
+
+  it('draws a chip’s syntax after the closing delimiter of the bold it follows', () => {
+    const ed = createEditor(`**b**[[${PAGE}]]`, [
+      BlockLink.configure({ resolveTitle: () => 'Plan' }),
+    ])
+    ed.commands.setTextSelection(2)
+    expect(shown(ed)).toBe('**b**[[Plan]]')
+  })
+
+  it('draws a chip’s closing syntax before the opening delimiter of the bold it precedes', () => {
+    const ed = createEditor(`[[${PAGE}]]**b**`, [
+      BlockLink.configure({ resolveTitle: () => 'Plan' }),
+    ])
+    ed.commands.setTextSelection(2)
+    expect(shown(ed)).toBe('[[Plan]]**b**')
   })
 })

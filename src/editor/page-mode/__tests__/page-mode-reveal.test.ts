@@ -308,3 +308,79 @@ describe('MarkdownReveal in page mode', () => {
     ])
   })
 })
+
+describe('MarkdownReveal beside chips in page mode', () => {
+  const TAG = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+  const LINK = '01ARZ3NDEKTSV4RRFFQ69G5FAW'
+
+  /** The chips' syntax, in document order. */
+  function chipSyntax(ed: Editor): string[] {
+    return [...ed.view.dom.querySelectorAll('.md-reveal-chip-marker')].map(
+      (el) => el.textContent ?? '',
+    )
+  }
+
+  // Block 1: `x ` 0..2, the tag chip 2..3, ` ` 3..4, the page chip 4..5, ` ` 5..6, the block ref 6..7.
+  const CHIPS: Row = [B, 0, `x #[${TAG}] [[${LINK}]] ((${LINK}))`]
+
+  it.each([
+    [0, []],
+    [2, ['#']],
+    [3, ['#']],
+    [4, ['[[', ']]']],
+    [5, ['[[', ']]']],
+    [6, ['((', '))']],
+    [7, ['((', '))']],
+  ])('a caret at offset %i of a block draws %j', (offset, expected) => {
+    const ed = page([[A, 0, 'first'], CHIPS, [C, 0, 'last']])
+    caret(ed, 1, offset)
+    expect(chipSyntax(ed)).toEqual(expected)
+    expect(markers(ed)).toEqual([])
+  })
+
+  it('draws a selected chip’s syntax, and nothing with the setting off or across blocks', () => {
+    const ed = page([[A, 0, 'first'], CHIPS, [C, 0, 'last']])
+    ed.commands.setNodeSelection(posIn(ed, 1, 4))
+    expect(chipSyntax(ed)).toEqual(['[[', ']]'])
+    ed.view.dispatch(
+      ed.state.tr.setSelection(
+        TextSelection.create(ed.state.doc, posIn(ed, 0, 2), posIn(ed, 1, 5)),
+      ),
+    )
+    expect(chipSyntax(ed)).toEqual([])
+    caret(ed, 1, 4)
+    writePreference(PREFERENCES.revealMarkdownSyntax, false)
+    ed.view.dispatch(ed.state.tr)
+    expect(chipSyntax(ed)).toEqual([])
+  })
+
+  it('draws only the caret’s chips on a page where every block holds chips', () => {
+    const rows = Array.from({ length: 60 }, (_, i): Row => [
+      blockId(i + 1),
+      0,
+      `a [[${LINK}]] b #[${TAG}]`,
+    ])
+    const ed = page(rows)
+    caret(ed, 30, 2)
+    expect(chipSyntax(ed)).toEqual(['[[', ']]'])
+  })
+
+  it('leaves Backspace and Delete at a chip as the setting off has them, a block’s start joining it', () => {
+    const outcome = (on: boolean, index: number, offset: number, key: string) => {
+      writePreference(PREFERENCES.revealMarkdownSyntax, on)
+      const ed = page([
+        [A, 0, 'first'],
+        [B, 0, `[[${LINK}]] x #[${TAG}]`],
+      ])
+      caret(ed, index, offset)
+      const handled = press(ed, key)
+      const out = { handled, rows: rowsOf(ed.state.doc), from: ed.state.selection.from }
+      ed.destroy()
+      open.pop()
+      return out
+    }
+    for (const offset of [0, 1, 3, 4, 5])
+      for (const key of ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight'])
+        expect(outcome(true, 1, offset, key)).toEqual(outcome(false, 1, offset, key))
+  })
+})

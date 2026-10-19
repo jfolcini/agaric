@@ -1436,7 +1436,8 @@
 
 /* #5689 — a revealed Markdown marker beside the caret's inline mark: a widget
    decoration outside the document, faint so the formatted text still leads. */
-.ProseMirror .md-reveal-marker {
+.ProseMirror .md-reveal-marker,
+.ProseMirror .md-reveal-chip-marker {
   @apply text-muted-foreground select-none;
 }
 
