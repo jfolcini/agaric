@@ -8,7 +8,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import {
@@ -23,9 +23,12 @@ import {
   pageFilterChipTitle,
   pageFilterSummary,
 } from '@/components/PageBrowser/PageBrowserFilterRow'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import type { PropertyPredicate } from '@/lib/bindings'
 import type { FilterPrimitive } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+
+vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: vi.fn(() => false) }))
 
 vi.mock('@/components/ui/popover', () => ({
   Popover: ({ children }: { children: React.ReactNode }) => (
@@ -545,6 +548,49 @@ describe('PageBrowserFilterRow', () => {
         onClearAll={vi.fn()}
       />,
     )
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+// #5927 — a phone keeps the chips on one row that scrolls sideways.
+describe('PageBrowserFilterRow on a phone', () => {
+  afterEach(() => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+  })
+
+  it.each([
+    [false, true],
+    [true, false],
+  ])('with isMobile=%s the row wraps: %s', (isMobile, wraps) => {
+    vi.mocked(useIsMobile).mockReturnValue(isMobile)
+    render(
+      <PageBrowserFilterRow
+        filters={[withKey({ type: 'Orphan' }), withKey({ type: 'Stub' })]}
+        onAddFilter={vi.fn()}
+        onRemoveFilter={vi.fn()}
+        onClearAll={vi.fn()}
+      />,
+    )
+    const row = screen.getByTestId('page-browser-filter-row')
+    expect(row.classList.contains('flex-wrap')).toBe(wraps)
+    expect(row.closest('[data-slot="scroll-area-viewport"]') != null).toBe(!wraps)
+  })
+
+  it('clears every chip from the scrolling row, with no axe violations', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(true)
+    const onClearAll = vi.fn()
+    const { container } = render(
+      <PageBrowserFilterRow
+        filters={[withKey({ type: 'Orphan' })]}
+        onAddFilter={vi.fn()}
+        onRemoveFilter={vi.fn()}
+        onClearAll={onClearAll}
+      />,
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: t('pageBrowser.filter.clearAllLabel') }),
+    )
+    expect(onClearAll).toHaveBeenCalledTimes(1)
     expect(await axe(container)).toHaveNoViolations()
   })
 })

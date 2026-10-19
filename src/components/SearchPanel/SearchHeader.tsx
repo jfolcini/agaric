@@ -79,6 +79,8 @@ export function SearchHeader({
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="search" must stay on the <form> that owns onSubmit; the <search> element is not a form-submitting element, so swapping would lose submit handling
         role="search"
         className="search-panel-header flex flex-wrap items-center gap-2"
+        // Stays pinned on a phone while the results scroll (App.tsx's outlet).
+        data-sticky-search=""
       >
         <SearchInput
           ref={inputRef}

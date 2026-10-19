@@ -8,6 +8,8 @@
  *      carries the trash count.
  *   4. Search first (#5637): the first row is search, sort, saved views and
  *      New page; search is the primary focus only with a fine pointer.
+ *   5. Phone (#5927): one row of search, sort, a ⋮ menu holding saved views
+ *      and the view buttons, and New page.
  *
  * Radix Select is globally mocked to a native `<select>` tree in
  * `src/test-setup.ts`, so `userEvent.selectOptions` drives the
@@ -28,11 +30,14 @@ import {
   PageBrowserHeader,
   type PageBrowserHeaderProps,
 } from '@/components/PageBrowser/PageBrowserHeader'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { PrimaryFocusProvider, usePrimaryFocusRegistry } from '@/hooks/usePrimaryFocus'
 import { t } from '@/lib/i18n'
 import { OPEN_NEW_PAGE_DIALOG_EVENT } from '@/lib/overlay-events'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
+
+vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: vi.fn(() => false) }))
 
 function makeProps(overrides: Partial<PageBrowserHeaderProps> = {}): PageBrowserHeaderProps {
   return {
@@ -334,6 +339,120 @@ describe('PageBrowserHeader', () => {
       ).toBeInTheDocument()
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ── phone (#5927) ──────────────────────────────────────
+  describe('on a phone', () => {
+    const MENU_VIEWS = [
+      ['sidebar.tags', 'tags'],
+      ['sidebar.graph', 'graph'],
+      ['sidebar.query', 'query'],
+      ['sidebar.templates', 'templates'],
+      ['sidebar.trash', 'trash'],
+    ] as const
+
+    beforeEach(() => {
+      vi.mocked(useIsMobile).mockReturnValue(true)
+      useNavigationStore.setState({ currentView: 'pages' })
+    })
+
+    afterEach(() => {
+      vi.mocked(useIsMobile).mockReturnValue(false)
+    })
+
+    it('keeps one row: search, sort, the ⋮ menu and New page, with no count or view row', () => {
+      const { container } = render(<PageBrowserHeader {...makeProps({ totalCount: 12 })} />)
+      const rows = container.querySelectorAll('.page-browser-header > div')
+      expect(rows).toHaveLength(1)
+      const row = rows[0] as HTMLElement
+      expect(row).not.toHaveClass('flex-wrap')
+      const inRow = within(row)
+      const order = [
+        inRow.getByRole('textbox', { name: t('pageBrowser.searchPlaceholder') }),
+        inRow.getByRole('combobox', { name: t('pageBrowser.sortLabel') }),
+        inRow.getByRole('button', { name: t('pageBrowser.moreMenu') }),
+        inRow.getByRole('button', { name: t('pageBrowser.newPage') }),
+      ]
+      for (let i = 1; i < order.length; i++) {
+        const prev = order[i - 1] as HTMLElement
+        expect(prev.compareDocumentPosition(order[i] as HTMLElement)).toBe(
+          Node.DOCUMENT_POSITION_FOLLOWING,
+        )
+      }
+      expect(screen.queryByTestId('page-browser-count')).toBeNull()
+      expect(screen.queryByRole('button', { name: t('pageBrowser.savedViews.trigger') })).toBeNull()
+      expect(screen.queryByRole('button', { name: t('sidebar.graph') })).toBeNull()
+    })
+
+    it('the ⋮ menu holds the saved views', async () => {
+      const user = userEvent.setup()
+      const onApplySavedView = vi.fn()
+      const view = {
+        id: 'v1',
+        name: 'Recent work',
+        createdAt: '2026-01-01T00:00:00Z',
+        sort: 'recent' as const,
+        filters: [],
+      }
+      render(<PageBrowserHeader {...makeProps({ savedViews: [view], onApplySavedView })} />)
+
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.moreMenu') }))
+      const menu = await screen.findByTestId('saved-views-menu')
+      expect(within(menu).getByText(t('pageBrowser.savedViews.trigger'))).toBeInTheDocument()
+      expect(within(menu).getByTestId('saved-views-save-current')).toBeInTheDocument()
+      await user.click(
+        within(menu).getByRole('button', {
+          name: t('pageBrowser.savedViews.apply', { name: 'Recent work' }),
+        }),
+      )
+      expect(onApplySavedView).toHaveBeenCalledWith(view)
+    })
+
+    it.each(MENU_VIEWS)(
+      'the ⋮ menu item %s opens the %s view and closes',
+      async (labelKey, view) => {
+        const user = userEvent.setup()
+        render(<PageBrowserHeader {...makeProps()} />)
+
+        await user.click(screen.getByRole('button', { name: t('pageBrowser.moreMenu') }))
+        const menu = await screen.findByTestId('saved-views-menu')
+        await user.click(within(menu).getByRole('button', { name: t(labelKey) }))
+
+        expect(useNavigationStore.getState().currentView).toBe(view)
+        await waitFor(() => expect(screen.queryByTestId('saved-views-menu')).toBeNull())
+      },
+    )
+
+    it('the ⋮ menu names the trash count', async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
+      vi.mocked(invoke).mockImplementation(mockInvokeCommands({ count_trash: () => 4 }))
+      try {
+        const user = userEvent.setup()
+        render(<PageBrowserHeader {...makeProps()} />)
+        await waitFor(() => {
+          expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === 'count_trash')).toBe(true)
+        })
+        await user.click(screen.getByRole('button', { name: t('pageBrowser.moreMenu') }))
+        const menu = await screen.findByTestId('saved-views-menu')
+        expect(
+          await within(menu).findByRole('button', {
+            name: t('pageBrowser.viewButtons.trashWithCount', { count: 4 }),
+          }),
+        ).toBeInTheDocument()
+      } finally {
+        vi.mocked(invoke).mockReset()
+        useSpaceStore.setState({ currentSpaceId: null })
+      }
+    })
+
+    it('has no axe violations with the ⋮ menu open', async () => {
+      const user = userEvent.setup()
+      const { container } = render(<PageBrowserHeader {...makeProps()} />)
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.moreMenu') }))
+      const menu = await screen.findByTestId('saved-views-menu')
+      expect(await axe(container)).toHaveNoViolations()
+      expect(await axe(menu)).toHaveNoViolations()
     })
   })
 })

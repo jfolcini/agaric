@@ -1,7 +1,7 @@
 /**
  * SavedViewsDropdown — list/apply/delete UI for named Pages-view snapshots
  * (#2003 piece 1). Slotted into `PageBrowserHeader`'s search/sort row,
- * next to the sort `Select`.
+ * next to the sort `Select`; on a phone it is that row's ⋮ menu instead.
  *
  * Pure presentational + its own transient popover/dialog-open state (mirrors
  * `PageHeaderMenu`'s `moveSubmenuOpen` — it's idiomatic in this codebase for
@@ -30,6 +30,13 @@ export interface SavedViewsDropdownProps {
   onDelete: (view: SavedPagesView) => void
   /** Fires once the user confirms a name in the save dialog. */
   onSaveCurrentView: (name: string) => void
+  /**
+   * Replaces the labelled "Saved views" button. The phone Pages header passes
+   * its ⋮ button, which turns this popover into the header's overflow menu.
+   */
+  trigger?: React.ReactElement | undefined
+  /** Extra rows below the saved views, after a separator. */
+  children?: ((close: () => void) => React.ReactNode) | undefined
 }
 
 export function SavedViewsDropdown({
@@ -38,6 +45,8 @@ export function SavedViewsDropdown({
   onApply,
   onDelete,
   onSaveCurrentView,
+  trigger,
+  children,
 }: SavedViewsDropdownProps): React.ReactElement {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -47,31 +56,38 @@ export function SavedViewsDropdown({
     <>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            className="w-auto min-w-[7rem]"
-            aria-label={
-              activeView
-                ? t('pageBrowser.savedViews.triggerActive', { name: activeView.name })
-                : t('pageBrowser.savedViews.trigger')
-            }
-            data-testid="saved-views-trigger"
-          >
-            <Bookmark
-              className="h-4 w-4 text-muted-foreground"
-              fill={activeView ? 'currentColor' : 'none'}
-              aria-hidden="true"
-            />
-            <span className="truncate max-w-[8rem]">
-              {activeView ? activeView.name : t('pageBrowser.savedViews.trigger')}
-            </span>
-          </Button>
+          {trigger ?? (
+            <Button
+              variant="outline"
+              className="w-auto min-w-[7rem]"
+              aria-label={
+                activeView
+                  ? t('pageBrowser.savedViews.triggerActive', { name: activeView.name })
+                  : t('pageBrowser.savedViews.trigger')
+              }
+              data-testid="saved-views-trigger"
+            >
+              <Bookmark
+                className="h-4 w-4 text-muted-foreground"
+                fill={activeView ? 'currentColor' : 'none'}
+                aria-hidden="true"
+              />
+              <span className="truncate max-w-[8rem]">
+                {activeView ? activeView.name : t('pageBrowser.savedViews.trigger')}
+              </span>
+            </Button>
+          )}
         </PopoverTrigger>
         <MenuPopoverContent
           align="end"
           data-testid="saved-views-menu"
-          aria-label={t('pageBrowser.savedViews.trigger')}
+          aria-label={trigger ? t('pageBrowser.moreMenu') : t('pageBrowser.savedViews.trigger')}
         >
+          {trigger != null && (
+            <p className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+              {t('pageBrowser.savedViews.trigger')}
+            </p>
+          )}
           {views.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">
               {t('pageBrowser.savedViews.empty')}
@@ -126,6 +142,12 @@ export function SavedViewsDropdown({
             <Save className="h-3.5 w-3.5" aria-hidden="true" />
             {t('pageBrowser.savedViews.saveCurrentView')}
           </PopoverMenuItem>
+          {children != null && (
+            <>
+              <hr className="my-1 h-px bg-border border-none" />
+              {children(() => setOpen(false))}
+            </>
+          )}
         </MenuPopoverContent>
       </Popover>
       <SaveViewDialog

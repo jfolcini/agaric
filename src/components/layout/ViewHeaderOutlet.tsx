@@ -15,7 +15,9 @@
  *    that setStates when the element attaches/detaches. Consumers re-render
  *    via context when the outlet element resolves.
  *  - ViewHeaderOutletSlot renders the host div that becomes the portal
- *    target. It sits between App.tsx's fixed <header> and the <ScrollArea>.
+ *    target. It sits between App.tsx's fixed <header> and the <ScrollArea>;
+ *    below `md` a second slot inside the scroller takes over, so the header
+ *    scrolls away with the content (#5927).
  *  - useViewHeaderOutlet returns the outlet DOM element (or null). When the
  *    hook is used outside a provider, it returns `undefined` so consumers can
  *    fall back to inline rendering (useful for tests and isolated renders).
@@ -29,6 +31,7 @@
 import type React from 'react'
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { cn } from '@/lib/utils'
 
 interface ViewHeaderOutletContextValue {
@@ -72,6 +75,11 @@ export function ViewHeaderOutletProvider({
 interface ViewHeaderOutletSlotProps {
   /** Extra classes merged onto the outlet host element. */
   readonly className?: string
+  /**
+   * This slot sits inside the scroll container and serves below `md`; the
+   * default slot serves from `md` up. Each renders nothing at the other width.
+   */
+  readonly insideScroller?: boolean
 }
 
 /**
@@ -84,8 +92,10 @@ interface ViewHeaderOutletSlotProps {
  */
 export function ViewHeaderOutletSlot({
   className,
+  insideScroller = false,
 }: ViewHeaderOutletSlotProps): React.ReactElement | null {
   const ctx = useContext(ViewHeaderOutletContext)
+  const isMobile = useIsMobile()
   // If the slot is used outside a provider we silently render an empty host —
   // the consumer warnings will surface the real problem (a <ViewHeader> with
   // no outlet).
@@ -96,6 +106,7 @@ export function ViewHeaderOutletSlot({
     },
     [setOutlet],
   )
+  if (insideScroller !== isMobile) return null
   return (
     <div
       ref={refCallback}

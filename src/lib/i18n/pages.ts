@@ -321,6 +321,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.viewButtons.trashWithCount_other': 'Trash, {{count}} items',
   // #2003 piece 1 — saved Pages views (sort + filters snapshot).
   'pageBrowser.savedViews.trigger': 'Saved views',
+  'pageBrowser.moreMenu': 'More Pages options',
   'pageBrowser.savedViews.triggerActive': 'Saved views — {{name}} applied',
   'pageBrowser.savedViews.empty': 'No saved views yet',
   'pageBrowser.savedViews.saveCurrentView': 'Save current view…',

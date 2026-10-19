@@ -57,6 +57,12 @@ export interface UseVirtualizedGroupedRowsOptions<TGroup, TItem> {
   focusedIndex: number
   /** Scroll container the virtualizer windows against. */
   scrollParentRef: RefObject<HTMLDivElement | null>
+  /**
+   * Distance from the top of the scroll container's content to the list, when
+   * the list does not start at that top (an ancestor scroller). Rows' `start`
+   * includes it.
+   */
+  scrollMargin?: number | undefined
 }
 
 export interface UseVirtualizedGroupedRowsResult<TGroup, TItem> {
@@ -77,6 +83,7 @@ export function useVirtualizedGroupedRows<TGroup, TItem extends { id: string }>(
   itemHeight,
   focusedIndex,
   scrollParentRef,
+  scrollMargin = 0,
 }: UseVirtualizedGroupedRowsOptions<TGroup, TItem>): UseVirtualizedGroupedRowsResult<
   TGroup,
   TItem
@@ -157,6 +164,7 @@ export function useVirtualizedGroupedRows<TGroup, TItem extends { id: string }>(
     getScrollElement: () => scrollParentRef.current,
     estimateSize,
     overscan: 5,
+    scrollMargin,
     rangeExtractor,
     getItemKey: (index) => virtualRows[index]?.key ?? index,
   })

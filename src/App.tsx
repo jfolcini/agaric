@@ -664,12 +664,10 @@ function App() {
               <QuickAccessBar />
             </FeatureErrorBoundary>
             {/*
-             * View-level sticky headers didn't stick because the
-             * nearest scroll ancestor was the <ScrollArea> viewport below,
-             * not the view component. Hoisting the headers to an outlet
-             * that lives _outside_ the scroll container lets them stay
-             * visible as the view scrolls, without relying on sticky
-             * positioning at all.
+             * From `md` up the view header sits outside the scroll container,
+             * so it stays visible while the view scrolls. A phone cannot
+             * spare that height: below `md` the slot inside the scroller
+             * serves instead, and the header scrolls away with the content.
              */}
             <ViewHeaderOutletSlot className="border-b border-border/40 px-4 md:px-6 md:pointer-fine:px-16 py-3 space-y-2" />
             <ScrollArea
@@ -696,6 +694,14 @@ function App() {
               )}
               data-slot="main-content"
             >
+              {/* `-mx-4 -mt-4` cancel the viewport's `p-4` so the header spans
+                  the pane as it does on desktop. A header holding the view's
+                  search field (`data-sticky-search`) keeps it at the top;
+                  sticky offsets count from inside that padding, hence `-top-4`. */}
+              <ViewHeaderOutletSlot
+                insideScroller
+                className="-mx-4 -mt-4 mb-4 border-b border-border/40 px-4 py-3 space-y-2 has-[[data-sticky-search]]:sticky has-[[data-sticky-search]]:-top-4 has-[[data-sticky-search]]:z-10"
+              />
               <div
                 className={cn(
                   'flex flex-1 min-h-0 flex-col',

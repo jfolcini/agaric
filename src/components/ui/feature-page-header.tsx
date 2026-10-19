@@ -21,6 +21,8 @@
  * Slots:
  *  - `title`            (required) — rendered as `<h1>`. The view's
  *                       accessible page title. Truncates on overflow.
+ *                       Screen-reader only below `md`, where the header bar
+ *                       shows the view's name.
  *  - `breadcrumb`       (optional) — full node, typically a `<nav>` with
  *                       aria-label. Sits above the title row.
  *  - `actions`          (optional) — right-aligned action buttons /
@@ -83,18 +85,28 @@ const FeaturePageHeader = ({
   <header
     ref={ref}
     data-slot="feature-page-header"
-    className={cn('feature-page-header flex flex-col gap-2', className)}
+    className={cn(
+      'feature-page-header flex flex-col gap-2',
+      // A title-only header has nothing left to show on a phone, so it gives
+      // back the gap its parent's `space-y-*` would put under it.
+      breadcrumb == null && actions == null && kebab == null && 'max-md:m-0',
+      className,
+    )}
   >
     {breadcrumb != null && <div data-slot="feature-page-header-breadcrumb">{breadcrumb}</div>}
     <div className="flex items-center gap-2">
+      {/* Below `md` the header bar already names the view (the shell label,
+          or the journal's date and mode), so the visible title would be the
+          second one on the screen. It stays the view's one heading for
+          assistive tech. */}
       <h1
         data-slot="feature-page-header-title"
-        className="flex-1 truncate text-2xl font-semibold tracking-tight"
+        className="flex-1 truncate text-2xl font-semibold tracking-tight max-md:sr-only"
       >
         {title}
       </h1>
       {actions != null && (
-        <div data-slot="feature-page-header-actions" className="flex items-center gap-1">
+        <div data-slot="feature-page-header-actions" className="ml-auto flex items-center gap-1">
           {actions}
         </div>
       )}

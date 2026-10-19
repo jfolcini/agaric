@@ -21,8 +21,11 @@ import { PROPERTY_OP_CHIP } from '@/components/PageBrowser/add-filter/vocab'
 import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import type { DatePredicate, FilterPrimitive } from '@/lib/bindings'
 import type { PageFilterWithKey } from '@/lib/filters/page-filter-with-key'
+import { cn } from '@/lib/utils'
 import { isExcludeJournalPagesFilter } from '@/stores/pageBrowserFilters'
 
 /** Soft cap above which the Add-Filter affordance warns about query cost. */
@@ -332,10 +335,14 @@ export function PageBrowserFilterRow({
   showAdvancedFacets,
 }: PageBrowserFilterRowProps): React.ReactElement {
   const { t } = useTranslation()
+  const isMobile = useIsMobile()
 
-  return (
+  const row = (
     <div
-      className="page-browser-filter-row flex flex-wrap items-center gap-1.5"
+      className={cn(
+        'page-browser-filter-row flex items-center gap-1.5',
+        isMobile ? 'w-max px-4 py-1' : 'flex-wrap',
+      )}
       data-testid="page-browser-filter-row"
     >
       {filters.length > 0 && (
@@ -381,5 +388,13 @@ export function PageBrowserFilterRow({
         </Button>
       )}
     </div>
+  )
+  // A phone keeps the chips on one row that scrolls sideways, edge to edge.
+  return isMobile ? (
+    <ScrollArea orientation="horizontal" className="-mx-4">
+      {row}
+    </ScrollArea>
+  ) : (
+    row
   )
 }
