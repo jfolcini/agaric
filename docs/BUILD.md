@@ -364,7 +364,9 @@ git verify-tag <version>
 git push --no-verify origin <version>         # starts the workflow again
 ```
 
-This is the push `scripts/bump-version.sh` ends with, so the same rules apply: the tag must verify, and the `release` environment still waits for your approval.
+This is the push `scripts/bump-version.sh` ends with, so the same rules apply: the tag must verify, and the `release` environment still waits for your approval. `git verify-tag` checks only the signature locally; the script also asks GitHub whether the tag object is verified (`release_require_verified_tag`) and this manual path skips that, so confirm the tag shows Verified on GitHub.
+
+If the failed run got as far as `build-and-release`, it created a draft Release for the tag up front, and the next run reuses it and uploads over its assets with `--clobber`. If `gh release view <version>` shows one, delete it first (drafts only): `gh release delete <version> --yes`.
 
 ## Android release signing
 

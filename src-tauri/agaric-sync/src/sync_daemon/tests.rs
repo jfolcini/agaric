@@ -8282,10 +8282,6 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
 /// production session code over real QUIC (`handle_incoming_sync` against
 /// `run_sync_session`), and the text must land in the initiator's engine and
 /// in its SQL.
-///
-/// Its cost is the test: the premise is a payload past the old cap, so the
-/// run generates, exports and moves tens of MiB, and a smaller one proves
-/// nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761() {
     use crate::apply_host::ApplyHost;

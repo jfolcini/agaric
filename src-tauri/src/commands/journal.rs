@@ -1675,8 +1675,6 @@ mod tests {
         // The three seeded blocks plus a thousand more exceed what one undo
         // reverts; the copy counts its ops before the first insert, so the
         // day commits without any of them rather than a thousand of them.
-        // The cost is the test: the day must start from more ops than the cap
-        // allows, and the cap is a thousand.
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
         let space = mk_space(&pool, "Personal").await;

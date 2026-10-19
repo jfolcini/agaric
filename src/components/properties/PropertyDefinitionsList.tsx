@@ -290,6 +290,9 @@ export function PropertyDefinitionsList(): React.ReactElement {
               {filteredDefs.map((def) => (
                 // On a phone the options take a second line, flush with the name, while
                 // Delete or Built-in stays on the name's line; one row when wider (#5925).
+                // Tab order follows the DOM (name, options, Delete), which is the wide row's
+                // left-to-right order; on a phone Delete is drawn above the options, so the
+                // two swap. Matching them would put Delete before the options on desktop.
                 <ListItem
                   key={def.key}
                   className="max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-y-0"

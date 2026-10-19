@@ -53,7 +53,10 @@ function ToggleGroup({
         className,
       )}
       onKeyDown={(event) => {
-        rovingKeyRef.current = ROVING_KEYS.has(event.key)
+        // Radix ignores a roving key with a modifier, so no focus move follows it.
+        rovingKeyRef.current =
+          ROVING_KEYS.has(event.key) &&
+          !(event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
         onKeyDown?.(event)
       }}
       onFocus={(event) => {

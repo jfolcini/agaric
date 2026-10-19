@@ -15,15 +15,13 @@
 
 import { ArrowUpDown, MoreVertical, Plus, Search } from 'lucide-react'
 import type React from 'react'
-import { type RefObject, useRef, useState } from 'react'
+import { type RefObject, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SavedViewsDropdown } from '@/components/PageBrowser/SavedViewsDropdown'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
-import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
-import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { SearchInput } from '@/components/ui/search-input'
 import {
@@ -119,7 +117,6 @@ export function PageBrowserHeader({
   const searchInputRef = useRef<HTMLInputElement>(null)
   const isTouch = useIsTouch()
   const isMobile = useIsMobile()
-  const [moreOpen, setMoreOpen] = useState(false)
   useRegisterPrimaryFocus(isTouch ? NO_PRIMARY_FOCUS : searchInputRef)
   // PageBrowser pagination UX + small muted text near
   // the search input so users always know roughly how many pages
@@ -257,20 +254,17 @@ export function PageBrowserHeader({
             {!isMobile && <SavedViewsDropdown {...savedViewsProps} />}
           </>
         )}
-        {isMobile &&
-          (showSortAndViews ? (
-            <SavedViewsDropdown {...savedViewsProps} trigger={moreTrigger}>
-              {viewMenuItems}
-            </SavedViewsDropdown>
-          ) : (
-            // With no pages there is no view to save, as on desktop.
-            <Popover open={moreOpen} onOpenChange={setMoreOpen}>
-              <PopoverTrigger asChild>{moreTrigger}</PopoverTrigger>
-              <MenuPopoverContent align="end" aria-label={t('pageBrowser.moreMenu')}>
-                {viewMenuItems(() => setMoreOpen(false))}
-              </MenuPopoverContent>
-            </Popover>
-          ))}
+        {isMobile && (
+          // With no pages there is no view to save, but the saved ones stay
+          // reachable: a filter that matches nothing is how you leave one.
+          <SavedViewsDropdown
+            {...savedViewsProps}
+            canSaveCurrentView={showSortAndViews}
+            trigger={moreTrigger}
+          >
+            {viewMenuItems}
+          </SavedViewsDropdown>
+        )}
         <Button
           className={cn('ml-auto', isMobile && 'w-9 px-0 [@media(pointer:coarse)]:w-11')}
           aria-label={t('pageBrowser.newPage')}

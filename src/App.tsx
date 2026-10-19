@@ -29,6 +29,7 @@ import { useDeepLinkRouter } from '@/hooks/useDeepLinkRouter'
 import { useFontSize } from '@/hooks/useFontSize'
 import { useInterfaceZoom } from '@/hooks/useInterfaceZoom'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { useLanguage } from '@/hooks/useLanguage'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
@@ -295,6 +296,7 @@ function App() {
   const { syncing, syncAll } = useSyncTrigger()
   const isOnline = useOnlineStatus()
   const isMobile = useIsMobile()
+  const isTouch = useIsTouch()
   const shouldShowMobileChrome = useShouldShowMobileChrome()
   // Shell-level dialog state (the dialogs' open flags + their
   // event listeners) lives in `useAppDialogs`. The dialog JSX stays in
@@ -586,7 +588,13 @@ function App() {
         />
         <SidebarInset>
           <ViewHeaderOutletProvider>
-            <header className="flex min-h-12 shrink-0 items-center gap-2 border-b bg-background px-4 max-md:min-h-14 max-md:gap-1 max-md:py-1.5">
+            <header
+              className={cn(
+                'flex min-h-12 shrink-0 items-center gap-2 border-b bg-background px-4 max-md:gap-1',
+                // Room for the 44 px touch targets; a mouse window has none.
+                isTouch && isMobile && 'min-h-14 py-1.5',
+              )}
+            >
               {/* Leads the header row, before the view title, because that
                   is where a navigation-drawer trigger is looked for. Renders
                   nothing on desktop. */}
