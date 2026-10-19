@@ -562,7 +562,8 @@ export async function navigateMobile(page: Page, view: string) {
 
 /**
  * Views opened from a Pages header button rather than the sidebar (#5269),
- * keyed by label. Trash's name gains its item count.
+ * keyed by label. Trash's name gains its item count. Matched exactly on the
+ * desktop buttons and as a substring in the phone ⋮ menu.
  */
 const PAGES_HEADER_VIEWS: Readonly<Record<string, string | RegExp>> = {
   Graph: 'Graph',
@@ -603,6 +604,13 @@ export async function navigateToView(page: Page, view: string) {
   const headerButtonName = PAGES_HEADER_VIEWS[view]
   if (headerButtonName !== undefined) {
     await navigateToView(page, 'Pages')
+    // A phone's Pages header keeps these in its ⋮ menu (#5927).
+    const more = page.getByTestId('page-browser-more')
+    if (await more.isVisible()) {
+      await more.click()
+      await activePopover(page).getByRole('button', { name: headerButtonName }).click()
+      return
+    }
     await page
       .locator('.page-browser-header')
       .getByRole('button', { name: headerButtonName, exact: true })

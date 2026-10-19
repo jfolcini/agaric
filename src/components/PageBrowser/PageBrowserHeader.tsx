@@ -4,6 +4,8 @@
  * Search first (#5637): the first row is the search input, the sort
  * dropdown, saved views and the New page button that opens the New page
  * dialog; below it, the buttons that open the page-adjacent views (#5269).
+ * A phone gets one row (#5927): search, sort as an icon, a ⋮ menu holding
+ * saved views and the view buttons, and New page as an icon.
  * The search input is the view's primary focus only with a fine pointer, so
  * entering the view on a phone does not raise the keyboard over the list.
  * The list state lives in the orchestrator (`PageBrowser`) and is passed in
@@ -11,7 +13,7 @@
  * themselves.
  */
 
-import { Plus, Search } from 'lucide-react'
+import { ArrowUpDown, MoreVertical, Plus, Search } from 'lucide-react'
 import type React from 'react'
 import { type RefObject, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -20,6 +22,7 @@ import { SavedViewsDropdown } from '@/components/PageBrowser/SavedViewsDropdown'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
+import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { SearchInput } from '@/components/ui/search-input'
 import {
   Select,
@@ -29,6 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import type { SortOption } from '@/hooks/usePageBrowserSort'
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
@@ -36,6 +40,7 @@ import { useTrashCount } from '@/hooks/useTrashCount'
 import { NAV_ITEMS } from '@/lib/nav-items'
 import { openNewPageDialog } from '@/lib/overlay-events'
 import type { SavedPagesView } from '@/lib/preferences'
+import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 
 /** Registered on touch so the view falls back to its container, not the search input. */
@@ -111,6 +116,7 @@ export function PageBrowserHeader({
   const trashCount = useTrashCount()
   const searchInputRef = useRef<HTMLInputElement>(null)
   const isTouch = useIsTouch()
+  const isMobile = useIsMobile()
   useRegisterPrimaryFocus(isTouch ? NO_PRIMARY_FOCUS : searchInputRef)
   // PageBrowser pagination UX + small muted text near
   // the search input so users always know roughly how many pages
@@ -145,13 +151,27 @@ export function PageBrowserHeader({
     // (a) Unfiltered → the grand total.
     return t('pageBrowser.countAll', { count: totalCount })
   })()
+  const viewButtonLabel = (view: (typeof VIEW_BUTTONS)[number]['id'], label: string) =>
+    view === 'trash' && trashCount > 0
+      ? t('pageBrowser.viewButtons.trashWithCount', { count: trashCount })
+      : label
+  const savedViewsProps = {
+    views: savedViews,
+    activeView: activeSavedView,
+    onApply: onApplySavedView,
+    onDelete: onDeleteSavedView,
+    onSaveCurrentView,
+  }
   return (
-    <div className="page-browser-header space-y-2">
-      {/* `flex-wrap` lets the controls stack onto a second line on narrow
-          viewports instead of overflowing. The search field keeps a sensible
-          min-width so it never collapses to an unusable sliver before wrapping. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[12rem]">
+    // On a phone the header is one row, and it stays pinned while the list
+    // scrolls under it (`data-sticky-search`, read by the outlet in App.tsx).
+    <div className="page-browser-header space-y-2" data-sticky-search="">
+      {/* On desktop `flex-wrap` lets the controls stack onto a second line
+          instead of overflowing, and the search field keeps a width it can be
+          typed in. A phone keeps one row: the search field shrinks, and the
+          count, saved views and view buttons go. */}
+      <div className={cn('flex items-center gap-2', !isMobile && 'flex-wrap')}>
+        <div className={cn('relative flex-1', isMobile ? 'min-w-0' : 'min-w-[12rem]')}>
           <Search
             className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
             aria-hidden="true"
@@ -167,7 +187,7 @@ export function PageBrowserHeader({
         </div>
         {showSortAndViews && (
           <>
-            {countLabel != null && (
+            {countLabel != null && !isMobile && (
               <span
                 className="text-xs text-muted-foreground whitespace-nowrap"
                 data-testid="page-browser-count"
@@ -179,10 +199,18 @@ export function PageBrowserHeader({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <SelectTrigger
-                    className="w-auto min-w-[7rem]"
+                    // An icon button on a phone; the chevron goes with the label.
+                    className={
+                      isMobile
+                        ? 'w-9 justify-center px-0 [@media(pointer:coarse)]:w-11 [&>svg:last-child]:hidden'
+                        : 'w-auto min-w-[7rem]'
+                    }
                     aria-label={t('pageBrowser.sortLabel')}
                   >
-                    <SelectValue />
+                    {isMobile && <ArrowUpDown aria-hidden="true" />}
+                    <span className={cn(isMobile && 'sr-only')}>
+                      <SelectValue />
+                    </span>
                   </SelectTrigger>
                 </TooltipTrigger>
                 <TooltipContent>{t('pageBrowser.sortPersistedTooltip')}</TooltipContent>
@@ -198,56 +226,77 @@ export function PageBrowserHeader({
                 <SelectItem value="most-content">{t('pageBrowser.sortMostContent')}</SelectItem>
               </SelectContent>
             </Select>
-            <SavedViewsDropdown
-              views={savedViews}
-              activeView={activeSavedView}
-              onApply={onApplySavedView}
-              onDelete={onDeleteSavedView}
-              onSaveCurrentView={onSaveCurrentView}
-            />
+            {!isMobile && <SavedViewsDropdown {...savedViewsProps} />}
           </>
         )}
-        {/* Icon-only below `sm`, so on a phone it can sit beside sort and
-            saved views. */}
+        {isMobile && (
+          <SavedViewsDropdown
+            {...savedViewsProps}
+            trigger={
+              <IconButton
+                variant="ghost"
+                className="[@media(pointer:coarse)]:size-11"
+                tooltip={t('pageBrowser.moreMenu')}
+                ariaLabel={t('pageBrowser.moreMenu')}
+                data-testid="page-browser-more"
+              >
+                <MoreVertical />
+              </IconButton>
+            }
+          >
+            {(close) =>
+              VIEW_BUTTONS.map(({ id: view, icon: Icon, labelKey }) => (
+                <PopoverMenuItem
+                  key={view}
+                  className="flex items-center gap-2"
+                  onClick={() => {
+                    close()
+                    setView(view)
+                  }}
+                >
+                  <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                  {viewButtonLabel(view, t(labelKey))}
+                </PopoverMenuItem>
+              ))
+            }
+          </SavedViewsDropdown>
+        )}
         <Button
-          className="ml-auto max-sm:w-9 max-sm:px-0 max-sm:[@media(pointer:coarse)]:w-11"
+          className={cn('ml-auto', isMobile && 'w-9 px-0 [@media(pointer:coarse)]:w-11')}
           aria-label={t('pageBrowser.newPage')}
           onClick={() => openNewPageDialog()}
         >
           <Plus />
-          <span className="max-sm:sr-only">{t('pageBrowser.newPage')}</span>
+          <span className={cn(isMobile && 'sr-only')}>{t('pageBrowser.newPage')}</span>
         </Button>
       </div>
 
-      <div className="flex items-center gap-1">
-        {VIEW_BUTTONS.map(({ id: view, icon: Icon, labelKey }) => {
-          const label = t(labelKey)
-          const showTrashCount = view === 'trash' && trashCount > 0
-          return (
-            <IconButton
-              key={view}
-              variant="ghost"
-              className="relative"
-              tooltip={label}
-              // The name replaces the button's content for assistive tech, so
-              // the count the badge shows has to be in the name as well.
-              ariaLabel={
-                showTrashCount
-                  ? t('pageBrowser.viewButtons.trashWithCount', { count: trashCount })
-                  : label
-              }
-              onClick={() => setView(view)}
-            >
-              <Icon />
-              {showTrashCount && (
-                <Badge tone="secondary" size="xs" className="absolute -top-1 -right-1">
-                  {trashCount}
-                </Badge>
-              )}
-            </IconButton>
-          )
-        })}
-      </div>
+      {!isMobile && (
+        <div className="flex items-center gap-1">
+          {VIEW_BUTTONS.map(({ id: view, icon: Icon, labelKey }) => {
+            const label = t(labelKey)
+            return (
+              <IconButton
+                key={view}
+                variant="ghost"
+                className="relative"
+                tooltip={label}
+                // The name replaces the button's content for assistive tech, so
+                // the count the badge shows has to be in the name as well.
+                ariaLabel={viewButtonLabel(view, label)}
+                onClick={() => setView(view)}
+              >
+                <Icon />
+                {view === 'trash' && trashCount > 0 && (
+                  <Badge tone="secondary" size="xs" className="absolute -top-1 -right-1">
+                    {trashCount}
+                  </Badge>
+                )}
+              </IconButton>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

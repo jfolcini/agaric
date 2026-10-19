@@ -11,18 +11,24 @@
  *     is still mounted.
  *  6. Slot className merges with the default classes.
  *  7. A11y: empty outlet has no violations.
+ *  8. Below `md` the slot inside the scroller serves and the outer one does
+ *     not, and a ViewHeader portals into whichever serves (#5927).
  */
 
 import { act, render, renderHook } from '@testing-library/react'
 import type React from 'react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { ViewHeader } from '@/components/layout/ViewHeader'
 import {
   useViewHeaderOutlet,
   ViewHeaderOutletProvider,
   ViewHeaderOutletSlot,
 } from '@/components/layout/ViewHeaderOutlet'
+import { useIsMobile } from '@/hooks/useIsMobile'
+
+vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: vi.fn(() => false) }))
 
 describe('ViewHeaderOutletProvider', () => {
   it('renders its children', () => {
@@ -134,5 +140,39 @@ describe('useViewHeaderOutlet', () => {
     expect(queryByTestId('view-header-outlet')).not.toBeInTheDocument()
     const afterUnmount = observations.at(-1)
     expect(afterUnmount).toBeNull()
+  })
+})
+
+describe('ViewHeaderOutletSlot placement', () => {
+  afterEach(() => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+  })
+
+  function renderBothSlots() {
+    return render(
+      <ViewHeaderOutletProvider>
+        <div data-testid="outside">
+          <ViewHeaderOutletSlot />
+        </div>
+        <div data-testid="inside">
+          <ViewHeaderOutletSlot insideScroller />
+        </div>
+        <ViewHeader>
+          <span>header content</span>
+        </ViewHeader>
+      </ViewHeaderOutletProvider>,
+    )
+  }
+
+  it.each([
+    [false, 'outside'],
+    [true, 'inside'],
+  ])('with isMobile=%s only the %s slot renders and hosts the header', (isMobile, host) => {
+    vi.mocked(useIsMobile).mockReturnValue(isMobile)
+    const { getByTestId, getAllByTestId, getByText } = renderBothSlots()
+    const outlets = getAllByTestId('view-header-outlet')
+    expect(outlets).toHaveLength(1)
+    expect(getByTestId(host)).toContainElement(outlets[0] as HTMLElement)
+    expect(outlets[0]).toContainElement(getByText('header content'))
   })
 })

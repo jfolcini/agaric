@@ -10,7 +10,8 @@
  */
 
 import type React from 'react'
-import { useEffect, useMemo, useRef } from 'react'
+import type { RefObject } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ProjectedEntriesSection } from '@/components/agenda/ProjectedEntries'
@@ -25,6 +26,7 @@ import type { AgendaProjectedEntries } from '@/hooks/useAgendaProjectedEntries'
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 import {
@@ -111,6 +113,13 @@ export function groupI18nKey(
 
 // ── Component ──────────────────────────────────────────────────────────
 
+/** App's main scroll viewport (`id="main-content"`, set in App.tsx). */
+const MAIN_SCROLLER: RefObject<HTMLDivElement | null> = {
+  get current() {
+    return document.getElementById('main-content') as HTMLDivElement | null
+  },
+}
+
 export function AgendaResults({
   blocks,
   loading,
@@ -159,6 +168,32 @@ export function AgendaResults({
   // flat-row container, while keyboard arrow keys still target the
   // outer `listRef`.
   const scrollParentRef = useRef<HTMLDivElement>(null)
+  // Below `md` the list has no scroller of its own (#5927): a box nested in
+  // the page's scroll trapped the swipe and kept the header pinned. The
+  // virtualizer windows against App's main scroller instead, offset by where
+  // the list sits in it.
+  const isMobile = useIsMobile()
+  const [listEl, setListEl] = useState<HTMLUListElement | null>(null)
+  const [listOffset, setListOffset] = useState(0)
+  useLayoutEffect(() => {
+    const scroller = MAIN_SCROLLER.current
+    if (!isMobile || listEl == null || scroller == null) return
+    const measure = () =>
+      setListOffset(
+        Math.round(
+          listEl.getBoundingClientRect().top -
+            scroller.getBoundingClientRect().top +
+            scroller.scrollTop,
+        ),
+      )
+    measure()
+    // Anything above the list that changes height (the filter bar, the
+    // notice) resizes the scroller's content.
+    const observer = new ResizeObserver(measure)
+    observer.observe(scroller.firstElementChild ?? scroller)
+    return () => observer.disconnect()
+  }, [isMobile, listEl])
+  const scrollMargin = isMobile ? listOffset : 0
 
   // Sort once for the flat (no-group) display path. The grouping helpers
   // (groupByDate / groupByPriority / groupByState / groupByPage) all re-sort
@@ -272,7 +307,8 @@ export function AgendaResults({
     headerHeight: 36,
     itemHeight: 56,
     focusedIndex,
-    scrollParentRef,
+    scrollParentRef: isMobile ? MAIN_SCROLLER : scrollParentRef,
+    scrollMargin,
   })
 
   // ── Error state (#1345) ────────────────────────────────────────────
@@ -368,7 +404,7 @@ export function AgendaResults({
           top: 0,
           left: 0,
           width: '100%',
-          transform: `translateY(${virtualRow.start}px)`,
+          transform: `translateY(${virtualRow.start - scrollMargin}px)`,
         }}
         content={block.content}
         // Metadata primitives — rendered by `BlockListItem`'s internal
@@ -397,6 +433,78 @@ export function AgendaResults({
 
   const virtualItems = virtualizer.getVirtualItems()
   const totalSize = virtualizer.getTotalSize()
+
+  /* Virtualized list (perf-review Tier 2 #6, 2026-05-14).
+  Headers + items are interleaved as flat virtual rows so the
+  virtualizer can drop offscreen subtrees entirely; this
+  replaces the previous nested `groups.map(group => group.blocks.map(item))`
+  tree-walk.
+
+  `BlockListItem` renders an `<li>` directly, so each virtual
+  row uses `<li>` (item rows) or `<li role="presentation">`
+  (group-header rows) under a single `<ul>` parent. This
+  keeps the listitem axe rule happy in both flat and grouped
+  modes without re-wrapping `BlockListItem` in an extra `<li>`
+  (which would also have failed the rule for nested `<li>`s). */
+  const resultsList = (
+    <ul
+      ref={setListEl}
+      className="agenda-results-list relative m-0 p-0 list-none"
+      aria-label={t('agenda.agendaResults')}
+      style={{ height: `${totalSize}px` }}
+    >
+      {virtualItems.map((virtualRow) => {
+        const row = virtualRows[virtualRow.index]
+        if (!row) return null
+        const rowStyle: React.CSSProperties = {
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+        }
+        if (row.kind === 'group-header') {
+          const i18nKey = groupI18nKey(row.group, GROUP_I18N)
+          const displayLabel = i18nKey ? t(i18nKey) : row.group.label
+          return (
+            // Group headers ride a `<li>` so they're a valid
+            // child of the surrounding `<ul>` (axe's `list` rule
+            // rejects non-`<li>` children, and `role="presentation"`
+            // on the `<li>` would also fail because it strips
+            // the listitem role — see the inline `<h2>` below
+            // which is what screen readers should land on; h2 because the
+            // Journal h1 is the only heading above it, and axe's
+            // heading-order rule rejects an h1 -> h3 jump).
+            <li
+              key={virtualRow.key}
+              data-index={virtualRow.index}
+              ref={virtualizer.measureElement}
+              style={rowStyle}
+              className="agenda-group"
+            >
+              <SectionGroupHeader
+                asChild
+                className={cn('agenda-group-header', row.group.className)}
+              >
+                <h2 data-testid="agenda-group-header">
+                  {displayLabel}
+                  <span className="ml-1.5 text-muted-foreground font-normal">
+                    ({row.group.blocks.length})
+                  </span>
+                </h2>
+              </SectionGroupHeader>
+            </li>
+          )
+        }
+        // `BlockListItem` IS a `<li>`. Pass the virtualizer's
+        // positioning style + ref + data-index through `liRef` /
+        // `style` / `dataIndex` so the row is a direct child of
+        // the `<ul>` (no nested-`<li>` HTML violation, exactly
+        // one listitem-roled element per row).
+        return renderItem(row.item, row.flatItemIndex, virtualRow)
+      })}
+    </ul>
+  )
 
   return (
     <BatchPropertiesProvider blockIds={allBlockIds} invalidationKey={batchInvalidationKey}>
@@ -458,93 +566,30 @@ export function AgendaResults({
               </div>
             )}
 
-            {/* Virtualized list (perf-review Tier 2 #6, 2026-05-14).
-            Headers + items are interleaved as flat virtual rows so the
-            virtualizer can drop offscreen subtrees entirely; this
-            replaces the previous nested `groups.map(group => group.blocks.map(item))`
-            tree-walk.
-
-            `BlockListItem` renders an `<li>` directly, so each virtual
-            row uses `<li>` (item rows) or `<li role="presentation">`
-            (group-header rows) under a single `<ul>` parent. This
-            keeps the listitem axe rule happy in both flat and grouped
-            modes without re-wrapping `BlockListItem` in an extra `<li>`
-            (which would also have failed the rule for nested `<li>`s). */}
-            <ScrollArea
-              viewportRef={scrollParentRef}
-              // pr-2.5 reserves room for the classic 10px scrollbar gutter so a
-              // focused/selected row's full rounded border (the right side in
-              // particular) renders inside the viewport instead of being clipped
-              // under the scrollbar. The `<ul>` is a block child of the viewport,
-              // so this right padding narrows the `width:100%` absolute rows with
-              // it — keeping all four border sides visible.
-              // The vertical budget grows by the notice's own height when the
-              // notice is shown. Without this the notice pushes `LoadMoreButton`
-              // — the exact control its copy tells the user to press — further
-              // down the page, which is self-defeating. Nothing is clipped either
-              // way (`App.tsx` wraps the main content in a scroller), so this is
-              // about keeping the button where the user last saw it.
-              viewportClassName={`agenda-results-scroll pr-2.5 ${
-                hasMore ? 'max-h-[calc(100dvh-300px)]' : 'max-h-[calc(100dvh-260px)]'
-              }`}
-            >
-              <ul
-                className="agenda-results-list relative m-0 p-0 list-none"
-                aria-label={t('agenda.agendaResults')}
-                style={{ height: `${totalSize}px` }}
+            {isMobile ? (
+              resultsList
+            ) : (
+              <ScrollArea
+                viewportRef={scrollParentRef}
+                // pr-2.5 reserves room for the classic 10px scrollbar gutter so a
+                // focused/selected row's full rounded border (the right side in
+                // particular) renders inside the viewport instead of being clipped
+                // under the scrollbar. The `<ul>` is a block child of the viewport,
+                // so this right padding narrows the `width:100%` absolute rows with
+                // it — keeping all four border sides visible.
+                // The vertical budget grows by the notice's own height when the
+                // notice is shown. Without this the notice pushes `LoadMoreButton`
+                // — the exact control its copy tells the user to press — further
+                // down the page, which is self-defeating. Nothing is clipped either
+                // way (`App.tsx` wraps the main content in a scroller), so this is
+                // about keeping the button where the user last saw it.
+                viewportClassName={`agenda-results-scroll pr-2.5 ${
+                  hasMore ? 'max-h-[calc(100dvh-300px)]' : 'max-h-[calc(100dvh-260px)]'
+                }`}
               >
-                {virtualItems.map((virtualRow) => {
-                  const row = virtualRows[virtualRow.index]
-                  if (!row) return null
-                  const rowStyle: React.CSSProperties = {
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    transform: `translateY(${virtualRow.start}px)`,
-                  }
-                  if (row.kind === 'group-header') {
-                    const i18nKey = groupI18nKey(row.group, GROUP_I18N)
-                    const displayLabel = i18nKey ? t(i18nKey) : row.group.label
-                    return (
-                      // Group headers ride a `<li>` so they're a valid
-                      // child of the surrounding `<ul>` (axe's `list` rule
-                      // rejects non-`<li>` children, and `role="presentation"`
-                      // on the `<li>` would also fail because it strips
-                      // the listitem role — see the inline `<h2>` below
-                      // which is what screen readers should land on; h2 because the
-                      // Journal h1 is the only heading above it, and axe's
-                      // heading-order rule rejects an h1 -> h3 jump).
-                      <li
-                        key={virtualRow.key}
-                        data-index={virtualRow.index}
-                        ref={virtualizer.measureElement}
-                        style={rowStyle}
-                        className="agenda-group"
-                      >
-                        <SectionGroupHeader
-                          asChild
-                          className={cn('agenda-group-header', row.group.className)}
-                        >
-                          <h2 data-testid="agenda-group-header">
-                            {displayLabel}
-                            <span className="ml-1.5 text-muted-foreground font-normal">
-                              ({row.group.blocks.length})
-                            </span>
-                          </h2>
-                        </SectionGroupHeader>
-                      </li>
-                    )
-                  }
-                  // `BlockListItem` IS a `<li>`. Pass the virtualizer's
-                  // positioning style + ref + data-index through `liRef` /
-                  // `style` / `dataIndex` so the row is a direct child of
-                  // the `<ul>` (no nested-`<li>` HTML violation, exactly
-                  // one listitem-roled element per row).
-                  return renderItem(row.item, row.flatItemIndex, virtualRow)
-                })}
-              </ul>
-            </ScrollArea>
+                {resultsList}
+              </ScrollArea>
+            )}
 
             {/* Load more */}
             <LoadMoreButton
