@@ -5311,6 +5311,59 @@ async fn undo_page_group_reverts_multi_op_group_newest_first() {
     mat.shutdown();
 }
 
+/// #5898 — deleting keys the block never held, a freeform one and a
+/// column-backed one, appends nothing, so the page's undo group still reverts
+/// the edit beside them. Each delete used to append an op whose reverse is
+/// `NotFound`, aborting the whole group.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_group_survives_deleting_absent_properties() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        OTHER_DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
+        .await
+        .unwrap();
+    for key in ["effort", "due_date"] {
+        let deleted =
+            delete_property_inner(&pool, DEV, &mat, created.id.as_str().into(), key.into())
+                .await
+                .unwrap();
+        assert_eq!(deleted, Vec::<String>::new(), "{key}: nothing was deleted");
+    }
+    settle(&mat).await;
+
+    let results = undo_page_group_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        0,
+        1_000_000,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    assert_eq!(results.len(), 1, "the group is the edit alone");
+    assert_eq!(results[0].reversed_op_type, "edit_block");
+    let after = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    assert_eq!(after.content, Some("v0".into()));
+
+    mat.shutdown();
+}
+
 /// A single-op group degenerates to one reverse (the batch command is a
 /// drop-in for the old single `undo_page_op`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

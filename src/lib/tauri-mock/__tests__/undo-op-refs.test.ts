@@ -8,8 +8,8 @@
  *    `remove_tag`) returns the ref(s) of the op-log row(s) it appended
  *    (`WithOps` wire shape). Idempotent tag no-ops (mock-only leniency, kept
  *    for the `tag_add_remove` conformance fixture — the REAL command rejects
- *    them) surface `op_refs: []`; a no-prior `delete_property` appends its op
- *    and surfaces the ref, exactly like the backend;
+ *    them) surface `op_refs: []`, as does a `delete_property` of a key the
+ *    block does not hold (#5898), exactly like the backend;
  *  - `undo_op` reverses EXACTLY the referenced op — newer ops landing after
  *    capture cannot shift the target (the #2446 race the migration kills);
  *  - the reject rules mirror `undo_op_inner`: unknown ref → `not_found`;
@@ -74,6 +74,30 @@ function rowOf(id: string): Record<string, unknown> {
   const b = blocks.get(id)
   if (!b) throw new Error(`block ${id} missing`)
   return b
+}
+
+/**
+ * Give `blockId` an `effort` property no op wrote: the block holds it, but the
+ * log has no `set_property` to restore. Conformance seeds cannot build this
+ * (both runners seed properties through `set_property`).
+ */
+function seedPropertyWithoutOp(blockId: string): void {
+  properties.set(
+    blockId,
+    new Map([
+      [
+        'effort',
+        {
+          key: 'effort',
+          value_text: '2h',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        },
+      ],
+    ]),
+  )
 }
 
 /** Run `fn` and return the AppError-shaped rejection it throws. */
@@ -181,7 +205,7 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     }
   })
 
-  it('delete_property echoes (block_id, key) + op_refs; a no-prior delete still surfaces its ref but is not undoable', () => {
+  it('delete_property echoes (block_id, key) + op_refs; a delete of an absent key appends nothing', () => {
     dispatch('set_property', {
       blockId: A,
       key: 'effort',
@@ -202,15 +226,44 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     expect(opLog.length).toBe(opCount + 1)
 
     // Second delete: the property no longer exists. Backend parity
-    // (`delete_property_core`): the op is STILL appended and its ref is
-    // STILL surfaced — but undoing it fails, because there is no prior
-    // `set_property` to restore (`build_reverse_delete_property` → NotFound).
+    // (`delete_property_core`, #5898): nothing is appended and no ref surfaces.
     const again = dispatch('delete_property', { blockId: A, key: 'effort' }) as WithOpsResp
-    expect(again.op_refs).toHaveLength(1)
-    expect(opLog.length).toBe(opCount + 2)
-    const err = captureRejection(() => dispatch('undo_op', { opRef: again.op_refs[0] }))
+    expect(again.op_refs).toEqual([])
+    expect(opLog.length).toBe(opCount + 1)
+  })
+
+  it('deleting a property no op wrote appends its op, but undoing it is not_found', () => {
+    // Held, so it appends; but no `set_property` is in the log to restore
+    // (`build_reverse_delete_property` → NotFound).
+    seedPropertyWithoutOp(A)
+
+    const del = dispatch('delete_property', { blockId: A, key: 'effort' }) as WithOpsResp
+    expect(del.op_refs).toHaveLength(1)
+    const err = captureRejection(() => dispatch('undo_op', { opRef: del.op_refs[0] }))
     expect(err.kind).toBe('not_found')
     expect(err.message).toMatch(/no prior set_property/)
+  })
+
+  it('restore_page_to_op refuses a priorless delete_property before it reverts anything', () => {
+    // A newer edit sits ABOVE the offender, so a check made op-by-op would
+    // revert it before refusing; the backend computes the whole reverse batch
+    // first (`compute_reverse_batch`), so nothing is written.
+    const target = dispatch('edit_block', { blockId: B, toText: 'target' }) as WithOpsResp
+    seedPropertyWithoutOp(A)
+    dispatch('delete_property', { blockId: A, key: 'effort' })
+    dispatch('edit_block', { blockId: B, toText: 'after' })
+    const opCount = opLog.length
+
+    const err = captureRejection(() =>
+      dispatch('restore_page_to_op', {
+        pageId: PAGE,
+        targetDeviceId: target.op_refs[0]?.device_id,
+        targetSeq: target.op_refs[0]?.seq,
+      }),
+    )
+    expect(err.kind).toBe('not_found')
+    expect(rowOf(B)['content']).toBe('after')
+    expect(opLog.length).toBe(opCount)
   })
 
   it('add_tag / remove_tag repeats surface empty op_refs (idempotent no-op)', () => {

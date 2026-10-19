@@ -2198,9 +2198,9 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
 }
 
 /**
- * Backend parity: the real command appends a `delete_property` op even when
- * the property never existed, but reversing that op is impossible — there is
- * no prior `set_property` to restore. `build_reverse_delete_property`
+ * Backend parity: a `delete_property` with no prior `set_property` in the log
+ * (a property seeded without one) cannot be reversed — there is nothing to
+ * restore. `build_reverse_delete_property`
  * (agaric-engine `reverse/batch.rs`) surfaces that as `NotFound`, and
  * `is_skippable_non_reversible` matches only `NonReversible`, so it is NOT
  * skipped: it aborts the whole batch.
