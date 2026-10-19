@@ -1147,15 +1147,15 @@ export async function pageSourceClipboard(
 
 /**
  * Click the source editor's button whose text holds `name` (Save reads
- * `Save (2 changes)` once the buffer changed; the buffer sits in TipTap's own
- * wrapper, inside the div that also holds its toolbar), then move the pointer
+ * `Save (2 changes)` once the buffer changed; Save and Cancel sit beside the
+ * Edit / Preview / Changes tabs, not inside them), then move the pointer
  * off it. The "Markdown saved" toast slides in under a pointer left on Save,
  * WebKit reports that as the pointer entering it, and sonner then expands the
  * stack and holds every toast open: two saves later the stack covers Save and
  * Cancel for good.
  */
 export async function clickPageSourceButton(name: string): Promise<void> {
-  const button = $(PAGE_SOURCE).parentElement().parentElement().parentElement().$(`button*=${name}`)
+  const button = $(PAGE_SOURCE).$('./ancestor::*[@data-slot="tabs"]/..').$(`button*=${name}`)
   await button.waitForClickable({ timeout: ACTION_TIMEOUT })
   await button.click()
   await browser.action('pointer').move({ x: 2, y: 2, origin: 'viewport' }).perform()
