@@ -50,7 +50,7 @@ export function isInsideEditableText(target: EventTarget | null): boolean {
   )
 }
 
-function linkUrlAt(target: EventTarget | null): string | undefined {
+export function linkUrlAt(target: EventTarget | null): string | undefined {
   if (!(target instanceof Element)) return undefined
   const linkEl = target.closest('.external-link')
   return linkEl

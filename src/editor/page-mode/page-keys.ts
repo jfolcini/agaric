@@ -84,7 +84,7 @@ export const splitPageBlock: Command = (state, dispatch) => {
 }
 
 /** The page's blocks as the flat tree block mode's tree operations read (`block-tree-ops.ts`). */
-function treeRows(doc: PMNode): TreeItem[] {
+export function treeRows(doc: PMNode): TreeItem[] {
   const rows: TreeItem[] = []
   const atDepth: string[] = []
   doc.forEach((node) => {
@@ -97,7 +97,7 @@ function treeRows(doc: PMNode): TreeItem[] {
 }
 
 /** The blocks the selection spans, none under another of them: the ones Tab and Shift+Tab move. */
-function selectedRoots(state: EditorState, rows: readonly TreeItem[]): string[] {
+export function selectedRoots(state: EditorState, rows: readonly TreeItem[]): string[] {
   const { doc, selection } = state
   const first = doc.resolve(selection.from).index(0)
   const last = doc.resolve(selection.to).index(0)
@@ -113,7 +113,7 @@ function selectedRoots(state: EditorState, rows: readonly TreeItem[]): string[] 
  * depth changed gets its new depth as an attribute. Never more than that, so
  * an undo rebased past a change made elsewhere does not bring back copies.
  */
-function applyRows(tr: Transaction, rows: readonly TreeItem[]): void {
+export function applyRows(tr: Transaction, rows: readonly TreeItem[]): void {
   const now = treeRows(tr.doc)
   let i = 0
   while (i < rows.length && now[i]?.id === rows[i]?.id) i += 1
@@ -135,61 +135,72 @@ function applyRows(tr: Transaction, rows: readonly TreeItem[]): void {
 }
 
 /**
- * Tab: each selected block, with the blocks under it, moves in under the
+ * Each of the blocks `pick` names, with the blocks under it, moves in under the
  * sibling before it, as block mode's `indent` does: nothing past the backend's
  * deepest level, and a block with no sibling before it stays.
  */
-export const indentBlocks: Command = (state, dispatch) => {
-  const tr = state.tr
-  const ends = selectionEnds(state.doc, state.selection)
-  let moved = false
-  for (const id of selectedRoots(state, treeRows(state.doc))) {
-    const rows = treeRows(tr.doc)
-    const prevSibling = findPrevSiblingAt(
-      rows,
-      rows.findIndex((row) => row.id === id),
-    )
-    if (prevSibling === null) continue
-    if (indentTooDeep(rows, id, prevSibling)) {
-      if (dispatch) notify.error(t('error.maxNestingReached'), { id: 'max-nesting-reached' })
-      break
+export const indentIds =
+  (pick: (state: EditorState) => string[]): Command =>
+  (state, dispatch) => {
+    const tr = state.tr
+    const ends = selectionEnds(state.doc, state.selection)
+    let moved = false
+    for (const id of pick(state)) {
+      const rows = treeRows(tr.doc)
+      const prevSibling = findPrevSiblingAt(
+        rows,
+        rows.findIndex((row) => row.id === id),
+      )
+      if (prevSibling === null) continue
+      if (indentTooDeep(rows, id, prevSibling)) {
+        if (dispatch) notify.error(t('error.maxNestingReached'), { id: 'max-nesting-reached' })
+        break
+      }
+      applyRows(tr, computeIndentedBlocks(rows, id, prevSibling))
+      moved = true
     }
-    applyRows(tr, computeIndentedBlocks(rows, id, prevSibling))
-    moved = true
+    if (dispatch) {
+      announce(t(moved ? 'announce.blockIndented' : 'announce.moveFailed'))
+      if (moved) dispatch(restoreSelection(tr, ends).scrollIntoView())
+    }
+    return true
   }
-  if (dispatch) {
-    announce(t(moved ? 'announce.blockIndented' : 'announce.moveFailed'))
-    if (moved) dispatch(restoreSelection(tr, ends).scrollIntoView())
-  }
-  return true
-}
+
+/** Tab: the selected blocks (`indentIds`). */
+export const indentBlocks = indentIds((state) => selectedRoots(state, treeRows(state.doc)))
 
 /**
- * Shift+Tab: each selected block, with the blocks under it, moves out to just
+ * Each of the blocks `pick` names, with the blocks under it, moves out to just
  * after its parent's blocks, as block mode's `dedent` does (#400): the blocks
- * that followed it under the parent stay there.
+ * that followed it under the parent stay there. Last first, so a run of
+ * siblings keeps its order.
  */
-export const outdentBlocks: Command = (state, dispatch) => {
-  const tr = state.tr
-  const ends = selectionEnds(state.doc, state.selection)
-  let moved = false
-  for (const id of selectedRoots(state, treeRows(state.doc)).toReversed()) {
-    const rows = treeRows(tr.doc)
-    const parentId = rows.find((row) => row.id === id)?.parent_id ?? null
-    if (parentId === null) continue
-    const grandparent = rows.find((row) => row.id === parentId)?.parent_id ?? null
-    applyRows(tr, computeDedentedBlocks(rows, id, parentId, grandparent))
-    moved = true
+export const outdentIds =
+  (pick: (state: EditorState) => string[]): Command =>
+  (state, dispatch) => {
+    const tr = state.tr
+    const ends = selectionEnds(state.doc, state.selection)
+    let moved = false
+    for (const id of pick(state).toReversed()) {
+      const rows = treeRows(tr.doc)
+      const parentId = rows.find((row) => row.id === id)?.parent_id ?? null
+      if (parentId === null) continue
+      const grandparent = rows.find((row) => row.id === parentId)?.parent_id ?? null
+      applyRows(tr, computeDedentedBlocks(rows, id, parentId, grandparent))
+      moved = true
+    }
+    if (dispatch) {
+      announce(t(moved ? 'announce.blockDedented' : 'announce.moveFailed'))
+      if (moved) dispatch(restoreSelection(tr, ends).scrollIntoView())
+    }
+    return true
   }
-  if (dispatch) {
-    announce(t(moved ? 'announce.blockDedented' : 'announce.moveFailed'))
-    if (moved) dispatch(restoreSelection(tr, ends).scrollIntoView())
-  }
-  return true
-}
+
+/** Shift+Tab: the selected blocks (`outdentIds`). */
+export const outdentBlocks = outdentIds((state) => selectedRoots(state, treeRows(state.doc)))
 
 /** Backspace at the start of a block's first textblock: join it to the text before. */
-const joinBackward: Command = (state, dispatch, view) => {
+export const joinBackward: Command = (state, dispatch, view) => {
   const { $from, empty } = state.selection
   if (!empty || !inOwnTextblock($from) || $from.parentOffset !== 0 || $from.index(1) !== 0) {
     return false

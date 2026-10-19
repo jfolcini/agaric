@@ -99,11 +99,13 @@ import {
   usePageSlashCommands,
 } from '@/editor/page-mode/page-slash-commands'
 import type { PageTaskActions } from '@/editor/page-mode/page-tasks'
+import { PageBlockMenu } from '@/editor/page-mode/PageBlockMenu'
 import { applyRemote } from '@/editor/page-mode/remote-patch'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
+import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
@@ -126,6 +128,9 @@ import { useSpaceStore } from '@/stores/space'
 
 const BlockDatePicker = lazy(() =>
   import('@/components/block-tree/BlockDatePicker').then((m) => ({ default: m.BlockDatePicker })),
+)
+const BlockHistorySheet = lazy(() =>
+  import('@/components/editor/BlockHistorySheet').then((m) => ({ default: m.BlockHistorySheet })),
 )
 const BlockPropertyDrawer = lazy(() =>
   import('@/components/editor/BlockPropertyDrawer').then((m) => ({
@@ -331,6 +336,8 @@ function PageModeDocument({
       command: (item: PickerItem) => void
       /** `/attach`'s file: attached, as block mode's `/attach` attaches it, never put in the text. */
       attachPicked: (id: string, files: File[]) => void
+      /** The block menu's History, once the block is saved. */
+      openHistory: (id: string) => void
     }
   >({
     cycle: () => {},
@@ -348,15 +355,18 @@ function PageModeDocument({
     setListStyle: () => {},
     command: () => {},
     attachPicked: () => {},
+    openHistory: () => {},
   })
   const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)
+  const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
+  const openInBackgroundTab = useOpenInBackgroundTab()
   // Block mode's chip navigation: another page opens; a block of this page takes the cursor.
   const noRovingEditor = useRef<RovingEditorHandle | null>(null)
   const handleFlushRef = useRef(() => {
     void flushRef.current()
     return null
   })
-  const { handleNavigateRef } = useBlockNavigateToLink({
+  const { handleNavigate, handleNavigateRef } = useBlockNavigateToLink({
     rovingEditorRef: noRovingEditor,
     handleFlushRef,
     pageStore,
@@ -651,6 +661,11 @@ function PageModeDocument({
           setDrawerBlockId(id)
           return Promise.resolve()
         }),
+      openHistory: (id) =>
+        void afterSave(id, () => {
+          setHistoryBlockId(id)
+          return Promise.resolve()
+        }),
       // Read again in turn with the saves: the page, its properties among it.
       propertiesEdited: () => {
         readAgain()
@@ -847,6 +862,16 @@ function PageModeDocument({
       </BlockResolversProvider>
       {/* Block mode's own: the marks and the link on a selection, and Ctrl+K. */}
       {editor !== null && <SelectionBubbleMenu editor={editor} />}
+      <PageBlockMenu
+        editor={editor}
+        pageId={pageId}
+        pageStore={pageStore}
+        actions={actions}
+        onOpenLinkInNewTab={
+          openInBackgroundTab &&
+          ((id) => void handleNavigate(id, (page, title) => openInBackgroundTab(page, title ?? '')))
+        }
+      />
       {datePickerOpen && (
         <Suspense fallback={null}>
           <BlockDatePicker
@@ -869,6 +894,19 @@ function PageModeDocument({
             onOpenChange={(open) => {
               if (open) return
               setDrawerBlockId(null)
+              actions.current.propertiesEdited()
+            }}
+          />
+        </Suspense>
+      )}
+      {historyBlockId !== null && (
+        <Suspense fallback={null}>
+          <BlockHistorySheet
+            blockId={historyBlockId}
+            open
+            onOpenChange={(open) => {
+              if (open) return
+              setHistoryBlockId(null)
               actions.current.propertiesEdited()
             }}
           />

@@ -92,7 +92,7 @@ export interface PageTaskActions {
   openDateLinkPicker: () => void
   /** Open block mode's property drawer on block `id`. */
   openPropertyDrawer: (id: string) => void
-  /** A property editor or the drawer closed: read the page's properties again. */
+  /** A property editor, the drawer or the history sheet closed: read the page's properties again. */
   propertiesEdited: () => void
   /** An attachment was deleted, renamed or added: read the page's attachments again. */
   attachmentsChanged: () => void
