@@ -33,3 +33,12 @@ Ran: vitest (the full suite, then the 30 affected files), every Pages,
 History, Agenda, Due, Graph, Trash, batch, mobile, touch, toolbar, page-mode
 and journal Playwright spec (776), `npm run typecheck`, `oxlint src e2e`, and
 `journal-template-quick-capture.e2e.ts` on the real backend for the button.
+
+CI then went red on `settings-phone.spec.ts`: the button never came back after
+the scroll up. Opening the Settings tab picker scrolled its own list, and that
+hid the button, so the spec's hidden check passed before the view's scroll
+event fired; on a busy runner the scroll down and the 16 px scroll up then
+reached the page as one event, still a scroll down. The button now listens
+only to scrolls inside `#main-content`, so a popup's list leaves it alone and
+the hidden check waits for the view's own event. A unit test pins the popup
+case; it went red with the scope check removed.
