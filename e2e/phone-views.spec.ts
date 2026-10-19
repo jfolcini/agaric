@@ -148,7 +148,9 @@ test.describe('Phone views at 360 × 780 (#5932) @mobile @pages @journal @graph'
     // Back to a scrolled screen restores its position, which is not a scroll down.
     await navigateToView(page, 'Pages')
     await expect(fab).toBeVisible()
-    await page.getByRole('button', { name: 'Back', exact: true }).click()
+    // A phone goes back with the system gesture, which the header's Back button
+    // (hidden below `md`, #5926) stands in for here: same `goBack`.
+    await page.locator('button[aria-label="Back"]').dispatchEvent('click')
     await expect
       .poll(() => page.evaluate(() => document.getElementById('main-content')?.scrollTop))
       .toBeGreaterThan(0)
