@@ -134,7 +134,7 @@ describe('Sheet a11y', () => {
 // ---------------------------------------------------------------------------
 
 describe('SheetContent base classes', () => {
-  it('SheetContent is `flex flex-col overflow-hidden p-6` so SheetBody can constrain its height', () => {
+  it('SheetContent is `flex flex-col overflow-hidden` on the 16/24 px gutter so SheetBody can constrain its height', () => {
     render(
       <Sheet open>
         <SheetContent aria-describedby={undefined}>
@@ -145,7 +145,7 @@ describe('SheetContent base classes', () => {
       </Sheet>,
     )
     const dialog = screen.getByRole('dialog')
-    expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-6')
+    expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-4', 'sm:p-6')
   })
 
   it.each(['top', 'bottom'] as const)(
@@ -242,7 +242,7 @@ describe('SheetBody', () => {
     // assert the height contract.
     const scrollRoot = child.closest('[data-slot="sheet-body"]')
     expect(scrollRoot).not.toBeNull()
-    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-6')
+    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-4', 'sm:-mx-6')
   })
 
   it('viewport carries the shared gutter and Radix width workaround classes', () => {
@@ -261,7 +261,7 @@ describe('SheetBody', () => {
     const child = screen.getByTestId('body-child')
     const viewport = child.closest('[data-slot="scroll-area-viewport"]')
     expect(viewport).not.toBeNull()
-    expect(viewport).toHaveClass('px-6', '[&>div]:!block')
+    expect(viewport).toHaveClass('px-4', 'sm:px-6', '[&>div]:!block')
   })
 
   it('SheetBody forwards ref to the ScrollArea root', () => {

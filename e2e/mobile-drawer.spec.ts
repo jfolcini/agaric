@@ -29,8 +29,22 @@ test('the drawer opens from the header button, not from a left-edge swipe @mobil
   await expect(drawer).toHaveCount(0)
   await expect(page.getByTestId('sidebar-swipe-hint')).toHaveCount(0)
 
+  // The swipe starts in the gutter beside the day heading, on nothing that
+  // takes touches itself: block rows hang into the gutter (#5929).
+  const heading = page.getByRole('heading', { level: 1 }).first()
+  await expect(heading).toBeVisible()
+  const box = await heading.boundingBox()
+  const y = Math.round((box?.y ?? 0) + (box?.height ?? 0) / 2)
+  const startsOnControl = await page.evaluate(
+    (at) =>
+      document
+        .elementFromPoint(5, at)
+        ?.closest('[data-testid="sortable-block"], button, a, [role="button"]') != null,
+    y,
+  )
+  expect(startsOnControl, 'swipe start lands on a control').toBe(false)
+
   const cdp = await page.context().newCDPSession(page)
-  const y = 400
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 5, y }] })
   for (const x of [25, 45, 65, 85, 105]) {
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] })

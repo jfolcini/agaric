@@ -12,12 +12,14 @@ import { cn } from '@/lib/utils'
 // PERF: hoisted from an inline string in render — twMerge then only re-parses
 // the caller's `className` rather than this whole base on every render.
 //
-// `flex flex-col overflow-hidden p-6` is baked into the base so consumers
-// can drop a `<SheetBody>` slot and get a properly height-constrained
+// `flex flex-col overflow-hidden` and the padding are baked into the base so
+// consumers can drop a `<SheetBody>` slot and get a properly height-constrained
 // scrollable region without re-stating padding / overflow at every call
-// site — mirrors the DialogContent shape in `./dialog-shared.ts`.
+// site — mirrors the DialogContent shape in `./dialog-shared.ts`. Below `sm`
+// the padding is the app's 16 px phone gutter (`App.tsx`), so a sheet's text
+// starts where the view's does. A consumer overriding it overrides `sm:` too.
 const SHEET_CONTENT_BASE =
-  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-popover text-popover-foreground outline-none p-6 shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
+  'fixed z-50 flex flex-col overflow-hidden gap-4 bg-popover text-popover-foreground outline-none p-4 sm:p-6 shadow-(--shadow-overlay) transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-moderate data-[state=open]:animate-in data-[state=open]:duration-moderate'
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -113,7 +115,10 @@ const SheetContent = ({
         {showCloseButton && (
           <SheetPrimitive.Close
             data-slot="sheet-close"
-            className={cn(closeButtonClassName, 'data-[state=open]:bg-secondary')}
+            className={cn(
+              closeButtonClassName,
+              'top-4 right-4 sm:top-6 sm:right-6 data-[state=open]:bg-secondary',
+            )}
           >
             <CloseButtonIcon />
           </SheetPrimitive.Close>
@@ -124,10 +129,9 @@ const SheetContent = ({
 }
 SheetContent.displayName = 'SheetContent'
 
-// Header/Footer dropped their own `p-4` when SheetContent gained `p-6`
-// (mirrors DialogHeader/DialogFooter, which also rely on DialogContent's
-// padding frame). Avoids the double-padding regression — the title now
-// sits at the same 24 px gutter as the SheetBody contents below.
+// Header/Footer carry no padding of their own (mirrors DialogHeader/
+// DialogFooter, which also rely on DialogContent's padding frame), so the
+// title sits on the same gutter as the SheetBody contents below.
 const SheetHeader = ({ ref, className, ...props }: React.ComponentProps<'div'>) => (
   <div
     ref={ref}
@@ -186,9 +190,9 @@ SheetDescription.displayName = 'SheetDescription'
  * Wraps children in a `ScrollArea` constrained to `flex-1 min-h-0` so it
  * shares the SheetContent's available height (everything not consumed by
  * the header/footer) instead of overflowing past the viewport. The
- * `-mx-6` + the shared viewport gutter class lets the scrollbar sit in
+ * negative margin + the viewport's matching padding lets the scrollbar sit in
  * the SheetContent's padding gutter while keeping the inner content
- * indented by the same 24 px the header uses — so left edges align.
+ * indented by the same gutter the header uses — so left edges align.
  *
  * Optional: pre-existing consumers that render their own ad-hoc body
  * wrappers continue to work since SheetContent's base padding/overflow
@@ -210,8 +214,8 @@ const SheetBody = ({ ref, className, children, dir, ...props }: SheetBodyProps) 
     // 'ltr' | 'rtl' (no `undefined` under exactOptionalPropertyTypes), so
     // forward it only when it's a valid direction.
     {...(dir === 'ltr' || dir === 'rtl' ? { dir } : {})}
-    className={cn('flex-1 min-h-0 -mx-6 -my-1', className)}
-    viewportClassName={DIALOG_BODY_VIEWPORT_CLASS}
+    className={cn('flex-1 min-h-0 -mx-4 sm:-mx-6 -my-1', className)}
+    viewportClassName={cn(DIALOG_BODY_VIEWPORT_CLASS, 'px-4 sm:px-6')}
     {...props}
   >
     <div className="space-y-4 min-w-0">{children}</div>

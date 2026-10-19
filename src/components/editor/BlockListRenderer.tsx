@@ -28,6 +28,7 @@ import { SortableBlockWrapper } from '@/components/editor/SortableBlockWrapper'
 import { Button } from '@/components/ui/button'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useExtraBlockProperties } from '@/hooks/useExtraBlockProperties'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { useListStyles } from '@/hooks/useListStyles'
 import { delegatedMiddleClickProps } from '@/hooks/useOpenInBackgroundTab'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
@@ -135,6 +136,7 @@ export function BlockListRenderer({
   onExpandMount,
 }: BlockListRendererProps): React.ReactElement {
   const { t } = useTranslation()
+  const isTouch = useIsTouch()
   const { onOpenLinkInNewTab } = useBlockActions()
   const linkMiddleClick = useMemo(
     () =>
@@ -345,8 +347,10 @@ export function BlockListRenderer({
               // depth-0 checkbox lines up with the heading above the tree. 54px
               // is `SortableBlock`'s lane (min-w-12) + gap-1 + the checkbox
               // button's p-0.5; the media query matches the pane's wider left
-              // padding in `App.tsx`, which makes room for it.
-              className="relative md:pointer-fine:-ml-13.5"
+              // padding in `App.tsx`, which makes room for it. Touch rows have
+              // no lane: what hangs is the row's gap-1 + the block's px-3, so
+              // block text lines up with the heading on the view's gutter.
+              className={cn('relative md:pointer-fine:-ml-13.5', isTouch && '-ml-4')}
             >
               {/* B4 (#290): faint indent-boundary guides during a drag so the
               20px DEAD_ZONE_PX reads as deliberate snap-to-grid and the indent

@@ -87,7 +87,8 @@ describe('HistorySheet', () => {
   })
 
   // block-history-sheet-fix-2026-05-14: body wrapper is now `<SheetBody>`
-  // (a ScrollArea with `flex-1 min-h-0 -mx-6 / viewportClassName="px-6"`)
+  // (a ScrollArea with `flex-1 min-h-0` and a negative margin matching its
+  // viewport's padding)
   // instead of the ad-hoc `<div className="mt-4 space-y-3 px-4 pb-4">`.
   // The new pattern aligns left edges with the SheetHeader and keeps the
   // LoadMoreButton at the bottom of the panel reachable on short windows.
@@ -99,7 +100,7 @@ describe('HistorySheet', () => {
     // slot, so query the body slot to reach the scroll container.
     const scrollRoot = panel.closest('[data-slot="sheet-body"]')
     expect(scrollRoot).not.toBeNull()
-    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-6')
+    expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-4', 'sm:-mx-6')
   })
 
   it('has no a11y violations when open', async () => {
