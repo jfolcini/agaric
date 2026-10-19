@@ -199,8 +199,9 @@ export function JournalCalendarDropdown({
     }
   }, [])
 
-  // Escape key closes the calendar
+  // Escape key closes the calendar; the bottom sheet closes itself on Escape.
   useEffect(() => {
+    if (isMobile) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -209,7 +210,7 @@ export function JournalCalendarDropdown({
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
+  }, [onClose, isMobile])
 
   // Check if calendar overflows viewport and flip above / shift horizontally
   useEffect(() => {

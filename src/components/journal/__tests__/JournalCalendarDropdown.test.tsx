@@ -224,6 +224,20 @@ describe('JournalCalendarDropdown on a phone (#5925)', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('closes once per Escape', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<Harness onClose={onClose} />)
+
+    await user.click(screen.getByRole('button', { name: /open calendar picker/i }))
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('has no a11y violations while open', async () => {
     const user = userEvent.setup()
     render(<Harness />)

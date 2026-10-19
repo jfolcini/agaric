@@ -19,6 +19,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   enterBlankSibling,
+  invoke,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -40,20 +41,6 @@ const HOLDER = runScopedMarker('wdio-pm-query-holder')
 const EMBEDDER = runScopedMarker('wdio-pm-embed-holder')
 // Letters, digits and `-` only, so the bare `#name` is the whole tag.
 const TAG = runScopedMarker('wdio-pm-query-tag')
-
-interface Internals {
-  __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-}
-
-/** Call the real backend as another surface does. */
-function invoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
-  return browser.execute(
-    (c: string, a: Record<string, unknown>) =>
-      (window as unknown as Internals).__TAURI_INTERNALS__.invoke(c, a),
-    cmd,
-    args,
-  ) as Promise<T>
-}
 
 /** The text of the embed block `blockId` draws, or null. */
 function embedOf(blockId: string): Promise<string | null> {

@@ -17,6 +17,7 @@
 import {
   NAV_TIMEOUT,
   enterBlankSibling,
+  invoke,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -29,20 +30,6 @@ import { PAGE_MODE, chooseEditMode, pageModeBlocks, pageModeIndexOf } from './pa
 const TASK = runScopedMarker('wdio-pm-attach-task')
 const NOTE = runScopedMarker('wdio-pm-attach-note')
 const PREVIEW = 'notes from the real backend'
-
-interface Internals {
-  __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-}
-
-/** Call the real backend as another surface does. */
-function invoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
-  return browser.execute(
-    (c: string, a: Record<string, unknown>) =>
-      (window as unknown as Internals).__TAURI_INTERNALS__.invoke(c, a),
-    cmd,
-    args,
-  ) as Promise<T>
-}
 
 /** The `textContent` of what `selector` matches inside block `blockId`, or null. */
 function textIn(blockId: string, selector: string): Promise<string | null> {

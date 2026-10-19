@@ -26,6 +26,7 @@ import {
   confirmDialog,
   enterBlankSibling,
   expectAbsent,
+  invoke,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -41,10 +42,6 @@ const SWITCHER = '[aria-label="Switch space"]'
 const PANEL = '[data-testid="settings-panel-spaces"]'
 const SEARCH_INPUT = '[aria-label="Search blocks"]'
 const SEARCH_STATUS = '[data-testid="search-results-count"]'
-
-interface Internals {
-  invoke: (cmd: string, args?: unknown) => Promise<unknown>
-}
 
 /** A Pages list row's title span (PageBrowser/PageRow.tsx), by exact title. */
 function pageRow(title: string): string {
@@ -187,13 +184,7 @@ async function waitForTagUsage(tag: string, count: number, what: string): Promis
 
 /** The OS window's title, asked of the window plugin (WebDriver's Get Title reads `document.title`). */
 function windowTitle(): Promise<string> {
-  return browser.execute(
-    () =>
-      (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__.invoke(
-        'plugin:window|title',
-        { label: 'main' },
-      ) as Promise<string>,
-  )
+  return invoke<string>('plugin:window|title', { label: 'main' })
 }
 
 async function waitForWindowTitle(expected: string): Promise<void> {

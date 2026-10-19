@@ -16,6 +16,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   addBlockWithMarker,
+  clipboardText,
   ctrlClick,
   navigateTo,
   runScopedMarker,
@@ -26,18 +27,6 @@ import {
 const TODAY = runScopedMarker('wdio-wek-today')
 const OTHER = runScopedMarker('wdio-wek-other')
 const EDITOR = '[data-testid="block-editor"]'
-
-/** Text the clipboard plugin holds, read the way the paste chord reads it. */
-async function clipboardText(): Promise<string> {
-  return await browser.execute(async () => {
-    const internals = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (cmd: string) => Promise<string | null> }
-      }
-    ).__TAURI_INTERNALS__
-    return (await internals.invoke('plugin:clipboard-manager|read_text')) ?? ''
-  })
-}
 
 /** The block row in day `day` (a `journal-YYYY-MM-DD` section id) holding `marker`. */
 function rowIn(day: string, marker: string) {

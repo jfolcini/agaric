@@ -25,6 +25,7 @@ import {
   blockStaticByMarker,
   chooseSelectOption,
   importMarkdownPage,
+  invoke,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -128,20 +129,6 @@ const LINKING_PAGE = runScopedMarker('wdio-backlinks-source')
 const LINKING_BLOCK = runScopedMarker('wdio-backlinks-linker')
 const QUERY_PAGE = runScopedMarker('wdio-backlinks-query')
 const QUERY_BLOCK = runScopedMarker('wdio-backlinks-holder')
-
-interface Internals {
-  __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-}
-
-/** Call the real backend as another surface does. */
-function invoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
-  return browser.execute(
-    (c: string, a: Record<string, unknown>) =>
-      (window as unknown as Internals).__TAURI_INTERNALS__.invoke(c, a),
-    cmd,
-    args,
-  ) as Promise<T>
-}
 
 /** Create page `title` holding one block `marker`; resolves to that block's id. */
 async function pageWithBlock(title: string, marker: string): Promise<string> {

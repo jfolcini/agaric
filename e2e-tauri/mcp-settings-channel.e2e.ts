@@ -27,6 +27,7 @@ import {
   blockStaticByMarker,
   confirmDialog,
   expectAbsent,
+  invoke,
   navigateTo,
   openEditHistory,
   openNewPage,
@@ -78,21 +79,11 @@ async function enableFromSettings(): Promise<string> {
 
 /** A read-write agent on every space, made through the app's own command; returns its token. */
 async function createAgent(name: string): Promise<string> {
-  const agent = await browser.execute(
-    (agentName: string) =>
-      (
-        window as unknown as {
-          __TAURI_INTERNALS__: {
-            invoke: (cmd: string, args: unknown) => Promise<{ token: string }>
-          }
-        }
-      ).__TAURI_INTERNALS__.invoke('create_mcp_agent', {
-        name: agentName,
-        mode: 'read_write',
-        spaceIds: null,
-      }),
+  const agent = await invoke<{ token: string }>('create_mcp_agent', {
     name,
-  )
+    mode: 'read_write',
+    spaceIds: null,
+  })
   return agent.token
 }
 

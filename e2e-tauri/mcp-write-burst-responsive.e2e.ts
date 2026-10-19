@@ -16,6 +16,7 @@ import {
   McpClient,
   NAV_TIMEOUT,
   blockStaticsByMarker,
+  invoke,
   reopenPageByTitle,
   runScopedMarker,
   waitForAppReady,
@@ -32,15 +33,6 @@ const IPC_ROUNDS = 100
 
 interface Internals {
   invoke: (cmd: string, args?: unknown) => Promise<unknown>
-}
-
-async function invoke<T>(cmd: string, args?: unknown): Promise<T> {
-  return browser.execute(
-    (c: string, a: unknown) =>
-      (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__.invoke(c, a),
-    cmd,
-    args,
-  ) as Promise<T>
 }
 
 function withinTimeout<T>(promise: Promise<T>, what: string): Promise<T> {

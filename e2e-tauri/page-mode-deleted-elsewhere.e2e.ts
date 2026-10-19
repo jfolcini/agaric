@@ -16,6 +16,7 @@
 import {
   NAV_TIMEOUT,
   enterBlankSibling,
+  invoke,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -36,9 +37,7 @@ interface Internals {
 
 /** Another surface deletes block `id` through the real IPC; nothing reloads the page. */
 async function deleteBlockElsewhere(id: string): Promise<void> {
-  await browser.execute(async (blockId: string) => {
-    await (window as unknown as Internals).__TAURI_INTERNALS__.invoke('delete_block', { blockId })
-  }, id)
+  await invoke('delete_block', { blockId: id })
 }
 
 /** `get_block`'s answer for block `id`, which it serves only live: `live`, or its error kind. */

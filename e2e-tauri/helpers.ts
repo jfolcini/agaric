@@ -1284,16 +1284,23 @@ export async function pickRepeatCommand(label: string): Promise<void> {
   await item.click()
 }
 
+/** Call the real backend as another surface does. */
+export function invoke<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
+  return browser.execute(
+    (c: string, a: Record<string, unknown>) =>
+      (
+        window as unknown as {
+          __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
+        }
+      ).__TAURI_INTERNALS__.invoke(c, a),
+    cmd,
+    args,
+  ) as Promise<T>
+}
+
 /** Text the clipboard plugin holds, read the way the paste chord reads it. */
 export async function clipboardText(): Promise<string> {
-  return await browser.execute(async () => {
-    const internals = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (cmd: string) => Promise<string | null> }
-      }
-    ).__TAURI_INTERNALS__
-    return (await internals.invoke('plugin:clipboard-manager|read_text')) ?? ''
-  })
+  return (await invoke<string | null>('plugin:clipboard-manager|read_text')) ?? ''
 }
 
 /**

@@ -18,6 +18,7 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  invoke,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -36,23 +37,9 @@ import {
 
 const ITEM = runScopedMarker('wdio-pm-list')
 
-interface Internals {
-  __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-}
-
 interface PropertyRow {
   key: string
   value_text: string | null
-}
-
-/** Call the real backend as another surface does. */
-function invoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
-  return browser.execute(
-    (c: string, a: Record<string, unknown>) =>
-      (window as unknown as Internals).__TAURI_INTERNALS__.invoke(c, a),
-    cmd,
-    args,
-  ) as Promise<T>
 }
 
 /** Block `blockId`'s stored list style, or null. */

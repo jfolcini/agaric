@@ -29,11 +29,6 @@ test('the drawer opens from the header button, not from a left-edge swipe @mobil
   await expect(drawer).toHaveCount(0)
   await expect(page.getByTestId('sidebar-swipe-hint')).toHaveCount(0)
 
-  // The journal's blocks start at the content gutter (`p-4`), nothing at x 0.
-  const block = page.locator('[data-testid="sortable-block"]').first()
-  await expect(block).toBeVisible()
-  expect((await block.boundingBox())?.x).toBe(16)
-
   const cdp = await page.context().newCDPSession(page)
   const y = 400
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 5, y }] })

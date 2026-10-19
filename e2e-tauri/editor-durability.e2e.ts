@@ -30,6 +30,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  invoke,
   navigateTo,
   openNewPage,
   pasteFileIntoFocusedBlock,
@@ -79,24 +80,6 @@ function tinyWav(): Buffer {
   header.write('data', 36)
   header.writeUInt32LE(samples.length, 40)
   return Buffer.concat([header, samples])
-}
-
-/** A backend command, called the way the app's bindings call it. */
-async function invoke<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
-  return (await browser.execute(
-    async (name: string, payload: Record<string, unknown>) => {
-      const internals = (
-        window as unknown as {
-          __TAURI_INTERNALS__: {
-            invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>
-          }
-        }
-      ).__TAURI_INTERNALS__
-      return await internals.invoke(name, payload)
-    },
-    cmd,
-    args,
-  )) as T
 }
 
 /** The `to_text` of every `edit_block` op the backend holds for `blockId`. */
