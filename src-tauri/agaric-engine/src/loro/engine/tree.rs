@@ -187,21 +187,8 @@ impl LoroEngine {
         }
         Ok(out)
     }
-    /// Whether any live tree node carries the legacy `position` meta — the
-    /// signature of a pre-#400 doc. New-scheme nodes (created via `create_at`)
-    /// never write `position`, so an all-new (or empty) doc returns `false`.
-    pub(super) fn any_node_has_legacy_position(&self) -> bool {
-        let tree = self.tree();
-        tree.get_nodes(false).into_iter().any(|n| {
-            tree.get_meta(n.id)
-                .ok()
-                .and_then(|m| m.get(FIELD_POSITION))
-                .is_some()
-        })
-    }
     /// Test-only: forge a genuine pre-#400 doc in place. Stamps each named
-    /// node's legacy [`FIELD_POSITION`] meta to the given value (so
-    /// [`Self::any_node_has_legacy_position`] is true) and removes the scheme
+    /// node's legacy [`FIELD_POSITION`] meta to the given value and removes the scheme
     /// marker (so [`Self::sibling_order_version`] reads 0). Lets a test create a
     /// doc whose tree (fractional) order disagrees with position order — the
     /// only shape that actually drives the migration reorder loop.
