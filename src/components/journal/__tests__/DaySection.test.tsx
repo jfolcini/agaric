@@ -297,16 +297,17 @@ describe('DaySection', () => {
     expect(hint.className).toContain('text-muted-foreground')
   })
 
-  // 9. Shows compact EmptyState w/ add-block CTA when no pageId and compact=true
-  it('shows compact EmptyState with add-block CTA when no pageId and compact=true', () => {
+  // 9. An empty day in a multi-day view is one row: the heading plus "+" (#5928)
+  it('renders an empty compact day as its heading row with an add-block button', () => {
     const entry = makeDayEntry({ pageId: null, displayDate: 'Sun, Jun 15, 2025' })
 
     render(<DaySection entry={entry} mode="weekly" compact onAddBlock={noop} />)
 
-    // Compact mode now uses the EmptyState primitive with an "Add block" action
-    expect(screen.getByTestId('empty-state')).toBeInTheDocument()
-    expect(screen.getByText(/No blocks for Sun, Jun 15, 2025/)).toBeInTheDocument()
-    expect(screen.getByText('Add block')).toBeInTheDocument()
+    expect(screen.queryByTestId('empty-state')).not.toBeInTheDocument()
+    // The empty-day sentence stays for screen readers only.
+    expect(screen.getByText(/No blocks for Sun, Jun 15, 2025/)).toHaveClass('sr-only')
+    const addBtn = screen.getByRole('button', { name: 'Add block' })
+    expect(addBtn.parentElement).toBe(screen.getByRole('heading').parentElement)
   })
 
   // 10. Calls onAddBlock when empty-state CTA clicked
@@ -331,9 +332,7 @@ describe('DaySection', () => {
 
     render(<DaySection entry={entry} mode="weekly" compact onAddBlock={onAddBlock} />)
 
-    // The compact button has "Add block" text
-    const addBtn = screen.getByText('Add block')
-    await user.click(addBtn)
+    await user.click(screen.getByRole('button', { name: 'Add block' }))
 
     expect(onAddBlock).toHaveBeenCalledWith('2025-06-15')
   })
@@ -762,6 +761,19 @@ describe('DaySection', () => {
     })
   })
 
+  it('a11y: no violations in an empty compact day', async () => {
+    const entry = makeDayEntry({ pageId: null, displayDate: 'Sun, Jun 15, 2025' })
+
+    const { container } = render(
+      <DaySection entry={entry} mode="weekly" compact onAddBlock={noop} />,
+    )
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
   // ── Part A — page-quick-actions (star + delete) ───────────
   describe('PageQuickActions integration', () => {
     // The shared `Button` mock at the top of this file flattens
@@ -1037,8 +1049,8 @@ describe('DaySection', () => {
 
       expect(screen.queryByTestId('day-section-lazy-placeholder')).not.toBeInTheDocument()
       expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
-      // Empty state still rendered.
-      expect(screen.getByTestId('empty-state')).toBeInTheDocument()
+      // The empty-day row still offers its add-block button.
+      expect(screen.getByRole('button', { name: 'Add block' })).toBeInTheDocument()
     })
 
     // An empty day's "Add block" creates only the page; the day must then

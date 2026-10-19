@@ -988,7 +988,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     expect(violations).toEqual([])
   })
 
-  // Below 640px the priority badge pads taller; at a smaller font a date chip is shorter than a property chip.
+  // At a smaller font a date chip is shorter than a property chip; the narrow width covers the phone layout.
   for (const [width, fontSize] of [
     [1280, '16px'],
     [600, '16px'],

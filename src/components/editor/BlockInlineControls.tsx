@@ -55,7 +55,7 @@ export function DateChip({
     <button
       type="button"
       className={cn(
-        `${chipClass} flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none cursor-pointer`,
+        `${chipClass} touch-hit-area flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none tabular-nums select-none cursor-pointer`,
         colorClass,
       )}
       title={label}
@@ -351,7 +351,7 @@ function PriorityBadge({
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="priority-badge flex-shrink-0 p-0.5 transition-colors focus-ring-visible active:scale-95 touch-target flex items-center justify-center"
+          className="priority-badge flex-shrink-0 transition-colors focus-ring-visible active:scale-95 touch-hit-area flex items-center justify-center"
           data-testid="priority-badge"
           aria-label={t('block.priorityCycle', { level: priorityLabel(priority) })}
           // #976 (item 9) — the badge is a toggle button cycling the block's
@@ -368,7 +368,7 @@ function PriorityBadge({
         >
           <span
             className={cn(
-              'inline-flex items-center justify-center rounded px-1.5 py-0.75 text-xs font-bold leading-none max-sm:px-2.5 max-sm:py-1',
+              'inline-flex items-center justify-center rounded px-1.5 py-0.75 text-xs font-bold leading-none max-sm:px-2.5',
               priorityColor(priority),
             )}
           >
@@ -482,7 +482,7 @@ function AttachmentBadge({
           key={animKey ?? 'initial'}
           type="button"
           className={cn(
-            'attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 max-sm:py-1 touch-target',
+            'attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 max-sm:py-1 touch-hit-area',
             animKey !== null && 'animate-in fade-in-0 zoom-in-95 duration-normal',
           )}
           data-testid="attachment-badge"
