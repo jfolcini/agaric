@@ -39,26 +39,44 @@ import { cn } from '@/lib/utils'
 /** Scroll travel (px) that counts as a direction, so jitter does not flicker it. */
 const SCROLL_SLOP = 8
 
+const INPUT_EVENTS = ['touchstart', 'wheel', 'keydown', 'pointerdown'] as const
+
 /** False after a scroll down in the view's content, true after a scroll up or at the top. */
 function useScrolledUp(enabled: boolean): boolean {
   const [up, setUp] = useState(true)
   useEffect(() => {
     if (!enabled) return
     const last = new WeakMap<EventTarget, number>()
+    // Scroll restore sets the position of a just-remounted view with no input behind it.
+    let userActed = false
+    const onInput = () => {
+      userActed = true
+    }
     const onScroll = (e: Event) => {
       // A popup's own list (a Select scrolling to its chosen option) is not the
       // user reading down the screen, so only the view's content counts.
       const el = e.target
       if (!(el instanceof Element) || !el.closest('#main-content')) return
       const top = el.scrollTop
-      const prev = last.get(el) ?? 0
+      const known = last.get(el)
+      if (known === undefined && !userActed) {
+        last.set(el, top)
+        return
+      }
+      const prev = known ?? 0
       if (top <= 0) setUp(true)
       else if (Math.abs(top - prev) < SCROLL_SLOP) return
       else setUp(top < prev)
       last.set(el, top)
     }
     document.addEventListener('scroll', onScroll, { capture: true, passive: true })
-    return () => document.removeEventListener('scroll', onScroll, { capture: true })
+    for (const type of INPUT_EVENTS)
+      document.addEventListener(type, onInput, { capture: true, passive: true })
+    return () => {
+      document.removeEventListener('scroll', onScroll, { capture: true })
+      for (const type of INPUT_EVENTS)
+        document.removeEventListener(type, onInput, { capture: true })
+    }
   }, [enabled])
   return up
 }

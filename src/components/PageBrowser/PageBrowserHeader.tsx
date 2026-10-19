@@ -15,13 +15,15 @@
 
 import { ArrowUpDown, MoreVertical, Plus, Search } from 'lucide-react'
 import type React from 'react'
-import { type RefObject, useRef } from 'react'
+import { type RefObject, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { SavedViewsDropdown } from '@/components/PageBrowser/SavedViewsDropdown'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
+import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { SearchInput } from '@/components/ui/search-input'
 import {
@@ -117,6 +119,7 @@ export function PageBrowserHeader({
   const searchInputRef = useRef<HTMLInputElement>(null)
   const isTouch = useIsTouch()
   const isMobile = useIsMobile()
+  const [moreOpen, setMoreOpen] = useState(false)
   useRegisterPrimaryFocus(isTouch ? NO_PRIMARY_FOCUS : searchInputRef)
   // PageBrowser pagination UX + small muted text near
   // the search input so users always know roughly how many pages
@@ -155,6 +158,31 @@ export function PageBrowserHeader({
     view === 'trash' && trashCount > 0
       ? t('pageBrowser.viewButtons.trashWithCount', { count: trashCount })
       : label
+  const moreTrigger = (
+    <IconButton
+      variant="ghost"
+      className="[@media(pointer:coarse)]:size-11"
+      tooltip={t('pageBrowser.moreMenu')}
+      ariaLabel={t('pageBrowser.moreMenu')}
+      data-testid="page-browser-more"
+    >
+      <MoreVertical />
+    </IconButton>
+  )
+  const viewMenuItems = (close: () => void) =>
+    VIEW_BUTTONS.map(({ id: view, icon: Icon, labelKey }) => (
+      <PopoverMenuItem
+        key={view}
+        className="flex items-center gap-2"
+        onClick={() => {
+          close()
+          setView(view)
+        }}
+      >
+        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+        {viewButtonLabel(view, t(labelKey))}
+      </PopoverMenuItem>
+    ))
   const savedViewsProps = {
     views: savedViews,
     activeView: activeSavedView,
@@ -229,38 +257,20 @@ export function PageBrowserHeader({
             {!isMobile && <SavedViewsDropdown {...savedViewsProps} />}
           </>
         )}
-        {isMobile && (
-          <SavedViewsDropdown
-            {...savedViewsProps}
-            trigger={
-              <IconButton
-                variant="ghost"
-                className="[@media(pointer:coarse)]:size-11"
-                tooltip={t('pageBrowser.moreMenu')}
-                ariaLabel={t('pageBrowser.moreMenu')}
-                data-testid="page-browser-more"
-              >
-                <MoreVertical />
-              </IconButton>
-            }
-          >
-            {(close) =>
-              VIEW_BUTTONS.map(({ id: view, icon: Icon, labelKey }) => (
-                <PopoverMenuItem
-                  key={view}
-                  className="flex items-center gap-2"
-                  onClick={() => {
-                    close()
-                    setView(view)
-                  }}
-                >
-                  <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                  {viewButtonLabel(view, t(labelKey))}
-                </PopoverMenuItem>
-              ))
-            }
-          </SavedViewsDropdown>
-        )}
+        {isMobile &&
+          (showSortAndViews ? (
+            <SavedViewsDropdown {...savedViewsProps} trigger={moreTrigger}>
+              {viewMenuItems}
+            </SavedViewsDropdown>
+          ) : (
+            // With no pages there is no view to save, as on desktop.
+            <Popover open={moreOpen} onOpenChange={setMoreOpen}>
+              <PopoverTrigger asChild>{moreTrigger}</PopoverTrigger>
+              <MenuPopoverContent align="end" aria-label={t('pageBrowser.moreMenu')}>
+                {viewMenuItems(() => setMoreOpen(false))}
+              </MenuPopoverContent>
+            </Popover>
+          ))}
         <Button
           className={cn('ml-auto', isMobile && 'w-9 px-0 [@media(pointer:coarse)]:w-11')}
           aria-label={t('pageBrowser.newPage')}

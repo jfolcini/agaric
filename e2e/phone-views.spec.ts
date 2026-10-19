@@ -137,6 +137,23 @@ test.describe('Phone views at 360 × 780 (#5932) @mobile @pages @journal @graph'
 
     // A new screen brings it back; editing a block hides it again.
     await openPageMobile(page, 'Getting Started')
+    await expect(page.getByTestId('block-static').first()).toBeVisible()
+    await expect(fab).toBeVisible()
+    await page.mouse.wheel(0, 600)
+    await page.mouse.wheel(0, -60)
+    await expect(fab).toBeVisible()
+    await page.mouse.wheel(0, 60)
+    await expect(fab).toBeHidden()
+
+    // Back to a scrolled screen restores its position, which is not a scroll down.
+    await navigateToView(page, 'Pages')
+    await expect(fab).toBeVisible()
+    await page.getByRole('button', { name: 'Back', exact: true }).click()
+    await expect
+      .poll(() => page.evaluate(() => document.getElementById('main-content')?.scrollTop))
+      .toBeGreaterThan(0)
+    // A restore that hid the button does it a beat after it sets the position.
+    await page.waitForTimeout(1000)
     await expect(fab).toBeVisible()
     await focusBlock(page, 0)
     await expect(fab).toBeHidden()

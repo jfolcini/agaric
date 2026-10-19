@@ -17,7 +17,7 @@
  * pending long-press. The timer is also cleared on unmount.
  */
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 export const DEFAULT_LONG_PRESS_DELAY = 500
 export const DEFAULT_LONG_PRESS_MOVE_THRESHOLD = 10
@@ -83,10 +83,13 @@ export function useLongPress({
 
   useEffect(() => clear, [clear])
 
-  return {
-    onPointerDown,
-    onPointerUp: clear,
-    onPointerLeave: clear,
-    onPointerMove,
-  }
+  return useMemo(
+    () => ({
+      onPointerDown,
+      onPointerUp: clear,
+      onPointerLeave: clear,
+      onPointerMove,
+    }),
+    [onPointerDown, clear, onPointerMove],
+  )
 }

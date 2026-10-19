@@ -39,6 +39,7 @@ import { setPriorityLevels } from '@/lib/priority-levels'
 import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
+import { cn } from '@/lib/utils'
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'] as const
 
@@ -297,27 +298,8 @@ export function PropertyDefinitionsList(): React.ReactElement {
                     <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
                     <Badge tone="secondary">{def.value_type}</Badge>
                   </div>
-                  {NON_DELETABLE_PROPERTIES.has(def.key) ? (
-                    <Badge
-                      tone="outline"
-                      className="shrink-0 text-xs text-muted-foreground sm:order-last sm:ml-auto"
-                    >
-                      {t('propertiesView.builtIn')}
-                    </Badge>
-                  ) : (
-                    <IconButton
-                      variant="ghost"
-                      size="icon-xs"
-                      tooltip={t('propertiesView.deleteTooltip')}
-                      ariaLabel={t('properties.deleteDefinition', { key: def.key })}
-                      className="sm:order-last sm:ml-auto [@media(pointer:coarse)]:-mr-3 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                      onClick={() => setDeleteTarget(def.key)}
-                    >
-                      <Trash2 />
-                    </IconButton>
-                  )}
                   {def.value_type === 'select' && (
-                    <div className="flex items-center gap-3 max-sm:col-span-2 sm:contents">
+                    <div className="flex items-center gap-3 max-sm:col-span-2 sm:ml-auto">
                       {LOCKED_PROPERTY_OPTIONS.has(def.key) && (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -412,6 +394,31 @@ export function PropertyDefinitionsList(): React.ReactElement {
                         </Popover>
                       )}
                     </div>
+                  )}
+                  {NON_DELETABLE_PROPERTIES.has(def.key) ? (
+                    <Badge
+                      tone="outline"
+                      className={cn(
+                        'shrink-0 text-xs text-muted-foreground max-sm:col-start-2 max-sm:row-start-1',
+                        def.value_type !== 'select' && 'sm:ml-auto',
+                      )}
+                    >
+                      {t('propertiesView.builtIn')}
+                    </Badge>
+                  ) : (
+                    <IconButton
+                      variant="ghost"
+                      size="icon-xs"
+                      tooltip={t('propertiesView.deleteTooltip')}
+                      ariaLabel={t('properties.deleteDefinition', { key: def.key })}
+                      className={cn(
+                        'max-sm:col-start-2 max-sm:row-start-1 [@media(pointer:coarse)]:-mr-3 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95',
+                        def.value_type !== 'select' && 'sm:ml-auto',
+                      )}
+                      onClick={() => setDeleteTarget(def.key)}
+                    >
+                      <Trash2 />
+                    </IconButton>
                   )}
                 </ListItem>
               ))}

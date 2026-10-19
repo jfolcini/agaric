@@ -1829,8 +1829,7 @@ jobs:
   # #5915 — one leg per module group, because the whole sweep outgrew the
   # 60-minute job cap (run 39183149461). `run-mutation.mjs --group k/n` deals
   # `MODULE_NAMES` round-robin, so the legs partition the modules and a new
-  # module joins a group with no edit here. Four legs keep the slowest group
-  # near half the cap on the slowest runner measured in #5915.
+  # module joins a group with no edit here. Sized from #5915.
   # `mutants-frontend-merge` below unions the groups and is where this lane
   # can go red.
   # ---------------------------------------------------------------------------

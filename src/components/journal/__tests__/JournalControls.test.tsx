@@ -414,9 +414,9 @@ describe('JournalControls', () => {
       expect(useJournalStore.getState().mode).toBe('daily')
       const weeklyTab = screen.getByRole('tab', { name: /weekly view/i })
       expect(weeklyTab).toHaveFocus()
-      // Roving tabindex follows focus; selection (aria-selected) stays on daily.
-      expect(weeklyTab).toHaveAttribute('tabindex', '0')
-      expect(dailyTab).toHaveAttribute('tabindex', '-1')
+      // The tab stop stays with the selection (APG manual activation), on daily.
+      expect(dailyTab).toHaveAttribute('tabindex', '0')
+      expect(weeklyTab).toHaveAttribute('tabindex', '-1')
       expect(dailyTab).toHaveAttribute('aria-selected', 'true')
       expect(weeklyTab).toHaveAttribute('aria-selected', 'false')
     })
