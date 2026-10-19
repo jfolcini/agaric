@@ -26,18 +26,12 @@
  */
 
 import { cva } from 'class-variance-authority'
-import { Check, ChevronDown, X } from 'lucide-react'
+import { ChevronDown, X } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  Command,
-  CommandEmpty,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command'
+import type { TabSwitcherListProps } from '@/components/layout/TabSwitcherList'
 import { IconButton } from '@/components/ui/icon-button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
@@ -50,12 +44,7 @@ import { getShortcutKeys } from '@/lib/keyboard-config'
 import { getPageDisplayName } from '@/lib/page-display'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
-import {
-  selectActiveTabIndexForSpace,
-  selectTabsForSpace,
-  type Tab,
-  useTabsStore,
-} from '@/stores/tabs'
+import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '@/stores/tabs'
 
 // Every tab overlaps the strip's hairline (`-mb-px`) so the active one's
 // background opens into the content. The strip's scroll viewport clips below
@@ -73,46 +62,17 @@ const tabVariants = cva(
   },
 )
 
-interface TabSwitcherProps {
-  tabs: Tab[]
-  activeTabIndex: number
-  displayLabel: (fullPath: string) => string
-  onActivate: (index: number) => void
-  onClose: (index: number) => void
-}
+// #5441 — lazy: cmdk loads when the switcher first opens.
+const TabSwitcherList = lazy(() =>
+  import('@/components/layout/TabSwitcherList').then((m) => ({ default: m.TabSwitcherList })),
+)
 
-/**
- * Lists every open tab under a filter input. The filter is a case-insensitive
- * substring over the shown label and the full path; the list is in memory, so
- * there is no debounce. cmdk supplies the combobox: focus starts in the input,
- * ArrowUp / ArrowDown move through the matches, Enter activates.
- */
-function TabSwitcher({
-  tabs,
-  activeTabIndex,
-  displayLabel,
-  onActivate,
-  onClose,
-}: TabSwitcherProps): React.ReactElement {
+function TabSwitcher({ onActivate, ...listProps }: TabSwitcherListProps): React.ReactElement {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
-  const [query, setQuery] = useState('')
-  const needle = query.trim().toLowerCase()
-  const rows = tabs.flatMap((tab, index) => {
-    const fullPath = tab.label || t('tabs.untitled')
-    const title = displayLabel(fullPath)
-    const matches = title.toLowerCase().includes(needle) || fullPath.toLowerCase().includes(needle)
-    return matches ? [{ tab, index, fullPath, title }] : []
-  })
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next)
-        if (!next) setQuery('')
-      }}
-    >
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <IconButton
           variant="ghost"
@@ -125,53 +85,15 @@ function TabSwitcher({
         </IconButton>
       </PopoverTrigger>
       <MenuPopoverContent align="start" className="w-72 p-0" aria-label={t('tabs.switcher')}>
-        <Command shouldFilter={false} loop label={t('tabs.switcher')}>
-          <CommandInput
-            value={query}
-            onValueChange={setQuery}
-            placeholder={t('tabs.switcherFilter')}
+        <Suspense fallback={null}>
+          <TabSwitcherList
+            {...listProps}
+            onActivate={(index) => {
+              onActivate(index)
+              setOpen(false)
+            }}
           />
-          <CommandList>
-            <CommandEmpty>{t('tabs.switcherNoMatch')}</CommandEmpty>
-            {rows.map(({ tab, index, fullPath, title }) => (
-              <CommandItem
-                key={tab.id}
-                value={tab.id}
-                title={fullPath}
-                className="gap-2"
-                onSelect={() => {
-                  onActivate(index)
-                  setOpen(false)
-                  setQuery('')
-                }}
-              >
-                <span className="inline-flex size-4 shrink-0 items-center justify-center">
-                  {index === activeTabIndex ? (
-                    <>
-                      <Check className="size-3" aria-hidden="true" />
-                      <span className="sr-only">{t('tabs.activeTab')}</span>
-                    </>
-                  ) : null}
-                </span>
-                <span className="flex-1 truncate">{title}</span>
-                {/* Mouse close, as on the strip: a widget inside an option is a
-                    nested-interactive violation. The menu stays open so several
-                    tabs can be pruned in a row; at one tab the bar unmounts. */}
-                <span
-                  data-tab-switcher-close=""
-                  aria-hidden="true"
-                  className="inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-destructive/20 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onClose(index)
-                  }}
-                >
-                  <X className="size-3" />
-                </span>
-              </CommandItem>
-            ))}
-          </CommandList>
-        </Command>
+        </Suspense>
       </MenuPopoverContent>
     </Popover>
   )
