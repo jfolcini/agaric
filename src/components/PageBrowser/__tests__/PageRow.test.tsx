@@ -227,19 +227,28 @@ describe('PageRow', () => {
       vi.useRealTimers()
     })
 
-    it('below sm hides the checkbox until something is selected, and always the bookmark and delete', () => {
+    it('hides the checkbox until something is selected, and always the bookmark and delete', () => {
       const { rerender } = render(<PageRow {...baseProps()} />)
       const checkboxCell = screen.getByRole('checkbox').closest('[role="gridcell"]')
-      expect(checkboxCell?.className).toContain('max-sm:hidden')
-      expect(screen.getByRole('button', { name: /bookmark page/i }).className).toContain(
-        'max-sm:hidden',
-      )
-      expect(
-        screen.getByRole('button', { name: /delete page/i }).closest('[role="gridcell"]')
-          ?.className,
-      ).toContain('max-sm:hidden')
+      const bookmark = screen.getByRole('button', { name: /bookmark page/i })
+      const trashCell = screen
+        .getByRole('button', { name: /delete page/i })
+        .closest('[role="gridcell"]')
+      expect(checkboxCell).toHaveClass('hidden')
+      expect(bookmark).toHaveClass('hidden')
+      expect(trashCell).toHaveClass('hidden')
       rerender(<PageRow {...baseProps({ selectionActive: true })} />)
-      expect(checkboxCell?.className).not.toContain('max-sm:hidden')
+      expect(checkboxCell).not.toHaveClass('hidden')
+    })
+
+    it('keeps every control on a narrow window without touch, where nothing else can select', () => {
+      vi.mocked(useIsTouch).mockReturnValue(false)
+      render(<PageRow {...baseProps()} />)
+      expect(screen.getByRole('checkbox').closest('[role="gridcell"]')).not.toHaveClass('hidden')
+      expect(screen.getByRole('button', { name: /bookmark page/i })).not.toHaveClass('hidden')
+      expect(
+        screen.getByRole('button', { name: /delete page/i }).closest('[role="gridcell"]'),
+      ).not.toHaveClass('hidden')
     })
 
     it('a long press selects the row, and its release opens nothing', () => {

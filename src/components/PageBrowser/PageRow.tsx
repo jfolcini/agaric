@@ -92,7 +92,7 @@ export interface PageRowProps {
   /** Whether this row is in the batch selection. Drives the leading
    * checkbox's checked state and the `data-selected` attribute. */
   multiSelected: boolean
-  /** Some row in the list is selected. Below `sm` the checkboxes show only
+  /** Some row in the list is selected. On a touch phone the checkboxes show only
    * then, and on a touch phone a tap on the row toggles it instead of
    * opening the page. */
   selectionActive: boolean
@@ -354,12 +354,12 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
       style={rowStyle(virtualRowStart)}
     >
       {/* #81 / batch-selection checkbox: the entry point into selection
-          mode, visible on hover / focus / when checked. Below `sm` it shows
+          mode, visible on hover / focus / when checked. On a touch phone it shows
           only once something is selected; the long press is the entry there. */}
       <div
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner checkbox; CSS-grid cell would break as a <td> without a <table>
         role="gridcell"
-        className={cn('flex shrink-0 items-center', !selectionActive && 'max-sm:hidden')}
+        className={cn('flex shrink-0 items-center', touchSelect && !selectionActive && 'hidden')}
       >
         <Checkbox
           checked={multiSelected}
@@ -381,7 +381,10 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
           variant="ghost"
           size="icon-xs"
           aria-label={starred ? t('pageBrowser.removeBookmark') : t('pageBrowser.addBookmark')}
-          className="star-toggle shrink-0 touch-target max-sm:hidden opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
+          className={cn(
+            'star-toggle shrink-0 touch-target opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star',
+            touchSelect && 'hidden',
+          )}
           data-starred={starred}
           onClick={(e) => {
             e.stopPropagation()
@@ -447,7 +450,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
         </NewTabTarget>
       </div>
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner action buttons; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className="flex shrink-0 items-center max-sm:hidden">
+      <div role="gridcell" className={cn('flex shrink-0 items-center', touchSelect && 'hidden')}>
         <Button
           variant="ghost"
           size="icon-xs"
