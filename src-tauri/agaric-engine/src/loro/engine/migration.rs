@@ -22,19 +22,14 @@ impl LoroEngine {
         }
     }
     /// Migrate the doc's sibling order onto the fractional index if it is a
-    /// genuine pre-#400 doc; otherwise just stamp the marker. Returns `Err` only
+    /// genuine pre-#400 doc; otherwise just stamp the marker (the migration
+    /// leaves a doc with no legacy `position` meta as it is). Returns `Err` only
     /// on a Loro failure; callers on the import path use the best-effort wrapper.
     pub(super) fn migrate_legacy_sibling_order_if_needed(&mut self) -> Result<(), AppError> {
         if self.sibling_order_version() >= SIBLING_ORDER_VERSION {
             return Ok(());
         }
-        if self.any_node_has_legacy_position() {
-            self.migrate_legacy_sibling_order()?;
-        } else {
-            self.mark_sibling_order_current();
-            self.doc.commit();
-        }
-        Ok(())
+        self.migrate_legacy_sibling_order()
     }
     /// One-time migration of a pre-#400 doc: reorder each parent's children to
     /// the legacy `ORDER BY position ASC, id ASC` and stamp the scheme marker.

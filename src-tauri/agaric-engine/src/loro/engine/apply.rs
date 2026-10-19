@@ -947,8 +947,7 @@ impl LoroEngine {
         // Always includes the seed (even if its tree node is already gone,
         // for idempotent cleanup of lingering map entries) plus every live
         // descendant collected before `tree.delete` orphans the subtree.
-        let mut purge_ids: Vec<String> = Vec::new();
-        if let Some(node) = self.node_for(block_id) {
+        let purge_ids: Vec<String> = if let Some(node) = self.node_for(block_id) {
             // The purge command emits a single `PurgeBlock` op for the seed
             // and SQL-cascades its descendants — it does *not* fan a purge
             // op per descendant to the engine. `tree.delete(seed)` orphans
@@ -968,14 +967,11 @@ impl LoroEngine {
                 self.index.remove(bid);
                 self.pending_parent.remove(bid);
             }
-            purge_ids = subtree_ids;
-        }
-        // `collect_subtree_block_ids` includes the seed, but guard against
-        // the already-absent-node case so the seed's map entries are still
-        // cleaned up (idempotency).
-        if !purge_ids.iter().any(|b| b.as_str() == block_id) {
-            purge_ids.push(block_id.to_string());
-        }
+            subtree_ids
+        } else {
+            // Already absent: the seed's map entries are still cleaned up (idempotency).
+            vec![block_id.to_string()]
+        };
         let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
         let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
         let aliases_root: LoroMap = self.doc.get_map(PAGE_ALIASES_ROOT);
