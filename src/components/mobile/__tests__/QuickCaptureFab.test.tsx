@@ -78,7 +78,9 @@ describe('QuickCaptureFab', () => {
     render(
       <>
         <QuickCaptureFab setQuickCaptureOpen={vi.fn()} />
-        <div data-testid="scroller" />
+        <div id="main-content">
+          <div data-testid="scroller" />
+        </div>
       </>,
     )
     const fab = screen.getByTestId('quick-capture-fab')
@@ -99,6 +101,21 @@ describe('QuickCaptureFab', () => {
     expect(fab).toHaveAttribute('data-shown', 'false')
     scrollTo(0)
     expect(fab).toHaveAttribute('data-shown', 'true')
+  })
+
+  it("stays shown when a popup's list scrolls down outside the view's content", () => {
+    render(
+      <>
+        <QuickCaptureFab setQuickCaptureOpen={vi.fn()} />
+        <div data-testid="popup-list" />
+      </>,
+    )
+    const list = screen.getByTestId('popup-list')
+    act(() => {
+      list.scrollTop = 144
+      list.dispatchEvent(new Event('scroll'))
+    })
+    expect(screen.getByTestId('quick-capture-fab')).toHaveAttribute('data-shown', 'true')
   })
 
   it('is an accessible, labelled button', () => {

@@ -39,15 +39,17 @@ import { cn } from '@/lib/utils'
 /** Scroll travel (px) that counts as a direction, so jitter does not flicker it. */
 const SCROLL_SLOP = 8
 
-/** False after a scroll down in any scroller, true after a scroll up or at the top. */
+/** False after a scroll down in the view's content, true after a scroll up or at the top. */
 function useScrolledUp(enabled: boolean): boolean {
   const [up, setUp] = useState(true)
   useEffect(() => {
     if (!enabled) return
     const last = new WeakMap<EventTarget, number>()
     const onScroll = (e: Event) => {
-      const el = e.target instanceof Element ? e.target : document.scrollingElement
-      if (!el) return
+      // A popup's own list (a Select scrolling to its chosen option) is not the
+      // user reading down the screen, so only the view's content counts.
+      const el = e.target
+      if (!(el instanceof Element) || !el.closest('#main-content')) return
       const top = el.scrollTop
       const prev = last.get(el) ?? 0
       if (top <= 0) setUp(true)
