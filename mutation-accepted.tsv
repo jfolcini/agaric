@@ -1,0 +1,306 @@
+# Mutants triage proved unkillable (equivalent), read by scripts/file-mutation-survivors.mjs.
+# A matching mutant is subtracted from the weekly lanes' findings instead of being re-filed.
+# One entry per line, tab-separated; lines starting with `#` and blank lines are ignored,
+# anything else that does not parse fails the lane.
+#   frontend  <TAB>file<TAB>mutator<TAB>column relative to the trimmed line<TAB>nth occurrence of that line in the file<TAB>trimmed line
+#   rust      <TAB>file (relative to src-tauri)<TAB>cargo-mutants description<TAB>trimmed line
+# Add entries in the PR that proves the equivalence: paste the survivor-block ids into
+# `node scripts/file-mutation-survivors.mjs --accept` (stdin) and append the output.
+# An entry whose line text no longer exists is inert; the filer logs how many matched nothing.
+frontend	src/editor/page-mode/page-attachments.ts	ConditionalExpression	63	1	this.held = new Map(Object.entries(rows).filter(([, list]) => list.length > 0))
+frontend	src/editor/page-mode/page-attachments.ts	EqualityOperator	63	1	this.held = new Map(Object.entries(rows).filter(([, list]) => list.length > 0))
+frontend	src/editor/page-mode/page-attachments.ts	MethodExpression	21	1	this.held = new Map(Object.entries(rows).filter(([, list]) => list.length > 0))
+frontend	src/editor/page-mode/page-block-ids.ts	BooleanLiteral	5	1	if (!remote && !structural && !takesIds(transactions)) return null
+frontend	src/editor/page-mode/page-block-ids.ts	BooleanLiteral	75	1	if (slice === undefined || from === undefined || to === undefined) return false
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	1	1	doc.resolve(from).index(0) !== doc.resolve(to).index(0) || holdsPageBlock(slice.content, type)
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	1	1	rules !== null && transactions.some(isHistoryTransaction)
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	27	1	if (attr !== undefined && pos !== undefined) return doc.nodeAt(pos)?.type === type
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	28	1	if (slice === undefined || from === undefined || to === undefined) return false
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	38	1	const atStart = $from.depth === 2 && $from.index(1) === 0 && $from.parentOffset === 0
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	46	1	const structural = transactions.some((tr) => tr.docChanged && changesBlocks(tr, type))
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	50	1	if (slice === undefined || from === undefined || to === undefined) return false
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	5	1	if (attr !== undefined && pos !== undefined) return doc.nodeAt(pos)?.type === type
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	5	1	if (!holdsPageBlock(slice.content, type)) return false
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	5	1	if (id !== null) known.add(id)
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	5	1	if (!remote && !structural && !takesIds(transactions)) return null
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	53	1	if (attr !== undefined && pos !== undefined) return doc.nodeAt(pos)?.type === type
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	62	1	const atStart = $from.depth === 2 && $from.index(1) === 0 && $from.parentOffset === 0
+frontend	src/editor/page-mode/page-block-ids.ts	ConditionalExpression	8	1	return rule === null || kept.has(rule) ? null : rule
+frontend	src/editor/page-mode/page-block-ids.ts	LogicalOperator	46	1	const structural = transactions.some((tr) => tr.docChanged && changesBlocks(tr, type))
+frontend	src/editor/page-mode/page-block-ids.ts	LogicalOperator	5	1	if (attr !== undefined && pos !== undefined) return doc.nodeAt(pos)?.type === type
+frontend	src/editor/page-mode/page-block-ids.ts	OptionalChaining	53	1	if (attr !== undefined && pos !== undefined) return doc.nodeAt(pos)?.type === type
+frontend	src/editor/page-mode/page-block-ids.ts	StringLiteral	46	1	export const pageBlockIdsKey = new PluginKey('pageBlockIds')
+frontend	src/editor/page-mode/page-block-ids.ts	StringLiteral	7	1	name: 'pageBlockIds',
+frontend	src/editor/page-mode/page-lists.ts	ArrayDeclaration	30	1	const items: OutlineItem[] = []
+frontend	src/editor/page-mode/page-lists.ts	ArrowFunction	19	1	const sameItems = (a: readonly OutlineItem[], b: readonly OutlineItem[]): boolean =>
+frontend	src/editor/page-mode/page-lists.ts	ArrowFunction	34	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
+frontend	src/editor/page-mode/page-lists.ts	CallExpression	21	1	if (set.size === 0) this.listeners.delete(id)
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	1	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	26	1	if (pickerOpen(state) || id === null) return false
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	47	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (id !== null) ids.add(id)
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (id === null || source.lists.styleOf(id) === 'none') return false
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (made !== undefined) source.setStyle(made, style)
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (next.state.doc !== previous.doc) source.lists.layout(next.state.doc)
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (sameItems(items, this.items)) return
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (set.size === 0) this.listeners.delete(id)
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (style !== 'none') next.set(id, listMarkerText(style, ordinals.get(id)))
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (style !== 'none') this.read.set(id, style)
+frontend	src/editor/page-mode/page-lists.ts	ConditionalExpression	5	1	if (written === 'none') this.read.delete(id)
+frontend	src/editor/page-mode/page-lists.ts	EqualityOperator	47	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
+frontend	src/editor/page-mode/page-lists.ts	EqualityOperator	71	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
+frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	59	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
+frontend	src/editor/page-mode/page-lists.ts	OptionalChaining	86	1	a.length === b.length && a.every((item, i) => item.id === b[i]?.id && item.depth === b[i]?.depth)
+frontend	src/editor/page-mode/page-lists.ts	Regex	14	1	return [rule(/^\s*[-+*]\s([^[\n])$/, 'bullet'), rule(/^\d+\.\s(.)$/, 'ordered')]
+frontend	src/editor/page-mode/page-lists.ts	Regex	54	1	return [rule(/^\s*[-+*]\s([^[\n])$/, 'bullet'), rule(/^\d+\.\s(.)$/, 'ordered')]
+frontend	src/editor/page-mode/page-lists.ts	StringLiteral	15	1	if (style !== 'none') next.set(id, listMarkerText(style, ordinals.get(id)))
+frontend	src/editor/page-mode/page-lists.ts	StringLiteral	15	1	if (style !== 'none') this.read.set(id, style)
+frontend	src/editor/page-mode/page-lists.ts	StringLiteral	17	1	if (written === 'none') this.read.delete(id)
+frontend	src/editor/page-mode/page-lists.ts	StringLiteral	33	1	state.tr.insertText(match[1] ?? '', range.from, range.to)
+frontend	src/editor/page-mode/page-lists.ts	StringLiteral	59	1	doc.forEach((node) => items.push({ id: blockIdOf(node) ?? '', depth: depthOf(node) }))
+frontend	src/editor/page-mode/page-lists.ts	StringLiteral	7	1	name: 'pageListKeys',
+frontend	src/editor/page-mode/page-properties.ts	BooleanLiteral	30	1	if (text === written) return true
+frontend	src/editor/page-mode/page-properties.ts	BooleanLiteral	8	1	return true
+frontend	src/editor/page-mode/page-properties.ts	ConditionalExpression	5	1	if (shown.length > 0) this.shown.set(id, shown)
+frontend	src/editor/page-mode/page-properties.ts	EqualityOperator	5	1	if (shown.length > 0) this.shown.set(id, shown)
+frontend	src/editor/page-mode/page-properties.ts	StringLiteral	34	1	const before = loaded === null ? '' : serialize(blockDocJson(loaded))
+frontend	src/editor/page-mode/page-rendered.ts	ConditionalExpression	31	1	if (first?.isText !== true || first.text?.trimStart().startsWith('{{') !== true) return null
+frontend	src/editor/page-mode/page-rendered.ts	ConditionalExpression	5	1	if (first?.isText !== true || first.text?.trimStart().startsWith('{{') !== true) return null
+frontend	src/editor/page-mode/page-rendered.ts	EqualityOperator	37	1	const past = view.state.doc.resolve(arrow.dir > 0 ? $head.after() : $head.before())
+frontend	src/editor/page-mode/page-rendered.ts	OptionalChaining	15	1	const first = node.firstChild?.firstChild
+frontend	src/editor/page-mode/page-rendered.ts	OptionalChaining	31	1	if (first?.isText !== true || first.text?.trimStart().startsWith('{{') !== true) return null
+frontend	src/editor/page-mode/page-rendered.ts	StringLiteral	66	1	if (first?.isText !== true || first.text?.trimStart().startsWith('{{') !== true) return null
+frontend	src/editor/page-mode/page-rendered.ts	StringLiteral	7	1	name: 'pageRenderedKeys',
+frontend	src/editor/page-mode/page-save.ts	ArrayDeclaration	27	1	const atDepth: string[] = []
+frontend	src/editor/page-mode/page-save.ts	ArrayDeclaration	28	1	const previous: number[] = []
+frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	18	1	const markdown = id === null ? undefined : content.get(id)
+frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	45	1	const restoreAt = creates.findIndex((op) => op.kind === 'restore')
+frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (anchor === null) return 0
+frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (at !== -1) children.splice(at, 1)
+frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (id !== null && markdown !== undefined) saved.set(id, { node, markdown })
+frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (id === null) return
+frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (parentId === undefined) return
+frontend	src/editor/page-mode/page-save.ts	ConditionalExpression	5	1	if (restoring !== undefined && restored.has(restoring)) {
+frontend	src/editor/page-mode/page-save.ts	LogicalOperator	52	2	const content = new Map(rows.map((row) => [row.id, row.content ?? '']))
+frontend	src/editor/page-mode/page-save.ts	ObjectLiteral	21	1	state.saved.set(up, { node: null, markdown: content.get(up) as string })
+frontend	src/editor/page-mode/page-save.ts	ObjectLiteral	63	1	await runAll(planDeletes(desired, state), state, api, result, { stopOnFailure: false })
+frontend	src/editor/page-mode/page-save.ts	ObjectLiteral	76	1	const edited = await runAll(planEdits(desired, state), state, api, result, {
+frontend	src/editor/page-mode/page-save.ts	StringLiteral	67	2	const content = new Map(rows.map((row) => [row.id, row.content ?? '']))
+frontend	src/editor/page-mode/page-tags.ts	BooleanLiteral	8	1	return true
+frontend	src/editor/page-mode/page-tasks.ts	ArrayDeclaration	27	1	properties: id === null ? [] : this.tasks.propertiesOf(id),
+frontend	src/editor/page-mode/page-tasks.ts	ArrayDeclaration	28	1	attachments: id === null ? [] : this.tasks.attachmentsOf(id),
+frontend	src/editor/page-mode/page-tasks.ts	BooleanLiteral	31	1	if (text === markdown) return true
+frontend	src/editor/page-mode/page-tasks.ts	BooleanLiteral	8	8	return true
+frontend	src/editor/page-mode/page-tasks.ts	CallExpression	1	1	this.waiting.delete(dom)
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	1	1	node.type !== this.node.type ||
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	13	1	properties: id === null ? [] : this.tasks.propertiesOf(id),
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	14	1	attachments: id === null ? [] : this.tasks.attachmentsOf(id),
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	15	1	const block = id === null ? undefined : this.tasks.blockOf(id)
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	28	1	if (saved === undefined || node === null || task === null) {
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if ($head.depth >= 1) gate.reveal(view.nodeDOM($head.before(1)))
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (!(dom instanceof Element)) return
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null || !drawn) {
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null || state === null) {
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null || text === null) {
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id !== null) this.shown.add(id)
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (id === null) this.unsubscribeMarker = () => {}
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	1	if (saved === undefined || node === null || task === null) {
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	5	2	if (this.renderer !== null) return
+frontend	src/editor/page-mode/page-tasks.ts	ConditionalExpression	53	1	if (typeof IntersectionObserver === 'undefined' || (id !== null && this.shown.has(id))) {
+frontend	src/editor/page-mode/page-tasks.ts	LogicalOperator	5	1	if (saved === undefined || node === null || task === null) {
+frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	1	1	this.checkbox?.destroy()
+frontend	src/editor/page-mode/page-tasks.ts	OptionalChaining	5	1	if (first?.type.name !== 'paragraph') return null
+frontend	src/editor/page-mode/page-tasks.ts	StringLiteral	7	1	name: 'pageTaskKeys',
+frontend	src/editor/token-ids.ts	ConditionalExpression	5	1	if (id === null || !goneAt(mapping, start) || !goneAt(mapping, tokens.last(node, offset))) {
+frontend	src/lib/agenda-filters.ts	BlockStatement	13	1	case 'tag': {
+frontend	src/lib/agenda-filters.ts	BlockStatement	9	1	} catch {
+frontend	src/lib/agenda-filters.ts	ConditionalExpression	1	1	case 'tag': {
+frontend	src/lib/agenda-filters.ts	ConditionalExpression	20	1	if (entry.isSet || firstText === undefined) {
+frontend	src/lib/agenda-filters.ts	ConditionalExpression	35	1	if (typeof parsed !== 'object' || parsed === null) return null
+frontend	src/lib/agenda-filters.ts	ConditionalExpression	5	1	if (due !== undefined) result.due = due
+frontend	src/lib/agenda-filters.ts	ConditionalExpression	5	1	if (postFilters.length === 0) return blocks
+frontend	src/lib/agenda-filters.ts	ConditionalExpression	5	1	if (range) ranges.push(range)
+frontend	src/lib/agenda-filters.ts	ConditionalExpression	5	1	if (scheduled !== undefined) result.scheduled = scheduled
+frontend	src/lib/agenda-filters.ts	ConditionalExpression	5	1	if (typeof parsed !== 'object' || parsed === null) return null
+frontend	src/lib/agenda-filters.ts	ConditionalExpression	5	1	if (undated !== undefined) result.undated = undated
+frontend	src/lib/agenda-filters.ts	ConditionalExpression	5	1	if (value === 'Overdue') continue
+frontend	src/lib/agenda-filters.ts	ConditionalExpression	5	2	if (range) ranges.push(range)
+frontend	src/lib/agenda-filters.ts	EqualityOperator	5	1	if (r.end > end) end = r.end
+frontend	src/lib/agenda-filters.ts	EqualityOperator	5	1	if (r.start < start) start = r.start
+frontend	src/lib/agenda-filters.ts	LogicalOperator	5	1	if (typeof parsed !== 'object' || parsed === null) return null
+frontend	src/lib/agenda-filters.ts	StringLiteral	15	1	if (value === 'Overdue') continue
+frontend	src/lib/agenda-filters.ts	StringLiteral	6	1	case 'tag': {
+frontend	src/lib/agenda-sort.ts	ArrayDeclaration	10	1	Overdue: [GROUP_RANK.beforeDates, null],
+frontend	src/lib/agenda-sort.ts	ConditionalExpression	1	1	block.priority != null && levels.indexOf(block.priority) >= 0
+frontend	src/lib/agenda-sort.ts	ConditionalExpression	24	1	if (titleA !== null && titleB !== null && titleA !== titleB) {
+frontend	src/lib/agenda-sort.ts	ConditionalExpression	24	1	if (y === undefined || m === undefined || d === undefined) return dateStr
+frontend	src/lib/agenda-sort.ts	ConditionalExpression	43	1	if (y === undefined || m === undefined || d === undefined) return dateStr
+frontend	src/lib/agenda-sort.ts	ConditionalExpression	5	1	if (titleA !== null && titleB !== null && titleA !== titleB) {
+frontend	src/lib/agenda-sort.ts	ConditionalExpression	5	1	if (y === undefined || m === undefined || d === undefined) return dateStr
+frontend	src/lib/agenda-sort.ts	LogicalOperator	5	1	if (titleA !== null && titleB !== null && titleA !== titleB) {
+frontend	src/lib/agenda-sort.ts	LogicalOperator	5	1	if (y === undefined || m === undefined || d === undefined) return dateStr
+frontend	src/lib/agenda-sort.ts	OptionalChaining	1	1	buckets.get(key)?.push(block)
+frontend	src/lib/agenda-sort.ts	OptionalChaining	1	2	buckets.get(key)?.push(block)
+frontend	src/lib/agenda-sort.ts	Regex	79	1	label === NO_PRIORITY ? 'text-muted-foreground' : classForLevel(label.replace(/^P/, ''))
+frontend	src/lib/agenda-sort.ts	StringLiteral	62	1	return INDEX_CLASS[Math.min(idx, INDEX_CLASS.length - 1)] ?? ''
+frontend	src/lib/block-tree-ops.ts	StringLiteral	26	1	return serialize({ type: 'doc', content: [b] }, notifyUnknownNodeTypeToast)
+frontend	src/lib/date-utils.ts	ConditionalExpression	24	1	if (y === undefined || m === undefined || d === undefined) return dateStr
+frontend	src/lib/date-utils.ts	ConditionalExpression	34	1	Number.isInteger(monthIndex1) && monthIndex1 >= 1 && monthIndex1 <= 12 ? monthIndex1 : 1
+frontend	src/lib/date-utils.ts	ConditionalExpression	38	1	if (date.getMonth() !== month - 1 || date.getDate() !== day) return isoContent
+frontend	src/lib/date-utils.ts	ConditionalExpression	43	1	if (y === undefined || m === undefined || d === undefined) return dateStr
+frontend	src/lib/date-utils.ts	ConditionalExpression	5	1	if (fmt === 'yyyy-MM-dd') return isoContent
+frontend	src/lib/date-utils.ts	ConditionalExpression	5	1	if (y === undefined || m === undefined || d === undefined) return dateStr
+frontend	src/lib/date-utils.ts	ConditionalExpression	54	1	Number.isInteger(monthIndex1) && monthIndex1 >= 1 && monthIndex1 <= 12 ? monthIndex1 : 1
+frontend	src/lib/date-utils.ts	EqualityOperator	34	1	Number.isInteger(monthIndex1) && monthIndex1 >= 1 && monthIndex1 <= 12 ? monthIndex1 : 1
+frontend	src/lib/date-utils.ts	LogicalOperator	5	1	if (y === undefined || m === undefined || d === undefined) return dateStr
+frontend	src/lib/date-utils.ts	StringLiteral	13	1	if (fmt === 'yyyy-MM-dd') return isoContent
+frontend	src/lib/enex-import.ts	ArithmeticOperator	39	1	dv.setUint32(totalLen - 4, Math.floor(originalLenBits / 4294967296) >>> 0, true)
+frontend	src/lib/enex-import.ts	ArrayDeclaration	29	1	const mediaRefs: string[] = []
+frontend	src/lib/enex-import.ts	BooleanLiteral	76	1	dv.setUint32(totalLen - 4, Math.floor(originalLenBits / 4294967296) >>> 0, true)
+frontend	src/lib/enex-import.ts	CallExpression	1	1	media.remove()
+frontend	src/lib/enex-import.ts	ConditionalExpression	5	1	if (cp !== undefined && cp >= 0x20) out += ch
+frontend	src/lib/enex-import.ts	ConditionalExpression	5	1	if (trimmed.length === 0) return ''
+frontend	src/lib/enex-import.ts	ConditionalExpression	8	1	return name === 'td' || name === 'th'
+frontend	src/lib/enex-import.ts	EqualityOperator	17	1	for (let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296)
+frontend	src/lib/enex-import.ts	EqualityOperator	17	1	for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+frontend	src/lib/enex-import.ts	MethodExpression	15	1	const cells = Array.from(tr.children).filter((c) => {
+frontend	src/lib/enex-import.ts	MethodExpression	17	1	const trimmed = enml.trim()
+frontend	src/lib/enex-import.ts	MethodExpression	5	1	if (texts.some((t) => t.length > 0)) rows.push(texts.join(' / '))
+frontend	src/lib/enex-import.ts	OptionalChaining	14	1	const mime = res.querySelector('mime')?.textContent?.trim() ?? 'application/octet-stream'
+frontend	src/lib/enex-import.ts	OptionalChaining	14	1	.map((el) => el.textContent?.trim() ?? '')
+frontend	src/lib/enex-import.ts	OptionalChaining	18	1	const rawTitle = noteEl.querySelector('title')?.textContent?.trim() ?? ''
+frontend	src/lib/enex-import.ts	Regex	13	1	candidate = /\.[^./\\]+$/.test(fileName) ? fileName : `${fileName}.${ext}`
+frontend	src/lib/enex-import.ts	Regex	21	1	return text.replace(/\s+/g, ' ').replace(/\|/g, '/').trim()
+frontend	src/lib/enex-import.ts	Regex	48	1	const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
+frontend	src/lib/enex-import.ts	StringLiteral	15	1	headingStyle: 'atx',
+frontend	src/lib/enex-import.ts	StringLiteral	36	1	const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
+frontend	src/lib/enex-import.ts	StringLiteral	40	1	.map((el) => el.textContent?.trim() ?? '')
+frontend	src/lib/enex-import.ts	StringLiteral	56	1	(_match, index: string) => mediaRefs[Number(index)] ?? '',
+frontend	src/lib/enex-import.ts	StringLiteral	59	1	const base = name.replace(/\\/g, '/').split('/').pop() ?? ''
+frontend	src/lib/enex-import.ts	StringLiteral	60	1	const htmlDoc = document.implementation.createHTMLDocument('')
+frontend	src/lib/enex-import.ts	StringLiteral	62	1	const enml = noteEl.querySelector('content')?.textContent ?? ''
+frontend	src/lib/enex-import.ts	StringLiteral	66	1	const hash = media.getAttribute('hash')?.trim().toLowerCase() ?? ''
+frontend	src/lib/enex-import.ts	StringLiteral	69	1	const texts = cells.map((c) => normalizeInlineCell(c.textContent ?? ''))
+frontend	src/lib/export-graph.ts	CallExpression	1	1	resolved.set(id, null)
+frontend	src/lib/export-graph.ts	ConditionalExpression	5	1	if (cleaned.length === 0 || /^\.+$/.test(cleaned)) return 'Untitled'
+frontend	src/lib/export-graph.ts	ConditionalExpression	5	1	if (id == null) return alt
+frontend	src/lib/export-graph.ts	ConditionalExpression	5	1	if (ids.size === 0) return { md, skippedAttachmentIds: [] }
+frontend	src/lib/export-graph.ts	ConditionalExpression	5	1	if (!md.includes(ATTACHMENT_REF_SCHEME)) return md
+frontend	src/lib/export-graph.ts	LogicalOperator	5	1	if (cleaned.length === 0 || /^\.+$/.test(cleaned)) return 'Untitled'
+frontend	src/lib/export-graph.ts	Regex	29	1	if (cleaned.length === 0 || /^\.+$/.test(cleaned)) return 'Untitled'
+frontend	src/lib/export-graph.ts	StringLiteral	39	1	const id = parseAttachmentRef(m[3] ?? '')
+frontend	src/lib/export-graph.ts	StringLiteral	47	1	const safeName = sanitizeSegment(flatName) || 'attachment'
+frontend	src/lib/export-graph.ts	StringLiteral	61	1	const zipPath = disambiguate(titleToZipPath(page.content ?? 'Untitled'), page.id, seen)
+frontend	src/lib/graph-neighborhood.ts	ArrayDeclaration	24	1	const next: string[] = []
+frontend	src/lib/graph-neighborhood.ts	ConditionalExpression	37	1	for (let depth = 0; depth < hops && frontier.length > 0; depth++) {
+frontend	src/lib/graph-neighborhood.ts	ConditionalExpression	5	1	if (a !== b) set.add(b)
+frontend	src/lib/graph-neighborhood.ts	ConditionalExpression	5	1	if (hops <= 0) return visited
+frontend	src/lib/graph-neighborhood.ts	EqualityOperator	37	1	for (let depth = 0; depth < hops && frontier.length > 0; depth++) {
+frontend	src/lib/graph-neighborhood.ts	EqualityOperator	5	1	if (hops <= 0) return visited
+frontend	src/lib/history-utils.ts	ConditionalExpression	38	1	return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+frontend	src/lib/in-page-find/matcher.ts	BlockStatement	38	1	if (haystack.length === text.length) {
+frontend	src/lib/in-page-find/matcher.ts	BlockStatement	49	1	if (import.meta.env.DEV && foldedNeedle === '') {
+frontend	src/lib/in-page-find/matcher.ts	BlockStatement	53	1	if (import.meta.env.DEV && foldedNeedle !== needle) {
+frontend	src/lib/in-page-find/matcher.ts	ConditionalExpression	17	1	const scanned = text.length > REGEX_NODE_SCAN_MAX ? text.slice(0, REGEX_NODE_SCAN_MAX) : text
+frontend	src/lib/in-page-find/matcher.ts	ConditionalExpression	28	1	if (start !== undefined && end !== undefined && (!wholeWord || isWholeWord(text, start, end))) {
+frontend	src/lib/in-page-find/matcher.ts	ConditionalExpression	5	1	if (haystack.length === text.length) {
+frontend	src/lib/in-page-find/matcher.ts	ConditionalExpression	5	1	if (import.meta.env.DEV && foldedNeedle === '') {
+frontend	src/lib/in-page-find/matcher.ts	ConditionalExpression	5	1	if (import.meta.env.DEV && foldedNeedle !== needle) {
+frontend	src/lib/in-page-find/matcher.ts	ConditionalExpression	5	1	if (!(node instanceof Text)) return NodeFilter.FILTER_REJECT
+frontend	src/lib/in-page-find/matcher.ts	ConditionalExpression	5	1	if (start !== undefined && end !== undefined && (!wholeWord || isWholeWord(text, start, end))) {
+frontend	src/lib/in-page-find/matcher.ts	ConditionalExpression	5	1	if (v == null || v.length === 0) return NodeFilter.FILTER_REJECT
+frontend	src/lib/in-page-find/matcher.ts	ConditionalExpression	8	1	return lowered.indexOf('ς') === -1 ? lowered : lowered.replace(FINAL_SIGMA_RE, 'σ')
+frontend	src/lib/in-page-find/matcher.ts	EqualityOperator	17	1	const scanned = text.length > REGEX_NODE_SCAN_MAX ? text.slice(0, REGEX_NODE_SCAN_MAX) : text
+frontend	src/lib/in-page-find/matcher.ts	EqualityOperator	23	1	if (high >= 0xd800 && high <= 0xdbff) return text.codePointAt(index - 2)
+frontend	src/lib/in-page-find/matcher.ts	EqualityOperator	8	1	while (from <= folded.length) {
+frontend	src/lib/in-page-find/matcher.ts	EqualityOperator	8	1	while (from <= haystack.length) {
+frontend	src/lib/in-page-find/matcher.ts	LogicalOperator	5	1	if (start !== undefined && end !== undefined && (!wholeWord || isWholeWord(text, start, end))) {
+frontend	src/lib/in-page-find/matcher.ts	StringLiteral	1	1	`(${JSON.stringify(foldedNeedle)} vs ${JSON.stringify(needle)}). Since #4507 ` +
+frontend	src/lib/in-page-find/matcher.ts	StringLiteral	1	1	`both go through foldForMatch, whose ς/σ collapse removes the only ` +
+frontend	src/lib/in-page-find/matcher.ts	StringLiteral	1	1	`branch is a pure optimisation only while this holds.`,
+frontend	src/lib/in-page-find/matcher.ts	StringLiteral	1	1	`context-sensitive mapping in the locale-free table, so these cannot differ — ` +
+frontend	src/lib/in-page-find/matcher.ts	StringLiteral	1	1	'in-page-find: scanLiteral reached the folded slow path with an empty folded needle — ' +
+frontend	src/lib/in-page-find/matcher.ts	StringLiteral	1	1	`in-page-find: the per-code-point fold and the whole-string fold disagree ` +
+frontend	src/lib/in-page-find/matcher.ts	StringLiteral	1	1	'the caseSensitive early return above must keep this unreachable',
+frontend	src/lib/in-page-find/matcher.ts	StringLiteral	1	1	`unless the host's Unicode tables gained another one. The fast/slow path ` +
+frontend	src/lib/in-page-find/matcher.ts	StringLiteral	24	1	return lowered.indexOf('ς') === -1 ? lowered : lowered.replace(FINAL_SIGMA_RE, 'σ')
+frontend	src/lib/in-page-find/matcher.ts	StringLiteral	45	1	if (import.meta.env.DEV && foldedNeedle === '') {
+frontend	src/lib/in-page-find/matcher.ts	StringLiteral	73	1	error: { kind: 'invalid', message: err instanceof Error ? err.message : '' },
+frontend	src/lib/jex-import.ts	ArithmeticOperator	8	1	while (offset + BLOCK <= archive.length) {
+frontend	src/lib/jex-import.ts	ConditionalExpression	5	1	if (cp !== undefined && cp >= 0x20) out += ch
+frontend	src/lib/jex-import.ts	ConditionalExpression	5	1	if (c === undefined || c === 0 || c === 0x20) continue
+frontend	src/lib/jex-import.ts	ConditionalExpression	5	1	if (raw === undefined) return null
+frontend	src/lib/jex-import.ts	StringLiteral	26	1	const line = lines[i] ?? ''
+frontend	src/lib/jex-import.ts	StringLiteral	28	1	const id = (props['id'] ?? '').toLowerCase()
+frontend	src/lib/jex-import.ts	StringLiteral	34	1	parentId: (props['parent_id'] ?? '').toLowerCase(),
+frontend	src/lib/jex-import.ts	StringLiteral	36	1	const sub = (mime.split('/')[1] ?? '').replace(/[^a-z0-9]/gi, '').toLowerCase()
+frontend	src/lib/jex-import.ts	StringLiteral	59	1	const base = name.replace(/\\/g, '/').split('/').pop() ?? ''
+frontend	src/lib/jex-import.ts	StringLiteral	70	1	folders.set(id, { title: firstLine, parentId: (props['parent_id'] ?? '').toLowerCase() })
+frontend	src/lib/search-query/classify.ts	ArrayDeclaration	44	1	const quotedOut: Array<[number, number]> = []
+frontend	src/lib/search-query/classify.ts	ConditionalExpression	5	1	if (tag) {
+frontend	src/lib/search-query/classify.ts	EqualityOperator	5	1	if (cursor < input.length) append(cursor, input.length)
+frontend	src/lib/search-query/classify.ts	EqualityOperator	5	1	if (q[1] <= to) {
+frontend	src/lib/search-query/classify.ts	EqualityOperator	8	1	while (qi < quotedOrdered.length && (quotedOrdered[qi]?.[1] ?? 0) <= from) {
+frontend	src/lib/search-query/classify.ts	OptionalChaining	38	1	while (qi < quotedOrdered.length && (quotedOrdered[qi]?.[1] ?? 0) <= from) {
+frontend	src/lib/search-query/serialize.ts	ConditionalExpression	1	1	rest.length === 0 && word?.text === glued && word.kind === 'word' && !word.unclosedQuote
+frontend	src/lib/search-query/tokenize.ts	ConditionalExpression	8	1	return c !== undefined && /\s/.test(c)
+frontend	src/lib/search-query/tokenize.ts	StringLiteral	16	1	assertAdvanced('tokenize/outer', prevOuter, i)
+frontend	src/lib/search-query/tokenize.ts	StringLiteral	16	1	assertAdvanced('tokenize/word', prevInner, i)
+frontend	src/lib/template-utils.ts	ArrayDeclaration	50	1	const properties = propertiesBySpace[spaceId] ?? []
+frontend	src/lib/template-utils.ts	ArrowFunction	72	1	const depthByIndex: number[] = Array.from({ length: deferred.length }, () => 0)
+frontend	src/lib/template-utils.ts	BooleanLiteral	63	1	writePreference(PREFERENCES.spaceTextJournalTemplatesDeleted, true)
+frontend	src/lib/template-utils.ts	ConditionalExpression	11	1	parentId: destParentIndex == null ? parentId : null,
+frontend	src/lib/template-utils.ts	ConditionalExpression	1	1	entry.resolveParentFromIndex == null
+frontend	src/lib/template-utils.ts	ConditionalExpression	27	1	if (userFormat == null || userFormat.length === 0) return fallback
+frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (cursorDeferredIndex !== null && context?.onCursorBlock) {
+frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (entry == null) continue
+frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (idx == null) continue
+frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (pid == null) continue
+frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (row != null) ids[idx] = row.id
+frontend	src/lib/template-utils.ts	ConditionalExpression	5	1	if (userFormat == null || userFormat.length === 0) return fallback
+frontend	src/lib/template-utils.ts	EqualityOperator	11	1	parentId: destParentIndex == null ? parentId : null,
+frontend	src/lib/template-utils.ts	EqualityOperator	17	1	for (let i = 0; i < deferred.length; i += 1) {
+frontend	src/lib/template-utils.ts	EqualityOperator	17	1	for (let k = 0; k < indicesAtLevel.length; k += 1) {
+frontend	src/lib/template-utils.ts	EqualityOperator	17	2	for (let i = 0; i < deferred.length; i += 1) {
+frontend	src/lib/template-utils.ts	EqualityOperator	35	1	for (const d of depthByIndex) if (d > maxDepth) maxDepth = d
+frontend	src/lib/template-utils.ts	MethodExpression	20	1	const normalized = body.trim().replace(/\s+/g, ' ')
+frontend	src/lib/template-utils.ts	ObjectLiteral	42	1	const ids: string[] = Array.from<string>({ length: deferred.length })
+frontend	src/lib/template-utils.ts	ObjectLiteral	43	1	const depthByIndex: number[] = Array.from({ length: deferred.length }, () => 0)
+frontend	src/lib/template-utils.ts	OptionalChaining	16	1	const parent = deferred[i]?.resolveParentFromIndex
+frontend	src/lib/template-utils.ts	OptionalChaining	65	1	? `Multiple journal templates found (${pages.length}). Using "${pages[0]?.content ?? pages[0]?.id}". ` +
+frontend	src/lib/template-utils.ts	OptionalChaining	86	1	? `Multiple journal templates found (${pages.length}). Using "${pages[0]?.content ?? pages[0]?.id}". ` +
+frontend	src/lib/tree-utils.ts	ArrayDeclaration	33	1	const ancestorStack: string[] = []
+frontend	src/lib/tree-utils.ts	ConditionalExpression	21	1	const parentDepth = parentId === null ? -1 : (items.find((i) => i.id === parentId)?.depth ?? -1)
+frontend	src/lib/tree-utils.ts	ConditionalExpression	5	1	if (selected.size === 0) return []
+frontend	src/lib/tree-utils.ts	EqualityOperator	1	1	Math.abs(dragOffset) > DEAD_ZONE_PX ? dragOffset - Math.sign(dragOffset) * DEAD_ZONE_PX : 0
+frontend	src/lib/tree-utils.ts	EqualityOperator	12	1	insertAt = overIdxInItems > activeIndex ? overIdxInWithout + 1 : overIdxInWithout
+frontend	src/lib/tree-utils.ts	EqualityOperator	1	2	Math.abs(dragOffset) > DEAD_ZONE_PX ? dragOffset - Math.sign(dragOffset) * DEAD_ZONE_PX : 0
+frontend	src/lib/tree-utils.ts	EqualityOperator	5	1	if (depth > depthCeiling) depth = depthCeiling
+frontend	src/lib/tree-utils.ts	EqualityOperator	5	1	if (depth > maxDepth) depth = maxDepth
+frontend	src/lib/tree-utils.ts	EqualityOperator	5	1	if (depth < minDepth) depth = minDepth
+frontend	src/lib/tree-utils.ts	EqualityOperator	5	1	if (depth > previousItem.depth) {
+frontend	src/lib/vault-import.ts	ConditionalExpression	10	2	}
+frontend	src/lib/vault-import.ts	ConditionalExpression	5	1	// up by another ref — dedup by the file object so we read each once).
+frontend	src/lib/vault-import.ts	Regex	14	10	/**
+frontend	src/stores/page-blocks-move.ts	ArrayDeclaration	33	1	const updatedBag: FlatBlock[] = []
+frontend	src/stores/page-blocks-move.ts	BlockStatement	11	1	if (!cur) {
+frontend	src/stores/page-blocks-move.ts	CallExpression	1	1	seen.add(id)
+frontend	src/stores/page-blocks-move.ts	ConditionalExpression	1	1	state.blocks === handle.provBlocks ||
+frontend	src/stores/page-blocks-move.ts	ConditionalExpression	14	1	provParent: (provIndex >= 0 ? blocks[provIndex]?.parent_id : null) ?? null,
+frontend	src/stores/page-blocks-move.ts	ConditionalExpression	5	1	if (b) touched.push(b)
+frontend	src/stores/page-blocks-move.ts	ConditionalExpression	5	1	if (!cur) {
+frontend	src/stores/page-blocks-move.ts	ConditionalExpression	5	1	if (seen.has(id)) continue
+frontend	src/stores/page-blocks-move.ts	ConditionalExpression	5	1	if (wantParent == null) return false
+frontend	src/stores/page-blocks-move.ts	OptionalChaining	31	1	provParent: (provIndex >= 0 ? blocks[provIndex]?.parent_id : null) ?? null,
+rust	agaric-engine/src/loro/engine/mod.rs	replace LoroEngine::init_sibling_ordering with ()	self.tree()
+rust	agaric-engine/src/loro/engine/snapshot.rs	replace > with >= in LoroEngine::reject_unknown_format_version	if v > supported {
+rust	agaric-engine/src/loro/engine/sync.rs	replace > with >= in advance_base	if end_counter > *c {
+rust	agaric-engine/src/loro/engine/sync.rs	replace > with >= in declared_end_vv	.filter_map(|(peer, &counter)| (counter > 0).then_some((*peer, counter)))
+rust	agaric-engine/src/loro/engine/tree.rs	replace < with <= in LoroEngine::ranked_slot	if (sib_pos, sib_id.as_str()) < (position, block_id) {
+rust	agaric-engine/src/reverse/attachment_ops.rs	replace != with == in build_reverse_add_attachment_from_payload	if row.fs_path != fs_path || row.filename != filename {
+rust	agaric-engine/src/reverse/attachment_ops.rs	replace || with && in build_reverse_add_attachment_from_payload	if row.fs_path != fs_path || row.filename != filename {
+rust	agaric-engine/src/reverse/batch.rs	replace / with % in fetch_prior_attachment_batch	let chunk_size = MAX_SQL_PARAMS / ATTACHMENT_BINDS_PER_OP;
+rust	agaric-engine/src/reverse/batch.rs	replace / with % in fetch_prior_position_batch	let chunk_size = MAX_SQL_PARAMS / POSITION_BINDS_PER_OP;
+rust	agaric-engine/src/reverse/batch.rs	replace / with % in fetch_prior_property_batch	let chunk_size = MAX_SQL_PARAMS / PROPERTY_BINDS_PER_OP;
+rust	agaric-engine/src/reverse/batch.rs	replace / with % in fetch_prior_text_batch	let chunk_size = MAX_SQL_PARAMS / TEXT_BINDS_PER_OP;
+rust	agaric-engine/src/reverse/batch.rs	replace / with % in reject_replicated_targets	let chunk_size = MAX_SQL_PARAMS / 2;

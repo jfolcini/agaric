@@ -164,4 +164,4 @@ npx oxfmt --write conformance/fixtures/   # from the repo root
 
 ## Mutants
 
-An equivalent (unkillable) mutant is recorded in its tracking issue's `mutation-accepted` block (`scripts/file-mutation-survivors.mjs`), not chased with tests.
+An equivalent (unkillable) mutant is recorded in `mutation-accepted.tsv` (see `src/__tests__/AGENTS.md` § Mutation triage), not chased with tests.
