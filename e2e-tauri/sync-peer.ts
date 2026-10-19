@@ -134,6 +134,8 @@ export async function setPeerAddress(deviceId: string, address: string): Promise
 
 type Command =
   | ({ cmd: 'pair' } & PairingQr)
+  | { cmd: 'host_pairing' }
+  | { cmd: 'wait_joined' }
   | { cmd: 'sync' }
   | { cmd: 'sync_refused' }
   | { cmd: 'get_block'; id: string }
@@ -156,6 +158,8 @@ type Command =
 
 type Reply =
   | { reply: 'paired'; device_id: string; address: string }
+  | { reply: 'hosting'; qr_svg: string }
+  | { reply: 'joined'; device_id: string }
   | { reply: 'synced' }
   | { reply: 'refused'; message: string }
   | { reply: 'block'; id: string; parent_id: string | null; content: string }
@@ -187,6 +191,10 @@ export interface PeerAttachment {
 }
 
 export interface SyncPeer {
+  /** Open a pairing this device hosts; resolves to the QR it shows, as the backend's SVG. */
+  hostPairing(): Promise<string>
+  /** Resolves to the device id of the app once it has joined the pairing `hostPairing` opened. */
+  waitJoined(): Promise<string>
   /** Join the app's pairing; resolves once the peer holds the app as its peer. */
   pair(qr: PairingQr): Promise<{ deviceId: string; address: string }>
   /** Pull from the app now; resolves once the pull has landed in the peer's vault. */
@@ -282,6 +290,8 @@ export async function startSyncPeer(): Promise<SyncPeer> {
       const paired = await request({ cmd: 'pair', ...qr }, 'paired')
       return { deviceId: paired.device_id, address: paired.address }
     },
+    hostPairing: async () => (await request({ cmd: 'host_pairing' }, 'hosting')).qr_svg,
+    waitJoined: async () => (await request({ cmd: 'wait_joined' }, 'joined')).device_id,
     sync: async () => {
       await request({ cmd: 'sync' }, 'synced')
     },

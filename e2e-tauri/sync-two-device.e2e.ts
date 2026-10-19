@@ -493,6 +493,36 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
     await expectImageRendered(imageBlockId, "after the app's pull")
   })
 
+  it('the Settings state card shows Idle, a last-sync time and one peer after the syncs', async () => {
+    await openSyncSettings()
+    // Read in one `execute`: the card re-renders as the sync store refreshes.
+    const readCard = () =>
+      browser.execute(() => {
+        const text = (selector: string) => document.querySelector(selector)?.textContent ?? ''
+        return {
+          state: text('.sync-state-label'),
+          peers: text('.sync-peer-count'),
+          lastSynced: text('.sync-last-synced'),
+        }
+      })
+    let seen = await readCard()
+    await browser
+      .waitUntil(
+        async () => {
+          seen = await readCard()
+          return (
+            seen.state === 'Idle' && seen.peers === '1' && /^just now$|ago$/.test(seen.lastSynced)
+          )
+        },
+        { timeout: NAV_TIMEOUT },
+      )
+      .catch(() => {
+        throw new Error(
+          `the state card did not settle on Idle, 1 peer and a time: ${JSON.stringify(seen)}`,
+        )
+      })
+  })
+
   it("unpairing refuses the peer's next sync and drops only this device's row", async () => {
     if (peer === undefined || paired === undefined) throw new Error('the pairing test failed')
     const { deviceId, appDeviceId } = paired
