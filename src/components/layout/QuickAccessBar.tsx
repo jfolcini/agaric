@@ -24,6 +24,8 @@
  *     works as-is on coarse pointers; enabling it here is the lower-risk fix.
  *   - No recents → null (recents-only: the empty path is the real one now that
  *     the always-present destinations zone is gone).
+ *   - Settings → null: opening a page from inside Settings is not wanted
+ *     (#5993); the tab bar stays as the way back.
  */
 
 import type React from 'react'
@@ -37,6 +39,7 @@ import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 import { getPageDisplayName } from '@/lib/page-display'
 import { shouldReduceMotion } from '@/lib/preferences'
+import { useNavigationStore } from '@/stores/navigation'
 import { type PageRef, selectRecentPagesForSpace, useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
 import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '@/stores/tabs'
@@ -57,6 +60,7 @@ export function QuickAccessBar(): React.ReactElement | null {
   })
 
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
+  const isSettings = useNavigationStore((s) => s.currentView === 'settings')
   const openInBackgroundTab = useOpenInBackgroundTab()
 
   const visible = recentPages.filter((p) => p.pageId !== activePageId)
@@ -130,7 +134,7 @@ export function QuickAccessBar(): React.ReactElement | null {
   // #927 f6: renders on mobile too — the recents strip is the mobile
   // page-switch affordance now that there is no bottom-nav and TabBar is
   // desktop-only. Recents-only: nothing to show when there are no recents.
-  if (visible.length === 0) return null
+  if (visible.length === 0 || isSettings) return null
 
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- roving-tabindex keyboard navigation: the <nav> intercepts arrow keys delegated up from its focused recent chips to move focus between them. The chips are the interactive controls; the <nav> only routes keys.

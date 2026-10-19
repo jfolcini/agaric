@@ -170,11 +170,13 @@ function MobileSidebarTrigger(): ReactElement | null {
       data-testid="mobile-sidebar-trigger"
       aria-label={t('sidebar.openMenu')}
       aria-haspopup="dialog"
-      // `self-start` keeps the 44px target pinned to the top of a header
-      // whose content stacks (a long title above its controls) instead of
-      // floating to its vertical middle. The negative margin puts the icon,
-      // not the button, on the header's 16px content edge.
-      className="-ml-1.5 shrink-0 self-start sm:self-center [@media(pointer:coarse)]:-ml-3.5"
+      // On touch, `self-start` keeps the 44px target on the first row of a
+      // header whose content stacks (a long title above its controls); the
+      // header's padding makes that row the whole header when it does not
+      // stack. A mouse header has no such padding, so there the trigger
+      // centres like the controls beside it. The negative margin puts the
+      // icon, not the button, on the header's 16px content edge.
+      className="-ml-1.5 shrink-0 self-center [@media(pointer:coarse)]:-ml-3.5 [@media(pointer:coarse)]:self-start"
     />
   )
 }

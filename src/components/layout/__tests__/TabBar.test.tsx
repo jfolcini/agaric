@@ -601,577 +601,135 @@ describe('TabBar', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Active-tab dropdown switcher
+  // Tab switcher (#5993)
   // ---------------------------------------------------------------------------
-  describe(' active-tab dropdown switcher', () => {
-    function setupThreeTabs(activeTabIndex = 1) {
-      useNavigationStore.setState({
-        currentView: 'page-editor',
-      })
+  describe('tab switcher', () => {
+    function setupTabs(labels: string[], activeTabIndex = 0) {
+      useNavigationStore.setState({ currentView: 'page-editor' })
       useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
-          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
-          { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
-        ],
+        tabs: labels.map((label, i) => ({
+          id: String(i),
+          pageStack: [{ pageId: `P${i}`, title: label }],
+          label,
+        })),
         activeTabIndex,
       })
     }
 
-    it('clicking the active tab opens a dropdown listing every tab with the active one checked', async () => {
-      setupThreeTabs(1)
-      const user = userEvent.setup()
+    async function openSwitcher(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole('button', { name: t('tabs.switcher') }))
+      return screen.findByRole('combobox')
+    }
+
+    function optionLabels(): string[] {
+      return screen.getAllByRole('option').map((o) => o.getAttribute('title') ?? '')
+    }
+
+    it('renders the caret before the tablist, outside it', () => {
+      setupTabs(['Page 1', 'Page 2', 'Page 3'], 1)
       render(<TabBar />)
 
-      // Click the active tab's label — the active tab is at index 1 ("Page 2").
-      await user.click(screen.getByText('Page 2'))
-
-      const menu = await screen.findByRole('menu')
-      expect(menu).toBeInTheDocument()
-
-      const items = within(menu).getAllByRole('menuitemradio')
-      expect(items).toHaveLength(3)
-      expect(items[0]).toHaveAttribute('aria-checked', 'false')
-      expect(items[1]).toHaveAttribute('aria-checked', 'true')
-      expect(items[2]).toHaveAttribute('aria-checked', 'false')
+      const caret = screen.getByRole('button', { name: t('tabs.switcher') })
+      const tablist = screen.getByRole('tablist')
+      expect(tablist).not.toContainElement(caret)
+      expect(caret.compareDocumentPosition(tablist) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
-    it('clicking a dropdown item switches tabs and closes the menu', async () => {
-      setupThreeTabs(1)
+    it('opens with focus in the filter and lists every tab', async () => {
+      setupTabs(['Page 1', 'Page 2', 'Page 3'], 1)
       const user = userEvent.setup()
       render(<TabBar />)
 
-      await user.click(screen.getByText('Page 2'))
-      const menu = await screen.findByRole('menu')
-      const items = within(menu).getAllByRole('menuitemradio')
+      const input = await openSwitcher(user)
 
-      // Pick the 3rd row (index 2 → "Page 3").
-      await user.click(items[2] as HTMLElement)
+      await waitFor(() => expect(input).toHaveFocus())
+      expect(optionLabels()).toEqual(['Page 1', 'Page 2', 'Page 3'])
+    })
+
+    it('typing narrows the list by a case-insensitive substring of the label or full path', async () => {
+      setupTabs(['Work/Alpha', 'Beta', 'work notes'], 1)
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      await openSwitcher(user)
+      // `WORK` is only in the hidden namespace of the first tab (shown as
+      // "Alpha") and in the third tab's label.
+      await user.keyboard('WORK')
+
+      expect(optionLabels()).toEqual(['Work/Alpha', 'work notes'])
+    })
+
+    it('shows the no-match row when nothing matches', async () => {
+      setupTabs(['Page 1', 'Page 2'])
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      await openSwitcher(user)
+      await user.keyboard('zzz')
+
+      expect(screen.queryAllByRole('option')).toHaveLength(0)
+      expect(screen.getByText(t('tabs.switcherNoMatch'))).toBeInTheDocument()
+    })
+
+    it('ArrowDown then Enter activates the highlighted match and closes the switcher', async () => {
+      setupTabs(['Alpha', 'Beta', 'Gamma'], 0)
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      await openSwitcher(user)
+      await user.keyboard('a')
+      // Matches: Alpha, Beta, Gamma; the first is highlighted.
+      await user.keyboard('{ArrowDown}{ArrowDown}{Enter}')
 
       expect(useTabsStore.getState().activeTabIndex).toBe(2)
-      // Menu has dismissed.
-      await waitForMenuClosed()
+      await waitFor(() => expect(screen.queryByRole('combobox')).toBeNull())
     })
 
-    it('clicking the close icon inside a dropdown row closes that tab but keeps the menu open', async () => {
-      setupThreeTabs(1)
+    it('clicking a row activates that tab', async () => {
+      setupTabs(['Alpha', 'Beta'], 0)
       const user = userEvent.setup()
       render(<TabBar />)
 
-      await user.click(screen.getByText('Page 2'))
-      await screen.findByRole('menu')
+      await openSwitcher(user)
+      await user.click(screen.getByRole('option', { name: /Beta/ }))
 
-      // Popover content is portaled — search document-wide, not just the
-      // render container (Radix mounts the portal on document.body).
-      const closeButtons = document.querySelectorAll('[data-tab-dropdown-close]')
-      expect(closeButtons.length).toBe(3)
-      await user.click(closeButtons[1] as HTMLElement)
-
-      // closeTab(1) removed "Page 2" — 2 tabs remain, menu is still present,
-      // and the remaining rows are re-rendered.
-
-      expect(useTabsStore.getState().tabs).toHaveLength(2)
-      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['Page 1', 'Page 3'])
-      expect(screen.getByRole('menu')).toBeInTheDocument()
+      expect(useTabsStore.getState().activeTabIndex).toBe(1)
     })
 
-    it('clicking the active tab from a non-editor view does not open the dropdown (flips view instead)', async () => {
-      useNavigationStore.setState({
-        currentView: 'journal',
-      })
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
-          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
-        ],
-        activeTabIndex: 0,
-      })
+    it('Escape closes the switcher without switching tabs', async () => {
+      setupTabs(['Alpha', 'Beta'], 0)
       const user = userEvent.setup()
       render(<TabBar />)
 
-      await user.click(screen.getByText('Page 1'))
-
-      expect(screen.queryByRole('menu')).toBeNull()
-      expect(useNavigationStore.getState().currentView).toBe('page-editor')
-    })
-
-    it('pressing Escape with the dropdown open closes the menu', async () => {
-      setupThreeTabs(1)
-      const user = userEvent.setup()
-      render(<TabBar />)
-
-      await user.click(screen.getByText('Page 2'))
-      await screen.findByRole('menu')
-
+      await openSwitcher(user)
       await user.keyboard('{Escape}')
 
-      await waitForMenuClosed()
-    })
-  })
-
-  // ---------------------------------------------------------------------------
-  // Chevron visual polish (discoverability of active-tab dropdown)
-  // ---------------------------------------------------------------------------
-  describe(' chevron visual polish', () => {
-    function setupActiveInEditor() {
-      useNavigationStore.setState({
-        currentView: 'page-editor',
-      })
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
-          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
-        ],
-        activeTabIndex: 0,
-      })
-    }
-
-    it('chevron on the active tab uses opacity-70 base + group-hover:opacity-100 reveal', () => {
-      setupActiveInEditor()
-      const { container } = render(<TabBar />)
-
-      // Scope to the active tab (index 0) and find the single ChevronDown icon
-      // rendered alongside the title span. lucide renders as an <svg>.
-      const tabs = screen.getAllByRole('tab')
-      const activeTab = tabs[0] as HTMLElement
-      const chevron = activeTab.querySelector('svg.lucide-chevron-down')
-      expect(chevron).not.toBeNull()
-      const className = chevron?.getAttribute('class') ?? ''
-      // Both the bumped base opacity and the hover-reveal must be pinned so a
-      // later refactor can't silently revert the discoverability fix. jsdom
-      // does not exercise :hover state — we only assert the class is present.
-      expect(className).toContain('opacity-70')
-      expect(className).toContain('group-hover:opacity-100')
-      // size-3 is deliberately preserved (see GitHub issues for the design note).
-      expect(className).toContain('size-3')
-
-      // Sanity: the tablist-container-scoped query returns exactly one chevron
-      // (only the active tab renders it).
-      expect(container.querySelectorAll('svg.lucide-chevron-down')).toHaveLength(1)
+      await waitFor(() => expect(screen.queryByRole('combobox')).toBeNull())
+      expect(useTabsStore.getState().activeTabIndex).toBe(0)
     })
 
-    it('the active tab (in page-editor view) has the `group` class so group-hover on the chevron resolves', () => {
-      setupActiveInEditor()
+    it("a row's close closes that tab only and keeps the switcher open", async () => {
+      setupTabs(['Alpha', 'Beta', 'Gamma'], 0)
+      const user = userEvent.setup()
       render(<TabBar />)
 
-      const tabs = screen.getAllByRole('tab')
-      // Active tab must carry `group` — without it the chevron's
-      // `group-hover:` utility is a no-op.
-      expect(tabs[0]).toHaveClass('group')
+      await openSwitcher(user)
+      const betaRow = screen.getByRole('option', { name: /Beta/ })
+      await user.click(betaRow.querySelector('[data-tab-switcher-close]') as HTMLElement)
+
+      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['Alpha', 'Gamma'])
+      expect(useTabsStore.getState().activeTabIndex).toBe(0)
+      expect(optionLabels()).toEqual(['Alpha', 'Gamma'])
     })
-  })
 
-  // ---------------------------------------------------------------------------
-  // Active-tab dropdown trigger aria-label
-  // ---------------------------------------------------------------------------
-  describe(' active-tab dropdown trigger aria-label', () => {
-    it('active tab in page-editor view has aria-label hinting the tab switcher', () => {
-      useNavigationStore.setState({
-        currentView: 'page-editor',
-      })
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
-          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
-        ],
-        activeTabIndex: 1,
-      })
-
+    it('has no a11y violations while open', async () => {
+      setupTabs(['Alpha', 'Beta', 'Gamma'], 1)
+      const user = userEvent.setup()
       render(<TabBar />)
 
-      const tabs = screen.getAllByRole('tab')
-      const activeTab = tabs[1] as HTMLElement
-      expect(activeTab.getAttribute('aria-label')).toBe(
-        t('tabs.switchTabsHint', { title: 'Page 2' }),
-      )
-    })
+      await openSwitcher(user)
 
-    it('active tab aria-label falls back to "Untitled" title for empty labels', () => {
-      useNavigationStore.setState({
-        currentView: 'page-editor',
-      })
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [], label: '' },
-          { id: '1', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
-        ],
-        activeTabIndex: 0,
-      })
-
-      render(<TabBar />)
-
-      const tabs = screen.getAllByRole('tab')
-      const activeTab = tabs[0] as HTMLElement
-      expect(activeTab.getAttribute('aria-label')).toBe(
-        t('tabs.switchTabsHint', { title: t('tabs.untitled') }),
-      )
-    })
-
-    it('inactive tabs do not set aria-label (accessible name falls back to visible text)', () => {
-      useNavigationStore.setState({
-        currentView: 'page-editor',
-      })
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
-          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
-        ],
-        activeTabIndex: 1,
-      })
-
-      render(<TabBar />)
-
-      const tabs = screen.getAllByRole('tab')
-      const inactiveTab = tabs[0] as HTMLElement
-      expect(inactiveTab.getAttribute('aria-label')).toBeNull()
-    })
-
-    it('active tab in a non-editor view (journal) does not set aria-label', () => {
-      useNavigationStore.setState({
-        currentView: 'journal',
-      })
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
-          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
-        ],
-        activeTabIndex: 0,
-      })
-
-      render(<TabBar />)
-
-      const tabs = screen.getAllByRole('tab')
-      const activeTab = tabs[0] as HTMLElement
-      // No Popover wiring in non-editor views → no aria-label either.
-      expect(activeTab.getAttribute('aria-label')).toBeNull()
-    })
-
-    it('Radix aria-haspopup and aria-expanded are preserved on the active tab in page-editor', () => {
-      useNavigationStore.setState({
-        currentView: 'page-editor',
-      })
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
-          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
-        ],
-        activeTabIndex: 0,
-      })
-
-      render(<TabBar />)
-
-      const tabs = screen.getAllByRole('tab')
-      const activeTab = tabs[0] as HTMLElement
-      expect(activeTab).toHaveAttribute('aria-haspopup', 'menu')
-      expect(activeTab).toHaveAttribute('aria-expanded', 'false')
-    })
-  })
-
-  // ---------------------------------------------------------------------------
-  // Dropdown a11y — flatten nested interactive (close button no longer
-  // nested inside role="menuitemradio")
-  // ---------------------------------------------------------------------------
-  describe(' dropdown a11y — flat menu items', () => {
-    function setupThreeTabs(activeTabIndex = 1) {
-      useNavigationStore.setState({
-        currentView: 'page-editor',
-      })
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [{ pageId: 'P1', title: 'Page 1' }], label: 'Page 1' },
-          { id: '1', pageStack: [{ pageId: 'P2', title: 'Page 2' }], label: 'Page 2' },
-          { id: '2', pageStack: [{ pageId: 'P3', title: 'Page 3' }], label: 'Page 3' },
-        ],
-        activeTabIndex,
-      })
-    }
-
-    async function openDropdown(): Promise<{ menu: HTMLElement; container: HTMLElement }> {
-      const user = userEvent.setup()
-      const { container } = render(<TabBar />)
-      // The active tab title is the dropdown trigger. Use the tablist-scoped
-      // role query to disambiguate from the menu copy that appears later.
-      const tabs = within(screen.getByRole('tablist')).getAllByRole('tab')
-      const activeTab = tabs.find((tab) => tab.getAttribute('aria-selected') === 'true')
-      await user.click(activeTab as HTMLElement)
-      const menu = await screen.findByRole('menu')
-      return { menu, container }
-    }
-
-    it('close affordance is no longer a <button> nested inside role="menuitemradio"', async () => {
-      setupThreeTabs(1)
-      await openDropdown()
-
-      // The activate items still carry role="menuitemradio".
-      const activateItems = screen.getAllByRole('menuitemradio')
-      expect(activateItems).toHaveLength(3)
-      // None of them contains a nested <button> — that was the violation.
-      for (const item of activateItems) {
-        expect(item.querySelector('button')).toBeNull()
-      }
-
-      // The close affordances are present as siblings (role="menuitem"),
-      // not as descendants of any menuitemradio.
-      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
-      expect(closeItems.length).toBe(3)
-      const expectedLabels = [
-        t('tabs.closeTab', { label: 'Page 1' }),
-        t('tabs.closeTab', { label: 'Page 2' }),
-        t('tabs.closeTab', { label: 'Page 3' }),
-      ]
-      closeItems.forEach((closeItem, i) => {
-        // Sibling, not descendant of menuitemradio.
-        expect(closeItem.closest('[role="menuitemradio"]')).toBeNull()
-        expect(closeItem.getAttribute('role')).toBe('menuitem')
-        // Icon-only → must carry an aria-label per the design-system rule.
-        expect(closeItem.getAttribute('aria-label')).toBe(expectedLabels[i])
-      })
-    })
-
-    it('has no a11y violations while the dropdown is open', async () => {
-      setupThreeTabs(1)
-      const { menu } = await openDropdown()
-
-      // Scope axe to the open menu's portal subtree — Radix mounts on body.
-      await waitFor(
-        async () => {
-          const results = await axe(menu)
-          expect(results).toHaveNoViolations()
-        },
-        { timeout: 5000 },
-      )
-    })
-
-    it("seeds focus on the active tab's activate item when the dropdown opens", async () => {
-      setupThreeTabs(1)
-      await openDropdown()
-
-      // index 1 is the active tab → activate item at index 2 of the doubled
-      // roving list, but the second menuitemradio (i=1) is what receives focus.
-      const activateItems = screen.getAllByRole('menuitemradio')
-      await waitFor(() => {
-        expect(activateItems[1]).toHaveFocus()
-      })
-    })
-
-    it('ArrowDown moves focus from an activate item to its sibling close item', async () => {
-      setupThreeTabs(0)
-      await openDropdown()
-
-      const activateItems = screen.getAllByRole('menuitemradio')
-      // Initial focus is on the active tab (index 0) activate item.
-      await waitFor(() => {
-        expect(activateItems[0]).toHaveFocus()
-      })
-
-      // ArrowDown advances to the close menuitem of the SAME row.
-      const user = userEvent.setup()
-      await user.keyboard('{ArrowDown}')
-
-      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
-      await waitFor(() => {
-        expect(closeItems[0]).toHaveFocus()
-      })
-    })
-
-    it("ArrowDown from a close item advances to the next row's activate item", async () => {
-      setupThreeTabs(0)
-      await openDropdown()
-
-      const user = userEvent.setup()
-      // activate-0 → close-0 → activate-1
-      await user.keyboard('{ArrowDown}{ArrowDown}')
-
-      const activateItems = screen.getAllByRole('menuitemradio')
-      await waitFor(() => {
-        expect(activateItems[1]).toHaveFocus()
-      })
-    })
-
-    it('ArrowUp from the first activate item wraps to the last close item', async () => {
-      setupThreeTabs(0)
-      await openDropdown()
-
-      const user = userEvent.setup()
-      await user.keyboard('{ArrowUp}')
-
-      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
-      await waitFor(() => {
-        expect([...closeItems].at(-1)).toHaveFocus()
-      })
-    })
-
-    it.each([
-      ['Enter', '{Enter}'],
-      ['Space', ' '],
-    ])('%s on a focused close item preserves menu focus and arrow navigation', async (_, key) => {
-      setupThreeTabs(0)
-      await openDropdown()
-
-      const user = userEvent.setup()
-      // Focus is on activate-0. ArrowDown → close-0. Activation → closeTab(0).
-      await user.keyboard('{ArrowDown}')
-      await user.keyboard(key)
-
-      expect(useTabsStore.getState().tabs).toHaveLength(2)
-      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['Page 2', 'Page 3'])
-      // Menu is still open after the close — user can keep pruning.
-      expect(screen.getByRole('menu')).toBeInTheDocument()
-      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
-      await waitFor(() => {
-        expect(closeItems[0]).toHaveFocus()
-      })
-
-      await user.keyboard('{ArrowDown}')
-      const activateItems = screen.getAllByRole('menuitemradio')
-      await waitFor(() => {
-        expect(activateItems[1]).toHaveFocus()
-      })
-    })
-
-    it('keeps the dropdown closed when a second tab is added after the bar auto-hides', async () => {
-      useNavigationStore.setState({ currentView: 'page-editor' })
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [], label: 'Page 1' },
-          { id: '1', pageStack: [], label: 'Page 2' },
-        ],
-        activeTabIndex: 0,
-      })
-      await openDropdown()
-
-      const user = userEvent.setup()
-      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
-      await user.click(closeItems[1] as HTMLElement)
-
-      await waitFor(() => {
-        expect(screen.queryByRole('menu')).toBeNull()
-      })
-
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [], label: 'Page 1' },
-          { id: '2', pageStack: [], label: 'Page 3' },
-        ],
-        activeTabIndex: 0,
-      })
-
-      await waitFor(() => {
-        expect(screen.getAllByRole('tab')).toHaveLength(2)
-      })
-      expect(screen.queryByRole('menu')).toBeNull()
-    })
-
-    it('Escape with focus on a close item still closes the dropdown', async () => {
-      setupThreeTabs(1)
-      await openDropdown()
-
-      const user = userEvent.setup()
-      // activate-1 (active tab seed) → ArrowDown → close-1.
-      await user.keyboard('{ArrowDown}')
-      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
-      await waitFor(() => {
-        expect(closeItems[1]).toHaveFocus()
-      })
-
-      await user.keyboard('{Escape}')
-
-      await waitForMenuClosed()
-    })
-
-    it('clicking the close item closes the right tab (data-tab-dropdown-close still works)', async () => {
-      setupThreeTabs(1)
-      await openDropdown()
-
-      const user = userEvent.setup()
-      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
-      // Close index 2 → "Page 3"
-      await user.click(closeItems[2] as HTMLElement)
-
-      expect(useTabsStore.getState().tabs).toHaveLength(2)
-      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['Page 1', 'Page 2'])
-    })
-
-    it('clicking a higher-indexed close item restores focus to a surviving menu item', async () => {
-      useNavigationStore.setState({ currentView: 'page-editor' })
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [], label: 'Page 1' },
-          { id: '1', pageStack: [], label: 'Page 2' },
-          { id: '2', pageStack: [], label: 'Page 3' },
-          { id: '3', pageStack: [], label: 'Page 4' },
-        ],
-        activeTabIndex: 0,
-      })
-      await openDropdown()
-
-      const user = userEvent.setup()
-      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
-      await user.click(closeItems[3] as HTMLElement)
-
-      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual([
-        'Page 1',
-        'Page 2',
-        'Page 3',
-      ])
-      const activateItems = screen.getAllByRole('menuitemradio')
-      await waitFor(() => {
-        expect(activateItems[0]).toHaveFocus()
-      })
-
-      await user.keyboard('{ArrowUp}')
-      const survivingCloseItems = document.querySelectorAll('[data-tab-dropdown-close]')
-      await waitFor(() => {
-        expect(survivingCloseItems[2]).toHaveFocus()
-      })
-    })
-
-    it('Enter on a higher-indexed close item clamps focus and keeps arrow navigation working', async () => {
-      useNavigationStore.setState({ currentView: 'page-editor' })
-      useTabsStore.setState({
-        tabs: [
-          { id: '0', pageStack: [], label: 'Page 1' },
-          { id: '1', pageStack: [], label: 'Page 2' },
-          { id: '2', pageStack: [], label: 'Page 3' },
-          { id: '3', pageStack: [], label: 'Page 4' },
-        ],
-        activeTabIndex: 0,
-      })
-      await openDropdown()
-
-      const user = userEvent.setup()
-      // activate-0 → … → close-3, then remove that final row.
-      await user.keyboard(
-        '{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}',
-      )
-      await user.keyboard('{Enter}')
-
-      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual([
-        'Page 1',
-        'Page 2',
-        'Page 3',
-      ])
-      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
-      await waitFor(() => {
-        expect(closeItems[2]).toHaveFocus()
-      })
-
-      await user.keyboard('{ArrowDown}')
-      const activateItems = screen.getAllByRole('menuitemradio')
-      await waitFor(() => {
-        expect(activateItems[0]).toHaveFocus()
-      })
+      expect(await axe(screen.getByRole('dialog'))).toHaveNoViolations()
     })
   })
 })
-
-/**
- * Waits for the popover menu to disappear. Radix unmounts the portal via a
- * post-close effect so `queryByRole` can flicker — this helper polls.
- */
-async function waitForMenuClosed(): Promise<void> {
-  const { waitFor: waitForFn } = await import('@testing-library/react')
-  await waitForFn(() => {
-    expect(screen.queryByRole('menu')).toBeNull()
-  })
-}

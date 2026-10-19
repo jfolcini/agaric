@@ -5,7 +5,7 @@
  * cluster was removed in #83 — it duplicated the left sidebar). Coverage:
  *  - Render gate: desktop AND mobile with recents render; no recents → null
  *    (#927 f6: the recents strip is the mobile page-switch affordance).
- *  - Currently-open page excluded from recents.
+ *  - Currently-open page excluded from recents; nothing renders on Settings.
  * Recents zone preserves all behaviour.
  *  - Roving tabindex over the recents (wrap, horizontal-only).
  *  - axe clean.
@@ -101,6 +101,17 @@ describe('QuickAccessBar', () => {
       mockedUseIsMobile.mockReturnValue(true)
       render(<QuickAccessBar />)
       expect(screen.queryByTestId('quick-access-bar')).toBeNull()
+    })
+
+    // #5993: no page opens from inside Settings; on any other view it shows.
+    it.each([
+      ['settings', false],
+      ['journal', true],
+    ] as const)('on the %s view, renders the strip: %s', (view, shown) => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+      useNavigationStore.setState({ currentView: view })
+      render(<QuickAccessBar />)
+      expect(screen.queryByTestId('quick-access-bar') !== null).toBe(shown)
     })
 
     it('returns null when the only recent is the currently-open page', () => {

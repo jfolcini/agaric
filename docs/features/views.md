@@ -154,10 +154,10 @@ The view that opens when you navigate to a single page. Not a sidebar entry — 
 
 ## Tabs
 
-A **TabBar** above the active view holds open pages (desktop only; hidden on mobile and when a single tab is open). Each tab persists per space — switching spaces restores that space's tabs.
+A **TabBar** above the active view holds open pages (desktop only; hidden on mobile and when a single tab is open). Each tab persists per space — switching spaces restores that space's tabs. A click on a tab opens it. The caret left of the tabs opens a switcher listing every open tab under a filter field: typing narrows the list to the tabs whose title or full path contains the text, ignoring case; the arrow keys move through the matches, Enter opens one, Escape closes, and each row's × closes its tab.
 
 A middle click on anything that opens a page opens it in a **background tab**, as a browser does, leaving the current view on screen: a `[[link]]` or `((ref))` in a block, a Pages row or tree entry, a bookmark, a recent page, a search result, a reference, an agenda or task row, a page link in a list, a graph node. Right-click (long-press on touch) offers *Open in new tab* for the same; on a block's link it is the first row of the block menu. Mobile shows no tabs, so there neither applies.
 
 ## Recent pages strip
 
-Below the TabBar on desktop, a horizontal strip of the recently-opened pages in the active space. Click to re-open; Ctrl/Cmd-click or middle-click opens it in a background tab.
+Below the TabBar on desktop, a horizontal strip of the recently-opened pages in the active space. Click to re-open; Ctrl/Cmd-click or middle-click opens it in a background tab. Settings does not show it.

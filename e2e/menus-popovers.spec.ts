@@ -10,7 +10,7 @@
  * internals.
  *
  * Surfaces covered:
- *   1. TabBar dropdown switcher          (src/components/layout/TabBar.tsx)
+ *   1. TabBar tab switcher               (src/components/layout/TabBar.tsx)
  *   2. SourcePageFilter popover          (src/components/filters/SourcePageFilter.tsx)
  *   3. FilterHelperPopover (Add filter)  (src/components/search/FilterHelperPopover.tsx)
  *   4. JournalCalendarDropdown           (src/components/journal/JournalCalendarDropdown.tsx)
@@ -23,76 +23,36 @@
 import { activePopover, expect, openPage, openSearchView, test, waitForBoot } from './helpers'
 
 // ===========================================================================
-// 1. TabBar dropdown switcher
+// 1. TabBar tab switcher
 // ===========================================================================
 //
-// The TabBar (src/components/layout/TabBar.tsx) only renders with ≥2 open tabs
-// (`if (tabs.length <= 1) return null`, line 114) and on a desktop viewport
-// (`if (isMobile) return null`, line 110 — the Playwright project uses Desktop
-// Chrome, so isMobile is false). Clicking the ACTIVE tab's label while in the
-// page-editor view opens the dropdown switcher (`handleTabClick`, lines
-// 126-129). We reach two tabs by opening a page, then firing the
-// `openInNewTab` shortcut (Ctrl+T) which duplicates the active page into a new
-// tab (useAppKeyboardShortcuts.ts TAB_SHORTCUTS / line 151).
+// The TabBar renders on a desktop viewport with two or more tabs; Ctrl+T
+// duplicates the active page into a second tab. The caret left of the tabs
+// opens the switcher (its filter flow is in tab-switcher.spec.ts).
 
-test.describe('TabBar dropdown switcher (#1171 surface 1) @pages @search @journal', () => {
-  test('open → switch tab → Escape closes and restores focus to the active tab', async ({
-    page,
-  }) => {
+test.describe('TabBar tab switcher (#1171 surface 1) @pages @search @journal', () => {
+  test('open → switch tab → Escape closes and restores focus to the caret', async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
-
-    // Open a second tab so the TabBar mounts (it autohides at ≤1 tab).
     await page.keyboard.press('Control+t')
 
-    // The tablist has aria-label "Editor tabs" (tabs.tabList, common.ts:275).
     const tablist = page.getByRole('tablist', { name: 'Editor tabs' })
-    await expect(tablist).toBeVisible()
+    await expect(tablist.getByRole('tab', { selected: true })).toHaveCount(1)
+    const caret = page.getByRole('button', { name: 'Switch tab', exact: true })
+    const switcher = page.getByRole('dialog', { name: 'Switch tab' })
 
-    // The active tab carries aria-selected="true" and (in page-editor view)
-    // aria-haspopup="menu" — it doubles as the dropdown trigger (TabBar.tsx
-    // lines 222-225).
-    const activeTab = tablist.getByRole('tab', { selected: true })
-    await expect(activeTab).toHaveAttribute('aria-haspopup', 'menu')
-
-    // Click the active tab's label → dropdown opens (MenuPopoverContent with
-    // role="menu", TabBar.tsx lines 276-283).
-    await activeTab.click()
-    const menu = page.getByRole('menu', { name: 'Editor tabs' })
-    await expect(menu).toBeVisible()
-    await expect(activeTab).toHaveAttribute('aria-expanded', 'true')
-
-    // The active tab's row is a checked menuitemradio (aria-checked="true",
-    // TabBar.tsx lines 310-312).
-    const checkedRow = menu.getByRole('menuitemradio', { checked: true })
-    await expect(checkedRow).toBeVisible()
-
-    // Two tabs duplicate the same page, so there are two activate rows. Click
-    // the OTHER one (the second menuitemradio) → switchTab + close (lines
-    // 316-319).
-    const rows = menu.getByRole('menuitemradio')
+    await caret.click()
+    const rows = switcher.getByRole('option')
     await expect(rows).toHaveCount(2)
-    await rows.nth(1).click()
-    await expect(menu).toHaveCount(0)
+    await rows.nth(0).click()
+    await expect(switcher).toHaveCount(0)
+    await expect(tablist.getByRole('tab').nth(0)).toHaveAttribute('aria-selected', 'true')
 
-    // Re-open and exercise the Escape → close path.
-    //
-    // NOTE on focus-restore: unlike the other four surfaces, this dropdown is
-    // anchored with a bare `PopoverAnchor` (TabBar.tsx lines 269-271), NOT a
-    // `PopoverTrigger`. Radix's `onCloseAutoFocus` returns focus to the
-    // *trigger* element on dismiss — and there is no trigger here, only an
-    // anchor (which is positioning-only, not a focus-return target). The
-    // component also does not implement its own on-close focus-restore effect
-    // (the dropdownItemRefs effect only moves focus while the menu is OPEN).
-    // So after Escape the active tab is NOT re-focused in production; asserting
-    // `toBeFocused()` here would test behavior that does not exist. We assert
-    // only the close (the menu's own contract), per the "assert rendered DOM,
-    // never component internals / nonexistent behavior" rule.
-    const activeTabAfter = tablist.getByRole('tab', { selected: true })
-    await activeTabAfter.click()
-    await expect(page.getByRole('menu', { name: 'Editor tabs' })).toBeVisible()
+    await caret.click()
+    await expect(switcher).toBeVisible()
     await page.keyboard.press('Escape')
-    await expect(page.getByRole('menu', { name: 'Editor tabs' })).toHaveCount(0)
+    await expect(switcher).toHaveCount(0)
+    await expect(caret).toBeFocused()
   })
 })
 
