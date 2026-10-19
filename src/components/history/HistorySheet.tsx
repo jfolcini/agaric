@@ -1,8 +1,8 @@
 /**
  * HistorySheet — renders the block history panel inside a side-drawer Sheet.
  *
- * Wraps HistoryPanel in a right-side Sheet opened from the block gutter
- * or context menu via BlockTree state.
+ * Wraps HistoryPanel in a right-side Sheet (a bottom sheet on a phone)
+ * opened from the block gutter or context menu via BlockTree state.
  */
 
 import type React from 'react'
@@ -17,6 +17,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { useIsMobile } from '@/hooks/useIsMobile'
 
 export interface HistorySheetProps {
   blockId: string | null
@@ -30,16 +31,20 @@ export function HistorySheet({
   onOpenChange,
 }: HistorySheetProps): React.ReactElement {
   const { t } = useTranslation()
+  const isMobile = useIsMobile()
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      {/* `sm:max-w-lg` (≈512 px) overrides the Sheet primitive's default
+      {/* A phone gets a bottom sheet (#5931). `sm:max-w-lg` (≈512 px) overrides the Sheet primitive's default
           `sm:max-w-sm` (≈384 px) — history rows are dense (timestamp +
           op-icon + author + multi-line preview + diff toggle + restore
           button) and 384 px guarantees aggressive single-word wrapping in
           the diff content. 512 px keeps the filter bar on one row and the
           diff hunks readable. Per-call override; other Sheet consumers
           keep the default width. */}
-      <SheetContent side="right" className="sm:max-w-lg">
+      <SheetContent
+        side={isMobile ? 'bottom' : 'right'}
+        className={isMobile ? undefined : 'sm:max-w-lg'}
+      >
         <SheetHeader>
           <SheetTitle>{t('history.title')}</SheetTitle>
           <SheetDescription>{t('history.description')}</SheetDescription>

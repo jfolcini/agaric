@@ -22,7 +22,9 @@ import { useTranslation } from 'react-i18next'
 import { shortcutHint } from '@/components/editor/block-context-menu/hints'
 import { Button } from '@/components/ui/button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { MenuSheet } from '@/components/ui/menu-sheet'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
+import { SheetTrigger } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/useIsMobile'
 
@@ -216,225 +218,250 @@ export function PageHeaderMenu({
     onFocus: () => setActiveId(id),
   })
 
-  return (
-    <Popover open={kebabOpen} onOpenChange={onKebabOpenChange}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <Button
-              ref={kebabRef}
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t('pageHeader.pageActions')}
-            >
-              <MoreVertical className="h-4 w-4" />
-            </Button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent>{t('pageHeader.pageActions')}</TooltipContent>
-      </Tooltip>
-      <MenuPopoverContent
-        align="end"
-        className="w-80"
-        role="menu"
-        tabIndex={-1}
-        aria-label={t('pageHeader.pageActions')}
-        onKeyDown={handleMenuKeyDown}
-        // Back to the kebab only when closing left focus nowhere: a row that
-        // focused something (Edit as Markdown's textarea) keeps it.
-        onCloseAutoFocus={(e) => {
-          if (document.activeElement !== document.body) e.preventDefault()
-        }}
-      >
-        {onOpenInNewTab != null && !isMobile && (
-          <>
-            <button
-              type="button"
-              className={MENU_ITEM_CLASS}
-              onClick={onOpenInNewTab}
-              {...menuItemProps('openInNewTab')}
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              {t('tabs.openInNewTab')}
-            </button>
-            <hr className="my-1 h-px bg-border border-none" />
-          </>
+  const triggerButton = (
+    <Button ref={kebabRef} variant="ghost" size="icon-sm" aria-label={t('pageHeader.pageActions')}>
+      <MoreVertical className="h-4 w-4" />
+    </Button>
+  )
+  const trigger = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {isMobile ? (
+          <SheetTrigger asChild>{triggerButton}</SheetTrigger>
+        ) : (
+          <PopoverTrigger asChild>{triggerButton}</PopoverTrigger>
         )}
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onUndo}
-          {...menuItemProps('undo')}
-        >
-          <Undo2 className="h-3.5 w-3.5" />
-          {t('pageHeader.undoAction')}
-          <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('undoLastPageOp')}</span>
-        </button>
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          disabled={!canRedo}
-          onClick={onRedo}
-          {...menuItemProps('redo')}
-        >
-          <Redo2 className="h-3.5 w-3.5" />
-          {t('pageHeader.redoAction')}
-          <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('redoLastUndoneOp')}</span>
-        </button>
-        <hr className="my-1 h-px bg-border border-none" />
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onOpenOutline}
-          {...menuItemProps('openOutline')}
-        >
-          <List className="h-3.5 w-3.5" />
-          {t('pageHeader.openOutline')}
-        </button>
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onShowInGraph}
-          {...menuItemProps('showInGraph')}
-        >
-          <Network className="h-3.5 w-3.5" />
-          {t('pageHeader.showInGraph')}
-          <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('showPageInGraph')}</span>
-        </button>
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onInsertEmoji}
-          {...menuItemProps('insertEmoji')}
-        >
-          <Smile className="h-3.5 w-3.5" />
-          {t('pageHeader.insertEmoji')}
-        </button>
-        <hr className="my-1 h-px bg-border border-none" />
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onAddAlias}
-          {...menuItemProps('addAlias')}
-        >
-          <Link className="h-3.5 w-3.5" />
-          {t('pageHeader.menuAddAlias')}
-        </button>
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onAddTag}
-          {...menuItemProps('addTag')}
-        >
-          <Tag className="h-3.5 w-3.5" />
-          {t('pageHeader.menuAddTag')}
-        </button>
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onAddProperty}
-          {...menuItemProps('addProperty')}
-        >
-          <Settings2 className="h-3.5 w-3.5" />
-          {t('pageHeader.menuAddProperty')}
-        </button>
-        <hr className="my-1 h-px bg-border border-none" />
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onToggleTemplate}
-          {...menuItemProps('toggleTemplate')}
-        >
-          <LayoutTemplate className="h-3.5 w-3.5" />
-          {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
-        </button>
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onToggleJournalTemplate}
-          {...menuItemProps('toggleJournalTemplate')}
-        >
-          <BookTemplate className="h-3.5 w-3.5" />
-          {isJournalTemplate
-            ? t('pageHeader.removeJournalTemplate')
-            : t('pageHeader.setJournalTemplate')}
-        </button>
-        <hr className="my-1 h-px bg-border border-none" />
-        <button
-          type="button"
-          className={MENU_ITEM_CLASS}
-          onClick={onExport}
-          {...menuItemProps('export')}
-        >
-          <Download className="h-3.5 w-3.5" />
-          {t('pageHeader.exportMarkdown')}
-          <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('exportPageMarkdown')}</span>
-        </button>
-        {onEditSource != null && (
+      </TooltipTrigger>
+      <TooltipContent>{t('pageHeader.pageActions')}</TooltipContent>
+    </Tooltip>
+  )
+  const menuProps = {
+    role: 'menu',
+    tabIndex: -1,
+    'aria-label': t('pageHeader.pageActions'),
+    onKeyDown: handleMenuKeyDown,
+  } as const
+  // Back to the kebab only when closing left focus nowhere: a row that
+  // focused something (Edit as Markdown's textarea) keeps it.
+  const onCloseAutoFocus = (e: Event) => {
+    if (document.activeElement !== document.body) e.preventDefault()
+  }
+
+  const items = (
+    <>
+      {onOpenInNewTab != null && !isMobile && (
+        <>
           <button
             type="button"
             className={MENU_ITEM_CLASS}
-            onClick={onEditSource}
-            {...menuItemProps('editSource')}
+            onClick={onOpenInNewTab}
+            {...menuItemProps('openInNewTab')}
           >
-            <FileCode className="h-3.5 w-3.5" />
-            {t('pageSource.edit')}
+            <ExternalLink className="h-3.5 w-3.5" />
+            {t('tabs.openInNewTab')}
           </button>
-        )}
-        {showMoveEntry && (
-          <>
-            <hr className="my-1 h-px bg-border border-none" />
-            <button
-              type="button"
-              className={MENU_ITEM_CLASS}
-              aria-haspopup="menu"
-              aria-expanded={moveSubmenuOpen}
-              onClick={() => setMoveSubmenuOpen((open) => !open)}
-              {...menuItemProps('moveTo')}
-            >
-              <FolderOutput className="h-3.5 w-3.5" />
-              {t('space.moveTo')}
-              <span className="ml-auto text-xs text-muted-foreground" aria-hidden="true">
-                {moveSubmenuOpen ? '▾' : '▸'}
-              </span>
-            </button>
-            {moveSubmenuOpen && (
-              <div
-                role="menu"
-                aria-label={t('space.moveTo')}
-                className="pl-4 mt-0.5 flex flex-col gap-0.5"
-              >
-                {moveTargets.map((target) => (
-                  <button
-                    key={target.id}
-                    type="button"
-                    role="menuitem"
-                    title={target.name}
-                    className={MENU_ITEM_CLASS}
-                    onClick={() => {
-                      setMoveSubmenuOpen(false)
-                      onMoveToSpace?.(target.id)
-                    }}
-                  >
-                    <span className="line-clamp-1">{target.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-        <hr className="my-1 h-px bg-border border-none" />
-        <div className="rounded-md bg-destructive/5 p-0.5">
+          <hr className="my-1 h-px bg-border border-none" />
+        </>
+      )}
+      <button type="button" className={MENU_ITEM_CLASS} onClick={onUndo} {...menuItemProps('undo')}>
+        <Undo2 className="h-3.5 w-3.5" />
+        {t('pageHeader.undoAction')}
+        <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('undoLastPageOp')}</span>
+      </button>
+      <button
+        type="button"
+        className={MENU_ITEM_CLASS}
+        disabled={!canRedo}
+        onClick={onRedo}
+        {...menuItemProps('redo')}
+      >
+        <Redo2 className="h-3.5 w-3.5" />
+        {t('pageHeader.redoAction')}
+        <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('redoLastUndoneOp')}</span>
+      </button>
+      <hr className="my-1 h-px bg-border border-none" />
+      <button
+        type="button"
+        className={MENU_ITEM_CLASS}
+        onClick={onOpenOutline}
+        {...menuItemProps('openOutline')}
+      >
+        <List className="h-3.5 w-3.5" />
+        {t('pageHeader.openOutline')}
+      </button>
+      <button
+        type="button"
+        className={MENU_ITEM_CLASS}
+        onClick={onShowInGraph}
+        {...menuItemProps('showInGraph')}
+      >
+        <Network className="h-3.5 w-3.5" />
+        {t('pageHeader.showInGraph')}
+        <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('showPageInGraph')}</span>
+      </button>
+      <button
+        type="button"
+        className={MENU_ITEM_CLASS}
+        onClick={onInsertEmoji}
+        {...menuItemProps('insertEmoji')}
+      >
+        <Smile className="h-3.5 w-3.5" />
+        {t('pageHeader.insertEmoji')}
+      </button>
+      <hr className="my-1 h-px bg-border border-none" />
+      <button
+        type="button"
+        className={MENU_ITEM_CLASS}
+        onClick={onAddAlias}
+        {...menuItemProps('addAlias')}
+      >
+        <Link className="h-3.5 w-3.5" />
+        {t('pageHeader.menuAddAlias')}
+      </button>
+      <button
+        type="button"
+        className={MENU_ITEM_CLASS}
+        onClick={onAddTag}
+        {...menuItemProps('addTag')}
+      >
+        <Tag className="h-3.5 w-3.5" />
+        {t('pageHeader.menuAddTag')}
+      </button>
+      <button
+        type="button"
+        className={MENU_ITEM_CLASS}
+        onClick={onAddProperty}
+        {...menuItemProps('addProperty')}
+      >
+        <Settings2 className="h-3.5 w-3.5" />
+        {t('pageHeader.menuAddProperty')}
+      </button>
+      <hr className="my-1 h-px bg-border border-none" />
+      <button
+        type="button"
+        className={MENU_ITEM_CLASS}
+        onClick={onToggleTemplate}
+        {...menuItemProps('toggleTemplate')}
+      >
+        <LayoutTemplate className="h-3.5 w-3.5" />
+        {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
+      </button>
+      <button
+        type="button"
+        className={MENU_ITEM_CLASS}
+        onClick={onToggleJournalTemplate}
+        {...menuItemProps('toggleJournalTemplate')}
+      >
+        <BookTemplate className="h-3.5 w-3.5" />
+        {isJournalTemplate
+          ? t('pageHeader.removeJournalTemplate')
+          : t('pageHeader.setJournalTemplate')}
+      </button>
+      <hr className="my-1 h-px bg-border border-none" />
+      <button
+        type="button"
+        className={MENU_ITEM_CLASS}
+        onClick={onExport}
+        {...menuItemProps('export')}
+      >
+        <Download className="h-3.5 w-3.5" />
+        {t('pageHeader.exportMarkdown')}
+        <span className={SHORTCUT_HINT_CLASS}>{shortcutHint('exportPageMarkdown')}</span>
+      </button>
+      {onEditSource != null && (
+        <button
+          type="button"
+          className={MENU_ITEM_CLASS}
+          onClick={onEditSource}
+          {...menuItemProps('editSource')}
+        >
+          <FileCode className="h-3.5 w-3.5" />
+          {t('pageSource.edit')}
+        </button>
+      )}
+      {showMoveEntry && (
+        <>
+          <hr className="my-1 h-px bg-border border-none" />
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 touch-target focus-ring-visible focus-visible:ring-destructive/50"
-            onClick={onDeleteRequest}
-            {...menuItemProps('delete')}
+            className={MENU_ITEM_CLASS}
+            aria-haspopup="menu"
+            aria-expanded={moveSubmenuOpen}
+            onClick={() => setMoveSubmenuOpen((open) => !open)}
+            {...menuItemProps('moveTo')}
           >
-            <Trash2 className="h-3.5 w-3.5" />
-            {t('pageHeader.deletePage')}
+            <FolderOutput className="h-3.5 w-3.5" />
+            {t('space.moveTo')}
+            <span className="ml-auto text-xs text-muted-foreground" aria-hidden="true">
+              {moveSubmenuOpen ? '▾' : '▸'}
+            </span>
           </button>
-        </div>
+          {moveSubmenuOpen && (
+            <div
+              role="menu"
+              aria-label={t('space.moveTo')}
+              className="pl-4 mt-0.5 flex flex-col gap-0.5"
+            >
+              {moveTargets.map((target) => (
+                <button
+                  key={target.id}
+                  type="button"
+                  role="menuitem"
+                  title={target.name}
+                  className={MENU_ITEM_CLASS}
+                  onClick={() => {
+                    setMoveSubmenuOpen(false)
+                    onMoveToSpace?.(target.id)
+                  }}
+                >
+                  <span className="line-clamp-1">{target.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      <hr className="my-1 h-px bg-border border-none" />
+      <div className="rounded-md bg-destructive/5 p-0.5">
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 touch-target focus-ring-visible focus-visible:ring-destructive/50"
+          onClick={onDeleteRequest}
+          {...menuItemProps('delete')}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          {t('pageHeader.deletePage')}
+        </button>
+      </div>
+    </>
+  )
+
+  // A phone gets the rows as a bottom sheet: the dropdown covered most of
+  // the screen (#5931).
+  if (isMobile) {
+    return (
+      <MenuSheet
+        open={kebabOpen}
+        onOpenChange={onKebabOpenChange}
+        title={t('pageHeader.pageActions')}
+        trigger={trigger}
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
+        <div {...menuProps}>{items}</div>
+      </MenuSheet>
+    )
+  }
+
+  return (
+    <Popover open={kebabOpen} onOpenChange={onKebabOpenChange}>
+      {trigger}
+      <MenuPopoverContent
+        align="end"
+        className="w-80"
+        {...menuProps}
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
+        {items}
       </MenuPopoverContent>
     </Popover>
   )

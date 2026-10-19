@@ -9,15 +9,18 @@
 
 import { devices, type Locator, type Page } from '@playwright/test'
 
-import { activeDialog, expect, navigateToView, test, waitForBoot } from './helpers'
+import { expect, navigateToView, test, waitForBoot } from './helpers'
 
 const iPhone13 = devices['iPhone 13']
 
 const searchInput = (page: Page): Locator =>
   page.locator('.page-browser-header').getByRole('textbox', { name: 'Search pages...' })
 
+// A dialog on desktop and a bottom sheet on a phone (#5931); both carry the id.
+const newPageDialog = (page: Page): Locator => page.getByTestId('new-page-dialog')
+
 const titleInput = (page: Page): Locator =>
-  activeDialog(page).getByRole('textbox', { name: 'New page title' })
+  newPageDialog(page).getByRole('textbox', { name: 'New page title' })
 
 /** On the Pages view, how many rows the search for `title` finds with exactly that title. */
 async function expectOnePageTitled(page: Page, title: string): Promise<void> {
@@ -29,7 +32,7 @@ async function expectOnePageTitled(page: Page, title: string): Promise<void> {
 async function createInOpenDialog(page: Page, title: string): Promise<void> {
   await expect(titleInput(page)).toBeFocused()
   await titleInput(page).fill(title)
-  await expect(activeDialog(page).getByText('No similar pages')).toBeVisible()
+  await expect(newPageDialog(page).getByText('No similar pages')).toBeVisible()
   await titleInput(page).press('Enter')
   await expect(page.locator('[aria-label="Page title"]')).toHaveText(title)
 }
@@ -92,7 +95,7 @@ test.describe('New page dialog (desktop) @pages @mobile', () => {
   }) => {
     await page.keyboard.press('Control+n')
     await expect(titleInput(page)).toBeFocused()
-    const dialog = activeDialog(page)
+    const dialog = newPageDialog(page)
 
     // Near matches are listed with Open buttons, and Create stays available.
     await titleInput(page).fill('meeting')
@@ -136,7 +139,7 @@ test.describe('New page dialog (desktop) @pages @mobile', () => {
     await expect(titleInput(page)).toBeFocused()
 
     await page.keyboard.press('Escape')
-    await expect(activeDialog(page)).toHaveCount(0)
+    await expect(newPageDialog(page)).toHaveCount(0)
     await expect(newPage).toBeFocused()
   })
 })
@@ -182,7 +185,7 @@ test.describe('New page dialog (phone) @pages @mobile', () => {
     await expect(titleInput(page)).toBeFocused()
     await titleInput(page).fill('PROJECTS')
 
-    const dialog = activeDialog(page)
+    const dialog = newPageDialog(page)
     await expect(dialog.getByRole('status')).toHaveText('A page named “Projects” already exists.')
     await expect(dialog.getByRole('button', { name: 'Create', exact: true })).toBeDisabled()
     await titleInput(page).press('Enter')

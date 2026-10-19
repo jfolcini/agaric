@@ -1,5 +1,6 @@
 /**
- * BlockPropertyDrawer — slide-out drawer showing all properties for a given block.
+ * BlockPropertyDrawer — slide-out drawer showing all properties for a given block
+ * (a bottom sheet on a phone).
  *
  * Follows the HistorySheet pattern: a Sheet component controlled from BlockTree
  * state. Displays property rows with inline editing, deletion, and an
@@ -28,6 +29,7 @@ import {
 } from '@/components/ui/sheet'
 import { useBlockPropertyIpc } from '@/hooks/useBlockPropertyIpc'
 import { useBlockReschedule } from '@/hooks/useBlockReschedule'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { usePropertySave } from '@/hooks/usePropertySave'
 import { announce } from '@/lib/announcer'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
@@ -56,6 +58,7 @@ export function BlockPropertyDrawer({
   onOpenChange,
 }: BlockPropertyDrawerProps): React.ReactElement {
   const { t } = useTranslation()
+  const isMobile = useIsMobile()
   const [loading, setLoading] = useState(true)
   const [properties, setProperties] = useState<PropertyRow[]>([])
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
@@ -332,7 +335,7 @@ export function BlockPropertyDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right">
+      <SheetContent side={isMobile ? 'bottom' : 'right'}>
         <SheetHeader>
           <SheetTitle>{t('property.drawerTitle')}</SheetTitle>
           <SheetDescription>{t('property.drawerDescription')}</SheetDescription>

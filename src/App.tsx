@@ -37,6 +37,7 @@ import { useQuickCaptureShortcut } from '@/hooks/useQuickCaptureShortcut'
 import { useRecoveryStatus } from '@/hooks/useRecoveryStatus'
 import { useScrollRestore } from '@/hooks/useScrollRestore'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
+import { useSoftKeyboardInset } from '@/hooks/useSoftKeyboardInset'
 import { useSyncEvents } from '@/hooks/useSyncEvents'
 import { useSyncTrigger } from '@/hooks/useSyncTrigger'
 import { useTheme } from '@/hooks/useTheme'
@@ -116,6 +117,33 @@ function preloadSearchOverlays(): void {
       logger.warn('App', 'search overlay preload failed', undefined, err)
     })
   }
+}
+
+/**
+ * A phone shows toasts at the bottom centre, in thumb reach and clear of the
+ * header and the search field under it (#5931). Bottom-right first moved to
+ * the top because it sat on the system navigation bar; the safe-area inset
+ * keeps that covered. The offset clears the floating capture button (5rem up,
+ * 56 px tall). While the soft keyboard is up the button is under it, so the
+ * toasts sit above the keyboard by the 5rem that clears the formatting toolbar
+ * pinned there. Its own component so a keyboard resize re-renders only this.
+ */
+function AppToaster({ isDark }: { isDark: boolean }): ReactElement {
+  const isMobile = useIsMobile()
+  const keyboardInset = useSoftKeyboardInset(isMobile)
+  const bottom =
+    keyboardInset > 0 ? `calc(${keyboardInset}px + 5rem)` : 'calc(9rem + var(--safe-area-bottom))'
+  return (
+    <Toaster
+      position={isMobile ? 'bottom-center' : 'bottom-right'}
+      // `mobileOffset` applies up to sonner's own 600 px breakpoint, `offset`
+      // above it, so a phone in landscape gets the same clearance.
+      {...(isMobile ? { offset: { bottom }, mobileOffset: { bottom } } : {})}
+      theme={isDark ? 'dark' : 'light'}
+      richColors
+      closeButton
+    />
+  )
 }
 
 /**
@@ -825,12 +853,7 @@ function App() {
           #733 — `isDark` comes from the now-module-level theme store, so
           a Settings theme change reaches the toaster without a reload. */}
       <FeatureErrorBoundary name="Notifications" nameKey="errorBoundary.section.notifications">
-        <Toaster
-          position={isMobile ? 'top-center' : 'bottom-right'}
-          theme={isDark ? 'dark' : 'light'}
-          richColors
-          closeButton
-        />
+        <AppToaster isDark={isDark} />
       </FeatureErrorBoundary>
     </BootGate>
   )

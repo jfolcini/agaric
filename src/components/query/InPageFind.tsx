@@ -124,14 +124,13 @@ interface InPageFindProps {
    */
   variant?: InPageFindVariant
   /**
-   * Embedded-variant only: override what happens when the user taps
-   * the close button or presses Escape. The overlay variant calls
+   * Embedded-variant only: override what happens when the user
+   * presses Escape (the embedded toolbar has no close button). The overlay variant calls
    * `useInPageFindStore.close()` directly — but doing the same in
    * the embedded path leaves the parent Sheet rendering a now-empty
    * toolbar (because the find store flips `open=false` while the
    * sheet body still wants to mount the toolbar). The parent
-   * SearchSheet passes a closure that closes the SHEET instead,
-   * matching the user's "tap X to dismiss" intent.
+   * SearchSheet passes a closure that closes the SHEET instead.
    */
   onCloseRequest?: () => void
 }
@@ -405,22 +404,21 @@ export function InPageFind({
       data-testid="in-page-find-toolbar"
       data-find-skip
       className={cn(
-        // Shared chrome: rounded card holding the input + toggles +
-        // counter + arrows. Tight gap so it reads as one unit.
-        'rounded-md border border-border px-2 py-1.5',
         variant === 'overlay' &&
-          // Single-row free-floating overlay anchored top-right.
+          // Single-row free-floating overlay anchored top-right: a
+          // rounded card holding the input + toggles + counter + arrows.
           // `fixed` so it floats above whichever view is rendered
           // without each view having to participate.
-          'fixed top-2 right-2 md:right-4 z-50 flex items-center gap-1.5 bg-popover shadow-(--shadow-floating) transition-transform duration-fast',
+          'fixed top-2 right-2 md:right-4 z-50 flex items-center gap-1.5 rounded-md border border-border bg-popover px-2 py-1.5 shadow-(--shadow-floating) transition-transform duration-fast',
         variant === 'embedded' &&
           // Two intentional rows inside the search sheet — row 1 is
           // the input across the full width; row 2 is the controls.
           // At 390 px (iPhone 13) the 8-control single row simply
           // doesn't fit; this layout keeps each touch target ≥ 44 px
           // (the coarse-pointer override on Button) without
-          // requiring wrap-into-chaos.
-          'flex flex-col gap-2 bg-background',
+          // requiring wrap-into-chaos. No card of its own: the sheet is
+          // the frame.
+          'flex flex-col gap-2',
       )}
     >
       <Input
@@ -450,9 +448,9 @@ export function InPageFind({
           input at row 1 — into a stable 3-row layout that fits 390 px
           phones without flex-wrap chaos.
 
-          Single-row math at 390 px (sheet padding ~32 + card padding
-          16 → 342 px usable): row 2 toggles 3 × 44 + 2 × 6 = 144 ✓;
-          row 3 counter (4.5rem) + 3 × 44 + 4 × 6 = 228 ✓. */}
+          Single-row math at 390 px (sheet padding 48 → 342 px usable):
+          row 2 toggles 3 × 44 + 2 × 6 = 144 ✓; row 3 counter (4.5rem)
+          + 2 × 44 + 3 × 6 = 178 ✓. */}
       <div className="flex items-center gap-1.5" data-testid="in-page-find-toggles">
         <Button
           type="button"
@@ -539,17 +537,20 @@ export function InPageFind({
         >
           <ChevronDown aria-hidden="true" />
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={t('findInPage.close')}
-          title={t('findInPage.close')}
-          data-testid="in-page-find-close"
-          onClick={handleClose}
-        >
-          <X aria-hidden="true" />
-        </Button>
+        {/* Embedded, the sheet's own close button is the one close. */}
+        {variant === 'overlay' && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={t('findInPage.close')}
+            title={t('findInPage.close')}
+            data-testid="in-page-find-close"
+            onClick={handleClose}
+          >
+            <X aria-hidden="true" />
+          </Button>
+        )}
       </div>
 
       {regexError && (

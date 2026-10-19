@@ -440,16 +440,19 @@ describe('SearchSheet', () => {
     expect(useSearchSheetStore.getState().mode).toBe('all-pages')
   })
 
-  it('tapping the embedded find toolbar close button closes the sheet (not the find store)', async () => {
+  it('Escape in the embedded find input closes the sheet (not the find store)', async () => {
     const user = userEvent.setup()
     const host = makeHost()
     useSearchSheetStore.getState().open$('in-page')
     try {
       render(<SearchSheet />)
       await waitFor(() => {
-        expect(screen.getByTestId('in-page-find-toolbar')).toBeInTheDocument()
+        expect(screen.getByTestId('in-page-find-input')).toHaveFocus()
       })
-      await user.click(screen.getByTestId('in-page-find-close'))
+      // The sheet's own × is the one close button; the toolbar has none.
+      expect(screen.queryByTestId('in-page-find-close')).not.toBeInTheDocument()
+      expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(1)
+      await user.keyboard('{Escape}')
       // Sheet closes; the bridge cleanup then closes the find store
       // (only because we opened it).
       await waitFor(() => {
@@ -525,20 +528,6 @@ describe('SearchSheet', () => {
   // #899 mobile-search polish — scope chip (#136), scope-pin (#135),
   // pull-to-dismiss (#133)
   // ─────────────────────────────────────────────────────────────────
-
-  describe('#136 scope chip', () => {
-    it('renders the active scope and re-scopes to the other segment on tap', async () => {
-      const user = userEvent.setup()
-      useSearchSheetStore.getState().open$('all-pages')
-      render(<SearchSheet />)
-      const chip = screen.getByTestId('search-sheet-scope-chip')
-      expect(chip).toHaveAttribute('data-scope', 'all-pages')
-      expect(chip).toHaveTextContent('All pages')
-      await user.click(chip)
-      expect(useSearchSheetStore.getState().mode).toBe('in-page')
-      expect(screen.getByTestId('search-sheet-scope-chip')).toHaveAttribute('data-scope', 'in-page')
-    })
-  })
 
   describe('#135 scope-pin (long-press)', () => {
     it('pins a scope as the default on long-press, badges it, and persists it', () => {

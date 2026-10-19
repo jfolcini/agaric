@@ -575,8 +575,6 @@ export const common: Record<string, string> = {
   'searchSheet.scopeUnpinned': 'Unpinned default search scope',
   'searchSheet.scopePinnedBadge': 'Pinned default',
   // #136 — active-scope chip shown next to the search input.
-  'searchSheet.scopeChipLabel': 'Searching: {{scope}}',
-  'searchSheet.scopeChipClear': 'Change search scope',
   // #131 — recent searches empty-state list.
   'searchSheet.recentSearchesTitle': 'Recent searches',
   'searchSheet.recentSearchesClear': 'Clear',
