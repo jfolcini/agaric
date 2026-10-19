@@ -21,6 +21,11 @@
  *   Typing markers still goes through the marks' own input rules
  *   (`flanking-marks.ts`).
  *
+ * A page, tag or block-ref chip beside the caret (or selected) shows its
+ * syntax (`[[` `]]`, `#`, `((` `))`) the same way, but only to read: the chip
+ * stays an atom whose id is not text, so Backspace and Delete take it whole as
+ * before and the syntax is no part of the selection.
+ *
  * A link's URL is edited through the link popover (Ctrl+K, or the selection
  * bubble's link button), not in its `](url)`.
  *
@@ -47,6 +52,7 @@ import {
   markerBesideCaret,
   marksTypedAt,
   OUTSIDE_HEADING_MARKER,
+  revealedChipMarkers,
   revealedMarkers,
   revealedRunsAt,
 } from '@/editor/revealed-markers'
@@ -88,10 +94,10 @@ class OutsideHeadingMarkerBookmark {
   }
 }
 
-function markerDom(text: string): HTMLElement {
+function markerDom(text: string, kind = 'marker'): HTMLElement {
   const span = document.createElement('span')
-  span.className = 'md-reveal-marker'
-  span.setAttribute('data-testid', 'md-reveal-marker')
+  span.className = `md-reveal-${kind}`
+  span.setAttribute('data-testid', `md-reveal-${kind}`)
   // Screen readers already announce the formatting from <strong>, <em>, <code>,
   // <s>, <a> and <h1>…<h6>; markers that come and go with the caret would read
   // characters the note does not contain.
@@ -103,9 +109,16 @@ function markerDom(text: string): HTMLElement {
 }
 
 function revealDecorations(state: EditorState): DecorationSet {
-  return DecorationSet.create(
-    state.doc,
-    revealedMarkers(state).map((m) => {
+  const chips = revealedChipMarkers(state).map((m) =>
+    // Its own class: the click and key handling above count `.md-reveal-marker`s.
+    Decoration.widget(m.pos, () => markerDom(m.text, 'chip-marker'), {
+      side: m.side,
+      key: `md-reveal-chip:${m.text}:${m.side}`,
+    }),
+  )
+  return DecorationSet.create(state.doc, [
+    ...chips,
+    ...revealedMarkers(state).map((m) => {
       const name = m.kind === 'heading' ? 'heading' : m.run.mark.type.name
       return Decoration.widget(m.pos, () => markerDom(m.text), {
         side: m.side,
@@ -115,7 +128,7 @@ function revealDecorations(state: EditorState): DecorationSet {
         key: `md-reveal:${m.role}:${name}:${m.text}:${m.side}:${JSON.stringify(m.marks)}`,
       })
     }),
-  )
+  ])
 }
 
 /** Sets the heading's level, 0 making it a paragraph, keeping the caret's side of the `#` run and what typing carries. */

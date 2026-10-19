@@ -3,7 +3,8 @@
  * Editor, the block editor shows the markers of the mark, heading or link the
  * caret is in. A marker is deleted or crossed as one unit, a heading's `#` run
  * changes its level, a link's URL is edited through the link popover, the
- * stored block and the clipboard never carry a marker, chips stay chips, and
+ * stored block and the clipboard never carry a marker, chips stay chips (their syntax
+ * is drawn apart, `chip-reveal.spec.ts`), and
  * an IME composition leaves the markers in place until it ends.
  */
 
@@ -455,7 +456,7 @@ test('a bare URL reveals nothing @editor @markdown @mobile', async ({ page }) =>
   await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
 })
 
-test('chips stay chips: no syntax beside a tag, and the arrows step over it @editor @markdown @mobile', async ({
+test('chips stay chips: a tag’s `#` is drawn apart from the markers, and the arrows step over it @editor @markdown @mobile', async ({
   page,
 }) => {
   // GS_4: `Try tagging blocks with #[work] or #[personal] to organize your notes.`
@@ -478,6 +479,8 @@ test('chips stay chips: no syntax beside a tag, and the arrows step over it @edi
   for (const pos of [tagPos, tagPos + 1]) {
     await setCaret(page, pos)
     await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
+    // The chip's own syntax (#5974) is no marker: the keys never see it.
+    await expect(page.getByTestId('md-reveal-chip-marker')).toHaveText(['#'])
   }
   // Past the chip, ArrowLeft lands before it: the chip is one step.
   await setCaret(page, tagPos + 1)
