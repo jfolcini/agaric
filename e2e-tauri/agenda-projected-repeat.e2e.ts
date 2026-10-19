@@ -22,6 +22,13 @@
 // seeded in one Edit as Markdown save, the way `block-duplicate-repeat` sets
 // its rule. The tests share one vault, so each writes its own titled page.
 //
+// The bounds test runs before the weekly one: the Due panel keeps a day's
+// projection for `PROJECTED_CACHE_TTL_MS`, so stepping over days 1 to 7 first
+// would leave days 1 to 4 holding an answer from before the bounds test's
+// tasks existed, and that test would wait out the TTL. What the file still
+// costs is its real round-trips (seed, drawer edit, complete, reopen), a few
+// seconds each, which is what it proves.
+//
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
 // ---------------------------------------------------------------------------
@@ -49,6 +56,8 @@ import {
   typeMarkerVerified,
   waitForAppReady,
 } from './helpers'
+
+const REMOUNT_AFTER_MS = 3_000
 
 const TASK = runScopedMarker('wdio-projected')
 const TASK_PAGE = runScopedMarker('wdio-projected-page')
@@ -146,25 +155,29 @@ async function projectedTexts(day: string): Promise<string[]> {
 
 /**
  * The projected entries of the open journal day `day` once they hold every one
- * of `expected`. The panel keeps a day's projection for
+ * of `expected`. A freshly shown day answers asynchronously, so the panel is
+ * polled in place first; the panel also keeps a day's projection for
  * `PROJECTED_CACHE_TTL_MS` (useDuePanelData.ts), so an answer from before the
- * cache rebuild can be served again for that long: the wait outlasts it, and
- * each remount asks again.
+ * cache rebuild can be served again for that long: a poll that stays empty past
+ * `REMOUNT_AFTER_MS` remounts the view, which asks again.
  */
 async function projectedOnceHolding(day: string, expected: string[]): Promise<string[]> {
   let texts: string[] = []
+  let mountedAt = Date.now()
   await browser.waitUntil(
     async () => {
       texts = await projectedTexts(day)
       if (expected.every((task) => texts.some((text) => text.includes(task)))) return true
+      if (Date.now() - mountedAt < REMOUNT_AFTER_MS) return false
       await navigateTo('Pages')
       await navigateTo('Journal')
       await $(`section[id="journal-${day}"]`).waitForExist({ timeout: NAV_TIMEOUT })
+      mountedAt = Date.now()
       return false
     },
     {
       timeout: 2 * NAV_TIMEOUT,
-      interval: 3_000,
+      interval: 250,
       timeoutMsg: `the Due panel of ${day} never projected ${expected.join(', ')}`,
     },
   )
@@ -183,6 +196,15 @@ async function agendaProjectedRows(task: string): Promise<Array<{ text: string; 
         })),
     task,
   )
+}
+
+/** Open the Daily journal on today, `today`. */
+async function showJournalToday(today: string): Promise<void> {
+  await navigateTo('Journal')
+  const goToToday = $('button[aria-label="Go to today"]')
+  await goToToday.waitForClickable({ timeout: NAV_TIMEOUT })
+  await goToToday.click()
+  await $(`section[id="journal-${today}"]`).waitForExist({ timeout: NAV_TIMEOUT })
 }
 
 /** Step the Daily journal forward one day to `day`. */
@@ -237,6 +259,43 @@ async function drawerValues(keys: string[]): Promise<Record<string, string>> {
 describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736) @journal', () => {
   before(waitForAppReady)
 
+  it('stops projecting a daily task after its repeat-until date and its repeat-count', async () => {
+    const page = runScopedMarker('wdio-bounds-page')
+    const counted = runScopedMarker('wdio-count-three')
+    const until = runScopedMarker('wdio-until-two')
+    const open = runScopedMarker('wdio-unbounded')
+    const days = await localDays(0, 5)
+    const [today, , inTwo] = days
+    if (today === undefined || inTwo === undefined) throw new Error('no dates to step through')
+    const daily = [`due_date:: ${today}`, 'repeat:: daily']
+    await seedTasks(page, [
+      { task: counted, props: [...daily, 'repeat-count:: 3'] },
+      { task: until, props: [...daily, `repeat-until:: ${inTwo}`] },
+      { task: open, props: daily },
+    ])
+
+    await showJournalToday(today)
+
+    // The unbounded task, projected every day, says the day's panel has
+    // answered after the save; the first day waits for all three.
+    const seen: Record<string, { counted: boolean; until: boolean }> = {}
+    for (const [i, day] of days.slice(1).entries()) {
+      await nextJournalDay(day)
+      const texts = await projectedOnceHolding(day, i === 0 ? [counted, until, open] : [open])
+      seen[day] = {
+        counted: texts.some((text) => text.includes(counted)),
+        until: texts.some((text) => text.includes(until)),
+      }
+    }
+    const [, inOne, , inThree, inFour] = days
+    expect(seen).toEqual({
+      [inOne ?? '']: { counted: true, until: true },
+      [inTwo]: { counted: true, until: true },
+      [inThree ?? '']: { counted: true, until: false },
+      [inFour ?? '']: { counted: false, until: false },
+    })
+  })
+
   it('lists a weekly TODO due today as projected in the Due panel a week out', async () => {
     // Today and the next seven days, spelled as the journal's day-section ids.
     const days = await localDays(0, 8)
@@ -270,54 +329,13 @@ describe('Agaric real-backend repeating tasks (#5366, #5734, #5735, #5736) @jour
     })
 
     // Daily mode (the default) steps one day per "Next day" (JournalControls).
-    await navigateTo('Journal')
+    await showJournalToday(today)
     for (const day of days.slice(1)) await nextJournalDay(day)
 
     const projected = () =>
       $(`section[id="journal-${weekOut}"]`).$(`[data-testid="projected-entry"]*=${TASK}`)
     await projectedOnceHolding(weekOut, [TASK])
     await expect(projected()).toBeDisplayed()
-  })
-
-  it('stops projecting a daily task after its repeat-until date and its repeat-count', async () => {
-    const page = runScopedMarker('wdio-bounds-page')
-    const counted = runScopedMarker('wdio-count-three')
-    const until = runScopedMarker('wdio-until-two')
-    const open = runScopedMarker('wdio-unbounded')
-    const days = await localDays(0, 5)
-    const [today, , inTwo] = days
-    if (today === undefined || inTwo === undefined) throw new Error('no dates to step through')
-    const daily = [`due_date:: ${today}`, 'repeat:: daily']
-    await seedTasks(page, [
-      { task: counted, props: [...daily, 'repeat-count:: 3'] },
-      { task: until, props: [...daily, `repeat-until:: ${inTwo}`] },
-      { task: open, props: daily },
-    ])
-
-    await navigateTo('Journal')
-    const goToToday = $('button[aria-label="Go to today"]')
-    await goToToday.waitForClickable({ timeout: NAV_TIMEOUT })
-    await goToToday.click()
-    await $(`section[id="journal-${today}"]`).waitForExist({ timeout: NAV_TIMEOUT })
-
-    // The unbounded task, projected every day, says the day's panel has
-    // answered after the save; the first day waits for all three.
-    const seen: Record<string, { counted: boolean; until: boolean }> = {}
-    for (const [i, day] of days.slice(1).entries()) {
-      await nextJournalDay(day)
-      const texts = await projectedOnceHolding(day, i === 0 ? [counted, until, open] : [open])
-      seen[day] = {
-        counted: texts.some((text) => text.includes(counted)),
-        until: texts.some((text) => text.includes(until)),
-      }
-    }
-    const [, inOne, , inThree, inFour] = days
-    expect(seen).toEqual({
-      [inOne ?? '']: { counted: true, until: true },
-      [inTwo]: { counted: true, until: true },
-      [inThree ?? '']: { counted: true, until: false },
-      [inFour ?? '']: { counted: false, until: false },
-    })
   })
 
   it('/repeat .+ counts from today and ++ steps past stale dates, weekly and monthly', async () => {
