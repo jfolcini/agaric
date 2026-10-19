@@ -51,6 +51,13 @@ if ! command -v cargo-tauri > /dev/null 2>&1; then
     fi
 fi
 
+# sqlx checks every `query!` at compile time against the DB `DATABASE_URL`
+# names (src-tauri/.env → dev.db), so a dev.db behind the migrations fails the
+# build with "no such column". Migrating is idempotent: it applies only what is
+# pending.
+echo "→ migrating the sqlx dev DB (scripts/setup-dev-db.sh)"
+scripts/setup-dev-db.sh
+
 # externalBin pre-build (sidecar agaric-mcp binary) — release.yml does
 # this via `node scripts/prepare-external-bins.mjs` AFTER the validate
 # gate. We do it here so the bundler finds the artifact.
