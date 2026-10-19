@@ -46,6 +46,7 @@ import { useViewChangeAnnouncer } from '@/hooks/useViewChangeAnnouncer'
 import { useWelcomeGate } from '@/hooks/useWelcomeGate'
 import { unwrap } from '@/lib/app-error'
 import { commands, type PeerRef } from '@/lib/bindings'
+import { lazyWithPreload } from '@/lib/lazy-with-preload'
 import { logger } from '@/lib/logger'
 import { openNewPageDialog } from '@/lib/overlay-events'
 import { cn } from '@/lib/utils'
@@ -98,17 +99,20 @@ const NoPeersDialog = lazy(() =>
 // mobile unified search sheet. The sheet's header trigger
 // (`<SearchSheetTrigger />`) is the touch-only entry point; keyboard users
 // still go through Ctrl+F / Cmd+K / Ctrl+Shift+F.
-const loadInPageFind = () => import('@/components/query/InPageFind')
-const loadCommandPalette = () => import('@/components/common/CommandPalette')
-const loadSearchSheet = () => import('@/components/mobile/SearchSheet')
-const InPageFind = lazy(() => loadInPageFind().then((m) => ({ default: m.InPageFind })))
-const CommandPalette = lazy(() => loadCommandPalette().then((m) => ({ default: m.CommandPalette })))
-const SearchSheet = lazy(() => loadSearchSheet().then((m) => ({ default: m.SearchSheet })))
+const InPageFind = lazyWithPreload(() =>
+  import('@/components/query/InPageFind').then((m) => ({ default: m.InPageFind })),
+)
+const CommandPalette = lazyWithPreload(() =>
+  import('@/components/common/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+)
+const SearchSheet = lazyWithPreload(() =>
+  import('@/components/mobile/SearchSheet').then((m) => ({ default: m.SearchSheet })),
+)
 
-/** Loads the overlay chunks so the first open renders without waiting on them. */
+/** Loads the overlay chunks so the first open renders without suspending. */
 function preloadSearchOverlays(): void {
-  for (const load of [loadInPageFind, loadCommandPalette, loadSearchSheet]) {
-    load().catch((err: unknown) => {
+  for (const overlay of [InPageFind, CommandPalette, SearchSheet]) {
+    overlay.preload().catch((err: unknown) => {
       logger.warn('App', 'search overlay preload failed', undefined, err)
     })
   }

@@ -9,7 +9,7 @@
  * - `useHeaderLabel` — used by the App shell header.
  */
 
-import { type ComponentType, lazy, type ReactElement, Suspense, useEffect } from 'react'
+import { type ReactElement, Suspense, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
@@ -18,6 +18,7 @@ import { scheduleIdle } from '@/components/editor/useLazyRovingEditor'
 import { JournalPage } from '@/components/JournalPage'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { lazyWithPreload } from '@/lib/lazy-with-preload'
 import { logger } from '@/lib/logger'
 import { NAV_ITEMS } from '@/lib/nav-items'
 import { useNavigationStore, type View } from '@/stores/navigation'
@@ -38,62 +39,36 @@ import { type PageEntry, selectPageStack, useTabsStore } from '@/stores/tabs'
 // Suspense fallback uses `LoadingSkeleton` (the shared primitive) so the
 // transient state matches the rest of the app visually.
 
-/**
- * `lazy()` plus a `preload()` that fetches the chunk before the view first renders.
- *
- * Once preloaded, the factory hands React the module through a thenable that
- * resolves synchronously, so the first render does not suspend. A render that
- * suspends commits `ViewFallback`, and React then holds the view back until
- * 300 ms after that fallback (its Suspense fallback throttle), however fast the
- * chunk arrived (#5444).
- */
-function lazyView<T extends ComponentType<any>>(load: () => Promise<{ default: T }>) {
-  let loaded: { default: T } | undefined
-  const preload = () =>
-    load().then((module) => {
-      loaded = module
-      return module
-    })
-  const factory = () => {
-    const module = loaded
-    if (!module) return preload()
-    // oxlint-disable-next-line unicorn/no-thenable -- lazy() reads a synchronous thenable without suspending; a resolved Promise still settles a microtask late
-    const resolved = { then: (resolve: (m: typeof module) => void) => resolve(module) }
-    return resolved as unknown as Promise<typeof module>
-  }
-  return Object.assign(lazy(factory), { preload })
-}
-
-const AdvancedQueryView = lazyView(() =>
+const AdvancedQueryView = lazyWithPreload(() =>
   import('@/components/AdvancedQuery/AdvancedQueryView').then((m) => ({
     default: m.AdvancedQueryView,
   })),
 )
-const GraphView = lazyView(() =>
+const GraphView = lazyWithPreload(() =>
   import('@/components/graph/GraphView').then((m) => ({ default: m.GraphView })),
 )
-const HistoryView = lazyView(() =>
+const HistoryView = lazyWithPreload(() =>
   import('@/components/history/HistoryView').then((m) => ({ default: m.HistoryView })),
 )
-const PageBrowser = lazyView(() =>
+const PageBrowser = lazyWithPreload(() =>
   import('@/components/PageBrowser').then((m) => ({ default: m.PageBrowser })),
 )
-const PageEditor = lazyView(() =>
+const PageEditor = lazyWithPreload(() =>
   import('@/components/pages/PageEditor').then((m) => ({ default: m.PageEditor })),
 )
-const SearchPanel = lazyView(() =>
+const SearchPanel = lazyWithPreload(() =>
   import('@/components/SearchPanel').then((m) => ({ default: m.SearchPanel })),
 )
-const SettingsView = lazyView(() =>
+const SettingsView = lazyWithPreload(() =>
   import('@/components/pages/SettingsView').then((m) => ({ default: m.SettingsView })),
 )
-const TagsView = lazyView(() =>
+const TagsView = lazyWithPreload(() =>
   import('@/components/TagsView').then((m) => ({ default: m.TagsView })),
 )
-const TemplatesView = lazyView(() =>
+const TemplatesView = lazyWithPreload(() =>
   import('@/components/templates/TemplatesView').then((m) => ({ default: m.TemplatesView })),
 )
-const TrashView = lazyView(() =>
+const TrashView = lazyWithPreload(() =>
   import('@/components/TrashView').then((m) => ({ default: m.TrashView })),
 )
 

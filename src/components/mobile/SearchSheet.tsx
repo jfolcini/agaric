@@ -14,7 +14,7 @@
  */
 
 import { FileSearch, Pin, X } from 'lucide-react'
-import { lazy, Suspense, useRef, useState } from 'react'
+import { Suspense, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -32,6 +32,8 @@ import { useLongPress } from '@/hooks/useLongPress'
 import { usePullToDismiss } from '@/hooks/usePullToDismiss'
 import { useSearchSheetBridge } from '@/hooks/useSearchSheetBridge'
 import { haptic } from '@/lib/haptics'
+import { lazyWithPreload } from '@/lib/lazy-with-preload'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import {
   clearPinnedSearchScope,
@@ -45,13 +47,20 @@ import { type SearchSheetMode, useSearchSheetStore } from '@/stores/useSearchShe
 
 // The in-page-find toolbar and the palette body are both lazy-imported
 // at the App level for their overlay surfaces. Importing them here
-// reuses the same chunks — React.lazy memoises by module identifier.
-const InPageFind = lazy(() =>
+// reuses the same chunks — the module loader memoises by module identifier.
+const InPageFind = lazyWithPreload(() =>
   import('@/components/query/InPageFind').then((m) => ({ default: m.InPageFind })),
 )
-const PaletteBody = lazy(() =>
+const PaletteBody = lazyWithPreload(() =>
   import('@/components/common/CommandPalette').then((m) => ({ default: m.PaletteBody })),
 )
+// This module loads at idle with the App-level overlays, so the sheet's first
+// open finds its segment loaded and does not suspend on it.
+for (const segment of [InPageFind, PaletteBody]) {
+  segment.preload().catch((err: unknown) => {
+    logger.warn('SearchSheet', 'search segment preload failed', undefined, err)
+  })
+}
 
 export function SearchSheet(): React.ReactElement | null {
   const { t } = useTranslation()
