@@ -43,9 +43,13 @@ name: Scheduled deep checks
 #   mutants-merge  — #3393: reassembles the shards into the single
 #                    `mutants-out` artifact + step summary the filer below
 #                    and every other reader have always consumed.
-#   mutants-frontend — #886: StrykerJS over the frontend modules
-#                    `stryker.modules.mjs` lists, each against its own tests.
-#                    Non-blocking, same triage-signal posture as `mutants`.
+#   mutants-frontend — #886/#5915: StrykerJS over the frontend modules
+#                    `stryker.modules.mjs` lists, each against its own tests,
+#                    one job per module group. Non-blocking, same
+#                    triage-signal posture as `mutants`.
+#   mutants-frontend-merge — #5915: unions the groups into the single
+#                    `mutation-frontend-report` artifact, and runs the
+#                    lane's liveness guard and summary over it.
 #   file-mutation-survivors — #2947: push-based triage loop for the two
 #                    mutants lanes above. Runs the filer ONCE PER LANE that
 #                    ran: each lane owns its own tracking issue, and a run
@@ -1821,12 +1825,26 @@ jobs:
   # own test file(s) — vitest's default "related" test-selection resolves
   # through barrel re-exports like `search-query/index.ts` and drags in
   # 271+ unrelated component tests otherwise).
+  #
+  # #5915 — one leg per module group, because the whole sweep outgrew the
+  # 60-minute job cap (run 39183149461). `run-mutation.mjs --group k/n` deals
+  # `MODULE_NAMES` round-robin, so the legs partition the modules and a new
+  # module joins a group with no edit here. Four legs keep the slowest group
+  # near half the cap on the slowest runner measured in #5915.
+  # `mutants-frontend-merge` below unions the groups and is where this lane
+  # can go red.
   # ---------------------------------------------------------------------------
   mutants-frontend:
     needs: select-lanes
     if: needs.select-lanes.outputs.mutants_frontend == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      # A group that dies must not cancel the others: their reports are still
+      # the week's signal, and the merge names what is missing.
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1841,53 +1859,140 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Run Stryker mutation testing (scoped frontend libs)
+      - name: Run Stryker mutation testing (this leg's module group)
         # Never gate: surviving mutants are triage signal, not a merge
-        # blocker. `npm run mutation` loops `stryker run` once per module
-        # (see `scripts/run-mutation.mjs`); a non-zero exit here means an
-        # actual Stryker crash, not a low mutation score (no
-        # `thresholds.break` is configured).
-        run: npm run mutation || true
+        # blocker. `run-mutation.mjs` loops `stryker run` once per module;
+        # a non-zero exit here means an actual Stryker crash, not a low
+        # mutation score (no `thresholds.break` is configured).
+        env:
+          GROUP: ${{ matrix.group }}/${{ strategy.job-total }}
+        run: node scripts/run-mutation.mjs --group "$GROUP" || true
+
+      - name: File the reports under this group's name
+        # `<group>-of-<legs>`, legs being `strategy.job-total`, so the merge
+        # reads how many groups to expect from the matrix itself. The name
+        # travels inside the artifact because download-artifact extracts a
+        # lone matching artifact without its own directory.
+        if: always()
+        env:
+          SLICE: ${{ matrix.group }}-of-${{ strategy.job-total }}
+        run: |
+          mkdir -p groups
+          if [ -d reports/mutation ]; then mv reports/mutation "groups/$SLICE"; fi
+
+      - name: Upload this group's mutation reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          # One artifact per group: upload-artifact rejects a duplicate name.
+          name: mutation-frontend-report-${{ matrix.group }}-of-${{ strategy.job-total }}
+          path: groups/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # mutants-frontend-merge (#5915) — the frontend `mutants-merge`: unions the
+  # groups into the one `mutation-frontend-report` artifact the filer reads,
+  # then runs the liveness guard and the summary over the union.
+  # ---------------------------------------------------------------------------
+  mutants-frontend-merge:
+    needs: [mutants-frontend, select-lanes]
+    # `always()` so a dead group still leaves the others' summary and
+    # artifact; the lane clause keeps a run that deselects the lane from
+    # merging nothing.
+    if: always() && needs.select-lanes.outputs.mutants_frontend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Read by `file-mutation-survivors`, which must not rewrite the frontend
+    # tracking issue from a partial survivor set (#3364).
+    outputs:
+      groups_merged: ${{ steps.merge.outputs.merged }}
+      groups_expected: ${{ steps.merge.outputs.expected }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Download every group's reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          # Each artifact holds one `<group>-of-<legs>` directory, so merging
+          # them keeps the groups apart and the step below can name a missing
+          # one.
+          pattern: mutation-frontend-report-*
+          merge-multiple: true
+          path: groups
+
+      - name: Merge the groups into one reports tree
+        id: merge
+        # The groups hold disjoint module directories, so copying them side
+        # by side is the union. A missing group is an error, but the groups
+        # that did upload are still merged, summarised and published; the
+        # counts it exports put the filer in dry-run for a short merge.
+        run: |
+          set -euo pipefail
+          mapfile -t legs < <(find groups -mindepth 1 -maxdepth 1 -type d -name '*-of-*' \
+            -printf '%f\n' | sed 's/.*-of-//' | sort -u)
+          if [ "${#legs[@]}" -ne 1 ]; then
+            echo "::error::found ${#legs[@]} group counts (${legs[*]:-none}) among the uploaded artifacts: no group uploaded reports, or the legs disagree on the matrix size"
+            exit 1
+          fi
+          merged=0
+          for group in $(seq 1 "${legs[0]}"); do
+            dir="groups/$group-of-${legs[0]}"
+            if [ -d "$dir" ]; then
+              mkdir -p reports/mutation
+              cp -R "$dir/." reports/mutation/
+              merged=$((merged + 1))
+            else
+              echo "::error::group $group of ${legs[0]} uploaded no reports; the liveness guard below names its modules"
+            fi
+          done
+          {
+            echo "merged=$merged"
+            echo "expected=${legs[0]}"
+          } >> "$GITHUB_OUTPUT"
+          [ "$merged" -eq "${legs[0]}" ]
 
       - name: Lane-liveness guard (#3330) — the load-bearing acceptance item
-        # Deliberately OUTSIDE the `|| true` above, and the exact frontend
-        # analogue of the Rust lane's `Zero-coverage guard (#3057)` step.
-        # Before this step existed, `mutants-frontend` was STRUCTURALLY
-        # INCAPABLE of failing: `|| true` ate a total StrykerJS crash, the
-        # `Mutation summary` step below `process.exit(0)`s on a missing
-        # `reports/mutation` and renders `| <mod> | _no report_ | … |` for a
-        # module that silently dropped out, and the artifact upload uses
-        # `if-no-files-found: ignore`. Nothing read a mutant count, so a
-        # crashed run and a perfect run were the same green tick — and the
-        # downstream `file-mutation-survivors` job then read the empty
-        # artifact as "zero survivors" on the (thereby false) premise that
-        # lane failure is visible via this job's own status.
+        # The frontend analogue of the Rust lane's `Zero-coverage guard
+        # (#3057)`, run over the union of every group. The legs run Stryker
+        # under `|| true` and upload with `if-no-files-found: ignore`, so
+        # without this step a crashed run and a perfect run were the same
+        # green tick, and `file-mutation-survivors` read the empty artifact as
+        # "zero survivors".
         #
-        # This step fails ONLY on lane liveness — a missing reports root, a
-        # module that produced no/invalid `mutation.json`, a zero total
-        # mutant count, or a module with mutants and not one kill (#5101) —
-        # never on mutation SCORE, which stays pure triage signal per the
-        # lane's whole design.
+        # It fails ONLY on lane liveness — a missing reports root, a module
+        # that produced no/invalid `mutation.json` (a dead group's modules
+        # included), a zero total mutant count, or a module with mutants and
+        # not one kill (#5101) — never on mutation SCORE, which stays pure
+        # triage signal per the lane's whole design.
         if: always()
         run: node scripts/check-mutation-reports.mjs --reports-dir reports/mutation
 
       - name: Mutation summary
         # Presentational only — never fails, by design (same as the Rust
-        # lane's `Mutants summary`). The liveness guard above is the single
-        # place this job can go red; if it did, the `_no report_` rows below
-        # are the diagnosis, not a silent pass.
+        # lane's `Mutants summary`). If the guard above went red, the
+        # `_no report_` rows below are the diagnosis, not a silent pass.
         #
-        # #3350: the renderer moved out of an inline heredoc into
-        # `scripts/render-mutation-summary.mjs`, because the per-PR
-        # diff-scoped lane (`mutation-pr.yml`) has to render the SAME shape
-        # and a heredoc can be neither imported nor unit-tested.
+        # #3350: the renderer lives in `scripts/render-mutation-summary.mjs`
+        # because the per-PR diff-scoped lane (`mutation-pr.yml`) renders the
+        # SAME shape.
         if: always()
         run: node scripts/render-mutation-summary.mjs --reports-dir reports/mutation >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload mutation reports
+      - name: Upload merged mutation reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          # The name `file-mutation-survivors` downloads; the per-group
+          # pattern above does not match it.
           name: mutation-frontend-report
           path: reports/mutation/
           if-no-files-found: ignore
@@ -1924,9 +2029,9 @@ jobs:
   # dispatch on `main` files exactly what the cron would.
   # ---------------------------------------------------------------------------
   file-mutation-survivors:
-    # `mutants-merge`, not `mutants` (#3393): the artifact this job downloads
-    # is the merged one, and `mutants` is now 21 shard jobs.
-    needs: [mutants-merge, mutants-frontend, select-lanes]
+    # The merge jobs, not the lanes (#3393, #5915): the artifacts this job
+    # downloads are the merged ones, and both lanes are matrices.
+    needs: [mutants-merge, mutants-frontend-merge, select-lanes]
     # EITHER lane, and safely so since the split: each lane owns its own
     # tracking issue and the step below runs the filer once per lane that
     # actually ran, requiring only that lane's artifact. The `&&` this briefly
@@ -2048,6 +2153,12 @@ jobs:
             ${{ needs.mutants-merge.outputs.shards_merged == ''
               || needs.mutants-merge.outputs.shards_merged
                  != needs.mutants-merge.outputs.shards_expected }}
+          # The same gate for the frontend groups (#5915): a dead group's
+          # survivors are absent, not resolved.
+          FRONTEND_SHORT_MERGE: >-
+            ${{ needs.mutants-frontend-merge.outputs.groups_merged == ''
+              || needs.mutants-frontend-merge.outputs.groups_merged
+                 != needs.mutants-frontend-merge.outputs.groups_expected }}
         run: |
           set -euo pipefail
           extra=()
@@ -2059,8 +2170,8 @@ jobs:
           # and `assertLaneInputsPresent` throws before the --dry-run branch
           # is even consulted — so a dead `mutants-out` (the only red this
           # lane has ever had: run 30794686024) would stop the FRONTEND issue
-          # being written that week, with `mutants-frontend` green and its
-          # artifact complete. `|| rc=1` keeps each lane's failure its own
+          # being written that week, with `mutants-frontend-merge` green and
+          # its artifact complete. `|| rc=1` keeps each lane's failure its own
           # while still reddening the step.
           rc=0
           # ONE INVOCATION PER LANE (#3364 superseded): each lane has its own
@@ -2086,12 +2197,17 @@ jobs:
               "${rust_extra[@]}" || rc=1
           fi
           if [ "$RAN_FRONTEND" = 'true' ]; then
+            frontend_extra=("${extra[@]}")
+            if [ "$FRONTEND_SHORT_MERGE" = 'true' ]; then
+              echo "::warning::running --dry-run for the FRONTEND lane: mutants-frontend-merge reported a short merge, so the frontend tracking issue is not rewritten from a partial survivor set (#3364). See the merge job's errors for the missing groups."
+              frontend_extra=(--dry-run)
+            fi
             node scripts/file-mutation-survivors.mjs \
               --lane frontend \
               --frontend-dir mutation-artifact \
               --require-input \
               --children \
-              "${extra[@]}" || rc=1
+              "${frontend_extra[@]}" || rc=1
           fi
           exit "$rc"
 
@@ -2833,7 +2949,7 @@ jobs:
 
       - name: Liveness guard (#4408) — the load-bearing acceptance item
         # Deliberately OUTSIDE the reporting-only step above, and the direct
-        # analogue of `mutants-frontend`'s `Lane-liveness guard (#3330)`.
+        # analogue of `mutants-frontend-merge`'s `Lane-liveness guard (#3330)`.
         # Fails ONLY on whether the lane RAN — never on how many findings it
         # reported, which stays pure triage signal per this lane's design.
         if: always()
@@ -3222,10 +3338,10 @@ jobs:
   report-scheduled-failures:
     needs:
       # `select-lanes` included so the comment above stays true, and for a
-      # concrete failure: if it dies for an infra reason on the cron, all
-      # twelve lanes skip and this reporter — authoritative, since `lanes`
-      # defaults to `all` — would file twelve broken lanes without naming
-      # the one job that actually failed.
+      # concrete failure: if it dies for an infra reason on the cron, every
+      # lane skips and this reporter — authoritative, since `lanes` defaults
+      # to `all` — would file every lane as broken without naming the one
+      # job that actually failed.
       - select-lanes
       - clippy-clean
       - bench-smoke
@@ -3234,6 +3350,7 @@ jobs:
       - mutants
       - mutants-merge
       - mutants-frontend
+      - mutants-frontend-merge
       - file-mutation-survivors
       - fuzz
       - file-fuzz-findings
