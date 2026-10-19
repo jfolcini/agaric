@@ -41,7 +41,7 @@ on:
 # merge #5's tree would never have been attributed to anything.
 #
 # So: cancel on PR refs, never on `main`. Push-mode CI is not a merge gate
-# either way — `validate / validate-all` and `dco` still gate the PR — but a
+# either way — `validate / validate-all`, `e2e-tauri-gate` and `dco` still gate the PR — but a
 # completed verdict per merged commit is what makes a red main attributable to
 # the merge that caused it.
 #
