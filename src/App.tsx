@@ -682,15 +682,15 @@ function App() {
               // for the block tree's control lane, which hangs left of the text
               // column on desktop (`BlockListRenderer`); the right side matches
               // so a centred column sits at the pane's centre.
-              // Where `QuickCaptureFab` shows, it floats 5rem up and is 3.5rem
-              // tall; 9rem keeps the last control clear of it (the `md:` copy
+              // Where `QuickCaptureFab` shows, it floats 1rem up and is 3.5rem
+              // tall; 6rem keeps the last control clear of it (the `md:` copy
               // outranks `md:p-6`). Graph's canvas fills the viewport instead
               // and runs under the button, its zoom controls on the far side.
               viewportClassName={cn(
                 'p-4 md:p-6 md:pointer-fine:px-16 focus-ring-visible pb-[calc(1rem+var(--safe-area-bottom))] md:pb-[calc(1.5rem+var(--safe-area-bottom))] scroll-pb-[var(--safe-area-bottom)]',
                 shouldShowMobileChrome &&
                   currentView !== 'graph' &&
-                  'pb-[calc(9rem+var(--safe-area-bottom))] md:pb-[calc(9rem+var(--safe-area-bottom))]',
+                  'pb-[calc(6rem+var(--safe-area-bottom))] md:pb-[calc(6rem+var(--safe-area-bottom))]',
               )}
               data-slot="main-content"
             >
@@ -807,7 +807,8 @@ function App() {
         name="Quick capture button"
         nameKey="errorBoundary.section.quickCaptureButton"
       >
-        <QuickCaptureFab setQuickCaptureOpen={setQuickCaptureOpen} />
+        {/* Keyed by view: a new screen shows it again after a scroll down hid it. */}
+        <QuickCaptureFab key={viewKey} setQuickCaptureOpen={setQuickCaptureOpen} />
       </FeatureErrorBoundary>
       {/* Quick-capture dialog — driven by the global hotkey
           registered in App's startup effect. Gated on `quickCaptureOpen`

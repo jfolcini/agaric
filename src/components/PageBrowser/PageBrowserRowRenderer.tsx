@@ -284,6 +284,7 @@ function FlatPageRow({
       hasDue={hasDue}
       duplicateTitle={row.duplicateTitle ?? false}
       multiSelected={selectedIds.has(page.id)}
+      selectionActive={selectedIds.size > 0}
       onToggleMultiSelect={onToggleMultiSelect}
       onSelect={handleSelect}
       onToggleStar={toggleStar}

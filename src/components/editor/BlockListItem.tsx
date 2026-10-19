@@ -457,6 +457,13 @@ function BlockListItemInner({
     [rowRef, liRef],
   )
 
+  // Below `sm` the title keeps the first line, after the leading status icon
+  // (the row's only `svg` child), and the chips and source wrap under it: on
+  // one line a 360 px phone squeezed the title to a few characters a line.
+  const hasLeadingIcon =
+    showCompletedIcon === true ||
+    (statusIconState !== undefined && !(statusIconState === 'DONE' && statusIconShowDone === false))
+
   const row = (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- this li is the focusable, keyboard-navigable list row itself (roving tabindex + Enter/Space activation via onKeyDown); the activation handlers belong on the row, and it can't become a <button> because it is a list item that contains nested interactive controls (date chip, reschedule button)
     <li
@@ -464,7 +471,7 @@ function BlockListItemInner({
       style={style}
       data-index={dataIndex}
       className={cn(
-        'flex items-center gap-2 rounded-md px-3 py-2 cursor-pointer transition-colors',
+        'flex items-center gap-2 rounded-md px-3 py-2 cursor-pointer transition-colors max-sm:flex-wrap max-sm:gap-y-1 max-sm:[&>svg]:order-first',
         // Touch: ensure 44px minimum height so embedded pills (priority, date chip)
         // With touch-device padding don't get clipped at the bottom.
         '[@media(pointer:coarse)]:min-h-11',
@@ -506,7 +513,13 @@ function BlockListItemInner({
       {/* Block content — full content by default; callers opt into line-clamp
           via contentClassName="line-clamp-2" when a truncated preview is needed
           (e.g. SearchPanel). Agenda shows full content. */}
-      <span className={cn('text-sm min-w-0 flex-1', contentClassName)}>
+      <span
+        className={cn(
+          'text-sm min-w-0 flex-1 max-sm:order-first',
+          hasLeadingIcon ? 'max-sm:basis-[calc(100%-2rem)]' : 'max-sm:basis-full',
+          contentClassName,
+        )}
+      >
         {richContent ?? emptyContentFallback ?? t('common.empty')}
       </span>
 

@@ -89,7 +89,8 @@ export function HistoryFilterBar({
       >
         <SelectTrigger
           id="op-type-filter"
-          className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+          // `w-auto flex-1`: the trigger's own `w-full` wrapped the "?" onto a row of its own.
+          className="h-8 w-auto flex-1 rounded-md border border-input bg-background px-2 text-sm"
           aria-label={t('history.filterByTypeLabel')}
         >
           <SelectValue />

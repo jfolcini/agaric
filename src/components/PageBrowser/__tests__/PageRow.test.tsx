@@ -5,15 +5,21 @@
  * user interaction, and suppresses `↗ 0` / `⊟ 0` zeros per the design.
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { collectFlagTokens, formatRelativeShort, PageRow } from '@/components/PageBrowser/PageRow'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
+import { DEFAULT_LONG_PRESS_DELAY } from '@/hooks/useLongPress'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
+
+vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: vi.fn(() => false) }))
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: vi.fn(() => false) }))
 
 type RequiredProps = React.ComponentProps<typeof PageRow>
 
@@ -57,6 +63,7 @@ function baseProps(overrides: Partial<RequiredProps> = {}): RequiredProps {
     hasScheduled: false,
     hasDue: false,
     multiSelected: false,
+    selectionActive: false,
     onToggleMultiSelect: vi.fn(),
     onSelect: vi.fn(),
     onToggleStar: vi.fn(),
@@ -205,6 +212,89 @@ describe('PageRow', () => {
 
       expect(openedTabs()).toEqual([[{ pageId: 'p', title: 'Hi' }]])
       expect(useNavigationStore.getState().currentView).toBe('pages')
+      expect(onSelect).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('on a touch phone (#5932)', () => {
+    beforeEach(() => {
+      vi.mocked(useIsMobile).mockReturnValue(true)
+      vi.mocked(useIsTouch).mockReturnValue(true)
+    })
+    afterEach(() => {
+      vi.mocked(useIsMobile).mockReturnValue(false)
+      vi.mocked(useIsTouch).mockReturnValue(false)
+      vi.useRealTimers()
+    })
+
+    it('below sm hides the checkbox until something is selected, and always the bookmark and delete', () => {
+      const { rerender } = render(<PageRow {...baseProps()} />)
+      const checkboxCell = screen.getByRole('checkbox').closest('[role="gridcell"]')
+      expect(checkboxCell?.className).toContain('max-sm:hidden')
+      expect(screen.getByRole('button', { name: /bookmark page/i }).className).toContain(
+        'max-sm:hidden',
+      )
+      expect(
+        screen.getByRole('button', { name: /delete page/i }).closest('[role="gridcell"]')
+          ?.className,
+      ).toContain('max-sm:hidden')
+      rerender(<PageRow {...baseProps({ selectionActive: true })} />)
+      expect(checkboxCell?.className).not.toContain('max-sm:hidden')
+    })
+
+    it('a long press selects the row, and its release opens nothing', () => {
+      vi.useFakeTimers()
+      const onToggleMultiSelect = vi.fn()
+      const onSelect = vi.fn()
+      render(
+        <PageRow {...baseProps({ pageId: 'p', title: 'Hi', onToggleMultiSelect, onSelect })} />,
+      )
+      const title = screen.getByText('Hi')
+      fireEvent.pointerDown(title, { clientX: 10, clientY: 10 })
+      act(() => {
+        vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY)
+      })
+      fireEvent.pointerUp(title)
+      fireEvent.click(title)
+      expect(onToggleMultiSelect).toHaveBeenCalledTimes(1)
+      expect(onToggleMultiSelect.mock.calls[0]?.[0]).toBe('p')
+      expect(onSelect).not.toHaveBeenCalled()
+    })
+
+    it('a short tap opens the page', () => {
+      vi.useFakeTimers()
+      const onToggleMultiSelect = vi.fn()
+      const onSelect = vi.fn()
+      render(
+        <PageRow {...baseProps({ pageId: 'p', title: 'Hi', onToggleMultiSelect, onSelect })} />,
+      )
+      const title = screen.getByText('Hi')
+      fireEvent.pointerDown(title, { clientX: 10, clientY: 10 })
+      act(() => {
+        vi.advanceTimersByTime(DEFAULT_LONG_PRESS_DELAY - 100)
+      })
+      fireEvent.pointerUp(title)
+      fireEvent.click(title)
+      expect(onSelect).toHaveBeenCalledWith('p', 'Hi')
+      expect(onToggleMultiSelect).not.toHaveBeenCalled()
+    })
+
+    it('while a selection is on, a tap toggles the row instead of opening it', () => {
+      const onToggleMultiSelect = vi.fn()
+      const onSelect = vi.fn()
+      render(
+        <PageRow
+          {...baseProps({
+            pageId: 'p',
+            title: 'Hi',
+            selectionActive: true,
+            onToggleMultiSelect,
+            onSelect,
+          })}
+        />,
+      )
+      fireEvent.click(screen.getByText('Hi'))
+      expect(onToggleMultiSelect).toHaveBeenCalledTimes(1)
       expect(onSelect).not.toHaveBeenCalled()
     })
   })

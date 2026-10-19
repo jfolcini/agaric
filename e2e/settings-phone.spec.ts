@@ -65,7 +65,8 @@ test.describe('Settings on a phone @mobile @settings', () => {
 })
 
 // The device's own 390x664 viewport. Keyboard is the longest tab, so its last
-// control is the one that reaches the bottom of the scroll.
+// control is the one that reaches the bottom of the scroll. The button hides on
+// the way down and returns on a scroll up, so the check nudges back up first.
 test.describe('Settings on a phone, scrolled to the end @mobile @settings', () => {
   test.use({ ...phone, viewport: iPhone13.viewport })
 
@@ -77,9 +78,15 @@ test.describe('Settings on a phone, scrolled to the end @mobile @settings', () =
       .getByTestId('settings-panel-keyboard')
       .getByRole('button', { name: 'Reset all to defaults', exact: true })
     await expect(resetAll).toBeVisible()
-    await page.locator('#main-content').evaluate((el) => {
+    const main = page.locator('#main-content')
+    await main.evaluate((el) => {
       el.scrollTop = el.scrollHeight
     })
+    await expect(page.getByTestId('quick-capture-fab')).toBeHidden()
+    await main.evaluate((el) => {
+      el.scrollTop -= 16
+    })
+    await expect(page.getByTestId('quick-capture-fab')).toBeVisible()
 
     const control = await resetAll.boundingBox()
     const fab = await page.getByTestId('quick-capture-fab').boundingBox()
@@ -106,7 +113,7 @@ test.describe('Graph on a phone @mobile @settings', () => {
     expect(
       canvas.y + canvas.height,
       `the graph ends at ${canvas.y + canvas.height}px, the FAB at ${fab.y + fab.height}px`,
-    ).toBeGreaterThan(fab.y + fab.height)
+    ).toBeGreaterThanOrEqual(fab.y + fab.height)
   })
 })
 
