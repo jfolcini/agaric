@@ -351,6 +351,21 @@ git push --delete origin <bad-tag>            # remote
 scripts/release.sh <correct-version>          # re-cut cleanly
 ```
 
+### If the tag's CI fails after the bump landed
+
+When `verify-version` passed but a later job failed (a red `validate` job, say), the bump commit is already on `main`, no release was published, and `scripts/release.sh` refuses with "already at `<version>` — nothing to release". Fix `main` in an ordinary PR, then move the tag onto it by hand:
+
+```bash
+git pull --ff-only
+git tag -d <version>                          # local
+git push --delete origin <version>            # remote
+git tag -s -m "Release <version>" <version>   # signed, on the fixed main
+git verify-tag <version>
+git push --no-verify origin <version>         # starts the workflow again
+```
+
+This is the push `scripts/bump-version.sh` ends with, so the same rules apply: the tag must verify, and the `release` environment still waits for your approval.
+
 ## Android release signing
 
 The `android-build-and-release` job in `.github/workflows/release.yml` builds the aarch64 release APK and signs it with a keystore stored in GitHub Secrets. Local builds produce unsigned APKs by default; in CI a missing keystore secret fails the job, so a release never ships an unsigned APK.
