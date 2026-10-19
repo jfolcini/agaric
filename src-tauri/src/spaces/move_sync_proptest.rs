@@ -23,8 +23,12 @@ use tokio::runtime::Runtime;
 use super::tests::{deferred_purges, shared_rows};
 use crate::materializer::Materializer;
 use agaric_core::ulid::BlockId;
+use agaric_engine::loro::snapshot::{rehydrate_registry, save_all_engines};
 use agaric_store::space::SpaceId;
 
+// What is left of the run is the cases themselves: each replays A's script
+// and B's rounds through the real materializer and import path, and fewer
+// cases leave the order and cut-point space thinner.
 const CASES: u32 = 64;
 const SPACES: usize = 3;
 const PAGES: usize = 2;
@@ -101,7 +105,7 @@ async fn vault(template: &std::path::Path) -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 
-async fn vaults(template: &std::path::Path) -> Vaults {
+async fn built_vaults(template: &std::path::Path) -> Vaults {
     use crate::commands::pages::record_page_open_inner;
     use crate::commands::{
         create_block_inner, create_page_in_space_inner, create_property_def_inner,
@@ -206,6 +210,55 @@ async fn vaults(template: &std::path::Path) -> Vaults {
             .unwrap();
     }
     v
+}
+
+/// The state every case starts from, built once: the setup (spaces, pages,
+/// the first full pull) cost three times the rounds it precedes.
+struct Seed {
+    dir: TempDir,
+    spaces: Vec<BlockId>,
+    pages: Vec<BlockId>,
+    children: Vec<BlockId>,
+}
+
+async fn seed(template: &std::path::Path) -> Seed {
+    let v = built_vaults(template).await;
+    v.mat_a.flush_background().await.unwrap();
+    v.mat_b.flush_background().await.unwrap();
+    save_all_engines(&v.pool_a, &v.mat_a.loro_state().registry).await;
+    save_all_engines(&v.pool_b, &v.mat_b.loro_state().registry).await;
+    v.shutdown();
+    v.pool_a.close().await;
+    v.pool_b.close().await;
+    let dir = TempDir::new().unwrap();
+    std::fs::copy(v._dirs.0.path().join("test.db"), dir.path().join("a.db")).unwrap();
+    std::fs::copy(v._dirs.1.path().join("test.db"), dir.path().join("b.db")).unwrap();
+    Seed {
+        dir,
+        spaces: v.spaces,
+        pages: v.pages,
+        children: v.children,
+    }
+}
+
+async fn vaults(seed: &Seed) -> Vaults {
+    let (pool_a, dir_a) = vault(&seed.dir.path().join("a.db")).await;
+    let (pool_b, dir_b) = vault(&seed.dir.path().join("b.db")).await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+    rehydrate_registry(&pool_a, &mat_a.loro_state().registry, "device-A").await;
+    rehydrate_registry(&pool_b, &mat_b.loro_state().registry, "device-B").await;
+    Vaults {
+        mat_a,
+        mat_b,
+        pool_a,
+        pool_b,
+        spaces: seed.spaces.clone(),
+        pages: seed.pages.clone(),
+        children: seed.children.clone(),
+        page_space: vec![Some(0); PAGES],
+        _dirs: (dir_a, dir_b),
+    }
 }
 
 impl Vaults {
@@ -432,8 +485,8 @@ impl Vaults {
 
 /// One case: A runs each round's script and B pulls it as the round says;
 /// then B pulls everything once more, in full.
-async fn run_case(template: &std::path::Path, rounds: &[Round]) {
-    let mut v = vaults(template).await;
+async fn run_case(seed: &Seed, rounds: &[Round]) {
+    let mut v = vaults(seed).await;
     for (n, round) in rounds.iter().enumerate() {
         for op in &round.ops {
             v.run_on_a(op).await;
@@ -475,22 +528,22 @@ async fn run_case(template: &std::path::Path, rounds: &[Round]) {
 
 #[test]
 fn a_peer_converges_whatever_order_and_end_its_pulls_take_5712() {
-    // Migrating each case's two vaults from scratch cost more than the rest
-    // of the case, so every vault is a copy of one migrated here.
+    // Migrating and setting up each case's two vaults from scratch cost more
+    // than the rest of the case, so every case starts from copies of one pair
+    // built here.
     let dir = TempDir::new().unwrap();
     let template = dir.path().join("template.db");
     Runtime::new().unwrap().block_on(async {
         crate::db::init_pool(&template).await.unwrap().close().await;
     });
+    let seed = Runtime::new().unwrap().block_on(seed(&template));
     let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig {
         cases: CASES,
         source_file: Some(file!()),
         ..ProptestConfig::default()
     });
     let result = runner.run(&prop::collection::vec(round(), 1..=3), |rounds| {
-        Runtime::new()
-            .unwrap()
-            .block_on(run_case(&template, &rounds));
+        Runtime::new().unwrap().block_on(run_case(&seed, &rounds));
         Ok(())
     });
     if let Err(failure) = result {

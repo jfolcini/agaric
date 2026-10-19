@@ -8409,6 +8409,8 @@ async fn import_markdown_multi_chunk_tree_matches_single_chunk() {
 
     // 2.5 chunks' worth of flat top-level blocks → at least 3 chunks, so
     // the import commits + releases the writer lock at least twice mid-way.
+    // The cost is the test: a chunk boundary exists only past
+    // `IMPORT_CHUNK_BLOCKS`, so the tree cannot be smaller.
     let n = IMPORT_CHUNK_BLOCKS * 2 + IMPORT_CHUNK_BLOCKS / 2;
     let n_i64 = i64::try_from(n).unwrap();
     let content = flat_markdown(n);
