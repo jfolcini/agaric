@@ -67,7 +67,7 @@ Split by domain or file boundary, up to 6 subagents owning at most 6 files each,
 
 Worktree: `git worktree add ../wt-x -b <branch> origin/main && bash scripts/seed-worktree.sh` from inside it (a fresh worktree lacks `node_modules`, `src-tauri/.env`, and `dev.db`). Cut it from the branch that holds the code you build on, which is not `origin/main` when that code is still in an open PR. While builders run, do a second independent issue rather than waiting. Each item gets its own `claude/<issue>-<slug>` branch and PR, and up to 10 PRs may be open at once; a cloud session's designated branch is one of those branches, not a cap on how many the session opens.
 
-Builders run targeted tests, plus `npm run typecheck` for TS (vitest does not type-check). The reviewer runs the real gates once per item over the whole worktree: the full suite, `npm run typecheck`, `npm run lint`, and for Rust `cargo clippy --workspace --all-targets -- -D warnings`, which otherwise runs only at pre-push and in CI.
+Builders run targeted tests, plus `npm run typecheck` for TS (vitest does not type-check). The reviewer runs the real gates once per item over the whole worktree: the full suite, `npm run typecheck`, `npm run lint`, `prek run --hook-stage manual --all-files`, the e2e specs `just e2e-related --range origin/main...HEAD` selects (Playwright on the worktree's own `PW_PORT`, WebdriverIO with `just e2e-real` when it selects a few specs; where it says "the whole lane", CI's run is the check and the PR does not merge while that lane is red), and for Rust `cargo clippy --workspace --all-targets -- -D warnings`, which otherwise runs only at pre-push and in CI.
 
 Prompt skeleton; keep the git and background lines verbatim:
 
@@ -82,7 +82,7 @@ Prompt skeleton; keep the git and background lines verbatim:
 **Do NOT modify:** AGENTS.md; anything outside the list above.
 **Do NOT run any git command** (stash/reset/checkout/add/commit); only edit files.
 **NEVER use background execution or monitors**; run every command in the foreground, read the output before your final message, and do not end while anything is pending.
-**Verification (targeted):** cd src-tauri && cargo nextest run --workspace -E '<filter>'  |  npx vitest run <paths> && npm run typecheck
+**Verification (targeted):** cd src-tauri && cargo nextest run --workspace -E '<filter>'  |  npx vitest run <paths> && npm run typecheck; then `just e2e-related --range origin/main...HEAD` and run what it selects (Playwright with this worktree's `PW_PORT`)
 **Success:** targeted tests pass (and select more than zero tests); follows AGENTS.md; no new warnings; each falsification ran as one shell command that restores on exit (AGENTS.md § Acceptance is falsification), and no stub is left in the tree.
 ```
 
