@@ -7396,3 +7396,97 @@ async fn sync_deferred_purges_0126_is_strict_and_cascades_with_its_block_5712() 
         .unwrap();
     assert_eq!(left, 0, "the row goes with its block (ON DELETE CASCADE)");
 }
+
+/// #5371 — 0128 raises each `pages_cache.last_edited_ms` below its page's
+/// newest op to that op, whichever block of the page it is on. A row already
+/// above it keeps its value, since the column only ever rises, and a row still
+/// at 0123's unfilled 0 stays there for the boot-scheduled rebuild to fill.
+#[tokio::test]
+async fn pages_cache_0127_last_edited_rises_to_the_newest_op_on_the_page_5371() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 126).await;
+
+    let stamped = "01J00000000000000000PAGE8S";
+    let child_of = "01J00000000000000000PAGE8C";
+    let child = "01J00000000000000000CHLD8C";
+    let ahead = "01J00000000000000000PAGE8A";
+    let unfilled = "01J00000000000000000PAGE8U";
+    for page in [stamped, child_of, ahead, unfilled] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(page)
+        .bind(page)
+        .bind(page)
+        .execute(&pool)
+        .await
+        .expect("seed page");
+    }
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+         VALUES (?, 'content', 'body', ?, ?)",
+    )
+    .bind(child)
+    .bind(child_of)
+    .bind(child_of)
+    .execute(&pool)
+    .await
+    .expect("seed child");
+    let ops = [
+        (stamped, 1_000_i64),
+        (stamped, 1_002),
+        (child_of, 2_000),
+        (child, 5_000),
+        (ahead, 3_000),
+        (unfilled, 4_000),
+    ];
+    for (seq, (block_id, created_at)) in (1_i64..).zip(ops) {
+        sqlx::query(
+            "INSERT INTO op_log (seq, device_id, op_type, payload, created_at, hash, block_id) \
+             VALUES (?, 'dev', 'edit_block', '{}', ?, 'h', ?)",
+        )
+        .bind(seq)
+        .bind(created_at)
+        .bind(block_id)
+        .execute(&pool)
+        .await
+        .expect("seed op");
+    }
+    for (page, last_edited) in [
+        (stamped, 1_000_i64),
+        (child_of, 2_000),
+        (ahead, 9_000),
+        (unfilled, 0),
+    ] {
+        sqlx::query(
+            "INSERT INTO pages_cache (page_id, title, title_sort_key, last_edited_ms, updated_at) \
+             VALUES (?, ?, ?, ?, 1)",
+        )
+        .bind(page)
+        .bind(page)
+        .bind(page.to_lowercase())
+        .bind(last_edited)
+        .execute(&pool)
+        .await
+        .expect("seed pre-0127 row");
+    }
+
+    apply_migrations_through(&pool, 126, 127).await;
+
+    let rows: Vec<(String, i64)> =
+        sqlx::query_as("SELECT page_id, last_edited_ms FROM pages_cache ORDER BY page_id")
+            .fetch_all(&pool)
+            .await
+            .expect("read healed rows");
+    assert_eq!(
+        rows,
+        vec![
+            (ahead.to_owned(), 9_000),
+            (child_of.to_owned(), 5_000),
+            (stamped.to_owned(), 1_002),
+            (unfilled.to_owned(), 0),
+        ],
+        "a row below its page's newest op rises to it, its own op or a child's; \
+         a row above it, or still unfilled, keeps its value"
+    );
+}
