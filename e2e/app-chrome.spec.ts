@@ -66,13 +66,14 @@ test.describe('phone chrome @mobile', () => {
     userAgent: iPhone13.userAgent,
   })
 
-  test('the app header is one 48px row on Journal, Search and a page', async ({ page }) => {
+  // 44px controls with 6px clear above and below, plus the 1px border (#5926).
+  test('the app header is one 57px row on Journal, a page and Search', async ({ page }) => {
     await waitForBoot(page)
-    expect((await box(appHeader(page))).h, 'Journal header').toBe(48)
-    await navigateToView(page, 'Search')
-    expect((await box(appHeader(page))).h, 'Search header').toBe(48)
+    expect((await box(appHeader(page))).h, 'Journal header').toBe(57)
     await openPageMobile(page, 'Projects')
-    expect((await box(appHeader(page))).h, 'page header').toBe(48)
+    expect((await box(appHeader(page))).h, 'page header').toBe(57)
+    await navigateToView(page, 'Search')
+    expect((await box(appHeader(page))).h, 'Search header').toBe(57)
   })
 
   test('the page header fits one row: title, star and Page actions', async ({ page }) => {

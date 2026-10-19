@@ -40,9 +40,12 @@ export function JournalModeMenu<M extends string>({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          variant="secondary"
+          variant="ghost"
           size="xs"
-          className={cn('shrink-0 gap-0.5 max-sm:px-1.5!', className)}
+          className={cn(
+            'shrink-0 gap-0.5 max-sm:px-1.5! [@media(pointer:coarse)]:min-w-11',
+            className,
+          )}
           aria-label={t('journal.viewModeMenuLabel', { mode: current })}
         >
           <span className="sm:hidden" aria-hidden="true">

@@ -170,10 +170,10 @@ function MobileSidebarTrigger(): ReactElement | null {
       aria-label={t('sidebar.openMenu')}
       aria-haspopup="dialog"
       // `self-start` keeps the 44px target pinned to the top of a header
-      // whose content stacks (a long view title above its date controls)
-      // instead of floating to its vertical middle; the header's content
-      // wrapper re-centres a single-row header against it.
-      className="-ml-2 shrink-0 self-start sm:self-center"
+      // whose content stacks (a long title above its controls) instead of
+      // floating to its vertical middle. The negative margin puts the icon,
+      // not the button, on the header's 16px content edge.
+      className="-ml-1.5 shrink-0 self-start sm:self-center [@media(pointer:coarse)]:-ml-3.5"
     />
   )
 }
@@ -235,13 +235,11 @@ function SearchOverlays(): ReactElement {
  * The journal branch never stacks: its controls (mode tabs, date stepper,
  * calendar) plus the search trigger are all "always on", and they belong on
  * ONE line on a phone rather than the three rows the stack produced. The
- * fitting is done inside `JournalControls` (compact tab/step widths + a
- * truncating date chip); this wrapper just has to stop wrapping.
+ * fitting is done inside `JournalControls` (a mode menu + a truncating date
+ * chip); this wrapper just has to stop wrapping.
  *
- * Every other view WRAPS below sm instead: a short title, Today and the
- * search trigger share one row, while a long title ("Advanced Query") beside
- * the full `GlobalDateControls` trio pushes the controls onto a second row
- * rather than overflowing a 360px screen.
+ * Every other view WRAPS below sm instead, so a title too long for the row
+ * pushes the controls onto a second row rather than overflowing the screen.
  *
  * Module-level rather than an inline ternary in `App`: that function sits at
  * the repo's cyclomatic-complexity ceiling, and a layout choice is not what
@@ -250,7 +248,7 @@ function SearchOverlays(): ReactElement {
 function headerContentClass(isJournalView: boolean): string {
   return cn(
     'flex min-w-0 flex-1 flex-row items-center gap-2',
-    isJournalView ? 'max-sm:gap-0.5' : 'flex-wrap',
+    isJournalView ? 'max-sm:gap-1' : 'flex-wrap',
   )
 }
 
@@ -588,7 +586,7 @@ function App() {
         />
         <SidebarInset>
           <ViewHeaderOutletProvider>
-            <header className="flex min-h-12 shrink-0 sm:items-center gap-2 border-b bg-background px-4 py-px sm:py-0">
+            <header className="flex min-h-12 shrink-0 items-center gap-2 border-b bg-background px-4 max-md:min-h-14 max-md:gap-1 max-md:py-1.5">
               {/* Leads the header row, before the view title, because that
                   is where a navigation-drawer trigger is looked for. Renders
                   nothing on desktop. */}

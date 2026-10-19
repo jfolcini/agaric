@@ -276,16 +276,10 @@ describe('JournalControls', () => {
   })
 
   // The row fits at 360px only because every control except the date is a
-  // fixed, phone-sized width (the mode tabs are a menu there, see above).
-  // Losing either lever re-overflows the row (and fails the e2e overflow
-  // sweep).
-  it('phone width shrinks the date stepper to fixed compact widths', () => {
+  // fixed width (the mode tabs are a menu there, see above). Losing that
+  // re-overflows the row (and fails the e2e overflow sweep).
+  it('the date chip is the one item on the row that shrinks', () => {
     render(<JournalControls />)
-
-    // Prev/next: 24px wide below sm, 44px tall as before.
-    for (const name of [/previous day/i, /next day/i]) {
-      expect(screen.getByRole('button', { name }).className).toContain('max-sm:w-6!')
-    }
 
     // The date chip is the ONE elastic item: `shrink` (the Button base is
     // `shrink-0`) + `min-w-0` + a truncating label, so a long date can never

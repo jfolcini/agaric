@@ -185,12 +185,11 @@ for (const profile of PROFILES) {
       )
     })
 
-    // Today, Back and Forward are on the journal header in every mode, today
-    // included. The five mode tabs are one menu here: next to the arrows they
-    // would squeeze the date chip to nothing.
-    test('Today, Back and Forward stay on the journal header without crowding the date', async ({
-      page,
-    }) => {
+    // Today is on the journal header in every mode, today included; Back and
+    // Forward are not (the system back walks the same history). The five mode
+    // tabs are one menu here: next to the stepper they would squeeze the date
+    // chip to nothing.
+    test('Today stays on the journal header without crowding the date', async ({ page }) => {
       await waitForBoot(page)
       const header = page.locator('header').first()
       const today = header.getByRole('button', { name: 'Go to today' })
@@ -201,8 +200,7 @@ for (const profile of PROFILES) {
           header.getByRole('button', { name: `Journal view mode: ${mode}` }),
         ).toBeVisible()
         await expect(today, `Today in ${mode}`).toBeVisible()
-        await expect(header.getByRole('button', { name: 'Back', exact: true })).toBeVisible()
-        await expect(header.getByRole('button', { name: 'Forward', exact: true })).toBeVisible()
+        await expect(header.getByRole('button', { name: 'Back', exact: true })).toBeHidden()
       }
       await header.getByRole('button', { name: /^Journal view mode/ }).click()
       await page.getByRole('button', { name: 'Day', exact: true }).click()
