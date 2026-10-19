@@ -24,7 +24,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -744,7 +744,12 @@ describe('QueryBuilderModal', () => {
       const user = userEvent.setup()
       render(<QueryBuilderModal {...defaultProps} />)
 
-      await user.click(screen.getByRole('button', { name: /^advanced$/i }))
+      const modes = screen.getByRole('tablist', { name: 'Builder mode' })
+      expect(within(modes).getByRole('tab', { name: /^simple$/i })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      )
+      await user.click(within(modes).getByRole('tab', { name: /^advanced$/i }))
 
       // The empty builder hint is shown; the simple type selector is gone.
       expect(screen.getByText(/add at least one filter/i)).toBeInTheDocument()
@@ -766,9 +771,9 @@ describe('QueryBuilderModal', () => {
       })
       render(<QueryBuilderModal {...defaultProps} initialExpression={payload} />)
 
-      // Advanced toggle is active and the two conditions are counted.
-      expect(screen.getByRole('button', { name: /^advanced$/i })).toHaveAttribute(
-        'aria-pressed',
+      // The Advanced tab is selected and the two conditions are counted.
+      expect(screen.getByRole('tab', { name: /^advanced$/i })).toHaveAttribute(
+        'aria-selected',
         'true',
       )
       expect(screen.getByTestId('advanced-filter-count')).toHaveTextContent(/2 filters/i)

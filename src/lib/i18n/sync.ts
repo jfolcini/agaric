@@ -89,6 +89,7 @@ export const sync: Record<string, string> = {
   'pairing.typePassphraseButton': 'Type passphrase',
   'pairing.scanQrCodeButton': 'Scan QR code',
   'pairing.recommendedBadge': 'Recommended',
+  'pairing.entryModeLabel': 'Enter the code',
   'pairing.wordPlaceholder': '{{ordinal}} word',
   'pairing.wordLabel': 'Passphrase word {{num}}',
   'pairing.entryFormWord': '{{ordinal}} word',

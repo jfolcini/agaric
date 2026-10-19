@@ -35,11 +35,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useReconciliationReport } from '@/hooks/useReconciliationReport'
 import { dispatchBugReport } from '@/lib/bug-report-events'
 import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
-import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 
 // DataTab drags in `jszip` (~135 kB) for "Export as ZIP". The tab
@@ -223,57 +223,53 @@ export function SettingsView(): React.ReactElement {
         </Select>
         {/* The whole rail is one tablist; each section is a labeled group of
             tabs so screen-reader users hear the grouping without the tabs
-            losing their flat `role="tab"` membership. */}
-        <div
-          role="tablist"
-          aria-label={t('sidebar.settings')}
-          aria-orientation="vertical"
-          className="hidden flex-col gap-4 sm:flex sm:w-48 sm:shrink-0"
-          data-testid="settings-tab-rail"
+            losing their flat `role="tab"` membership. Arrow keys select as
+            they move, as in the app sidebar. */}
+        <Tabs
+          variant="vertical"
+          value={activeTab}
+          onValueChange={(tab) => setActiveTab(tab as SettingsTab)}
+          className="hidden sm:block sm:w-48 sm:shrink-0"
         >
-          {TAB_GROUPS.map((group) => (
-            // role="presentation" makes the group wrapper transparent to the
-            // accessibility tree so the `tab` buttons remain DIRECT children
-            // of the `tablist` (WAI-ARIA requires tablist→tab parentage —
-            // a real role="group" between them is a violation). The visible
-            // section header still groups the tabs for sighted users; it
-            // also carries role="presentation" so it isn't announced as a
-            // heading sitting illegally inside the tablist. The grouping is
-            // surfaced to assistive tech instead via each tab's
-            // `aria-describedby` pointing at the (hidden) header text.
-            <div key={group.id} role="presentation" className="flex flex-col gap-0.5">
-              <span
-                id={`settings-group-${group.id}`}
-                role="presentation"
-                className="px-3 pb-1 text-sm font-semibold text-foreground"
-              >
-                {t(group.labelKey)}
-              </span>
-              {group.tabs.map((tab) => (
-                <button
-                  type="button"
-                  key={tab}
-                  role="tab"
-                  id={`settings-tab-${tab}`}
-                  aria-selected={activeTab === tab}
-                  aria-controls={`settings-panel-${tab}`}
-                  aria-describedby={`settings-group-${group.id}`}
-                  className={cn(
-                    // Same neutral `sidebar-accent` pill as the app sidebar's
-                    // active item (#5332).
-                    'w-full rounded-md px-3 py-1.5 text-left text-sm font-medium transition-colors [@media(pointer:coarse)]:min-h-11',
-                    activeTab === tab
-                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                      : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-                  )}
-                  onClick={() => setActiveTab(tab)}
+          <TabsList
+            aria-label={t('sidebar.settings')}
+            className="gap-4"
+            data-testid="settings-tab-rail"
+          >
+            {TAB_GROUPS.map((group) => (
+              // role="presentation" makes the group wrapper transparent to the
+              // accessibility tree so the `tab` buttons remain DIRECT children
+              // of the `tablist` (WAI-ARIA requires tablist→tab parentage —
+              // a real role="group" between them is a violation). The visible
+              // section header still groups the tabs for sighted users; it
+              // also carries role="presentation" so it isn't announced as a
+              // heading sitting illegally inside the tablist. The grouping is
+              // surfaced to assistive tech instead via each tab's
+              // `aria-describedby` pointing at the (hidden) header text.
+              <div key={group.id} role="presentation" className="flex flex-col gap-0.5">
+                <span
+                  id={`settings-group-${group.id}`}
+                  role="presentation"
+                  className="px-3 pb-1 text-sm font-semibold text-foreground"
                 >
-                  {t(TAB_LABEL_KEYS[tab])}
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
+                  {t(group.labelKey)}
+                </span>
+                {group.tabs.map((tab) => (
+                  <TabsTrigger
+                    key={tab}
+                    value={tab}
+                    // One panel element serves every tab, so the ids are ours.
+                    id={`settings-tab-${tab}`}
+                    aria-controls={`settings-panel-${tab}`}
+                    aria-describedby={`settings-group-${group.id}`}
+                  >
+                    {t(TAB_LABEL_KEYS[tab])}
+                  </TabsTrigger>
+                ))}
+              </div>
+            ))}
+          </TabsList>
+        </Tabs>
 
         {/* Tab panels.
 

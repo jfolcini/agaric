@@ -33,8 +33,8 @@ import { findUnresolvedUlidTokens } from '@/components/pages/ulid-tokens'
 import { Button } from '@/components/ui/button'
 import { SHARED_INPUT_CLASSES } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { SourceLines } from '@/editor/source-buffer'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -135,6 +135,8 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
   const hintId = useId()
   const draftNoteId = useId()
   const legacyNoteId = useId()
+  const editTabId = useId()
+  const editPanelId = useId()
   const [opened, setOpened] = useState<Opened | null>(null)
   const [mode, setMode] = useState<Mode>('edit')
   // The buffer as last typed, for what shows beside it; null until it changes.
@@ -358,17 +360,12 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
     void submit(opened.base.source, true)
   }
 
-  // Back to Edit puts the caret back in the buffer, which was hidden.
   const switchMode = (value: string): void => {
-    // Radix sends '' when the shown mode is pressed again.
     const next = MODES.find((m) => m === value)
     if (next === undefined) return
-    flushSync(() => {
-      // The diff may be a pause behind the buffer.
-      if (next === 'changes' && typed.current !== null) setDiffedText(typed.current.lines.text)
-      setMode(next)
-    })
-    if (next === 'edit') bufferRef.current?.focus()
+    // The diff may be a pause behind the buffer.
+    if (next === 'changes' && typed.current !== null) setDiffedText(typed.current.lines.text)
+    setMode(next)
   }
 
   const copyLegacyDraft = async (): Promise<void> => {
@@ -429,48 +426,67 @@ export function PageSourceEditor({ pageId, onClose }: PageSourceEditorProps): Re
           {t('pageSource.draftRestored')}
         </p>
       )}
-      <ToggleGroup
-        type="single"
-        value={mode}
-        onValueChange={switchMode}
-        aria-label={t('pageSource.view')}
-        className="self-start"
-      >
-        {MODES.map((m) => (
-          <ToggleGroupItem key={m} value={m}>
-            {t(MODE_LABELS[m])}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
-      <Suspense fallback={loading}>
-        <LazyPageSourceBuffer
-          key={opened.generation}
-          ref={bufferRef}
-          pageId={pageId}
-          initial={opened.initial}
-          pageIds={opened.page.lineIds}
-          readOnly={saving}
+      <Tabs value={mode} onValueChange={switchMode}>
+        <TabsList aria-label={t('pageSource.view')} className="mb-2">
+          {MODES.map((m) => (
+            <TabsTrigger
+              key={m}
+              value={m}
+              {...(m === 'edit' && {
+                id: editTabId,
+                'aria-controls': editPanelId,
+                // On click, not on select: Radix selects on mousedown, and the
+                // mousedown's own focus would take the caret back.
+                onClick: () => bufferRef.current?.focus(),
+              })}
+            >
+              {t(MODE_LABELS[m])}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        {/* Not a TabsContent: that unmounts while hidden, and the buffer holds the edit. */}
+        <div
+          role="tabpanel"
+          id={editPanelId}
+          aria-labelledby={editTabId}
           hidden={mode !== 'edit'}
-          saveLabel={saveLabel}
-          nothingToSave={unchanged}
-          label={t('pageSource.editorLabel')}
-          describedBy={opened.draftRestored ? `${draftNoteId} ${hintId}` : hintId}
-          className={BUFFER_CLASS}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-          onSave={handleSave}
-          onCancel={handleCancel}
-        />
-      </Suspense>
-      <p id={hintId} hidden={mode !== 'edit'} className="text-xs text-muted-foreground">
-        {t('pageSource.hint')}
-      </p>
-      {mode === 'preview' && shown !== null && (
-        <Suspense fallback={loading}>
-          <LazyPageSourcePreview lines={shown} />
-        </Suspense>
-      )}
-      {mode === 'changes' && <PageSourceChanges diff={diff} />}
+          className="flex flex-col gap-2"
+        >
+          <Suspense fallback={loading}>
+            <LazyPageSourceBuffer
+              key={opened.generation}
+              ref={bufferRef}
+              pageId={pageId}
+              initial={opened.initial}
+              pageIds={opened.page.lineIds}
+              readOnly={saving}
+              hidden={mode !== 'edit'}
+              saveLabel={saveLabel}
+              nothingToSave={unchanged}
+              label={t('pageSource.editorLabel')}
+              describedBy={opened.draftRestored ? `${draftNoteId} ${hintId}` : hintId}
+              className={BUFFER_CLASS}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              onSave={handleSave}
+              onCancel={handleCancel}
+            />
+          </Suspense>
+          <p id={hintId} className="text-xs text-muted-foreground">
+            {t('pageSource.hint')}
+          </p>
+        </div>
+        <TabsContent value="preview">
+          {shown !== null && (
+            <Suspense fallback={loading}>
+              <LazyPageSourcePreview lines={shown} />
+            </Suspense>
+          )}
+        </TabsContent>
+        <TabsContent value="changes">
+          <PageSourceChanges diff={diff} />
+        </TabsContent>
+      </Tabs>
       {saveError !== null && (
         <p role="alert" className="text-sm text-destructive">
           {saveError}

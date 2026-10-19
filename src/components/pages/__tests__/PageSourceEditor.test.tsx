@@ -638,14 +638,14 @@ describe('PageSourceEditor saving', () => {
     renderEditor()
     const box = await loadedEditor()
     edit(box, 'first', 'first x')
-    await user.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+    await user.click(screen.getByRole('tab', { name: t('pageSource.changes') }))
     expect(box).not.toBeVisible()
 
     await user.click(saveButton())
 
     expect(await screen.findByRole('alert')).toHaveTextContent(failure.message)
-    expect(screen.getByRole('radio', { name: t('pageSource.modeEdit') })).toHaveAttribute(
-      'aria-checked',
+    expect(screen.getByRole('tab', { name: t('pageSource.modeEdit') })).toHaveAttribute(
+      'aria-selected',
       'true',
     )
     expect(box).toBeVisible()
@@ -1144,7 +1144,7 @@ describe('PageSourceEditor with a draft from before the line ids (#5160 D-f)', (
 
 describe('PageSourceEditor Edit, Preview and Changes', () => {
   function modeSwitch(): HTMLElement {
-    return screen.getByRole('radiogroup', { name: t('pageSource.view') })
+    return screen.getByRole('tablist', { name: t('pageSource.view') })
   }
 
   it('Save is off while the text is the page’s, then counts the hunks the text changed', async () => {
@@ -1179,10 +1179,10 @@ describe('PageSourceEditor Edit, Preview and Changes', () => {
     const box = await loadedEditor()
     edit(box, 'second', 'second edited')
 
-    const radios = within(modeSwitch()).getAllByRole('radio')
-    expect(radios.map((radio) => radio.textContent)).toEqual(['Edit', 'Preview', 'Changes'])
-    expect(radios[0]).toHaveAttribute('aria-checked', 'true')
-    await user.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+    const tabs = within(modeSwitch()).getAllByRole('tab')
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Edit', 'Preview', 'Changes'])
+    expect(tabs[0]).toHaveAttribute('aria-selected', 'true')
+    await user.click(screen.getByRole('tab', { name: t('pageSource.changes') }))
 
     expect(box).not.toBeVisible()
     const changes = screen.getByRole('region', { name: t('pageSource.changes') })
@@ -1191,7 +1191,7 @@ describe('PageSourceEditor Edit, Preview and Changes', () => {
     ])
     expect(changes).toHaveTextContent(`${t('pageSource.changeAdded')} - second edited`)
 
-    await user.click(screen.getByRole('radio', { name: t('pageSource.modeEdit') }))
+    await user.click(screen.getByRole('tab', { name: t('pageSource.modeEdit') }))
     expect(box).toBeVisible()
     expect(box).toHaveFocus()
     expect(screen.queryByRole('region', { name: t('pageSource.changes') })).not.toBeInTheDocument()
@@ -1205,7 +1205,7 @@ describe('PageSourceEditor Edit, Preview and Changes', () => {
     const box = await loadedEditor()
     edit(box, WELCOME, '- Welcome to **Agaric**!')
 
-    await user.click(screen.getByRole('radio', { name: t('pageSource.preview') }))
+    await user.click(screen.getByRole('tab', { name: t('pageSource.preview') }))
 
     const preview = await screen.findByRole('region', { name: t('pageSource.preview') })
     expect(within(preview).getByText('Agaric').tagName).toBe('STRONG')
@@ -1240,7 +1240,7 @@ describe('PageSourceEditor Edit, Preview and Changes', () => {
     const box = await loadedEditor()
     edit(box, 'second', 'second edited')
 
-    fireEvent.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+    fireEvent.mouseDown(screen.getByRole('tab', { name: t('pageSource.changes') }))
 
     const changes = screen.getByRole('region', { name: t('pageSource.changes') })
     expect([...changes.querySelectorAll('mark')].map((mark) => mark.textContent)).toEqual([
@@ -1255,7 +1255,7 @@ describe('PageSourceEditor Edit, Preview and Changes', () => {
     await loadedEditor()
 
     expect(saveButton()).toHaveAccessibleName('Save (1 change)')
-    fireEvent.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+    fireEvent.mouseDown(screen.getByRole('tab', { name: t('pageSource.changes') }))
     expect(screen.getByRole('region', { name: t('pageSource.changes') })).toHaveTextContent(
       `${t('pageSource.changeAdded')} - second edited`,
     )
@@ -1266,11 +1266,11 @@ describe('PageSourceEditor Edit, Preview and Changes', () => {
     renderEditor()
     await loadedEditor()
 
-    await user.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
-    await user.click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+    await user.click(screen.getByRole('tab', { name: t('pageSource.changes') }))
+    await user.click(screen.getByRole('tab', { name: t('pageSource.changes') }))
 
-    expect(screen.getByRole('radio', { name: t('pageSource.changes') })).toHaveAttribute(
-      'aria-checked',
+    expect(screen.getByRole('tab', { name: t('pageSource.changes') })).toHaveAttribute(
+      'aria-selected',
       'true',
     )
     expect(screen.getByText(t('pageSource.noChanges'))).toBeInTheDocument()
@@ -1284,7 +1284,7 @@ describe('PageSourceEditor Edit, Preview and Changes', () => {
     const { container } = renderEditor()
     edit(await loadedEditor(), 'second', 'second edited')
 
-    await user.click(screen.getByRole('radio', { name: t(key) }))
+    await user.click(screen.getByRole('tab', { name: t(key) }))
     await screen.findByRole('region', { name: t(key) })
 
     await waitFor(async () => {

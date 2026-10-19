@@ -399,6 +399,8 @@ const THEME_PAIRS = [
   { pair: 'graph current-page accent', fg: 'graph-accent', bg: 'background', min: NON_TEXT },
   // The selected tab's bar, on the document tab bar and every tab strip (#5924).
   { pair: 'selected tab bar', fg: 'tab-indicator', bg: 'background', min: NON_TEXT },
+  // Query builder and Pair device put a tab strip on a dialog (#5920).
+  { pair: 'selected tab bar in a dialog', fg: 'tab-indicator', bg: 'popover', min: NON_TEXT },
   {
     pair: 'sidebar hover / active item',
     fg: 'sidebar-accent-foreground',

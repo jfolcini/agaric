@@ -682,7 +682,7 @@ describe('on a phone', () => {
       ed.view.dispatch(ed.state.tr.insertText(' Saved.', positionOf(ed, 'knowledge base.', 15)))
     })
 
-    await userEvent.setup().click(screen.getByRole('radio', { name: t('pageSource.changes') }))
+    await userEvent.setup().click(screen.getByRole('tab', { name: t('pageSource.changes') }))
 
     expect(screen.queryByRole('toolbar', { name: t('toolbar.formatting') })).not.toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: t('action.cancel') })).toHaveLength(1)
