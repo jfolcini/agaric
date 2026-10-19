@@ -3,7 +3,8 @@
  *
  * Extracted from DeviceManagement to reduce component size.
  * Shows device name (or truncated ID), last-synced time, reset count badge,
- * address info, and action buttons (rename, sync, unpair).
+ * address info, the running session's progress, and action buttons (rename, sync,
+ * unpair).
  *
  * #4298: "device name" is now a precedence, not a column — the user's local
  * override, then the name the peer advertised over the wire, then the truncated
@@ -21,6 +22,7 @@ import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { PeerSyncProgress } from '@/components/peers/PeerSyncProgress'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -217,6 +219,7 @@ export function PeerListItem({
                 })}
               </p>
             )}
+            <PeerSyncProgress peerId={peer.peer_id} name={displayName} />
             {peer.reset_count > 0 && (
               <Badge tone="outline" className="mt-0.5 text-xs">
                 {t('device.resetCount', { count: peer.reset_count })}

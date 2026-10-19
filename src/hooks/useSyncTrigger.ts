@@ -133,25 +133,11 @@ async function syncOnePeerWithToast(
     const store = useSyncStore.getState()
     await runWithTimeout(
       startSync(peerId, (update) => {
-        // `SyncProgressUpdate` is a tagged enum: the
-        // op-sync stream lands as `kind: 'sync'`, the post-sync
-        // attachment-transfer stream lands as `kind: 'files'`. Fall
-        // through to the file branch on `complete` so the affordance
-        // resets without an extra explicit tick.
+        store.recordPeerProgress(peerId, update)
         if (update.kind === 'sync') {
           store.setState(mapBackendState(update.state))
           store.setOpsReceived(update.ops_received)
           store.setOpsSent(update.ops_sent)
-        } else if (update.phase === 'complete') {
-          store.resetFileProgress()
-        } else if (update.phase === 'sending' || update.phase === 'receiving') {
-          store.setFileProgress(
-            update.phase,
-            Number(update.files_done),
-            Number(update.files_total),
-            Number(update.bytes_done),
-            Number(update.bytes_total),
-          )
         }
       }),
       SYNC_TIMEOUT_MS,

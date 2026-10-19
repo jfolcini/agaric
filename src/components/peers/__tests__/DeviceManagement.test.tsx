@@ -29,7 +29,7 @@ import {
   type TypedInvokeHandlers,
 } from '@/__tests__/helpers/invoke'
 import { DeviceManagement } from '@/components/peers/DeviceManagement'
-import type { PeerRef } from '@/lib/bindings'
+import type { PeerRef, SyncProgressUpdate } from '@/lib/bindings'
 // #4084 (review): `comparePeers` moved to `@/lib/peer-sync-activity` so the
 // pairing dialog's list can apply the same order without importing
 // `DeviceManagement` (which imports `PairingDialog`, which renders
@@ -108,8 +108,10 @@ const { mockSyncStoreState } = vi.hoisted(() => ({
     lastSyncedAt: null,
     opsReceived: 0,
     opsSent: 0,
+    peerProgress: {},
     setState: vi.fn(),
     setPeers: vi.fn(),
+    recordPeerProgress: vi.fn(),
     updateLastSynced: vi.fn(),
     incrementOpsReceived: vi.fn(),
     incrementOpsSent: vi.fn(),
@@ -322,6 +324,24 @@ describe('DeviceManagement', () => {
         expect.objectContaining({ peerId: 'peer-abc-1234567890' }),
       )
     })
+
+    // #5842 — the backend streams this session's progress over the channel
+    // the press registered; it must reach the store under that peer.
+    const startSyncArgs = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'start_sync')?.[1] as {
+      progress: { onmessage?: (update: SyncProgressUpdate) => void }
+    }
+    const update: SyncProgressUpdate = {
+      kind: 'sync',
+      state: 'streaming',
+      remote_device_id: 'peer-abc-1234567890',
+      ops_received: 1,
+      ops_sent: 2,
+    }
+    startSyncArgs.progress.onmessage?.(update)
+    expect(mockSyncStoreState.recordPeerProgress).toHaveBeenCalledWith(
+      'peer-abc-1234567890',
+      update,
+    )
   })
 
   it('"Unpair" button calls deletePeerRef after confirmation', async () => {

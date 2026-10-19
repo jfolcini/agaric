@@ -196,7 +196,7 @@ describe('useSyncTrigger', () => {
     expect(mockStartSync).toHaveBeenCalledWith('PEER1', expect.any(Function))
   })
 
-  it('routes Files-variant updates into the sync store', async () => {
+  it('records the progress under the peer it synced', async () => {
     mockListPeerRefs.mockResolvedValue([
       {
         peer_id: 'PEER_FILES',
@@ -255,13 +255,15 @@ describe('useSyncTrigger', () => {
         bytes_total: 12_000_000,
       })
     })
-    {
-      const state = useSyncStore.getState()
-      expect(state.filePhase).toBe('receiving')
-      expect(state.filesTotal).toBe(2)
-      expect(state.bytesDone).toBe(5_000_000)
-      expect(state.bytesTotal).toBe(12_000_000)
-    }
+    expect(useSyncStore.getState().peerProgress).toEqual({
+      PEER_FILES: {
+        phase: 'receiving',
+        filesDone: 0,
+        filesTotal: 2,
+        bytesDone: 5_000_000,
+        bytesTotal: 12_000_000,
+      },
+    })
 
     // Tier 2 — terminal complete tick clears the file affordance.
     act(() => {
@@ -275,12 +277,7 @@ describe('useSyncTrigger', () => {
         bytes_total: 12_000_000,
       })
     })
-    {
-      const state = useSyncStore.getState()
-      expect(state.filePhase).toBeNull()
-      expect(state.filesDone).toBe(0)
-      expect(state.bytesDone).toBe(0)
-    }
+    expect(useSyncStore.getState().peerProgress).toEqual({})
 
     await pending
   })

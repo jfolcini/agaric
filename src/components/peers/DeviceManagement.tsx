@@ -49,6 +49,12 @@ import { PREFERENCES, usePreference } from '@/lib/preferences'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { useSyncStore } from '@/stores/sync'
 
+// The backend keeps one progress channel per peer, the last one registered, so
+// a press that passed none would silence that peer's row for its session.
+function startSyncReportingProgress(peerId: string) {
+  return startSync(peerId, (update) => useSyncStore.getState().recordPeerProgress(peerId, update))
+}
+
 export function DeviceManagement(): React.ReactElement {
   const { t } = useTranslation()
   const [deviceId, setDeviceId] = useState<string | null>(null)
@@ -166,7 +172,7 @@ export function DeviceManagement(): React.ReactElement {
       setSyncingPeerId(peerId)
       try {
         await executeSyncWithTimeout(async () => {
-          await startSync(peerId)
+          await startSyncReportingProgress(peerId)
         })
         await loadData()
       } catch (err) {
@@ -188,7 +194,7 @@ export function DeviceManagement(): React.ReactElement {
       setSyncingPeerId(peer.peer_id)
       try {
         await executeSyncWithTimeout(async () => {
-          await startSync(peer.peer_id)
+          await startSyncReportingProgress(peer.peer_id)
         })
       } catch (err) {
         logger.error('DeviceManagement', `Sync failed for ${peer.peer_id}`, undefined, err)

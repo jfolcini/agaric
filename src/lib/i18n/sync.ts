@@ -170,6 +170,13 @@ export const sync: Record<string, string> = {
   'device.loadingMessage': 'Loading device information...',
   'device.syncingMessage': 'Syncing with device {{name}}...',
   'device.syncingAllMessage': 'Syncing with all paired devices...',
+  // `ops_*` count sync messages, one per space, not changes (#4305).
+  'device.syncProgressOps': 'Syncing: {{sent}} messages sent, {{received}} received',
+  'device.syncProgressSending':
+    'Sending attachments: {{filesDone}} of {{filesTotal}} files, {{bytesDone}} of {{bytesTotal}}',
+  'device.syncProgressReceiving':
+    'Receiving attachments: {{filesDone}} of {{filesTotal}} files, {{bytesDone}} of {{bytesTotal}}',
+  'device.syncProgressBarLabel': 'Attachment transfer with {{name}}',
   'device.syncErrorMessage': 'Sync error: {{error}}',
   'device.retryButton': 'Retry',
   'device.dismissErrorLabel': 'Dismiss error',
