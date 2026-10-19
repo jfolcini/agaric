@@ -13,10 +13,11 @@ import { type Selection, TextSelection, type Transaction } from '@tiptap/pm/stat
 import { Mapping, type StepMap } from '@tiptap/pm/transform'
 
 import { parse } from '@/editor/markdown-serializer'
+import { PAGE_BLOCK } from '@/editor/page-mode/page-block-name'
 import { blockIdOf } from '@/editor/token-ids'
 import type { DocNode } from '@/editor/types'
 
-export const PAGE_BLOCK = 'pageBlock'
+export { PAGE_BLOCK }
 
 export const PageDocument = Node.create({ name: 'doc', topNode: true, content: `${PAGE_BLOCK}+` })
 
