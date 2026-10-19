@@ -66,13 +66,12 @@ test.describe('One left edge on a phone (#5929) @mobile @journal @pages @setting
     await waitForBoot(page)
   })
 
-  test('Journal: the day heading and block text share the gutter', async ({ page }) => {
+  // The header bar names the day on a phone, and the in-content title is
+  // screen-reader-only there (#5955), so the block text is the edge to check.
+  test('Journal: block and task text sit on the gutter', async ({ page }) => {
     const today = page.locator('section[id^="journal-"]').first()
     await expect(block(page, 'Morning standup')).toBeVisible()
 
-    await expect
-      .poll(() => textLeft(page.getByRole('heading', { level: 1 }).first()), 'day heading')
-      .toBe(GUTTER)
     await expect.poll(() => textLeft(block(page, 'Morning standup')), 'block text').toBe(GUTTER)
     await expect
       .poll(() => textLeft(block(page, 'Buy groceries')), 'task text')
