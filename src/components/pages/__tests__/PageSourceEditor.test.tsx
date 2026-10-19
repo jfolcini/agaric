@@ -6,6 +6,10 @@
  * editor's own transactions, as typing does. The save paths that change the
  * page run against the REAL tauri-mock dispatch and re-read the page's buffer
  * afterwards; the paths that only decide what to show stub the IPCs.
+ *
+ * The toolbar above the buffer is stubbed out: no test here presses it, and
+ * it renders its tooltip-wrapped buttons again on every keystroke.
+ * `PageSourceToolbar.test.tsx` renders this editor with it.
  */
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
@@ -37,6 +41,8 @@ import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
+
+vi.mock('@/components/pages/PageSourceToolbar', () => ({ PageSourceToolbar: () => null }))
 
 // The real diff, counted: the Changes view's laziness is how often it runs.
 vi.mock('@/lib/line-diff', async (importOriginal) => {
@@ -112,6 +118,21 @@ function renderEditor(pageId = PAGE_ID) {
 
 async function loadedEditor(): Promise<HTMLElement> {
   return screen.findByRole('textbox', { name: t('pageSource.editorLabel') })
+}
+
+/**
+ * Runs `type` on a fake clock, then lets the typing pause go by at once: the
+ * draft write and the diff wait for it, as does the ULID title lookup. The
+ * clock also runs on its own, for `userEvent`'s zero-delay waits.
+ */
+async function typingPause(type: () => void | Promise<void>): Promise<void> {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true })
+  try {
+    await type()
+    await act(() => vi.advanceTimersByTimeAsync(300))
+  } finally {
+    vi.useRealTimers()
+  }
 }
 
 function editorOf(box: HTMLElement): Editor {
@@ -536,7 +557,7 @@ describe('PageSourceEditor saving', () => {
       stubResolving([{ id: KNOWN, title: 'Known', block_type: 'content', deleted: false }])
       renderEditor()
       const box = await loadedEditor()
-      edit(box, 'first', `first ((${KNOWN}))`)
+      await typingPause(() => edit(box, 'first', `first ((${KNOWN}))`))
       const status = screen.getByRole('status')
 
       caretAtEnd(box, 'first')
@@ -750,7 +771,7 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
     const user = userEvent.setup()
     const rendered = renderEditor(PAGE_GETTING_STARTED)
     const box = await loadedEditor()
-    change(box)
+    await typingPause(() => change(box))
     const edited = bufferOf(box)
     dispatch('edit_block', { blockId: BLOCK_GS_3, toText: ELSEWHERE })
     const current = pageBuffer(PAGE_GETTING_STARTED)
@@ -790,9 +811,7 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
   it('Merge saves the buffer against its own base with the change made elsewhere folded in, as one undo entry', async () => {
     const { current, dialog, onClose, user } = await saveOverAChange()
     const { PAGE_GETTING_STARTED } = SEED_IDS
-    await waitFor(() => {
-      expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).not.toBeNull()
-    })
+    expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).not.toBeNull()
 
     await user.click(within(dialog).getByRole('button', { name: t('pageSource.merge') }))
 
@@ -849,9 +868,7 @@ describe('PageSourceEditor when the page changed elsewhere', () => {
   it('Reload replaces the buffer and its base with the page as it is now and drops the draft', async () => {
     const { current, dialog, onClose, user } = await saveOverAChange()
     const { PAGE_GETTING_STARTED } = SEED_IDS
-    await waitFor(() => {
-      expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).not.toBeNull()
-    })
+    expect(localStorage.getItem(draftKey(PAGE_GETTING_STARTED))).not.toBeNull()
 
     await user.click(within(dialog).getByRole('button', { name: t('action.reload') }))
 
@@ -894,21 +911,17 @@ describe('PageSourceEditor draft', () => {
     const box = await loadedEditor()
     caretAtEnd(box, '- second')
 
-    await user.keyboard('x')
-    await waitFor(() => {
-      expect(localStorage.getItem(draftKey())).toBe(
-        JSON.stringify({
-          base: BUFFER,
-          text: '- first\n- secondx\n',
-          lineIds: [A, B, null],
-        }),
-      )
-    })
+    await typingPause(() => user.keyboard('x'))
+    expect(localStorage.getItem(draftKey())).toBe(
+      JSON.stringify({
+        base: BUFFER,
+        text: '- first\n- secondx\n',
+        lineIds: [A, B, null],
+      }),
+    )
 
-    await user.keyboard('{Backspace}')
-    await waitFor(() => {
-      expect(localStorage.getItem(draftKey())).toBeNull()
-    })
+    await typingPause(() => user.keyboard('{Backspace}'))
+    expect(localStorage.getItem(draftKey())).toBeNull()
   })
 
   // The edit and `unmount()` run in one task, so the 300 ms timer cannot fire between.
@@ -1140,19 +1153,23 @@ describe('PageSourceEditor Edit, Preview and Changes', () => {
     expect(saveButton()).toBeDisabled()
     expect(saveButton()).toHaveAccessibleName(t('action.save'))
 
-    edit(box, 'first', 'first x')
-    await waitFor(() => expect(saveButton()).toHaveAccessibleName('Save (1 change)'))
+    await typingPause(() => edit(box, 'first', 'first x'))
+    expect(saveButton()).toHaveAccessibleName('Save (1 change)')
     expect(saveButton()).toBeEnabled()
 
     caretAtEnd(box)
-    act(() => {
-      editorOf(box).commands.insertContent('- third')
+    await typingPause(() => {
+      act(() => {
+        editorOf(box).commands.insertContent('- third')
+      })
     })
-    await waitFor(() => expect(saveButton()).toHaveAccessibleName('Save (2 changes)'))
+    expect(saveButton()).toHaveAccessibleName('Save (2 changes)')
 
-    edit(box, 'first x', 'first')
-    edit(box, '- third', '')
-    await waitFor(() => expect(saveButton()).toBeDisabled())
+    await typingPause(() => {
+      edit(box, 'first x', 'first')
+      edit(box, '- third', '')
+    })
+    expect(saveButton()).toBeDisabled()
     expect(saveButton()).toHaveAccessibleName(t('action.save'))
   })
 
@@ -1207,12 +1224,14 @@ describe('PageSourceEditor Edit, Preview and Changes', () => {
     const box = await loadedEditor()
     const diffed = vi.mocked(diffLines).mock.calls.length
 
-    edit(box, 'first', 'first x')
-    edit(box, 'first x', 'first xy')
-    edit(box, 'first xy', 'first xyz')
-    expect(vi.mocked(diffLines)).toHaveBeenCalledTimes(diffed)
+    await typingPause(() => {
+      edit(box, 'first', 'first x')
+      edit(box, 'first x', 'first xy')
+      edit(box, 'first xy', 'first xyz')
+      expect(vi.mocked(diffLines)).toHaveBeenCalledTimes(diffed)
+    })
 
-    await waitFor(() => expect(saveButton()).toHaveAccessibleName('Save (1 change)'))
+    expect(saveButton()).toHaveAccessibleName('Save (1 change)')
     expect(vi.mocked(diffLines)).toHaveBeenCalledTimes(diffed + 1)
   })
 

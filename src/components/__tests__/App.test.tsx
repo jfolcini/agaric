@@ -6,6 +6,9 @@
  *  - Clicking nav items switches views
  *  - All views render (Journal, Pages, Tags, Trash, Settings › App health)
  *  - a11y compliance
+ *
+ * Its time is its test count: each test boots the whole App, and the first
+ * test into each lazily loaded view or dialog also loads that chunk.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -1494,14 +1497,16 @@ describe('App', () => {
       expect(screen.queryByTestId('in-page-find-stub')).not.toBeInTheDocument()
       expect(screen.queryByTestId('search-sheet-stub')).not.toBeInTheDocument()
 
-      act(() => useCommandPaletteStore.getState().open$())
-      expect(await screen.findByTestId('command-palette-stub')).toBeInTheDocument()
-      act(() => useInPageFindStore.getState().open$())
-      expect(await screen.findByTestId('in-page-find-stub')).toBeInTheDocument()
+      // Each open is an async act: outside one, React throttles the reveal of a
+      // newly loaded lazy overlay, and the test would wait that out.
+      await act(async () => useCommandPaletteStore.getState().open$())
+      expect(screen.getByTestId('command-palette-stub')).toBeInTheDocument()
+      await act(async () => useInPageFindStore.getState().open$())
+      expect(screen.getByTestId('in-page-find-stub')).toBeInTheDocument()
 
       // The sheet's segment hides the matching App-level overlay.
-      act(() => useSearchSheetStore.getState().open$('all-pages'))
-      expect(await screen.findByTestId('search-sheet-stub')).toBeInTheDocument()
+      await act(async () => useSearchSheetStore.getState().open$('all-pages'))
+      expect(screen.getByTestId('search-sheet-stub')).toBeInTheDocument()
       expect(screen.queryByTestId('command-palette-stub')).not.toBeInTheDocument()
       expect(screen.getByTestId('in-page-find-stub')).toBeInTheDocument()
       act(() => useSearchSheetStore.getState().setMode('in-page'))
