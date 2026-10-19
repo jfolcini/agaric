@@ -113,8 +113,7 @@ test.describe('Scheduled date filtering @journal', () => {
     const duePanel = page.locator('[data-testid="due-panel"]')
     await expect(duePanel).toBeVisible({ timeout: 5000 })
 
-    // Click "Scheduled" filter pill — regex tolerates `(N)` badge suffix but
-    // excludes the neighbouring "Scheduled: show all" toggle button.
+    // Click "Scheduled" filter pill — regex tolerates the `(N)` badge suffix.
     const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
     await expect(filterBar).toBeVisible()
     const scheduledFilter = filterBar.getByRole('radio', {
@@ -143,7 +142,7 @@ test.describe('Scheduled date filtering @journal', () => {
     const initialCount = await items.count()
 
     // Switch to "Scheduled" filter (fewer items). Regex tolerates the `(N)`
-    // badge suffix but excludes the neighbouring "Scheduled: show all" toggle.
+    // badge suffix.
     const filterBar = duePanel.locator('[data-testid="due-panel-filters"]')
     const scheduledFilter = filterBar.getByRole('radio', {
       name: /^Scheduled( \(\d+\))?$/,

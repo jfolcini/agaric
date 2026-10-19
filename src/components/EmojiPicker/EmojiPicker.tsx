@@ -691,7 +691,7 @@ function SkinToneSelector({ value, onChange, tonable }: SkinToneSelectorProps) {
       {SKIN_TONES.map((tone) => {
         const label = t(tone.labelKey)
         return (
-          /* oxlint-disable jsx-a11y/prefer-tag-over-role -- role="radio" on a styled emoji <button>; a native <input type="radio"> would lose the swatch styling and aria-checked toggle behavior (mirrors IncludeExcludeToggle / QueryBuilderModal) */
+          /* oxlint-disable jsx-a11y/prefer-tag-over-role -- role="radio" on a styled emoji <button>; a native <input type="radio"> would lose the swatch styling and aria-checked toggle behavior */
           <button
             key={tone.id}
             type="button"

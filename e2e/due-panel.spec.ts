@@ -42,9 +42,9 @@ test('hide-before-scheduled hides a task scheduled next week and shows it again 
   await expect(future).toHaveCount(1)
   await expect(unscheduled).toHaveCount(1)
 
-  await panel.getByRole('button', { name: 'Scheduled: show all' }).click()
-  const hideToggle = panel.getByRole('button', { name: 'Scheduled: hide future' })
-  await expect(hideToggle).toHaveAttribute('aria-pressed', 'true')
+  const hideToggle = panel.getByRole('switch', { name: 'Hide future scheduled' })
+  await hideToggle.click()
+  await expect(hideToggle).toHaveAttribute('aria-checked', 'true')
   await expect(future).toHaveCount(0)
   await expect(unscheduled).toHaveCount(1)
 
@@ -54,10 +54,7 @@ test('hide-before-scheduled hides a task scheduled next week and shows it again 
   await expect(future).toHaveCount(0)
 
   await hideToggle.click()
-  await expect(panel.getByRole('button', { name: 'Scheduled: show all' })).toHaveAttribute(
-    'aria-pressed',
-    'false',
-  )
+  await expect(hideToggle).toHaveAttribute('aria-checked', 'false')
   await expect(future).toHaveCount(1)
 })
 

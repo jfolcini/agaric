@@ -21,7 +21,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -2078,43 +2078,66 @@ describe('LinkedReferences', () => {
 
       expect(await screen.findByText('every shape')).toBeInTheDocument()
 
-      await user.click(screen.getByRole('button', { name: t('references.kindPageLinks') }))
+      await user.click(screen.getByRole('radio', { name: t('references.kindPageLinks') }))
       expect(await screen.findByText('a page link')).toBeInTheDocument()
       expect(screen.queryByText('every shape')).not.toBeInTheDocument()
 
-      await user.click(screen.getByRole('button', { name: t('references.kindBlockRefs') }))
+      await user.click(screen.getByRole('radio', { name: t('references.kindBlockRefs') }))
       expect(await screen.findByText('a block reference')).toBeInTheDocument()
       expect(screen.queryByText('a page link')).not.toBeInTheDocument()
 
-      await user.click(screen.getByRole('button', { name: t('references.kindAll') }))
+      await user.click(screen.getByRole('radio', { name: t('references.kindAll') }))
       expect(await screen.findByText('every shape')).toBeInTheDocument()
     })
 
-    it('exposes the selected kind through aria-pressed', async () => {
+    it('exposes the selected kind through aria-checked', async () => {
       const user = userEvent.setup()
       mockKindAwareInvoke()
 
       renderLinkedReferences({ targetId: 'PAGE1' })
 
-      expect(await screen.findByRole('button', { name: t('references.kindAll') })).toHaveAttribute(
-        'aria-pressed',
+      expect(await screen.findByRole('radio', { name: t('references.kindAll') })).toHaveAttribute(
+        'aria-checked',
         'true',
       )
-      expect(screen.getByRole('button', { name: t('references.kindPageLinks') })).toHaveAttribute(
-        'aria-pressed',
+      expect(screen.getByRole('radio', { name: t('references.kindPageLinks') })).toHaveAttribute(
+        'aria-checked',
         'false',
       )
 
-      await user.click(screen.getByRole('button', { name: t('references.kindPageLinks') }))
+      await user.click(screen.getByRole('radio', { name: t('references.kindPageLinks') }))
       expect(await screen.findByText('a page link')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('references.kindPageLinks') })).toHaveAttribute(
-        'aria-pressed',
+      expect(screen.getByRole('radio', { name: t('references.kindPageLinks') })).toHaveAttribute(
+        'aria-checked',
         'true',
       )
-      expect(screen.getByRole('button', { name: t('references.kindAll') })).toHaveAttribute(
-        'aria-pressed',
+      expect(screen.getByRole('radio', { name: t('references.kindAll') })).toHaveAttribute(
+        'aria-checked',
         'false',
       )
+    })
+
+    it('an arrow key moves the kind, and only the checked kind is a tab stop', async () => {
+      const user = userEvent.setup()
+      mockKindAwareInvoke()
+
+      renderLinkedReferences({ targetId: 'PAGE1' })
+      expect(await screen.findByText('every shape')).toBeInTheDocument()
+
+      const group = screen.getByRole('radiogroup', { name: t('references.kindFilterLabel') })
+      const all = within(group).getByRole('radio', { name: t('references.kindAll') })
+      all.focus()
+      await user.keyboard('{ArrowRight}')
+
+      const pageLinks = within(group).getByRole('radio', { name: t('references.kindPageLinks') })
+      expect(pageLinks).toHaveFocus()
+      expect(pageLinks).toHaveAttribute('aria-checked', 'true')
+      expect(await screen.findByText('a page link')).toBeInTheDocument()
+      expect(
+        within(group)
+          .getAllByRole('radio')
+          .filter((r) => r.tabIndex === 0),
+      ).toEqual([pageLinks])
     })
 
     // axe-presence: one audit per visual state, not one per file — each kind
@@ -2127,11 +2150,11 @@ describe('LinkedReferences', () => {
       expect(await screen.findByText('every shape')).toBeInTheDocument()
       expect(await axe(container)).toHaveNoViolations()
 
-      await user.click(screen.getByRole('button', { name: t('references.kindPageLinks') }))
+      await user.click(screen.getByRole('radio', { name: t('references.kindPageLinks') }))
       expect(await screen.findByText('a page link')).toBeInTheDocument()
       expect(await axe(container)).toHaveNoViolations()
 
-      await user.click(screen.getByRole('button', { name: t('references.kindBlockRefs') }))
+      await user.click(screen.getByRole('radio', { name: t('references.kindBlockRefs') }))
       expect(await screen.findByText('a block reference')).toBeInTheDocument()
       expect(await axe(container)).toHaveNoViolations()
     })
@@ -2140,17 +2163,17 @@ describe('LinkedReferences', () => {
     // tests below go red: the skeleton swap unmounts the pressed button
     // (focus falls to <body>), and an empty result renders `empty={null}`,
     // taking the whole control with it.
-    it('keeps focus on the pressed button while the new query resolves', async () => {
+    it('keeps focus on the checked kind while the new query resolves', async () => {
       const user = userEvent.setup()
       mockKindAwareInvoke()
 
       renderLinkedReferences({ targetId: 'PAGE1' })
       await screen.findByText('every shape')
 
-      const pageLinks = screen.getByRole('button', { name: t('references.kindPageLinks') })
+      const pageLinks = screen.getByRole('radio', { name: t('references.kindPageLinks') })
       await user.click(pageLinks)
       expect(await screen.findByText('a page link')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: t('references.kindPageLinks') })).toHaveFocus()
+      expect(screen.getByRole('radio', { name: t('references.kindPageLinks') })).toHaveFocus()
     })
 
     it('stays reachable when the selected kind matches nothing', async () => {
@@ -2191,13 +2214,13 @@ describe('LinkedReferences', () => {
       renderLinkedReferences({ targetId: 'PAGE1' })
       expect(await screen.findByText('a block reference')).toBeInTheDocument()
 
-      await user.click(screen.getByRole('button', { name: t('references.kindPageLinks') }))
+      await user.click(screen.getByRole('radio', { name: t('references.kindPageLinks') }))
       await waitFor(() => {
         expect(screen.queryByText('a block reference')).not.toBeInTheDocument()
       })
 
       // Nothing matched, so the list is gone — but the way back is not.
-      await user.click(screen.getByRole('button', { name: t('references.kindAll') }))
+      await user.click(screen.getByRole('radio', { name: t('references.kindAll') }))
       expect(await screen.findByText('a block reference')).toBeInTheDocument()
     })
   })

@@ -93,10 +93,10 @@ test.describe('Tag filter modes return the matching blocks (#5366) @pages @searc
     await selectTag(page, 'alpha')
     await selectTag(page, 'beta')
 
-    await page.getByRole('button', { name: 'AND', exact: true }).click()
+    await page.getByRole('radio', { name: 'AND', exact: true }).click()
     await expect(results(page)).toHaveText([/^Alpha and beta/])
 
-    await page.getByRole('button', { name: 'OR', exact: true }).click()
+    await page.getByRole('radio', { name: 'OR', exact: true }).click()
     await expect(results(page)).toHaveText([
       /^Alpha only/,
       /^Beta only/,

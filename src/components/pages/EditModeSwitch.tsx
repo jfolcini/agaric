@@ -34,9 +34,7 @@ export function EditModeSwitch({
       value="page"
       aria-disabled={blocked ? true : undefined}
       aria-describedby={blocked ? reasonId : undefined}
-      // The tooltip's trigger replaces `data-state`, which the item's own selected
-      // look reads, so Page takes it from `aria-checked`.
-      className="aria-checked:bg-secondary aria-checked:text-foreground aria-checked:shadow-sm aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+      className="aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
     >
       {t('pageMode.page')}
     </ToggleGroupItem>
