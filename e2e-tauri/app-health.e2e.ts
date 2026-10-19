@@ -6,7 +6,8 @@
 // "Everything matches" whatever the vault holds, and a download goes nowhere.
 // Here the materializer counts real work, the reconciliation oracle rebuilds
 // every derived table of a real vault, and the bug report's ZIP is bytes on
-// disk. The three tests share one vault; each reads its own baseline, and the
+// disk, and an attached file's row is compared with the engine entry its op
+// wrote. The three tests share one vault; each reads its own baseline, and the
 // integrity result lives in SettingsView, so each leaves Settings before it
 // runs a check.
 //
@@ -24,6 +25,7 @@ import {
   importMarkdownPage,
   navigateTo,
   openNewPage,
+  pasteFileIntoFocusedBlock,
   runScopedMarker,
   takeDownload,
   typeMarkerVerified,
@@ -213,7 +215,7 @@ describe('Agaric real-backend App health and bug report (#5741, #5740) @boot @se
 
   // Last: a regression leaves a diverged row in the shared vault, and every
   // later check would report it.
-  it('rebuilds every derived table of a vault with a task, a tag, links that create pages and properties, and finds no difference', async () => {
+  it('rebuilds every derived table of a vault with a task, a tag, links that create pages, properties and an attachment, and finds no difference', async () => {
     const marker = runScopedMarker('wdio-integrity')
     await navigateTo('Journal')
     await openAppHealth()
@@ -240,6 +242,9 @@ describe('Agaric real-backend App health and bug report (#5741, #5740) @boot @se
     await $('[data-testid="block-editor"]')
       .$(`[data-testid="block-link-chip"]=${marker}-typed`)
       .waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    // A text file stays a block attachment and adds no block.
+    await pasteFileIntoFocusedBlock('YWdhcmlj', 'wdio-health.txt', 'text/plain')
+    await waitForToast('Attached "wdio-health.txt"')
     await navigateTo('Journal')
     await openAppHealth()
     const seeded = await runIntegrityCheck()

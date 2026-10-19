@@ -8,9 +8,10 @@
 // (`rewrite_vault_wikilinks`). Only this lane holds the stored bytes, the
 // resolved link and the materialized tag, so each is asserted after a
 // navigation round-trip: the link chip opens the vault's note and no page of
-// the bare name exists, the tag chip reads its name, the front-matter property
-// is set, the embed renders from the stored bytes, and the image is an
-// attachment only, never a page.
+// the bare name exists, `[[über]]` names `Über.md` (the backend folds note
+// names in full Unicode, as the frontend does), the tag chip reads its name,
+// the front-matter property is set, the embed renders from the stored bytes,
+// and the image is an attachment only, never a page.
 //
 // WebKitWebDriver cannot pick a folder: Send Keys with a directory path hands
 // the input the directory itself as one File, which fails to read. So the
@@ -134,23 +135,27 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
       '---',
       `- ${marker}-links [[${topic}]] #${marker}-tag`,
       `- ${marker}-figure ![[pic.png]]`,
+      `- ${marker}-umlaut [[über]]`,
       '',
     ].join('\n')
-    // The image is an attachment, so the pick makes two pages.
+    // The image is an attachment, so the pick makes three pages.
     await importVault(
       vault,
       {
         [`${home}.md`]: Buffer.from(homeMd),
         [`${topic}.md`]: Buffer.from(`- ${marker}-body\n`),
+        'Über.md': Buffer.from(`- ${marker}-uber\n`),
         'pic.png': PNG,
       },
-      'Imported “2 files”',
+      'Imported “3 files”',
     )
 
     await navigateTo('Journal')
     await navigateTo('Pages')
     await pageEntry(`${vault}/${topic}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     await expectAbsent(`span[title="${topic}"]`, `a page titled ${topic}`)
+    await pageEntry(`${vault}/Über`).waitForDisplayed({ timeout: NAV_TIMEOUT })
+    await expectAbsent('span[title="über"]', 'a page titled über')
     await expectAbsent(`span[title="${vault}/pic.png"]`, 'a page made of the image')
 
     await openPage(`${vault}/${home}`)
@@ -170,6 +175,13 @@ describe('Agaric real-backend Obsidian vault import (#5740) @markdown', () => {
         throw new Error(`the tag chip reads ${JSON.stringify(tagText)}, not the imported tag`)
       })
     await expectImageRendered(await blockId(`${marker}-figure`), 'the embedded image')
+    const umlaut = $(
+      `li[data-block-id="${await blockId(`${marker}-umlaut`)}"] [data-testid="block-link-chip"]`,
+    )
+    await browser.waitUntil(async () => (await umlaut.getAttribute('title')) === `${vault}/Über`, {
+      timeout: NAV_TIMEOUT,
+      timeoutMsg: '[[über]] never resolved to Über.md',
+    })
 
     const properties = $('.page-property-table-header')
     await properties.waitForClickable({ timeout: NAV_TIMEOUT })
