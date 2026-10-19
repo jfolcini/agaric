@@ -224,6 +224,7 @@ export const MODULES = {
       'src/editor/page-mode/__tests__/page-block-ids.test.ts',
       'src/editor/__tests__/source-buffer.test.ts',
       'src/editor/__tests__/source-buffer-blocks.test.ts',
+      'src/editor/__tests__/token-ids.test.ts',
     ],
   },
   'page-block-ids': {
@@ -238,6 +239,7 @@ export const MODULES = {
     src: 'src/editor/page-mode/page-save.ts',
     tests: [
       'src/editor/page-mode/__tests__/page-save.test.ts',
+      'src/editor/page-mode/__tests__/page-save-edges.test.ts',
       'src/editor/page-mode/__tests__/remote-patch.test.ts',
     ],
   },

@@ -104,38 +104,31 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
   // shadowed tokens as invalid so the rendered chips agree with the
   // effective query instead of showing filters that silently don't apply.
   for (const kind of ['due', 'scheduled'] as const) {
-    const indices: number[] = []
-    for (let i = 0; i < filters.length; i++) {
-      if (filters[i]?.kind === kind) indices.push(i)
-    }
-    if (indices.length > 1) {
-      for (const i of indices.slice(0, -1)) {
-        const shadowed = filters[i]
-        if (!shadowed) continue
-        filters[i] = {
-          kind: 'invalid',
-          source: input.slice(shadowed.span[0], shadowed.span[1]),
-          error: `shadowed by a later ${kind}: — only the last ${kind}: filter applies`,
-          span: shadowed.span,
-        }
+    const last = filters.findLastIndex((f) => f.kind === kind)
+    filters.forEach((f, i) => {
+      if (f.kind !== kind || i === last) return
+      filters[i] = {
+        kind: 'invalid',
+        source: input.slice(f.span[0], f.span[1]),
+        error: `shadowed by a later ${kind}: — only the last ${kind}: filter applies`,
+        span: f.span,
       }
-    }
+    })
   }
 
   // The backend widens every tag of a query at once
   // (`tags_match_inline_and_inherited`), so beside an `under:` a `tag:` chip
   // would silently match inherited tags too. Flag it instead.
   if (filters.some((f) => f.kind === 'under')) {
-    for (let i = 0; i < filters.length; i++) {
-      const f = filters[i]
-      if (f?.kind !== 'tag') continue
+    filters.forEach((f, i) => {
+      if (f.kind !== 'tag') return
       filters[i] = {
         kind: 'invalid',
         source: input.slice(f.span[0], f.span[1]),
         error: t('searchQuery.tagBesideUnder'),
         span: f.span,
       }
-    }
+    })
   }
 
   const freeText = buildFreeText(input, consumedSpans, quotedSpans)
@@ -203,11 +196,11 @@ function buildFreeText(
   let out = ''
   let pos = 0
   for (const [qs, qe] of quotedOut) {
-    if (qs > pos) out += stripped.slice(pos, qs).replace(/\s+/g, ' ')
+    out += stripped.slice(pos, qs).replace(/\s+/g, ' ')
     out += stripped.slice(qs, qe)
     pos = qe
   }
-  if (pos < stripped.length) out += stripped.slice(pos).replace(/\s+/g, ' ')
+  out += stripped.slice(pos).replace(/\s+/g, ' ')
 
   return out.trim()
 }

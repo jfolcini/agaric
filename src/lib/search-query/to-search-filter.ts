@@ -130,10 +130,7 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
         excludedPropertyFilters.push({ key: f.key, value: f.value })
         break
       }
-      case 'invalid': {
-        // Don't ship invalid tokens to the backend.
-        break
-      }
+      // `invalid` has no case: invalid tokens never reach the backend.
     }
   }
   return {

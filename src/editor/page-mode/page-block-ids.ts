@@ -61,8 +61,7 @@ function holdsPageBlock(fragment: Fragment, type: NodeType): boolean {
  */
 function changesBlocks(tr: Transaction, type: NodeType): boolean {
   return tr.steps.some((step, i) => {
-    const doc = tr.docs[i]
-    if (doc === undefined) return true
+    const doc = tr.docs[i] as PMNode
     // Duck-typed: ProseMirror can be loaded twice, so no `instanceof` (AGENTS.md).
     const { pos, attr, from, to, slice } = step as Partial<{
       pos: number

@@ -1,3 +1,9 @@
+/**
+ * Equivalent mutants, accepted: the `where` labels passed to `assertAdvanced`
+ * (read only in the message of a throw no input reaches), and `c !==
+ * undefined` in `isWhitespace` forced true (`/\s/.test(undefined)` is false).
+ */
+
 import { describe, expect, it } from 'vitest'
 
 import { assertAdvanced, tokenize } from '@/lib/search-query/tokenize'
@@ -121,6 +127,16 @@ describe('tokenize', () => {
     expect(plain).not.toHaveProperty('unclosedQuote')
     const [closed] = tokenize('prop:key="ab cd"')
     expect(closed).not.toHaveProperty('unclosedQuote')
+  })
+
+  it('gives a word with an unclosed mid-word quote its exact text, span and flag', () => {
+    expect(tokenize('a"b')).toEqual([
+      { kind: 'word', text: 'a"b', span: [0, 3], unclosedQuote: true },
+    ])
+  })
+
+  it('does not flag a word that merely starts with a stray quote as unclosed', () => {
+    expect(tokenize('"abc')).toEqual([{ kind: 'word', text: '"abc', span: [0, 4] }])
   })
 
   it('mid-word phrase boundary contract matches outer quoted phrase (#152)', () => {

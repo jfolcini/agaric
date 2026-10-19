@@ -178,7 +178,7 @@ export function parseInlineProperties(content: string): InlinePropertyLine[] {
  */
 export function stripPropertyLines(content: string, lineIndexes: ReadonlySet<number>): string {
   const lines = content.split('\n')
-  const blank = (i: number) => lines[i]?.trim() === ''
+  const blank = (i: number) => (lines[i] as string).trim() === ''
   const kept: string[] = []
   for (let i = 0; i < lines.length; i += 1) {
     if (!lineIndexes.has(i)) {
@@ -189,7 +189,7 @@ export function stripPropertyLines(content: string, lineIndexes: ReadonlySet<num
     while (lineIndexes.has(end + 1)) end += 1
     const ownParagraph = (i === 0 || blank(i - 1)) && (end === lines.length - 1 || blank(end + 1))
     if (ownParagraph && end < lines.length - 1) end += 1
-    else if (ownParagraph && kept.at(-1)?.trim() === '') kept.pop()
+    else if (ownParagraph) kept.pop()
     i = end
   }
   // When the ORIGINAL last line is stripped, the line that becomes the new
