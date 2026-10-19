@@ -2,7 +2,7 @@
  * PageRow tests.
  *
  * Verifies the row primitive renders, fires its primitive callbacks on
- * user interaction, and suppresses `↗ 0` / `⊟ 0` zeros per the design.
+ * user interaction, and suppresses zero link / block counts per the design.
  */
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -92,16 +92,25 @@ describe('PageRow', () => {
     expect(container.querySelector('#page-row-abc')).not.toBeNull()
   })
 
-  it('shows ↗ and ⊟ badges when counts > 0', () => {
-    render(<PageRow {...baseProps({ inboundLinkCount: 5, childBlockCount: 12 })} />)
-    expect(screen.getByText(/5 ↗/u)).toBeInTheDocument()
-    expect(screen.getByText(/12 ⊟/u)).toBeInTheDocument()
+  // #5992 — SVG icons, not text glyphs a system may draw as colour emoji.
+  it('shows the link and block counts with an SVG icon each when counts > 0', () => {
+    const { container } = render(
+      <PageRow {...baseProps({ inboundLinkCount: 5, childBlockCount: 12 })} />,
+    )
+    const inbound = container.querySelector('[data-metadata-inbound] [aria-hidden="true"]')
+    const children = container.querySelector('[data-metadata-children] [aria-hidden="true"]')
+    expect(inbound).toHaveTextContent(/^5$/u)
+    expect(inbound?.querySelector('svg')).not.toBeNull()
+    expect(children).toHaveTextContent(/^12$/u)
+    expect(children?.querySelector('svg')).not.toBeNull()
   })
 
-  it('suppresses ↗ 0 and ⊟ 0', () => {
-    render(<PageRow {...baseProps({ inboundLinkCount: 0, childBlockCount: 0 })} />)
-    expect(screen.queryByText(/↗/u)).not.toBeInTheDocument()
-    expect(screen.queryByText(/⊟/u)).not.toBeInTheDocument()
+  it('suppresses zero link and block counts', () => {
+    const { container } = render(
+      <PageRow {...baseProps({ inboundLinkCount: 0, childBlockCount: 0 })} />,
+    )
+    expect(container.querySelector('[data-metadata-inbound]')).toBeNull()
+    expect(container.querySelector('[data-metadata-children]')).toBeNull()
   })
 
   it('renders only the first property flag', () => {

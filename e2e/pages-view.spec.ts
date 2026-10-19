@@ -878,16 +878,18 @@ test.describe('metadata badges @pages', () => {
     // Getting Started: 1 inbound link, 5 child blocks, a relative-time stamp.
     const row = grid(page).locator('[data-page-item]:has-text("Getting Started")')
     await expect(row.locator('[data-metadata-inbound]')).toBeVisible()
-    await expect(row.locator('[data-metadata-inbound]')).toContainText('1 ↗')
+    await expect(row.locator('[data-metadata-inbound]')).toContainText('1')
+    await expect(row.locator('[data-metadata-inbound] svg')).toBeVisible()
     await expect(row.locator('[data-metadata-children]')).toBeVisible()
-    await expect(row.locator('[data-metadata-children]')).toContainText('5 ⊟')
+    await expect(row.locator('[data-metadata-children]')).toContainText('5')
+    await expect(row.locator('[data-metadata-children] svg')).toBeVisible()
     await expect(row.locator('[data-metadata-relative]')).toBeVisible()
   })
 
   test('zero-inbound pages suppress the inbound badge', async ({ page }) => {
     await bootPages(page)
-    // Projects has no inbound links → the ↗ badge is omitted, but it has
-    // children so the ⊟ badge stays.
+    // Projects has no inbound links → the inbound badge is omitted, but it
+    // has children so the children badge stays.
     const row = grid(page).locator('[data-page-item]:has-text("Projects")')
     await expect(row.locator('[data-metadata-inbound]')).toHaveCount(0)
     await expect(row.locator('[data-metadata-children]')).toBeVisible()
@@ -902,7 +904,8 @@ test.describe('metadata badges @pages', () => {
     // carries no same-page edge to keep the editor/inner-links specs stable.)
     const row = grid(page).locator('[data-page-item]:has-text("Quick Notes")')
     await expect(row.locator('[data-metadata-inbound]')).toBeVisible()
-    await expect(row.locator('[data-metadata-inbound]')).toContainText('1 ↗')
+    await expect(row.locator('[data-metadata-inbound]')).toContainText('1')
+    await expect(row.locator('[data-metadata-inbound] svg')).toBeVisible()
     await expect(row.locator('[data-metadata-inbound]')).not.toContainText('2 ↗')
   })
 })

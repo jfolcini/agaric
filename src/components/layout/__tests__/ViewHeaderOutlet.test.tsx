@@ -11,8 +11,10 @@
  *     is still mounted.
  *  6. Slot className merges with the default classes.
  *  7. A11y: empty outlet has no violations.
- *  8. Below `md` the slot inside the scroller serves and the outer one does
- *     not, and a ViewHeader portals into whichever serves (#5927).
+ *  8. On a touch phone the slot inside the scroller serves and the outer one
+ *     does not, and a ViewHeader portals into whichever serves (#5927); a
+ *     narrow mouse window keeps the outer one, and the header stays when the
+ *     width crosses `md` either way (#5992).
  */
 
 import { act, render, renderHook } from '@testing-library/react'
@@ -27,8 +29,10 @@ import {
   ViewHeaderOutletSlot,
 } from '@/components/layout/ViewHeaderOutlet'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 
 vi.mock('@/hooks/useIsMobile', () => ({ useIsMobile: vi.fn(() => false) }))
+vi.mock('@/hooks/useIsTouch', () => ({ useIsTouch: vi.fn(() => true) }))
 
 describe('ViewHeaderOutletProvider', () => {
   it('renders its children', () => {
@@ -146,10 +150,11 @@ describe('useViewHeaderOutlet', () => {
 describe('ViewHeaderOutletSlot placement', () => {
   afterEach(() => {
     vi.mocked(useIsMobile).mockReturnValue(false)
+    vi.mocked(useIsTouch).mockReturnValue(true)
   })
 
-  function renderBothSlots() {
-    return render(
+  function BothSlots(): React.ReactElement {
+    return (
       <ViewHeaderOutletProvider>
         <div data-testid="outside">
           <ViewHeaderOutletSlot />
@@ -160,8 +165,12 @@ describe('ViewHeaderOutletSlot placement', () => {
         <ViewHeader>
           <span>header content</span>
         </ViewHeader>
-      </ViewHeaderOutletProvider>,
+      </ViewHeaderOutletProvider>
     )
+  }
+
+  function renderBothSlots() {
+    return render(<BothSlots />)
   }
 
   it.each([
@@ -174,5 +183,36 @@ describe('ViewHeaderOutletSlot placement', () => {
     expect(outlets).toHaveLength(1)
     expect(getByTestId(host)).toContainElement(outlets[0] as HTMLElement)
     expect(outlets[0]).toContainElement(getByText('header content'))
+  })
+
+  it('a narrow mouse window keeps the header outside the scroller', () => {
+    vi.mocked(useIsMobile).mockReturnValue(true)
+    vi.mocked(useIsTouch).mockReturnValue(false)
+    const { getByTestId, getByText } = renderBothSlots()
+    expect(getByTestId('outside')).toContainElement(getByText('header content'))
+  })
+
+  // The two slots re-render in separate commits as the width crosses `md`, so
+  // going wide the outer slot attaches before the inner one detaches.
+  it('keeps the header when the slot it left detaches after the next one attached', () => {
+    function Slots({ outer, inner }: { outer: boolean; inner: boolean }): React.ReactElement {
+      return (
+        <ViewHeaderOutletProvider>
+          <div data-testid="outer">{outer && <ViewHeaderOutletSlot />}</div>
+          <div data-testid="inner">{inner && <ViewHeaderOutletSlot />}</div>
+          <ViewHeader>
+            <span>header content</span>
+          </ViewHeader>
+        </ViewHeaderOutletProvider>
+      )
+    }
+    const { getByTestId, getByText, rerender } = render(<Slots outer={false} inner />)
+    act(() => {
+      rerender(<Slots outer inner />)
+    })
+    act(() => {
+      rerender(<Slots outer inner={false} />)
+    })
+    expect(getByTestId('outer')).toContainElement(getByText('header content'))
   })
 })

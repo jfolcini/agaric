@@ -2,9 +2,9 @@
  * #5927 — on a phone the view header scrolls away with the content instead of
  * pinning a third of the screen, and each screen names its view once.
  *
- * Below `md` the view header portals into a slot inside App's scroller, so it
- * leaves the screen when the content scrolls; only a search field stays pinned
- * (Pages). `FeaturePageHeader`'s title is screen-reader only there, because
+ * On a touch phone the view header portals into a slot inside App's
+ * scroller, so it leaves the screen when the content scrolls; only a search
+ * field stays pinned (Pages). `FeaturePageHeader`'s title is screen-reader only there, because
  * the header bar already names the view: the view keeps exactly one heading.
  */
 
