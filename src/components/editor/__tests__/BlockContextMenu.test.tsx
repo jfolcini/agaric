@@ -2314,3 +2314,56 @@ describe('BlockContextMenu — copy content', () => {
     expect(mockedWriteText).not.toHaveBeenCalled()
   })
 })
+
+// #5931 — below the 768 px `useIsMobile` breakpoint the menu is a bottom sheet:
+// Radix owns dismissal and placement, floating-ui and the document listeners
+// stay off.
+describe('BlockContextMenu on a phone', () => {
+  const desktopWidth = window.innerWidth
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+  })
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
+  })
+
+  it('renders the menu inside a sheet without floating-ui positioning', async () => {
+    const { computePosition } = await import('@floating-ui/dom')
+    renderMenu()
+    const sheet = screen.getByRole('dialog', { name: t('contextMenu.blockActions') })
+    const menu = within(sheet).getByRole('menu', { name: t('contextMenu.blockActions') })
+    expect(menu).not.toHaveAttribute('style')
+    expect(vi.mocked(computePosition)).not.toHaveBeenCalled()
+    expect(await axe(sheet)).toHaveNoViolations()
+  })
+
+  it('a press inside the sheet but off the rows keeps it open', async () => {
+    const { props } = renderMenu()
+    // The dropdown's outside-press listener arms a frame after opening.
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    fireEvent.pointerDown(screen.getByRole('dialog', { name: t('contextMenu.blockActions') }))
+    expect(props.onClose).not.toHaveBeenCalled()
+  })
+
+  it('Escape closes it and returns focus to the trigger', async () => {
+    const user = userEvent.setup()
+    const triggerEl = document.createElement('button')
+    document.body.append(triggerEl)
+    const focusSpy = vi.spyOn(triggerEl, 'focus')
+    const { props } = renderMenu({ triggerRef: { current: triggerEl } })
+
+    await user.keyboard('{Escape}')
+
+    expect(props.onClose).toHaveBeenCalledTimes(1)
+    expect(focusSpy).toHaveBeenCalled()
+    triggerEl.remove()
+  })
+
+  it('a row runs its action and closes the sheet', async () => {
+    const user = userEvent.setup()
+    const { props } = renderMenu()
+    await user.click(screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.delete')) }))
+    expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onClose).toHaveBeenCalledTimes(1)
+  })
+})

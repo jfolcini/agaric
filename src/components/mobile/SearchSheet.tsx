@@ -13,7 +13,7 @@
  * unit-testable in isolation.
  */
 
-import { FileSearch, Pin, X } from 'lucide-react'
+import { FileSearch, Pin } from 'lucide-react'
 import { Suspense, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
@@ -40,7 +40,6 @@ import {
   getPinnedSearchScope,
   setPinnedSearchScope,
 } from '@/lib/pinned-search-scope'
-import { cn } from '@/lib/utils'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 import { type SearchSheetMode, useSearchSheetStore } from '@/stores/useSearchSheetStore'
@@ -123,9 +122,6 @@ export function SearchSheet(): React.ReactElement | null {
     if (!next) close()
   }
 
-  const activeScopeLabel =
-    mode === 'in-page' ? t('searchSheet.segmentInPage') : t('searchSheet.segmentAllPages')
-
   // ToggleGroup's `onValueChange` may fire with `''` when the user
   // taps the active item — single-select toggle groups can de-select.
   // Ignore that case so the sheet always has an active segment.
@@ -175,14 +171,15 @@ export function SearchSheet(): React.ReactElement | null {
             downward drag here closes the sheet, while the scrollable
             body below keeps its native scroll. `touch-none` stops the
             browser claiming the gesture for scroll/zoom so the pointer
-            stream reaches our handlers. */}
+            stream reaches our handlers. 44 px tall for the thumb, with
+            negative margins so the visible bar keeps its place. */}
         <button
           type="button"
           {...dragHandlers}
           tabIndex={-1}
           aria-label={t('searchSheet.dragHandleLabel')}
           data-testid="search-sheet-drag-handle"
-          className="mx-auto -mt-2 mb-1 flex h-5 w-full max-w-[8rem] cursor-grab touch-none items-center justify-center"
+          className="mx-auto -mt-5 -mb-2 flex h-11 w-full max-w-[8rem] cursor-grab touch-none items-center justify-center"
         >
           <span aria-hidden className="h-1.5 w-10 rounded-full bg-muted-foreground/30" />
         </button>
@@ -245,29 +242,6 @@ export function SearchSheet(): React.ReactElement | null {
             {t('searchSheet.segmentAllPages')}
           </ToggleGroupItem>
         </ToggleGroup>
-        {/* #136 — active-scope chip. Surfaces which scope the user is
-            searching right next to the segment control. Tapping it (or
-            its ×) flips to the *other* scope — a one-tap re-scope that
-            doubles as the "remove / change" affordance the issue asks
-            for. Decorative for desktop (the sheet is touch-only). */}
-        <div className="flex items-center gap-2 px-0.5">
-          <button
-            type="button"
-            onClick={() => setMode(mode === 'in-page' ? 'all-pages' : 'in-page')}
-            aria-label={t('searchSheet.scopeChipClear')}
-            data-testid="search-sheet-scope-chip"
-            data-scope={mode}
-            className={cn(
-              'inline-flex min-h-7 items-center gap-1 rounded-full border border-border bg-muted/50 px-2.5 py-0.5 text-xs font-medium text-muted-foreground',
-              'hover:bg-accent hover:text-foreground focus-ring-visible',
-            )}
-          >
-            <span className="truncate">
-              {t('searchSheet.scopeChipLabel', { scope: activeScopeLabel })}
-            </span>
-            <X aria-hidden className="size-3 shrink-0" />
-          </button>
-        </div>
         <SheetBody>
           {mode === 'in-page' ? (
             inPageContainer == null ? (
@@ -288,8 +262,8 @@ export function SearchSheet(): React.ReactElement | null {
               </div>
             ) : (
               <Suspense fallback={null}>
-                {/* `onCloseRequest` routes the toolbar's close button
-                    and Escape to the SHEET (not the find store). The
+                {/* `onCloseRequest` routes the toolbar's Escape to the
+                    SHEET (not the find store). The
                     bridge's cleanup closes the find store as part of
                     the sheet-close transition. */}
                 <InPageFind variant="embedded" onCloseRequest={close} />

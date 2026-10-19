@@ -21,7 +21,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { BlockDatePicker } from '@/components/block-tree/BlockDatePicker'
@@ -226,5 +226,43 @@ describe('BlockDatePicker', () => {
     // After tabbing, focus must still be inside the dialog
     const dialog = screen.getByRole('dialog', { name: 'Date picker' })
     expect(dialog.contains(document.activeElement)).toBe(true)
+  })
+})
+
+// #5931 — on a phone the picker is a bottom sheet (`useDialogOrSheet`).
+describe('BlockDatePicker on a phone', () => {
+  const onSelect = vi.fn()
+  const onClose = vi.fn()
+  const desktopWidth = window.innerWidth
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockParseDate.mockReturnValue(null)
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+  })
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
+  })
+
+  it('opens as a sheet that keeps the editor-portal marker', async () => {
+    render(<BlockDatePicker onSelect={onSelect} onClose={onClose} />)
+
+    const sheet = screen.getByRole('dialog', { name: 'Date picker' })
+    expect(sheet).toHaveAttribute('data-slot', 'sheet-content')
+    expect(sheet).toHaveAttribute('data-testid', 'date-picker-popup')
+    expect(sheet).toHaveAttribute('data-editor-portal')
+    expect(screen.getByRole('textbox', { name: 'Type a date' })).toHaveFocus()
+    expect(await axe(sheet)).toHaveNoViolations()
+  })
+
+  it('a typed date selects it on Enter, and Escape closes', async () => {
+    mockParseDate.mockReturnValue('2025-03-15')
+    const user = userEvent.setup()
+    render(<BlockDatePicker onSelect={onSelect} onClose={onClose} />)
+
+    await user.type(screen.getByRole('textbox', { name: 'Type a date' }), 'mar 15{Enter}')
+    expect(onSelect).toHaveBeenCalledWith(new Date(2025, 2, 15))
+
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })

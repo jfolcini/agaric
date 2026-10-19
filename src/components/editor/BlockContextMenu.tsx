@@ -2,7 +2,8 @@
  * BlockContextMenu — floating context menu for mobile long-press / desktop right-click.
  *
  * Renders at an absolute screen position via a React portal so it is never
- * clipped by overflow containers. Provides quick access to block actions
+ * clipped by overflow containers; on a phone it is a bottom sheet instead
+ * (`MenuSheet`, #5931). Provides quick access to block actions
  * that are otherwise only available on hover (delete, indent, dedent) plus
  * task-state and priority toggles.
  *
@@ -47,6 +48,8 @@ import {
 import { renderItem as renderMenuItem } from '@/components/editor/block-context-menu/menu-row'
 import type { BlockContextMenuProps, MenuItem } from '@/components/editor/block-context-menu/types'
 import { CALLOUT_CONFIG, CALLOUT_TYPES } from '@/components/RichContentRenderer/context'
+import { MenuSheet } from '@/components/ui/menu-sheet'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { unwrap } from '@/lib/app-error'
@@ -707,8 +710,11 @@ export function BlockContextMenu({
   activeBlockType,
   selectedBlockIds: selectedBlockIdsProp,
   actionIds,
-}: BlockContextMenuProps): React.ReactElement {
+}: BlockContextMenuProps): React.ReactElement | null {
   const { t } = useTranslation()
+  // The sheet brings its own dismissal and placement: the outside-press and
+  // Escape listeners and floating-ui below are the dropdown's.
+  const isMobile = useIsMobile()
 
   // A2 (#1020) — the per-block action callbacks arrive as a single cohesive
   // `actions` bag. Each entry is optional; a missing key gates its menu item
@@ -780,6 +786,7 @@ export function BlockContextMenu({
   // Event that opened the menu does not immediately close it (
   // mirrors `suggestion-renderer.ts` and `BlockPropertyEditor.tsx`).
   useEffect(() => {
+    if (isMobile) return
     const handlePointerDown = (e: PointerEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         handleCloseWithFocus()
@@ -794,10 +801,11 @@ export function BlockContextMenu({
       if (frameId !== null) cancelAnimationFrame(frameId)
       document.removeEventListener('pointerdown', handlePointerDown, true)
     }
-  }, [handleCloseWithFocus])
+  }, [handleCloseWithFocus, isMobile])
 
   // ── Close on Escape ──────────────────────────────────────────────
   useEffect(() => {
+    if (isMobile) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -806,7 +814,7 @@ export function BlockContextMenu({
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [handleCloseWithFocus])
+  }, [handleCloseWithFocus, isMobile])
 
   // ── Compute position with floating-ui ─────────────────────────────
   // Uses `autoUpdate` so the menu reflows on scroll/resize while open,
@@ -821,7 +829,7 @@ export function BlockContextMenu({
 
   useEffect(() => {
     const el = menuRef.current
-    if (!el) return
+    if (!el || isMobile) return
 
     const triggerEl = triggerRef?.current ?? null
 
@@ -884,7 +892,7 @@ export function BlockContextMenu({
     }
 
     return autoUpdate(virtualEl, el, updatePosition)
-  }, [position, triggerRef, blockId])
+  }, [position, triggerRef, blockId, isMobile])
 
   // Fix 6 — "bulk" mode: the menu was opened on a block that is part of an
   // active multi-selection of >1 block. In that case Delete / TODO / Priority /
@@ -1058,10 +1066,12 @@ export function BlockContextMenu({
       tabIndex={-1}
       aria-label={t('contextMenu.blockActions')}
       className={cn(
-        'block-context-menu fixed z-50 min-w-[160px] rounded-md border bg-popover p-1 shadow-(--shadow-floating)',
-        positioned ? 'animate-in fade-in-0 zoom-in-95 opacity-100' : 'opacity-0',
+        'block-context-menu',
+        !isMobile &&
+          'fixed z-50 min-w-[160px] rounded-md border bg-popover p-1 shadow-(--shadow-floating)',
+        !isMobile && (positioned ? 'animate-in fade-in-0 zoom-in-95 opacity-100' : 'opacity-0'),
       )}
-      style={{ left: computedPos.x, top: computedPos.y }}
+      style={isMobile ? undefined : { left: computedPos.x, top: computedPos.y }}
       onKeyDown={handleKeyDown}
       data-editor-portal=""
     >
@@ -1113,5 +1123,22 @@ export function BlockContextMenu({
   // empty menu (or a "No actions available" placeholder) is a dead end —
   // the user can't do anything but dismiss it. Short-circuit so the menu
   // simply never appears.
-  return createPortal(visibleItems.length === 0 ? null : menu, document.body)
+  if (visibleItems.length === 0) return null
+  if (isMobile) {
+    return (
+      <MenuSheet
+        open
+        onOpenChange={(open) => {
+          if (!open) handleCloseWithFocus()
+        }}
+        title={t('contextMenu.blockActions')}
+        // Focus goes where `handleCloseWithFocus` or the chosen action puts it.
+        onCloseAutoFocus={(e) => e.preventDefault()}
+        data-editor-portal=""
+      >
+        {menu}
+      </MenuSheet>
+    )
+  }
+  return createPortal(menu, document.body)
 }

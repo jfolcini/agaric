@@ -581,7 +581,8 @@ export async function createPageFromPagesView(page: Page, title: string): Promis
     .locator('.page-browser-header')
     .getByRole('button', { name: 'New Page', exact: true })
     .click()
-  const input = activeDialog(page).getByRole('textbox', { name: 'New page title' })
+  // A dialog on desktop, a bottom sheet on a phone: both carry this id.
+  const input = page.getByTestId('new-page-dialog').getByRole('textbox', { name: 'New page title' })
   await expect(input).toBeFocused()
   await input.fill(title)
   await input.press('Enter')

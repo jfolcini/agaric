@@ -364,6 +364,56 @@ describe('NewPageDialog', () => {
   })
 })
 
+// #5931 — on a phone the dialog is a bottom sheet (`useDialogOrSheet`), with
+// the same form.
+describe('NewPageDialog on a phone', () => {
+  const desktopWidth = window.innerWidth
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+  })
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
+  })
+
+  it('opens as a sheet with the title field focused', async () => {
+    const { view, dialog, input } = await openDialog()
+
+    expect(dialog).toHaveAttribute('data-slot', 'sheet-content')
+    expect(dialog).toHaveAttribute('data-testid', 'new-page-dialog')
+    expect(input).toHaveFocus()
+    expect(await axe(view.container.ownerDocument.body)).toHaveNoViolations()
+  })
+
+  it('Enter creates the page and opens it', async () => {
+    const onOpenPage = vi.fn()
+    const { user, input } = await openDialog({ onOpenPage })
+
+    await user.type(input, 'Phone page{Enter}')
+    await settleSearch()
+
+    expect((await spacePageTitles()).filter((title) => title === 'Phone page')).toHaveLength(1)
+    expect(onOpenPage).toHaveBeenCalledWith(expect.any(String), 'Phone page')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('shows the error and stays open when the create IPC rejects', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'create_page_in_space') throw new Error('disk full')
+      return dispatch(cmd, args)
+    })
+    const { user, input } = await openDialog()
+
+    await user.type(input, 'Doomed page')
+    await user.click(createButton())
+    await settleSearch()
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      t('pageBrowser.createFailed', { error: 'Error: disk full' }),
+    )
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+})
+
 describe('NewPageDialog and the [[ picker', () => {
   // Both call `matchPages`; the dialog lists the picker's pages (minus the
   // create item and the page that already carries the name), at most five.

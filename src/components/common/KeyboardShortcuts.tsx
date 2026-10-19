@@ -2,7 +2,7 @@
  * KeyboardShortcuts — help panel showing all available keyboard shortcuts (UX #9).
  *
  * Triggered by pressing `?` globally (when not editing a block) or via
- * a sidebar button. Uses the Sheet component for a slide-in panel.
+ * a sidebar button. A right-side Sheet, or a bottom sheet on a phone.
  */
 
 import { ChevronRight, Keyboard, Settings as SettingsIcon } from 'lucide-react'
@@ -22,6 +22,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
@@ -167,6 +168,7 @@ export function KeyboardShortcuts({
   const [internalOpen, setInternalOpen] = useState(false)
   const [filter, setFilter] = useState('')
   const { t } = useTranslation()
+  const isMobile = useIsMobile()
 
   const isControlled = controlledOpen !== undefined
   const open = isControlled ? controlledOpen : internalOpen
@@ -223,7 +225,7 @@ export function KeyboardShortcuts({
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetContent side="right">
+      <SheetContent side={isMobile ? 'bottom' : 'right'}>
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
             <Keyboard className="h-5 w-5" />

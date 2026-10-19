@@ -592,3 +592,48 @@ describe('PageHeaderMenu delete button danger zone', () => {
     expect(deleteButton?.className).not.toContain('focus-visible:ring-ring/50')
   })
 })
+
+// #5931 — on a phone the rows open as a bottom sheet instead of a dropdown.
+describe('PageHeaderMenu on a phone', () => {
+  const desktopWidth = window.innerWidth
+  beforeEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+  })
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
+  })
+
+  it('tapping the kebab asks to open the sheet', async () => {
+    const user = userEvent.setup()
+    const onKebabOpenChange = vi.fn()
+    renderMenu({ onKebabOpenChange })
+    await user.click(screen.getByRole('button', { name: t('pageHeader.pageActions') }))
+    expect(onKebabOpenChange).toHaveBeenCalledWith(true)
+  })
+
+  it('shows the rows as a menu inside a sheet, not a popover', async () => {
+    renderMenu({ kebabOpen: true })
+    const sheet = screen.getByRole('dialog', { name: t('pageHeader.pageActions') })
+    expect(sheet).toHaveAttribute('data-slot', 'sheet-content')
+    expect(document.querySelector('[data-slot="popover-content"]')).toBeNull()
+    const menu = within(sheet).getByRole('menu', { name: t('pageHeader.pageActions') })
+    expect(within(menu).getByRole('menuitem', { name: /Add alias/ })).toBeInTheDocument()
+    expect(await axe(sheet)).toHaveNoViolations()
+  })
+
+  it('a row fires its action', async () => {
+    const user = userEvent.setup()
+    const onAddTag = vi.fn()
+    renderMenu({ kebabOpen: true, onAddTag })
+    await user.click(screen.getByRole('menuitem', { name: /Add tag/ }))
+    expect(onAddTag).toHaveBeenCalledTimes(1)
+  })
+
+  it('Escape asks to close the sheet', async () => {
+    const user = userEvent.setup()
+    const onKebabOpenChange = vi.fn()
+    renderMenu({ kebabOpen: true, onKebabOpenChange })
+    await user.keyboard('{Escape}')
+    expect(onKebabOpenChange).toHaveBeenCalledWith(false)
+  })
+})

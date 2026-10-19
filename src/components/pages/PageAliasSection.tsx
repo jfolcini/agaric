@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -27,6 +28,15 @@ export function PageAliasSection({
   onStopEditing,
 }: PageAliasSectionProps) {
   const { t } = useTranslation()
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // It mounts only when the user asks to add an alias, and the kebab row or
+  // Edit button that asked is gone by then. Focused in an effect, not with
+  // `autoFocus`: on a phone the kebab is a modal sheet whose focus trap still
+  // holds during the commit that mounts this input, and takes the focus back.
+  useEffect(() => {
+    if (editingAliases) inputRef.current?.focus()
+  }, [editingAliases])
 
   if (aliases.length === 0 && !editingAliases) return null
 
@@ -59,14 +69,13 @@ export function PageAliasSection({
           }}
         >
           <Input
+            ref={inputRef}
             type="text"
             className="w-24 sm:w-32 [@media(pointer:coarse)]:w-full h-7 text-xs"
             placeholder={t('pageHeader.newAliasPlaceholder')}
             value={aliasInput}
             onChange={(e) => onAliasInputChange(e.target.value)}
             aria-label={t('pageHeader.newAliasInput')}
-            // oxlint-disable-next-line jsx-a11y/no-autofocus -- it mounts only when the user asks to add an alias, and the kebab row or Edit button that asked is gone by then
-            autoFocus
           />
           <Button type="submit" variant="ghost" size="xs">
             {t('pageHeader.add')}

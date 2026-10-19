@@ -8,6 +8,9 @@
  * name follows the picker's own rule for a typed name: a title or an alias,
  * ignoring case. Then Open it is the primary action and Create is disabled.
  * A blank title creates the first free `Untitled N`.
+ *
+ * On a phone it is a bottom sheet (`useDialogOrSheet`), so the title input
+ * sits just above the keyboard it opens.
  */
 
 import { Plus } from 'lucide-react'
@@ -18,18 +21,11 @@ import { useTranslation } from 'react-i18next'
 import { matchPages, type PageMatches, type PageRow } from '@/components/block-tree/page-matcher'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import type { PickerItem } from '@/editor/SuggestionList'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { usePageCreation } from '@/hooks/usePageCreation'
@@ -110,6 +106,7 @@ export function NewPageDialog({
   onOpenPage,
 }: NewPageDialogProps): React.ReactElement {
   const { t } = useTranslation()
+  const { Root, Content, Header, Title, Description, Footer } = useDialogOrSheet('dialog')
   const formId = useId()
   const headingId = useId()
   const [title, setTitle] = useState(initialTitle)
@@ -194,18 +191,18 @@ export function NewPageDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
+    <Root open={open} onOpenChange={onOpenChange}>
+      <Content
         data-testid="new-page-dialog"
         onCloseAutoFocus={(e) => {
           e.preventDefault()
           if (!openedPageRef.current && returnFocusTo instanceof HTMLElement) returnFocusTo.focus()
         }}
       >
-        <DialogHeader>
-          <DialogTitle>{t('newPageDialog.title')}</DialogTitle>
-          <DialogDescription>{t('newPageDialog.description')}</DialogDescription>
-        </DialogHeader>
+        <Header>
+          <Title>{t('newPageDialog.title')}</Title>
+          <Description>{t('newPageDialog.description')}</Description>
+        </Header>
         <form
           id={formId}
           className="space-y-2"
@@ -293,7 +290,7 @@ export function NewPageDialog({
             )}
           </section>
         )}
-        <DialogFooter>
+        <Footer>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('newPageDialog.cancel')}
           </Button>
@@ -313,8 +310,8 @@ export function NewPageDialog({
               {t('newPageDialog.create')}
             </Button>
           )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </Footer>
+      </Content>
+    </Root>
   )
 }
