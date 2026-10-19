@@ -168,7 +168,7 @@ function NegateToggle({
       }
       onClick={onClick}
       className={cn(
-        'h-7 rounded-md border px-1.5 text-[10px] font-semibold uppercase leading-none focus-ring-visible',
+        'h-7 rounded-md border px-1.5 text-[10px] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11 font-semibold uppercase leading-none focus-ring-visible',
         negated
           ? 'border-destructive bg-destructive text-destructive-foreground'
           : 'bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground',

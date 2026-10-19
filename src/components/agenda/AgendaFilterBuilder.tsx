@@ -459,7 +459,7 @@ export function AgendaFilterBuilder({
                     >
                       <button
                         type="button"
-                        className="flex items-center gap-1 rounded-l-full px-2 py-0.5 hover:bg-accent cursor-pointer focus-ring-visible"
+                        className="touch-hit-area flex items-center gap-1 rounded-l-full px-2 py-0.5 hover:bg-accent cursor-pointer focus-ring-visible"
                         // #1746 — keep the chip clickable/removable, but flag it
                         // as inert to AT and surface a tooltip explaining why.
                         aria-disabled={isSubsumed || undefined}

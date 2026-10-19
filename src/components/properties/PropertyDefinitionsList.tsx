@@ -341,14 +341,15 @@ export function PropertyDefinitionsList(): React.ReactElement {
                       {def.key === 'todo_state' && (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              className="inline-flex items-center justify-center text-muted-foreground"
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              className="text-muted-foreground"
                               data-testid="todo-state-cycle-help"
                               aria-label={t('propertiesView.taskCycleHelpLabel')}
                             >
                               <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                            </button>
+                            </Button>
                           </TooltipTrigger>
                           <TooltipContent className="max-w-xs">
                             {t('propertiesView.taskCycleHelpContent')}
