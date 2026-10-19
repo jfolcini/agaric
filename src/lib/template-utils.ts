@@ -471,7 +471,6 @@ export async function insertTemplateBlocks(
       indicesAtLevel.push(i)
       specsAtLevel.push({ ...entry.spec, parentId: resolvedParentId })
     }
-    if (specsAtLevel.length === 0) continue
     try {
       const { blocks: created } = unwrap(await commands.createBlocksBatch(specsAtLevel))
       for (let k = 0; k < indicesAtLevel.length; k += 1) {

@@ -1,3 +1,34 @@
+/**
+ * Equivalent mutants, accepted:
+ * - `pages[0]?.` → `pages[0].` in `loadJournalTemplate`'s warning: it is built
+ *   only when there are at least two pages.
+ * - `formatWithFallback`'s `userFormat == null || userFormat.length === 0` →
+ *   `false`: a null format throws inside the `try` and an empty one formats to
+ *   `''`, and both fall back.
+ * - `body.trim()` → `body` in `resolveLegacyToken`: `head` and `arg` are
+ *   trimmed again.
+ * - `insertTemplateBlocks`:
+ *   - `pid == null` → `false`: every descendant has a parent, and a `null`
+ *     key would never be read.
+ *   - the `destParentIndex == null ? parentId : null` spec field: the level
+ *     loop overwrites every spec's `parentId`.
+ *   - `depthByIndex` and `ids` built empty or filled with `undefined`: every
+ *     read goes through `?? 0` or the hole filter.
+ *   - the past-the-end guards (`<=` in the three index loops,
+ *     `deferred[i]?.`, `entry == null`, `idx == null` → `false`): the extra
+ *     iteration reads `undefined` and does nothing, and no in-range entry is
+ *     null.
+ *   - `d > maxDepth` → `>=`: an equal depth assigns the same value.
+ *   - `entry.resolveParentFromIndex == null` → `false`: `ids[null]` is
+ *     `undefined`, so `?? parentId` picks the same parent.
+ *   - `row != null` → `true`: `create_blocks_batch` returns one row per spec.
+ *   - `cursorDeferredIndex !== null` → `true`: `ids[null]` is `undefined`, so
+ *     the callback still does not fire.
+ * - `deleteSpaceTextJournalTemplates`: `?? []` → `['Stryker was here']` (a
+ *   string has no `key`), and `writePreference(…, true)` → `false` (the
+ *   preference's `serialize` ignores its value).
+ */
+
 import { invoke, type InvokeArgs } from '@tauri-apps/api/core'
 import { es } from 'date-fns/locale/es'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -52,6 +83,42 @@ function stubTemplates(handlers: TypedInvokeHandlers): void {
 /** The `query_by_property` envelope — a `PageResponse` always carries `total_count`. */
 function propertyPage(items: BlockRow[]): CommandReturns['query_by_property'] {
   return { items, next_cursor: null, has_more: false, total_count: null }
+}
+
+/**
+ * Install a template subtree (`[id, parentId, content, position?]` rows, a
+ * missing position being the row's index) and a `create_blocks_batch` that
+ * names each created block `NEW_<content>`. Returns every batch's
+ * `(content, parentId)` pairs.
+ */
+function stubTemplateTree(
+  rows: Array<[string, string, string | null, (number | null)?]>,
+  failBatch?: number,
+): Array<Array<[string, string]>> {
+  const batches: Array<Array<[string, string]>> = []
+  stubTemplates({
+    load_page_subtree: () => ({
+      blocks: rows.map(([id, parentId, content, position], index) =>
+        makeBlockRow({
+          id,
+          parent_id: parentId,
+          content,
+          position: position === undefined ? index : position,
+        }),
+      ),
+      truncated: false,
+      total: rows.length,
+    }),
+    create_blocks_batch: (args) => {
+      const specs = args['specs'] as Array<{ content: string; parentId: string }>
+      batches.push(specs.map((s) => [s.content, s.parentId]))
+      if (batches.length === failBatch) throw new Error('batch insert failed')
+      return withOps({
+        blocks: specs.map((s) => makeBlockRow({ id: `NEW_${s.content}`, content: s.content })),
+      })
+    },
+  })
+  return batches
 }
 
 beforeEach(() => {
@@ -232,9 +299,10 @@ describe('insertTemplateBlocks', () => {
     // levels. (Each level is its own all-or-nothing tx; failures
     // aren't backed out across levels because the previous-level
     // commit already happened.)
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
     // The batch ORDER is the subject: depth 0 succeeds, depth 1 fails.
+    const failure = new Error('batch insert failed')
     let batchLevel = 0
     stubTemplates({
       // load_page_subtree(TMPL) → A (root child) + B (A's child)
@@ -250,7 +318,7 @@ describe('insertTemplateBlocks', () => {
         batchLevel += 1
         if (batchLevel === 1)
           return withOps({ blocks: [makeBlockRow({ id: 'NEW_A', content: 'A' })] })
-        throw new Error('batch insert failed')
+        throw failure
       },
     })
 
@@ -260,9 +328,59 @@ describe('insertTemplateBlocks', () => {
     // throw — the partial result is returned.
     expect(ids).toEqual(['NEW_A'])
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('template batch insert failed at depth level'),
+      'template-utils',
+      'template batch insert failed at depth level',
+      { level: 1, count: 1 },
+      expect.objectContaining({ message: failure.message }),
     )
     warnSpy.mockRestore()
+  })
+
+  it('copies a three-level template whose last block is top-level, each block under its copy', async () => {
+    const batches = stubTemplateTree([
+      ['A', 'TMPL', 'a'],
+      ['B', 'A', 'b'],
+      ['C', 'B', 'c'],
+      ['D', 'TMPL', 'd'],
+    ])
+
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
+
+    expect(ids).toEqual(['NEW_a', 'NEW_b', 'NEW_c', 'NEW_d'])
+    expect(batches).toEqual([
+      [
+        ['a', 'PARENT'],
+        ['d', 'PARENT'],
+      ],
+      [['b', 'NEW_a']],
+      [['c', 'NEW_b']],
+    ])
+  })
+
+  it('copies a template block with no content as an empty block', async () => {
+    const batches = stubTemplateTree([['A', 'TMPL', null]])
+
+    await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
+
+    expect(batches).toEqual([[['', 'PARENT']]])
+  })
+
+  // `load_page_subtree` documents its row order as not load-bearing, so the
+  // copy orders siblings itself.
+  it('copies siblings in position order, unpositioned last, whatever order the rows arrive in', async () => {
+    const batches = stubTemplateTree([
+      ['U', 'TMPL', 'unpositioned', null],
+      ['C', 'TMPL', 'third', 7],
+      ['A', 'TMPL', 'first', 1],
+      ['B', 'TMPL', 'second', 3],
+    ])
+
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
+
+    expect(ids).toEqual(['NEW_first', 'NEW_second', 'NEW_third', 'NEW_unpositioned'])
+    expect(batches.map((batch) => batch.map(([content]) => content))).toEqual([
+      ['first', 'second', 'third', 'unpositioned'],
+    ])
   })
 
   it('returns empty array when template has no children', async () => {
@@ -352,15 +470,63 @@ describe('insertTemplateBlocks — {{ }} variable substitution (#1442)', () => {
     expect(specs?.[1]?.content).toBe('here')
   })
 
+  it('reports the first of several {{cursor}} blocks', async () => {
+    stubTemplateTree([
+      ['A', 'TMPL', 'a'],
+      ['B', 'TMPL', 'b{{cursor}}'],
+      ['C', 'TMPL', 'c{{cursor}}'],
+    ])
+    const onCursorBlock = vi.fn()
+
+    await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST', { onCursorBlock })
+
+    expect(onCursorBlock.mock.calls).toEqual([['NEW_b']])
+  })
+
+  it('inserts a {{cursor}} template for a caller that passes no context', async () => {
+    const batches = stubTemplateTree([['A', 'TMPL', 'a{{cursor}}']])
+
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST')
+
+    expect(ids).toEqual(['NEW_a'])
+    expect(batches).toEqual([[['a', 'PARENT']]])
+  })
+
+  it('reports no cursor block when the level holding it fails to land', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    stubTemplateTree(
+      [
+        ['A', 'TMPL', 'a'],
+        ['B', 'A', 'b{{cursor}}'],
+      ],
+      2,
+    )
+    const onCursorBlock = vi.fn()
+
+    const ids = await insertTemplateBlocks('TMPL', 'PARENT', 'SPACE_TEST', { onCursorBlock })
+
+    expect(ids).toEqual(['NEW_a'])
+    expect(onCursorBlock).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
   it('short-circuits to [] with no active space, dispatching no load_page_subtree (b1)', async () => {
     // b1 — the descendant fetch (`load_page_subtree`) is required-active.
     // With `spaceId == null` there is no template to expand, so
     // `insertTemplateBlocks` returns an empty id list WITHOUT dispatching
     // (a Global scope would be rejected by the backend).
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
     const ids = await insertTemplateBlocks('TMPL', 'PARENT', null)
 
     expect(ids).toEqual([])
     expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
+    expect(warnSpy).toHaveBeenCalledWith(
+      'template-utils',
+      'insertTemplateBlocks: no active space; skipping',
+      {},
+    )
+    warnSpy.mockRestore()
   })
 })
 
@@ -378,15 +544,25 @@ describe('loadJournalTemplate', () => {
     expect(template).not.toBeNull()
     expect(template?.id).toBe('JT1')
     expect(duplicateWarning).toBeNull()
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'query_by_property',
-      expect.objectContaining({
-        request: expect.objectContaining({
-          key: 'journal-template',
-          valueText: 'true',
-        }),
-      }),
-    )
+    // `blockType: 'page'` keeps a content block carrying the property from
+    // being taken for the journal template.
+    expect(mockedInvoke).toHaveBeenCalledWith('query_by_property', {
+      request: {
+        key: 'journal-template',
+        valueText: 'true',
+        valueDate: null,
+        operator: null,
+        cursor: null,
+        limit: 10,
+        excludeParentId: null,
+        contentNonEmpty: null,
+        blockType: 'page',
+        valueTextIn: null,
+        valueDateRange: null,
+        excludeTodoStates: null,
+      },
+      scope: { kind: 'active', space_id: 'SPACE_1' },
+    })
   })
 
   it('returns null when no journal template exists', async () => {
@@ -410,9 +586,10 @@ describe('loadJournalTemplate', () => {
 
     expect(template).not.toBeNull()
     expect(template?.id).toBe('JT1')
-    expect(duplicateWarning).not.toBeNull()
-    expect(duplicateWarning).toContain('Multiple journal templates found (2)')
-    expect(duplicateWarning).toContain('Daily Journal')
+    expect(duplicateWarning).toBe(
+      'Multiple journal templates found (2). Using "Daily Journal". ' +
+        'Remove the journal-template property from extra pages to avoid ambiguity.',
+    )
   })
 
   it('returns null duplicateWarning when exactly one template exists', async () => {
@@ -476,7 +653,47 @@ describe('loadTemplatePagesWithPreview', () => {
     expect(result[0]?.preview).toBe(`${'A'.repeat(60)}\u2026`)
   })
 
+  it('keeps a preview of exactly 60 chars whole', async () => {
+    const content = 'B'.repeat(60)
+    stubTemplates({
+      query_by_property: () =>
+        propertyPage([makeBlockRow({ id: 'T1', block_type: 'page', content: 'Template' })]),
+      first_child_for_blocks: () => ({
+        T1: makeBlockRow({ id: 'C1', content, parent_id: 'T1', position: 0 }),
+      }),
+    })
+
+    const result = await loadTemplatePagesWithPreview('SPACE_1')
+    expect(result[0]?.preview).toBe(content)
+  })
+
+  it('carries each page title, and reads a missing title or child text as empty', async () => {
+    stubTemplates({
+      query_by_property: () =>
+        propertyPage([
+          makeBlockRow({ id: 'T1', block_type: 'page', content: 'Standup' }),
+          makeBlockRow({ id: 'T2', block_type: 'page', content: null }),
+        ]),
+      first_child_for_blocks: () => ({
+        T2: makeBlockRow({ id: 'C2', content: null, parent_id: 'T2', position: 0 }),
+      }),
+    })
+
+    expect(await loadTemplatePagesWithPreview('SPACE_1')).toEqual([
+      { id: 'T1', content: 'Standup', preview: null },
+      { id: 'T2', content: '', preview: '' },
+    ])
+  })
+
+  it('fetches no previews when there are no templates', async () => {
+    stubTemplates({ query_by_property: () => propertyPage([]) })
+
+    expect(await loadTemplatePagesWithPreview('SPACE_1')).toEqual([])
+    expect(mockedInvoke.mock.calls.map(([cmd]) => cmd)).toEqual(['query_by_property'])
+  })
+
   it('handles preview fetch failure gracefully', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
     stubTemplates({
       query_by_property: () =>
         propertyPage([makeBlockRow({ id: 'T1', block_type: 'page', content: 'Template' })]),
@@ -486,6 +703,13 @@ describe('loadTemplatePagesWithPreview', () => {
 
     const result = await loadTemplatePagesWithPreview('SPACE_1')
     expect(result[0]?.preview).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith(
+      'template-utils',
+      'template preview batch fetch failed',
+      { templateCount: 1 },
+      expect.objectContaining({ message: 'first_child_for_blocks failed' }),
+    )
+    warnSpy.mockRestore()
   })
 
   it('fires a single batch preview IPC for many templates', async () => {
@@ -632,6 +856,15 @@ describe('expandTemplateVariables — resolver map (#1450 Phase 1)', () => {
       // RangeError — the resolver must swallow it and fall back to the default.
       expect(expandTemplateVariables('<% today:ooooo %>', { now: NOW })).toBe('2026-03-07')
     })
+
+    it('falls back to the default when the format formats to nothing', () => {
+      // A lone quote opens an empty literal: date-fns returns ''.
+      expect(expandTemplateVariables("<% today:' %>", { now: NOW })).toBe('2026-03-07')
+    })
+
+    it('ignores spaces around the colon', () => {
+      expect(expandTemplateVariables('<% today : DD/MM/YYYY %>', { now: NOW })).toBe('07/03/2026')
+    })
   })
 
   describe('date math', () => {
@@ -649,6 +882,12 @@ describe('expandTemplateVariables — resolver map (#1450 Phase 1)', () => {
 
     it('crosses a month boundary correctly', () => {
       expect(expandTemplateVariables('<% date+30 %>', { now: NOW })).toBe('2026-04-06')
+    })
+
+    it('leaves a token that only contains date math verbatim', () => {
+      expect(expandTemplateVariables('<% xdate+1 %> <% date+1x %>', { now: NOW })).toBe(
+        '<% xdate+1 %> <% date+1x %>',
+      )
     })
   })
 

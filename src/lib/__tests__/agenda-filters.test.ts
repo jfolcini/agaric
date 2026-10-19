@@ -4,6 +4,28 @@
  * Verifies the AgendaFilter[] → `filtered_blocks_query` translation
  * (audit H3), the tag-id resolution path, the empty-filter default
  * branch, and edge cases.
+ *
+ * Equivalent mutants, accepted:
+ * - `decodeUnfilteredCursor`:
+ *   - the non-object check, dropped or weakened: a JSON `null` throws into the
+ *     `catch`, and any other non-object decodes to `{}`, which fetches nothing
+ *     and returns the same empty result.
+ *   - `due` / `scheduled` / `undated !== undefined` → `true`: a field set to
+ *     `undefined` reads as an absent one, since every reader tests
+ *     `!== undefined`.
+ *   - the emptied `catch`: `undefined` reads as `null` at the caller.
+ * - `unionRanges`'s `<` / `>` → `<=` / `>=`: an equal bound assigns the same
+ *   value.
+ * - `appendFutureDateDimension`'s `value === 'Overdue'` skip, dropped:
+ *   `toFutureDatePreset('Overdue')` is null, so the next guard skips it.
+ * - `if (range)` → `true` in both date dimensions: every preset the two
+ *   mappers return is one `getDateRangeForFilter` knows.
+ * - `firstText === undefined` → `false` in `appendCustomPropertyDimension`: an
+ *   entry that is not `isSet` holds at least one text.
+ * - the `tag` case of `translateFilters`, removed or emptied: its body only
+ *   breaks, and the switch has no default.
+ * - `applyPostFilters`' early return, dropped: filtering by no predicate
+ *   keeps every block.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -22,6 +44,7 @@ import {
   loadMoreUnfilteredAgenda,
   toFutureDatePreset,
   toPastDatePreset,
+  unionRanges,
 } from '@/lib/agenda-filters'
 import type { BlockRow, TagCacheRow } from '@/lib/bindings'
 
@@ -108,6 +131,19 @@ describe('toPastDatePreset', () => {
   it('returns null for unknown labels', () => {
     expect(toPastDatePreset('Unknown')).toBeNull()
     expect(toPastDatePreset('Next 7 days')).toBeNull()
+  })
+})
+
+describe('unionRanges', () => {
+  it('spans the earliest start and latest end whichever range comes first', () => {
+    const month = { start: '2025-03-01', end: '2025-03-31' }
+    const today = { start: '2025-03-15', end: '2025-03-15' }
+    expect(unionRanges([month, today])).toEqual(month)
+    expect(unionRanges([today, month])).toEqual(month)
+  })
+
+  it('is null for no ranges', () => {
+    expect(unionRanges([])).toBeNull()
   })
 })
 
@@ -295,11 +331,93 @@ describe('executeAgendaFilters', () => {
     // wrong-typed `due` must reject the whole cursor rather than reach
     // `queryByProperty` as a bogus backend cursor.
     it('#3881: loadMoreUnfilteredAgenda rejects a well-formed-JSON cursor whose field is wrong-typed', async () => {
-      const cursor = `agenda-unfiltered:${JSON.stringify({ due: 42, scheduled: null })}`
+      const cursor = `agenda-unfiltered:${JSON.stringify({ due: 42, scheduled: 'SCHED_2' })}`
       const result = await loadMoreUnfilteredAgenda(cursor, 'SPACE_1')
       expect(result.blocks).toHaveLength(0)
       expect(result.hasMore).toBe(false)
       expect(result.cursor).toBeNull()
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    it('loadMoreUnfilteredAgenda rejects a composite payload without its namespace prefix', async () => {
+      const payload = JSON.stringify({ due: 'DUE_2' })
+      // A same-length prefix from another namespace, and none at all.
+      for (const cursor of [`agenda-elsewhere-:${payload}`, payload]) {
+        expect(await loadMoreUnfilteredAgenda(cursor, 'SPACE_1')).toEqual({
+          blocks: [],
+          hasMore: false,
+          cursor: null,
+        })
+      }
+      expect(mockedInvoke).not.toHaveBeenCalled()
+    })
+
+    /** Page 1 of the unfiltered agenda, where only `source` has a second page. */
+    async function firstPageWithMoreIn(
+      source: 'scheduled_date' | 'undated',
+    ): Promise<{ cursor: string | null; hasMore: boolean }> {
+      const more = { next_cursor: `${source}_2`, has_more: true }
+      stubAgenda({
+        query_by_property: (args) => {
+          const req = args['request'] as Record<string, unknown>
+          if (req['cursor'] === `${source}_2`) return page([makeBlock({ id: `${source}-2` })])
+          return req['key'] === source ? page([makeBlock({ id: `${source}-1` })], more) : emptyPage
+        },
+        list_undated_tasks: (args) => {
+          if (args['cursor'] === `${source}_2`) return page([makeBlock({ id: `${source}-2` })])
+          return source === 'undated' ? page([makeBlock({ id: 'undated-1' })], more) : emptyPage
+        },
+      })
+      const first = await executeAgendaFilters([], 'SPACE_1')
+      return { cursor: first.cursor, hasMore: first.hasMore }
+    }
+
+    it.each(['scheduled_date', 'undated'] as const)(
+      'load-more resumes %s alone when it is the only source with more',
+      async (source) => {
+        const first = await firstPageWithMoreIn(source)
+        expect(first.hasMore).toBe(true)
+
+        mockedInvoke.mockClear()
+        const next = await loadMoreUnfilteredAgenda(first.cursor as string, 'SPACE_1')
+
+        const calls = mockedInvoke.mock.calls.map(([cmd, args]) => {
+          const a = args as Record<string, unknown>
+          const req = (a['request'] ?? a) as Record<string, unknown>
+          return [cmd, req['cursor']]
+        })
+        expect(calls).toEqual([
+          [source === 'undated' ? 'list_undated_tasks' : 'query_by_property', `${source}_2`],
+        ])
+        expect(next).toEqual({
+          blocks: [expect.objectContaining({ id: `${source}-2` })],
+          hasMore: false,
+          cursor: null,
+        })
+      },
+    )
+
+    it('treats a source that has more but no cursor as exhausted', async () => {
+      const noCursor = { next_cursor: null, has_more: true }
+      stubAgenda({
+        query_by_property: () => page([], noCursor),
+        list_undated_tasks: () => page([], noCursor),
+      })
+
+      const result = await executeAgendaFilters([], 'SPACE_1')
+
+      expect(result).toEqual({ blocks: [], hasMore: false, cursor: null })
+    })
+
+    it('loadMoreUnfilteredAgenda dispatches nothing when spaceId is null', async () => {
+      const { cursor } = await firstPageWithMoreIn('scheduled_date')
+      mockedInvoke.mockClear()
+
+      expect(await loadMoreUnfilteredAgenda(cursor as string, null)).toEqual({
+        blocks: [],
+        hasMore: false,
+        cursor: null,
+      })
       expect(mockedInvoke).not.toHaveBeenCalled()
     })
   })
@@ -363,7 +481,7 @@ describe('executeAgendaFilters', () => {
 
     it('skips IPC entirely when status values list is empty', async () => {
       const result = await executeAgendaFilters([{ dimension: 'status', values: [] }], 'SPACE_1')
-      expect(result.blocks).toHaveLength(0)
+      expect(result).toEqual({ blocks: [], hasMore: false, cursor: null, today: expect.any(Date) })
       expect(filteredCalls()).toHaveLength(0)
     })
   })
@@ -628,6 +746,52 @@ describe('executeAgendaFilters', () => {
       expect(result.blocks.map((b) => b.id)).toEqual(['null-state-today'])
     })
 
+    it('residual excludes an open task with no date in the filtered column', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+      stubAgenda({
+        filtered_blocks_query: () =>
+          page([makeBlock({ id: 'undated-todo', due_date: null, todo_state: 'TODO' })]),
+      })
+
+      const result = await executeAgendaFilters(
+        [{ dimension: 'dueDate', values: ['Today', 'Overdue'] }],
+        'SPACE_1',
+      )
+
+      expect(result.blocks).toEqual([])
+    })
+
+    it('a block must pass the residual of every date dimension', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+      // Due today passes the due residual; scheduled before today and DONE
+      // fails the scheduled one.
+      const failsScheduled = makeBlock({
+        id: 'fails-scheduled',
+        due_date: '2025-03-15',
+        scheduled_date: '2025-03-01',
+        todo_state: 'DONE',
+      })
+      const passesBoth = makeBlock({
+        id: 'passes-both',
+        due_date: '2025-03-15',
+        scheduled_date: '2025-03-15',
+        todo_state: 'DONE',
+      })
+      stubAgenda({ filtered_blocks_query: () => page([failsScheduled, passesBoth]) })
+
+      const result = await executeAgendaFilters(
+        [
+          { dimension: 'dueDate', values: ['Today', 'Overdue'] },
+          { dimension: 'scheduledDate', values: ['Today', 'Overdue'] },
+        ],
+        'SPACE_1',
+      )
+
+      expect(result.blocks.map((b) => b.id)).toEqual(['passes-both'])
+    })
+
     it('advances past a backend page fully consumed by the residual instead of returning an empty page with hasMore', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(new Date('2025-03-15T12:00:00'))
@@ -752,6 +916,15 @@ describe('executeAgendaFilters', () => {
       // #4412 — `valueTextIn` is `#[serde(default)]` (`src-tauri/src/commands/queries.rs:44`),
       // so the is-set filter omits it and the backend reads `vec![]`.
       expect(propertyFilters[0]?.['valueTextIn']).toBeUndefined()
+    })
+
+    it('a leading colon belongs to the key, not to a value of an empty key', async () => {
+      await executeAgendaFilters([{ dimension: 'property', values: [':Alice'] }], 'SPACE_1')
+
+      const call = filteredCalls()[0] as Record<string, unknown>
+      expect(call['propertyFilters']).toEqual([
+        { key: ':Alice', valueText: null, valueDate: null, valueDateRange: null },
+      ])
     })
   })
 
@@ -929,6 +1102,16 @@ describe('executeAgendaFilters', () => {
       )
     })
 
+    it('resolves the tag named exactly, not the first one sharing its prefix', async () => {
+      stubAgenda({
+        list_tags_by_prefix: () => [tagRow('TAG_WORKSHOP', 'workshop'), tagRow('TAG_WORK', 'Work')],
+      })
+
+      await executeAgendaFilters([{ dimension: 'tag', values: ['work'] }], 'SPACE_1')
+
+      expect(filteredCalls()[0]?.['tagFilters']).toEqual({ tagIds: ['TAG_WORK'], mode: 'or' })
+    })
+
     // #5274 — a tag name is unique per space, so `todo` in two spaces is two
     // tags. The lookup asks the active space, so the agenda resolves ITS
     // `todo` even when the other space's row would come back first unscoped.
@@ -1002,7 +1185,7 @@ describe('executeAgendaFilters', () => {
         'SPACE_1',
       )
 
-      expect(result.blocks).toHaveLength(0)
+      expect(result).toEqual({ blocks: [], hasMore: false, cursor: null, today: expect.any(Date) })
       // No filtered_blocks_query — empty input would be rejected by the
       // backend with Validation; the FE short-circuits.
       expect(filteredCalls()).toHaveLength(0)
@@ -1422,6 +1605,20 @@ describe('loadMoreAgendaFilters', () => {
     expect(result.blocks).toHaveLength(0)
     expect(result.hasMore).toBe(false)
     expect(result.cursor).toBeNull()
+    expect(filteredCalls()).toHaveLength(0)
+  })
+
+  it('short-circuits without a tag dimension when no dimension resolves to a payload', async () => {
+    const today = new Date('2025-03-15T12:00:00')
+
+    const result = await loadMoreAgendaFilters(
+      [{ dimension: 'status', values: [] }],
+      'CURSOR_PAGE_2',
+      'SPACE_1',
+      today,
+    )
+
+    expect(result).toEqual({ blocks: [], hasMore: false, cursor: null, today })
     expect(filteredCalls()).toHaveLength(0)
   })
 

@@ -39,8 +39,7 @@
  * that file's global `@tauri-apps/api/core` mock and fail immediately
  * without it (`mockedInvoke.mockResolvedValue is not a function`). Opt in
  * per module, never globally: the flag roughly 4x's the per-mutant test-run
- * cost, which is why the deferred list at the bottom of this file is as long
- * as it is.
+ * cost.
  */
 
 export const MODULES = {
@@ -268,6 +267,18 @@ export const MODULES = {
       'src/editor/page-mode/__tests__/page-mode-parity.test.ts',
     ],
   },
+  // #5915 — which tasks the agenda shows, and the blocks a template writes
+  // into a page.
+  'agenda-filters': {
+    setup: true,
+    src: 'src/lib/agenda-filters.ts',
+    tests: ['src/lib/__tests__/agenda-filters.test.ts'],
+  },
+  'template-utils': {
+    setup: true,
+    src: 'src/lib/template-utils.ts',
+    tests: ['src/lib/__tests__/template-utils.test.ts'],
+  },
 }
 
 /**
@@ -277,12 +288,6 @@ export const MODULES = {
  * developer machine; the scheduled runner is roughly 1.5–1.8x slower, so
  * treat them as ratios against the pre-#3350 set (1799 mutants, 229s on the
  * same machine), not as absolutes.
- *
- * - `agenda-filters` (426 mutants, 145s, 40 survivors) and `template-utils`
- *   (317 mutants, 107s, 70 survivors). Together they cost more wall-clock
- *   than the ENTIRE pre-#3350 lane and return the worst signal-per-second
- *   ratio measured. Both are `setup: true` shapes whose per-mutant test run
- *   is dominated by `src/test-setup.ts`.
  *
  * - `jaro-winkler` (100 mutants, 32 survivors, 16s). Cheap, but it ranks
  *   fuzzy-search suggestions; a survivor means "results ordered slightly
