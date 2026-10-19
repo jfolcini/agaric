@@ -19,6 +19,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  clipboardText,
   ctrlClick,
   enterBlankSibling,
   navigateTo,
@@ -93,18 +94,6 @@ async function reopenTheNewPage(): Promise<void> {
   await navigateTo('Journal')
   await reopenPageByTitle('Untitled')
   await $(`[data-testid="sortable-block"]*=${PARENT}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
-}
-
-/** Text the clipboard plugin holds, read the way the paste chord reads it. */
-async function clipboardText(): Promise<string> {
-  return await browser.execute(async () => {
-    const internals = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (cmd: string) => Promise<string | null> }
-      }
-    ).__TAURI_INTERNALS__
-    return (await internals.invoke('plugin:clipboard-manager|read_text')) ?? ''
-  })
 }
 
 describe('Agaric real-backend block clipboard (#5140 Phase 3b) @editor', () => {

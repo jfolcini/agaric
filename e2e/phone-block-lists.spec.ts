@@ -41,6 +41,12 @@ test.describe('Block lists on a phone (#5928) @editor @journal @mobile', () => {
     page,
   }) => {
     await waitForBoot(page)
+    // "Update dependencies" gets an attachment, its only chip.
+    await page.evaluate(() =>
+      (
+        window as unknown as { __addMockAttachment: (...args: unknown[]) => unknown }
+      ).__addMockAttachment('0000000000000000000BLOCK15', 'notes.pdf', 'application/pdf', 100),
+    )
     await openPageMobile(page, 'Projects')
     const row = page.locator('[data-testid="sortable-block"]', { hasText: 'Fix login bug' })
     await expect(row.getByTestId('block-metadata-row')).toBeVisible()
@@ -82,6 +88,15 @@ test.describe('Block lists on a phone (#5928) @editor @journal @mobile', () => {
       true,
       true,
     ])
+
+    const attached = page.locator('[data-testid="sortable-block"]', {
+      hasText: 'Update dependencies',
+    })
+    await expect(attached.getByTestId('attachment-badge')).toBeVisible()
+    expect(
+      await height(attached.getByTestId('block-metadata-row')),
+      'attachment-only chip row height vs a dated one, px',
+    ).toBeLessThanOrEqual(await height(row.getByTestId('block-metadata-row')))
   })
 
   test('an empty Week day is one row', async ({ page }) => {

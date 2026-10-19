@@ -33,6 +33,7 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   chooseSelectOption,
+  invoke,
   navigateTo,
   reopenPageByTitle,
   runScopedMarker,
@@ -63,19 +64,6 @@ const REF_NOTE_TWO = runScopedMarker('wdio-ref-note-two')
 
 const SYNC_BUTTON = '[data-slot="sidebar"] button[aria-label="Sync"]'
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
-
-interface Internals {
-  invoke: (cmd: string, args?: unknown) => Promise<unknown>
-}
-
-async function invoke(cmd: string, args: unknown): Promise<void> {
-  await browser.execute(
-    (c: string, a: unknown) =>
-      (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__.invoke(c, a),
-    cmd,
-    args,
-  )
-}
 
 /** Whether the sidebar's Sync button takes a click: it is `aria-disabled` while a sync runs. */
 async function syncIdle(): Promise<boolean> {

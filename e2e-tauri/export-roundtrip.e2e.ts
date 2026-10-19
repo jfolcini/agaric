@@ -20,6 +20,7 @@ import {
   clipboardText,
   confirmDialog,
   importMarkdownPage,
+  invoke,
   navigateTo,
   openNewPage,
   pasteFileIntoFocusedBlock,
@@ -98,14 +99,7 @@ async function pageAction(item: string): Promise<void> {
  */
 async function exportOpenPage(): Promise<string> {
   const sentinel = runScopedMarker('wdio-rt-sentinel')
-  await browser.execute(async (text: string) => {
-    const internals = (
-      window as unknown as {
-        __TAURI_INTERNALS__: { invoke: (cmd: string, args: object) => Promise<unknown> }
-      }
-    ).__TAURI_INTERNALS__
-    await internals.invoke('plugin:clipboard-manager|write_text', { text })
-  }, sentinel)
+  await invoke('plugin:clipboard-manager|write_text', { text: sentinel })
   await pageAction('Export as Markdown')
   let text = sentinel
   await browser

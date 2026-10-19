@@ -22,6 +22,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   enterBlankSibling,
+  invoke,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -41,10 +42,6 @@ import {
 const TASK = runScopedMarker('wdio-pm-weekly')
 const NOTE = runScopedMarker('wdio-pm-note')
 
-interface Internals {
-  __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-}
-
 interface Row {
   todo_state: string | null
   due_date: string | null
@@ -53,16 +50,6 @@ interface Row {
 interface PropertyRow {
   key: string
   value_text: string | null
-}
-
-/** Call the real backend as another surface does. */
-function invoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
-  return browser.execute(
-    (c: string, a: Record<string, unknown>) =>
-      (window as unknown as Internals).__TAURI_INTERNALS__.invoke(c, a),
-    cmd,
-    args,
-  ) as Promise<T>
 }
 
 function text(value: string) {

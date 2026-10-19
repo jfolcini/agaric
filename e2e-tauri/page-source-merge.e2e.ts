@@ -14,18 +14,19 @@
 import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
+  clickPageSourceButton,
+  enterBlankSibling,
   expectAbsent,
+  invoke,
   navigateTo,
   openNewPage,
   openPageSource,
-  clickPageSourceButton,
   pageSourceLines,
   reopenPageByTitle,
   runScopedMarker,
   setPageSourceLines,
   typeMarkerVerified,
   waitForAppReady,
-  enterBlankSibling,
 } from './helpers'
 
 const FIRST = runScopedMarker('wdio-merge-first')
@@ -45,18 +46,7 @@ async function reopenTheNewPage(marker: string): Promise<void> {
 
 /** Another device's edit, as it lands: `edit_block` through the real IPC. */
 async function editBlockElsewhere(blockId: string, toText: string): Promise<void> {
-  await browser.execute(
-    async (id: string, text: string) => {
-      const internals = (
-        window as unknown as {
-          __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-        }
-      ).__TAURI_INTERNALS__
-      await internals.invoke('edit_block', { blockId: id, toText: text })
-    },
-    blockId,
-    toText,
-  )
+  await invoke('edit_block', { blockId, toText })
 }
 
 describe('Agaric real-backend source-mode Merge (#5140 Phase 5) @pages @markdown', () => {

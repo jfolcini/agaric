@@ -23,6 +23,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   confirmDialog,
+  invoke,
   navigateTo,
   runScopedMarker,
   typeInputVerified,
@@ -34,19 +35,6 @@ const AGENT = runScopedMarker('wdio-agent')
 const TITLE = runScopedMarker('wdio-agent-page')
 const READER = runScopedMarker('wdio-reader')
 const WRITER = runScopedMarker('wdio-writer')
-
-interface Internals {
-  invoke: (cmd: string, args?: unknown) => Promise<unknown>
-}
-
-async function invoke<T>(cmd: string, args?: unknown): Promise<T> {
-  return browser.execute(
-    (c: string, a: unknown) =>
-      (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__.invoke(c, a),
-    cmd,
-    args,
-  ) as Promise<T>
-}
 
 type Reply = Record<string, unknown>
 

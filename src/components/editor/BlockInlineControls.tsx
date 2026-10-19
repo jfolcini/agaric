@@ -482,7 +482,7 @@ function AttachmentBadge({
           key={animKey ?? 'initial'}
           type="button"
           className={cn(
-            'attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 max-sm:py-1 touch-hit-area',
+            'attachment-badge flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none cursor-pointer bg-muted text-muted-foreground hover:bg-accent max-sm:px-2.5 touch-hit-area',
             animKey !== null && 'animate-in fade-in-0 zoom-in-95 duration-normal',
           )}
           data-testid="attachment-badge"

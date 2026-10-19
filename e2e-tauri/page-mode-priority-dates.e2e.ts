@@ -19,6 +19,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   enterBlankSibling,
+  invoke,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -39,23 +40,9 @@ const TASK = runScopedMarker('wdio-pm-dated')
 const NEXT = runScopedMarker('wdio-pm-after')
 const DATE_PICKER = '[data-testid="date-picker-popup"]'
 
-interface Internals {
-  __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-}
-
 interface Row {
   priority: string | null
   due_date: string | null
-}
-
-/** Call the real backend as another surface does. */
-function invoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
-  return browser.execute(
-    (c: string, a: Record<string, unknown>) =>
-      (window as unknown as Internals).__TAURI_INTERNALS__.invoke(c, a),
-    cmd,
-    args,
-  ) as Promise<T>
 }
 
 /** The local date `days` from today, as `YYYY-MM-DD`. */

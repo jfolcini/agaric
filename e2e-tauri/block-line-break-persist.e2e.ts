@@ -29,6 +29,7 @@ import {
   NAV_TIMEOUT,
   blockStaticByMarker,
   blockStaticsByMarker,
+  invoke,
   navigateTo,
   openJournalBlockEditor,
   openNewPage,
@@ -52,20 +53,6 @@ const SPLIT_INTRO = runScopedMarker('wdio-split-typed-intro')
 const SPLIT_TASK = runScopedMarker('wdio-split-typed-call')
 // Letters, digits and `-` only, so the bare `#name` is the whole tag.
 const SPLIT_TAG = runScopedMarker('wdio-split-typed-tag')
-
-interface Internals {
-  __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-}
-
-/** Call the real backend as another surface does. */
-function invoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
-  return browser.execute(
-    (c: string, a: Record<string, unknown>) =>
-      (window as unknown as Internals).__TAURI_INTERNALS__.invoke(c, a),
-    cmd,
-    args,
-  ) as Promise<T>
-}
 
 /** The block the roving editor is in, and its text. */
 function editorBlock(): Promise<{ id: string | null; text: string }> {

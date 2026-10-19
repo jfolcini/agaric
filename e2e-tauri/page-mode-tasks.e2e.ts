@@ -21,6 +21,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   enterBlankSibling,
+  invoke,
   isoDay,
   navigateTo,
   openNewPage,
@@ -46,20 +47,6 @@ const SLASH_FIRST = runScopedMarker('wdio-pm-slash-first')
 const SLASH_TASK = runScopedMarker('wdio-pm-slash-task')
 const MENU = '[data-testid="suggestion-popup"]'
 const DATE_PICKER = '[data-testid="date-picker-popup"]'
-
-interface Internals {
-  __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-}
-
-/** Call the real backend as another surface does. */
-function invoke<T>(cmd: string, args: Record<string, unknown>): Promise<T> {
-  return browser.execute(
-    (c: string, a: Record<string, unknown>) =>
-      (window as unknown as Internals).__TAURI_INTERNALS__.invoke(c, a),
-    cmd,
-    args,
-  ) as Promise<T>
-}
 
 /** The checkbox of the page-mode block whose id is `blockId`. */
 function checkbox(blockId: string) {

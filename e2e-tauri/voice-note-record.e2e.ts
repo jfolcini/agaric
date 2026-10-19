@@ -16,6 +16,7 @@ import {
   ACTION_TIMEOUT,
   NAV_TIMEOUT,
   blockStaticByMarker,
+  invoke,
   navigateTo,
   openNewPage,
   reopenPageByTitle,
@@ -68,15 +69,7 @@ describe('Agaric real-webview voice note (#5730) @attachments', () => {
     const blockId = await block.getAttribute('data-block-id')
     if (blockId === null) throw new Error('the voice note block has no data-block-id')
 
-    const rows = await browser.execute(
-      async (id: string) =>
-        (await (
-          window as unknown as {
-            __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> }
-          }
-        ).__TAURI_INTERNALS__.invoke('list_attachments', { blockId: id })) as AttachmentRow[],
-      blockId,
-    )
+    const rows = await invoke<AttachmentRow[]>('list_attachments', { blockId })
     expect(rows).toHaveLength(1)
     const [row] = rows
     expect(row?.mime_type).toBe('audio/ogg')

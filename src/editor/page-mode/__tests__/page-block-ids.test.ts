@@ -1,10 +1,13 @@
 /**
  * Page mode's id rules (#5691): a real TipTap editor over page mode's
  * extensions; keys go through ProseMirror's `handleKeyDown` and the clipboard
- * through the view's own copy and paste.
+ * through the view's own copy and paste. A peer's change is the transaction a
+ * remote patch dispatches.
  */
 
 import type { Editor } from '@tiptap/core'
+import { closeHistory } from '@tiptap/pm/history'
+import type { Transaction } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
@@ -18,6 +21,7 @@ import {
   rowsOf,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
+import { REMOTE_PATCH, startOf } from '@/editor/page-mode/page-document'
 
 const A = blockId(1)
 const B = blockId(2)
@@ -267,6 +271,127 @@ describe('undo', () => {
 
     expect(idsOf(ed.state.doc)).toEqual([A, NEW_1])
     expect(idsOf(ed.state.doc)).not.toContain(NEW_2)
+  })
+})
+
+/** A peer's change as `remotePatch` brings it in: outside undo history, marked remote. */
+function fromPeer(ed: Editor, change: (tr: Transaction) => Transaction): void {
+  ed.view.dispatch(change(ed.state.tr).setMeta('addToHistory', false).setMeta(REMOTE_PATCH, true))
+}
+
+/** A peer's edit of block `index`, which holds one paragraph: `text` in place of its text. */
+function peerRewrites(ed: Editor, index: number, text: string): void {
+  const from = posIn(ed, index, 0)
+  const to = posIn(ed, index, ed.state.doc.child(index).textContent.length)
+  fromPeer(ed, (tr) =>
+    text === '' ? tr.delete(from, to) : tr.replaceWith(from, to, ed.state.schema.text(text)),
+  )
+}
+
+/** A block of one paragraph, new to the page or brought back, inserted at `index` under `id`. */
+function peerAdds(ed: Editor, index: number, id: string, text: string): void {
+  const block = ed.state.schema.nodeFromJSON({
+    type: 'pageBlock',
+    attrs: { blockId: id, depth: 0 },
+    content: [{ type: 'paragraph', content: text === '' ? [] : [{ type: 'text', text }] }],
+  })
+  fromPeer(ed, (tr) => tr.insert(startOf(ed.state.doc, index), block))
+}
+
+describe('undo and redo after a peer’s change', () => {
+  it('put a cut text back under its id, though a peer rewrote the block it was pasted into', () => {
+    const ed = build([
+      [A, 0, 'alpha'],
+      [B, 0, 'alpha'],
+    ])
+    const html = cut(ed, posIn(ed, 1, 0), posIn(ed, 1, 5))
+    ed.view.dispatch(closeHistory(ed.state.tr))
+    caret(ed, 0, 0)
+    ed.view.pasteHTML(html)
+    peerRewrites(ed, 0, 'peer ')
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [B, 0, 'peer '],
+      [NEW_1, 0, ''],
+    ])
+
+    // The rules follow the first character, the peer's, which held B's id; the undo put A back.
+    ed.commands.undo()
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'peer '],
+      [NEW_1, 0, ''],
+    ])
+    ed.commands.undo()
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'peer '],
+      [B, 0, 'alpha'],
+    ])
+
+    ed.commands.redo()
+    ed.commands.redo()
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [B, 0, 'peer '],
+      [NEW_1, 0, ''],
+    ])
+  })
+
+  it('give the block an undo re-creates a new id when a peer has brought the original back', () => {
+    const ed = build([
+      [A, 0, 'foo'],
+      [B, 0, 'bar'],
+    ])
+    caret(ed, 1, 0)
+    press(ed, 'Backspace')
+    peerAdds(ed, 1, B, 'bar')
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'foobar'],
+      [B, 0, 'bar'],
+    ])
+
+    // The block this undo re-creates and the peer's both hold B.
+    ed.commands.undo()
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'foo'],
+      [NEW_1, 0, 'bar'],
+      [B, 0, 'bar'],
+    ])
+  })
+
+  it('keep a joined block’s id when a peer emptied it, though the rules would move it on', () => {
+    const ed = build([
+      [A, 0, 'alpha'],
+      [B, 0, ''],
+    ])
+    caret(ed, 0, 5)
+    press(ed, 'Delete')
+    peerRewrites(ed, 0, '')
+    peerAdds(ed, 1, B, 'peer')
+
+    // A is empty, so the rules follow its end, which the undo's split puts in the second half.
+    ed.commands.undo()
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, ''],
+      [NEW_1, 0, ''],
+      [B, 0, 'peer'],
+    ])
+  })
+
+  it('leave every block its id when a peer’s rewrite left nothing of the undone steps', () => {
+    const ed = build([[A, 0, 'alpha']])
+    caret(ed, 0, 2)
+    ed.view.pasteText('x\ny')
+    expect(idsOf(ed.state.doc)).toEqual([A, NEW_1])
+    peerRewrites(ed, 0, 'peer')
+    peerRewrites(ed, 1, 'peer2')
+
+    // Both halves are the peer's now: the undo finds no paste to take out, and unsets an id.
+    ed.commands.undo()
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'peer'],
+      [NEW_1, 0, 'peer2'],
+    ])
   })
 })
 
