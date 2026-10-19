@@ -9,6 +9,8 @@ import { unwrap } from '@/lib/app-error'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
+import { TASK_STATES } from '@/lib/task-states'
 
 /** Ergonomic single-value-field param shape produced by
  *  {@link buildPropertyParams} and reshaped at the call site into
@@ -32,23 +34,43 @@ export type BuildResult =
   | { ok: true; params: SetPropertyParams }
   | { ok: false; error: 'invalidNumber' }
 
+/** A built-in property definition: fixed in code, the same in every vault. */
+export interface BuiltinPropertyDef {
+  key: string
+  value_type: string
+  options: readonly string[] | null
+}
+
 /**
- * Built-in (system-managed) properties, whose definitions cannot be deleted.
- * Mirrors `is_builtin_property_key` in `src-tauri/agaric-store/src/op.rs`.
+ * The built-in property definitions (#5841), which nothing can create, edit
+ * or delete. Mirrors `BUILTIN_PROPERTY_DEFS` in
+ * `src-tauri/agaric-store/src/op.rs`, pinned by
+ * `property-save-utils-rust-parity.test.ts`.
  */
-export const NON_DELETABLE_PROPERTIES = new Set([
-  'todo_state',
-  'priority',
-  'due_date',
-  'scheduled_date',
-  'created_at',
-  'completed_at',
-  'repeat',
-  'repeat-until',
-  'repeat-count',
-  'repeat-seq',
-  'repeat-origin',
-])
+export const BUILTIN_PROPERTY_DEFS: readonly BuiltinPropertyDef[] = [
+  { key: 'todo_state', value_type: 'select', options: TASK_STATES },
+  { key: 'priority', value_type: 'select', options: PRIORITY_LEVELS },
+  { key: 'due_date', value_type: 'date', options: null },
+  { key: 'scheduled_date', value_type: 'date', options: null },
+  { key: 'created_at', value_type: 'date', options: null },
+  { key: 'completed_at', value_type: 'date', options: null },
+  { key: 'repeat', value_type: 'text', options: null },
+  { key: 'repeat-until', value_type: 'date', options: null },
+  { key: 'repeat-count', value_type: 'number', options: null },
+  { key: 'repeat-seq', value_type: 'number', options: null },
+  { key: 'repeat-origin', value_type: 'text', options: null },
+  { key: 'space', value_type: 'ref', options: null },
+  { key: 'is_space', value_type: 'select', options: ['true'] },
+  { key: 'listStyle', value_type: 'select', options: ['bullet', 'ordered'] },
+]
+
+/**
+ * The built-in keys, whose definitions cannot be deleted or edited. Mirrors
+ * `is_builtin_property_key` in `src-tauri/agaric-store/src/op.rs`.
+ */
+export const NON_DELETABLE_PROPERTIES: ReadonlySet<string> = new Set(
+  BUILTIN_PROPERTY_DEFS.map((def) => def.key),
+)
 
 /**
  * The keys `delete_property` refuses, which only state transitions and
@@ -74,29 +96,15 @@ export const REPEAT_RULE_BOUNDS: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Properties whose `options` list is locked — users cannot edit them from
- * the Properties tab. Currently only `todo_state`: the task cycle
- * (`none → TODO → DOING → DONE → CANCELLED → none`) is intentionally fixed
- * in `task-states.ts`, and the DB-side `options` are kept in sync via
- * migrations 0029 and 0031. Editing them from the UI would let the DB drift
- * from the canonical vocabulary, silently breaking the status filter
- * dimension in AgendaFilterBuilder.
- *
- * `priority` is NOT locked here even though its cycle is also fixed today
- * (`null → 1 → 2 → 3 → null`); unlocking priority is scope.
- */
-export const LOCKED_PROPERTY_OPTIONS = new Set(['todo_state'])
-
-/**
  * Keys that live in a dedicated column on `blocks` and can therefore never be
  * a `block_properties` row. Mirrors `COLUMN_BACKED_PROPERTY_KEYS` in
  * `src-tauri/agaric-store/src/op.rs` (the four reserved keys plus `space`).
  *
  * Distinct from {@link NON_DELETABLE_PROPERTIES}, which mirrors
- * `is_builtin_property_key` (the reserved keys plus the `created_at` /
- * `completed_at` / `repeat-*` lifecycle keys) — the two sets overlap but mean
- * different things, and `delete_property` explicitly ALLOWS the reserved keys
- * and the recurrence rule while refusing the other lifecycle ones.
+ * `is_builtin_property_key` (every built-in definition) — the two sets overlap
+ * but mean different things, and `delete_property` explicitly ALLOWS the
+ * reserved keys and the recurrence rule while refusing the other lifecycle
+ * ones.
  */
 const COLUMN_BACKED_PROPERTY_KEYS = new Set([
   'todo_state',
@@ -234,10 +242,8 @@ export function carriedRenameDefinition(
  * could be taken back, established BEFORE anything is written.
  *
  * - Builtin (`NON_DELETABLE_PROPERTIES`) and column-backed keys —
- *   `create_property_def` has no reserved-key guard of its own, and the
- *   delete refuses every builtin, so such a row is un-removable the instant
- *   it lands. (Column-backed keys were already skipped; their shape is fixed
- *   by the `blocks` column.)
+ *   `create_property_def` refuses a built-in key outright (#5841), and a
+ *   column-backed key's shape is fixed by the `blocks` column.
  * - A key that is ALREADY declared — `create_property_def` is INSERT OR
  *   IGNORE, so nothing would be created anyway, and the existing row is the
  *   user's, never this rename's to withdraw.
@@ -257,9 +263,9 @@ export function carriedRenameDefinition(
  * `BEGIN IMMEDIATE`, so it closes both gaps this one has by construction:
  * the TOCTOU between the read pool and the write pool, and the keys past the
  * 1000-key cap. This check stays because it is strictly broader — it also
- * declines builtin and already-declared keys, which the backend accepts by
- * design — and because declining locally saves a round-trip whose only
- * possible outcome is a rejection.
+ * declines already-declared keys, which the backend accepts by design — and
+ * because declining locally saves a round-trip whose only possible outcome is
+ * a rejection.
  *
  * Throws whatever the two lookups throw; the caller treats a failed
  * pre-flight like a failed copy (best-effort, rename proceeds).

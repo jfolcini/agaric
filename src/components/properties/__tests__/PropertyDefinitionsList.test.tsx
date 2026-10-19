@@ -5,6 +5,7 @@
  *  - Renders property definitions list, without the internal `is_space` (#5629)
  *  - Search/filter functionality
  *  - Delete with confirmation
+ *  - A built-in shows a lock and offers no edit or delete (#5841)
  *  - Has no a11y violations (axe)
  */
 
@@ -19,7 +20,6 @@ import { mockInvokeCommands, type TypedInvokeHandlers } from '@/__tests__/helper
 import { PropertyDefinitionsList } from '@/components/properties/PropertyDefinitionsList'
 import type { AppError, PageResponse, PropertyDefinition } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
-import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { propertyDefs, seedBlocks } from '@/lib/tauri-mock/seed'
 
@@ -47,7 +47,13 @@ function makePropDef(
     value_type: valueType,
     options,
     created_at: '2025-01-15T00:00:00Z',
+    builtin: false,
   }
+}
+
+/** A built-in definition as `list_property_defs` returns it (#5841). */
+function makeBuiltinDef(key: string, valueType: string, options: string | null = null) {
+  return { ...makePropDef(key, valueType, options), builtin: true }
 }
 
 /**
@@ -64,7 +70,6 @@ function pageOf(items: PropertyDefinition[]): PageResponse<PropertyDefinition> {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  __resetPriorityLevelsForTests()
 })
 
 describe('PropertyDefinitionsList', () => {
@@ -84,9 +89,9 @@ describe('PropertyDefinitionsList', () => {
     expect(screen.getByText('Due')).toBeInTheDocument()
   })
 
-  // #5629 — every space block carries `is_space`, so its delete always failed.
+  // #5629 — every space block carries `is_space`, the app's bookkeeping.
   it('hides the internal is_space definition', async () => {
-    stubDefs(pageOf([makePropDef('is_space', 'select', '["true"]'), makePropDef('status')]))
+    stubDefs(pageOf([makeBuiltinDef('is_space', 'select', '["true"]'), makePropDef('status')]))
 
     render(<PropertyDefinitionsList />)
 
@@ -99,7 +104,7 @@ describe('PropertyDefinitionsList', () => {
 
   it('typing is_space keeps Create disabled and says the key exists', async () => {
     const user = userEvent.setup()
-    stubDefs(pageOf([makePropDef('is_space', 'select', '["true"]'), makePropDef('status')]))
+    stubDefs(pageOf([makeBuiltinDef('is_space', 'select', '["true"]'), makePropDef('status')]))
 
     render(<PropertyDefinitionsList />)
     await screen.findByText('Status')
@@ -533,36 +538,53 @@ describe('PropertyDefinitionsList', () => {
     expect(optionValues).toContain('url')
   })
 
-  it('hides delete button on built-in properties and shows Built-in badge', async () => {
+  it('shows a lock on a built-in and offers no edit or delete for it', async () => {
     stubDefs(
       pageOf([
-        makePropDef('repeat', 'text'),
-        makePropDef('completed_at', 'date'),
-        makePropDef('custom-field', 'text'),
+        makeBuiltinDef('priority', 'select', '["1","2","3"]'),
+        makeBuiltinDef('repeat', 'text'),
+        makePropDef('custom-field', 'select', '["a","b"]'),
       ]),
     )
 
     render(<PropertyDefinitionsList />)
 
-    expect(await screen.findByText('Repeat')).toBeInTheDocument()
-    expect(screen.getByText('Completed At')).toBeInTheDocument()
-    expect(screen.getByText('Custom Field')).toBeInTheDocument()
-
-    // Built-in properties show "Built-in" badge, not delete button
+    expect(await screen.findByText('Priority')).toBeInTheDocument()
+    for (const key of ['priority', 'repeat']) {
+      const lock = screen.getByTestId(`builtin-lock-${key}`)
+      expect(lock).toHaveTextContent(t('propertiesView.builtinLockLabel'))
+      expect(
+        screen.queryByRole('button', { name: t('properties.deleteDefinition', { key }) }),
+      ).not.toBeInTheDocument()
+    }
+    expect(screen.queryByTestId('builtin-lock-custom-field')).not.toBeInTheDocument()
+    // The one Edit options button is the user's select, not priority's.
     expect(
-      screen.queryByRole('button', { name: /Delete property repeat/i }),
-    ).not.toBeInTheDocument()
+      screen.getAllByRole('button', { name: t('propertiesView.editOptionsTooltip') }),
+    ).toHaveLength(1)
     expect(
-      screen.queryByRole('button', { name: /Delete property completed_at/i }),
-    ).not.toBeInTheDocument()
-
-    const badges = screen.getAllByText('Built-in')
-    expect(badges).toHaveLength(2)
-
-    // Custom property still has delete button
-    expect(
-      screen.getByRole('button', { name: /Delete property custom-field/i }),
+      screen.getByRole('button', {
+        name: t('properties.deleteDefinition', { key: 'custom-field' }),
+      }),
     ).toBeInTheDocument()
+  })
+
+  it('has no a11y violations with built-ins locked', async () => {
+    stubDefs(
+      pageOf([
+        makeBuiltinDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]'),
+        makeBuiltinDef('priority', 'select', '["1","2","3"]'),
+        makePropDef('status', 'select', '["open","closed"]'),
+      ]),
+    )
+
+    const { container } = render(<PropertyDefinitionsList />)
+
+    await screen.findByTestId('builtin-lock-priority')
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 
   it('search clear button clears the filter', async () => {
@@ -650,102 +672,13 @@ describe('PropertyDefinitionsList', () => {
     ).toBeInTheDocument()
   })
 
-  // Todo_state's options are locked (cycle is fixed by code + migration 0029)
-  describe('locked options for todo_state', () => {
-    it('does NOT render the Edit options button for todo_state', async () => {
-      stubDefs(
-        pageOf([
-          makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]'),
-          makePropDef('priority', 'select', '["1","2","3"]'),
-          makePropDef('effort', 'select', '["15m","30m","1h"]'),
-        ]),
-      )
-
-      render(<PropertyDefinitionsList />)
-
-      await screen.findByText('Todo State')
-
-      // Only non-locked select properties show the Edit options button.
-      // Two select defs are not locked (priority, effort), so exactly two buttons.
-      const editButtons = screen.getAllByRole('button', { name: /Edit options/i })
-      expect(editButtons).toHaveLength(2)
-    })
-
-    it('renders a locked indicator for todo_state with accessible tooltip copy', async () => {
-      stubDefs(pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]))
-
-      render(<PropertyDefinitionsList />)
-
-      const locked = await screen.findByTestId('locked-options-todo_state')
-      expect(locked).toHaveTextContent(t('propertiesView.optionsLocked'))
-    })
-
-    // #1431: the task-state cycle is fixed by design (none → TODO → DOING →
-    // DONE → CANCELLED → none). The locked indicator carries a lock
-    // icon with an explicit accessible label/title so screen-reader and
-    // mouse-hover users learn the property is not editable.
-    it('lock indicator exposes an accessible "fixed and not editable" label', async () => {
-      stubDefs(pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]))
-
-      render(<PropertyDefinitionsList />)
-
-      const locked = await screen.findByTestId('locked-options-todo_state')
-      // The wrapper carries the title attribute (native tooltip).
-      expect(locked).toHaveAttribute('title', t('propertiesView.optionsLockedTitle'))
-      // The lock icon itself is reachable by its accessible label.
-      expect(screen.getByLabelText(t('propertiesView.optionsLockedTitle'))).toBeInTheDocument()
-    })
-
-    it('does NOT render the lock indicator on non-locked properties', async () => {
-      stubDefs(
-        pageOf([
-          makePropDef('priority', 'select', '["1","2","3"]'),
-          makePropDef('effort', 'select', '["15m","30m"]'),
-          makePropDef('custom-field', 'text'),
-        ]),
-      )
-
-      render(<PropertyDefinitionsList />)
-
-      await screen.findByText('Priority')
-      expect(screen.queryByTestId('locked-options-priority')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('locked-options-effort')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('locked-options-custom-field')).not.toBeInTheDocument()
-      expect(
-        screen.queryByLabelText(t('propertiesView.optionsLockedTitle')),
-      ).not.toBeInTheDocument()
-    })
-
-    it('priority (not locked yet,) still shows the Edit options button', async () => {
-      stubDefs(pageOf([makePropDef('priority', 'select', '["1","2","3"]')]))
-
-      render(<PropertyDefinitionsList />)
-
-      await screen.findByText('Priority')
-      expect(screen.getByRole('button', { name: /Edit options/i })).toBeInTheDocument()
-    })
-
-    it('renders without a11y violations when todo_state is locked', async () => {
-      stubDefs(
-        pageOf([
-          makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]'),
-          makePropDef('priority', 'select', '["1","2","3"]'),
-        ]),
-      )
-
-      const { container } = render(<PropertyDefinitionsList />)
-
-      await screen.findByText('Todo State')
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
-  })
-
   // Explain WHY the todo_state cycle is fixed via a HelpCircle
   // tooltip on the todo_state row only.
   describe('todo_state cycle help', () => {
     it('renders the HelpCircle on the todo_state row', async () => {
-      stubDefs(pageOf([makePropDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]))
+      stubDefs(
+        pageOf([makeBuiltinDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')]),
+      )
 
       render(<PropertyDefinitionsList />)
 
@@ -758,7 +691,7 @@ describe('PropertyDefinitionsList', () => {
     it('does NOT render the HelpCircle on non-todo_state rows', async () => {
       stubDefs(
         pageOf([
-          makePropDef('priority', 'select', '["1","2","3"]'),
+          makeBuiltinDef('priority', 'select', '["1","2","3"]'),
           makePropDef('effort', 'select', '["15m","30m","1h"]'),
           makePropDef('custom-field', 'text'),
         ]),
@@ -768,69 +701,6 @@ describe('PropertyDefinitionsList', () => {
 
       await screen.findByText('Priority')
       expect(screen.queryByTestId('todo-state-cycle-help')).not.toBeInTheDocument()
-    })
-  })
-
-  // Saving `priority.options` must refresh the shared priority
-  // levels cache so the rest of the app (badge colours, agenda sort,
-  // filter choices) reflects the new set without a reload.
-  describe('priority level refresh', () => {
-    it('updates getPriorityLevels() when priority options are saved', async () => {
-      const user = userEvent.setup()
-      stubDefs(pageOf([makePropDef('priority', 'select', '["1","2","3"]')]))
-
-      render(<PropertyDefinitionsList />)
-
-      expect(await screen.findByText('Priority')).toBeInTheDocument()
-
-      stubInvoke({
-        update_property_def_options: () => makePropDef('priority', 'select', '["1","2","3","4"]'),
-      })
-
-      const editBtn = screen.getByRole('button', { name: /Edit options/i })
-      await user.click(editBtn)
-
-      const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
-      // fireEvent.change bypasses userEvent's key parsing (which interprets
-      // `[` / `]` as key descriptors).
-      fireEvent.change(optionsInput, { target: { value: '["1","2","3","4"]' } })
-
-      const saveBtn = screen.getByRole('button', { name: /^Save$/i })
-      await user.click(saveBtn)
-
-      await waitFor(() => {
-        expect(getPriorityLevels()).toEqual(['1', '2', '3', '4'])
-      })
-    })
-
-    it('does NOT refresh priority levels when editing a different property', async () => {
-      const user = userEvent.setup()
-      stubDefs(pageOf([makePropDef('stage', 'select', '["a","b"]')]))
-
-      render(<PropertyDefinitionsList />)
-
-      expect(await screen.findByText('Stage')).toBeInTheDocument()
-
-      stubInvoke({
-        update_property_def_options: () => makePropDef('stage', 'select', '["x","y","z"]'),
-      })
-
-      const editBtn = screen.getByRole('button', { name: /Edit options/i })
-      await user.click(editBtn)
-
-      const optionsInput = screen.getByLabelText(t('propertiesView.optionsJsonLabel'))
-      fireEvent.change(optionsInput, { target: { value: '["x","y","z"]' } })
-
-      const saveBtn = screen.getByRole('button', { name: /^Save$/i })
-      await user.click(saveBtn)
-
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
-          key: 'stage',
-          options: '["x","y","z"]',
-        })
-      })
-      expect(getPriorityLevels()).toEqual(['1', '2', '3'])
     })
   })
 

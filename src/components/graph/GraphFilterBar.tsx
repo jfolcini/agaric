@@ -29,7 +29,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import { canonicalToGraphFilters, graphFiltersToCanonical } from '@/lib/filters/model'
 import { parseFilterPredicates } from '@/lib/filters/validate'
 import {
@@ -39,6 +38,7 @@ import {
   getGraphFilterKey,
 } from '@/lib/graph-filters'
 import { logger } from '@/lib/logger'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
@@ -270,10 +270,6 @@ function AddFilterForm({
 }: AddFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
 
-  // Subscribe to the user-configured priority levels so the
-  // filter checkbox list reflects the live set without a reload.
-  const priorityLevels = usePriorityLevels()
-
   const [dimension, setDimension] = useState<GraphFilterType | ''>('')
 
   // Per-dimension state — kept separate so switching dimensions doesn't clobber
@@ -471,7 +467,7 @@ function AddFilterForm({
         <fieldset className="flex flex-col gap-1 border-0 p-0 m-0">
           <legend className="sr-only">{t('graph.filter.priority')}</legend>
           <div className="flex flex-col gap-1">
-            {priorityLevels.map((v) => (
+            {PRIORITY_LEVELS.map((v) => (
               <label
                 key={v}
                 className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-muted"

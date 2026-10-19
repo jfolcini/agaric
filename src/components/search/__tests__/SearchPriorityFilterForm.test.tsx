@@ -2,9 +2,9 @@
  * CR-MINOR — dedicated tests for `<SearchPriorityFilterForm>`.
  *
  * Previously covered only transitively via `FilterHelperPopover.test.tsx`.
- * The form builds a `priority` / `not-priority` `FilterToken` from the
- * user-configurable `usePriorityLevels()` set plus the appended `none`
- * sentinel, driven by an include/exclude toggle.
+ * The form builds a `priority` / `not-priority` `FilterToken` from
+ * `PRIORITY_LEVELS` plus the appended `none` sentinel, driven by an
+ * include/exclude toggle.
  *
  * `@/components/ui/select` is globally mocked as a native `<select>` (see
  * `src/test-setup.ts`), so `userEvent.selectOptions` drives the value.

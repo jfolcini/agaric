@@ -121,7 +121,7 @@ describe('tauri-mock error-shape conformance (#2463)', () => {
         cmd: 'set_todo_state',
         args: { blockId: MISSING_ID, state: 'TODO' },
       },
-      { name: 'set_priority', cmd: 'set_priority', args: { blockId: MISSING_ID, level: 'high' } },
+      { name: 'set_priority', cmd: 'set_priority', args: { blockId: MISSING_ID, level: '1' } },
       {
         name: 'set_due_date',
         cmd: 'set_due_date',

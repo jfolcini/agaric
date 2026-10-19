@@ -12,7 +12,7 @@
  */
 
 import { t } from '@/lib/i18n'
-import { getPriorityLevels } from '@/lib/priority-levels'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 import { validateGlob } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { registerTokenPrefix, type ValueParser } from '@/lib/search-query/registry'
@@ -31,9 +31,8 @@ let registered = false
  * case-insensitively for parity with the `due:` parser (and the backend, which
  * treats the `none` sentinel case-insensitively).
  *
- * Todo states are a fixed vocabulary (`isTodoState`); priority levels are
- * user-configurable, so we read the live levels at parse time via
- * `getPriorityLevels()`.
+ * Todo states and priority levels are fixed vocabularies (`isTodoState`,
+ * `PRIORITY_LEVELS`).
  */
 function isKnownState(value: string): boolean {
   if (value.toLowerCase() === 'none') return true
@@ -42,7 +41,7 @@ function isKnownState(value: string): boolean {
 
 function isKnownPriority(value: string): boolean {
   if (value.toLowerCase() === 'none') return true
-  return getPriorityLevels().includes(value)
+  return PRIORITY_LEVELS.includes(value)
 }
 
 /**

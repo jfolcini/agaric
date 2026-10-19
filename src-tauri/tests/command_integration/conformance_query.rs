@@ -218,10 +218,10 @@ const BLOCK_ATTRS: &[&str] = &["parent_id", "page_id", "position", "deleted_at"]
 const TAG_ATTRS: &[&str] = &["name", "usage_count"];
 
 /// A `PropertyDefinition` (#3830), whose token head is the registry `key`.
-/// `created_at` is a wall clock and stays off the token; `value_type` and
-/// `options` are the whole of what the declaration says. MUST match
-/// `PROPERTY_DEF_TOKEN` in the TS twin.
-pub(super) const PROPERTY_DEF_ATTRS: &[&str] = &["value_type", "options"];
+/// `created_at` is a wall clock and stays off the token; `value_type`,
+/// `options` and `builtin` (#5841) are the whole of what the declaration
+/// says. MUST match `PROPERTY_DEF_TOKEN` in the TS twin.
+pub(super) const PROPERTY_DEF_ATTRS: &[&str] = &["value_type", "options", "builtin"];
 
 /// An `AttachmentRow` (#3830), whose token head is the attachment id and whose
 /// attributes are every other column. `created_at` rides along VERBATIM,

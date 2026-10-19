@@ -85,7 +85,13 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
     // `list_property_defs` is now cursor-paginated, so the IPC
     // response shape is `{ items, next_cursor, has_more }`.
     const defs: PropertyDefinition[] = [
-      { key: 'effort', value_type: 'number', options: null, created_at: '2026-01-01T00:00:00Z' },
+      {
+        key: 'effort',
+        value_type: 'number',
+        options: null,
+        created_at: '2026-01-01T00:00:00Z',
+        builtin: false,
+      },
     ]
     const page = { items: defs, next_cursor: null, has_more: false, total_count: null }
     stubInvoke({ list_property_defs: () => page })
@@ -118,6 +124,7 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
           value_type: 'number',
           options: null,
           created_at: '2026-01-01T00:00:00Z',
+          builtin: false,
         },
       ],
       next_cursor: 'cursor-page-2',
@@ -151,6 +158,7 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
           value_type: 'number',
           options: null,
           created_at: '2026-01-01T00:00:00Z',
+          builtin: false,
         },
       ],
       next_cursor: 'cursor-2',
@@ -164,6 +172,7 @@ describe('useBlockPropertyIpc.listPropertyDefs', () => {
           value_type: 'select',
           options: '["todo","done"]',
           created_at: '2026-01-02T00:00:00Z',
+          builtin: false,
         },
       ],
       next_cursor: null,

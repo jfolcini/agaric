@@ -2,7 +2,8 @@
  * PropertyDefinitionsList -- CRUD for property definitions.
  *
  * Search/filter, create form, list rendering, delete confirmation,
- * and edit options for select-type properties.
+ * and edit options for select-type properties. A built-in definition
+ * (#5841) shows a lock and offers no action.
  */
 
 import { HelpCircle, Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
@@ -33,16 +34,13 @@ import { unwrap } from '@/lib/app-error'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
-import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { setPriorityLevels } from '@/lib/priority-levels'
-import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'] as const
 
-/** Every space block carries this key, so deleting its definition always fails. */
+/** The space marker every space block carries is app bookkeeping (#5629). */
 const SPACE_MARKER_KEY = 'is_space'
 
 export function PropertyDefinitionsList(): React.ReactElement {
@@ -85,9 +83,9 @@ export function PropertyDefinitionsList(): React.ReactElement {
     setLoadError(false)
     try {
       // `listPropertyDefs` is paginated. The settings panel is
-      // single-page-by-design — it surfaces the seeded vocabulary
-      // (~19 built-ins plus user-authored entries), which fits well
-      // under one page; we destructure `.items` and ignore the cursor.
+      // single-page-by-design — it surfaces the built-ins plus the user's
+      // definitions, which fit well under one page; we destructure `.items`
+      // and ignore the cursor.
       const { items: defs } = unwrap(await commands.listPropertyDefs(null, null))
       setDefinitions(defs)
     } catch (error) {
@@ -162,26 +160,6 @@ export function PropertyDefinitionsList(): React.ReactElement {
         const updated = unwrap(await commands.updatePropertyDefOptions(key, editOptionsValue))
         setDefinitions((prev) => prev.map((d) => (d.key === key ? updated : d)))
         setEditingOptionsKey(null)
-        // Sync the active priority level cache when the user
-        // edits `priority.options`. Other property keys are untouched.
-        if (key === 'priority' && updated.options != null) {
-          try {
-            const parsed: unknown = JSON.parse(updated.options)
-            if (Array.isArray(parsed)) {
-              const levels = parsed.filter((v): v is string => typeof v === 'string')
-              if (levels.length > 0) setPriorityLevels(levels)
-            }
-          } catch (parseErr) {
-            // Server already accepted the payload; the cache just won't
-            // update. Log so silent drift doesn't mask real bugs.
-            logger.warn(
-              'PropertyDefinitionsList',
-              'Could not parse saved priority options after successful update',
-              { options: updated.options },
-              parseErr,
-            )
-          }
-        }
       } catch (err) {
         // See loadDefinitions above — unified error reporting.
         reportIpcError('PropertyDefinitionsList', 'property.errorUpdate', err, t, { key })
@@ -290,22 +268,18 @@ export function PropertyDefinitionsList(): React.ReactElement {
                 <ListItem key={def.key}>
                   <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
                   <Badge tone="secondary">{def.value_type}</Badge>
-                  {def.value_type === 'select' && LOCKED_PROPERTY_OPTIONS.has(def.key) && (
+                  {def.builtin && (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <span
-                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground"
-                          data-testid={`locked-options-${def.key}`}
-                          title={t('propertiesView.optionsLockedTitle')}
+                          className="inline-flex items-center text-muted-foreground"
+                          data-testid={`builtin-lock-${def.key}`}
                         >
-                          <Lock
-                            className="h-3 w-3"
-                            aria-label={t('propertiesView.optionsLockedTitle')}
-                          />
-                          {t('propertiesView.optionsLocked')}
+                          <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span className="sr-only">{t('propertiesView.builtinLockLabel')}</span>
                         </span>
                       </TooltipTrigger>
-                      <TooltipContent>{t('propertiesView.optionsLockedTooltip')}</TooltipContent>
+                      <TooltipContent>{t('propertiesView.builtinLockTooltip')}</TooltipContent>
                     </Tooltip>
                   )}
                   {def.key === 'todo_state' && (
@@ -325,7 +299,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
                       </TooltipContent>
                     </Tooltip>
                   )}
-                  {def.value_type === 'select' && !LOCKED_PROPERTY_OPTIONS.has(def.key) && (
+                  {def.value_type === 'select' && !def.builtin && (
                     <Popover
                       open={editingOptionsKey === def.key}
                       onOpenChange={(open) => {
@@ -380,11 +354,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
                     </Popover>
                   )}
                   <div className="flex-1" />
-                  {NON_DELETABLE_PROPERTIES.has(def.key) ? (
-                    <Badge tone="outline" className="shrink-0 text-xs text-muted-foreground">
-                      {t('propertiesView.builtIn')}
-                    </Badge>
-                  ) : (
+                  {!def.builtin && (
                     <IconButton
                       variant="ghost"
                       size="icon-xs"

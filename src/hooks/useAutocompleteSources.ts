@@ -11,18 +11,18 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useFailedOnce } from '@/hooks/useFailedOnce'
 import { useGenerationGuard } from '@/hooks/useGenerationGuard'
-import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import { isCancellation, unwrap } from '@/lib/app-error'
 import type { AutocompleteItem } from '@/lib/autocomplete-item'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { getPathHistory } from '@/lib/path-history'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 import {
   ensurePropertyKeysInvalidationListener,
   propertyKeysQueryFn,
@@ -58,6 +58,8 @@ const TAG_LIMIT = 20
 
 /** Stable empty-array reference for the propKey list before it resolves. */
 const EMPTY: string[] = []
+/** The priority levels the filter parser accepts, plus `none` as the cycle has. */
+const PRIORITY_VALUES: readonly string[] = [...PRIORITY_LEVELS, 'none']
 
 export interface UseAutocompleteSourcesArgs {
   anchor: AutocompleteAnchor
@@ -172,14 +174,6 @@ export function useAutocompleteSources(
   const surfaceFailureOnce = useFailedOnce()
   const { t } = useTranslation()
   const tagDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // DOC-A7 follow-up — priority autocomplete values must track the
-  // user-configurable priority levels (the source of truth), NOT a stale
-  // hardcoded `A/B/C`. The filter parser + chips use the numeric
-  // `DEFAULT_PRIORITY_LEVELS` (`1`/`2`/`3`), so suggesting `A/B/C` offered
-  // values that never matched. `none` is appended to mirror the cycle.
-  const priorityLevels = usePriorityLevels()
-  const priorityValues = useMemo(() => [...priorityLevels, 'none'], [priorityLevels])
 
   // ── PropKey invalidation wiring ───────────────────────────────────
   // The fetch itself is driven by the `useQuery` above (enabled while the
@@ -299,7 +293,7 @@ export function useAutocompleteSources(
     }
     case 'priority':
     case 'notPriority': {
-      return { items: projectStatic(priorityValues, anchor.query), loading: false }
+      return { items: projectStatic(PRIORITY_VALUES, anchor.query), loading: false }
     }
     case 'due':
     case 'scheduled': {

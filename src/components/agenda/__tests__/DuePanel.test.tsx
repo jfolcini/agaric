@@ -24,7 +24,6 @@ import { axe } from 'vitest-axe'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { clearProjectedCache } from '@/hooks/useDuePanelData'
 import { t } from '@/lib/i18n'
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 // #4412 — `listBlocks` / `batchResolve` / `queryByProperty` retired their
 // hand-written wrappers; the hook calls `commands.*` and unwraps the `Result`
@@ -321,42 +320,27 @@ describe('DuePanel', () => {
     expect(items[3]).toHaveTextContent('no priority')
   })
 
-  // #1522 — DuePanel must sort within a group by the *configurable* priority
-  // rank (`priorityRank` from `@/lib/priority-levels`), not the hardcoded
-  // legacy 1/2/3 ordering. With custom levels configured as ['high','low'],
-  // a 'high' block must sort above a 'low' block. Under the old `priorityKey`
-  // helper both values were unknown → 4, so the original list order would have
-  // been preserved (here that would put 'low first' before 'high second').
-  describe('configurable priority sort (#1522)', () => {
-    afterEach(() => {
-      __resetPriorityLevelsForTests()
+  // #5841 — a level from before the levels were fixed sorts after the levels.
+  it('sorts an out-of-range priority after the levels', async () => {
+    mockedListBlocks.mockResolvedValue({
+      // Listed out-of-range first, so a no-op sort would keep that order.
+      items: [
+        makeBlock({ id: 'B1', todo_state: 'TODO', priority: 'P0', content: 'legacy priority' }),
+        makeBlock({ id: 'B2', todo_state: 'TODO', priority: '3', content: 'level priority' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
     })
 
-    it('sorts within group by configurable priority rank, not legacy 1/2/3', async () => {
-      // Custom levels: 'high' (rank 0) outranks 'low' (rank 1).
-      setPriorityLevels(['high', 'low'])
+    render(<DuePanel date="2025-06-15" />)
 
-      mockedListBlocks.mockResolvedValue({
-        // Intentionally listed low-first so a no-op sort would keep that order.
-        items: [
-          makeBlock({ id: 'B1', todo_state: 'TODO', priority: 'low', content: 'low priority' }),
-          makeBlock({ id: 'B2', todo_state: 'TODO', priority: 'high', content: 'high priority' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+    await screen.findByText(t('duePanel.header', { count: 2 }))
 
-      render(<DuePanel date="2025-06-15" />)
-
-      await screen.findByText(t('duePanel.header', { count: 2 }))
-
-      const items = screen.getAllByText(/(high|low) priority/)
-      expect(items).toHaveLength(2)
-      // Configurable rank: 'high' (rank 0) sorts above 'low' (rank 1).
-      expect(items[0]).toHaveTextContent('high priority')
-      expect(items[1]).toHaveTextContent('low priority')
-    })
+    const items = screen.getAllByText(/(legacy|level) priority/)
+    expect(items).toHaveLength(2)
+    expect(items[0]).toHaveTextContent('level priority')
+    expect(items[1]).toHaveTextContent('legacy priority')
   })
 
   // 5. Shows loading skeleton during initial load

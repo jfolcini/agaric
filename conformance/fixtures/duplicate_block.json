@@ -325,7 +325,7 @@
       "code": null,
       "error": null,
       "name": "define_a_ref_property",
-      "returns": ["reviewer#value_type=ref#options=null"]
+      "returns": ["reviewer#value_type=ref#options=null#builtin=false"]
     },
     {
       "code": null,

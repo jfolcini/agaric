@@ -1,5 +1,5 @@
 {
-  "description": "#3830 — the two `property_definitions` WRITERS that answer with the row, driven through the command leg (`via: \"command\"`; neither appends an op, so the op log stays empty and `expected` carries only the seeded page). Pins `create_property_def`'s shape validation (bad value_type, bad key) and its INSERT OR IGNORE idempotency — a second create for the same key keeps the FIRST declaration, value_type and all — plus `update_property_def_options`' non-empty-JSON-array check, its select-type-only guard (the seeded text `note`) and its NotFound on an unknown key. Read back through the `list_property_defs` / `get_property_def` steps pinned by #4939. NOT pinned here: `conflicting_existing_values` (the #4399 probe that refuses a declaration which would orphan values the vault already holds under that key) — the mock has no equivalent, and the seed deliberately declares no `block_properties` row under either key. #4710 adds the `url` declaration and a value under it. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
+  "description": "#3830 — the two `property_definitions` WRITERS that answer with the row, driven through the command leg (`via: \"command\"`; neither appends an op, so the op log stays empty and `expected` carries only the seeded page). Pins `create_property_def`'s shape validation (bad value_type, bad key) and its INSERT OR IGNORE idempotency — a second create for the same key keeps the FIRST declaration, value_type and all — plus `update_property_def_options`' non-empty-JSON-array check, its select-type-only guard (the seeded text `note`) and its NotFound on an unknown key. #5841: every write to a built-in definition — create, options edit, delete — is refused with `BuiltinPropertyLocked`, and the listing carries the built-ins marked `builtin`. Read back through the `list_property_defs` / `get_property_def` steps pinned by #4939. NOT pinned here: `conflicting_existing_values` (the #4399 probe that refuses a declaration which would orphan values the vault already holds under that key) — the mock has no equivalent, and the seed deliberately declares no `block_properties` row under either key. #4710 adds the `url` declaration and a value under it. Re-author `expected` / `expected_ops` / `expected_queries` via CONFORMANCE_UPDATE=1.",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -51,13 +51,13 @@
       "code": null,
       "error": null,
       "name": "create_select_def",
-      "returns": ["priority_level#value_type=select#options=[\"low\",\"high\"]"]
+      "returns": ["priority_level#value_type=select#options=[\"low\",\"high\"]#builtin=false"]
     },
     {
       "code": null,
       "error": null,
       "name": "create_existing_def_keeps_first",
-      "returns": ["priority_level#value_type=select#options=[\"low\",\"high\"]"]
+      "returns": ["priority_level#value_type=select#options=[\"low\",\"high\"]#builtin=false"]
     },
     {
       "code": null,
@@ -75,13 +75,15 @@
       "code": null,
       "error": null,
       "name": "create_url_def",
-      "returns": ["homepage#value_type=url#options=null"]
+      "returns": ["homepage#value_type=url#options=null#builtin=false"]
     },
     {
       "code": null,
       "error": null,
       "name": "update_select_options",
-      "returns": ["priority_level#value_type=select#options=[\"low\",\"high\",\"urgent\"]"]
+      "returns": [
+        "priority_level#value_type=select#options=[\"low\",\"high\",\"urgent\"]#builtin=false"
+      ]
     },
     {
       "code": null,
@@ -108,9 +110,21 @@
       "returns": []
     },
     {
-      "code": null,
+      "code": "BuiltinPropertyLocked",
       "error": "validation",
       "name": "delete_a_builtin_def_is_refused",
+      "returns": []
+    },
+    {
+      "code": "BuiltinPropertyLocked",
+      "error": "validation",
+      "name": "create_a_builtin_def_is_refused",
+      "returns": []
+    },
+    {
+      "code": "BuiltinPropertyLocked",
+      "error": "validation",
+      "name": "update_a_builtin_def_options_is_refused",
       "returns": []
     },
     {
@@ -132,7 +146,24 @@
       "error": null,
       "has_more": false,
       "name": "registry_after_writes",
-      "rows": ["homepage#value_type=url#options=null", "note#value_type=text#options=null"],
+      "rows": [
+        "completed_at#value_type=date#options=null#builtin=true",
+        "created_at#value_type=date#options=null#builtin=true",
+        "due_date#value_type=date#options=null#builtin=true",
+        "homepage#value_type=url#options=null#builtin=false",
+        "is_space#value_type=select#options=[\"true\"]#builtin=true",
+        "listStyle#value_type=select#options=[\"bullet\",\"ordered\"]#builtin=true",
+        "note#value_type=text#options=null#builtin=false",
+        "priority#value_type=select#options=[\"1\",\"2\",\"3\"]#builtin=true",
+        "repeat#value_type=text#options=null#builtin=true",
+        "repeat-count#value_type=number#options=null#builtin=true",
+        "repeat-origin#value_type=text#options=null#builtin=true",
+        "repeat-seq#value_type=number#options=null#builtin=true",
+        "repeat-until#value_type=date#options=null#builtin=true",
+        "scheduled_date#value_type=date#options=null#builtin=true",
+        "space#value_type=ref#options=null#builtin=true",
+        "todo_state#value_type=select#options=[\"TODO\",\"DOING\",\"DONE\",\"CANCELLED\"]#builtin=true"
+      ],
       "total_count": null
     },
     {
@@ -140,7 +171,7 @@
       "error": null,
       "has_more": null,
       "name": "note_after_writes",
-      "rows": ["note#value_type=text#options=null"],
+      "rows": ["note#value_type=text#options=null#builtin=false"],
       "total_count": null
     }
   ],
@@ -272,9 +303,35 @@
         "key": "todo_state"
       },
       "command": "delete_property_def",
-      "comment": "A built-in reserved key is not the user's to remove.",
+      "comment": "#5841 — a built-in definition is not the user's to remove.",
+      "expect_code": "BuiltinPropertyLocked",
       "expect_error": "validation",
       "name": "delete_a_builtin_def_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "priority",
+        "options": "[\"P0\",\"1\",\"2\",\"3\"]",
+        "valueType": "select"
+      },
+      "command": "create_property_def",
+      "comment": "#5841 — a built-in key cannot be declared, not even with options of its own.",
+      "expect_code": "BuiltinPropertyLocked",
+      "expect_error": "validation",
+      "name": "create_a_builtin_def_is_refused",
+      "via": "command"
+    },
+    {
+      "args": {
+        "key": "priority",
+        "options": "[\"P0\",\"1\",\"2\",\"3\"]"
+      },
+      "command": "update_property_def_options",
+      "comment": "#5841 — the priority levels are fixed; editing their options is refused.",
+      "expect_code": "BuiltinPropertyLocked",
+      "expect_error": "validation",
+      "name": "update_a_builtin_def_options_is_refused",
       "via": "command"
     },
     {
@@ -301,7 +358,7 @@
     {
       "args": {},
       "command": "list_property_defs",
-      "comment": "The whole registry after the ops: `note` survives (its delete was refused for the live row) and `priority_level` is gone.",
+      "comment": "The whole registry after the ops: `note` survives (its delete was refused for the live row), `priority_level` is gone, and the built-ins are unchanged.",
       "name": "registry_after_writes"
     },
     {

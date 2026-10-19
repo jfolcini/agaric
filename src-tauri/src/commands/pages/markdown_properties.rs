@@ -34,14 +34,7 @@ impl PropertyLines {
             sqlx::query!(r#"SELECT key AS "key!", value_type, options FROM property_definitions"#)
                 .fetch_all(&mut *conn)
                 .await?;
-        let mut spellings: HashMap<String, Vec<String>> = HashMap::new();
-        for row in &rows {
-            spellings
-                .entry(import::fold_property_key(&row.key))
-                .or_default()
-                .push(row.key.clone());
-        }
-        let declarations = rows
+        let declarations: HashMap<String, PropertyDeclaration> = rows
             .into_iter()
             .map(|row| {
                 let declaration = PropertyDeclaration {
@@ -50,7 +43,19 @@ impl PropertyLines {
                 };
                 (row.key, declaration)
             })
+            .chain(
+                agaric_store::op::BUILTIN_PROPERTY_DEFS
+                    .iter()
+                    .map(|def| (def.key.to_owned(), def.into())),
+            )
             .collect();
+        let mut spellings: HashMap<String, Vec<String>> = HashMap::new();
+        for key in declarations.keys() {
+            spellings
+                .entry(import::fold_property_key(key))
+                .or_default()
+                .push(key.clone());
+        }
         Ok(Self {
             mode,
             declarations,
@@ -78,7 +83,7 @@ impl PropertyLines {
     }
 
     /// The key `typed` names (D13): the one definition it folds to, the
-    /// reserved keys' included (migration 0014 declares them). Two that fold
+    /// built-in ones included. Two that fold
     /// alike are never guessed between, and a key none folds to is a custom
     /// key: both stay as typed.
     pub(super) fn canonical_key(&self, typed: &str) -> String {
@@ -179,10 +184,7 @@ impl PropertyLines {
             agaric_engine::recurrence::validate_repeat_rule(value).map_err(refusal)?;
         }
         let value = match (self.mode, key) {
-            (PropertyWrite::Import, "priority") => import_priority_value(
-                value,
-                declaration.as_ref().and_then(|d| d.options.as_deref()),
-            ),
+            (PropertyWrite::Import, "priority") => import_priority_value(value),
             _ => value.to_string(),
         };
         let args = if value_type == Some("ref") {
@@ -359,13 +361,8 @@ pub(crate) async fn read_typed_ref(
     key: &str,
     text: String,
 ) -> Result<(Option<String>, Option<String>), AppError> {
-    let declared = sqlx::query!(
-        "SELECT value_type, options FROM property_definitions WHERE key = ?",
-        key,
-    )
-    .fetch_optional(&mut *conn)
-    .await?;
-    if declared.is_none_or(|row| row.value_type != "ref") {
+    let declared = agaric_engine::block_ops::property_declaration(&mut *conn, key).await?;
+    if declared.is_none_or(|declaration| declaration.value_type != "ref") {
         return Ok((Some(text), None));
     }
     let block = BlockId::from_trusted(block_id);

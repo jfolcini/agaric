@@ -41,7 +41,7 @@ import type { BacklinkFilter } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { getPriorityLevels } from '@/lib/priority-levels'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 import { requireActiveScope } from '@/lib/space-scope'
 import { TASK_STATES } from '@/lib/task-states'
 import { useSpaceStore } from '@/stores/space'
@@ -90,7 +90,7 @@ function buildStatusFilter(s: BuildState): BuildResult {
 
 function buildPriorityFilter(s: BuildState): BuildResult {
   if (s.priorityValue === 'none') {
-    return { filter: noneOf(getPriorityLevels().map((level) => ({ type: 'Priority', level }))) }
+    return { filter: noneOf(PRIORITY_LEVELS.map((level) => ({ type: 'Priority', level }))) }
   }
   return { filter: { type: 'Priority', level: s.priorityValue } }
 }

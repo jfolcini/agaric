@@ -16,9 +16,8 @@ import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 
 /**
- * Display label for a priority level. priority levels are
- * user-configurable; the label is always `P{level}` so any string key
- * (numeric or alpha) renders correctly.
+ * Display label for a priority level: `P{level}`, so a level from before the
+ * levels were fixed (#5841), which can be any string, renders too.
  */
 export function priorityLabel(priority: string): string {
   return `P${priority}`

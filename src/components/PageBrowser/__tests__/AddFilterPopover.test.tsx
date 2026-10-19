@@ -13,7 +13,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makePageHeading } from '@/__tests__/fixtures'
@@ -25,11 +25,7 @@ import {
 } from '@/components/AdvancedQuery/HasParentMatchingEditor'
 import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import type { FilterPrimitive } from '@/lib/bindings'
-import {
-  __resetPriorityLevelsForTests,
-  DEFAULT_PRIORITY_LEVELS,
-  setPriorityLevels,
-} from '@/lib/priority-levels'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -54,16 +50,6 @@ async function openPopover(user: ReturnType<typeof userEvent.setup>): Promise<HT
 }
 
 describe('AddFilterPopover', () => {
-  // E1 — Priority values are driven by the user-configurable priority levels;
-  // reset the module-level store before/after each test so a custom-level test
-  // can't leak into the default-level assertions.
-  beforeEach(() => {
-    __resetPriorityLevelsForTests()
-  })
-  afterEach(() => {
-    __resetPriorityLevelsForTests()
-  })
-
   it('renders both filter category groups when opened', async () => {
     const user = userEvent.setup()
     render(<AddFilterPopover onAddFilter={vi.fn()} />)
@@ -171,34 +157,22 @@ describe('AddFilterPopover', () => {
     })
   })
 
-  // E1 — the offered Priority values are driven by `usePriorityLevels()` (the
-  // user-configurable levels), NOT a hardcoded `A/B/C`. Out of the box the
-  // levels are `1/2/3` (`DEFAULT_PRIORITY_LEVELS`); a level button emits that
-  // exact string so the backend `b.priority = ?` match succeeds.
-  it('offers exactly the configured priority levels (default 1/2/3)', async () => {
+  // E1 — the offered Priority values are `PRIORITY_LEVELS`, NOT a hardcoded
+  // `A/B/C`; a level button emits that exact string so the backend
+  // `b.priority = ?` match succeeds.
+  it('offers exactly the priority levels 1/2/3', async () => {
     const user = userEvent.setup()
     render(<AddFilterPopover onAddFilter={vi.fn()} />)
     await openPopover(user)
 
-    for (const level of DEFAULT_PRIORITY_LEVELS) {
+    for (const level of PRIORITY_LEVELS) {
       expect(screen.getByRole('button', { name: level })).toBeInTheDocument()
     }
     // The legacy hardcoded A/B/C must no longer be offered.
     expect(screen.queryByRole('button', { name: 'A' })).not.toBeInTheDocument()
   })
 
-  it('reflects custom priority levels when reconfigured', async () => {
-    setPriorityLevels(['P0', 'P1'])
-    const user = userEvent.setup()
-    render(<AddFilterPopover onAddFilter={vi.fn()} />)
-    await openPopover(user)
-
-    expect(screen.getByRole('button', { name: 'P0' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'P1' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '3' })).not.toBeInTheDocument()
-  })
-
-  it('emits a Priority primitive carrying the configured level value', async () => {
+  it('emits a Priority primitive carrying the level value', async () => {
     const user = userEvent.setup()
     const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
     render(<AddFilterPopover onAddFilter={onAddFilter} />)
@@ -772,7 +746,13 @@ describe('AddFilterPopover', () => {
         mockInvokeCommands({
           list_property_defs: () => ({
             items: [
-              { key, value_type: valueType, options: null, created_at: '2026-01-01T00:00:00Z' },
+              {
+                key,
+                value_type: valueType,
+                options: null,
+                created_at: '2026-01-01T00:00:00Z',
+                builtin: false,
+              },
             ],
             next_cursor: null,
             has_more: false,
@@ -887,6 +867,7 @@ describe('AddFilterPopover', () => {
                 value_type: 'ref',
                 options: null,
                 created_at: '2026-01-01T00:00:00Z',
+                builtin: false,
               },
             ],
             next_cursor: null,
@@ -949,12 +930,14 @@ describe('AddFilterPopover', () => {
                 value_type: 'text',
                 options: null,
                 created_at: '2026-01-01T00:00:00Z',
+                builtin: false,
               },
               {
                 key: 'estimate',
                 value_type: 'number',
                 options: null,
                 created_at: '2026-01-01T00:00:00Z',
+                builtin: false,
               },
             ],
             next_cursor: null,
@@ -1039,12 +1022,14 @@ describe('AddFilterPopover', () => {
                 value_type: 'number',
                 options: null,
                 created_at: '2026-01-01T00:00:00Z',
+                builtin: false,
               },
               {
                 key: 'deadline',
                 value_type: 'date',
                 options: null,
                 created_at: '2026-01-01T00:00:00Z',
+                builtin: false,
               },
             ],
             next_cursor: null,
@@ -1180,6 +1165,7 @@ describe('AddFilterPopover', () => {
                 value_type: 'ref',
                 options: null,
                 created_at: '2026-01-01T00:00:00Z',
+                builtin: false,
               },
             ],
             next_cursor: null,

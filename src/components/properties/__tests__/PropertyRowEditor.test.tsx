@@ -17,7 +17,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlockRow, makePageHeading, withOps } from '@/__tests__/fixtures'
@@ -29,7 +29,6 @@ import type {
   PropertyRow,
   WithOps,
 } from '@/lib/bindings'
-import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -88,6 +87,7 @@ function makeDef(key: string, valueType: string, options?: string): PropertyDefi
     value_type: valueType,
     options: options ?? null,
     created_at: '2026-01-01T00:00:00Z',
+    builtin: false,
   }
 }
 
@@ -108,7 +108,6 @@ const savedRow: WithOps<BlockRow> = withOps(makeBlockRow({ id: 'BLOCK_1' }))
 
 beforeEach(() => {
   vi.clearAllMocks()
-  __resetPriorityLevelsForTests()
   // b1 — the ref picker's `list_all_pages_in_space` is required-active;
   // seed an active space so opening the picker dispatches instead of
   // short-circuiting to an empty list.
@@ -117,10 +116,6 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
-})
-
-afterEach(() => {
-  __resetPriorityLevelsForTests()
 })
 
 describe('PropertyRowEditor rendering', () => {
@@ -1380,107 +1375,24 @@ describe('PropertyRowEditor ref picker', () => {
     })
   })
 
-  // Todo_state's options are locked — the edit-options button must
-  // not appear on the block-level property editor either. Keeps
-  // `property_definitions.todo_state.options` in lockstep with TASK_CYCLE.
-  describe('locked options for todo_state', () => {
-    it('does NOT render the edit options button for todo_state', () => {
+  // #5841 — a built-in's options are fixed, so the row offers no editor for them.
+  describe('built-in definitions', () => {
+    it('offers no edit options for a built-in select', () => {
       render(
         <PropertyRowEditor
           blockId="BLOCK_1"
-          prop={makeProp('todo_state', { value_text: 'TODO' })}
-          def={makeDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')}
+          prop={makeProp('listStyle', { value_text: 'bullet' })}
+          def={{ ...makeDef('listStyle', 'select', '["bullet","ordered"]'), builtin: true }}
           onSave={vi.fn()}
         />,
       )
 
       expect(
-        screen.queryByLabelText(t('pageProperty.editOptionsLabel', { key: 'todo_state' })),
+        screen.queryByLabelText(t('pageProperty.editOptionsLabel', { key: 'listStyle' })),
       ).not.toBeInTheDocument()
     })
 
-    it('renders a locked indicator for todo_state with accessible tooltip copy', () => {
-      render(
-        <PropertyRowEditor
-          blockId="BLOCK_1"
-          prop={makeProp('todo_state', { value_text: 'TODO' })}
-          def={makeDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')}
-          onSave={vi.fn()}
-        />,
-      )
-
-      const locked = screen.getByTestId('locked-options-todo_state')
-      expect(locked).toHaveTextContent(t('propertiesView.optionsLocked'))
-    })
-
-    it('priority (not locked yet,) still shows the edit options button', () => {
-      render(
-        <PropertyRowEditor
-          blockId="BLOCK_1"
-          prop={makeProp('priority', { value_text: '1' })}
-          def={makeDef('priority', 'select', '["1","2","3"]')}
-          onSave={vi.fn()}
-        />,
-      )
-
-      expect(
-        screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'priority' })),
-      ).toBeInTheDocument()
-    })
-
-    it('renders without a11y violations when todo_state is locked', async () => {
-      const { container } = render(
-        <PropertyRowEditor
-          blockId="BLOCK_1"
-          prop={makeProp('todo_state', { value_text: 'TODO' })}
-          def={makeDef('todo_state', 'select', '["TODO","DOING","DONE","CANCELLED"]')}
-          onSave={vi.fn()}
-        />,
-      )
-
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
-  })
-
-  // Saving options on the `priority` definition must refresh the
-  // shared priority-levels cache from the block-level editor too.
-  describe('priority level refresh', () => {
-    it('updates getPriorityLevels() after saving new priority options', async () => {
-      const user = userEvent.setup()
-      stubInvoke({
-        update_property_def_options: () => makeDef('priority', 'select', '["1","2","3","4"]'),
-      })
-
-      render(
-        <PropertyRowEditor
-          blockId="BLOCK_1"
-          prop={makeProp('priority', { value_text: '1' })}
-          def={makeDef('priority', 'select', '["1","2","3"]')}
-          onSave={vi.fn()}
-        />,
-      )
-
-      await user.click(
-        screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'priority' })),
-      )
-
-      const input = screen.getByLabelText(t('pageProperty.newOptionLabel'))
-      await user.type(input, '4')
-      await user.click(screen.getByLabelText(t('pageProperty.addOptionLabel')))
-      await user.click(screen.getByRole('button', { name: t('pageProperty.saveOptionsButton') }))
-
-      await waitFor(() => {
-        expect(getPriorityLevels()).toEqual(['1', '2', '3', '4'])
-      })
-    })
-
-    it('does not refresh priority levels when editing a non-priority key', async () => {
-      const user = userEvent.setup()
-      stubInvoke({
-        update_property_def_options: () => makeDef('stage', 'select', '["x","y","z"]'),
-      })
-
+    it("offers edit options for a user's select", () => {
       render(
         <PropertyRowEditor
           blockId="BLOCK_1"
@@ -1490,20 +1402,9 @@ describe('PropertyRowEditor ref picker', () => {
         />,
       )
 
-      await user.click(screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })))
-
-      const input = screen.getByLabelText(t('pageProperty.newOptionLabel'))
-      await user.type(input, 'z')
-      await user.click(screen.getByLabelText(t('pageProperty.addOptionLabel')))
-      await user.click(screen.getByRole('button', { name: t('pageProperty.saveOptionsButton') }))
-
-      await waitFor(() => {
-        expect(mockedInvoke).toHaveBeenCalledWith('update_property_def_options', {
-          key: 'stage',
-          options: '["x","y","z"]',
-        })
-      })
-      expect(getPriorityLevels()).toEqual(['1', '2', '3'])
+      expect(
+        screen.getByLabelText(t('pageProperty.editOptionsLabel', { key: 'stage' })),
+      ).toBeInTheDocument()
     })
   })
 })

@@ -726,6 +726,9 @@ pub struct PropertyDefinition {
     pub value_type: String,
     pub options: Option<String>, // JSON array string for select types
     pub created_at: String,
+    /// A built-in definition (#5841): fixed in code, never stored, and refused
+    /// by every definition write.
+    pub builtin: bool,
 }
 
 // ---------------------------------------------------------------------------

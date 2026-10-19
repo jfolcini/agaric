@@ -263,25 +263,17 @@ export const properties: Record<string, string> = {
   'propertiesView.deleted': 'Property definition deleted',
   'propertiesView.created': 'Property definition created',
   'propertiesView.editOptions': 'Edit options',
-  'propertiesView.taskStates': 'Task States',
-  'propertiesView.taskStatesDesc':
-    'Customize the task state cycle. Click a block checkbox to cycle through these states.',
-  'propertiesView.addTaskState': 'New state (e.g., CANCELLED)',
-  'propertiesView.add': 'Add',
-  'propertiesView.taskStatesReload': 'Reload the page to apply changes.',
   'propertiesView.duplicateKey': 'A property with this key already exists',
   'propertiesView.deadlineWarning': 'Deadline warning',
   'propertiesView.deadlineWarningDesc':
     "Show tasks due within this many days in the Agenda's Upcoming list. 0 turns it off.",
-  'propertiesView.builtIn': 'Built-in',
+  'propertiesView.builtinLockLabel': 'Built in',
+  'propertiesView.builtinLockTooltip':
+    "Built-in properties are the same in every vault. They can't be edited or deleted.",
   'propertiesView.clearSearch': 'Clear search',
   'propertiesView.deleteTooltip': 'Delete property',
   'propertiesView.editOptionsTooltip': 'Edit options',
   'propertiesView.noFilterResults': 'No properties match your search',
-  'propertiesView.optionsLocked': 'Locked',
-  'propertiesView.optionsLockedTitle': 'Task state cycle is fixed and not editable',
-  'propertiesView.optionsLockedTooltip':
-    'The TODO state cycle is fixed at TODO → DOING → DONE → CANCELLED. Options cannot be edited.',
   'propertiesView.taskCycleHelpLabel': 'Task cycle help',
   'propertiesView.taskCycleHelpContent':
     'Task states cycle in a fixed order: TODO → DOING → DONE → CANCELLED → none. The order puts the common terminal (DONE) immediately after work begins (DOING); CANCELLED is the abandon-without-completing escape hatch at the end.',

@@ -22,9 +22,9 @@ import { enUS } from 'date-fns/locale/en-US'
 import { utf8ToBase64Url } from '@/lib/base64url'
 import type { AppError, PageResponse, PageSort, commands } from '@/lib/bindings'
 import { ulidToDate } from '@/lib/format'
+import { BUILTIN_PROPERTY_DEFS } from '@/lib/property-save-utils'
 import { pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
 import { compareUtf8Bytes, foldAsciiUppercase } from '@/lib/sqlite-collation'
-import { TASK_STATES } from '@/lib/task-states'
 import {
   type MockLinkEdge,
   classifyLinkKind,
@@ -396,31 +396,37 @@ export function invalidOperationRejection(message: string): Error & AppError {
 }
 
 /**
- * #3091 — mirror the backend's reserved-key value VALIDATION (NOT
- * normalization: `validate_reserved_property_value` in
- * `commands/properties.rs` and `validate_set_property` in `agaric-store/op.rs`
- * only validate — they never rewrite casing or reformat dates, so the mock must
- * not either). Throws a `validation` rejection when:
- *   1. a `todo_state` value is outside its option set, matched
- *      CASE-SENSITIVELY (the backend's `defaults.contains(&value)` /
- *      `property_definitions.options` membership check — a lowercase `done`
- *      is REJECTED, never silently upper-cased);
- *   2. a reserved DATE key (`due_date` / `scheduled_date`) or `todo_state`
- *      carries an empty/whitespace-only value (`set_property.value_date.empty`
- *      / `set_property.value_text.empty`).
- *
- * `priority` is intentionally NOT membership-validated here: its option set is
- * user-configurable (`set_priority_levels`), so the valid set depends on the
- * live `property_definitions` row when one exists. The backend DOES fall back
- * to a fixed `["1","2","3"]` when no definition row is present (same shape as
- * the todo_state fallback), so the mock is knowingly PERMISSIVE for priority:
- * enforcing the fixed fallback would false-fail tests that configure custom
- * levels without seeding a definition row. The mock enforces `todo_state`
- * membership (its canonical task-state defaults are stable) and non-empty values,
- * and leaves `priority` values unrestricted.
+ * The definition of `key` as the backend's `property_declaration` reads it:
+ * the built-in (#5841), marked `builtin`, else the mock's user row.
  */
-const TODO_STATE_DEFAULTS: readonly string[] = TASK_STATES
+export function propertyDefinition(key: string): Record<string, unknown> | undefined {
+  const builtin = BUILTIN_PROPERTY_DEFS.find((def) => def.key === key)
+  if (builtin) {
+    return {
+      key: builtin.key,
+      value_type: builtin.value_type,
+      options: builtin.options && JSON.stringify(builtin.options),
+      created_at: '2026-01-01T00:00:00.000Z',
+      builtin: true,
+    }
+  }
+  const row = propertyDefs.get(key)
+  return row && { ...row, builtin: false }
+}
 
+/**
+ * #3091 — mirror the backend's reserved-key value VALIDATION (NOT
+ * normalization: `validate_property_value` in `agaric-engine/block_ops.rs` and
+ * `validate_set_property` in `agaric-store/op.rs` only validate — they never
+ * rewrite casing or reformat dates, so the mock must not either). Throws a
+ * `validation` rejection when:
+ *   1. a `todo_state` or `priority` value is outside its built-in options
+ *      (#5841), matched CASE-SENSITIVELY — a lowercase `done` is REJECTED,
+ *      never silently upper-cased;
+ *   2. a reserved DATE key (`due_date` / `scheduled_date`), `todo_state` or
+ *      `priority` carries an empty/whitespace-only value
+ *      (`set_property.value_date.empty` / `set_property.value_text.empty`).
+ */
 export function assertValidReservedPropertyValue(
   key: string,
   channel: 'value_text' | 'value_date',
@@ -435,22 +441,14 @@ export function assertValidReservedPropertyValue(
     }
     return
   }
-  if (key !== 'todo_state') return
+  if (key !== 'todo_state' && key !== 'priority') return
   if (value.trim() === '') {
     throw validationRejection('set_property.value_text.empty')
   }
-  // Validate against the seeded definition's options if present, else the
-  // built-in task-state defaults (the `validate_reserved_property_value`
-  // fallback the mock's definition-less store always lands on).
-  const def = propertyDefs.get('todo_state')
-  const rawOptions = def?.['value_type'] === 'select' ? (def['options'] as string | null) : null
-  const options =
-    rawOptions !== null && rawOptions !== undefined
-      ? (JSON.parse(rawOptions) as string[])
-      : TODO_STATE_DEFAULTS
+  const options = BUILTIN_PROPERTY_DEFS.find((def) => def.key === key)?.options ?? []
   if (!options.includes(value)) {
     throw validationRejection(
-      `todo_state '${value}' is not in allowed options: ${options.join(', ')}`,
+      `Property '${key}' value '${value}' is not in allowed options: ${options.join(', ')}`,
     )
   }
 }
@@ -522,7 +520,7 @@ export function assertValidSetPropertyValue(key: string, valueText: string | nul
       message: `repeat rule '${valueText}' is not valid`,
     })
   }
-  const def = propertyDefs.get(key)
+  const def = propertyDefinition(key)
   if (def?.['value_type'] !== 'select') return
   const rawOptions = def['options'] as string | null
   // A NULL options column means "no restriction" — the real backend

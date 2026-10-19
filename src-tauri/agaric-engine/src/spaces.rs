@@ -263,19 +263,6 @@ pub async fn migrate_pages_to_personal_space(
         return Ok(());
     }
 
-    // The `space` definition is seeded by migration 0035_spaces.sql; a
-    // missing row means a broken DB, surfaced before any op is appended.
-    let def = sqlx::query!("SELECT value_type FROM property_definitions WHERE key = 'space'")
-        .fetch_optional(&mut **tx)
-        .await?;
-    if def.is_none() {
-        return Err(AppError::InvalidOperation(
-            "property_definitions row for 'space' is missing — \
-             migration 0035_spaces.sql did not land"
-                .into(),
-        ));
-    }
-
     for page_id in page_ids {
         let payload = OpPayload::SetProperty(SetPropertyPayload {
             block_id: BlockId::from_trusted(page_id),

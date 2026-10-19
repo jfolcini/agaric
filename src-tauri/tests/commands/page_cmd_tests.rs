@@ -2957,13 +2957,6 @@ async fn everything_page(pool: &SqlitePool, mat: &Materializer) -> BlockId {
         insert_block(pool, id, "page", "Twin", None, Some(position)).await;
         assign_to_space(pool, id, TEST_SPACE_ID).await;
     }
-    update_property_def_options_inner(
-        pool,
-        "todo_state".into(),
-        r#"["TODO","DOING","DONE","CANCELLED","WAITING"]"#.into(),
-    )
-    .await
-    .unwrap();
     for (key, value_type) in [
         ("estimate", "number"),
         ("billable", "boolean"),
@@ -3010,9 +3003,9 @@ async fn everything_page(pool: &SqlitePool, mat: &Materializer) -> BlockId {
     set_todo_state_inner(pool, DEV, mat, id(&task), Some("DONE".into()))
         .await
         .unwrap();
-    set_todo_state_inner(pool, DEV, mat, id(&waiting), Some("WAITING".into()))
-        .await
-        .unwrap();
+    // A state from before the task states were fixed (#5841), which no
+    // command writes now.
+    set_task_columns(pool, waiting.as_str(), Some("WAITING"), None, None, None).await;
     set_priority_inner(pool, DEV, mat, id(&task), Some("1".into()))
         .await
         .unwrap();
@@ -3259,8 +3252,8 @@ async fn apply_page_source_reads_a_ref_value_as_an_id_or_a_title() {
 }
 
 /// What the user types is checked against the key's options, as the property
-/// editor checks it; a value a block already held but its key no longer offers
-/// is left alone.
+/// editor checks it; a level a block held from before the priority levels
+/// were fixed (#5841) is left alone.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_checks_only_typed_values_against_their_options() {
     let (pool, _dir) = test_pool().await;
@@ -3268,30 +3261,13 @@ async fn apply_page_source_checks_only_typed_values_against_their_options() {
     let page = dup_page(&pool, &mat, "Options").await;
     let kept = dup_child(&pool, &mat, &page, "kept").await;
     let other = dup_child(&pool, &mat, &page, "other").await;
-    set_property_inner(
-        &pool,
-        DEV,
-        &mat,
-        kept.as_str().into(),
-        "priority".into(),
-        Some("3".into()),
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    update_property_def_options_inner(&pool, "priority".into(), r#"["1","2"]"#.into())
-        .await
-        .unwrap();
     settle(&mat).await;
+    set_task_columns(&pool, kept.as_str(), None, Some("P0"), None, None).await;
     let base = page_source(&pool, &page).await;
     let before = dup_counts(&pool).await;
     let line = format!("- other ^{other}\n");
 
-    let typed = with(&base, &line, &format!("{line}  priority:: 3\n"));
+    let typed = with(&base, &line, &format!("{line}  priority:: P0\n"));
     let refused = save_source(&pool, &mat, &page, &typed, &base).await;
     assert!(
         matches!(refused, Err(AppError::Validation { .. })),
@@ -3310,8 +3286,8 @@ async fn apply_page_source_checks_only_typed_values_against_their_options() {
     );
     assert_eq!(
         dup_storage(&pool, &kept).await[0],
-        r#"columns todo=None priority=Some("3") scheduled=None due=None"#,
-        "the value its key no longer offers stays"
+        r#"columns todo=None priority=Some("P0") scheduled=None due=None"#,
+        "the level from before stays"
     );
 }
 
@@ -5298,8 +5274,8 @@ async fn duplicate_block_points_a_declared_ref_at_the_original_target() {
 }
 
 /// A value accepted when it was written is copied even if its key no longer
-/// offers it: narrowed priority levels or a retired select option must not
-/// make Duplicate fail.
+/// offers it: a priority level from before the levels were fixed (#5841) or a
+/// retired select option must not make Duplicate fail.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn duplicate_block_copies_a_value_its_key_no_longer_offers() {
     let (pool, _dir) = test_pool().await;
@@ -5314,37 +5290,33 @@ async fn duplicate_block_copies_a_value_its_key_no_longer_offers() {
     .await
     .unwrap();
     let original = dup_child(&pool, &mat, &page, "narrowed").await;
-    for (key, value) in [("priority", "3"), ("stage", "final")] {
-        set_property_inner(
-            &pool,
-            DEV,
-            &mat,
-            original.as_str().into(),
-            key.into(),
-            Some(value.into()),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    }
-    update_property_def_options_inner(&pool, "priority".into(), r#"["1","2"]"#.into())
-        .await
-        .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        original.as_str().into(),
+        "stage".into(),
+        Some("final".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     update_property_def_options_inner(&pool, "stage".into(), r#"["draft"]"#.into())
         .await
         .unwrap();
     settle(&mat).await;
+    set_task_columns(&pool, original.as_str(), None, Some("P0"), None, None).await;
 
     let rows = duplicate(&pool, &mat, &original).await;
 
     assert_eq!(
         dup_storage(&pool, &rows[0].id).await,
         vec![
-            r#"columns todo=None priority=Some("3") scheduled=None due=None"#.to_owned(),
+            r#"columns todo=None priority=Some("P0") scheduled=None due=None"#.to_owned(),
             r#"stage text=Some("final") num=None date=None ref=None bool=None"#.to_owned(),
         ],
         "the copy keeps the values its keys have since stopped offering"
@@ -14307,22 +14279,15 @@ async fn export_emits_task_checkbox_and_metadata_property_lines_1916() {
     }
 }
 
-/// #5160 D6 — an Export → Import round trip keeps every task state: the four
-/// written as checkboxes and one written as a `todo_state::` line, and a
-/// block whose text merely looks like a checkbox stays text.
+/// #5160 D6 — an Export → Import round trip keeps every task state, each
+/// written as a checkbox, and a block whose text merely looks like a checkbox
+/// stays text.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_import_round_trip_keeps_every_task_state() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    update_property_def_options_inner(
-        &pool,
-        "todo_state".into(),
-        r#"["TODO","DOING","DONE","CANCELLED","WAITING"]"#.into(),
-    )
-    .await
-    .unwrap();
     const SRC: &str = "01AAAAAAAAAAAAAAAAAATASKRT";
     insert_block(&pool, SRC, "page", "Task Round Trip", None, Some(1)).await;
     assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
@@ -14334,7 +14299,6 @@ async fn export_import_round_trip_keeps_every_task_state() {
         ("DOING", Some("DOING")),
         ("DONE", Some("DONE")),
         ("CANCELLED", Some("CANCELLED")),
-        ("WAITING", Some("WAITING")),
         ("[ ] not a task", None),
         ("[#A] not a priority\nSCHEDULED: <2026-10-01 Thu>", None),
     ];
@@ -14348,7 +14312,6 @@ async fn export_import_round_trip_keeps_every_task_state() {
     let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
     for escaped in [
         "- [ ] \\TODO\n",
-        "- \\WAITING\n  todo_state:: WAITING\n",
         "- \\[ ] not a task\n",
         "- \\[#A] not a priority\n  \\SCHEDULED: <2026-10-01 Thu>\n",
     ] {
@@ -14520,44 +14483,34 @@ async fn import_reads_logseq_task_syntax_into_the_task_columns() {
     mat.shutdown();
 }
 
-/// #5160 D7 — `[#B]` is the SECOND option of the `priority` definition, whatever
-/// the user named it.
+/// #5160 D7 — `[#B]` is the SECOND built-in priority level, `2`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_maps_an_org_priority_letter_to_the_definitions_option() {
+async fn import_maps_an_org_priority_letter_to_its_level() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    for (options, expected, title) in [
-        (r#"["High","Medium","Low"]"#, "Medium", "Named"),
-        (r#"["A","B","C"]"#, "B", "Lettered"),
-    ] {
-        update_property_def_options_inner(&pool, "priority".into(), options.into())
-            .await
-            .unwrap();
-        import_markdown_inner(
-            &pool,
-            DEV,
-            &mat,
-            _dir.path(),
-            "- TODO [#B] x\n".into(),
-            Some(format!("{title}.md")),
-            TEST_SPACE_ID.into(),
-            None,
-        )
-        .await
-        .unwrap();
-        settle(&mat).await;
-        let priority: Option<String> = sqlx::query_scalar(
-            "SELECT b.priority FROM blocks b JOIN blocks p ON p.id = b.parent_id \
-             WHERE p.content = ? AND b.deleted_at IS NULL",
-        )
-        .bind(title)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(priority.as_deref(), Some(expected), "{options}");
-    }
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- TODO [#B] x\n".into(),
+        Some("Lettered.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let priority: Option<String> = sqlx::query_scalar(
+        "SELECT b.priority FROM blocks b JOIN blocks p ON p.id = b.parent_id \
+         WHERE p.content = 'Lettered' AND b.deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(priority.as_deref(), Some("2"));
     mat.shutdown();
 }
 

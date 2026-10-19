@@ -766,8 +766,8 @@ describe('run_advanced_query — groupBy cursor is rejected the same way the fla
  * #3863 — cursor byte fidelity for values that are not plain ASCII.
  *
  * The cursor payload carries USER TEXT: the `Title` term is the raw page
- * title (`SORT_COLUMN_GETTERS.title` → `row.content`) and `Priority` is a
- * user-configurable label. The engine encodes
+ * title (`SORT_COLUMN_GETTERS.title` → `row.content`) and `Priority` is
+ * stored text (a level from before #5841 can be any string). The engine encodes
  * `URL_SAFE_NO_PAD.encode(json.as_bytes())` (`src-tauri/agaric-store/src/query/engine.rs:177`) — i.e. the
  * UTF-8 bytes of the JSON. `btoa` cannot do that: it throws
  * `InvalidCharacterError` above U+00FF and silently encodes the LATIN-1 byte

@@ -187,9 +187,5 @@ export type GraphFilterType = (typeof GRAPH_FILTER_TYPES)[number]
 /** Canonical persisted task-state values in user-facing filter order. */
 export { TASK_STATES as GRAPH_STATUS_VALUES } from '@/lib/task-states'
 
-/**
- * Default allowed priority values — kept for back-compat with tests and
- * Code paths that don't yet read the dynamic set. callers now read
- * the live user-configured list via `getPriorityLevels()` directly.
- */
-export const GRAPH_PRIORITY_VALUES = ['1', '2', '3'] as const
+/** The priority values a graph filter allows: the priority levels. */
+export { PRIORITY_LEVELS as GRAPH_PRIORITY_VALUES } from '@/lib/priority-levels'

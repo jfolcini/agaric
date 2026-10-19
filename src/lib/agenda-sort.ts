@@ -1,6 +1,6 @@
 import type { BlockRow } from '@/lib/bindings'
 import { getAppLocaleTag } from '@/lib/date-locale'
-import { getPriorityLevels, priorityRank } from '@/lib/priority-levels'
+import { PRIORITY_LEVELS, priorityRank } from '@/lib/priority-levels'
 import {
   isTodoState,
   TASK_STATE_SORT_ORDER,
@@ -303,17 +303,16 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
 }
 
 /**
- * Group blocks by priority level. Returns groups in level order
- * (configurable via), with the `No priority` key last (renderer
- * translates via t('agenda.noPriority')). Within each group,
- * blocks are sorted by date ASC then state.
+ * Group blocks by priority level. Returns groups in level order, with the
+ * `No priority` key last (renderer translates via t('agenda.noPriority')),
+ * which also holds a level from before the levels were fixed. Within each
+ * group, blocks are sorted by date ASC then state.
  *
- * Index-keyed `CLASS_MAP` matches the first three groups to the
- * destructive / pending / active semantic tokens; level 4+ re-uses the
- * "active" token (same fallback as `priorityColor`).
+ * Index-keyed `INDEX_CLASS` matches the three groups to the destructive /
+ * pending / active semantic tokens.
  */
 export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
-  const levels = getPriorityLevels()
+  const levels = PRIORITY_LEVELS
   const groupLabel = (p: string) => `P${p}`
   const NO_PRIORITY = 'No priority'
 
@@ -345,15 +344,9 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
 
   // `lv` always comes from `levels`: the only call site passes
   // `label.replace(/^P/, '')` where `label` is `` `P${lv}` ``, so the strip is
-  // an exact round-trip and `idx >= 0` always (levels are normalised to
-  // non-empty, deduped strings in priority-levels.ts). The clamped index is
-  // therefore always in range — the `?? ''` is unreachable at runtime and
-  // exists only for `noUncheckedIndexedAccess`, which types a variable tuple
-  // index as `string | undefined`.
-  const classForLevel = (lv: string): string => {
-    const idx = levels.indexOf(lv)
-    return INDEX_CLASS[Math.min(idx, INDEX_CLASS.length - 1)] ?? ''
-  }
+  // an exact round-trip and the index is in range. The `?? ''` exists only
+  // for `noUncheckedIndexedAccess`.
+  const classForLevel = (lv: string): string => INDEX_CLASS[levels.indexOf(lv)] ?? ''
 
   const result: AgendaGroup[] = []
   for (const [label, group] of buckets) {

@@ -1,5 +1,5 @@
 {
-  "description": "#3830 — READ-command differential over the property-definition registry: `list_property_defs` and `get_property_def`. Both were waived as \"registry, not projected block state\" until a fixture could put the same registry on both stacks; `seed.property_defs` is that, and a fixture declaring it declares the WHOLE registry (the Rust seed clears migrations 0011/0014/0016/0035/0103's builtin declarations first, because the mock's map starts empty). The defs are seeded in NON-alphabetical order on purpose: `list_property_defs_inner` is `ORDER BY key ASC`, so the ordered comparison pins the sort rather than insertion order — the divergence this fixture found and fixed in the mock. Every token carries `value_type` and `options`, the whole of what a declaration says; `created_at` is a wall clock and is not comparable. The one op writes `status = todo` through `set_property`, which both stacks gate on the seeded select's `options`, so the declaration is load-bearing rather than decorative — and it is an OP rather than a `seed.properties` entry because the Rust seed writes those through `set_property_inner`, which appends an op_log entry the mock's direct seed write does not (no other fixture uses that section). NOT pinned: pagination (the mock serves every def in one page and ignores `cursor` / `limit`) and the builtin declarations themselves, which `clearMock` wipes from the mock's seed.",
+  "description": "#3830 — READ-command differential over the property-definition registry: `list_property_defs` and `get_property_def`. Both were waived as \"registry, not projected block state\" until a fixture could put the same registry on both stacks; `seed.property_defs` is that, and a fixture declaring it declares the WHOLE set of user rows (the Rust seed clears the migrations' editable seeds first, because the mock's map starts empty). The built-ins (#5841) are constants on both stacks, listed among the rows by key with `builtin: true`. The defs are seeded in NON-alphabetical order on purpose: `list_property_defs_inner` is `ORDER BY key ASC`, so the ordered comparison pins the sort rather than insertion order — the divergence this fixture found and fixed in the mock. Every token carries `value_type`, `options` and `builtin`, the whole of what a declaration says; `created_at` is a wall clock and is not comparable. The one op writes `status = todo` through `set_property`, which both stacks gate on the seeded select's `options`, so the declaration is load-bearing rather than decorative — and it is an OP rather than a `seed.properties` entry because the Rust seed writes those through `set_property_inner`, which appends an op_log entry the mock's direct seed write does not (no other fixture uses that section). NOT pinned: pagination (the mock serves every def in one page and ignores `cursor` / `limit`).",
   "expected": {
     "block_tags": [],
     "blocks": [
@@ -56,8 +56,22 @@
       "has_more": false,
       "name": "property_defs_sorted_by_key",
       "rows": [
-        "estimate#value_type=number#options=null",
-        "status#value_type=select#options=[\"todo\",\"done\"]"
+        "completed_at#value_type=date#options=null#builtin=true",
+        "created_at#value_type=date#options=null#builtin=true",
+        "due_date#value_type=date#options=null#builtin=true",
+        "estimate#value_type=number#options=null#builtin=false",
+        "is_space#value_type=select#options=[\"true\"]#builtin=true",
+        "listStyle#value_type=select#options=[\"bullet\",\"ordered\"]#builtin=true",
+        "priority#value_type=select#options=[\"1\",\"2\",\"3\"]#builtin=true",
+        "repeat#value_type=text#options=null#builtin=true",
+        "repeat-count#value_type=number#options=null#builtin=true",
+        "repeat-origin#value_type=text#options=null#builtin=true",
+        "repeat-seq#value_type=number#options=null#builtin=true",
+        "repeat-until#value_type=date#options=null#builtin=true",
+        "scheduled_date#value_type=date#options=null#builtin=true",
+        "space#value_type=ref#options=null#builtin=true",
+        "status#value_type=select#options=[\"todo\",\"done\"]#builtin=false",
+        "todo_state#value_type=select#options=[\"TODO\",\"DOING\",\"DONE\",\"CANCELLED\"]#builtin=true"
       ],
       "total_count": null
     },
@@ -66,7 +80,7 @@
       "error": null,
       "has_more": null,
       "name": "get_property_def_hit",
-      "rows": ["status#value_type=select#options=[\"todo\",\"done\"]"],
+      "rows": ["status#value_type=select#options=[\"todo\",\"done\"]#builtin=false"],
       "total_count": null
     },
     {
@@ -75,6 +89,14 @@
       "has_more": null,
       "name": "get_property_def_miss",
       "rows": [],
+      "total_count": null
+    },
+    {
+      "cursor": null,
+      "error": null,
+      "has_more": null,
+      "name": "get_builtin_property_def",
+      "rows": ["priority#value_type=select#options=[\"1\",\"2\",\"3\"]#builtin=true"],
       "total_count": null
     }
   ],
@@ -95,7 +117,7 @@
     {
       "args": {},
       "command": "list_property_defs",
-      "comment": "`estimate` before `status`, though the seed declares `status` first: the listing is `ORDER BY key ASC`. The attributes pin the declaration itself — a select's `options` array and the `null` a non-select carries.",
+      "comment": "`estimate` before `status`, though the seed declares `status` first: the listing is `ORDER BY key ASC`, the built-ins merged in by key. The attributes pin the declaration itself — a select's `options` array, the `null` a non-select carries, and whether it is built in.",
       "name": "property_defs_sorted_by_key"
     },
     {
@@ -114,6 +136,14 @@
       "comment": "The other half of the pair: `colour` was never declared, so the lookup misses and the command answers `None` rather than refusing or inventing an undeclared row. Empty on purpose — the previous step's hit is what makes the absence a real distinction instead of a vacuous one.",
       "expect_empty": true,
       "name": "get_property_def_miss"
+    },
+    {
+      "args": {
+        "key": "priority"
+      },
+      "command": "get_property_def",
+      "comment": "#5841 — a built-in key has no row, and the lookup still answers its fixed definition, marked `builtin`.",
+      "name": "get_builtin_property_def"
     }
   ],
   "seed": {

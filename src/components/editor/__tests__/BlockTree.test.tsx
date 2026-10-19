@@ -5442,6 +5442,7 @@ describe('BlockTree leaked-empty-block cleanup', () => {
           value_type: 'text',
           options: null,
           created_at: '0',
+          builtin: false,
         }),
         set_property: async (args) => {
           await answered.promise

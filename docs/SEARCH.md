@@ -145,7 +145,7 @@ Filter-prefix autocomplete works in **regex mode** too: the prefixes are real st
 | Prefix | Source | Notes |
 |---|---|---|
 | `state:` / `not-state:` | Static: `TODO`, `DOING`, `DONE`, `CANCELLED`, `none` | Same vocabulary the parser accepts. |
-| `priority:` / `not-priority:` | The active priority levels (`DEFAULT_PRIORITY_LEVELS` = `1`, `2`, `3`; user-configurable via the `priority` property definition), plus `none` | Same vocabulary the parser accepts. |
+| `priority:` / `not-priority:` | The priority levels (`PRIORITY_LEVELS` = `1`, `2`, `3`), plus `none` | Same vocabulary the parser accepts. |
 | `due:` / `scheduled:` | Static bucket list: `today`, `yesterday`, `overdue`, `this-week`, `this-month`, `next-week`, `older`, `none` | Bucket keywords only — explicit ISO dates and comparison operators aren't suggested. |
 | `tag:#` / `under:#` / `#` | `listTagsByPrefix` IPC (150 ms debounce) | Returns up to 20 tags matching the typed prefix. |
 | `prop:` / `not-prop:` (key side) | Shared property-keys cache — `block_properties` `DISTINCT key`s for the current space | Lazily fetched on first `prop:` open per session+space; invalidates on `block:properties-changed`. |

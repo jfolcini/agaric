@@ -19,19 +19,22 @@ Properties are defined once (key + type + optional configuration like select opt
 
 ## Built-in properties
 
-These ship out of the box and back specific features:
+These back specific features. Their definitions are fixed: the same in every vault, they can't be edited or deleted, and Settings shows them with a lock.
 
 | Key | Type | Used by |
 | --- | --- | --- |
-| `todo_state` | Select (TODO / DOING / CANCELLED / DONE — that order is the cycle) | Editor task cycle; Agenda filter |
+| `todo_state` | Select (TODO / DOING / DONE / CANCELLED — that order is the cycle) | Editor task cycle; Agenda filter |
 | `priority` | Select (1 / 2 / 3) | Editor priority cycle; Agenda filter; visual chip |
 | `due_date` | Date | Agenda Due panel; date-property colour |
 | `scheduled_date` | Date | Agenda Due panel; date-property colour |
 | `completed_at` | Date | Done panel; Agenda filter |
 | `created_at` | Date | Agenda filter; History timestamps |
-| `effort` | Select (15m / 30m / 1h / 2h / 4h / 1d) | Optional task sizing |
-| `assignee` | Text | Optional task ownership |
-| `location` | Text | Optional task context |
+
+The repeat properties below, the list style (`listStyle`: bullet / ordered) and the space keys (`space`, `is_space`) are built in too.
+
+A block that holds a priority level or task state from before these options were fixed keeps it: an out-of-range priority shows a neutral badge and sorts after the three levels, and an unknown task state shows as it is. Writing such a value again is refused.
+
+A new vault also starts with a few ordinary definitions you can edit or delete: `status`, `url`, `effort`, `assignee` and `location`.
 
 ## Repeat properties (recurring tasks)
 
@@ -94,7 +97,7 @@ When a property value changes, downstream surfaces (DuePanel, DonePanel, LinkedR
 
 ## Where to manage definitions
 
-**Settings → Properties** lists every property definition with its type. From there you can create a definition, delete one no block uses, and edit a select key's options as a JSON array. Built-in keys can't be deleted, and `todo_state`'s options are locked. Renaming a key, changing its type, renaming an option and a usage count are not built yet (#5841). The same view is also reachable via the `agaric://settings/properties` deep link.
+**Settings → Properties** lists every property definition with its type. From there you can create a definition, delete one no block uses, and edit a select key's options as a JSON array. A built-in definition shows a lock and offers neither. Renaming a key, changing its type, renaming an option and a usage count are not built yet (#5841). The same view is also reachable via the `agaric://settings/properties` deep link.
 
 ## Pitfalls to know
 

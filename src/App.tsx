@@ -333,9 +333,8 @@ function App() {
   useViewChangeAnnouncer()
 
   // ── (stretch): mount-only IPC hydration ──────────
-  // Boot recovery (orphan-draft flush) and the priority-levels
-  // hydrate the global state from Tauri once at app start. Both are
-  // empty-deps effects with no React state coupling.
+  // Boot recovery (orphan-draft flush) runs once at app start, an
+  // empty-deps effect with no React state coupling.
   useAppBootRecovery()
 
   // ── Degraded-boot signal (#1255) ──────────────────────────────────

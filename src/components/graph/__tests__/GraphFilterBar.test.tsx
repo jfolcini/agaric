@@ -13,7 +13,6 @@ import { canonicalToGraphFilters, type FilterPredicate } from '@/lib/filters/mod
 import type { GraphFilter } from '@/lib/graph-filters'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 import { useSpaceStore } from '@/stores/space'
 
 // Silence the logger.warn calls emitted by readPersistedFilters /
@@ -97,7 +96,6 @@ describe('GraphFilterBar', () => {
 
   beforeEach(() => {
     onFiltersChange = vi.fn<(filters: GraphFilter[]) => void>()
-    __resetPriorityLevelsForTests()
     // Clear persisted filters between tests so localStorage state
     // from an earlier test (or the StatefulHarness write effect) does not
     // leak into the next run.
@@ -105,7 +103,6 @@ describe('GraphFilterBar', () => {
   })
 
   afterEach(() => {
-    __resetPriorityLevelsForTests()
     localStorage.removeItem('agaric:graph-filters')
   })
 
@@ -572,63 +569,6 @@ describe('GraphFilterBar', () => {
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
-    })
-  })
-
-  // Priority filter checkboxes reflect the user-configured level set.
-  describe('priority level subscription', () => {
-    it('renders priority checkboxes for custom user-configured levels', async () => {
-      setPriorityLevels(['High', 'Mid', 'Low'])
-      const user = userEvent.setup()
-      render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
-
-      const dimensionSelect = screen.getByLabelText(t('graph.filter.selectDimension'))
-      await user.selectOptions(dimensionSelect, 'priority')
-
-      // Custom levels without matching i18n keys fall back to the raw key.
-      expect(
-        screen.getByRole('checkbox', { name: 'graph.filter.priorityValue.High' }),
-      ).toBeInTheDocument()
-      expect(
-        screen.getByRole('checkbox', { name: 'graph.filter.priorityValue.Mid' }),
-      ).toBeInTheDocument()
-      expect(
-        screen.getByRole('checkbox', { name: 'graph.filter.priorityValue.Low' }),
-      ).toBeInTheDocument()
-      // The default '1', '2', '3' checkboxes are not rendered.
-      expect(
-        screen.queryByRole('checkbox', { name: t('graph.filter.priorityValue.1') }),
-      ).not.toBeInTheDocument()
-    })
-
-    it('re-renders when levels change via setPriorityLevels after mount', async () => {
-      const user = userEvent.setup()
-      render(<GraphFilterBar filters={[]} onFiltersChange={onFiltersChange} allTags={sampleTags} />)
-
-      const dimensionSelect = screen.getByLabelText(t('graph.filter.selectDimension'))
-      await user.selectOptions(dimensionSelect, 'priority')
-
-      // Defaults: 1/2/3 resolve through i18n to their translated labels.
-      expect(
-        screen.getByRole('checkbox', { name: t('graph.filter.priorityValue.1') }),
-      ).toBeInTheDocument()
-      // Level 5 not present yet.
-      expect(
-        screen.queryByRole('checkbox', { name: 'graph.filter.priorityValue.5' }),
-      ).not.toBeInTheDocument()
-
-      // Live update — subscribe pushes new levels.
-      setPriorityLevels(['1', '2', '3', '4', '5'])
-
-      // Levels 4 and 5 have no i18n keys, so t() returns the raw key.
-      await waitFor(() => {
-        expect(
-          screen.getByRole('checkbox', { name: 'graph.filter.priorityValue.4' }),
-        ).toBeInTheDocument()
-        expect(
-          screen.getByRole('checkbox', { name: 'graph.filter.priorityValue.5' }),
-        ).toBeInTheDocument()
-      })
     })
   })
 

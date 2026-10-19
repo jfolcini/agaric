@@ -289,10 +289,9 @@ describe('BacklinkFilterBuilder', () => {
       ])
     })
 
-    // #2281 item 10 — the backlink Priority vocabulary is now the shared
-    // `usePriorityLevels()` set plus the `none` sentinel, matching the search
-    // `priority:` form (previously a fixed 1/2/3 shortlist). The configured
-    // default levels are 1/2/3, so the offered options are 1/2/3/none.
+    // #2281 item 10 — the backlink Priority vocabulary is the shared
+    // `PRIORITY_LEVELS` set plus the `none` sentinel, matching the search
+    // `priority:` form, so the offered options are 1/2/3/none.
     it('offers the shared priority vocabulary (levels plus `none`)', async () => {
       const user = userEvent.setup()
       renderBuilder()
@@ -308,7 +307,7 @@ describe('BacklinkFilterBuilder', () => {
     })
 
     // Like Status, priority `none` means "no priority set": none of the
-    // configured levels.
+    // levels.
     it('emits "none of the priority levels" for the priority `none` sentinel', async () => {
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()

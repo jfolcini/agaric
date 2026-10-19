@@ -1068,33 +1068,66 @@ async fn list_property_defs_returns_all_ordered() {
         .await
         .unwrap();
 
-    // Paginated; under the default limit all three defs fit on
-    // page 1 (no second page expected).
+    // Paginated; under the default limit the three defs and the built-ins
+    // fit on page 1 (no second page expected).
     let page = list_property_defs_inner(&pool, None, None).await.unwrap();
-    let defs = &page.items;
-    assert_eq!(defs.len(), 3);
-    assert_eq!(defs[0].key, "alpha", "results must be sorted by key");
-    assert_eq!(defs[1].key, "mid");
-    assert_eq!(defs[2].key, "zeta");
+    let user_keys: Vec<&str> = page
+        .items
+        .iter()
+        .filter(|d| !d.builtin)
+        .map(|d| d.key.as_str())
+        .collect();
+    assert_eq!(
+        user_keys,
+        ["alpha", "mid", "zeta"],
+        "results must be sorted by key"
+    );
+    assert_eq!(
+        page.items.len(),
+        3 + agaric_store::op::BUILTIN_PROPERTY_DEFS.len(),
+        "the built-ins are listed with the user's rows"
+    );
     assert!(!page.has_more);
     assert!(page.next_cursor.is_none());
 }
 
+/// #5841 — the built-ins come from the constant, marked `builtin`, between
+/// the seeded user rows in key order; `due` is no longer seeded.
 #[tokio::test]
-async fn list_property_defs_includes_seeded_defaults() {
+async fn list_property_defs_lists_builtins_with_the_seeded_rows_5841() {
     let (pool, _dir) = test_pool().await;
-    // Thread no cursor; seeded defaults fit under the default limit.
     let page = list_property_defs_inner(&pool, None, None).await.unwrap();
-    let defs = &page.items;
-    let keys: Vec<&str> = defs.iter().map(|d| d.key.as_str()).collect();
-    assert!(keys.contains(&"status"), "seeded 'status' must exist");
-    assert!(keys.contains(&"due"), "seeded 'due' must exist");
-    assert!(keys.contains(&"url"), "seeded 'url' must exist");
+    let listed: Vec<(&str, bool)> = page
+        .items
+        .iter()
+        .map(|d| (d.key.as_str(), d.builtin))
+        .collect();
+    let mut expected: Vec<(&str, bool)> = agaric_store::op::BUILTIN_PROPERTY_DEFS
+        .iter()
+        .map(|def| (def.key, true))
+        .chain(
+            ["assignee", "effort", "location", "status", "url"]
+                .into_iter()
+                .map(|key| (key, false)),
+        )
+        .collect();
+    expected.sort_unstable();
+    assert_eq!(listed, expected, "built-ins and seeded rows, by key");
 
-    // Verify status is select-type with correct options
-    let status = defs.iter().find(|d| d.key == "status").unwrap();
+    let status = page.items.iter().find(|d| d.key == "status").unwrap();
     assert_eq!(status.value_type, "select");
     assert!(status.options.is_some());
+
+    let priority = get_property_def_inner(&pool, "priority")
+        .await
+        .unwrap()
+        .expect("priority is built in");
+    assert!(priority.builtin, "get_property_def marks a built-in");
+    assert_eq!(
+        priority.options.as_deref(),
+        Some(r#"["1","2","3"]"#),
+        "the fixed priority levels"
+    );
 }
 
 #[tokio::test]
@@ -1577,10 +1610,9 @@ async fn thin_commands_survive_delete_property_cycle() {
 // strict ordering, no dup; no-cursor first-page; empty fixture →
 // `has_more=false`.
 
-/// Helper: clear seeded migrations and seed `count` deterministic
+/// Helper: clear the seeded rows and seed `count` deterministic
 /// property defs (`m85_def_<NNN>`) so the keyset ordering is
-/// predictable. The default `init_pool` ships ~19 seeded defaults
-/// which would otherwise interleave with the test fixture.
+/// predictable. The built-ins (#5841) still interleave with them.
 async fn seed_m85_property_defs(pool: &sqlx::SqlitePool, count: usize) -> Vec<String> {
     sqlx::query("DELETE FROM property_definitions")
         .execute(pool)
@@ -1626,8 +1658,15 @@ async fn list_property_defs_returns_next_cursor_when_capped_m85() {
 #[tokio::test]
 async fn list_property_defs_walks_pages_correctly_m85() {
     let (pool, _dir) = test_pool().await;
-    // Seed exactly 10 defs; with limit=4 we expect three pages: 4 + 4 + 2.
-    let keys = seed_m85_property_defs(&pool, 10).await;
+    // Seed exactly 10 defs; with the built-ins in between, limit=4 walks
+    // several pages that mix both.
+    let mut keys = seed_m85_property_defs(&pool, 10).await;
+    keys.extend(
+        agaric_store::op::BUILTIN_PROPERTY_DEFS
+            .iter()
+            .map(|def| def.key.to_owned()),
+    );
+    keys.sort_unstable();
 
     let mut walked: Vec<String> = Vec::new();
     let mut cursor: Option<String> = None;
@@ -1653,11 +1692,8 @@ async fn list_property_defs_walks_pages_correctly_m85() {
     }
 
     assert_eq!(
-        walked.len(),
-        keys.len(),
-        "walking all pages must yield exactly {} entries (one per seeded def), got {}",
-        keys.len(),
-        walked.len()
+        walked, keys,
+        "walking all pages yields every seeded def and built-in once, in key order"
     );
 
     // Strictly increasing on key (lexicographic).
@@ -1689,29 +1725,20 @@ async fn list_property_defs_with_no_cursor_returns_first_page_m85() {
     let page = list_property_defs_inner(&pool, None, None).await.unwrap();
     assert_eq!(
         page.items.len(),
-        3,
+        3 + agaric_store::op::BUILTIN_PROPERTY_DEFS.len(),
         "small fixture must fit on the first page under the default limit",
     );
-    assert!(!page.has_more, "no second page expected for 3-row fixture");
+    assert!(
+        !page.has_more,
+        "no second page expected for a small fixture"
+    );
     assert!(page.next_cursor.is_none(), "no cursor when has_more=false");
-    // First page rows must match the seeded keys in monotonic order.
-    let returned: Vec<String> = page.items.iter().map(|r| r.key.clone()).collect();
+    // The user rows must match the seeded keys in monotonic order.
+    let returned: Vec<String> = page
+        .items
+        .iter()
+        .filter(|r| !r.builtin)
+        .map(|r| r.key.clone())
+        .collect();
     assert_eq!(returned, keys, "first page rows must match seed order");
-}
-
-#[tokio::test]
-async fn list_property_defs_empty_result_returns_no_cursor_m85() {
-    let (pool, _dir) = test_pool().await;
-    // Clear seeded defaults so the result truly empty (the migration-
-    // seeded defs would otherwise mask the empty case).
-    sqlx::query("DELETE FROM property_definitions")
-        .execute(&pool)
-        .await
-        .unwrap();
-    let page = list_property_defs_inner(&pool, None, Some(5))
-        .await
-        .unwrap();
-    assert_eq!(page.items.len(), 0, "no rows should yield an empty page");
-    assert!(page.next_cursor.is_none(), "empty result must not paginate");
-    assert!(!page.has_more, "empty result must report has_more=false");
 }

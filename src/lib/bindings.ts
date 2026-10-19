@@ -438,6 +438,11 @@ export const commands = {
 	value_type: string,
 	options: string | null,
 	created_at: string,
+	/**
+	 *  A built-in definition (#5841): fixed in code, never stored, and refused
+	 *  by every definition write.
+	 */
+	builtin: boolean,
 } | null, AppError>(__TAURI_INVOKE("get_property_def", { key })),
 	/**
 	 *  Tauri command: list all property definitions, paginated.
@@ -3231,6 +3236,11 @@ export type PropertyDefinition = {
 	value_type: string,
 	options: string | null,
 	created_at: string,
+	/**
+	 *  A built-in definition (#5841): fixed in code, never stored, and refused
+	 *  by every definition write.
+	 */
+	builtin: boolean,
 };
 
 /**
@@ -4602,7 +4612,13 @@ export type ValidationCode =
  *  (`create_mcp_agent`, #5667). Coded so the create dialog can name the
  *  clash beside the name field.
  */
-"DuplicateAgentName";
+"DuplicateAgentName" | 
+/**
+ *  A create, options edit or delete of a built-in property definition
+ *  (`agaric_store::op::BUILTIN_PROPERTY_DEFS`, #5841): those are fixed in
+ *  code and the same in every vault.
+ */
+"BuiltinPropertyLocked";
 
 /**
  *  A single referenced sibling file carried over IPC for an attachment-aware

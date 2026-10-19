@@ -144,6 +144,7 @@ describe('buildInitParams', () => {
     value_type: valueType,
     options: null,
     created_at: '2026-01-01T00:00:00Z',
+    builtin: false,
   })
 
   // The draft-row types have no valid initializer: an arm returning
@@ -478,7 +479,15 @@ describe('renameMayDeclareKey', () => {
 
   it('refuses an already-declared key — that row is not this rename to withdraw', async () => {
     installBackend(
-      { effortPoints: { key: 'effortPoints', value_type: 'text', options: null, created_at: 'T' } },
+      {
+        effortPoints: {
+          key: 'effortPoints',
+          value_type: 'text',
+          options: null,
+          created_at: 'T',
+          builtin: false,
+        },
+      },
       [],
     )
     expect(await renameMayDeclareKey('effortPoints')).toBe(false)

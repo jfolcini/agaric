@@ -9,7 +9,7 @@ use tracing::instrument;
 
 use crate::db::{CommandTx, ReadPool, WriteCtx, WritePool};
 use crate::materializer::Materializer;
-use agaric_core::error::AppError;
+use agaric_core::error::{AppError, ValidationCode};
 use agaric_core::ulid::{ActiveBlockId, BlockId};
 use agaric_store::backlink;
 use agaric_store::pagination;
@@ -17,60 +17,6 @@ use agaric_store::pagination::ActiveBlockRow;
 
 use super::sanitize_internal_error;
 use super::*;
-
-/// Built-in fallback vocabulary for the `todo_state` reserved key —
-/// must mirror the live `property_definitions.options` seeded by
-/// migrations 0014/0029/0031 (`["TODO","DOING","DONE","CANCELLED"]`).
-/// Declared once here (rather than re-typed as a literal at each
-/// `validate_reserved_property_value` call site) so a future seed
-/// change only needs one edit; `todo_state_and_priority_fallback_defaults_match_seeded_options`
-/// (in `src-tauri/tests/commands/property_cmd_tests.rs`) asserts this constant
-/// stays in sync with the actual seeded options as a drift guard
-/// (#3124 — the fallback previously omitted CANCELLED).
-pub const TODO_STATE_FALLBACK_DEFAULTS: &[&str] = &["TODO", "DOING", "DONE", "CANCELLED"];
-
-/// Built-in fallback vocabulary for the `priority` reserved key —
-/// must mirror the live `property_definitions.options` seeded by
-/// migration 0014 (`["1","2","3"]`, never changed since). See
-/// [`TODO_STATE_FALLBACK_DEFAULTS`] for why this is a named constant.
-pub const PRIORITY_FALLBACK_DEFAULTS: &[&str] = &["1", "2", "3"];
-
-/// Defensive fallback validation for reserved property
-/// keys (`todo_state`, `priority`) when the corresponding row in
-/// `property_definitions` has been deleted.
-///
-/// `set_property_in_tx` is the primary line of validation — it
-/// consults the live `property_definitions.options` JSON. If that row
-/// is missing (stale schema, manual delete, fresh test DB), this
-/// helper re-enforces the seeded built-in defaults so a missing
-/// definition cannot silently relax the reserved-key contract.
-///
-/// `def_row_present` is the boolean result of fetching
-/// `property_definitions WHERE key = '<key>'` — fed in by the caller
-/// so each reserved key keeps its own literal-keyed `sqlx::query!`
-/// statement (the per-key literals are already cached in `.sqlx/`,
-/// and avoiding a parameterised lookup here means no cache
-/// regeneration is required).
-///
-/// `defaults` is the ordered list of allowed values (pass
-/// [`TODO_STATE_FALLBACK_DEFAULTS`] / [`PRIORITY_FALLBACK_DEFAULTS`]);
-/// the error message echoes them verbatim so the frontend toast lines
-/// up with the user's mental model of "TODO/DOING/DONE/CANCELLED" or
-/// "1/2/3".
-fn validate_reserved_property_value(
-    def_row_present: bool,
-    key: &str,
-    value: &str,
-    defaults: &[&str],
-) -> Result<(), AppError> {
-    if !def_row_present && !defaults.contains(&value) {
-        return Err(AppError::validation(format!(
-            "{key} '{value}' is not in allowed options: {}",
-            defaults.join(", ")
-        )));
-    }
-    Ok(())
-}
 
 /// Emit `EVENT_PROPERTY_CHANGED` with a log-on-error
 /// fallback so a transient emit failure does not propagate as a
@@ -511,9 +457,8 @@ pub async fn set_todo_state_inner(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — `state` is not 1-50 characters, or not an
-///   option of the `todo_state` definition (the built-in states when it has
-///   been deleted)
+/// - [`AppError::Validation`] — `state` is not 1-50 characters, or not one
+///   of the built-in task states
 /// - [`AppError::NotFound`] — the block is missing
 pub(crate) async fn set_todo_state_in_tx(
     tx: &mut CommandTx,
@@ -523,26 +468,13 @@ pub(crate) async fn set_todo_state_in_tx(
     prior: &PriorTaskState,
     state: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    if let Some(ref s) = state {
-        if s.is_empty() || s.len() > 50 {
-            return Err(AppError::validation(
-                "Todo state must be 1-50 characters".into(),
-            ));
-        }
-        // `set_property_in_tx` checks the definition's options when it
-        // exists; the built-in defaults still hold when it has been deleted.
-        // Shared with `set_priority_inner` via
-        // `validate_reserved_property_value`.
-        let def_row =
-            sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
-                .fetch_optional(&mut ***tx)
-                .await?;
-        validate_reserved_property_value(
-            def_row.is_some(),
-            "todo_state",
-            s,
-            TODO_STATE_FALLBACK_DEFAULTS,
-        )?;
+    // `set_property_in_tx` checks the state against the built-in options.
+    if let Some(ref s) = state
+        && (s.is_empty() || s.len() > 50)
+    {
+        return Err(AppError::validation(
+            "Todo state must be 1-50 characters".into(),
+        ));
     }
     let new_state = state.clone();
     let (result, todo_op) = set_property_in_tx(
@@ -653,9 +585,6 @@ async fn warn_if_batch_skips_recurrence(
 /// 1-50 characters. Split out (#5074) to keep that command under
 /// `clippy::too_many_lines`; pure, so it needs no pool.
 ///
-/// The option-list fallback check is NOT here — it reads
-/// `property_definitions` and so belongs inside the command's transaction.
-///
 /// # Errors
 ///
 /// - [`AppError::Validation`] — empty `block_ids`, more than
@@ -735,9 +664,8 @@ pub(crate) async fn resolve_prior_task_states_batch(
 /// either commits every state change or none of them — same all-or-
 /// nothing semantics as the single-row path (H-4 / invariant #2).
 ///
-/// `state` validation matches `set_todo_state_inner` (1-50 chars,
-/// fallback to seeded `["TODO","DOING","DONE","CANCELLED"]` defaults
-/// when the `property_definitions` row is missing).
+/// `state` validation matches `set_todo_state_inner` (1-50 chars, one of
+/// the built-in task states).
 ///
 /// **Tolerance for missing rows**: in contrast with the single-row
 /// `set_todo_state_inner` (which returns `NotFound` for a missing or
@@ -787,22 +715,6 @@ pub async fn set_todo_state_batch_inner(
     // skips recurrence in exactly the same way — emits the same diagnostic
     // instead of nothing.
     warn_if_batch_skips_recurrence(&mut tx, "set_todo_state_batch_inner", &block_ids).await?;
-
-    // Fallback validation — mirrors
-    // `set_todo_state_inner`. Read once for the whole batch (single
-    // SELECT, regardless of N).
-    if let Some(ref s) = state {
-        let def_row =
-            sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
-                .fetch_optional(&mut **tx)
-                .await?;
-        validate_reserved_property_value(
-            def_row.is_some(),
-            "todo_state",
-            s,
-            TODO_STATE_FALLBACK_DEFAULTS,
-        )?;
-    }
 
     // #2038 / #5074: one membership query for the whole batch, carrying each
     // survivor's prior lifecycle state. See
@@ -874,10 +786,6 @@ pub async fn set_todo_state_batch_inner(
 /// one shared check would flatten four messages into one and quietly extend
 /// the batch allowlist's shape to a path that has none.
 ///
-/// The reserved-key option-list fallback is NOT here — it reads
-/// `property_definitions` and so belongs inside the command's transaction
-/// (`validate_set_property_batch_text_key`).
-///
 /// # Errors
 ///
 /// - [`AppError::Validation`] — a non-allowlisted `key`, empty `block_ids`,
@@ -930,34 +838,6 @@ fn validate_set_property_batch_input(
     Ok(())
 }
 
-/// Reserved-key option-list fallback validation for [`set_property_batch_inner`]'s
-/// two text keys, run on the caller's already-open transaction (one SELECT for
-/// the whole batch, regardless of N).
-///
-/// Split out of that command (#4639); it reads, it never writes, and the
-/// caller keeps the transaction and its commit. Branch into two
-/// compile-checked `query!` macros with literal keys (both already in the
-/// `.sqlx/` cache) rather than one runtime query on the dynamic `key`, so this
-/// stays schema-validated at build time with no new cache entry.
-async fn validate_set_property_batch_text_key(
-    conn: &mut sqlx::SqliteConnection,
-    key: &str,
-    value: &str,
-) -> Result<(), AppError> {
-    let (def_exists, defaults): (bool, &[&str]) = if key == "todo_state" {
-        let row = sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
-            .fetch_optional(&mut *conn)
-            .await?;
-        (row.is_some(), TODO_STATE_FALLBACK_DEFAULTS)
-    } else {
-        let row = sqlx::query!("SELECT options FROM property_definitions WHERE key = 'priority'")
-            .fetch_optional(&mut *conn)
-            .await?;
-        (row.is_some(), PRIORITY_FALLBACK_DEFAULTS)
-    };
-    validate_reserved_property_value(def_exists, key, value, defaults)
-}
-
 /// The set of property keys `set_property_batch` is allowed to write.
 ///
 /// This is a **security boundary**: the batch command routes an untrusted
@@ -976,10 +856,8 @@ const SET_PROPERTY_BATCH_ALLOWED_KEYS: &[&str] =
 /// `value = None` CLEARS the property (all `value_*` columns null), same
 /// clear semantics as the single-row inners. `value = Some(_)` routes to
 /// the correct typed column by key:
-/// - `todo_state` / `priority` → `value_text`, with the same
-///   `property_definitions` option-list fallback validation the single-row
-///   (`set_todo_state_inner` / `set_priority_inner`) and
-///   `set_todo_state_batch_inner` paths run.
+/// - `todo_state` / `priority` → `value_text`, checked against the built-in
+///   options by `set_property_in_tx`, as the single-row paths are.
 /// - `due_date` / `scheduled_date` → `value_date`, with the same ISO
 ///   `YYYY-MM-DD` format check the single-row date inners run (also
 ///   re-enforced by `validate_property_value` inside `set_property_in_tx`).
@@ -1035,13 +913,6 @@ pub async fn set_property_batch_inner(
     // other 3/4 of this command pays no extra SELECT.
     if key == "todo_state" {
         warn_if_batch_skips_recurrence(&mut tx, "set_property_batch_inner", &block_ids).await?;
-    }
-
-    // Reserved-key option-list fallback validation for the two text keys,
-    // mirroring `set_todo_state_batch_inner` / `set_priority_inner`. Read
-    // once for the whole batch (single SELECT, regardless of N).
-    if is_text_key && let Some(ref v) = value {
-        validate_set_property_batch_text_key(&mut tx, &key, v).await?;
     }
 
     // Route the single value to the correct typed column: text keys →
@@ -1105,15 +976,9 @@ pub async fn set_property_batch_inner(
 
 /// Set the priority on a block (level value or clear).
 ///
-/// Priority levels are user-configurable through the
-/// `property_definitions.options` JSON for the `priority` key (see
-/// docs/architecture/data-and-events.md § Property values). Validation against the configured
-/// options is performed inside [`set_property_in_tx`], which honours the
-/// current definition row. As a defensive fallback — mirroring the
-/// `set_todo_state_inner` pattern — when the `priority`
-/// definition row has been deleted we re-enforce the seeded built-in
-/// `["1","2","3"]` defaults so a missing definition cannot relax the
-/// reserved-key contract.
+/// The levels are the built-in `priority` options (#5841); `set_property_in_tx`
+/// refuses any other. A block that already holds an out-of-range level from
+/// before keeps it until this sets another.
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn set_priority_inner(
     pool: &SqlitePool,
@@ -1129,54 +994,20 @@ pub async fn set_priority_inner(
             "priority must be 1-50 characters".into(),
         ));
     }
-
-    // Open the CommandTx before the property_definitions read so
-    // the fallback validation and the write share atomicity. Previously
-    // the fetch ran against `pool` and we then delegated to
-    // `set_property_inner`, which opens its own tx — the validation
-    // window and the write window were separate. Folding everything
-    // into one tx removes that gap. Body inlined from
-    // `set_property_inner` (with `caller_context = None`) to keep the
-    // tx scope wide enough to host the fallback read.
-    let mut tx = CommandTx::begin_immediate(pool, "set_priority").await?;
-    // #2604 — rollback-safe engine apply (rewind on tx abort).
-    tx.arm_engine_rollback(materializer.loro_state());
-
-    // Rely on the user-extended `priority` property definition
-    // options for validation (handled inside `set_property_in_tx`).
-    // If the definition row has been deleted, fall back to the
-    // built-in seeded options so reserved-key validation remains
-    // enforced. Mirrors `set_todo_state_inner` via the shared
-    // `validate_reserved_property_value` helper.
-    if let Some(ref l) = level {
-        let def_row =
-            sqlx::query!("SELECT options FROM property_definitions WHERE key = 'priority'")
-                .fetch_optional(&mut **tx)
-                .await?;
-        validate_reserved_property_value(
-            def_row.is_some(),
-            "priority",
-            l,
-            PRIORITY_FALLBACK_DEFAULTS,
-        )?;
-    }
-
-    let (block, op_record) = set_property_in_tx(
-        &mut tx,
-        materializer.loro_state(),
+    set_property_inner(
+        pool,
         device_id,
-        block_id.into_string(),
-        "priority",
+        materializer,
+        block_id,
+        "priority".to_string(),
         level,
         None,
         None,
         None,
         None,
+        None,
     )
-    .await?;
-    tx.enqueue_background(Arc::new(op_record));
-    tx.commit_and_dispatch(materializer).await?;
-    Ok(ActiveBlockRow::from_block_row_unchecked(block))
+    .await
 }
 
 /// Set the due date on a block (ISO date YYYY-MM-DD or clear).
@@ -1380,6 +1211,30 @@ pub async fn get_property_inner(
     Ok(row)
 }
 
+/// Refuse a definition write to a built-in key (#5841): those are code
+/// constants, the same in every vault.
+fn refuse_builtin_definition_write(key: &str) -> Result<(), AppError> {
+    if agaric_store::op::is_builtin_property_key(key) {
+        return Err(AppError::validation_coded(
+            ValidationCode::BuiltinPropertyLocked,
+            format!("property '{key}' is built in and cannot be changed"),
+        ));
+    }
+    Ok(())
+}
+
+/// The [`PropertyDefinition`] of a built-in. It is never stored, so it has no
+/// creation time of its own; `created_at` is the date the seeds carried.
+fn builtin_definition(def: &agaric_store::op::BuiltinPropertyDef) -> PropertyDefinition {
+    PropertyDefinition {
+        key: def.key.to_owned(),
+        value_type: def.value_type.to_owned(),
+        options: def.options_json(),
+        created_at: "2026-01-01T00:00:00.000Z".to_owned(),
+        builtin: true,
+    }
+}
+
 /// Shape validation shared by every `property_definitions` writer:
 /// [`create_property_def_inner`] (owns its pool round-trip) and
 /// [`create_property_def_in_tx`] (writes inside a caller's transaction).
@@ -1390,6 +1245,7 @@ fn validate_property_def_shape(
     value_type: &str,
     options: Option<&str>,
 ) -> Result<(), AppError> {
+    refuse_builtin_definition_write(key)?;
     // Validate key: non-empty, max 64 chars, alphanumeric + underscore + hyphen
     if key.is_empty() || key.len() > 64 {
         return Err(AppError::validation(
@@ -1520,9 +1376,8 @@ fn declared_type_admits_shape(value_type: &str, shape: &str) -> bool {
 /// block's values is just as permanently stuck. Narrowing the condition
 /// here would let link 3 back in through the trash.
 ///
-/// Reserved / column-backed keys need no carve-out: migration 0088's
-/// `key_not_reserved` CHECK forbids `block_properties` rows for them
-/// outright, so the probe finds nothing and the declaration proceeds.
+/// Built-in keys never reach the probe: [`validate_property_def_shape`]
+/// refuses them first (#5841).
 async fn conflicting_existing_values(
     conn: &mut sqlx::SqliteConnection,
     key: &str,
@@ -1607,7 +1462,8 @@ async fn conflicting_existing_values(
 
 /// Create a property definition. Uses INSERT OR IGNORE for idempotency —
 /// if the key already exists, this is a no-op and the existing row is
-/// returned unchanged.
+/// returned unchanged. A built-in key is refused with
+/// [`ValidationCode::BuiltinPropertyLocked`].
 ///
 /// # Refuses to declare a type over values that contradict it (#4399)
 ///
@@ -1654,7 +1510,7 @@ pub async fn create_property_def_inner(
     // what keeps a rename onto an already-declared key a no-op.
     let existing = sqlx::query_as!(
         PropertyDefinition,
-        "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
+        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool" FROM property_definitions WHERE key = ?"#,
         key
     )
     .fetch_optional(&mut *tx)
@@ -1675,7 +1531,7 @@ pub async fn create_property_def_inner(
     // never one a racing writer slipped in afterwards.
     let row = sqlx::query_as!(
         PropertyDefinition,
-        "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
+        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool" FROM property_definitions WHERE key = ?"#,
         key
     )
     .fetch_one(&mut *tx)
@@ -1733,7 +1589,8 @@ pub async fn create_property_def_in_tx(
 }
 
 /// List all property definitions, paginated and ordered by `key ASC`
-/// (AGENTS.md invariant #3).
+/// (AGENTS.md invariant #3): the built-ins (#5841), marked `builtin`, merged
+/// with the user's rows.
 ///
 /// `key` is the primary key on `property_definitions` (a string, not a
 /// ULID), so the keyset cursor is encoded via [`pagination::Cursor::for_id`] with
@@ -1760,9 +1617,9 @@ pub async fn list_property_defs_inner(
         None => (None, ""),
     };
     let fetch_limit = page.limit + 1;
-    let rows = sqlx::query_as!(
+    let mut rows = sqlx::query_as!(
         PropertyDefinition,
-        r#"SELECT key, value_type, options, created_at
+        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool"
          FROM property_definitions
          WHERE (?1 IS NULL OR key > ?2)
          ORDER BY key ASC
@@ -1773,15 +1630,24 @@ pub async fn list_property_defs_inner(
     )
     .fetch_all(pool)
     .await?;
+    // The first `fetch_limit` rows after the cursor plus every built-in after
+    // it hold the first `fetch_limit` of the union. `str` orders by bytes, as
+    // SQLite's BINARY collation does.
+    rows.extend(
+        agaric_store::op::BUILTIN_PROPERTY_DEFS
+            .iter()
+            .filter(|def| cursor_flag.is_none() || def.key > cursor_key)
+            .map(builtin_definition),
+    );
+    rows.sort_by(|a, b| a.key.cmp(&b.key));
+    rows.truncate(usize::try_from(fetch_limit).unwrap_or(usize::MAX));
     pagination::build_page_response(rows, page.limit, |last| {
         pagination::Cursor::for_id(last.key.clone())
     })
 }
 
-/// Fetch a single property definition by primary
-/// key. Returns `Ok(None)` when no row exists for `key` (callers like
-/// `useAppBootRecovery` treat the missing-priority-def case as "use
-/// the default level set" rather than an error).
+/// Fetch a single property definition by key: the built-in (#5841), else the
+/// user's row. Returns `Ok(None)` for an undeclared key.
 ///
 /// The SQL shape mirrors the existing single-key `SELECT` already used
 /// inside [`create_property_def_inner`] (post-INSERT readback) and
@@ -1795,9 +1661,12 @@ pub async fn get_property_def_inner(
     pool: &SqlitePool,
     key: &str,
 ) -> Result<Option<PropertyDefinition>, AppError> {
+    if let Some(def) = agaric_store::op::builtin_property_def(key) {
+        return Ok(Some(builtin_definition(def)));
+    }
     let row = sqlx::query_as!(
         PropertyDefinition,
-        "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
+        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool" FROM property_definitions WHERE key = ?"#,
         key
     )
     .fetch_optional(pool)
@@ -1806,7 +1675,7 @@ pub async fn get_property_def_inner(
 }
 
 /// Update the options array for a select-type definition.
-/// Returns error if the key doesn't exist or isn't select-type.
+/// Returns error if the key is built in, doesn't exist or isn't select-type.
 ///
 /// # Orphan rows on narrowing
 ///
@@ -1856,6 +1725,7 @@ pub async fn update_property_def_options_inner(
     key: String,
     options: String,
 ) -> Result<PropertyDefinition, AppError> {
+    refuse_builtin_definition_write(&key)?;
     // Validate options is a non-empty JSON array of strings
     let parsed: Vec<String> = serde_json::from_str(&options)
         .map_err(|_| AppError::validation("options must be a JSON array of strings".into()))?;
@@ -1874,7 +1744,7 @@ pub async fn update_property_def_options_inner(
     // Fetch existing to verify it's select-type
     let existing = sqlx::query_as!(
         PropertyDefinition,
-        "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
+        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool" FROM property_definitions WHERE key = ?"#,
         key
     )
     .fetch_optional(&mut *tx)
@@ -1937,7 +1807,7 @@ pub async fn update_property_def_options_inner(
     // returned shape reflects exactly what is committed.
     let updated = sqlx::query_as!(
         PropertyDefinition,
-        "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
+        r#"SELECT key, value_type, options, created_at, 0 AS "builtin!: bool" FROM property_definitions WHERE key = ?"#,
         key
     )
     .fetch_one(&mut *tx)
@@ -1976,11 +1846,7 @@ pub async fn update_property_def_options_inner(
 /// message.
 #[instrument(skip(pool), err)]
 pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result<(), AppError> {
-    if agaric_store::op::is_builtin_property_key(&key) {
-        return Err(AppError::validation(
-            "cannot delete builtin property definition".into(),
-        ));
-    }
+    refuse_builtin_definition_write(&key)?;
 
     // Open a BEGIN IMMEDIATE tx so the dependent-row check and
     // the DELETE are TOCTOU-safe. Dropping the tx without commit (early

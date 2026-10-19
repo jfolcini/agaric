@@ -43,7 +43,7 @@ const EXPECTED_RESERVED_KEYS = [
 ]
 
 function def(value_type: string, options: string | null = null): PropertyDefinition {
-  return { key: 'k', value_type, options, created_at: '2026-01-01T00:00:00Z' }
+  return { key: 'k', value_type, options, created_at: '2026-01-01T00:00:00Z', builtin: false }
 }
 
 describe('parseInlineProperties', () => {

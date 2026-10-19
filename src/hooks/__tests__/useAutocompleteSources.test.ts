@@ -70,7 +70,6 @@ vi.mock('@/lib/logger', () => ({
 
 import { STATE_VALUES, useAutocompleteSources } from '@/hooks/useAutocompleteSources'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 import { _resetPropertyValuesCacheForTest } from '@/lib/property-values-cache'
 import { TASK_STATE_AUTOCOMPLETE_VALUES } from '@/lib/task-states'
 
@@ -85,6 +84,7 @@ function propDef(key: string, valueType: string, options?: string[]): PropertyDe
     value_type: valueType,
     options: options ? JSON.stringify(options) : null,
     created_at: '2024-01-01T00:00:00Z',
+    builtin: false,
   }
 }
 
@@ -97,7 +97,6 @@ beforeEach(() => {
   vi.useFakeTimers()
   _resetPropertyKeysCacheForTest()
   _resetPropertyValuesCacheForTest()
-  __resetPriorityLevelsForTests()
   mockedGetPathHistory.mockReturnValue([])
   mockListTagsByPrefix.mockResolvedValue([])
   mockedListPropertyKeys.mockResolvedValue({ status: 'ok', data: [] } as never)
@@ -151,25 +150,14 @@ describe('useAutocompleteSources', () => {
     expect(result.current.loading).toBe(false)
   })
 
-  it('priority anchor projects the default numeric levels + none', () => {
+  it('priority anchor projects the numeric levels + none', () => {
     // DOC-A7 follow-up — autocomplete must offer the real numeric priority
-    // values (`DEFAULT_PRIORITY_LEVELS`), not the stale hardcoded `A/B/C`
-    // that never matched the filter parser.
+    // values (`PRIORITY_LEVELS`), not the stale hardcoded `A/B/C` that never
+    // matched the filter parser.
     const anchor: AutocompleteAnchor = { active: 'priority', query: '', anchor: 0 }
     const { result } = renderHook(() => useAutocompleteSources({ anchor, spaceId: 'S1' }))
     expect(result.current.items.map((i) => i.value)).toEqual(['1', '2', '3', 'none'])
     expect(result.current.loading).toBe(false)
-  })
-
-  it('priority anchor reflects user-configured priority levels', () => {
-    // The values are driven by the configurable source of truth, so a
-    // custom level set flows straight through to the popover.
-    act(() => {
-      setPriorityLevels(['P0', 'P1'])
-    })
-    const anchor: AutocompleteAnchor = { active: 'priority', query: '', anchor: 0 }
-    const { result } = renderHook(() => useAutocompleteSources({ anchor, spaceId: 'S1' }))
-    expect(result.current.items.map((i) => i.value)).toEqual(['P0', 'P1', 'none'])
   })
 
   it('due anchor with query "to" returns only "today"', () => {
