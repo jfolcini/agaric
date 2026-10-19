@@ -670,10 +670,10 @@ function App() {
               <QuickAccessBar />
             </FeatureErrorBoundary>
             {/*
-             * From `md` up the view header sits outside the scroll container,
-             * so it stays visible while the view scrolls. A phone cannot
-             * spare that height: below `md` the slot inside the scroller
-             * serves instead, and the header scrolls away with the content.
+             * The view header sits outside the scroll container, so it stays
+             * visible while the view scrolls. A touch phone cannot spare that
+             * height: there the slot inside the scroller serves instead, and
+             * the header scrolls away with the content.
              */}
             <ViewHeaderOutletSlot className="border-b border-border/40 px-4 md:px-6 md:pointer-fine:px-16 py-3 space-y-2" />
             <ScrollArea

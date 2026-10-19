@@ -1,16 +1,17 @@
 /**
  * `PageRow`.
  *
- * Pages-view leaf row for one page: title + ↗ inbound link count + ⊟
- * child-block count + relative modified time + the first property-flag
- * badge (if any).
+ * Pages-view leaf row for one page: title + inbound link count (`Link2`) +
+ * child-block count (`List`) + relative modified time + the first
+ * property-flag badge (if any). The counts' icons are SVG in `currentColor`,
+ * not text glyphs a system may draw as colour emoji (#5992).
  *
  * Inputs are typed primitive props (no objects with reference identity
  * that change across renders) so `React.memo`'s shallow compare can hit
  * across parent re-renders. Mirrors the pattern in `BlockListItem`.
  */
 
-import { Bookmark, FileText, Trash2 } from 'lucide-react'
+import { Bookmark, FileText, Link2, List, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { memo, useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -75,9 +76,9 @@ export interface PageRowProps {
   // ── Typed metadata primitives (Phase 1 IPC columns) ────────
   /** Epoch-ms from `last_modified_at` (#109 Phase 2). `null` renders "never". */
   lastModifiedAt: number | null
-  /** Inbound link count. Zero suppresses the ↗ badge. */
+  /** Inbound link count. Zero suppresses the badge. */
   inboundLinkCount: number
-  /** Descendant non-deleted block count. Zero suppresses the ⊟ badge. */
+  /** Descendant non-deleted block count. Zero suppresses the badge. */
   childBlockCount: number
   /** Page itself carries `block_tags`. */
   hasTags: boolean
@@ -422,7 +423,10 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
             >
               {inboundLinkCount > 0 && (
                 <span data-metadata-inbound className="max-sm:hidden">
-                  <span aria-hidden="true">{`${inboundLinkCount} ↗`}</span>
+                  <span aria-hidden="true" className="inline-flex items-center gap-0.5">
+                    {inboundLinkCount}
+                    <Link2 className="h-3 w-3" />
+                  </span>
                   <span className="sr-only">
                     {t('pageBrowser.metadata.inbound', { count: inboundLinkCount })}
                   </span>
@@ -430,7 +434,10 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
               )}
               {childBlockCount > 0 && (
                 <span data-metadata-children className="max-sm:hidden">
-                  <span aria-hidden="true">{`${childBlockCount} ⊟`}</span>
+                  <span aria-hidden="true" className="inline-flex items-center gap-0.5">
+                    {childBlockCount}
+                    <List className="h-3 w-3" />
+                  </span>
                   <span className="sr-only">
                     {t('pageBrowser.metadata.children', { count: childBlockCount })}
                   </span>

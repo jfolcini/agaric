@@ -81,7 +81,7 @@ Each sort encodes its primary key into an **existing** `Cursor` slot (`deleted_a
 
 ## Page rows
 
-A page row shows the title + `↗ inbound_link_count` + `⊟ child_block_count` + relative time + the first matched `has-*` flag chip (if any). The virtualizer estimates every row at 44 px (`PAGE_ROW_HEIGHT`, next to `HEADER_ROW_HEIGHT` in `src/components/PageBrowser.tsx`); `measureElement` corrects it to the rendered height.
+A page row shows the title + `inbound_link_count` (link icon) + `child_block_count` (list icon) + relative time + the first matched `has-*` flag chip (if any). The virtualizer estimates every row at 44 px (`PAGE_ROW_HEIGHT`, next to `HEADER_ROW_HEIGHT` in `src/components/PageBrowser.tsx`); `measureElement` corrects it to the rendered height.
 
 `<PageRow>` is **Pages-specific** and lives at `src/components/PageBrowser/PageRow.tsx`. TrashView and HistoryView have different row shapes (`TrashRow.descendants_affected`, `HistoryEntry`'s op-log payload), so extracting prematurely couples three views to a single primitive that has to grow optional props for each one's metadata. If a second consumer needs this shape, propose an extraction PR first rather than importing across surfaces.
 

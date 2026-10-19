@@ -16,8 +16,9 @@
  *    via context when the outlet element resolves.
  *  - ViewHeaderOutletSlot renders the host div that becomes the portal
  *    target. It sits between App.tsx's fixed <header> and the <ScrollArea>;
- *    below `md` a second slot inside the scroller takes over, so the header
- *    scrolls away with the content (#5927).
+ *    on a touch phone a second slot inside the scroller takes over, so the
+ *    header scrolls away with the content (#5927). A narrow mouse window
+ *    keeps the outer slot.
  *  - useViewHeaderOutlet returns the outlet DOM element (or null). When the
  *    hook is used outside a provider, it returns `undefined` so consumers can
  *    fall back to inline rendering (useful for tests and isolated renders).
@@ -32,11 +33,12 @@ import type React from 'react'
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { cn } from '@/lib/utils'
 
 interface ViewHeaderOutletContextValue {
   readonly outlet: HTMLElement | null
-  readonly setOutlet: (el: HTMLElement | null) => void
+  readonly setOutlet: React.Dispatch<React.SetStateAction<HTMLElement | null>>
 }
 
 /**
@@ -58,15 +60,7 @@ export function ViewHeaderOutletProvider({
   children,
 }: ViewHeaderOutletProviderProps): React.ReactElement {
   const [outlet, setOutlet] = useState<HTMLElement | null>(null)
-  // Stable setter reference so the memoised context value doesn't force
-  // consumer re-renders on every Provider render.
-  const stableSetOutlet = useCallback((el: HTMLElement | null) => {
-    setOutlet(el)
-  }, [])
-  const value: ViewHeaderOutletContextValue = useMemo(
-    () => ({ outlet, setOutlet: stableSetOutlet }),
-    [outlet, stableSetOutlet],
-  )
+  const value: ViewHeaderOutletContextValue = useMemo(() => ({ outlet, setOutlet }), [outlet])
   return (
     <ViewHeaderOutletContext.Provider value={value}>{children}</ViewHeaderOutletContext.Provider>
   )
@@ -76,8 +70,9 @@ interface ViewHeaderOutletSlotProps {
   /** Extra classes merged onto the outlet host element. */
   readonly className?: string
   /**
-   * This slot sits inside the scroll container and serves below `md`; the
-   * default slot serves from `md` up. Each renders nothing at the other width.
+   * This slot sits inside the scroll container and serves on a touch phone;
+   * the default slot serves everywhere else. Each renders nothing where the
+   * other serves.
    */
   readonly insideScroller?: boolean
 }
@@ -95,6 +90,7 @@ export function ViewHeaderOutletSlot({
   insideScroller = false,
 }: ViewHeaderOutletSlotProps): React.ReactElement | null {
   const ctx = useContext(ViewHeaderOutletContext)
+  const isTouch = useIsTouch()
   const isMobile = useIsMobile()
   // If the slot is used outside a provider we silently render an empty host —
   // the consumer warnings will surface the real problem (a <ViewHeader> with
@@ -102,11 +98,14 @@ export function ViewHeaderOutletSlot({
   const setOutlet = ctx?.setOutlet
   const refCallback = useCallback(
     (el: HTMLDivElement | null) => {
-      setOutlet?.(el)
+      if (el === null || setOutlet === undefined) return
+      setOutlet(el)
+      // The two slots swap in separate commits, so the other may have attached first.
+      return () => setOutlet((current) => (current === el ? null : current))
     },
     [setOutlet],
   )
-  if (insideScroller !== isMobile) return null
+  if (insideScroller !== (isTouch && isMobile)) return null
   return (
     <div
       ref={refCallback}
