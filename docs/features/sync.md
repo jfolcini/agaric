@@ -34,7 +34,7 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
   - Strikethrough WiFi: offline.
 - **"Last synced N ago"** in the Sync icon's tooltip, with the state.
 - **Settings › Sync & devices**, at the top once a device is paired: the overall sync state, the last successful sync, and the peer count. To retry, use the device list's *Sync all* or a device's *Sync now*.
-- **Per-peer progress** while a sync is running (operations sent / received, then attachment-file transfer with byte progress).
+- **Per-peer progress** in the device's row while a sync is running: sync messages sent and received, then the attachment transfer with files and bytes done of total and a progress bar; the row clears when the sync ends (#5842). It shows for syncs this device starts (*Sync now*, *Sync all*, and its own periodic sync), not for a session the other device dialled in.
 - **Retry toast** per peer on failure — partial failures don't blow up the whole batch.
 
 ## How sync runs

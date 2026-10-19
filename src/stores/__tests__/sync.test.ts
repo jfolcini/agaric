@@ -19,13 +19,7 @@ describe('useSyncStore', () => {
       expect(state.lastSyncedAt).toBeNull()
       expect(state.opsReceived).toBe(0)
       expect(state.opsSent).toBe(0)
-      // File-transfer progress fields default to a
-      // "no transfer active" tuple so the UI hides the affordance.
-      expect(state.filePhase).toBeNull()
-      expect(state.filesDone).toBe(0)
-      expect(state.filesTotal).toBe(0)
-      expect(state.bytesDone).toBe(0)
-      expect(state.bytesTotal).toBe(0)
+      expect(state.peerProgress).toEqual({})
     })
   })
 
@@ -147,49 +141,56 @@ describe('useSyncStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // SetFileProgress / resetFileProgress
+  // recordPeerProgress
   // ---------------------------------------------------------------------------
-  describe('setFileProgress', () => {
-    it('records the active file-transfer phase and counters', () => {
-      useSyncStore.getState().setFileProgress('sending', 1, 3, 5_000_000, 15_000_000)
-      const state = useSyncStore.getState()
-      expect(state.filePhase).toBe('sending')
-      expect(state.filesDone).toBe(1)
-      expect(state.filesTotal).toBe(3)
-      expect(state.bytesDone).toBe(5_000_000)
-      expect(state.bytesTotal).toBe(15_000_000)
+  describe('recordPeerProgress', () => {
+    const ops = (state: string, sent: number, received: number) =>
+      ({
+        kind: 'sync',
+        state,
+        remote_device_id: 'R',
+        ops_sent: sent,
+        ops_received: received,
+      }) as const
+    const files = (phase: string, filesDone: number, bytesDone: number) =>
+      ({
+        kind: 'files',
+        phase,
+        remote_device_id: 'R',
+        files_done: filesDone,
+        files_total: 3,
+        bytes_done: bytesDone,
+        bytes_total: 9_000,
+      }) as const
+
+    it('keeps each peer apart', () => {
+      useSyncStore.getState().recordPeerProgress('PEER_A', ops('streaming', 2, 1))
+      useSyncStore.getState().recordPeerProgress('PEER_B', files('sending', 1, 3_000))
+
+      expect(useSyncStore.getState().peerProgress).toEqual({
+        PEER_A: { phase: 'ops', opsSent: 2, opsReceived: 1 },
+        PEER_B: {
+          phase: 'sending',
+          filesDone: 1,
+          filesTotal: 3,
+          bytesDone: 3_000,
+          bytesTotal: 9_000,
+        },
+      })
     })
 
-    it('does not clobber unrelated state', () => {
-      useSyncStore.getState().setState('syncing')
-      useSyncStore.getState().setOpsReceived(7)
+    it('ends a peer on a terminal op state or the files complete tick, not the others', () => {
+      const record = useSyncStore.getState().recordPeerProgress
+      record('PEER_A', ops('streaming', 1, 1))
+      record('PEER_B', ops('streaming', 1, 1))
+      record('PEER_C', files('receiving', 0, 0))
 
-      useSyncStore.getState().setFileProgress('receiving', 0, 2, 0, 8_000_000)
+      record('PEER_A', ops('complete', 2, 2))
+      record('PEER_B', ops('error', 0, 0))
+      expect(Object.keys(useSyncStore.getState().peerProgress)).toEqual(['PEER_C'])
 
-      const state = useSyncStore.getState()
-      expect(state.state).toBe('syncing')
-      expect(state.opsReceived).toBe(7)
-      expect(state.filePhase).toBe('receiving')
-    })
-  })
-
-  describe('resetFileProgress', () => {
-    it('clears file-transfer fields without touching the rest', () => {
-      useSyncStore.getState().setState('syncing')
-      useSyncStore.getState().setOpsReceived(12)
-      useSyncStore.getState().setFileProgress('sending', 2, 2, 10_000_000, 10_000_000)
-
-      useSyncStore.getState().resetFileProgress()
-
-      const state = useSyncStore.getState()
-      expect(state.filePhase).toBeNull()
-      expect(state.filesDone).toBe(0)
-      expect(state.filesTotal).toBe(0)
-      expect(state.bytesDone).toBe(0)
-      expect(state.bytesTotal).toBe(0)
-      // Unrelated fields untouched.
-      expect(state.state).toBe('syncing')
-      expect(state.opsReceived).toBe(12)
+      record('PEER_C', files('complete', 3, 9_000))
+      expect(useSyncStore.getState().peerProgress).toEqual({})
     })
   })
 
@@ -208,7 +209,13 @@ describe('useSyncStore', () => {
       useSyncStore.getState().updateLastSynced('2025-01-15T12:00:00Z')
       useSyncStore.getState().setOpsReceived(42)
       useSyncStore.getState().setOpsSent(17)
-      useSyncStore.getState().setFileProgress('sending', 1, 2, 5_000_000, 10_000_000)
+      useSyncStore.getState().recordPeerProgress('peer-1', {
+        kind: 'sync',
+        state: 'streaming',
+        remote_device_id: 'peer-1',
+        ops_sent: 1,
+        ops_received: 0,
+      })
 
       // Reset
       useSyncStore.getState().reset()
@@ -221,11 +228,7 @@ describe('useSyncStore', () => {
       expect(state.lastSyncedAt).toBeNull()
       expect(state.opsReceived).toBe(0)
       expect(state.opsSent).toBe(0)
-      expect(state.filePhase).toBeNull()
-      expect(state.filesDone).toBe(0)
-      expect(state.filesTotal).toBe(0)
-      expect(state.bytesDone).toBe(0)
-      expect(state.bytesTotal).toBe(0)
+      expect(state.peerProgress).toEqual({})
     })
   })
 
