@@ -171,10 +171,13 @@ test.describe('phone view headers (#5927) @mobile @pages @journal', () => {
     await expectOneHiddenHeading(page, 'Trash')
     await expect(page.getByTestId('trash-empty-trash-btn')).toBeVisible()
 
-    expect(await scrollMainToEnd(page)).toBeGreaterThan(0)
-    expect(
-      (await rect(page.locator('[data-slot="feature-page-header"]'))).bottom,
-    ).toBeLessThanOrEqual(await barBottom(page))
+    // The list scrolls inside its own box, so how far `#main-content` can scroll
+    // is its bottom padding: the header leaves with the scroll, by exactly it.
+    const header = page.locator('[data-slot="feature-page-header"]')
+    const before = (await rect(header)).top
+    const scrolled = await scrollMainToEnd(page)
+    expect(scrolled).toBeGreaterThan(0)
+    expect((await rect(header)).top).toBe(before - scrolled)
   })
 
   test('Journal: Day names the date once, Week drops the generic heading', async ({ page }) => {
