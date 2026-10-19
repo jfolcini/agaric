@@ -15,7 +15,8 @@
 //! `add_tag_inner`, `move_block_inner`, `move_blocks_to_space_inner`,
 //! `add_attachment_with_bytes_inner`, `get_active_block_inner`,
 //! `get_property_inner`, `list_attachments_inner`, `read_attachment_inner` and
-//! `list_peer_refs_inner`. `sync` wakes the daemon as `start_sync` does; it
+//! `list_peer_refs_inner`, and `start_pairing_armed_inner` for the pairing this
+//! vault hosts. `sync` wakes the daemon as `start_sync` does; it
 //! never runs a session itself.
 //!
 //! A session is a pull by the device that dials (#610), so each direction has
@@ -39,7 +40,7 @@ use agaric_lib::commands::{
     create_block_inner_with_space, create_space_inner, edit_block_inner, get_active_block_inner,
     get_property_inner, list_attachments_inner, list_peer_refs_inner, move_block_inner,
     move_blocks_to_space_inner, read_attachment_inner, set_due_date_inner, set_property_inner,
-    set_todo_state_inner,
+    set_todo_state_inner, start_pairing_armed_inner,
 };
 use agaric_lib::db::{DbPools, init_pools, now_ms};
 use agaric_lib::materializer::Materializer;
@@ -73,6 +74,10 @@ enum Command {
         endpoint_id: String,
         addrs: Vec<String>,
     },
+    /// Show a pairing QR, as the app's dialog does, for the app to scan.
+    HostPairing,
+    /// Wait for the app to join the pairing `host_pairing` opened.
+    WaitJoined,
     /// Pull from the paired app now, and wait until the pull has landed.
     Sync,
     /// Pull from the paired app now, and wait for the app to refuse it.
@@ -173,6 +178,14 @@ enum Reply {
     Paired {
         device_id: String,
         address: String,
+    },
+    /// The QR of a pairing this vault hosts, as the backend draws it.
+    Hosting {
+        qr_svg: String,
+    },
+    /// The device id of the app that joined this vault's pairing.
+    Joined {
+        device_id: String,
     },
     Synced,
     /// `message` is the first sync error the daemon reported after the wake.
@@ -314,6 +327,8 @@ impl Peer {
                 };
                 self.pair(passphrase, app).await
             }
+            Command::HostPairing => self.host_pairing().await,
+            Command::WaitJoined => self.wait_joined().await,
             Command::Sync => self.sync().await,
             Command::SyncRefused => self.sync_refused().await,
             Command::GetBlock { id } => self.get_block(id).await,
@@ -386,6 +401,37 @@ impl Peer {
             device_id: self.device_id.clone(),
             address: address.to_string(),
         })
+    }
+
+    async fn host_pairing(&self) -> Result<Reply, AppError> {
+        let info = start_pairing_armed_inner(
+            &self.pools.write,
+            &self.pairing,
+            &self.scheduler,
+            &self.device_id,
+        )
+        .await?;
+        Ok(Reply::Hosting {
+            qr_svg: info.qr_svg,
+        })
+    }
+
+    async fn wait_joined(&mut self) -> Result<Reply, AppError> {
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            if let Some(row) = list_peer_refs_inner(&self.pools.read).await?.pop() {
+                self.app = Some(row.peer_id.clone());
+                return Ok(Reply::Joined {
+                    device_id: row.peer_id,
+                });
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(AppError::InvalidOperation(format!(
+                    "waited {WAIT:?} for the app to join this vault's pairing"
+                )));
+            }
+            tokio::time::sleep(POLL).await;
+        }
     }
 
     async fn sync(&self) -> Result<Reply, AppError> {
@@ -805,6 +851,18 @@ mod tests {
                 addrs: vec!["10.0.0.2:4100".into()],
             }),
             "a pair command is the decoded QR with a `cmd` added"
+        );
+    }
+
+    #[test]
+    fn the_hosting_commands_are_their_names_alone() {
+        assert_eq!(
+            parse_command(r#"{"cmd":"host_pairing"}"#),
+            Ok(Command::HostPairing)
+        );
+        assert_eq!(
+            parse_command(r#"{"cmd":"wait_joined"}"#),
+            Ok(Command::WaitJoined)
         );
     }
 
