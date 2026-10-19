@@ -1478,34 +1478,37 @@ describe('App', () => {
       })
     })
 
-    // #5441 — same gate for the search overlays: their chunks load on first open.
-    it('mounts the search overlays only while their store is open', async () => {
+    // #5441 — same gate for the search overlays: their chunks load at idle, and
+    // the first open renders without suspending. An open that suspends commits
+    // the fallback, and React holds the overlay back 300 ms after it. The first
+    // open in this file is the one that can suspend, so this test opens them first.
+    it('mounts the search overlays only while their store is open, and the first open does not suspend', async () => {
       render(<App />)
       await waitFor(() => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
-      // Settle the lazy imports first, so an overlay mounted while closed has rendered.
-      await act(() =>
-        Promise.all([
+      // Let the idle preload (a 0 ms timeout where `requestIdleCallback` is missing) settle.
+      await act(async () => {
+        await Promise.all([
           import('@/components/common/CommandPalette'),
           import('@/components/query/InPageFind'),
           import('@/components/mobile/SearchSheet'),
-        ]),
-      )
+        ])
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
 
       expect(screen.queryByTestId('command-palette-stub')).not.toBeInTheDocument()
       expect(screen.queryByTestId('in-page-find-stub')).not.toBeInTheDocument()
       expect(screen.queryByTestId('search-sheet-stub')).not.toBeInTheDocument()
 
-      // Each open is an async act: outside one, React throttles the reveal of a
-      // newly loaded lazy overlay, and the test would wait that out.
-      await act(async () => useCommandPaletteStore.getState().open$())
+      // Synchronous: an overlay that suspends is still absent right after the opening act.
+      act(() => useCommandPaletteStore.getState().open$())
       expect(screen.getByTestId('command-palette-stub')).toBeInTheDocument()
-      await act(async () => useInPageFindStore.getState().open$())
+      act(() => useInPageFindStore.getState().open$())
       expect(screen.getByTestId('in-page-find-stub')).toBeInTheDocument()
 
       // The sheet's segment hides the matching App-level overlay.
-      await act(async () => useSearchSheetStore.getState().open$('all-pages'))
+      act(() => useSearchSheetStore.getState().open$('all-pages'))
       expect(screen.getByTestId('search-sheet-stub')).toBeInTheDocument()
       expect(screen.queryByTestId('command-palette-stub')).not.toBeInTheDocument()
       expect(screen.getByTestId('in-page-find-stub')).toBeInTheDocument()
