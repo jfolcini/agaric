@@ -1,22 +1,26 @@
 // ---------------------------------------------------------------------------
-// Real-backend OS reminder for a task due today, fired once (#5741).
+// Real-backend OS reminder for a due task (#5741).
 //
 // The reminder is the maintenance job `reminders_tick` (`reminders.rs`): on a
-// run at or after the chosen local time it notifies every open task due today
-// that has no row in its fired ledger, writing the row first. The mock has no
-// job, no ledger and no OS, so only this lane shows a reminder that never
-// fires or fires on every run.
+// run at or after the chosen local time it notifies every open task due on the
+// run's local date that has no row in its fired ledger, writing the row first.
+// The mock has no job, no ledger and no OS, so only this lane shows a reminder
+// that never fires.
 //
 // The sink is the session bus: `dbus-monitor` sees the app's
 // `org.freedesktop.Notifications.Notify` call (notify-rust, `notifier.rs`)
 // whether or not a notification daemon answers it, and the summary is the
-// task's first line. The second task proves a later run happened, so the
-// first task's single capture is "once", not "not yet twice".
+// task's first line.
 //
-// Slow by design: the job runs on every 60 s tick of the maintenance daemon,
-// the first about a minute after boot, so a reminder arrives up to a minute
-// after its time. Each wait is its own case to stay inside the per-test
-// timeout.
+// No wall-clock window: the reminder minute is the current one, so the next
+// run is already past it, and the task is due on that minute's date. Near
+// midnight the minute is the coming midnight instead, so the run that fires
+// sees the same date the task is due on.
+//
+// Slow by design: the job runs on the maintenance daemon's 60 s tick, the
+// first a tick after boot, and that real run is what the spec proves. It
+// waits for one run only; that a later run does not notify again is the
+// ledger's job, pinned by `fires_exactly_once_across_two_ticks`.
 //
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see
 // helpers.ts.
@@ -38,19 +42,19 @@ import {
 } from './helpers'
 
 const TASK_A = runScopedMarker('wdio-remind-first')
-const TASK_B = runScopedMarker('wdio-remind-second')
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
 const DATE_PICKER = '[data-testid="date-picker-popup"]'
 const SWITCH = '[data-testid="notifications-enabled-switch"]'
 const TIME_INPUT = '[data-testid="notifications-reminder-time"]'
 const NOTIFY_MATCH = "type='method_call',interface='org.freedesktop.Notifications',member='Notify'"
-// Up to a minute until the reminder time, a tick until the run after it, and slack.
+// Seeding plus one tick fits in this, so a minute this close to midnight moves to midnight.
+const ROLLOVER_MARGIN_MS = 120_000
+// The margin, a tick, and slack.
 const REMINDER_TIMEOUT = 240_000
 
 let monitor: ChildProcess | undefined
 let monitorLog = ''
 let monitorExit = ''
-let today = ''
 
 /** Start `dbus-monitor` on the session bus and resolve once it is monitoring. */
 function startNotifyMonitor(): Promise<void> {
@@ -113,8 +117,15 @@ async function waitForReminder(task: string): Promise<void> {
   })
 }
 
-/** A page holding one block, `task`, due today through `/due`. */
-async function seedTaskDueToday(task: string): Promise<void> {
+/** The reminder minute: now, or the coming midnight when the first run could fall past it. */
+function reminderMinute(now: Date): Date {
+  const midnight = new Date(now)
+  midnight.setHours(24, 0, 0, 0)
+  return midnight.getTime() - now.getTime() < ROLLOVER_MARGIN_MS ? midnight : now
+}
+
+/** A page holding one block, `task`, due on `day` through `/due`. */
+async function seedTaskDue(task: string, day: string): Promise<void> {
   await openNewPage(runScopedMarker(`${task}-page`))
   await typeMarkerVerified(task)
   const id = await browser.execute(
@@ -129,7 +140,7 @@ async function seedTaskDueToday(task: string): Promise<void> {
   const dueItem = $('#suggestion-due')
   await dueItem.waitForClickable({ timeout: ACTION_TIMEOUT })
   await dueItem.click()
-  await typeInputVerified(`${DATE_PICKER} input[aria-label="Type a date"]`, 'today')
+  await typeInputVerified(`${DATE_PICKER} input[aria-label="Type a date"]`, day)
   await browser.keys(['Enter'])
   await $(DATE_PICKER).waitForExist({ reverse: true, timeout: ACTION_TIMEOUT })
   // The chip renders once `set_due_date` has answered.
@@ -157,16 +168,11 @@ describe('Agaric real-backend due-task reminder (#5741) @journal', () => {
     monitor?.kill()
   })
 
-  it('reminders on at the next minute, with a task due today', async () => {
-    const now = new Date()
-    if (24 * 60 - (now.getHours() * 60 + now.getMinutes()) < 15) {
-      throw new Error('the run starts within 15 minutes of local midnight: "due today" would roll')
-    }
-    today = isoDay(now)
-    const next = new Date(now.getTime() + 60_000)
-    const time = `${String(next.getHours()).padStart(2, '0')}:${String(next.getMinutes()).padStart(2, '0')}`
+  it('reminders on at the current minute, with a task due that day', async () => {
+    const at = reminderMinute(new Date())
+    const time = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
 
-    await seedTaskDueToday(TASK_A)
+    await seedTaskDue(TASK_A, isoDay(at))
 
     await openSettingsTab('notifications')
     const toggle = $(SWITCH)
@@ -198,13 +204,5 @@ describe('Agaric real-backend due-task reminder (#5741) @journal', () => {
     expect(notifications().filter((n) => n.summary === TASK_A)).toEqual([
       { summary: TASK_A, body: 'Due today' },
     ])
-  })
-
-  it('a later run notifies a new due task and not the first one again', async () => {
-    await seedTaskDueToday(TASK_B)
-    await waitForReminder(TASK_B)
-    expect(notifiedCount(TASK_B)).toBe(1)
-    expect(notifiedCount(TASK_A)).toBe(1)
-    expect(isoDay(new Date())).toBe(today)
   })
 })
