@@ -33,13 +33,18 @@ async function openWeekView(): Promise<void> {
   })
 }
 
-/** The id of the first week day still showing its no-page empty state. */
+/**
+ * The id of the first week day still showing its no-page empty state. The
+ * "No blocks for" sentence is for screen readers only, so read the text
+ * content, not the rendered text.
+ */
 async function firstEmptyDayId(): Promise<string> {
   let found: string | undefined
   await browser.waitUntil(
     async () => {
       for (const day of await $$('section[id^="journal-"]').getElements()) {
-        if ((await day.getText()).includes('No blocks for')) {
+        const text = await browser.execute((el: HTMLElement) => el.textContent ?? '', day)
+        if (text.includes('No blocks for')) {
           found = (await day.getAttribute('id')) ?? undefined
           return true
         }
@@ -59,7 +64,7 @@ describe('Agaric real-backend week view empty-day Add block @editor @journal', (
     await openWeekView()
 
     const day = `section[id="${await firstEmptyDayId()}"]`
-    const addBlock = $(day).$('button*=Add block')
+    const addBlock = $(day).$('button[aria-label="Add block"]')
     await addBlock.waitForClickable({ timeout: ACTION_TIMEOUT })
     await addBlock.click()
 

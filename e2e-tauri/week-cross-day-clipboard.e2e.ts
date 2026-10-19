@@ -142,7 +142,7 @@ describe('Agaric real-backend week-view clipboard across two days @editor @journ
     // The empty day's "Add block" creates its page and seeds its first block.
     const otherDay = $(`#${empty}`)
     await otherDay.scrollIntoView()
-    await otherDay.$('button*=Add block').click()
+    await otherDay.$('button[aria-label="Add block"]').click()
     await browser.waitUntil(
       async () => (await $$(`#${empty} [data-testid="sortable-block"]`).getElements()).length === 1,
       { timeout: ACTION_TIMEOUT, timeoutMsg: `Add block did not seed one block row in ${empty}` },

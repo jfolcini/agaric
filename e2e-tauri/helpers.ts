@@ -42,12 +42,16 @@
 //     SidebarMenuButton `{...props}`). This is a VIEW-AGNOSTIC readiness
 //     signal: after a nav click the target button flips to `page`, proving the
 //     view actually switched — no per-view anchor or timing race required.
-//   - `button*=Add block`                   JournalPage "Add block" action
-//     (`agenda.day.addBlock`), the same selector smoke.e2e.ts committed to.
+//   - `button*=Add block`                   the "Add block" action under a
+//     day's blocks (`AddBlockButton`, `action.addBlock`), the same selector
+//     smoke.e2e.ts committed to. A week or stream day with no page offers an
+//     icon button instead: `button[aria-label="Add block"]`
+//     (`agenda.day.addBlock`).
 //   - `#journal-tab-weekly`                 JournalControls week tab
 //     (`journalTabId('weekly')`); `section[id="journal-<date>"]` is a
 //     DaySection, and "No blocks for" (`agenda.day.empty`) marks a day with
-//     no page.
+//     no page. In the week and stream views that sentence is for screen
+//     readers only: read it from `textContent`, which `getText()` leaves out.
 //   - `#new-page-name`                      the New page dialog's title field
 //     (NewPageDialog.tsx), opened by the sidebar's "New Page" button
 //     (`openNewPageDialog`); Enter in it creates the page.
@@ -272,10 +276,10 @@ export function blockStaticByMarker(marker: string) {
  * contenteditable, tolerating BOTH first-block CTAs.
  *
  * On a vault that ALREADY has a journal page for the day, DaySection renders the
- * `AddBlockButton` ("Add block" — `action.addBlock`, DaySection.tsx:509-512). On
+ * `AddBlockButton` ("Add block" — `action.addBlock`). On
  * a VIRGIN vault where today's page does not exist yet, `entry.pageId` is null
  * and DaySection instead renders the empty-state CTA labelled "Add your first
- * block" (`journal.addFirstBlock`, DaySection.tsx:470-501). Both buttons call
+ * block" (`journal.addFirstBlock`). Both buttons call
  * the SAME `onAddBlock(dateStr)` -> `handleAddBlock` handler
  * (useJournalBlockCreation.ts), which creates the page if needed and seeds +
  * focuses a first block (template path or BlockTree's `autoCreateFirstBlock`),

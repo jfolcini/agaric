@@ -168,14 +168,19 @@ async function expandUnfinished(): Promise<void> {
   }
 }
 
-/** The id of a week day other than `except` that still shows its no-page empty state. */
+/**
+ * The id of a week day other than `except` that still shows its no-page empty
+ * state. Its "No blocks for" sentence is for screen readers only, which
+ * `getText()` leaves out, so this reads the text content.
+ */
 async function emptyWeekDay(except: string): Promise<string> {
   let found: string | undefined
   await browser.waitUntil(
     async () => {
       for (const day of await $$('section[id^="journal-"]').getElements()) {
         const date = ((await day.getAttribute('id')) ?? '').replace('journal-', '')
-        if (date !== except && (await day.getText()).includes('No blocks for')) {
+        const text = await browser.execute((el: HTMLElement) => el.textContent ?? '', day)
+        if (date !== except && text.includes('No blocks for')) {
           found = date
           return true
         }
