@@ -7,6 +7,9 @@
  * Agenda + calendar pair only joins it on the content/navigation views in
  * `DATE_CONTROL_VIEWS`; on the tool/admin views and the page editor a bare
  * calendar trio reads as off-context (#1740).
+ *
+ * None of it shows below `md`: on a phone the drawer's Journal entry is one
+ * tap away, and the row is for the view's own title.
  */
 
 import { Calendar as CalendarIcon } from 'lucide-react'
@@ -71,18 +74,15 @@ export function GlobalDateControls(): React.ReactElement {
   }
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1 max-md:hidden">
       <Button variant="outline" size="xs" onClick={handleToday} aria-label={t('journal.goToToday')}>
         {t('journal.today')}
       </Button>
       {DATE_CONTROL_VIEWS.has(currentView) && (
         <>
-          {/* Hidden on a phone, where it would wrap the header onto a second
-              row; Agenda stays in the journal's mode menu there. */}
           <Button
             variant="outline"
             size="xs"
-            className="hidden sm:inline-flex"
             onClick={handleAgenda}
             aria-label={t('journal.goToAgenda')}
           >

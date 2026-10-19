@@ -1,5 +1,7 @@
 /**
- * HistoryNavButtons — the header's Back / Forward, shown on every view.
+ * HistoryNavButtons — the header's Back / Forward, shown on every view from
+ * `md` up. A phone has none: Android's system back walks the same history
+ * (`back-handlers.ts`), and the row's width goes to the journal stepper.
  *
  * Steps through `@/stores/navigation-history`: journal periods, pages and
  * views in the order they were visited, per space. Arrows rather than
@@ -24,14 +26,10 @@ export function HistoryNavButtons(): React.ReactElement {
   useResolveStore((s) => s.version)
 
   return (
-    // `self-start` pins them beside the hamburger when a phone header wraps.
-    <div className="flex shrink-0 items-center gap-0.5 self-start sm:self-center">
-      {/* 24px wide below md, like the journal row's other icons, which is
-          what lets the phone journal header keep a readable date. */}
+    <div className="flex shrink-0 items-center gap-0.5 max-md:hidden">
       <IconButton
         variant="ghost"
         size="icon-xs"
-        className="max-md:w-6!"
         ariaLabel={t('nav.back')}
         tooltip={t('nav.back')}
         disabled={!canStep(history, -1)}
@@ -42,7 +40,6 @@ export function HistoryNavButtons(): React.ReactElement {
       <IconButton
         variant="ghost"
         size="icon-xs"
-        className="max-md:w-6!"
         ariaLabel={t('nav.forward')}
         tooltip={t('nav.forward')}
         disabled={!canStep(history, 1)}
