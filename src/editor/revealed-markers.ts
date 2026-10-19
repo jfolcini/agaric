@@ -16,6 +16,7 @@ import {
   OPEN_DELIMITER,
   writesBareUrl,
 } from '@/editor/markdown-serialize'
+import { PAGE_BLOCK } from '@/editor/page-mode/page-block-name'
 import { isMarkdownRevealEnabled } from '@/lib/editor-preferences'
 
 const EMPHASIS_MARKS = ['bold', 'italic', 'strike', 'code'] as const
@@ -258,9 +259,18 @@ function headingMarker(state: EditorState, start: number, level: number): Headin
   }
 }
 
+/** A page-mode selection that reaches into more than one block: it reveals nothing, and is never walked. */
+function spansPageBlocks({ doc, selection }: EditorState): boolean {
+  if (selection.empty || doc.firstChild?.type.name !== PAGE_BLOCK) return false
+  const { $from, $to } = selection
+  // A position between blocks (Ctrl+A ends there) belongs to the block before it.
+  const last = $to.depth === 0 ? $to.index(0) - 1 : $to.index(0)
+  return $from.index(0) !== last
+}
+
 /** The markers `state` reveals, none with the preference off. */
 export function revealedMarkers(state: EditorState): Marker[] {
-  if (!isMarkdownRevealEnabled()) return []
+  if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
   const headings = [...headingsAtSelection(state)].map(([start, level]) =>
     headingMarker(state, start, level),
   )

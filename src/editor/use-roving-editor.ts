@@ -567,7 +567,8 @@ export interface ContentExtensionOptions {
  * `blocks` (rules, tables, code, headings, history), `inline` (links, math,
  * images) and `chips` (tags, page links and block refs, with their pickers).
  * The order is behaviour, since a later extension's plugins act first: block
- * mode places `MarkdownReveal` between `text` and `lists`, where it was.
+ * mode places `MarkdownReveal` between `text` and `lists`, where it was, and
+ * page mode (`page-mode-extensions.ts`) after its list keys.
  */
 export function contentExtensions(o: ContentExtensionOptions) {
   const listTypes = o.listInputRules
@@ -942,7 +943,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Document,
       ...content.text,
       // #5689 — the caret's inline marks show their Markdown markers, behind the
-      // off-by-default `revealMarkdownSyntax` preference. Block mode only (#5691).
+      // off-by-default `revealMarkdownSyntax` preference.
       MarkdownReveal,
       ...content.lists,
       // #3000 — paints the focused block's list marker (bullet / computed

@@ -8,12 +8,15 @@
  * takes the task state (`page-tasks.ts`). The stock `- ` and `1. ` rules,
  * which make an in-block list, are off: page mode's own make the block a
  * bullet or numbered block, as block mode's list-style rule does
- * (`page-lists.ts`). In page mode the document owns text and structure.
+ * (`page-lists.ts`). In page mode the document owns text and structure. With
+ * the *Show Markdown syntax around the cursor* setting on, block mode's reveal
+ * draws the syntax around the caret here too (`MarkdownReveal`).
  */
 
 import type { Extensions } from '@tiptap/core'
 import Placeholder from '@tiptap/extension-placeholder'
 
+import { MarkdownReveal } from '@/editor/extensions/markdown-reveal'
 import { PropertyPicker } from '@/editor/extensions/property-picker'
 import { QueryPicker } from '@/editor/extensions/query-picker'
 import { SlashCommand } from '@/editor/extensions/slash-command'
@@ -71,6 +74,10 @@ export function pageModeExtensions(options: PageModeExtensionOptions): Extension
     PageKeys,
     PageRenderedKeys,
     ...(options.lists === undefined ? [] : [pageListKeys(options.lists)]),
+    // After `pageListKeys` and at its priority: among equals the one registered
+    // last acts first, and a marker before the caret takes Backspace before the
+    // list key and the block join do.
+    MarkdownReveal,
     PageBlockFocus,
     // Block mode's placeholder, on the empty paragraph the cursor is in.
     Placeholder.configure({
