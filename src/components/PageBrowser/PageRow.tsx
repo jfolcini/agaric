@@ -12,7 +12,7 @@
 
 import { Bookmark, FileText, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { memo, useCallback, useEffect, useSyncExternalStore } from 'react'
+import { memo, useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DuplicateTitleCue } from '@/components/common/DuplicateTitleCue'
@@ -20,7 +20,9 @@ import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { NewTabTarget } from '@/components/common/NewTabTarget'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import { useLongPress } from '@/hooks/useLongPress'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { cn } from '@/lib/utils'
@@ -90,6 +92,10 @@ export interface PageRowProps {
   /** Whether this row is in the batch selection. Drives the leading
    * checkbox's checked state and the `data-selected` attribute. */
   multiSelected: boolean
+  /** Some row in the list is selected. Below `sm` the checkboxes show only
+   * then, and on a touch phone a tap on the row toggles it instead of
+   * opening the page. */
+  selectionActive: boolean
   /** Toggle this row's batch selection (additive to the single-row
    * star/delete flow). Receives the click event so the parent's
    * `useListMultiSelect.handleRowClick` can honour Shift (range) and
@@ -229,6 +235,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
     hasScheduled,
     hasDue,
     multiSelected,
+    selectionActive,
     onToggleMultiSelect,
     onSelect,
     onToggleStar,
@@ -282,6 +289,39 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
     [viewport, pageId, measureElement],
   )
 
+  // On a phone the row shows no checkbox until something is selected: a long
+  // press selects it (Material's list multi-select), and the batch toolbar
+  // that appears carries bookmark and delete. The release after the hold is
+  // no tap, so its click is swallowed.
+  const isMobile = useIsMobile()
+  const touchSelect = isTouch && isMobile
+  const pressRef = useRef<React.PointerEvent | null>(null)
+  const heldRef = useRef(false)
+  const longPress = useLongPress({
+    onLongPress: () => {
+      if (!pressRef.current) return
+      heldRef.current = true
+      onToggleMultiSelect(pageId, pressRef.current)
+    },
+  })
+  const longPressProps = touchSelect
+    ? {
+        ...longPress,
+        onPointerDown: (e: React.PointerEvent) => {
+          heldRef.current = false
+          pressRef.current = e
+          longPress.onPointerDown(e)
+        },
+        onClickCapture: (e: React.MouseEvent) => {
+          if (!heldRef.current) return
+          heldRef.current = false
+          e.preventDefault()
+          e.stopPropagation()
+        },
+        onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+      }
+    : {}
+
   const relative = formatRelativeShort(lastModifiedAt)
   const relativeLabel = relative === '' ? t('pageBrowser.metadata.never') : relative
   const firstFlag = collectFlagTokens({ hasTags, hasTodo, hasScheduled, hasDue })[0]
@@ -305,17 +345,22 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
       // element for keyboard nav).
       onMouseEnter={() => prefetchIntent.schedule(pageId)}
       onMouseLeave={prefetchIntent.cancel}
+      {...longPressProps}
       className={cn(
         'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
+        touchSelect && 'select-none [-webkit-touch-callout:none]',
         focused && 'list-cursor',
       )}
       style={rowStyle(virtualRowStart)}
     >
-      {/* #81 / batch-selection checkbox. Always present (it is
-          the entry point into selection mode); visible on hover / focus /
-          when checked, mirroring the star + delete affordances. */}
-      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner checkbox; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className="flex shrink-0 items-center">
+      {/* #81 / batch-selection checkbox: the entry point into selection
+          mode, visible on hover / focus / when checked. Below `sm` it shows
+          only once something is selected; the long press is the entry there. */}
+      <div
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner checkbox; CSS-grid cell would break as a <td> without a <table>
+        role="gridcell"
+        className={cn('flex shrink-0 items-center', !selectionActive && 'max-sm:hidden')}
+      >
         <Checkbox
           checked={multiSelected}
           onClick={(e) => {
@@ -336,7 +381,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
           variant="ghost"
           size="icon-xs"
           aria-label={starred ? t('pageBrowser.removeBookmark') : t('pageBrowser.addBookmark')}
-          className="star-toggle shrink-0 touch-target opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
+          className="star-toggle shrink-0 touch-target max-sm:hidden opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-visible:opacity-100 focus-visible:ring-inset transition-opacity text-muted-foreground hover:text-star data-[starred=true]:opacity-100 data-[starred=true]:text-star"
           data-starred={starred}
           onClick={(e) => {
             e.stopPropagation()
@@ -349,7 +394,10 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
           <button
             type="button"
             className="page-browser-item flex flex-1 min-w-0 items-center gap-3 border-none bg-transparent p-0 text-left text-sm cursor-pointer focus-ring-visible focus-visible:ring-inset"
-            onClick={() => onSelect(pageId, title)}
+            onClick={(e) => {
+              if (touchSelect && selectionActive) onToggleMultiSelect(pageId, e)
+              else onSelect(pageId, title)
+            }}
             // #2850 — keyboard focus intent (mirrors the row's hover intent
             // above); this button is the row's actual focusable element.
             onFocus={() => prefetchIntent.schedule(pageId)}
@@ -399,7 +447,7 @@ function PageRowInner(props: PageRowProps): React.ReactElement {
         </NewTabTarget>
       </div>
       {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner action buttons; CSS-grid cell would break as a <td> without a <table> */}
-      <div role="gridcell" className="flex shrink-0 items-center">
+      <div role="gridcell" className="flex shrink-0 items-center max-sm:hidden">
         <Button
           variant="ghost"
           size="icon-xs"

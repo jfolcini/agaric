@@ -7,15 +7,17 @@
  *  - Render gate: shows when `useShouldShowMobileChrome()` is true; renders
  *    nothing when false (desktop).
  *  - Click invokes the shared `setQuickCaptureOpen(true)` setter.
+ *  - Steps aside while an editing toolbar is pinned and on a scroll down.
  *  - Carries the i18n aria-label + the stable test id.
  *  - axe clean.
  */
 
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { usePinToolbar } from '@/components/FormattingToolbar/pinned-toolbar'
 import { QuickCaptureFab } from '@/components/mobile/QuickCaptureFab'
 import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 
@@ -42,23 +44,61 @@ describe('QuickCaptureFab', () => {
     expect(screen.queryByTestId('quick-capture-fab')).toBeNull()
   })
 
-  it('sits 5rem above the inset to clear the bottom-fixed FormattingToolbar', () => {
-    // The touch FormattingToolbar pins `fixed inset-x-0 bottom-0` (~47px tall)
-    // when a block is focused, and its right-aligned "More" button shares the
-    // bottom-right column with this FAB. A ~1rem offset (the value #1747 tried)
-    // floats the size-14 FAB over that toolbar and swallows the "More" tap
-    // (caught by the `formatting-toolbar-mobile` e2e). The offset must stay at
-    // 5rem (80px) so the FAB clears the 47px toolbar, stacked on the bottom
-    // safe-area inset.
-    //
-    // The VARIABLE, not `env()` directly — same convention as
-    // `App.test.tsx`'s main-content-viewport assertion: `index.css` is the
-    // one definition site for `--safe-area-*`, and every consumer, this FAB
-    // included, reads the variable rather than `env()` directly.
+  it('sits 1rem above the bottom safe-area inset at 56 px, with no 44 px size variant', () => {
+    // Every Button size sets a coarse-pointer 44 px that beats `size-14`. The
+    // VARIABLE, not `env()` directly — same convention as `App.test.tsx`'s
+    // main-content-viewport assertion.
     render(<QuickCaptureFab setQuickCaptureOpen={vi.fn()} />)
     const fab = screen.getByTestId('quick-capture-fab')
-    expect(fab.className).toContain('bottom-[calc(5rem+var(--safe-area-bottom))]')
+    expect(fab.className).toContain('bottom-[calc(1rem+var(--safe-area-bottom))]')
+    expect(fab.className).toContain('size-14')
+    expect(fab.className).not.toContain('pointer:coarse')
     expect(fab.className).not.toContain('env(safe-area-inset-bottom)')
+  })
+
+  it('hides while an editing toolbar is pinned and returns when it unmounts', () => {
+    function PinnedToolbar(): null {
+      usePinToolbar(true)
+      return null
+    }
+    const { rerender } = render(
+      <>
+        <QuickCaptureFab setQuickCaptureOpen={vi.fn()} />
+        <PinnedToolbar />
+      </>,
+    )
+    const fab = screen.getByTestId('quick-capture-fab')
+    expect(fab).toHaveAttribute('data-shown', 'false')
+    expect(fab.className).toContain('invisible')
+    rerender(<QuickCaptureFab setQuickCaptureOpen={vi.fn()} />)
+    expect(fab).toHaveAttribute('data-shown', 'true')
+  })
+
+  it('hides on a scroll down and returns on a scroll up', () => {
+    render(
+      <>
+        <QuickCaptureFab setQuickCaptureOpen={vi.fn()} />
+        <div data-testid="scroller" />
+      </>,
+    )
+    const fab = screen.getByTestId('quick-capture-fab')
+    const scroller = screen.getByTestId('scroller')
+    const scrollTo = (top: number) =>
+      act(() => {
+        scroller.scrollTop = top
+        scroller.dispatchEvent(new Event('scroll'))
+      })
+    scrollTo(200)
+    expect(fab).toHaveAttribute('data-shown', 'false')
+    // Jitter under the slop leaves it hidden.
+    scrollTo(196)
+    expect(fab).toHaveAttribute('data-shown', 'false')
+    scrollTo(150)
+    expect(fab).toHaveAttribute('data-shown', 'true')
+    scrollTo(400)
+    expect(fab).toHaveAttribute('data-shown', 'false')
+    scrollTo(0)
+    expect(fab).toHaveAttribute('data-shown', 'true')
   })
 
   it('is an accessible, labelled button', () => {

@@ -625,7 +625,8 @@ export function GraphFilterBar({
 
   return (
     <fieldset
-      className="graph-filter-bar flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-background/80 p-2 backdrop-blur-sm"
+      // Below `sm` it is no box of its own inside the graph card (#5932).
+      className="graph-filter-bar flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-background/80 p-2 backdrop-blur-sm max-sm:border-0 max-sm:p-0"
       aria-label={t('graph.filter.addFilter')}
       data-testid="graph-filter-bar"
     >

@@ -53,7 +53,12 @@ export function BatchActionToolbar({
       role="toolbar"
       aria-label={t('batch.selectedCount', { count: selectedCount })}
       aria-describedby={!suppressRangeSelectHint ? 'batch-range-select-hint' : undefined}
-      className={cn('flex items-center gap-2 rounded-lg border bg-muted/50 p-2', className)}
+      // Wraps: a phone cannot fit the actions on one line, and the clipped
+      // ones (Pages' Bookmark and Delete) were unreachable.
+      className={cn(
+        'flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 p-2',
+        className,
+      )}
     >
       <Badge tone="secondary">{t('batch.selectedCount', { count: selectedCount })}</Badge>
       {children}

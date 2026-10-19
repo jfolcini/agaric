@@ -14,6 +14,7 @@ import type React from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { usePinToolbar } from '@/components/FormattingToolbar/pinned-toolbar'
 import { type RenderMode, Tip } from '@/components/FormattingToolbar/shared'
 import { Button } from '@/components/ui/button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
@@ -55,6 +56,7 @@ export function ToolbarFrame({
   // instance to the bottom of the layout viewport and lift it above the
   // keyboard via `visualViewport`. Desktop keeps the inline layout.
   const isTouch = useIsTouch()
+  usePinToolbar(isTouch)
   const [overflowPopoverOpen, setOverflowPopoverOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
