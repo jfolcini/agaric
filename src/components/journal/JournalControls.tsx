@@ -172,21 +172,16 @@ export function JournalControls(): React.ReactElement {
   const todayShortcut = getShortcutKeys('goToToday')
 
   return (
-    // ONE row at every width. Below `sm` this used to be `flex-col`, which —
-    // nested inside the App header's own `flex-col` — put the mode tabs, the
-    // date stepper and the search trigger on three separate rows on a phone
-    // (measured: a 148px-tall header at 360px). The row now fits by shrinking
-    // the fixed chrome (see the `max-sm:*!` widths below) and letting the date
-    // chip absorb whatever is left, so overflow is structurally impossible
-    // rather than budgeted: every other child is fixed-width, and the chip
-    // truncates.
+    // ONE row at every width: every child but the date chip is fixed-width,
+    // and the chip truncates, so overflow is structurally impossible rather
+    // than budgeted.
     <div
-      className="flex min-w-0 flex-1 items-center gap-2 max-sm:gap-0.5"
+      className="flex min-w-0 flex-1 items-center gap-2 max-sm:gap-1"
       data-testid="journal-header"
     >
       {/* Mode switcher: tabs from lg up; below it one menu button, because the
-          five tabs next to Back / Forward, the date stepper and Today leave the
-          date chip no room on a phone or a touch tablet. Manual activation:
+          five tabs next to the date stepper and Today leave the date chip no
+          room on a phone or a touch tablet. Manual activation:
           arrow keys move focus only, so passing a tab does not mount its view
           (Agenda fires IPC on mount); Enter, Space or a click selects. */}
       <Tabs
@@ -232,7 +227,7 @@ export function JournalControls(): React.ReactElement {
           agenda/stream, and anchoring the popover to their shared parent lets
           both use ONE dropdown instance (right-aligned to the cluster, which
           is where it already sat when the icon was the only trigger). */}
-      <div className="relative flex min-w-0 items-center gap-1 max-sm:gap-0.5">
+      <div className="relative flex min-w-0 items-center gap-1">
         {/* Surface the current configurable bindings so users discover the
             shortcuts without opening the KeyboardShortcuts sheet. */}
         {!hidesDateNav && (
@@ -240,9 +235,6 @@ export function JournalControls(): React.ReactElement {
             <IconButton
               variant="ghost"
               size="icon-xs"
-              // 28×44 on a phone — see the tab comment above for why the
-              // coarse-pointer 44px WIDTH cannot be afforded on this row.
-              className="max-sm:w-6!"
               ariaLabel={navLabels.prev}
               aria-keyshortcuts={toAriaKeyshortcuts(previousShortcut)}
               tooltip={
@@ -273,7 +265,7 @@ export function JournalControls(): React.ReactElement {
               // the date text, which truncates. That is what makes "no
               // horizontal overflow" structural instead of a pixel budget
               // that a longer locale string could blow.
-              className="min-w-0 shrink gap-1 text-sm font-medium max-sm:px-0.5!"
+              className="min-w-0 shrink gap-1 text-sm font-medium max-sm:px-0! [@media(pointer:coarse)]:min-w-11"
               aria-label={`${dateDisplay} · ${t('journal.openCalendar')}`}
               aria-expanded={calendarOpen}
               aria-haspopup="dialog"
@@ -296,7 +288,6 @@ export function JournalControls(): React.ReactElement {
             <IconButton
               variant="ghost"
               size="icon-xs"
-              className="max-sm:w-6!"
               ariaLabel={navLabels.next}
               aria-keyshortcuts={toAriaKeyshortcuts(nextShortcut)}
               tooltip={
@@ -316,22 +307,20 @@ export function JournalControls(): React.ReactElement {
         )}
         {/* Always shown, on every mode and date: today's page is where most
             writing happens, so the way back to it never moves or vanishes.
-            Below `md` it is a 24px ghost icon: the word squeezes the date
-            chip to one letter on a 360px phone, and on a 640-767px touch
-            screen the full-word tabs leave the chip no room either. `!`
-            because the outline variant's own classes otherwise win on source
-            order. */}
+            Below `md` it is a ghost icon: the word squeezes the date chip to
+            one letter on a 360px phone. `!` because the outline variant's own
+            classes otherwise win on source order. */}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
               variant="outline"
               size="xs"
-              className="max-md:w-6! max-md:px-0! max-md:border-transparent! max-md:bg-transparent! max-md:shadow-none! max-md:active:bg-accent/80!"
+              className="max-md:border-transparent! max-md:bg-transparent! max-md:shadow-none! max-md:active:bg-accent/80! [@media(pointer:coarse)]:min-w-11"
               onClick={goToToday}
               aria-label={t('journal.goToToday')}
               aria-keyshortcuts={toAriaKeyshortcuts(todayShortcut)}
             >
-              <House className="md:hidden" aria-hidden="true" />
+              <House className="size-4 md:hidden" aria-hidden="true" />
               <span className="max-md:hidden">{t('journal.today')}</span>
             </Button>
           </TooltipTrigger>
@@ -349,7 +338,6 @@ export function JournalControls(): React.ReactElement {
           <IconButton
             variant="ghost"
             size="icon-xs"
-            className="max-sm:w-6!"
             ariaLabel={t('journal.openCalendar')}
             tooltip={t('journal.openCalendar')}
             aria-expanded={calendarOpen}
