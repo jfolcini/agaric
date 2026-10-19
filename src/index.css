@@ -2182,6 +2182,28 @@
   }
 }
 
+/* A 44 px coarse-pointer hit area that adds no layout height: a transparent
+ * pseudo-element centred on the control and at least as large as it, so a
+ * small chip stays small in its row. It sits above the rows around it, which
+ * would otherwise take the taps on its overhang. Keep 8 px between neighbours
+ * narrower than 44 px, or their hit areas overlap. */
+@utility touch-hit-area {
+  @media (pointer: coarse) {
+    position: relative;
+
+    &::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(44px, 100%);
+      height: max(44px, 100%);
+      transform: translate(-50%, -50%);
+      z-index: 1;
+    }
+  }
+}
+
 /* ── PageBrowser namespace gutter ──────────────────────────────────────
  * The `Pages` list interleaves two row shapes: a flat page row
  * (`PageRow`) and a namespace subtree (`PageTreeItem`). Only the flat

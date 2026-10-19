@@ -229,7 +229,7 @@ export function TemplatesView(): React.ReactElement {
           value={newTemplateName}
           onChange={(e) => setNewTemplateName(e.target.value)}
           placeholder={t('templates.newTemplatePlaceholder')}
-          className="flex-1"
+          className="sm:flex-1"
         />
         <Button
           type="submit"

@@ -582,8 +582,10 @@ test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
           const options = optionsEl.getBoundingClientRect()
           if (Math.abs(options.left - name.left) > 1)
             problems.push(`${key}: options at x=${options.left}, name at x=${name.left}`)
-          if (Math.abs(options.top - line1Bottom) > 1)
-            problems.push(`${key}: options top ${options.top}, line 1 ends at ${line1Bottom}`)
+          // Line 2 is the options' line box; a 44 px help button can share it.
+          const optionsLine = (optionsEl.parentElement ?? optionsEl).getBoundingClientRect()
+          if (Math.abs(optionsLine.top - line1Bottom) > 1)
+            problems.push(`${key}: options top ${optionsLine.top}, line 1 ends at ${line1Bottom}`)
         }
         const below = [...el.querySelectorAll('*')].some(
           (n) => n.getBoundingClientRect().top >= line1Bottom,

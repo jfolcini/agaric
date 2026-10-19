@@ -319,7 +319,7 @@ export function BookmarksSection(): ReactElement {
         isCollapsed={collapsed}
         onToggle={() => setCollapsed((prev) => !prev)}
         testId="sidebar-bookmarks-toggle"
-        className="h-8 px-2 py-0 text-xs font-medium group-data-[collapsible=icon]:hidden"
+        className="h-8 px-2 py-0 text-xs font-medium group-data-[collapsible=icon]:hidden [@media(pointer:coarse)]:h-11"
       >
         {t('bookmarks.title')}
       </CollapsiblePanelHeader>

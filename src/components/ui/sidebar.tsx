@@ -383,7 +383,7 @@ const SidebarFooter = ({ ref, className, ...props }: React.ComponentProps<'div'>
     ref={ref}
     data-slot="sidebar-footer"
     data-sidebar="footer"
-    className={cn('flex flex-col gap-2 p-2', className)}
+    className={cn('flex flex-col gap-2 px-4 py-2 group-data-[collapsible=icon]:px-2', className)}
     {...props}
   />
 )
@@ -441,7 +441,10 @@ const SidebarGroup = ({ ref, className, ...props }: React.ComponentProps<'div'>)
     ref={ref}
     data-slot="sidebar-group"
     data-sidebar="group"
-    className={cn('relative flex w-full min-w-0 flex-col p-2', className)}
+    className={cn(
+      'relative flex w-full min-w-0 flex-col px-4 py-2 group-data-[collapsible=icon]:px-2',
+      className,
+    )}
     {...props}
   />
 )
@@ -544,12 +547,9 @@ const SidebarMenuItem = ({ ref, className, ...props }: React.ComponentProps<'li'
 SidebarMenuItem.displayName = 'SidebarMenuItem'
 
 const sidebarMenuButtonVariants = cva(
-  // On touch / coarse-pointer devices, enforce the 44-px WCAG
-  // Target Size minimum when the sidebar is collapsed to icon-only mode via
-  // `[@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11!`. The
-  // pointer-fine default stays at `size-8` (32 px) because pointer precision
-  // is higher. Only the desktop icon-collapsed rail reaches this now — below
-  // the mobile breakpoint the sidebar is a Sheet with full-width rows.
+  // A coarse pointer gets 44 px targets: the default size's rows are `h-11`,
+  // and the desktop icon-only rail's buttons are `size-11!`. A fine pointer
+  // keeps 32 px.
   "peer/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! group-data-[collapsible=icon]:justify-center [@media(pointer:coarse)]:group-data-[collapsible=icon]:size-11! hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground focus-ring-visible active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:hover:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:[&>span]:sr-only [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0 [&>svg:not([class*='text-'])]:text-icon",
   {
     variants: {
@@ -559,7 +559,7 @@ const sidebarMenuButtonVariants = cva(
           'bg-background border border-sidebar-border hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_var(--sidebar-accent)]',
       },
       size: {
-        default: 'h-8 text-sm',
+        default: 'h-8 text-sm [@media(pointer:coarse)]:h-11',
         sm: 'h-7 text-xs',
         lg: 'h-12 text-sm group-data-[collapsible=icon]:p-0!',
       },

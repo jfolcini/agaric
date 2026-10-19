@@ -16,6 +16,7 @@ import {
 } from '@/components/common/VirtualizedBlockList'
 import { PageLink } from '@/components/pages/PageLink'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
+import { IconButton } from '@/components/ui/icon-button'
 import { getPageDisplayName, type PageDisplay } from '@/lib/page-display'
 
 /**
@@ -184,6 +185,7 @@ function CollapsibleGroupListInner<G extends GroupItem>({
         // ancestor segments below in a smaller muted line). The `title=""`
         // tooltip preserves the full path on hover.
         const display = getDisplayNameCached(title)
+        const toggleLabel = isExpanded ? t('group.collapseGroup') : t('group.expandGroup')
         return (
           <div key={group.page_id} className={groupClassName}>
             {onPageTitleClick ? (
@@ -193,14 +195,18 @@ function CollapsibleGroupListInner<G extends GroupItem>({
                   'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors'
                 }
               >
-                <button
-                  type="button"
+                {/* The negative margin keeps the chevron where the bare icon was. */}
+                <IconButton
+                  variant="ghost"
+                  size="icon-xs"
+                  className="-ml-1.25 [@media(pointer:coarse)]:-ml-3.75"
                   onClick={() => onToggleGroup(group.page_id)}
                   aria-expanded={isExpanded}
-                  aria-label={isExpanded ? t('group.collapseGroup') : t('group.expandGroup')}
+                  ariaLabel={toggleLabel}
+                  tooltip={toggleLabel}
                 >
                   <ChevronToggle isExpanded={isExpanded} size="md" />
-                </button>
+                </IconButton>
                 <PageLink pageId={group.page_id} title={title} className="flex-1 min-w-0 text-left">
                   <span className="flex min-w-0 flex-col" title={display.title}>
                     <span className="truncate">{display.label}</span>
