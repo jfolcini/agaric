@@ -154,7 +154,8 @@ test.describe('Phone views at 360 × 780 (#5932) @mobile @pages @journal @graph'
     await expect
       .poll(() => page.evaluate(() => document.getElementById('main-content')?.scrollTop))
       .toBeGreaterThan(0)
-    // A restore that hid the button does it a beat after it sets the position.
+    // An absence check: the scroll event of a restore arrives a frame after it sets the
+    // position, and nothing marks "no hide came", so this is many frames, not a sync point.
     await page.waitForTimeout(1000)
     await expect(fab).toBeVisible()
     await focusBlock(page, 0)

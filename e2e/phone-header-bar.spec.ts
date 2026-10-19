@@ -7,7 +7,7 @@
 
 import { devices, type Locator } from '@playwright/test'
 
-import { expect, focusBlock, navigateToView, test, waitForBoot } from './helpers'
+import { expect, focusBlock, navigateToView, openPageMobile, test, waitForBoot } from './helpers'
 
 const iPhone13 = devices['iPhone 13']
 const TARGET = 44
@@ -92,6 +92,36 @@ for (const viewport of [
         expect(await layoutViolations(header), view).toEqual([])
       })
     }
+
+    test('the page editor header fits its controls', async ({ page }) => {
+      await waitForBoot(page)
+      await openPageMobile(page, 'Projects')
+      const header = page.locator('header').first()
+      await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+      expect(await layoutViolations(header), 'page editor').toEqual([])
+    })
+
+    test('what a phone leaves out stays out of the header', async ({ page }) => {
+      await waitForBoot(page)
+      const header = page.locator('header').first()
+      await expect(header.getByRole('button', { name: 'Back', exact: true })).toBeHidden()
+      await expect(header.getByRole('button', { name: 'Forward', exact: true })).toBeHidden()
+
+      // Outside the journal the date controls are the journal's, not the view's.
+      for (const view of ['Pages', 'Settings', 'History'] as const) {
+        await navigateToView(page, view)
+        await expect(header.getByTestId('header-label')).toBeVisible()
+        await expect(header.getByRole('button', { name: 'Go to today' })).toBeHidden()
+        await expect(header.getByRole('button', { name: 'Go to agenda' })).toBeHidden()
+        await expect(header.getByRole('button', { name: 'Open calendar picker' })).toBeHidden()
+        await expect(header.getByTestId('search-sheet-trigger')).toBeVisible()
+      }
+
+      // The Search view is the search: no second way into it.
+      await navigateToView(page, 'Search')
+      await expect(header.getByTestId('header-label')).toBeVisible()
+      await expect(header.getByTestId('search-sheet-trigger')).toHaveCount(0)
+    })
 
     test('the pinned formatting toolbar fits its controls', async ({ page }) => {
       await waitForBoot(page)

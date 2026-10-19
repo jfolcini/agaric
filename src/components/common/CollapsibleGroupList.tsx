@@ -195,8 +195,9 @@ function CollapsibleGroupListInner<G extends GroupItem>({
                   'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors'
                 }
               >
-                {/* The negative margin keeps the chevron where the bare icon was;
-                    the 44 px coarse-pointer button stops at the header's edge. */}
+                {/* The negative margin pulls the button toward the header's edge; on a
+                    coarse pointer its 44 px box stops there and the centred icon
+                    sits a few px right of where the bare icon was. */}
                 <IconButton
                   variant="ghost"
                   size="icon-xs"

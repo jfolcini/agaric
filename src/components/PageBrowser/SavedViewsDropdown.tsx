@@ -35,6 +35,8 @@ export interface SavedViewsDropdownProps {
    * its ⋮ button, which turns this popover into the header's overflow menu.
    */
   trigger?: React.ReactElement | undefined
+  /** False hides "Save current view…", for a list with nothing to save. */
+  canSaveCurrentView?: boolean
   /** Extra rows below the saved views, after a separator. */
   children?: ((close: () => void) => React.ReactNode) | undefined
 }
@@ -45,6 +47,7 @@ export function SavedViewsDropdown({
   onApply,
   onDelete,
   onSaveCurrentView,
+  canSaveCurrentView = true,
   trigger,
   children,
 }: SavedViewsDropdownProps): React.ReactElement {
@@ -130,18 +133,22 @@ export function SavedViewsDropdown({
               })}
             </ul>
           )}
-          <hr className="my-1 h-px bg-border border-none" />
-          <PopoverMenuItem
-            className="flex items-center gap-2"
-            onClick={() => {
-              setOpen(false)
-              setSaveDialogOpen(true)
-            }}
-            data-testid="saved-views-save-current"
-          >
-            <Save className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('pageBrowser.savedViews.saveCurrentView')}
-          </PopoverMenuItem>
+          {canSaveCurrentView && (
+            <>
+              <hr className="my-1 h-px bg-border border-none" />
+              <PopoverMenuItem
+                className="flex items-center gap-2"
+                onClick={() => {
+                  setOpen(false)
+                  setSaveDialogOpen(true)
+                }}
+                data-testid="saved-views-save-current"
+              >
+                <Save className="h-3.5 w-3.5" aria-hidden="true" />
+                {t('pageBrowser.savedViews.saveCurrentView')}
+              </PopoverMenuItem>
+            </>
+          )}
           {children != null && (
             <>
               <hr className="my-1 h-px bg-border border-none" />

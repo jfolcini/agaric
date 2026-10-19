@@ -409,21 +409,31 @@ describe('PageBrowserHeader', () => {
       expect(onApplySavedView).toHaveBeenCalledWith(view)
     })
 
-    it('with no pages the ⋮ menu holds only the view buttons, as on desktop', async () => {
+    it('with no pages the ⋮ menu keeps the saved views but cannot save one', async () => {
       const user = userEvent.setup()
-      render(<PageBrowserHeader {...makeProps({ showSortAndViews: false })} />)
+      const onDeleteSavedView = vi.fn()
+      const view = {
+        id: 'v1',
+        name: 'Recent work',
+        createdAt: '2026-01-01T00:00:00Z',
+        sort: 'recent' as const,
+        filters: [],
+      }
+      render(
+        <PageBrowserHeader
+          {...makeProps({ showSortAndViews: false, savedViews: [view], onDeleteSavedView })}
+        />,
+      )
 
       await user.click(screen.getByRole('button', { name: t('pageBrowser.moreMenu') }))
-      const menu = await screen.findByRole('dialog', { name: t('pageBrowser.moreMenu') })
-      expect(within(menu).queryByText(t('pageBrowser.savedViews.trigger'))).toBeNull()
-      expect(
-        within(menu).queryByRole('button', { name: t('pageBrowser.savedViews.saveCurrentView') }),
-      ).toBeNull()
-      expect(
-        within(menu)
-          .getAllByRole('button')
-          .map((b) => b.textContent),
-      ).toEqual(MENU_VIEWS.map(([labelKey]) => t(labelKey)))
+      const menu = await screen.findByTestId('saved-views-menu')
+      expect(within(menu).queryByTestId('saved-views-save-current')).toBeNull()
+      await user.click(
+        within(menu).getByRole('button', {
+          name: t('pageBrowser.savedViews.delete', { name: 'Recent work' }),
+        }),
+      )
+      expect(onDeleteSavedView).toHaveBeenCalledWith(view)
       await user.click(within(menu).getByRole('button', { name: t('sidebar.graph') }))
       expect(useNavigationStore.getState().currentView).toBe('graph')
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())

@@ -716,6 +716,24 @@ describe('ToggleGroup', () => {
     expect(c).toHaveAttribute('aria-checked', 'false')
   })
 
+  it('an arrow key with a modifier moves nothing, and the next plain focus checks nothing', async () => {
+    const user = userEvent.setup()
+    render(
+      <ToggleGroup type="single" aria-label="Modes" defaultValue="a">
+        <ToggleGroupItem value="a">A</ToggleGroupItem>
+        <ToggleGroupItem value="b">B</ToggleGroupItem>
+      </ToggleGroup>,
+    )
+    const [a, b] = screen.getAllByRole('radio')
+    a?.focus()
+    await user.keyboard('{Shift>}{ArrowRight}{/Shift}')
+    expect(a).toHaveFocus()
+
+    act(() => b?.focus())
+    expect(b).toHaveAttribute('aria-checked', 'false')
+    expect(a).toHaveAttribute('aria-checked', 'true')
+  })
+
   it('draws the checked segment with a foreground outline, not the primary fill', () => {
     render(
       <ToggleGroup type="single" aria-label="Modes" value="a">

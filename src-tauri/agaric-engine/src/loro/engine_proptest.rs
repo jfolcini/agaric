@@ -1422,8 +1422,8 @@ mod n_way {
         /// every touched block id + property key.
         ///
         /// Its cost is the test: every peer imports every other peer's stream, so a
-        /// case grows with devices times ops, and the 3-way interleavings are the
-        /// point.
+        /// case grows with devices squared times ops, and the 3-way interleavings
+        /// are the point.
         ///
         /// This is the headline N-way property: independent concurrent
         /// authoring on 3..=5 peers converges to one agreed state. A
