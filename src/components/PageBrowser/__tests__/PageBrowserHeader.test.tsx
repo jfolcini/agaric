@@ -409,6 +409,26 @@ describe('PageBrowserHeader', () => {
       expect(onApplySavedView).toHaveBeenCalledWith(view)
     })
 
+    it('with no pages the ⋮ menu holds only the view buttons, as on desktop', async () => {
+      const user = userEvent.setup()
+      render(<PageBrowserHeader {...makeProps({ showSortAndViews: false })} />)
+
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.moreMenu') }))
+      const menu = await screen.findByRole('dialog', { name: t('pageBrowser.moreMenu') })
+      expect(within(menu).queryByText(t('pageBrowser.savedViews.trigger'))).toBeNull()
+      expect(
+        within(menu).queryByRole('button', { name: t('pageBrowser.savedViews.saveCurrentView') }),
+      ).toBeNull()
+      expect(
+        within(menu)
+          .getAllByRole('button')
+          .map((b) => b.textContent),
+      ).toEqual(MENU_VIEWS.map(([labelKey]) => t(labelKey)))
+      await user.click(within(menu).getByRole('button', { name: t('sidebar.graph') }))
+      expect(useNavigationStore.getState().currentView).toBe('graph')
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    })
+
     it.each(MENU_VIEWS)(
       'the ⋮ menu item %s opens the %s view and closes',
       async (labelKey, view) => {

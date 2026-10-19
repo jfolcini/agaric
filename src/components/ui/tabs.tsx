@@ -10,10 +10,10 @@
  *    `sidebar-accent` pill of the app sidebar's active item; arrow keys are
  *    Up/Down.
  *
- * Radix gives each tablist one tab stop, arrow keys, Home and End. Every
- * switcher here is controlled and mounts only the selected panel, so a tab
- * that is not selected carries no `aria-controls`: it would name a panel that
- * is not in the document.
+ * Radix gives each tablist one tab stop, arrow keys, Home and End; the tab
+ * stop is the selected tab. Every switcher here is controlled and mounts only
+ * the selected panel, so a tab that is not selected carries no
+ * `aria-controls`: it would name a panel that is not in the document.
  */
 
 import { cva } from 'class-variance-authority'
@@ -100,6 +100,9 @@ function TabsTrigger({
       data-slot="tabs-trigger"
       value={value}
       className={cn(tabsTriggerVariants({ variant: tabs.variant }), className)}
+      // Radix keeps the tab stop on the last-focused tab, which goes stale when
+      // the value changes from outside it (a shortcut, a day clicked in Week view).
+      tabIndex={value === tabs.value ? 0 : -1}
       {...props}
       {...(value === tabs.value ? {} : { 'aria-controls': undefined })}
     />

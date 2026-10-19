@@ -316,6 +316,16 @@ describe('PropertyDefinitionsList', () => {
     expect(screen.getByRole('button', { name: /Edit options/i })).toBeInTheDocument()
   })
 
+  it('Edit options comes before Delete in the tab order, as drawn on desktop', async () => {
+    stubDefs(pageOf([makePropDef('status', 'select', '["open","closed"]')]))
+
+    render(<PropertyDefinitionsList />)
+
+    const edit = await screen.findByRole('button', { name: /Edit options/i })
+    const del = screen.getByRole('button', { name: /Delete property/i })
+    expect(edit.compareDocumentPosition(del) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   // ---------------------------------------------------------------------------
   // Error path tests
   // ---------------------------------------------------------------------------

@@ -109,7 +109,12 @@ test.describe('phone touch targets @mobile', () => {
     await waitForBoot(page)
     await openPageMobile(page, 'Getting Started')
     const refs = page.getByTestId('linked-references')
-    await expect44(refs.getByRole('button', { name: 'Collapse group' }).first(), 'Collapse group')
+    const collapse = refs.getByRole('button', { name: 'Collapse group' }).first()
+    await expect44(collapse, 'Collapse group')
+    // It stays inside its header row, whose pressed background it sits on.
+    expect(await left(collapse)).toBe(
+      await left(refs.locator('.linked-references-group-header').first()),
+    )
   })
 
   test("Agenda's status filter chip", async ({ page }) => {

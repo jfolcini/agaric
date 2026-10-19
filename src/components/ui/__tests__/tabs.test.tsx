@@ -113,6 +113,40 @@ describe('Tabs', () => {
     expect(document.activeElement).toHaveAttribute('role', 'tabpanel')
   })
 
+  it('the tab stop follows a selection made outside the tablist', async () => {
+    // Like the Journal's mode tabs: the panel and a second way to pick a tab sit outside.
+    function OutsidePicker() {
+      const [value, setValue] = useState('one')
+      return (
+        <>
+          <button type="button">before</button>
+          <Tabs value={value} onValueChange={setValue}>
+            <TabsList aria-label="Numbers">
+              {VALUES.map((v) => (
+                <TabsTrigger key={v} value={v}>
+                  {v}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+          <button type="button" onClick={() => setValue('three')}>
+            pick three
+          </button>
+        </>
+      )
+    }
+    const user = userEvent.setup()
+    render(<OutsidePicker />)
+    tab('one').focus()
+    await user.click(screen.getByRole('button', { name: 'pick three' }))
+
+    await user.tab({ shift: true })
+    expect(tab('three')).toHaveFocus()
+    screen.getByRole('button', { name: 'before' }).focus()
+    await user.tab()
+    expect(tab('three')).toHaveFocus()
+  })
+
   it('ArrowRight and ArrowLeft move between tabs and wrap; Home and End reach the ends', async () => {
     const user = userEvent.setup()
     render(<Harness />)

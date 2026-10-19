@@ -195,11 +195,12 @@ function CollapsibleGroupListInner<G extends GroupItem>({
                   'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors'
                 }
               >
-                {/* The negative margin keeps the chevron where the bare icon was. */}
+                {/* The negative margin keeps the chevron where the bare icon was;
+                    the 44 px coarse-pointer button stops at the header's edge. */}
                 <IconButton
                   variant="ghost"
                   size="icon-xs"
-                  className="-ml-1.25 [@media(pointer:coarse)]:-ml-3.75"
+                  className="-ml-1.25 [@media(pointer:coarse)]:-ml-3"
                   onClick={() => onToggleGroup(group.page_id)}
                   aria-expanded={isExpanded}
                   ariaLabel={toggleLabel}

@@ -12,7 +12,7 @@
  *  - axe clean.
  */
 
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -90,6 +90,7 @@ describe('QuickCaptureFab', () => {
         scroller.scrollTop = top
         scroller.dispatchEvent(new Event('scroll'))
       })
+    fireEvent.touchStart(scroller)
     scrollTo(200)
     expect(fab).toHaveAttribute('data-shown', 'false')
     // Jitter under the slop leaves it hidden.
@@ -101,6 +102,29 @@ describe('QuickCaptureFab', () => {
     expect(fab).toHaveAttribute('data-shown', 'false')
     scrollTo(0)
     expect(fab).toHaveAttribute('data-shown', 'true')
+  })
+
+  it('a scroll restore after a remount is not a scroll down, but the next user scroll is', () => {
+    render(
+      <>
+        <QuickCaptureFab setQuickCaptureOpen={vi.fn()} />
+        <div id="main-content">
+          <div data-testid="scroller" />
+        </div>
+      </>,
+    )
+    const fab = screen.getByTestId('quick-capture-fab')
+    const scroller = screen.getByTestId('scroller')
+    const scrollTo = (top: number) =>
+      act(() => {
+        scroller.scrollTop = top
+        scroller.dispatchEvent(new Event('scroll'))
+      })
+    scrollTo(600)
+    expect(fab).toHaveAttribute('data-shown', 'true')
+    fireEvent.wheel(scroller)
+    scrollTo(900)
+    expect(fab).toHaveAttribute('data-shown', 'false')
   })
 
   it("stays shown when a popup's list scrolls down outside the view's content", () => {
