@@ -94,3 +94,48 @@ test.describe('phone chrome @mobile', () => {
     }
   })
 })
+
+// Every header button, the mobile sidebar trigger included, centres on one
+// line: a narrow mouse window once pinned the trigger to the header's top (#5993).
+const HEADER_LAYOUTS = [
+  { name: 'narrow mouse window', use: { viewport: { width: 600, height: 800 } }, trigger: true },
+  {
+    name: 'phone',
+    use: {
+      viewport: { width: 360, height: 780 },
+      hasTouch: iPhone13.hasTouch,
+      isMobile: iPhone13.isMobile,
+      deviceScaleFactor: iPhone13.deviceScaleFactor,
+      userAgent: iPhone13.userAgent,
+    },
+    trigger: true,
+  },
+  { name: 'desktop', use: { viewport: { width: 1280, height: 800 } }, trigger: false },
+]
+
+for (const layout of HEADER_LAYOUTS) {
+  test.describe(`header buttons on a ${layout.name} @mobile @journal @pages`, () => {
+    test.use(layout.use)
+
+    test('share one vertical centre on Journal and Pages', async ({ page }) => {
+      await waitForBoot(page)
+      const trigger = appHeader(page).getByTestId('mobile-sidebar-trigger')
+      await expect(trigger).toHaveCount(layout.trigger ? 1 : 0)
+      for (const view of ['Journal', 'Pages']) {
+        await navigateToView(page, view)
+        const centres: number[] = []
+        for (const button of await appHeader(page).getByRole('button').all()) {
+          if (!(await button.isVisible())) continue
+          const b = await box(button)
+          centres.push(b.y + b.h / 2)
+        }
+        expect(centres.length, `${view} header buttons`).toBeGreaterThan(1)
+        expect(Math.max(...centres) - Math.min(...centres), `${view} spread`).toBeLessThanOrEqual(1)
+        await page.screenshot({
+          path: test.info().outputPath(`header-${view}.png`),
+          clip: { x: 0, y: 0, width: layout.use.viewport.width, height: 80 },
+        })
+      }
+    })
+  })
+}

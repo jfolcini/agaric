@@ -14,34 +14,27 @@
  * `text-muted-foreground`, because the tab is selected but its page is not
  * the one on screen. Inactive tabs are plain muted text on the strip.
  *
- * Clicking the active tab's label opens a dropdown switcher listing every
- * Open tab. The dropdown reuses the `Popover` primitive because the
- * repo does not (yet) ship a `DropdownMenu` primitive — the behaviour is
- * equivalent: one anchor, one portaled content region, Escape closes,
- * outside-click closes.
+ * A caret button left of the strip opens `TabSwitcher`: every open tab under
+ * a filter input, as Chrome's tab search. Clicking a tab only activates it.
  *
  * Implements ARIA tablist pattern with ArrowLeft/ArrowRight + Home/End
  * keyboard navigation using automatic activation (focus follows selection).
  *
  * The close area is a `<span>` (not a `<button>`) to avoid nested-interactive
- * a11y violations inside `role="tab"`. Close also available via Ctrl+W.
- *
- * Inside the active-tab dropdown, each row is split into TWO sibling
- * menu items — `role="menuitemradio"` (activate) + `role="menuitem"` (close) —
- * wrapped in a `role="none"` flex container. This keeps the close affordance
- * out of the activate item's interactive subtree (no nested `<button>` inside
- * `role="menuitemradio"`) while still letting screen-reader users reach both
- * actions via ArrowDown/ArrowUp on a single roving tabindex.
+ * a11y violations inside `role="tab"` (and `role="option"` in the switcher).
+ * Close also available via Ctrl+W and Delete / Backspace on a focused tab.
  */
 
 import { cva } from 'class-variance-authority'
-import { Check, ChevronDown, X } from 'lucide-react'
+import { ChevronDown, X } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { TabSwitcherListProps } from '@/components/layout/TabSwitcherList'
+import { IconButton } from '@/components/ui/icon-button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
-import { Popover, PopoverAnchor } from '@/components/ui/popover'
+import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
@@ -57,7 +50,7 @@ import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '
 // background opens into the content. The strip's scroll viewport clips below
 // that line, so the focus ring is drawn inside the tab.
 const tabVariants = cva(
-  'group flex items-center gap-1 px-3 py-1 -mb-px border-t-2 text-sm truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none focus-ring-visible focus-visible:ring-inset',
+  'flex items-center gap-1 px-3 py-1 -mb-px border-t-2 text-sm truncate max-w-[120px] md:max-w-[200px] cursor-pointer select-none focus-ring-visible focus-visible:ring-inset',
   {
     variants: {
       state: {
@@ -68,6 +61,43 @@ const tabVariants = cva(
     },
   },
 )
+
+// #5441 — lazy: cmdk loads when the switcher first opens.
+const TabSwitcherList = lazy(() =>
+  import('@/components/layout/TabSwitcherList').then((m) => ({ default: m.TabSwitcherList })),
+)
+
+function TabSwitcher({ onActivate, ...listProps }: TabSwitcherListProps): React.ReactElement {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <IconButton
+          variant="ghost"
+          size="icon-xs"
+          ariaLabel={t('tabs.switcher')}
+          tooltip={t('tabs.switcher')}
+          className="mr-1 shrink-0 self-center"
+        >
+          <ChevronDown />
+        </IconButton>
+      </PopoverTrigger>
+      <MenuPopoverContent align="start" className="w-72 p-0" aria-label={t('tabs.switcher')}>
+        <Suspense fallback={null}>
+          <TabSwitcherList
+            {...listProps}
+            onActivate={(index) => {
+              onActivate(index)
+              setOpen(false)
+            }}
+          />
+        </Suspense>
+      </MenuPopoverContent>
+    </Popover>
+  )
+}
 
 export function TabBar(): React.ReactElement | null {
   const { t } = useTranslation()
@@ -90,13 +120,6 @@ export function TabBar(): React.ReactElement | null {
 
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
   const keyNavRef = useRef(false)
-  const [dropdownOpen, setDropdownOpen] = useState(false)
-  // Dropdown rows are flattened into TWO sibling menu items each
-  // (activate + close) so the close affordance is no longer a `<button>`
-  // nested inside `role="menuitemradio"`. We rove a single tabindex across
-  // the doubled item list — even indices = activate, odd = close.
-  const dropdownItemRefs = useRef<(HTMLDivElement | null)[]>([])
-  const [dropdownFocusedIndex, setDropdownFocusedIndex] = useState(0)
   const isMobile = useIsMobile()
 
   const { handleKeyDown: handleListKeyDown } = useListKeyboardNavigation({
@@ -114,28 +137,6 @@ export function TabBar(): React.ReactElement | null {
     }
   }, [activeTabIndex])
 
-  // When the dropdown opens, seed the roving focus on the active
-  // tab's activate item (even index = i*2). Closing the dropdown is a no-op
-  // — the next open re-seeds.
-  useEffect(() => {
-    if (dropdownOpen) {
-      // oxlint-disable-next-line react/set-state-in-effect -- seeds the roving menu index on open; a plain derive would discard the user's arrow-key moves; the guarded adjust is out of scope; see #4407
-      setDropdownFocusedIndex(activeTabIndex * 2)
-    }
-  }, [dropdownOpen, activeTabIndex])
-
-  // Keep DOM focus in sync with the roving index whenever it
-  // advances. Radix Popover focuses the content element on open; this
-  // effect overrides that to land focus on the seeded menu item.
-  useEffect(() => {
-    // React calls the previous inline ref callbacks with `null` during a
-    // keyed row move. That cleanup can re-extend an array truncated in the
-    // close handler, so enforce the live DOM length after the commit too.
-    dropdownItemRefs.current.length = dropdownOpen ? tabs.length * 2 : 0
-    if (!dropdownOpen) return
-    dropdownItemRefs.current[dropdownFocusedIndex]?.focus()
-  }, [dropdownOpen, dropdownFocusedIndex, tabs.length])
-
   // Scope item 6: TabBar is desktop-only. Mobile users navigate via
   // sidebar + breadcrumbs; the `openInNewTab` IPC surface collapses to a
   // plain `navigateToPage` on mobile (handled at the call site).
@@ -151,12 +152,6 @@ export function TabBar(): React.ReactElement | null {
     if (target.closest('[data-tab-close]')) {
       e.stopPropagation()
       closeTab(i)
-      return
-    }
-    // Clicking the active tab's label opens the dropdown switcher
-    // (desktop-only by virtue of the earlier `isMobile` early-return).
-    if (i === activeTabIndex && currentView === 'page-editor') {
-      setDropdownOpen((prev) => !prev)
       return
     }
     switchTab(i)
@@ -192,62 +187,28 @@ export function TabBar(): React.ReactElement | null {
     return currentView === 'page-editor' ? 'editing' : 'elsewhere'
   }
 
-  // ArrowDown / ArrowUp / Home / End rove focus across the doubled
-  // item list (activate-1, close-1, activate-2, close-2, …). Wrap at both
-  // ends so keyboard users can cycle without leaving the menu.
-  function handleDropdownKeyDown(e: React.KeyboardEvent): void {
-    const total = tabs.length * 2
-    if (total === 0) return
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      setDropdownFocusedIndex((prev) => (prev + 1) % total)
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      setDropdownFocusedIndex((prev) => (prev - 1 + total) % total)
-    } else if (e.key === 'Home') {
-      e.preventDefault()
-      setDropdownFocusedIndex(0)
-    } else if (e.key === 'End') {
-      e.preventDefault()
-      setDropdownFocusedIndex(total - 1)
-    }
-  }
-
-  function closeDropdownTab(i: number): void {
-    const remainingItemCount = (tabs.length - 1) * 2
-
-    // The menu remains open while pruning tabs, so discard references for
-    // items which will be unmounted before the focus effect runs. When the
-    // bar itself is about to disappear, also close its Popover state.
-    dropdownItemRefs.current.length = Math.max(remainingItemCount, 0)
-    if (remainingItemCount <= 2) {
-      // At one remaining tab the whole TabBar auto-hides. Close the
-      // controlled Popover as well so it does not reopen if another tab is
-      // added later while this component instance remains mounted.
-      setDropdownFocusedIndex(0)
-      setDropdownOpen(false)
-    } else {
-      // Preserve the current roving position when possible; otherwise use
-      // the final surviving item (e.g. closing the last row's close action).
-      setDropdownFocusedIndex((current) => Math.min(current, remainingItemCount - 1))
-    }
-
-    closeTab(i)
-  }
-
   return (
-    <ScrollArea orientation="horizontal" className="bg-muted/30">
-      <div
-        role="tablist"
-        aria-label={t('tabs.tabList')}
-        // Left edge matches the Recent / ViewHeaderOutletSlot rows below so the
-        // chrome stack aligns vertically.
-        className="flex items-end gap-1 border-b border-border px-4 md:px-6 md:pointer-fine:pl-16 pt-1 min-w-0"
-      >
-        <Popover open={dropdownOpen} onOpenChange={setDropdownOpen}>
+    // Left edge matches the Recent / ViewHeaderOutletSlot rows below so the
+    // chrome stack aligns vertically. The hairline is drawn twice, under the
+    // caret and on the tablist, because each tab overlaps the tablist's own.
+    <div className="flex min-w-0 bg-muted/30">
+      <div className="flex shrink-0 border-b border-border pl-4 md:pl-6 md:pointer-fine:pl-16 pt-1">
+        <TabSwitcher
+          tabs={tabs}
+          activeTabIndex={activeTabIndex}
+          displayLabel={displayLabel}
+          onActivate={switchTab}
+          onClose={closeTab}
+        />
+      </div>
+      <ScrollArea orientation="horizontal" className="min-w-0 flex-1">
+        <div
+          role="tablist"
+          aria-label={t('tabs.tabList')}
+          className="flex items-end gap-1 border-b border-border pr-4 md:pr-6 pt-1 min-w-0"
+        >
           {tabs.map((tab, i) => {
             const isActive = i === activeTabIndex
-            const showDropdownHint = isActive && currentView === 'page-editor'
             // Bug 1: tabs are space-constrained (`max-w-[120px]
             // md:max-w-[200px]` + `truncate`) — full namespaced paths
             // overflow fast. Display the LEAF only and surface the full
@@ -255,8 +216,7 @@ export function TabBar(): React.ReactElement | null {
             // "Untitled" is preserved verbatim so the existing label test
             // keeps passing.
             const fullPath = tab.label || t('tabs.untitled')
-            const displayTitle = displayLabel(fullPath)
-            const button = (
+            return (
               <button
                 key={tab.id}
                 ref={(el) => {
@@ -266,34 +226,12 @@ export function TabBar(): React.ReactElement | null {
                 role="tab"
                 tabIndex={isActive ? 0 : -1}
                 aria-selected={isActive}
-                aria-haspopup={showDropdownHint ? 'menu' : undefined}
-                aria-expanded={showDropdownHint ? dropdownOpen : undefined}
-                // When the active tab doubles as the dropdown trigger
-                // (`currentView === 'page-editor'`), supply an `aria-label`
-                // hinting that Enter/Space opens a tab switcher. Radix already
-                // wires `aria-haspopup`/`aria-expanded`; the label complements
-                // them. Inactive tabs fall back to their visible text content.
-                aria-label={
-                  showDropdownHint ? t('tabs.switchTabsHint', { title: fullPath }) : undefined
-                }
                 title={fullPath}
-                // `group` (in `tabVariants`) enables `group-hover:` on the
-                // chevron so hovering the active tab intensifies the dropdown hint.
                 className={tabVariants({ state: tabState(i) })}
                 onClick={(e) => handleTabClick(i, e)}
                 onKeyDown={(e) => handleTabKeyDown(i, e)}
               >
-                <span className="truncate">{displayTitle}</span>
-                {showDropdownHint && (
-                  // Chevron is the only visual affordance for the
-                  // active-tab dropdown. Bump base opacity (50 → 70) and
-                  // intensify on hover via `group-hover` so first-time users
-                  // can see the hint without guessing.
-                  <ChevronDown
-                    className="size-3 opacity-70 group-hover:opacity-100 ml-1"
-                    aria-hidden="true"
-                  />
-                )}
+                <span className="truncate">{displayLabel(fullPath)}</span>
                 <span
                   data-tab-close=""
                   className="ml-1 rounded-sm hover:bg-destructive/20 p-0.5 inline-flex"
@@ -303,108 +241,9 @@ export function TabBar(): React.ReactElement | null {
                 </span>
               </button>
             )
-
-            // Only the active tab anchors the dropdown; inactive tabs render
-            // as bare buttons so their clicks switch tabs.
-            return isActive ? (
-              <PopoverAnchor key={tab.id} asChild>
-                {button}
-              </PopoverAnchor>
-            ) : (
-              button
-            )
           })}
-          <MenuPopoverContent
-            align="start"
-            sideOffset={4}
-            role="menu"
-            tabIndex={-1}
-            aria-label={t('tabs.tabList')}
-            onKeyDown={handleDropdownKeyDown}
-          >
-            {tabs.map((tab, i) => {
-              const isActive = i === activeTabIndex
-              // Bug 1: dropdown rows share the same leaf-with-tooltip
-              // treatment as the tab buttons themselves so the two surfaces
-              // read consistently. The aria-label for the close action keeps
-              // the full path so screen readers announce the unambiguous page.
-              const fullPath = tab.label || t('tabs.untitled')
-              const displayTitle = displayLabel(fullPath)
-              const activateIdx = i * 2
-              const closeIdx = i * 2 + 1
-              return (
-                // Each row is a presentational flex container with
-                // TWO sibling menu items inside — neither nests the other.
-                // role="none" tells AT to treat the wrapper as transparent,
-                // so role="menu" still sees only direct menuitem* children.
-                <div
-                  key={tab.id}
-                  role="none"
-                  className="flex w-full items-center gap-1 rounded-sm hover:bg-accent data-[state=checked]:bg-accent/60"
-                  data-state={isActive ? 'checked' : 'unchecked'}
-                >
-                  <div
-                    ref={(el) => {
-                      dropdownItemRefs.current[activateIdx] = el
-                    }}
-                    role="menuitemradio"
-                    aria-checked={isActive}
-                    data-state={isActive ? 'checked' : 'unchecked'}
-                    tabIndex={dropdownFocusedIndex === activateIdx ? 0 : -1}
-                    title={fullPath}
-                    className="flex flex-1 items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm cursor-pointer touch-target focus-ring-visible"
-                    onClick={() => {
-                      switchTab(i)
-                      setDropdownOpen(false)
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        switchTab(i)
-                        setDropdownOpen(false)
-                      }
-                    }}
-                  >
-                    <span
-                      className="inline-flex size-4 shrink-0 items-center justify-center"
-                      aria-hidden="true"
-                    >
-                      {isActive ? <Check className="size-3" /> : null}
-                    </span>
-                    <span className="flex-1 truncate">{displayTitle}</span>
-                  </div>
-                  <div
-                    ref={(el) => {
-                      dropdownItemRefs.current[closeIdx] = el
-                    }}
-                    role="menuitem"
-                    data-tab-dropdown-close=""
-                    tabIndex={dropdownFocusedIndex === closeIdx ? 0 : -1}
-                    aria-label={t('tabs.closeTab', { label: fullPath })}
-                    className="mr-1 inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-destructive/20 cursor-pointer [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 focus-ring-visible"
-                    onClick={(e) => {
-                      // Keep the dropdown open when the close item fires —
-                      // the user likely wants to prune several tabs in a row.
-                      e.stopPropagation()
-                      e.preventDefault()
-                      closeDropdownTab(i)
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        closeDropdownTab(i)
-                      }
-                    }}
-                  >
-                    <X className="size-3" />
-                  </div>
-                </div>
-              )
-            })}
-          </MenuPopoverContent>
-        </Popover>
-      </div>
-    </ScrollArea>
+        </div>
+      </ScrollArea>
+    </div>
   )
 }

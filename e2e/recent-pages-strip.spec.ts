@@ -1,6 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 
-import { expect, openPage, test, waitForBoot } from './helpers'
+import { expect, navigateToView, openPage, test, waitForBoot } from './helpers'
 
 /**
  * The recents strip above the editor lists visited pages newest first, minus
@@ -53,4 +53,27 @@ test('lists visited pages newest first; click reopens, middle and Ctrl click ope
   await expect(tabs(page).nth(2)).toHaveText(/Projects/)
   await expect(tabs(page).nth(2)).toHaveAttribute('aria-selected', 'false')
   await expect(pageTitle(page)).toHaveText('Meetings')
+})
+
+// #5993: no page opens from inside Settings.
+test('the strip is gone on Settings and back on the next view @pages @settings', async ({
+  page,
+}) => {
+  await waitForBoot(page)
+  for (const title of ['Getting Started', 'Quick Notes']) {
+    await openPage(page, title)
+    await expect(pageTitle(page)).toHaveText(title)
+  }
+  await expect(recentChips(page)).toHaveText(['Getting Started'])
+
+  await navigateToView(page, 'Settings')
+  await expect(page.getByTestId('settings-tab-rail')).toBeVisible()
+  await expect(page.getByTestId('quick-access-bar')).toHaveCount(0)
+  await page.screenshot({
+    path: test.info().outputPath('settings-no-strip.png'),
+    animations: 'disabled',
+  })
+
+  await navigateToView(page, 'Journal')
+  await expect(recentChips(page)).toHaveText(['Getting Started'])
 })
