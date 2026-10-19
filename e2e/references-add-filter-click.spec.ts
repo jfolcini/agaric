@@ -85,8 +85,8 @@ const CONTROLS: Control[] = [
   ADD_FILTER,
   {
     name: 'the Page links toggle',
-    locate: (page) => references(page).getByRole('button', { name: 'Page links', exact: true }),
-    expectLanded: (_page, control) => expect(control).toHaveAttribute('aria-pressed', 'true'),
+    locate: (page) => references(page).getByRole('radio', { name: 'Page links', exact: true }),
+    expectLanded: (_page, control) => expect(control).toBeChecked(),
   },
   {
     name: 'Filter by source page',
