@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { SheetBody } from '@/components/ui/sheet'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -352,143 +353,143 @@ export function QueryBuilderModal({
 
         <Body>
           {/* ---- Mode toggle (Simple text form vs. nested And/Or/Not builder) ---- */}
-          <div className="flex flex-wrap gap-2" aria-label={t('queryBuilder.mode.label')}>
-            {(['simple', 'advanced'] as const).map((m) => (
-              <Button
-                key={m}
-                variant={mode === m ? 'default' : 'outline'}
-                size="sm"
-                aria-pressed={mode === m}
-                onClick={() => setMode(m)}
-              >
-                {t(`queryBuilder.mode.${m}`)}
-              </Button>
-            ))}
-          </div>
-
-          {/* ---- Query Type Selector (simple mode) ---- */}
-          {mode === 'simple' && (
-            <div
-              className="flex flex-wrap gap-2"
-              role="radiogroup"
-              aria-label={t('queryBuilder.typeLabel')}
-              tabIndex={-1}
-              onKeyDown={handleRadioGroupKeyDown}
-            >
-              {QUERY_TYPES.map((type) => (
-                <Button
-                  key={type}
-                  ref={(el) => {
-                    radioRefs.current[type] = el
-                  }}
-                  variant={queryType === type ? 'default' : 'outline'}
-                  size="sm"
-                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="radio" on a styled <Button> inside a roving-tabindex radiogroup; a native <input type="radio"> would lose the Button styling and the aria-checked/roving-focus toggle behavior
-                  role="radio"
-                  aria-checked={queryType === type}
-                  tabIndex={queryType === type ? 0 : -1}
-                  onClick={() => setQueryType(type)}
-                >
-                  {t(`queryBuilder.type.${type}`)}
-                </Button>
+          <Tabs
+            value={mode}
+            onValueChange={(next) => setMode(next === 'advanced' ? 'advanced' : 'simple')}
+          >
+            <TabsList aria-label={t('queryBuilder.mode.label')}>
+              {(['simple', 'advanced'] as const).map((m) => (
+                <TabsTrigger key={m} value={m}>
+                  {t(`queryBuilder.mode.${m}`)}
+                </TabsTrigger>
               ))}
-            </div>
-          )}
-
-          {/* ---- Tag Query Form ---- */}
-          {mode === 'simple' && queryType === 'tag' && (
-            <div className="space-y-2">
-              <Label htmlFor="qb-tag-prefix">{t('queryBuilder.tagPrefix')}</Label>
-              <Input
-                id="qb-tag-prefix"
-                value={tagExpr}
-                onChange={(e) => setTagExpr(e.target.value)}
-                placeholder={t('queryBuilder.tagPrefixPlaceholder')}
-              />
-            </div>
-          )}
-
-          {/* ---- Property Query Form ---- */}
-          {mode === 'simple' && queryType === 'property' && (
-            <div className="space-y-2">
-              <Label htmlFor="qb-prop-key">{t('queryBuilder.propertyKey')}</Label>
-              <Input
-                id="qb-prop-key"
-                value={propertyKey}
-                onChange={(e) => setPropertyKey(e.target.value)}
-                placeholder={t('queryBuilder.propertyKeyPlaceholder')}
-                list="qb-prop-key-list"
-                aria-autocomplete="list"
-                aria-controls="qb-prop-key-list"
-                aria-invalid={propertyKeyUnknown}
-                aria-describedby={propertyKeyUnknown ? 'qb-prop-key-warning' : undefined}
-                className={cn(propertyKeyUnknown && 'border-destructive')}
-              />
-              <datalist id="qb-prop-key-list" data-testid="qb-prop-key-list">
-                {knownPropertyKeys.map((k) => (
-                  <option key={k} value={k}>
-                    {k}
-                  </option>
+            </TabsList>
+            <TabsContent value="simple" className="mt-4 space-y-4">
+              {/* ---- Query Type Selector ---- */}
+              <div
+                className="flex flex-wrap gap-2"
+                role="radiogroup"
+                aria-label={t('queryBuilder.typeLabel')}
+                tabIndex={-1}
+                onKeyDown={handleRadioGroupKeyDown}
+              >
+                {QUERY_TYPES.map((type) => (
+                  <Button
+                    key={type}
+                    ref={(el) => {
+                      radioRefs.current[type] = el
+                    }}
+                    variant={queryType === type ? 'default' : 'outline'}
+                    size="sm"
+                    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="radio" on a styled <Button> inside a roving-tabindex radiogroup; a native <input type="radio"> would lose the Button styling and the aria-checked/roving-focus toggle behavior
+                    role="radio"
+                    aria-checked={queryType === type}
+                    tabIndex={queryType === type ? 0 : -1}
+                    onClick={() => setQueryType(type)}
+                  >
+                    {t(`queryBuilder.type.${type}`)}
+                  </Button>
                 ))}
-              </datalist>
-              {propertyKeyUnknown && (
-                <p id="qb-prop-key-warning" className="text-xs text-destructive" aria-live="polite">
-                  {t('queryBuilder.propertyKeyUnknown', { key: propertyKeyTrimmed })}
-                </p>
+              </div>
+
+              {/* ---- Tag Query Form ---- */}
+              {queryType === 'tag' && (
+                <div className="space-y-2">
+                  <Label htmlFor="qb-tag-prefix">{t('queryBuilder.tagPrefix')}</Label>
+                  <Input
+                    id="qb-tag-prefix"
+                    value={tagExpr}
+                    onChange={(e) => setTagExpr(e.target.value)}
+                    placeholder={t('queryBuilder.tagPrefixPlaceholder')}
+                  />
+                </div>
               )}
 
-              <Label htmlFor="qb-prop-operator">{t('queryBuilder.propertyOperator')}</Label>
-              <Select value={propertyOperator} onValueChange={setPropertyOperator}>
-                <SelectTrigger
-                  id="qb-prop-operator"
-                  aria-label={t('queryBuilder.propertyOperator')}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {OPERATOR_OPTIONS.map((op) => (
-                    <SelectItem
-                      key={op.value}
-                      value={op.value}
-                      endContent={
-                        <span className="ml-2 text-muted-foreground">{t(op.descKey)}</span>
-                      }
+              {/* ---- Property Query Form ---- */}
+              {queryType === 'property' && (
+                <div className="space-y-2">
+                  <Label htmlFor="qb-prop-key">{t('queryBuilder.propertyKey')}</Label>
+                  <Input
+                    id="qb-prop-key"
+                    value={propertyKey}
+                    onChange={(e) => setPropertyKey(e.target.value)}
+                    placeholder={t('queryBuilder.propertyKeyPlaceholder')}
+                    list="qb-prop-key-list"
+                    aria-autocomplete="list"
+                    aria-controls="qb-prop-key-list"
+                    aria-invalid={propertyKeyUnknown}
+                    aria-describedby={propertyKeyUnknown ? 'qb-prop-key-warning' : undefined}
+                    className={cn(propertyKeyUnknown && 'border-destructive')}
+                  />
+                  <datalist id="qb-prop-key-list" data-testid="qb-prop-key-list">
+                    {knownPropertyKeys.map((k) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))}
+                  </datalist>
+                  {propertyKeyUnknown && (
+                    <p
+                      id="qb-prop-key-warning"
+                      className="text-xs text-destructive"
+                      aria-live="polite"
                     >
-                      {op.symbol}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                      {t('queryBuilder.propertyKeyUnknown', { key: propertyKeyTrimmed })}
+                    </p>
+                  )}
 
-              <Label htmlFor="qb-prop-value">{t('queryBuilder.propertyValue')}</Label>
-              <Input
-                id="qb-prop-value"
-                value={propertyValue}
-                onChange={(e) => setPropertyValue(e.target.value)}
-                placeholder={t('queryBuilder.propertyValuePlaceholder')}
-              />
-            </div>
-          )}
+                  <Label htmlFor="qb-prop-operator">{t('queryBuilder.propertyOperator')}</Label>
+                  <Select value={propertyOperator} onValueChange={setPropertyOperator}>
+                    <SelectTrigger
+                      id="qb-prop-operator"
+                      aria-label={t('queryBuilder.propertyOperator')}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {OPERATOR_OPTIONS.map((op) => (
+                        <SelectItem
+                          key={op.value}
+                          value={op.value}
+                          endContent={
+                            <span className="ml-2 text-muted-foreground">{t(op.descKey)}</span>
+                          }
+                        >
+                          {op.symbol}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
 
-          {/* ---- Backlinks Query Form ---- */}
-          {mode === 'simple' && queryType === 'backlinks' && (
-            <div className="space-y-2">
-              <Label htmlFor="qb-backlink-target">{t('queryBuilder.backlinkTarget')}</Label>
-              <Input
-                id="qb-backlink-target"
-                value={backlinkTarget}
-                onChange={(e) => setBacklinkTarget(e.target.value)}
-                placeholder={t('queryBuilder.backlinkTargetPlaceholder')}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t('queryBuilder.backlinkTargetHelper')}
-              </p>
-            </div>
-          )}
+                  <Label htmlFor="qb-prop-value">{t('queryBuilder.propertyValue')}</Label>
+                  <Input
+                    id="qb-prop-value"
+                    value={propertyValue}
+                    onChange={(e) => setPropertyValue(e.target.value)}
+                    placeholder={t('queryBuilder.propertyValuePlaceholder')}
+                  />
+                </div>
+              )}
 
-          {/* ---- Advanced (nested And/Or/Not) builder ---- */}
-          {mode === 'advanced' && (
-            <div className="space-y-2">
+              {/* ---- Backlinks Query Form ---- */}
+              {queryType === 'backlinks' && (
+                <div className="space-y-2">
+                  <Label htmlFor="qb-backlink-target">{t('queryBuilder.backlinkTarget')}</Label>
+                  <Input
+                    id="qb-backlink-target"
+                    value={backlinkTarget}
+                    onChange={(e) => setBacklinkTarget(e.target.value)}
+                    placeholder={t('queryBuilder.backlinkTargetPlaceholder')}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t('queryBuilder.backlinkTargetHelper')}
+                  </p>
+                </div>
+              )}
+            </TabsContent>
+
+            {/* ---- Advanced (nested And/Or/Not) builder ---- */}
+            <TabsContent value="advanced" className="mt-4 space-y-2">
               <p className="text-xs text-muted-foreground">{t('queryBuilder.advanced.hint')}</p>
               <Suspense fallback={<div className="text-xs text-muted-foreground">…</div>}>
                 <FilterGroup
@@ -507,8 +508,8 @@ export function QueryBuilderModal({
                   ? t('queryBuilder.advanced.empty')
                   : t('queryBuilder.advanced.filterCount', { count: advancedLeafCount })}
               </p>
-            </div>
-          )}
+            </TabsContent>
+          </Tabs>
 
           {/* ---- Display Options ---- */}
           <div className="flex items-center gap-2">

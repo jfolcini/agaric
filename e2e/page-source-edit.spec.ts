@@ -567,7 +567,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     await page.keyboard.type(' See [[Quick Notes]] now.')
     await expect(saveButton(page)).toHaveText('Save (1 change)')
 
-    await page.getByRole('radio', { name: 'Changes', exact: true }).click()
+    await page.getByRole('tab', { name: 'Changes', exact: true }).click()
     const changes = page.getByRole('region', { name: 'Changes', exact: true })
     await expect(editor).toBeHidden()
     await expect(changes.locator('[data-change="removed"]')).toHaveText([
@@ -575,7 +575,7 @@ test.describe('Edit as Markdown (#5140 Phase 4b) @editor @pages @markdown @mobil
     ])
     await expect(changes.locator('mark')).toHaveText(['See [[Quick Notes]] now.'])
 
-    await page.getByRole('radio', { name: 'Preview', exact: true }).click()
+    await page.getByRole('tab', { name: 'Preview', exact: true }).click()
     const preview = page.getByRole('region', { name: 'Preview', exact: true })
     const first = preview.getByTestId('page-source-preview-block').first()
     await expect(first.getByTestId('block-link-chip')).toHaveText('Quick Notes')

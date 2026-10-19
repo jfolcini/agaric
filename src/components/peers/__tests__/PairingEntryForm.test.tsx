@@ -4,7 +4,7 @@
  * Validates:
  *  - Renders 4 word input fields in manual mode
  *  - Shows "or" separator
- *  - Entry mode toggle buttons work
+ *  - Entry mode tabs work
  *  - Word inputs call onWordChange with correct index and value
  *  - Word inputs call onWordKeyDown on key press
  *  - Cancel button calls onCancel
@@ -90,73 +90,78 @@ describe('PairingEntryForm', () => {
     expect(screen.getByText('OR')).toBeInTheDocument()
   })
 
-  it('shows entry mode toggle buttons', () => {
+  it('shows the entry modes as tabs, the selected one marked', () => {
     render(<PairingEntryForm {...defaultProps} />)
 
-    expect(screen.getByRole('button', { name: /Type passphrase/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Scan QR code/i })).toBeInTheDocument()
+    expect(screen.getByRole('tablist', { name: 'Enter the code' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Type passphrase/i })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(screen.getByRole('tab', { name: /Scan QR code/i })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    )
+    expect(screen.getByRole('tabpanel')).toContainElement(
+      screen.getByLabelText('Passphrase word 1'),
+    )
   })
 
-  // QR is the faster pairing path; render it first so it lands as
-  // the primary call-to-action in the toggle row.
-  it('renders the QR scan button before the manual passphrase button', () => {
+  // QR is the faster pairing path, so it is the first tab.
+  it('renders the QR scan tab before the manual passphrase tab', () => {
     render(<PairingEntryForm {...defaultProps} />)
 
-    const toggle = document.querySelector('.pairing-entry-toggle')
-    expect(toggle).toBeInTheDocument()
-    const buttons = toggle?.querySelectorAll('button') ?? []
-    expect(buttons.length).toBe(2)
-    expect(buttons[0]?.textContent).toMatch(/Scan QR code/i)
-    expect(buttons[1]?.textContent).toMatch(/Type passphrase/i)
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      'Scan QR codeRecommended',
+      'Type passphrase',
+    ])
   })
 
-  // #1966 — on narrow phones the two toggle buttons (the QR button carries an
-  // icon + label + "Recommended" badge) must stack vertically instead of
-  // overflowing the dialog. The row is column-first and only goes horizontal at
-  // the `sm` breakpoint, with each button full-width while stacked.
-  it('stacks the entry-mode toggle vertically on narrow viewports', () => {
+  // Signpost QR as the recommended path with a Badge inside the QR scan tab.
+  it('renders a "Recommended" Badge inside the QR scan tab', () => {
     render(<PairingEntryForm {...defaultProps} />)
 
-    const toggle = document.querySelector('.pairing-entry-toggle')
-    expect(toggle).toHaveClass('flex-col')
-    expect(toggle).toHaveClass('sm:flex-row')
-
-    const buttons = toggle?.querySelectorAll('button') ?? []
-    for (const button of buttons) {
-      expect(button).toHaveClass('w-full')
-      expect(button).toHaveClass('sm:w-auto')
-    }
-  })
-
-  // Signpost QR as the recommended path with a Badge inside the
-  // QR scan button.
-  it('renders a "Recommended" Badge inside the QR scan button', () => {
-    render(<PairingEntryForm {...defaultProps} />)
-
-    const scanBtn = screen.getByRole('button', { name: /Scan QR code/i })
-    const badge = scanBtn.querySelector('[data-slot="badge"]')
+    const scanTab = screen.getByRole('tab', { name: /Scan QR code/i })
+    const badge = scanTab.querySelector('[data-slot="badge"]')
     expect(badge).toBeInTheDocument()
     expect(badge?.textContent).toBe('Recommended')
   })
 
-  it('calls onEntryModeChange when scan button is clicked', async () => {
+  it('calls onEntryModeChange when the scan tab is clicked', async () => {
     const user = userEvent.setup()
     const onEntryModeChange = vi.fn()
     render(<PairingEntryForm {...defaultProps} onEntryModeChange={onEntryModeChange} />)
 
-    await user.click(screen.getByRole('button', { name: /Scan QR code/i }))
+    await user.click(screen.getByRole('tab', { name: /Scan QR code/i }))
     expect(onEntryModeChange).toHaveBeenCalledWith('scan')
   })
 
-  it('calls onEntryModeChange when type passphrase button is clicked', async () => {
+  it('calls onEntryModeChange when the type passphrase tab is clicked', async () => {
     const user = userEvent.setup()
     const onEntryModeChange = vi.fn()
     render(
       <PairingEntryForm {...defaultProps} entryMode="scan" onEntryModeChange={onEntryModeChange} />,
     )
 
-    await user.click(screen.getByRole('button', { name: /Type passphrase/i }))
+    await user.click(screen.getByRole('tab', { name: /Type passphrase/i }))
     expect(onEntryModeChange).toHaveBeenCalledWith('manual')
+  })
+
+  // Choosing Scan starts the camera, so passing over it with the arrow keys must not.
+  it('arrowing onto the scan tab does not choose it; Enter does', async () => {
+    const user = userEvent.setup()
+    const onEntryModeChange = vi.fn()
+    render(<PairingEntryForm {...defaultProps} onEntryModeChange={onEntryModeChange} />)
+
+    screen.getByRole('tab', { name: /Type passphrase/i }).focus()
+    await user.keyboard('{ArrowLeft}')
+
+    expect(screen.getByRole('tab', { name: /Scan QR code/i })).toHaveFocus()
+    expect(onEntryModeChange).not.toHaveBeenCalled()
+
+    await user.keyboard('{Enter}')
+    expect(onEntryModeChange).toHaveBeenCalledWith('scan')
   })
 
   it('calls onWordChange when typing in a word input', async () => {

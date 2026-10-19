@@ -38,7 +38,7 @@ async function startScanner(page: Page): Promise<Locator> {
   const dialog = activeDialog(page).or(activeSheet(page))
   await dialog.getByRole('button', { name: /have a code from the other device/i }).click()
   // One press: choosing to scan starts the camera.
-  await dialog.getByRole('button', { name: /^Scan QR code\s*Recommended$/ }).click()
+  await dialog.getByRole('tab', { name: /^Scan QR code\s*Recommended$/ }).click()
   return dialog.getByRole('region', { name: 'QR code scanner viewport' })
 }
 
@@ -191,7 +191,7 @@ test.describe('at phone width @sync @mobile', () => {
     const dialog = activeDialog(page).or(activeSheet(page))
     const retry = dialog.getByRole('button', { name: 'Retry camera', exact: true })
     await expect(retry).toBeFocused()
-    const typePassphrase = dialog.getByRole('button', { name: 'Type passphrase', exact: true })
+    const typePassphrase = dialog.getByRole('tab', { name: 'Type passphrase', exact: true })
     for (const button of [retry, typePassphrase]) {
       await expect(button).toBeInViewport()
       expect((await button.boundingBox())?.height).toBeGreaterThanOrEqual(44)

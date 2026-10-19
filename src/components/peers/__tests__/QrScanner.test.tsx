@@ -409,7 +409,7 @@ describe('QrScanner in the pairing form', () => {
     expect(await screen.findByText(t('qrScanner.scanningMessage'))).toBeInTheDocument()
     expect(constructedIds).toHaveLength(2)
 
-    await user.click(screen.getByRole('button', { name: /type passphrase/i }))
+    await user.click(screen.getByRole('tab', { name: /type passphrase/i }))
     expect(screen.getAllByRole('textbox')).toHaveLength(4)
     expect(screen.queryByLabelText(t('qrScanner.viewportLabel'))).not.toBeInTheDocument()
   })

@@ -303,6 +303,32 @@ describe('SettingsView', () => {
       }
     })
 
+    // #5920 — the rail is one tab stop; the arrow keys move along it.
+    it('is one tab stop, and ArrowDown, End and Home move along the rail', async () => {
+      const user = userEvent.setup()
+      render(<SettingsView />)
+      screen.getByRole('combobox', { name: t('sidebar.settings') }).focus()
+
+      await user.tab()
+      const general = screen.getByRole('tab', { name: t('settings.tabGeneral') })
+      expect(general).toHaveFocus()
+
+      await user.keyboard('{ArrowDown}')
+      const appearance = screen.getByRole('tab', { name: t('settings.tabAppearance') })
+      expect(appearance).toHaveFocus()
+      expect(appearance).toHaveAttribute('aria-selected', 'true')
+      expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-appearance')
+      expect(screen.getAllByRole('tab').filter((tab) => tab.tabIndex === 0)).toEqual([appearance])
+
+      await user.keyboard('{End}')
+      expect(screen.getByRole('tab', { name: t('settings.tabStatus') })).toHaveFocus()
+      await user.keyboard('{Home}')
+      expect(general).toHaveFocus()
+
+      await user.tab()
+      expect(document.activeElement).not.toHaveAttribute('role', 'tab')
+    })
+
     it('does not render the old horizontal-overflow scroll viewport', () => {
       render(<SettingsView />)
       // The wheel-scroll workaround lived on a ScrollArea viewport; the

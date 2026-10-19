@@ -103,6 +103,7 @@ The cross-feature primitives most worth knowing (not exhaustive — see `src/com
 - **IconButton** (`src/components/ui/`) — mandates `tooltip` + `ariaLabel`. Use instead of `<Button size="icon">` + bare Lucide icon.
 - **SearchInput** (`src/components/ui/`) — input with built-in clear button.
 - **MenuPopoverContent** (`src/components/ui/`) — canonical popover content for menu-style popovers. Prefer this over plain `PopoverContent` for menu surfaces.
+- **Tabs** (`src/components/ui/`) — for a control that swaps one panel for another: `underline` (the default) or `vertical` (the Settings rail). It is not for picking a value, and not for independent `aria-pressed` toggles.
 - **FilterPill** (`src/components/ui/`) — removable chip used in filter rows.
 - **ChevronToggle** (`src/components/ui/`) — animated chevron; for expand/collapse triggers.
 - **AlertListRow** (`src/components/ui/`) / **AlertSection** (`src/components/agenda/`) — overdue / upcoming sections and their list rows.

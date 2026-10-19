@@ -3303,9 +3303,9 @@ describe('PairingDialog', () => {
       scannedPayload.current = payload
       render(<PairingDialog open onOpenChange={vi.fn()} />)
       await selectJoinerRole(user)
-      await user.click(await screen.findByRole('button', { name: /Scan QR code/i }))
+      await user.click(await screen.findByRole('tab', { name: /Scan QR code/i }))
       await user.click(await screen.findByTestId('mock-qr-scan'))
-      await user.click(await screen.findByRole('button', { name: /Type passphrase/i }))
+      await user.click(await screen.findByRole('tab', { name: /Type passphrase/i }))
     }
 
     function expectWordsFilled() {
@@ -3525,7 +3525,7 @@ describe('PairingDialog', () => {
       scannedPayload.current = ''
       const { container } = render(<PairingDialog open onOpenChange={vi.fn()} />)
       await selectJoinerRole(user)
-      await user.click(await screen.findByRole('button', { name: /Scan QR code/i }))
+      await user.click(await screen.findByRole('tab', { name: /Scan QR code/i }))
       await screen.findByTestId('mock-qr-scan')
 
       const results = await axe(container)

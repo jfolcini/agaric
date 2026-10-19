@@ -2737,10 +2737,9 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      const tablist = screen.getByRole('tablist')
-      const parent = tablist.parentElement as HTMLElement
-      expect(parent.className).not.toMatch(/(?:^|:)flex-col/)
-      expect(parent.className).toContain('items-center')
+      const header = screen.getByTestId('journal-header')
+      expect(header.className).not.toMatch(/(?:^|:)flex-col/)
+      expect(header.className).toContain('items-center')
     })
 
     // A 100 px floor on the date readout overflows the chip wherever the row
