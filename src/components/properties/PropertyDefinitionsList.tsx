@@ -287,117 +287,131 @@ export function PropertyDefinitionsList(): React.ReactElement {
           filteredDefs.length > 0 ? (
             <ul className="space-y-1">
               {filteredDefs.map((def) => (
-                // Actions wrap under the name on a phone instead of running off the card (#5925).
-                <ListItem key={def.key} className="flex-wrap">
-                  <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
-                  <Badge tone="secondary">{def.value_type}</Badge>
-                  {def.value_type === 'select' && LOCKED_PROPERTY_OPTIONS.has(def.key) && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span
-                          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground"
-                          data-testid={`locked-options-${def.key}`}
-                          title={t('propertiesView.optionsLockedTitle')}
-                        >
-                          <Lock
-                            className="h-3 w-3"
-                            aria-label={t('propertiesView.optionsLockedTitle')}
-                          />
-                          {t('propertiesView.optionsLocked')}
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent>{t('propertiesView.optionsLockedTooltip')}</TooltipContent>
-                    </Tooltip>
-                  )}
-                  {def.key === 'todo_state' && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          className="inline-flex items-center justify-center text-muted-foreground"
-                          data-testid="todo-state-cycle-help"
-                          aria-label={t('propertiesView.taskCycleHelpLabel')}
-                        >
-                          <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent className="max-w-xs">
-                        {t('propertiesView.taskCycleHelpContent')}
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-                  <div className="ml-auto flex items-center gap-3">
-                    {def.value_type === 'select' && !LOCKED_PROPERTY_OPTIONS.has(def.key) && (
-                      <Popover
-                        open={editingOptionsKey === def.key}
-                        onOpenChange={(open) => {
-                          if (open) {
-                            setEditingOptionsKey(def.key)
-                            setEditOptionsValue(def.options ?? '')
-                          } else {
-                            setEditingOptionsKey(null)
-                          }
-                        }}
-                      >
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            aria-label={t('propertiesView.editOptionsTooltip')}
-                          >
-                            <Settings2 />
-                            {t('propertiesView.editOptions')}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent aria-label={t('propertiesView.editOptionsPopoverLabel')}>
-                          <div className="space-y-2">
-                            <Input
-                              value={editOptionsValue}
-                              onChange={(e) => setEditOptionsValue(e.target.value)}
-                              placeholder={t('propertiesView.optionsJsonPlaceholder')}
-                              aria-label={t('propertiesView.optionsJsonLabel')}
-                              aria-invalid={jsonError != null}
-                              aria-describedby={
-                                jsonError != null ? 'property-options-json-error' : undefined
-                              }
-                            />
-                            {jsonError && (
-                              <p
-                                id="property-options-json-error"
-                                className="text-xs text-destructive"
-                                role="alert"
-                              >
-                                {t('propertiesView.invalidJsonHint', { error: jsonError })}
-                              </p>
-                            )}
-                            <Button
-                              size="sm"
-                              disabled={jsonError != null}
-                              onClick={() => handleSaveOptions(def.key)}
-                            >
-                              {t('action.save')}
-                            </Button>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                    )}
-                    {NON_DELETABLE_PROPERTIES.has(def.key) ? (
-                      <Badge tone="outline" className="shrink-0 text-xs text-muted-foreground">
-                        {t('propertiesView.builtIn')}
-                      </Badge>
-                    ) : (
-                      <IconButton
-                        variant="ghost"
-                        size="icon-xs"
-                        tooltip={t('propertiesView.deleteTooltip')}
-                        ariaLabel={t('properties.deleteDefinition', { key: def.key })}
-                        className="text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
-                        onClick={() => setDeleteTarget(def.key)}
-                      >
-                        <Trash2 />
-                      </IconButton>
-                    )}
+                // On a phone the options take a second line, flush with the name, while
+                // Delete or Built-in stays on the name's line; one row when wider (#5925).
+                <ListItem
+                  key={def.key}
+                  className="max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-y-0"
+                >
+                  <div className="flex min-w-0 items-center gap-3 [@media(pointer:coarse)]:min-h-11">
+                    <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
+                    <Badge tone="secondary">{def.value_type}</Badge>
                   </div>
+                  {NON_DELETABLE_PROPERTIES.has(def.key) ? (
+                    <Badge
+                      tone="outline"
+                      className="shrink-0 text-xs text-muted-foreground sm:order-last sm:ml-auto"
+                    >
+                      {t('propertiesView.builtIn')}
+                    </Badge>
+                  ) : (
+                    <IconButton
+                      variant="ghost"
+                      size="icon-xs"
+                      tooltip={t('propertiesView.deleteTooltip')}
+                      ariaLabel={t('properties.deleteDefinition', { key: def.key })}
+                      className="sm:order-last sm:ml-auto [@media(pointer:coarse)]:-mr-3 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95"
+                      onClick={() => setDeleteTarget(def.key)}
+                    >
+                      <Trash2 />
+                    </IconButton>
+                  )}
+                  {def.value_type === 'select' && (
+                    <div className="flex items-center gap-3 max-sm:col-span-2 sm:contents">
+                      {LOCKED_PROPERTY_OPTIONS.has(def.key) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span
+                              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground max-sm:px-0"
+                              data-testid={`locked-options-${def.key}`}
+                              title={t('propertiesView.optionsLockedTitle')}
+                            >
+                              <Lock
+                                className="h-3 w-3"
+                                aria-label={t('propertiesView.optionsLockedTitle')}
+                              />
+                              {t('propertiesView.optionsLocked')}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {t('propertiesView.optionsLockedTooltip')}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {def.key === 'todo_state' && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="inline-flex items-center justify-center text-muted-foreground"
+                              data-testid="todo-state-cycle-help"
+                              aria-label={t('propertiesView.taskCycleHelpLabel')}
+                            >
+                              <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            {t('propertiesView.taskCycleHelpContent')}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      {!LOCKED_PROPERTY_OPTIONS.has(def.key) && (
+                        <Popover
+                          open={editingOptionsKey === def.key}
+                          onOpenChange={(open) => {
+                            if (open) {
+                              setEditingOptionsKey(def.key)
+                              setEditOptionsValue(def.options ?? '')
+                            } else {
+                              setEditingOptionsKey(null)
+                            }
+                          }}
+                        >
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              className="max-sm:px-0!"
+                              aria-label={t('propertiesView.editOptionsTooltip')}
+                            >
+                              <Settings2 />
+                              {t('propertiesView.editOptions')}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent aria-label={t('propertiesView.editOptionsPopoverLabel')}>
+                            <div className="space-y-2">
+                              <Input
+                                value={editOptionsValue}
+                                onChange={(e) => setEditOptionsValue(e.target.value)}
+                                placeholder={t('propertiesView.optionsJsonPlaceholder')}
+                                aria-label={t('propertiesView.optionsJsonLabel')}
+                                aria-invalid={jsonError != null}
+                                aria-describedby={
+                                  jsonError != null ? 'property-options-json-error' : undefined
+                                }
+                              />
+                              {jsonError && (
+                                <p
+                                  id="property-options-json-error"
+                                  className="text-xs text-destructive"
+                                  role="alert"
+                                >
+                                  {t('propertiesView.invalidJsonHint', { error: jsonError })}
+                                </p>
+                              )}
+                              <Button
+                                size="sm"
+                                disabled={jsonError != null}
+                                onClick={() => handleSaveOptions(def.key)}
+                              >
+                                {t('action.save')}
+                              </Button>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                      )}
+                    </div>
+                  )}
                 </ListItem>
               ))}
             </ul>
