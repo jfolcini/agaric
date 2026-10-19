@@ -69,7 +69,6 @@ import type { AttachmentRow, OpRef } from '@/lib/bindings'
 import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '@/lib/block-utils'
 import { t } from '@/lib/i18n'
 import { matchesShortcutBinding, tipTapShortcutMap } from '@/lib/keyboard-config'
-import { notify } from '@/lib/notify'
 import { scrollParentY } from '@/lib/scroll-parent'
 import type { TodoState } from '@/lib/task-states'
 import type { FlatBlock } from '@/lib/tree-utils'
@@ -504,11 +503,12 @@ function blockAtPointer(view: EditorView, event: MouseEvent): string | null {
   return blockIdOf($at.depth >= 1 ? $at.node(1) : (($at.nodeAfter ?? $at.nodeBefore) as PMNode))
 }
 
-/** The block a paste goes to: the caret's, or the first a selection between blocks (Ctrl+A) holds. */
+/**
+ * The block a paste goes to: the caret's, or the first a selection of whole
+ * blocks (Ctrl+A) holds, which starts before it.
+ */
 function pasteBlockId(state: EditorState): string | null {
-  const { $from } = state.selection
-  const block = $from.depth >= 1 ? $from.node(1) : $from.nodeAfter
-  return caretBlockId(state) ?? (block === null ? null : blockIdOf(block))
+  return caretBlockId(state) ?? blockIdOf(state.selection.$from.nodeAfter as PMNode)
 }
 
 /**
@@ -520,20 +520,18 @@ function pasteBlockId(state: EditorState): string | null {
  * Files pasted go to the caret's block, and files dropped to the block they
  * land on.
  */
-const PageTaskKeys = Extension.create<{ tasks: PageTaskSource | null }>({
+// Configured only through `pageTasks`, so `tasks` is always set.
+const PageTaskKeys = Extension.create<{ tasks: PageTaskSource }>({
   name: 'pageTaskKeys',
   // Ahead of the hard break's own Mod-Enter.
   priority: 1000,
-  addOptions() {
-    return { tasks: null }
-  },
   addKeyboardShortcuts() {
     const { tasks } = this.options
     const setPriority =
       (level: '1' | '2' | '3') =>
       ({ editor }: { editor: Editor }): boolean => {
         const id = caretBlockId(editor.state)
-        if (tasks === null || id === null) return false
+        if (id === null) return false
         tasks.setPriority(id, level)
         return true
       }
@@ -558,7 +556,7 @@ const PageTaskKeys = Extension.create<{ tasks: PageTaskSource | null }>({
         props: {
           handleKeyDown(view, event) {
             const id = caretBlockId(view.state)
-            if (tasks === null || id === null) return false
+            if (id === null) return false
             if (matchesShortcutBinding(event, 'cycleTaskState')) {
               tasks.cycle(id)
               return true
@@ -576,17 +574,15 @@ const PageTaskKeys = Extension.create<{ tasks: PageTaskSource | null }>({
           // As block mode's: files win over any text the clipboard also holds.
           handlePaste(view, event) {
             const files = Array.from(event.clipboardData?.files ?? [])
-            if (tasks === null || files.length === 0) return false
-            const id = pasteBlockId(view.state)
-            // Taken either way: a file is never left to a text paste that drops it.
-            if (id === null) notify.error(t('blockTree.attachFileFailed'))
-            else tasks.attach(id, files)
+            const id = files.length === 0 ? null : pasteBlockId(view.state)
+            if (id === null) return false
+            tasks.attach(id, files)
             return true
           },
           handleDrop(view, event) {
             const files = Array.from(event.dataTransfer?.files ?? [])
             const id = files.length === 0 ? null : blockAtPointer(view, event)
-            if (tasks === null || id === null) return false
+            if (id === null) return false
             tasks.attach(id, files)
             return true
           },

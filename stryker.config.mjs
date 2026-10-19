@@ -1,8 +1,8 @@
 import { MODULES } from './stryker.modules.mjs'
 
-// #886 — nightly-only, non-gating mutation testing scoped to a handful of
-// pure/deterministic frontend libs (never components or Tauri IPC). Full
-// recipe + evaluation numbers: issue #886. Always run through
+// #886 — nightly-only, non-gating mutation testing of the frontend modules
+// `stryker.modules.mjs` lists. Full recipe + evaluation numbers: issue #886.
+// Always run through
 // `npm run mutation` (or `scripts/run-mutation.mjs` directly), never
 // `npx stryker run` bare — this config mutates exactly one module per run,
 // selected via `STRYKER_MODULE`, because Stryker can't vary its test scope

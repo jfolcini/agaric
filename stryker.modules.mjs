@@ -1,7 +1,6 @@
 /**
- * #886 — registry of pure, deterministic frontend modules eligible for
- * Stryker mutation testing, and the ONLY test file(s) each one may run
- * against.
+ * #886 — registry of the frontend modules eligible for Stryker mutation
+ * testing, and the ONLY test file(s) each one may run against.
  *
  * This is the third blocker from the maintainer's evaluation (issue #886):
  * vitest's default "related" mode (dependency-graph test selection) is not
@@ -14,8 +13,9 @@
  * `stryker.vitest.config.mjs` reads it to pick `test.include`. This file is
  * the single source of truth both configs (and the driver script) read from.
  *
- * Scope is intentionally narrow — pure, side-effect-free library code only,
- * never components or Tauri IPC. Notably excluded from `search-query/`:
+ * The #886 seed was pure, side-effect-free library code; the waves below it
+ * are chosen by risk, page mode's node view among them. Notably excluded from
+ * `search-query/`:
  * `register.ts` / `registry.ts` (a module-level mutable `registrations`
  * array — `ensureRegistered()`'s `let registered = false` one-shot guard and
  * the shared array are exactly the kind of cross-test-file mutable state
@@ -279,6 +279,28 @@ export const MODULES = {
     src: 'src/lib/template-utils.ts',
     tests: ['src/lib/__tests__/template-utils.test.ts'],
   },
+  // Page mode's node view (#5915): a survivor is a task, list marker, query or
+  // attachment drawn wrong, or a key or a file that goes to the wrong block.
+  'page-tasks': {
+    setup: true,
+    src: 'src/editor/page-mode/page-tasks.ts',
+    tests: ['src/editor/page-mode/__tests__/page-tasks.test.tsx'],
+  },
+  'page-lists': {
+    setup: true,
+    src: 'src/editor/page-mode/page-lists.ts',
+    tests: ['src/editor/page-mode/__tests__/page-lists.test.tsx'],
+  },
+  'page-rendered': {
+    setup: true,
+    src: 'src/editor/page-mode/page-rendered.ts',
+    tests: ['src/editor/page-mode/__tests__/page-rendered.test.tsx'],
+  },
+  'page-attachments': {
+    setup: true,
+    src: 'src/editor/page-mode/page-attachments.ts',
+    tests: ['src/editor/page-mode/__tests__/page-attachments.test.tsx'],
+  },
 }
 
 /**
@@ -292,12 +314,6 @@ export const MODULES = {
  * - `jaro-winkler` (100 mutants, 32 survivors, 16s). Cheap, but it ranks
  *   fuzzy-search suggestions; a survivor means "results ordered slightly
  *   differently", which is not the defect class this lane is for.
- *
- * - `page-tasks` (502 mutants, unfinished after 590s on a loaded machine), and
- *   with it page mode's other node-view modules `page-lists`, `page-rendered`
- *   and `page-attachments`, not yet measured: none has a test file of its own,
- *   so each is tested through `PageModeEditor.test.tsx`, whose first full run
- *   takes about 13s.
  */
 
 export const MODULE_NAMES = Object.keys(MODULES)
