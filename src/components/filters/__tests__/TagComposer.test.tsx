@@ -1,17 +1,22 @@
 /**
  * Tests for TagComposer (#1426) — focuses on the IPC error path of its
  * `listTagsByPrefix` typeahead (required by the ipc-error-path-coverage
- * guard, #1270), plus the happy path and a11y.
+ * guard, #1270), plus the happy path, a11y and the All / Any keyboard.
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { stubInvoke } from '@/__tests__/helpers/invoke'
-import { TagComposer, type TagComposerCallbacks } from '@/components/filters/TagComposer'
+import {
+  TagComposer,
+  type TagComposerCallbacks,
+  useTagComposerState,
+} from '@/components/filters/TagComposer'
 import type { TagCacheRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { emptyTagBuilder } from '@/lib/tagExpr'
@@ -95,5 +100,42 @@ describe('TagComposer — tag typeahead IPC', () => {
     await screen.findByLabelText(t('tagFilter.composer.searchLabel'))
 
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+/** The composer over its real state hook, so a combinator change re-renders. */
+function StatefulComposer(): React.ReactElement {
+  const { root, callbacks, toggle } = useTagComposerState()
+  return (
+    <>
+      <button type="button" onClick={toggle}>
+        open
+      </button>
+      {root && <TagComposer root={root} callbacks={callbacks} />}
+    </>
+  )
+}
+
+describe('TagComposer — All / Any combinator', () => {
+  it('an arrow key moves the combinator, and only the checked one is a tab stop', async () => {
+    const user = userEvent.setup()
+    render(<StatefulComposer />)
+    await user.click(screen.getByRole('button', { name: 'open' }))
+
+    const group = screen.getByRole('radiogroup', { name: t('tagFilter.composer.opLabel') })
+    const all = within(group).getByRole('radio', { name: t('tagFilter.composer.opAnd') })
+    const any = within(group).getByRole('radio', { name: t('tagFilter.composer.opOr') })
+    expect(all).toHaveAttribute('aria-checked', 'true')
+
+    // The group's NOT toggle sits just before the combinator.
+    screen.getByRole('button', { name: t('tagFilter.composer.negateGroup') }).focus()
+    await user.tab()
+    expect(all).toHaveFocus()
+    await user.keyboard('{ArrowRight}')
+
+    expect(any).toHaveFocus()
+    expect(any).toHaveAttribute('aria-checked', 'true')
+    expect(all).toHaveAttribute('aria-checked', 'false')
+    expect(within(group).getAllByRole('radio').filter((r) => r.tabIndex === 0)).toEqual([any])
   })
 })

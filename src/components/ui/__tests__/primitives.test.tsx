@@ -686,6 +686,48 @@ describe('ToggleGroup', () => {
     expect(second).toHaveAttribute('data-state', 'off')
   })
 
+  it('an arrow key checks the segment it focuses, and Tab reaches only the checked one', async () => {
+    const user = userEvent.setup()
+    render(
+      <>
+        <button type="button">Before</button>
+        <ToggleGroup type="single" aria-label="Modes" defaultValue="a">
+          <ToggleGroupItem value="a">A</ToggleGroupItem>
+          <ToggleGroupItem value="b">B</ToggleGroupItem>
+          <ToggleGroupItem value="c">C</ToggleGroupItem>
+        </ToggleGroup>
+      </>,
+    )
+    const [a, b, c] = screen.getAllByRole('radio')
+    screen.getByRole('button', { name: 'Before' }).focus()
+
+    await user.tab()
+    expect(a).toHaveFocus()
+    await user.keyboard('{ArrowRight}')
+    expect(b).toHaveFocus()
+    expect(b).toHaveAttribute('aria-checked', 'true')
+    expect(a).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getAllByRole('radio').filter((r) => r.tabIndex === 0)).toEqual([b])
+
+    await user.tab({ shift: true })
+    expect(screen.getByRole('button', { name: 'Before' })).toHaveFocus()
+    await user.tab()
+    expect(b).toHaveFocus()
+    expect(c).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('draws the checked segment with a foreground outline, not the primary fill', () => {
+    render(
+      <ToggleGroup type="single" aria-label="Modes" value="a">
+        <ToggleGroupItem value="a">A</ToggleGroupItem>
+      </ToggleGroup>,
+    )
+    const item = screen.getByRole('radio', { name: 'A' })
+    // Keyed on aria-checked: a TooltipTrigger asChild overwrites data-state.
+    expect(item.className).toContain('aria-checked:border-foreground')
+    expect(item.className).not.toContain('bg-primary')
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(
       <ToggleGroup type="single" aria-label="Diff mode" defaultValue="a">

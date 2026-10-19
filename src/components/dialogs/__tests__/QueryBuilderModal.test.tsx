@@ -132,8 +132,7 @@ describe('QueryBuilderModal', () => {
       const propertyRadio = screen.getByRole('radio', { name: /^Property$/i })
       expect(propertyRadio).toHaveAttribute('aria-checked', 'true')
       expect(propertyRadio).toHaveFocus()
-      expect(propertyRadio).toHaveAttribute('tabindex', '0')
-      expect(tagRadio).toHaveAttribute('tabindex', '-1')
+      expect(screen.getAllByRole('radio').filter((r) => r.tabIndex === 0)).toEqual([propertyRadio])
 
       await user.keyboard('{ArrowDown}')
       const backlinksRadio = screen.getByRole('radio', { name: /^Backlinks$/i })

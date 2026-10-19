@@ -6,9 +6,7 @@
  *    single-select ToggleGroup (role=radio, aria-checked, data-state)
  *  - Shows correct aria-checked state for selected filter
  *  - Calls onSourceFilterChange with correct value
- *  - Renders hide-before-scheduled toggle
- *  - Toggle calls onToggleHideBeforeScheduled
- *  - Toggle aria-pressed reflects state (and shares the ToggleGroup item look)
+ *  - Renders the hide-future-scheduled switch; it reflects and toggles the state
  *  - a11y audit passes (axe)
  */
 
@@ -41,11 +39,9 @@ describe('DuePanelFilters', () => {
 
     const all = screen.getByRole('radio', { name: 'All' })
     expect(all).toHaveAttribute('aria-checked', 'true')
-    expect(all).toHaveAttribute('data-state', 'on')
     for (const name of ['Due', 'Scheduled', 'Properties']) {
       const segment = screen.getByRole('radio', { name })
       expect(segment).toHaveAttribute('aria-checked', 'false')
-      expect(segment).toHaveAttribute('data-state', 'off')
     }
   })
 
@@ -55,7 +51,6 @@ describe('DuePanelFilters', () => {
     expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'false')
     const due = screen.getByRole('radio', { name: 'Due' })
     expect(due).toHaveAttribute('aria-checked', 'true')
-    expect(due).toHaveAttribute('data-state', 'on')
   })
 
   it('renders the source segments as one single-select ToggleGroup', () => {
@@ -67,10 +62,10 @@ describe('DuePanelFilters', () => {
     // Coarse-pointer segments are 44px wide each; on a 360px phone the four of
     // them overflow the panel unless the group wraps inside its own box.
     expect(group).toHaveClass('max-w-full', 'flex-wrap')
-    // Active state is the quiet ToggleGroup fill, never the brand-red fill
+    // Active state is the neutral ToggleGroup outline, never the brand-red fill
     // that read as an error beside the red Overdue section.
     const active = screen.getByRole('radio', { name: 'All' })
-    expect(active.className).toContain('data-[state=on]:bg-secondary')
+    expect(active.className).toContain('aria-checked:border-foreground')
     expect(active.className).not.toContain('bg-primary')
   })
 
@@ -137,29 +132,25 @@ describe('DuePanelFilters', () => {
     expect(onFilterChange).toHaveBeenCalledWith('property:')
   })
 
-  it('renders hide-before-scheduled toggle with correct label when OFF', () => {
-    render(<DuePanelFilters {...defaultProps} hideBeforeScheduled={false} />)
+  it('renders the hide-future-scheduled switch off, then on', () => {
+    const { rerender } = render(<DuePanelFilters {...defaultProps} hideBeforeScheduled={false} />)
 
-    const toggle = screen.getByRole('button', { name: /Scheduled: show all/i })
-    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    const toggle = screen.getByRole('switch', { name: 'Hide future scheduled' })
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+
+    rerender(<DuePanelFilters {...defaultProps} hideBeforeScheduled />)
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
   })
 
-  it('renders hide-before-scheduled toggle with correct label when ON', () => {
-    render(<DuePanelFilters {...defaultProps} hideBeforeScheduled />)
-
-    const toggle = screen.getByRole('button', { name: /Scheduled: hide future/i })
-    expect(toggle).toHaveAttribute('aria-pressed', 'true')
-  })
-
-  it('calls onToggleHideBeforeScheduled when toggle is clicked', async () => {
+  it('calls onToggleHideBeforeScheduled when the switch or its label is clicked', async () => {
     const user = userEvent.setup()
     const onToggle = vi.fn()
 
     render(<DuePanelFilters {...defaultProps} onToggleHideBeforeScheduled={onToggle} />)
 
-    const toggle = screen.getByRole('button', { name: /Scheduled: show all/i })
-    await user.click(toggle)
-    expect(onToggle).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('switch', { name: 'Hide future scheduled' }))
+    await user.click(screen.getByText('Hide future scheduled'))
+    expect(onToggle).toHaveBeenCalledTimes(2)
   })
 
   it('a11y: no violations with default state', async () => {
@@ -234,10 +225,9 @@ describe('DuePanelFilters', () => {
     })
   })
 
-  // The tooltip trigger wraps each segment in a span; focus must still reach the
-  // radio, roving focus must still step across the wrappers, and the tooltip
-  // must open from keyboard focus alone.
-  it('opens the segment tooltip on keyboard focus and arrows between segments without selecting', async () => {
+  // Each segment is its own tooltip trigger: the tooltip opens on keyboard focus
+  // alone, and an arrow key moves focus and the selection together.
+  it('opens the segment tooltip on keyboard focus and an arrow key selects the next segment', async () => {
     const user = userEvent.setup()
     const onFilterChange = vi.fn()
     render(<DuePanelFilters {...defaultProps} onSourceFilterChange={onFilterChange} />)
@@ -255,31 +245,9 @@ describe('DuePanelFilters', () => {
     expect(
       await screen.findByRole('tooltip', { name: 'Hard due date — overdue if past' }),
     ).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true')
-    expect(onFilterChange).not.toHaveBeenCalled()
-  })
-
-  it('hide-before-scheduled toggle has aria-label and 44px min-height on coarse pointer', () => {
-    render(<DuePanelFilters {...defaultProps} hideBeforeScheduled={false} />)
-
-    const toggle = screen.getByRole('button', { name: /Scheduled: show all/i })
-    expect(toggle).toHaveAttribute('aria-label', 'Scheduled: show all')
-    expect(toggle.className).toContain('[@media(pointer:coarse)]:min-h-11')
-  })
-
-  it('hide-before-scheduled toggle shares the ToggleGroup item look and fills when on', () => {
-    const { rerender } = render(<DuePanelFilters {...defaultProps} hideBeforeScheduled={false} />)
-
-    const off = screen.getByRole('button', { name: /Scheduled: show all/i })
-    expect(off).toHaveAttribute('data-slot', 'toggle-group-item')
-    expect(off).toHaveAttribute('data-state', 'off')
-    expect(off.className).toContain('data-[state=on]:bg-secondary')
-    expect(off.className).not.toContain('bg-primary')
-
-    rerender(<DuePanelFilters {...defaultProps} hideBeforeScheduled />)
-    expect(screen.getByRole('button', { name: /Scheduled: hide future/i })).toHaveAttribute(
-      'data-state',
-      'on',
-    )
+    expect(onFilterChange).toHaveBeenCalledWith('column:due_date')
+    expect(
+      screen.getAllByRole('radio').filter((radio) => radio.tabIndex === 0),
+    ).toEqual([screen.getByRole('radio', { name: 'Due' })])
   })
 })

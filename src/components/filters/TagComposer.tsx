@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SearchInput } from '@/components/ui/search-input'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { requireActiveScope } from '@/lib/space-scope'
@@ -99,7 +100,7 @@ export function useTagComposerState(): {
   return { root, callbacks, toggle }
 }
 
-/** All/Any combinator — a 2-way segmented radiogroup over a group's `op`. */
+/** All/Any combinator — a 2-way segmented control over a group's `op`. */
 function OpToggle({
   op,
   onSetOp,
@@ -113,34 +114,22 @@ function OpToggle({
     { value: 'or', label: t('tagFilter.composer.opOr') },
   ]
   return (
-    <div
-      className="inline-flex rounded-md border"
-      role="radiogroup"
+    <ToggleGroup
+      type="single"
       aria-label={t('tagFilter.composer.opLabel')}
+      value={op}
+      onValueChange={(next) => {
+        // Pressing the checked segment again reports '', which matches none.
+        const option = options.find((o) => o.value === next)
+        if (option) onSetOp(option.value)
+      }}
     >
-      {options.map(({ value, label }) => {
-        const selected = op === value
-        return (
-          <button
-            key={value}
-            type="button"
-            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a real radio <input> can't render as a flush segmented-toggle button; the radiogroup/radio/aria-checked semantics are explicit and accessible
-            role="radio"
-            aria-checked={selected}
-            aria-label={label}
-            onClick={() => onSetOp(value)}
-            className={cn(
-              'h-7 px-2.5 text-xs first:rounded-l-md last:rounded-r-md focus-ring-visible',
-              selected
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-background hover:bg-accent hover:text-accent-foreground',
-            )}
-          >
-            {label}
-          </button>
-        )
-      })}
-    </div>
+      {options.map(({ value, label }) => (
+        <ToggleGroupItem key={value} value={value}>
+          {label}
+        </ToggleGroupItem>
+      ))}
+    </ToggleGroup>
   )
 }
 

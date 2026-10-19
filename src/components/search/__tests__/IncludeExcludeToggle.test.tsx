@@ -3,18 +3,21 @@
  *
  * Previously this segmented control was only exercised transitively via
  * `FilterHelperPopover.test.tsx`. It is a controlled WAI-ARIA radiogroup:
- * two `role="radio"` buttons whose selection is driven by the `negate`
- * prop, with `onChange(negate)` fired on click.
+ * two `role="radio"` segments whose selection is driven by the `negate`
+ * prop, with `onChange(negate)` fired on click or arrow key.
  *
  * Coverage:
  *  - renders the group + both radios with the supplied labels
  *  - `aria-checked` reflects the controlled `negate` value
  *  - clicking a radio fires `onChange` with the matching boolean
+ *  - an arrow key moves the selection; only the checked radio is a tab stop
  *  - axe(container) clean in both states
  */
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type React from 'react'
+import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -78,11 +81,45 @@ describe('IncludeExcludeToggle — interaction', () => {
     expect(onChange).toHaveBeenCalledWith(false)
   })
 
-  it('still fires onChange when the already-selected option is clicked (controlled component)', async () => {
+  it('keeps the selection when the checked option is clicked again', async () => {
     const user = userEvent.setup()
     const { onChange } = setup(false)
     await user.click(includeRadio())
-    expect(onChange).toHaveBeenCalledWith(false)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(includeRadio()).toHaveAttribute('aria-checked', 'true')
+  })
+})
+
+describe('IncludeExcludeToggle — keyboard', () => {
+  function Stateful(): React.ReactElement {
+    const [negate, setNegate] = useState(false)
+    return (
+      <>
+        <button type="button">Before</button>
+        <IncludeExcludeToggle
+          negate={negate}
+          onChange={setNegate}
+          label={LABEL}
+          includeLabel={INCLUDE}
+          excludeLabel={EXCLUDE}
+        />
+      </>
+    )
+  }
+
+  it('an arrow key moves the selection, and only the checked radio is a tab stop', async () => {
+    const user = userEvent.setup()
+    render(<Stateful />)
+    screen.getByRole('button', { name: 'Before' }).focus()
+
+    await user.tab()
+    expect(includeRadio()).toHaveFocus()
+    await user.keyboard('{ArrowRight}')
+
+    expect(excludeRadio()).toHaveFocus()
+    expect(excludeRadio()).toHaveAttribute('aria-checked', 'true')
+    expect(includeRadio()).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getAllByRole('radio').filter((r) => r.tabIndex === 0)).toEqual([excludeRadio()])
   })
 })
 
