@@ -13,9 +13,10 @@
 // themselves a reason to touch the issue — a pure "some mutants got killed"
 // week stays a no-op, same as a pure "nothing changed" week.
 //
-// State lives in the tracking issue itself (its body), not a committed
-// baseline file — the workflow only needs `issues: write`, never
-// `contents: write`, and there is nothing to keep in sync with a repo file.
+// The tracked state lives in the tracking issue itself (its body), not a
+// committed baseline file — the workflow only needs `issues: write`, never
+// `contents: write`. The accepted-equivalent set is the one input that is a
+// committed file, read and never written (§ Accepted-equivalent below).
 //
 // #3788 — "survivor" in the paragraph above is a historical name. What this
 // tracks is two DIFFERENT findings, and for a year it silently tracked only
@@ -55,6 +56,10 @@
 //     [--run-url <url>]             (default: derived from $GITHUB_SERVER_URL
 //                                    /$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
 //     [--dry-run]                   (compute + print; never call `gh`)
+//     [--accepted-file <path>]      (default: mutation-accepted.tsv at the repo root)
+//     [--rust-root <dir>]           (default: src-tauri; where rust ids' files resolve)
+//     --accept                      (instead of a run: read mutant ids from stdin,
+//                                    print their mutation-accepted.tsv lines)
 //     [--known-body-file <path>]    (TEST-ONLY: use this file's content as
 //                                    the existing tracking issue's body
 //                                    instead of calling `gh issue list`;
@@ -154,61 +159,44 @@
 // what either lane alone can reach, which is why it is not the per-run
 // default.
 //
-// ── Accepted-equivalent mutants (#4173) ──────────────────────────────────
+// ── Accepted-equivalent mutants (#5986, was #4173) ───────────────────────
 //
 // Some mutants are UNKILLABLE by construction: a `case 'invalid':` arm that
-// falls through to a documented no-op, an `if (pos < s.length)` guard that is
-// redundant with `String.prototype.slice`'s own behaviour past the end, a `?.`
-// mandated by `noUncheckedIndexedAccess`, a dev-only `assertAdvanced` label
-// whose whole point is to be unreachable. No test can kill them and no test
-// should be written trying.
+// falls through to a documented no-op, a guard redundant with
+// `String.prototype.slice`'s own behaviour, a `?.` mandated by
+// `noUncheckedIndexedAccess`. No test can kill them and none should be written
+// trying. Removing one from the survivor block is byte-identical to the mutant
+// having been killed, so the next run re-files it and reopens its child.
 //
-// Before #4173 the only way to record that verdict was to hand-remove the
-// line from the survivor block above — which is BYTE-IDENTICAL to the mutant
-// having been killed. The next weekly run re-observed it, re-added it as
-// "new", and re-opened the child issue that had just been closed. Measured on
-// #3142's triage slice: 25 mutants across `classify`, `tokenize`,
-// `query-utils` and `to-search-filter` were proven equivalent TWICE, by two
-// different sessions, a week apart, reaching the same verdicts. The cost is
-// not the re-filing — it is that each cycle spends a real triage session
-// re-deriving arguments already written two comments up, and that a genuinely
-// new survivor appearing inside a block of 25 known-equivalent ones is much
-// harder to see.
+// They are recorded in the committed file `mutation-accepted.tsv` (repo root),
+// one fingerprint per line, which the job reads from its checkout. The filer
+// SUBTRACTS the matching mutants from the OBSERVED set before the diff, so an
+// accepted mutant is not new, does not enter the tracked set, does not reopen a
+// child and is not announced as resolved either (see `main`).
 //
-// So the parent carries a THIRD marker block, `mutation-accepted`, holding the
-// ids triage has ruled equivalent. The filer SUBTRACTS it from the OBSERVED
-// set before the diff, so an accepted mutant is not new, does not enter the
-// tracked set, does not re-open a child, and is not announced as resolved
-// either (see `main`). It is the one block in this body a HUMAN writes: the
-// filer never adds a line here, it only re-renders what it read and drops what
-// has gone stale.
+// The fingerprint is line-independent, so a PR that shifts lines does not
+// expire it (the old `(file, line, column, mutator)` ids did, which is why the
+// accepted set used to live by hand in the issue body and be re-pasted after
+// every such PR):
+//   frontend  file, mutator, the trimmed text of the mutated source line, the
+//             column relative to that text, which occurrence of that text in the
+//             file it is. Tab-separated: `frontend<TAB>file<TAB>mutator<TAB>col<TAB>n<TAB>text`.
+//   rust      file, cargo-mutants' description (function name included) and the
+//             trimmed source line: `rust<TAB>file<TAB>description<TAB>text`.
+// The text is part of the key, so an entry whose line was edited is simply
+// inert; it can never suppress a different mutant. The filer logs how many
+// entries matched nothing, prune them when convenient. An entry names no
+// replacement, so it covers every replacement of its mutator at that column, but
+// a different mutator or column on the same line still reports (this is what
+// separates it from the `// Stryker disable` directives #3593 rejected).
 //
-// This is NOT the `// Stryker disable` mechanism #3593 considered and
-// rejected, and it does not reopen that decision. The objection recorded there
-// stands: a `disable next-line ConditionalExpression` suppresses EVERY
-// conditional mutant on the line, including observable siblings that are
-// genuinely killable. An accepted-block entry is keyed on the whole mutant id —
-// (file, line, column, mutator), which is exactly what #3788 added the column
-// for — so it has no blast radius past the single mutant it names, and a
-// sibling mutant on the SAME LINE still reports normally. `selfTestAcceptedGaps`
-// pins that property specifically, because it is the entire reason this
-// mechanism is acceptable where the directives were not.
+// An unparsable line makes the filer exit 1, which reddens the lane through
+// `report-scheduled-failures`; there is no separate guard.
 //
-// STALENESS is the cost, and RE-ANCHORING is the mitigation. An entry names a
-// line, and lines move; an entry left in place after its line moved would
-// permanently suppress whatever mutant now sits at that id — silence in the
-// one direction this script exists to prevent. So an accepted entry matching
-// NOTHING in the observed set is DROPPED on the next body rewrite, and the
-// mutant re-reports normally the next time it is seen. The failure mode is
-// therefore "you have to re-accept it after a refactor", never "it is
-// suppressed forever". (The alternative canvassed in #4173 — stamping each
-// entry with the commit that accepted it — records the same fact but still
-// needs a human to act on it; dropping is the version that self-heals.)
-//
-// Note the premise re-anchoring shares with the survivor block: it reads the
-// OBSERVED set, so a lane that silently contributed nothing would drop that
-// lane's accepted entries along with its survivors. That is the #3364 hazard
-// exactly, and `--require-input` is its guard for both blocks.
+// To record a mutant: in the PR that proves it equivalent, paste its survivor
+// block line(s) into `node scripts/file-mutation-survivors.mjs --accept` (stdin)
+// on the checkout the ids were reported for, and append the output to
+// `mutation-accepted.tsv`.
 //
 // Exit codes: 0 on success (including the no-op case), 1 on a real error
 // (bad args, a `gh` call failing).
@@ -263,16 +251,6 @@ const MARKER_END = '<!-- mutation-survivors:end -->'
 // markers — cannot see it and the tracked set is unaffected.
 const CHILD_MARKER_START = '<!-- mutation-children:begin -->'
 const CHILD_MARKER_END = '<!-- mutation-children:end -->'
-
-// The parent's THIRD marker block (#4173): the mutant ids triage has PROVEN
-// equivalent (unkillable). A distinct prefix again — no substring collision
-// with either block above — and rendered after both, so neither
-// `parseKnownSurvivors` nor `parseChildLinks` can see it and neither the
-// tracked set nor the child map is affected. Unlike the other two, this block
-// is HAND-WRITTEN by triage: the filer only ever re-renders what it read, and
-// drops entries that have gone stale. See § Accepted-equivalent above.
-const ACCEPTED_MARKER_START = '<!-- mutation-accepted:begin -->'
-const ACCEPTED_MARKER_END = '<!-- mutation-accepted:end -->'
 
 // GitHub rejects an issue title over 256 characters. A rust area is a source
 // path, so this is reachable in principle; failing here beats a bare 422 from
@@ -718,6 +696,11 @@ export function parseRustSurvivors(missedTxtPath) {
  * a finding and stays out.
  */
 export function parseFrontendSurvivors(dir) {
+  return parseFrontendMutants(dir).map((m) => m.id)
+}
+
+/** `parseFrontendSurvivors` with each mutant's accepted-equivalent fingerprint (#5986). */
+export function parseFrontendMutants(dir) {
   if (!existsSync(dir)) return []
   const survivors = []
   for (const jsonPath of findMutationJsonFiles(dir)) {
@@ -731,14 +714,19 @@ export function parseFrontendSurvivors(dir) {
     // how `scripts/run-mutation.mjs` lays out `reports/mutation/<module>/`.
     const module_ = jsonPath.split('/').at(-2) ?? 'unknown'
     for (const [file, entry] of Object.entries(report.files ?? {})) {
+      const lines = typeof entry.source === 'string' ? entry.source.split('\n') : undefined
       for (const mutant of entry.mutants ?? []) {
         if (mutant.status !== 'Survived' && mutant.status !== 'NoCoverage') continue
         const line = mutant.location?.start?.line ?? '?'
         const column = mutant.location?.start?.column ?? '?'
         const suffix = mutant.status === 'NoCoverage' ? NO_COVERAGE_SUFFIX : ''
-        survivors.push(
-          `[frontend] ${module_}: ${file}:${line}:${column} [${mutant.mutatorName}]${suffix}`,
-        )
+        survivors.push({
+          id: `[frontend] ${module_}: ${file}:${line}:${column} [${mutant.mutatorName}]${suffix}`,
+          key:
+            lines && Number.isInteger(line) && Number.isInteger(column)
+              ? frontendKey(file, mutant.mutatorName, lines, line, column)
+              : undefined,
+        })
       }
     }
   }
@@ -788,6 +776,132 @@ function findMutationJsonFiles(dir) {
 }
 
 // ---------------------------------------------------------------------------
+// Accepted-equivalent mutants (#5986)
+// ---------------------------------------------------------------------------
+
+const ACCEPTED_PATH = resolve(REPO_ROOT, 'mutation-accepted.tsv')
+// `let` only so `--self-test` can point every fixture run at an empty file.
+let defaultAcceptedPath = ACCEPTED_PATH
+// cargo-mutants runs from `src-tauri/`, so its ids name files relative to it.
+const RUST_ROOT = resolve(REPO_ROOT, 'src-tauri')
+
+/**
+ * The line-independent identity of a frontend mutant: file, mutator, the
+ * trimmed text of its source line, its column relative to that text, and which
+ * occurrence of that text it is in the file. `lines` is the file's source and
+ * `line` is 1-based. `undefined` when the line cannot be read.
+ */
+function frontendKey(file, mutator, lines, line, column) {
+  const raw = lines[line - 1]
+  const text = raw?.trim()
+  if (!text) return undefined
+  const relativeColumn = column - (raw.length - raw.trimStart().length)
+  let occurrence = 1
+  for (let i = 0; i < line - 1; i++) if (lines[i].trim() === text) occurrence++
+  return ['frontend', file, mutator, relativeColumn, occurrence, text].join('\t')
+}
+
+/** id -> rust fingerprint (file, description, trimmed source line) for every id that resolves. */
+function rustKeys(ids, root) {
+  const sources = new Map()
+  const keys = new Map()
+  for (const id of ids) {
+    const m = /^\[rust\] (.+?):(\d+):\d+: (.+)$/.exec(id)
+    if (!m) continue
+    const [, file, line, description] = m
+    if (!sources.has(file)) {
+      const path = join(root, file)
+      sources.set(file, existsSync(path) ? readFileSync(path, 'utf8').split('\n') : [])
+    }
+    const text = sources.get(file)[Number(line) - 1]?.trim()
+    if (text) keys.set(id, ['rust', file, description, text].join('\t'))
+  }
+  return keys
+}
+
+const ACCEPTED_ENTRY_SHAPE = {
+  frontend: /^frontend\t[^\t]+\t[^\t]+\t-?\d+\t[1-9]\d*\t\S/,
+  rust: /^rust\t[^\t]+\t[^\t]+\t\S/,
+}
+
+/**
+ * The fingerprints in `mutation-accepted.tsv`. Blank lines and `#` comments are
+ * skipped; anything else that is not an entry throws, so a bad paste fails the
+ * lane instead of silently suppressing nothing.
+ */
+export function parseAcceptedFile(text, where = 'mutation-accepted.tsv') {
+  const keys = new Set()
+  for (const [i, line] of text.split('\n').entries()) {
+    if (line.trim() === '' || line.startsWith('#')) continue
+    const lane = line.split('\t', 1)[0]
+    if (!ACCEPTED_ENTRY_SHAPE[lane]?.test(line) || line !== line.trimEnd())
+      throw new Error(
+        `${where}:${i + 1}: not an accepted-equivalent entry: ${JSON.stringify(line)}`,
+      )
+    keys.add(line)
+  }
+  return keys
+}
+
+/**
+ * `--accept`: the file lines for mutant ids (the survivor block's lines, first-seen
+ * dates and fences tolerated), fingerprinted against the checkout the ids were
+ * reported for. Throws when an id's source line cannot be read.
+ */
+export function acceptedLinesFor(text, { repoRoot = REPO_ROOT, rustRoot = RUST_ROOT } = {}) {
+  const out = new Set()
+  const ids = text
+    .split('\n')
+    .map((l) => l.replace(FIRST_SEEN_PREFIX, '').trim())
+    .filter((l) => l.startsWith('[frontend] ') || l.startsWith('[rust] '))
+  for (const id of ids) {
+    const fe = /^\[frontend\] [^:]+: (.+?):(\d+):(\d+) \[([^\]]+)\]( \(NoCoverage\))?$/.exec(id)
+    let key
+    if (fe) {
+      const path = resolve(repoRoot, fe[1])
+      if (existsSync(path))
+        key = frontendKey(
+          fe[1],
+          fe[4],
+          readFileSync(path, 'utf8').split('\n'),
+          Number(fe[2]),
+          Number(fe[3]),
+        )
+    } else {
+      key = rustKeys([id], rustRoot).get(id)
+    }
+    if (key === undefined) throw new Error(`--accept: cannot resolve the source line of ${id}`)
+    out.add(key)
+  }
+  return [...out].toSorted((a, b) => a.localeCompare(b))
+}
+
+/**
+ * Subtracts the accepted-equivalent mutants from the OBSERVED set, before
+ * anything else looks at it: out of `current` so the mutant is never new and
+ * never re-opens a child, and out of `known` so dropping it from the tracked
+ * set is not announced as "resolved" (a test killing an unkillable mutant is a
+ * lie of the #3245 family). An entry matching nothing is inert; only its count
+ * is logged. Split out of `main` for its branches.
+ */
+function applyAcceptedGaps({ entries, keys, body, current, lane }) {
+  const laneEntries = [...entries].filter((e) => e.startsWith(`${lane}\t`))
+  const accepted = [...new Set(current)]
+    .filter((id) => entries.has(keys.get(id)))
+    .toSorted((a, b) => a.localeCompare(b))
+  const matched = new Set(accepted.map((id) => keys.get(id)))
+  console.log(
+    `accepted-equivalent (#5986): ${accepted.length} mutant(s) suppressed; ${laneEntries.filter((e) => !matched.has(e)).length} of ${laneEntries.length} ${lane} entries matched nothing (informational)`,
+  )
+  const acceptedSet = new Set(accepted)
+  return {
+    accepted,
+    reported: current.filter((id) => !acceptedSet.has(id)),
+    known: new Set([...parseKnownSurvivors(body)].filter((id) => !acceptedSet.has(id))),
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Diffing against the tracking issue's known state
 // ---------------------------------------------------------------------------
 
@@ -798,33 +912,13 @@ function findMutationJsonFiles(dir) {
 // stripped on read, never part of the id.
 const FIRST_SEEN_PREFIX = /^(\d{4}-\d{2}-\d{2})\t/
 
-/**
- * The lines inside ONE fenced marker block. Parameterised over the markers
- * (#4173) because there are now two blocks with identical framing that carry
- * ids — the survivor block and the accepted-equivalent block — and a
- * copy-pasted slicer is how the two would eventually disagree about what
- * counts as a line. `parseChildLinks` keeps its own reader: its lines are
- * `#<number><TAB><area>`, not mutant ids.
- *
- * The boundary rule itself is split out into `markerBlockRange` for the same
- * reason: `parseReanchorNotes` has to ask "is this line INSIDE a block?" and a
- * second copy of the `indexOf` arithmetic is how that reader and this one would
- * eventually disagree about where a block ends. One rule, two callers — and in
- * particular both share the `end < start` case that returns nothing at all,
- * which is the case a poisoned marker creates.
- */
-function markerBlockRange(body, startMarker, endMarker) {
-  if (!body) return null
+/** The lines inside ONE fenced marker block (`parseChildLinks` keeps its own reader). */
+function markerBlockLines(body, startMarker, endMarker) {
+  if (!body) return []
   const start = body.indexOf(startMarker)
   const end = body.indexOf(endMarker)
-  if (start === -1 || end === -1 || end < start) return null
-  return [start + startMarker.length, end]
-}
-
-function markerBlockLines(body, startMarker, endMarker) {
-  const range = markerBlockRange(body, startMarker, endMarker)
-  if (range === null) return []
-  const block = body.slice(range[0], range[1])
+  if (start === -1 || end === -1 || end < start) return []
+  const block = body.slice(start + startMarker.length, end)
   // The block is a fenced code block; strip the ``` fences and blank lines.
   // Only the trailing whitespace is trimmed — a leading trim would eat the
   // first-seen prefix's own separator on a malformed line and silently mint a
@@ -837,10 +931,6 @@ function markerBlockLines(body, startMarker, endMarker) {
 
 function stateBlockLines(body) {
   return markerBlockLines(body, MARKER_START, MARKER_END)
-}
-
-function acceptedBlockLines(body) {
-  return markerBlockLines(body, ACCEPTED_MARKER_START, ACCEPTED_MARKER_END)
 }
 
 /**
@@ -872,27 +962,6 @@ export function parseKnownSurvivors(body) {
  */
 export function parseFirstSeen(body) {
   return blockDates(stateBlockLines(body))
-}
-
-/**
- * #4173 — the mutant ids a human has recorded in the accepted-equivalent
- * block: proven unkillable, and therefore subtracted from the observed set
- * instead of re-reported every week. Mirrors `parseKnownSurvivors` exactly,
- * including the optional date prefix — same regex, different meaning (there it
- * is "first seen", here "accepted on"), and stripped on read in both so the
- * prefix can never become part of the id. An entry a triager pasted without a
- * date must parse to the same id as the same entry with one, or the block
- * would silently suppress nothing on the run after it was written.
- *
- * @returns {Set<string>}
- */
-export function parseAcceptedSurvivors(body) {
-  return new Set(acceptedBlockLines(body).map((l) => l.replace(FIRST_SEEN_PREFIX, '')))
-}
-
-/** #4173 — accepted-equivalent id -> the `YYYY-MM-DD` it was accepted on, where recorded. */
-export function parseAcceptedOn(body) {
-  return blockDates(acceptedBlockLines(body))
 }
 
 /**
@@ -1051,201 +1120,6 @@ function renderChildBlock(childLinks) {
 }
 
 /**
- * #4173 — the accepted-equivalent block: the ONE part of this body a human
- * writes and the filer only maintains.
- *
- * Two properties the preamble has to carry, because a reader who gets either
- * wrong will misuse the block:
- *   - it is HAND-EDITED, the exact opposite of the two blocks above it. The
- *     filer never adds a line here; a mutant becomes accepted only because a
- *     triager decided it was unkillable and wrote it down.
- *   - an entry suppresses exactly the one mutant its id names. That is the
- *     difference from the `// Stryker disable` directives #3593 rejected, and
- *     it is what makes the block safe to hand a triager at all.
- *
- * Rendered ALWAYS, empty included — unlike the child block, and deliberately
- * so. The head above tells a triager to "copy the id into the
- * accepted-equivalent block at the bottom of this body", and the how-to
- * preamble that tells them the line shape lives inside this block: on an issue
- * with nothing accepted yet, rendering only when non-empty meant the
- * instructions pointed at a block that was not on the page, and the FIRST
- * triager — the only one who has never seen the mechanism work — had to invent
- * the marker syntax from the script source. So the empty block IS the template:
- * markers, fence, and a line saying what goes between them. Measured, not
- * estimated: 1085 characters of the body budget on every body that renders,
- * which moves the #3257 clamp ceiling from 597 rust-shaped findings to 586. The
- * ladder's rungs are unchanged — the block is STATE and was never a rung — and
- * eleven findings of headroom is what the instruction being true costs.
- *
- * `reanchored` is the re-anchoring history (see `appendReanchorNote`): the
- * filer's own note of the entries it dropped. It renders here, ABOVE the
- * markers and therefore outside everything `parseAcceptedSurvivors` reads —
- * which holds only because `noteSafeId` has broken the marker delimiters in
- * every line spliced in here, whether this run wrote it (`appendReanchorNote`)
- * or read it out of the previous body (`parseReanchorNotes`). Position alone
- * does not buy it: the markers are found by `indexOf` over the whole body, so
- * an unsanitised note ABOVE them can move the boundary and put itself INSIDE
- * the block it was meant to sit outside. `reanchored` is therefore only ever
- * the output of those two functions — hand this a raw body line and the
- * guarantee is gone.
- */
-function renderAcceptedBlock(accepted, acceptedOn, reanchored = []) {
-  const lines = [
-    `### Accepted-equivalent mutants (${accepted.length})`,
-    "_Hand-edited — **this block is yours, not the filer's**. Record a mutant here once triage has PROVEN it equivalent (unkillable), and the weekly run stops re-filing it: copy its id verbatim from the block above, in the same `<accepted-on date><TAB><mutant>` shape (the date is bookkeeping and is ignored). The filer never adds a line here. It only re-renders what it read, and DROPS any entry whose id matches no observed mutant — so an entry whose line has moved stops suppressing anything and that mutant re-reports normally, rather than staying silently hidden (#4173). An entry suppresses **only the one mutant it names**: a different mutant on the same line, same mutator or not, still reports._",
-  ]
-  if (accepted.length === 0) {
-    lines.push(
-      '_Nothing accepted yet — **the empty block below is the template**. Paste one line per proven-unkillable mutant between the two marker comments, inside the fence, and the next run stops reporting it. Keep the marker comments exactly as they are: they are what the filer reads._',
-    )
-  }
-  if (reanchored.length > 0) {
-    lines.push(
-      `_Re-anchoring history — entries the filer DROPPED because they matched no observed mutant (their mutants report normally again until re-accepted). Kept in the body because a dropped entry is a triage verdict quietly expiring, and the run log that recorded the drop expires with the run; the ${MAX_REANCHOR_NOTES} most recent are kept. These are history, not state: the ids below are not suppressing anything._`,
-      ...reanchored,
-    )
-  }
-  lines.push(ACCEPTED_MARKER_START, '```')
-  for (const id of accepted) {
-    const on = acceptedOn.get(id)
-    lines.push(on ? `${on}\t${id}` : id)
-  }
-  lines.push('```', ACCEPTED_MARKER_END)
-  return lines
-}
-
-/**
- * #4173 residual — the durable half of re-anchoring.
- *
- * Dropping a stale accepted entry is the SAFE direction (the mutant re-reports
- * rather than staying hidden), but it also silently retires a triage verdict a
- * human spent a session reaching, and until now the only record that it had
- * happened was a line in a CI log that GitHub deletes with the run. If every
- * recorded entry went stale in one run — a file rename does exactly that — the
- * whole block vanished from the issue and nothing on the page said why.
- *
- * So the drop is written into the body itself, as prose OUTSIDE the markers,
- * newest last and capped: bounded growth, and a triager who wonders why a
- * mutant they accepted in March is back has the answer on the page they are
- * already looking at.
- *
- * The ids in a note are deliberately NOT part of any findings list — #3245's
- * "no finding appears twice" rule is about the lists a triager counts, and a
- * history bullet is not one. A dropped id that later comes back as a live
- * survivor is therefore in the state block AND named in the history, which is
- * the honest rendering of "this came back after we retired it".
- */
-const REANCHOR_NOTE_PREFIX = '- **Re-anchored '
-const MAX_REANCHOR_NOTES = 5
-
-/**
- * A note is the ONE place this filer echoes HAND-EDITED body text back into the
- * body, un-fenced and — because the note renders above the markers — EARLIER in
- * it than `ACCEPTED_MARKER_START`. Every marker here is an HTML comment and
- * `markerBlockLines` locates them with a bare `indexOf`, so an id carrying a
- * marker delimiter does not merely look odd in the history: it MOVES the block
- * boundary the next run reads.
- *
- * Both directions were reproducible, and the accepted block is hand-edited free
- * text, so an id shaped like a marker only takes a bad paste (re-seeding "the
- * whole block, markers included" INTO the fence is the obvious one) — or a
- * maintainer annotating the history by hand, which is the other way a note gets
- * written and the one this function never sees:
- *
- *   - a note containing `…accepted:begin -->` puts the FIRST start marker
- *     inside the note, so the block read next run starts mid-prose: the note's
- *     own tail and the real marker line parse as live accepted entries — the
- *     history parsing back as state, which is precisely what the note's
- *     position outside the markers was supposed to make impossible;
- *   - a note containing `…accepted:end -->` puts the FIRST end marker BEFORE
- *     the start marker, so `markerBlockLines` returns nothing, the block reads
- *     as empty FOREVER (the poisoned note is carried forward with no expiry),
- *     every accepted mutant re-reports as new, and the next rewrite renders an
- *     empty block — silently erasing every triage verdict on the page.
- *
- * So the delimiters are broken on BOTH paths a note reaches the body by, and
- * naming only one of them is how this invariant was wrong the first time. This
- * function is applied when a note is WRITTEN (below) and again when one is READ
- * back (`parseReanchorNotes`), because a note is carried forward verbatim from
- * the previous body and only the write path was ever the filer's. The read path
- * is the reachable one: a maintainer hand-annotating the re-anchoring history —
- * it renders as ordinary prose in a shape that invites it — quotes a raw end
- * marker, and from the next run on the accepted block reads EMPTY, the rewrite
- * renders it empty, and the note is picked back up and re-rendered unchanged, so
- * it never expires. Guarding the write path alone leaves that entirely open:
- * position outside the markers was never a proof of safety for text this filer
- * did not author, which is the whole point of the two cases above.
- *
- * Sanitising on read is idempotent — neither `<! --` nor `-- >` contains the
- * delimiter it came from — so a body that has been through one run is stable,
- * and a poisoned one converges in exactly one rewrite instead of never.
- *
- * A stale id is by definition one that matches no observed mutant, so nothing
- * downstream reads these back as state; the mangling is visible, which is the
- * right signal for a "mutant id" that contains an HTML comment in the first
- * place.
- */
-function noteSafeId(id) {
-  return id.replaceAll('<!--', '<! --').replaceAll('-->', '-- >')
-}
-
-/**
- * The re-anchoring notes already in a body, oldest first — SCOPED, SANITISED
- * and CAPPED on read, because everything this returns is spliced straight back
- * into the next body by `renderAcceptedBlock`, and none of it was written by
- * this script. A note survives by being copied forward, so "the filer only
- * writes safe notes" says nothing about what the filer READS.
- *
- * Scoped: only lines that BEGIN outside every marker block count. A note is
- * prose above the markers; a line in the note shape that begins inside a fence
- * is hand-edited block content that happens to start with the prefix, and
- * reading it as a note both duplicated it into the history and left it in the
- * block, where it is also read as an id. The test is where the line STARTS, not
- * whether it overlaps: a note whose own tail has been swallowed by a poisoned
- * marker still starts outside, and dropping it there would lose the record this
- * whole mechanism exists to keep.
- *
- * Sanitised: `noteSafeId` on read as well as on write. `markerBlockRange` finds
- * both delimiters with a bare `indexOf` over the whole body, so a carried-
- * forward note quoting a raw marker MOVES the accepted block — see `noteSafeId`
- * for the two directions. Applied here the poison is defused on the first run
- * that reads it, which is also what makes recovery converge.
- *
- * Capped: `appendReanchorNote` slices only when it appends, so a body that
- * somehow holds more than the cap — a paste, a hand-edit, an older revision of
- * this script — would otherwise carry them all forward for ever, and "bounded
- * growth" would hold only for bodies this script had never had to recover.
- */
-export function parseReanchorNotes(body) {
-  if (!body) return []
-  const blocks = [
-    markerBlockRange(body, MARKER_START, MARKER_END),
-    markerBlockRange(body, ACCEPTED_MARKER_START, ACCEPTED_MARKER_END),
-    markerBlockRange(body, CHILD_MARKER_START, CHILD_MARKER_END),
-  ].filter((r) => r !== null)
-  const notes = []
-  let at = 0
-  for (const line of body.split('\n')) {
-    const startsAt = at
-    at += line.length + 1
-    if (!line.startsWith(REANCHOR_NOTE_PREFIX)) continue
-    if (blocks.some(([from, to]) => startsAt >= from && startsAt < to)) continue
-    notes.push(noteSafeId(line))
-  }
-  return notes.slice(-MAX_REANCHOR_NOTES)
-}
-
-/** Carried-forward notes plus this run's, if this run dropped anything. */
-export function appendReanchorNote(notes, stale, today) {
-  if (stale.length === 0) return notes.slice(-MAX_REANCHOR_NOTES)
-  const what = `${stale.length} accepted entr${stale.length === 1 ? 'y' : 'ies'}`
-  return [
-    ...notes,
-    `${REANCHOR_NOTE_PREFIX}${today ?? 'undated'}** — ${what} dropped, matching no observed mutant: ${stale.map((id) => `\`${noteSafeId(id)}\``).join(', ')}`,
-  ].slice(-MAX_REANCHOR_NOTES)
-}
-
-/**
  * The per-area state machine, kept pure for the same reason
  * `file-scheduled-failures.mjs` keeps `decideAction` pure — it is the part with
  * real branches worth pinning:
@@ -1361,7 +1235,7 @@ export function buildChildBody({
     accepted.length === 0
       ? []
       : [
-          `**This is not an all-clear.** The ${accepted.length} finding(s) still present in **${area}** are recorded in the parent as **accepted as equivalent** — triage proved them unkillable (#4173), so they survive every run and the filer has stopped reporting them. If any OTHER mutant appears here, the next run reopens this issue rather than filing a new one.`,
+          `**This is not an all-clear.** The ${accepted.length} finding(s) still present in **${area}** are recorded in \`mutation-accepted.tsv\` as **accepted as equivalent** — triage proved them unkillable (#5986), so they survive every run and the filer has stopped reporting them. If any OTHER mutant appears here, the next run reopens this issue rather than filing a new one.`,
           '',
           `**Accepted as equivalent (${accepted.length})** — still surviving, deliberately not reported:`,
           '```',
@@ -1374,7 +1248,7 @@ export function buildChildBody({
     '',
     `Parent: ${parentRef} (the rolling tracking issue). This child is filed, re-rendered and closed automatically by \`scripts/file-mutation-survivors.mjs\` — **do not rename the title**, the filer matches on it verbatim to re-find this issue instead of opening a duplicate.`,
     '',
-    `Start with the no-coverage list: those mutants are unkillable by construction until a test exercises the code, so no amount of strengthening an existing test touches them. Survivors are the opposite — the test exists and is too weak. Either way, fix it the way the parent asks: add or strengthen a test that kills the mutant, or record it as an accepted gap. The lists below are re-rendered from the parent's machine-readable block on every run and hold no state of their own — remove a line **in the parent**, not here. This issue closes itself once ${area} has no findings left.`,
+    `Start with the no-coverage list: those mutants are unkillable by construction until a test exercises the code, so no amount of strengthening an existing test touches them. Survivors are the opposite — the test exists and is too weak. Either way, fix it the way the parent asks: add or strengthen a test that kills the mutant, or record it in \`mutation-accepted.tsv\`. The lists below are re-rendered from the parent's machine-readable block on every run and hold no state of their own — remove a line **in the parent**, not here. This issue closes itself once ${area} has no findings left.`,
     '',
   ]
   head.push(...acceptedNote)
@@ -1481,9 +1355,6 @@ export function buildIssueBody({
   today,
   newOnes = [],
   childLinks = new Map(),
-  accepted = [],
-  acceptedOn = new Map(),
-  reanchored = [],
 }) {
   const newSet = new Set(newOnes)
   const { survived, noCoverage } = partitionByOutcome(all)
@@ -1504,7 +1375,7 @@ export function buildIssueBody({
   )
   head.push('')
   head.push(
-    'Triage each line below: either (a) add (no coverage) or strengthen (survivor) a test that kills it and remove its line here, or (b) leave a comment explaining why it is an accepted gap and remove its line here anyway. Removing a line is not durable on its own — once it is gone, the next run that sees that mutant again re-adds it as "new" — so for (b), also copy the id into the **accepted-equivalent** block at the bottom of this body, which is where a proven-unkillable mutant is recorded permanently (#4173). That block is always there, empty or not, and it carries the line shape and the marker comments you need — so there is nothing to invent even if you are the first to record one.',
+    'Triage each line below: either (a) add (no coverage) or strengthen (survivor) a test that kills it and remove its line here, or (b) leave a comment explaining why it is an accepted gap and remove its line here anyway. Removing a line is not durable on its own — once it is gone, the next run that sees that mutant again re-adds it as "new" — so for (b), also record the mutant in `mutation-accepted.tsv` at the repo root, in the PR that proves it equivalent (`node scripts/file-mutation-survivors.mjs --accept` prints the lines for pasted ids). That file is where a proven-unkillable mutant is recorded permanently (#5986); this body holds no accepted state.',
   )
   head.push('')
   head.push(
@@ -1602,13 +1473,6 @@ export function buildIssueBody({
   // area count, one short line each, and it is the primary dedup record, so
   // the clamp ladder below must never drop it.
   state.push(...renderChildBlock(childLinks))
-  // #4173 — STATE too, for the same reason and with the same consequence: it
-  // is the filer's memory of what triage has already ruled equivalent, so the
-  // clamp ladder below must never drop it. Dropping it would re-serve every
-  // accepted mutant as "new" the following week — the precise loop the block
-  // exists to end — and would do it silently, since the run that dropped it
-  // looks exactly like a run that never had one.
-  state.push(...renderAcceptedBlock(accepted, acceptedOn, reanchored))
 
   const tail = []
   if (runUrl) {
@@ -1927,6 +1791,18 @@ function parseArgs(argv) {
         args.knownBodyFile = argv[++i]
         break
       }
+      case '--accepted-file': {
+        args.acceptedFile = argv[++i]
+        break
+      }
+      case '--rust-root': {
+        args.rustRoot = argv[++i]
+        break
+      }
+      case '--accept': {
+        args.accept = true
+        break
+      }
       default: {
         throw new Error(`unrecognized argument: ${a}`)
       }
@@ -1980,84 +1856,28 @@ function assertLaneInputsPresent(args, frontendReports) {
   }
 }
 
-/**
- * #4173 — the accepted-equivalent block, applied to the OBSERVED set before
- * anything else looks at it. Two steps, in this order:
- *
- *   RE-ANCHOR  an accepted entry matching no observed mutant is stale — its
- *              line moved, or the mutant became killable — and is dropped
- *              here, so it is simply not rendered back into the body. An entry
- *              can therefore never suppress a mutant forever; the worst case
- *              is that a refactor costs a re-accept.
- *   SUBTRACT   the entries that survived re-anchoring come out of `current`
- *              AND out of `known`. HERE, at `diffSurvivors`' call site, and
- *              not inside it — that stays a pure two-set function with its own
- *              fixtures. Out of `current` so the mutant is never new and never
- *              re-enters the tracked set (and so its area can never be the
- *              reason a child issue is re-opened); out of `known` so dropping
- *              it from the tracked set is not announced as "resolved", which
- *              would claim a test now kills a mutant that cannot be killed — a
- *              lie of exactly the #3245 family.
- *
- * Split out of `main` for its branches, like `writeParent` below.
- */
-function applyAcceptedGaps({ body, current }) {
-  const observed = new Set(current)
-  const recorded = [...parseAcceptedSurvivors(body)].toSorted()
-  const accepted = recorded.filter((id) => observed.has(id))
-  const stale = recorded.filter((id) => !observed.has(id))
-  const acceptedSet = new Set(accepted)
-  if (recorded.length > 0) {
-    console.log(
-      `accepted-equivalent (#4173): ${accepted.length} suppressed of ${recorded.length} recorded`,
-    )
+/** The lane's own observed ids and, per id, its accepted-equivalent fingerprint. */
+function observedMutants(args) {
+  if (args.lane === 'rust') {
+    const current = args.rustMissed ? parseRustSurvivors(args.rustMissed) : []
+    return { current, keys: rustKeys(current, args.rustRoot ?? RUST_ROOT) }
   }
-  // The DROP is not announced here. Nothing has been dropped yet: an entry
-  // leaves the block only when the body is rewritten, and this run may not
-  // rewrite it at all (the no-op arm in `main` is the common case on a quiet
-  // week). The old log said "dropped N accepted entries" from here, before that
-  // was decided, so on every quiet week it claimed a removal that had not
-  // happened and would not happen — the entries stayed in the body and were
-  // re-evaluated the following Monday. `main` owns the announcement now,
-  // because `main` is where it becomes true or false.
+  const mutants = args.frontendDir ? parseFrontendMutants(args.frontendDir) : []
   return {
-    accepted,
-    stale,
-    acceptedOn: parseAcceptedOn(body),
-    reported: current.filter((id) => !acceptedSet.has(id)),
-    known: new Set([...parseKnownSurvivors(body)].filter((id) => !acceptedSet.has(id))),
+    current: mutants.map((m) => m.id),
+    keys: new Map(mutants.map((m) => [m.id, m.key])),
   }
-}
-
-/**
- * #4173 residual — the re-anchoring announcement, made from `main` and not from
- * `applyAcceptedGaps`, because only `main` knows whether the body is going to
- * be rewritten at all.
- *
- * A stale entry is dropped by being LEFT OUT of a rewrite. On a run that writes
- * nothing — the quiet week, which is the common case — it is therefore not
- * dropped: it is still in the issue on Tuesday and is re-evaluated next Monday.
- * The old log said "dropped N accepted entries" from before the no-op check,
- * i.e. every quiet week it announced a removal that had not happened and was
- * not going to, about the filer's own state, in the one report whose entire job
- * is not to say things that are not so.
- */
-function announceReanchoring({ stale, willWrite, dryRun }) {
-  if (stale.length === 0) return
-  const what = `${stale.length} accepted entr${stale.length === 1 ? 'y' : 'ies'} matching no observed mutant: ${stale.join(', ')}`
-  if (!willWrite) {
-    console.log(
-      `re-anchoring (#4173): LEFT IN PLACE — this run rewrites nothing, so the entries stay in the body and are re-evaluated next run — ${what}`,
-    )
-    return
-  }
-  console.log(
-    `re-anchoring (#4173): ${dryRun ? 'would drop' : 'dropping'} ${what} — so an entry whose line has moved cannot go on suppressing whatever mutant now sits at that id. The drop is recorded in the body's re-anchoring history, not only here.`,
-  )
 }
 
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv)
+  if (args.accept) {
+    const lines = acceptedLinesFor(readFileSync(0, 'utf8'), {
+      ...(args.rustRoot && { rustRoot: resolve(args.rustRoot) }),
+    })
+    console.log(lines.join('\n'))
+    return
+  }
   if (!LANE_NAMES.includes(args.lane)) {
     throw new Error(
       `--lane is required and must be one of ${LANE_NAMES.join(', ')} — got ${args.lane === undefined ? '(unset)' : `"${args.lane}"`}. Each lane owns its own tracking issue; running without one would have to guess which issue to rewrite.`,
@@ -2084,14 +1904,10 @@ export function main(argv = process.argv.slice(2)) {
   // Not reading the other lane's input at all is simpler AND strictly safer:
   // passing `--frontend-dir` with `--lane rust` now cannot contribute an id,
   // rather than contributing ids a filter is trusted to remove.
-  const current =
-    args.lane === 'rust'
-      ? args.rustMissed
-        ? parseRustSurvivors(args.rustMissed)
-        : []
-      : args.frontendDir
-        ? parseFrontendSurvivors(args.frontendDir)
-        : []
+  // An unreadable or malformed accepted file throws here, before any `gh` call.
+  const acceptedPath = args.acceptedFile ?? defaultAcceptedPath
+  const entries = parseAcceptedFile(readFileSync(acceptedPath, 'utf8'), acceptedPath)
+  const { current, keys } = observedMutants(args)
 
   const { survived, noCoverage } = partitionByOutcome(current)
   console.log(
@@ -2114,12 +1930,15 @@ export function main(argv = process.argv.slice(2)) {
     existingIssue = findTrackingIssue(repo, args.title)
   }
 
-  // #4173 — see `applyAcceptedGaps`: the proven-equivalent mutants come out of
+  // #5986 — see `applyAcceptedGaps`: the proven-equivalent mutants come out of
   // the observed set (and out of the tracked set) before anything else looks
   // at either.
-  const { accepted, stale, acceptedOn, reported, known } = applyAcceptedGaps({
+  const { accepted, reported, known } = applyAcceptedGaps({
+    entries,
+    keys,
     body: existingIssue?.body,
     current,
+    lane: args.lane,
   })
   // #3350 — carried forward from the existing body so a survivor's age is
   // measured from when it FIRST appeared, not from the last time the body was
@@ -2200,7 +2019,6 @@ export function main(argv = process.argv.slice(2)) {
     existingIssue.state !== 'CLOSED' &&
     frontendComplete
   const willWrite = newOnes.length > 0 || childWork.length > 0 || needsClose
-  announceReanchoring({ stale, willWrite, dryRun: args.dryRun })
 
   if (!willWrite) {
     console.log('no new mutation findings — no-op (tracking issue left untouched)')
@@ -2211,11 +2029,6 @@ export function main(argv = process.argv.slice(2)) {
     }
     return
   }
-
-  // #4173 residual — the durable half: the run log that recorded a drop dies
-  // with the run, so the drop is written into the body too, carried forward
-  // from the body that is being replaced.
-  const reanchored = appendReanchorNote(parseReanchorNotes(existingIssue?.body), stale, today)
 
   if (args.dryRun) {
     // Rendered against the ALREADY-RECORDED links only: a dry run files no
@@ -2229,9 +2042,6 @@ export function main(argv = process.argv.slice(2)) {
       today,
       newOnes,
       childLinks: knownChildren,
-      accepted,
-      acceptedOn,
-      reanchored,
     })
     printDryRun({
       args,
@@ -2271,9 +2081,6 @@ export function main(argv = process.argv.slice(2)) {
     today,
     newOnes,
     childLinks,
-    accepted,
-    acceptedOn,
-    reanchored,
   })
   writeParent({ existingIssue, repo, title: args.title, body, newOnes, childWork, needsClose })
 }
@@ -3319,6 +3126,7 @@ function selfTestChildGh({ check }) {
     state = 'OPEN',
     lane = 'rust',
     reports = [],
+    acceptedArgs = [],
   }) => {
     writeFileSync(missed, missedLines.join('\n'), 'utf8')
     // `feDir` exists only on the frontend lane; the writes that use it live
@@ -3360,6 +3168,7 @@ function selfTestChildGh({ check }) {
         lane,
         ...(lane === 'frontend' ? ['--frontend-dir', feDir] : ['--rust-missed', missed]),
         '--children',
+        ...acceptedArgs,
         '--known-body-file',
         knownBody,
         '--repo',
@@ -3381,15 +3190,13 @@ function selfTestChildGh({ check }) {
     return calls
   }
 
-  const parentWith = (all, childLinks, accepted = []) =>
+  const parentWith = (all, childLinks) =>
     buildIssueBody({
       all,
       resolvedOnes: [],
       today: '2026-08-09',
       newOnes: [],
       childLinks,
-      accepted,
-      acceptedOn: new Map(accepted.map((id) => [id, '2026-08-09'])),
     })
 
   // 11a. BOOTSTRAP. A parent that already tracks both survivors but has no
@@ -3701,10 +3508,16 @@ function selfTestAcceptedChildClose({ check, drive, parentWith, opId, OP }) {
   //      reused here, that the surviving id is named, and that the mutant did
   //      not sneak back into the tracked set on the way past.
   {
+    const rustRoot = mkdtempSync(join(tmpdir(), 'accepted-child-close-'))
+    mkdirSync(join(rustRoot, 'agaric-store/src'), { recursive: true })
+    writeFileSync(join(rustRoot, 'agaric-store/src/op.rs'), `${'\n'.repeat(9)}    foo(x)\n`)
+    const acceptedFile = join(rustRoot, 'accepted.tsv')
+    writeFileSync(acceptedFile, 'rust\tagaric-store/src/op.rs\treplace foo with bar in x\tfoo(x)\n')
     const calls = drive({
       missedLines: [opId.replace('[rust] ', '')],
-      body: parentWith([opId], new Map([[OP, 101]]), [opId]),
+      body: parentWith([opId], new Map([[OP, 101]])),
       state: 'OPEN',
+      acceptedArgs: ['--accepted-file', acceptedFile, '--rust-root', rustRoot],
     })
     const seq = calls.map((c) => c.sub).join(',')
     const closeBody = calls.find((c) => c.sub === 'edit' && c.target === '101')?.body ?? ''
@@ -3721,9 +3534,8 @@ function selfTestAcceptedChildClose({ check, drive, parentWith, opId, OP }) {
       `gh sequence was: ${seq || '(no gh calls at all)'} — body: ${closeBody.slice(0, 200)}`,
     )
     check(
-      parseAcceptedSurvivors(parentEdit?.body ?? '').has(opId) &&
-        !parseKnownSurvivors(parentEdit?.body ?? '').has(opId),
-      'the accepted mutant stays accepted and out of the tracked set across the close (#4173)',
+      parentEdit !== undefined && !parseKnownSurvivors(parentEdit.body).has(opId),
+      'the accepted mutant stays out of the tracked set across the close (#5986)',
       parentEdit?.body ?? '(no parent edit)',
     )
   }
@@ -3738,9 +3550,16 @@ function selfTestAcceptedChildClose({ check, drive, parentWith, opId, OP }) {
 // PRESENCE of the no-coverage entry and its SEPARATION from the survivors — a
 // fix that merged the two buckets would still "surface" it while telling every
 // reader the wrong story about what is wrong with the code.
+const FIXTURE_FILE = 'src/lib/date-utils.ts'
+const FIXTURE_LINES = Array.from({ length: 130 }, (_, i) => `// filler ${i + 1}`)
+FIXTURE_LINES[85] = '  if (start > end && ready) return null'
+FIXTURE_LINES[119] = 'export function getWeekRange() {'
+const FIXTURE_SOURCE = FIXTURE_LINES.join('\n')
+
 const STRYKER_FIXTURE = {
   files: {
-    'src/lib/date-utils.ts': {
+    [FIXTURE_FILE]: {
+      source: FIXTURE_SOURCE,
       // Two survivors on ONE line, differing only by column: the case the
       // pre-#3788 line-level id collapsed into a single entry (#3749).
       mutants: [
@@ -4126,674 +3945,179 @@ function selfTestBodyCap({ ok, fail }) {
 }
 
 /**
- * #4173 — the accepted-equivalent block, end to end.
+/**
+ * #5986 — the accepted-equivalent file, end to end through `main()` under
+ * `--dry-run --known-body-file`: the subtraction lives at the call site
+ * (`diffSurvivors` stays a pure two-set function), so a unit-level fixture
+ * would pass just as well on a filer that never applies it.
  *
- * The loop this closes: a mutant proven UNKILLABLE could only be recorded by
- * hand-removing its line from the survivor block, which is byte-identical to
- * the mutant having been killed, so the next run re-observed it, re-filed it
- * as new, and re-opened the child issue that had just been closed. Three of
- * #3142's areas went round that loop twice.
- *
- * Four properties here, and the second is the load-bearing one — it is the
- * whole reason this mechanism is allowed where #3593's `// Stryker disable`
- * directives were not. The block's own parsing invariants (the optional date
- * prefix, block isolation) are in `selfTestAcceptedBlockShape` below.
- *
- * Driven through `main()` under `--dry-run --known-body-file` rather than
- * against `buildIssueBody` alone, because the subtraction deliberately lives
- * at the CALL SITE (`diffSurvivors` stays a pure two-set function): a
- * unit-level fixture would pass just as well on a filer that never applies it.
+ * The load-bearing properties: an entry survives a pure line shift, goes inert
+ * when its line is edited, and covers only the mutant it fingerprints (a
+ * different column on the same line, or a textually identical line elsewhere,
+ * still reports). The last is why this is acceptable where #3593's
+ * `// Stryker disable` directives were not.
  */
-function selfTestAcceptedGaps({ ok, fail, survivor }) {
+function selfTestAcceptedGaps({ ok, fail }) {
   const AREA = 'frontend: date-utils'
-  // A mutant the Stryker fixture reports as Killed, so it is NOT in the
-  // observed set: this is what a stale entry looks like after the line it
-  // named moved or the mutant became killable.
-  const STALE = '[frontend] date-utils: src/lib/date-utils.ts:12:1 [BooleanLiteral]'
-  const root = writeStrykerFixture('date-utils', STRYKER_FIXTURE)
-  const bodyFile = (name, body) => {
-    const path = join(root, name)
-    writeFileSync(path, body)
-    return path
+  const scratch = mkdtempSync(join(tmpdir(), 'accepted-gaps-'))
+  const repoRoot = join(scratch, 'repo')
+  mkdirSync(join(repoRoot, 'src/lib'), { recursive: true })
+  writeFileSync(join(repoRoot, FIXTURE_FILE), `${FIXTURE_SOURCE}\n`)
+  const acceptedFor = (...ids) => acceptedLinesFor(ids.join('\n'), { repoRoot }).join('\n')
+  const id = (line, column, shift = 0) =>
+    `[frontend] date-utils: ${FIXTURE_FILE}:${line + shift}:${column} [ConditionalExpression]`
+  const NC = (shift = 0) =>
+    `[frontend] date-utils: ${FIXTURE_FILE}:${120 + shift}:3 [BlockStatement] (NoCoverage)`
+  const mutant = (line, column, mutatorName = 'ConditionalExpression', status = 'Survived') => ({
+    mutatorName,
+    status,
+    location: { start: { line, column } },
+  })
+  // The fixture's report with `shift` lines inserted above everything, and
+  // line 86's text replaced when `edit` is given.
+  const fixtureDir = ({ shift = 0, edit } = {}) => {
+    const lines = [...FIXTURE_LINES]
+    if (edit) lines[85] = edit
+    return writeStrykerFixture('date-utils', {
+      files: {
+        [FIXTURE_FILE]: {
+          source: [...Array.from({ length: shift }, () => '// inserted'), ...lines].join('\n'),
+          mutants: [
+            mutant(86 + shift, 7),
+            mutant(86 + shift, 24),
+            mutant(120 + shift, 3, 'BlockStatement', 'NoCoverage'),
+          ],
+        },
+      },
+    })
   }
-  const runDry = (path) =>
-    captureMain([
+  let n = 0
+  const run = ({ accepted, tracked, dir }) => {
+    const file = (name, text) => {
+      const path = join(scratch, `${n++}-${name}`)
+      writeFileSync(path, text)
+      return path
+    }
+    return captureMain([
       '--dry-run',
       '--children',
       '--known-body-file',
-      path,
-      '--frontend-dir',
-      root,
-      '--lane',
-      'frontend',
-      '--require-input',
-    ])
-
-  // 14a. SUPPRESSED. The accepted mutant is observed by the lane this run;
-  //      with the other two findings unchanged the run has nothing to say. Not
-  //      new, not re-tracked, no child touched (so nothing re-opened), and the
-  //      suppression is reported for what it is.
-  //
-  //      NOT the `known`-side subtraction, despite what this comment used to
-  //      claim: SV_COL7 is accepted here but is NOT in this fixture's tracked
-  //      block (`all` is NC_ID + SV_COL24), so the `known` filter has nothing
-  //      to remove and `resolvedOnes` is 0 with or without it. The
-  //      "not announced as RESOLVED" check below is a genuine no-op in this
-  //      fixture. 14b is the one that earns that credit — see the
-  //      new/resolved-count assertion there.
-  {
-    const path = bodyFile(
-      'accepted-suppressed.md',
-      buildIssueBody({
-        all: [NC_ID, SV_COL24].toSorted(),
-        resolvedOnes: [],
-        today: '2026-08-01',
-        firstSeen: new Map([
-          [NC_ID, '2026-08-01'],
-          [SV_COL24, '2026-08-01'],
-        ]),
-        childLinks: new Map([[AREA, 4242]]),
-        accepted: [SV_COL7],
-        acceptedOn: new Map([[SV_COL7, '2026-08-19']]),
-      }),
-    )
-    const { out, err } = runDry(path)
-    const problems = []
-    if (err) problems.push(`threw: ${err.message}`)
-    if (!out.includes('no new mutation findings — no-op')) problems.push('not a no-op')
-    if (out.includes('notify')) problems.push('a child was notified/re-opened')
-    if (out.includes('no longer present')) problems.push('announced as resolved')
-    if (!out.includes('1 suppressed of 1 recorded')) problems.push('suppression not reported')
-    if (problems.length === 0)
-      ok('an accepted mutant is not new, not re-tracked, not re-opened and not "resolved" (#4173)')
-    else
-      fail(
-        'an accepted mutant is not new, not re-tracked, not re-opened and not "resolved" (#4173)',
-        `${problems.join('; ')} — out=${out.slice(0, 800)}`,
-      )
-  }
-
-  // 14b. THE SIBLING ON THE SAME LINE STILL REPORTS. This test exists because
-  //      it is the entire difference between this block and the
-  //      `// Stryker disable next-line <Mutator>` directives #3593 rejected:
-  //      a directive suppresses every mutant on the line, including ones that
-  //      are genuinely killable, so accepting one gap silently buys silence on
-  //      its neighbours. An accepted entry is keyed on the full mutant id —
-  //      (file, line, column, mutator), which is exactly what #3788 added the
-  //      column for — so it has no blast radius past the mutant it names.
-  //      SV_COL7 and SV_COL24 are the same file, the same line 86 and the same
-  //      ConditionalExpression mutator, differing ONLY in column: accepting
-  //      the first must leave the second reporting exactly as if nothing had
-  //      been accepted. If this assertion ever has to be relaxed, the
-  //      mechanism has become the one that was rejected.
-  //
-  //      The same fixture pins re-anchoring (the stale entry is dropped) and
-  //      the block's round trip (the live entry survives the rewrite with its
-  //      date), because both are observable in the body this run would write.
-  {
-    const path = bodyFile(
-      'accepted-sibling.md',
-      buildIssueBody({
-        all: [SV_COL7],
-        resolvedOnes: [],
-        today: '2026-08-01',
-        firstSeen: new Map([[SV_COL7, '2026-08-01']]),
-        childLinks: new Map([[AREA, 4242]]),
-        accepted: [SV_COL7, STALE].toSorted(),
-        acceptedOn: new Map([[SV_COL7, '2026-08-19']]),
-      }),
-    )
-    const { out, err } = runDry(path)
-    const bodyAt = out.indexOf('[dry-run] --- issue body ---')
-    // The body block is the LAST thing the dry run prints now that there is
-    // no comment section after it — the CI job never comments.
-    const body = out.slice(bodyAt)
-    // "Announced as new" used to mean "named in the per-run comment". The CI
-    // job does not comment, so the claim is carried by the tracked set plus
-    // the exact new/resolved counts asserted at the bottom of this block —
-    // 3 observed, 1 accepted, so exactly 2 new and 0 resolved. That pair is
-    // strictly stronger than the old per-id comment check: it fails if the
-    // accepted id leaks into EITHER side.
-    const tracked = parseKnownSurvivors(body)
-    const acceptedBack = parseAcceptedSurvivors(body)
-    const problems = []
-    if (err) problems.push(`threw: ${err.message}`)
-    if (!tracked.has(SV_COL24)) problems.push('the same-line sibling was suppressed too')
-    if (tracked.has(SV_COL7)) problems.push('the accepted mutant entered the tracked set')
-    // THE `known` SIDE OF THE SUBTRACTION, and this is the fixture that
-    // exercises it (14a cannot: its accepted id is not in its tracked block, so
-    // the filter there is a no-op). Here SV_COL7 IS tracked and IS accepted, so
-    // dropping `.filter(id => !acceptedSet.has(id))` from `known` leaves it in
-    // the tracked set while it is absent from `reported` — and `diffSurvivors`
-    // announces it as RESOLVED, i.e. claims a test now kills a mutant triage
-    // has just certified as unkillable. `resolved: 0` is that claim's tripwire.
-    if (!out.includes('new findings: 2, resolved: 0'))
-      problems.push('wrong new/resolved counts (an accepted id must be neither)')
-    if (problems.length === 0)
-      ok('a sibling mutant on the SAME LINE still reports — an entry suppresses one id (#4173)')
-    else
-      fail(
-        'a sibling mutant on the SAME LINE still reports — an entry suppresses one id (#4173)',
-        `${problems.join('; ')} — out=${out.slice(0, 900)}`,
-      )
-
-    // Re-anchoring: the entry matching no observed mutant is gone from the
-    // rewritten block, so it can never permanently suppress the id it names;
-    // the live entry survives, with the date it was accepted on.
-    const staleProblems = []
-    if (acceptedBack.has(STALE)) staleProblems.push('the stale entry survived the rewrite')
-    if (!acceptedBack.has(SV_COL7)) staleProblems.push('the live entry was dropped')
-    if (parseAcceptedOn(body).get(SV_COL7) !== '2026-08-19')
-      staleProblems.push(`lost its accepted-on date (${parseAcceptedOn(body).get(SV_COL7)})`)
-    // The wording matters, not just the word: this run DOES rewrite the body,
-    // so a drop is what happens. `selfTestAcceptedReanchorTrace` pins the other
-    // arm, where the same stale entry is not dropped at all.
-    if (!out.includes('re-anchoring (#4173): would drop 1 accepted entry'))
-      staleProblems.push('the drop was not reported as a drop')
-    if (staleProblems.length === 0)
-      ok('a stale accepted entry is dropped on rewrite and the live one is kept, dated (#4173)')
-    else
-      fail(
-        'a stale accepted entry is dropped on rewrite and the live one is kept, dated (#4173)',
-        staleProblems.join('; '),
-      )
-  }
-
-  // 14d. THE CLAMP. The accepted block is STATE: the same #3257 fixture that
-  //      proves the survivor block survives a clamped body must prove this one
-  //      does. Dropping it would re-serve every accepted mutant as "new" the
-  //      following week — the loop this closes — and would do it silently.
-  {
-    const all = Array.from({ length: 200 }, (_, i) => survivor(i))
-    const resolvedOnes = Array.from({ length: 600 }, (_, i) => survivor(10_000 + i))
-    const body = buildIssueBody({
-      all,
-      resolvedOnes,
-      runUrl: 'https://example/run',
-      accepted: [SV_COL7],
-      acceptedOn: new Map([[SV_COL7, '2026-08-19']]),
-    })
-    const acceptedBack = parseAcceptedSurvivors(body)
-    if (
-      body.length <= MAX_BODY_CHARS &&
-      !body.includes(resolvedOnes[0]) &&
-      acceptedBack.size === 1 &&
-      acceptedBack.has(SV_COL7) &&
-      parseAcceptedOn(body).get(SV_COL7) === '2026-08-19' &&
-      parseKnownSurvivors(body).size === 200
-    )
-      ok('the accepted block survives the body-size clamp, like the state block (#4173)')
-    else
-      fail(
-        'the accepted block survives the body-size clamp, like the state block (#4173)',
-        `len=${body.length} accepted=${acceptedBack.size} tracked=${parseKnownSurvivors(body).size}`,
-      )
-  }
-}
-
-/**
- * #4173, the pure half: what the accepted block itself has to guarantee, with
- * no lane fixture in the way. Split from `selfTestAcceptedGaps` above only to
- * keep each function under the repo's cyclomatic-complexity budget, the same
- * split `selfTestNoCoverageEmptyAndMigration` makes.
- */
-function selfTestAcceptedBlockShape({ ok, fail }) {
-  // 14c. The date prefix is bookkeeping, never part of the id. A triager who
-  //      pastes an id without a date must get the same suppression as one who
-  //      dates it — otherwise the block silently suppresses nothing and the
-  //      mutant comes back next week with no sign of why.
-  {
-    const block = (line) =>
-      `${ACCEPTED_MARKER_START}\n\`\`\`\n${line}\n\`\`\`\n${ACCEPTED_MARKER_END}`
-    const dated = parseAcceptedSurvivors(block(`2026-08-19\t${SV_COL7}`))
-    const undated = parseAcceptedSurvivors(block(SV_COL7))
-    if (
-      dated.size === 1 &&
-      undated.size === 1 &&
-      dated.has(SV_COL7) &&
-      undated.has(SV_COL7) &&
-      parseAcceptedOn(block(`2026-08-19\t${SV_COL7}`)).get(SV_COL7) === '2026-08-19' &&
-      !parseAcceptedOn(block(SV_COL7)).has(SV_COL7)
-    )
-      ok('an accepted entry parses to the same id with or without its date prefix (#4173)')
-    else
-      fail(
-        'an accepted entry parses to the same id with or without its date prefix (#4173)',
-        `dated=${[...dated].join(',')} undated=${[...undated].join(',')}`,
-      )
-
-    // …and the accepted block is invisible to the survivor reader, or every
-    // accepted id would come straight back as a tracked survivor.
-    const mixed = buildIssueBody({
-      all: [SV_COL24],
-      resolvedOnes: [],
-      accepted: [SV_COL7],
-      acceptedOn: new Map(),
-    })
-    if (!parseKnownSurvivors(mixed).has(SV_COL7) && parseKnownSurvivors(mixed).size === 1)
-      ok('the accepted block does not leak into the tracked survivor set (#4173)')
-    else
-      fail(
-        'the accepted block does not leak into the tracked survivor set (#4173)',
-        [...parseKnownSurvivors(mixed)].join(' | '),
-      )
-  }
-
-  // 14e. #4173 residual — THE INSTRUCTIONS EXIST ON THE PAGE THEY POINT AT.
-  //      The head tells a triager to copy the id into "the accepted-equivalent
-  //      block at the bottom of this body", and the how-to (the line shape, the
-  //      marker comments, the one-id-per-entry rule) lives inside that block.
-  //      Rendered only when non-empty, NEITHER existed on a tracking issue with
-  //      nothing accepted yet — which is every issue until the first triager
-  //      records one, i.e. exactly the reader with no way to know the syntax.
-  //      An empty block is furniture; furniture that makes the instruction true
-  //      is worth its 1085 characters (measured against the same builder, not
-  //      estimated — it moves the #3257 ceiling from 597 findings to 586).
-  {
-    const empty = buildIssueBody({ all: [SV_COL24], resolvedOnes: [], accepted: [] })
-    const problems = []
-    if (!empty.includes(ACCEPTED_MARKER_START) || !empty.includes(ACCEPTED_MARKER_END))
-      problems.push('no marker pair to paste into')
-    if (!empty.includes('accepted-equivalent** block at the bottom of this body'))
-      problems.push('the head stopped pointing at the block')
-    if (!empty.includes('the empty block below is the template'))
-      problems.push('no "this is the template" line')
-    if (!empty.includes('`<accepted-on date><TAB><mutant>` shape'))
-      problems.push('the how-to preamble (the line shape) is missing')
-    // …and the furniture is furniture: an empty block must parse to an empty
-    // set, or every issue would boot with a phantom accepted entry.
-    if (parseAcceptedSurvivors(empty).size > 0) problems.push('the empty block minted an entry')
-    if (parseKnownSurvivors(empty).size !== 1) problems.push('it disturbed the tracked set')
-    if (problems.length === 0)
-      ok('a body with nothing accepted still carries the block a triager is told to use (#4173)')
-    else
-      fail(
-        'a body with nothing accepted still carries the block a triager is told to use (#4173)',
-        problems.join('; '),
-      )
-  }
-}
-
-/**
- * #4173 residual — re-anchoring, which is a CLAIM the filer makes about its own
- * state, and both halves of the claim were wrong.
- *
- *   1. It was announced from `applyAcceptedGaps`, which runs BEFORE the no-op
- *      check. A stale entry is dropped by being left out of a body rewrite, so
- *      on a quiet week — the common case — nothing was written, the entry
- *      stayed in the issue, and the log said it had been dropped anyway. The
- *      next run re-evaluated the same entry and said it again.
- *   2. When it did happen, the only record was that log line, and a workflow
- *      log expires. A drop retires a triage verdict a human spent a session
- *      reaching; if every entry went stale at once (a file rename does that),
- *      the whole block left the issue with nothing on the page saying why.
- *
- * Driven through `main()` because both halves are decisions `main` makes:
- * whether the body is rewritten at all, and what goes into it when it is.
- */
-function selfTestAcceptedReanchorTrace({ ok, fail }) {
-  const AREA = 'frontend: date-utils'
-  const STALE = '[frontend] date-utils: src/lib/date-utils.ts:12:1 [BooleanLiteral]'
-  const root = writeStrykerFixture('date-utils', STRYKER_FIXTURE)
-  const HEAD = '[dry-run] --- issue body ---\n'
-  // Runs to the end: the comment section that used to terminate the body
-  // block is gone, because the CI job never comments.
-  const bodyOf = (out) => out.slice(out.indexOf(HEAD) + HEAD.length)
-  const bodyFile = (name, body) => {
-    const path = join(root, name)
-    writeFileSync(path, body)
-    return path
-  }
-  const runDry = (dir, path) =>
-    captureMain([
-      '--dry-run',
-      '--children',
-      '--known-body-file',
-      path,
+      file(
+        'body.md',
+        tracked === undefined
+          ? ''
+          : buildIssueBody({
+              all: tracked.toSorted(),
+              resolvedOnes: [],
+              today: '2026-08-01',
+              firstSeen: new Map(tracked.map((t) => [t, '2026-08-01'])),
+              childLinks: new Map([[AREA, 4242]]),
+            }),
+      ),
+      '--accepted-file',
+      file('accepted.tsv', accepted),
       '--frontend-dir',
       dir,
       '--lane',
       'frontend',
       '--require-input',
     ])
+  }
+  const verdict = (name, problems, out) =>
+    problems.length === 0
+      ? ok(name)
+      : fail(name, `${problems.join('; ')} — out=${out.slice(0, 700)}`)
 
-  // 14f. THE QUIET WEEK. Everything observed is already tracked and nothing is
-  //      accepted-and-live, so the run writes nothing — and therefore drops
-  //      nothing. The entry is still in the issue on Tuesday. Saying "dropped"
-  //      here is the filer misreporting its own state, which is the one thing
-  //      this script exists to stop other reports doing.
-  {
-    const path = bodyFile(
-      'quiet-with-stale.md',
-      buildIssueBody({
-        all: [NC_ID, SV_COL7, SV_COL24].toSorted(),
-        resolvedOnes: [],
-        today: '2026-08-01',
-        firstSeen: new Map([
-          [NC_ID, '2026-08-01'],
-          [SV_COL7, '2026-08-01'],
-          [SV_COL24, '2026-08-01'],
-        ]),
-        childLinks: new Map([[AREA, 4242]]),
-        accepted: [STALE],
-        acceptedOn: new Map([[STALE, '2026-08-19']]),
-      }),
-    )
-    const { out, err } = runDry(root, path)
+  // 14a. SUPPRESSED, and a pure line shift keeps the entry valid. Same fixture
+  //      twice: as authored, then with 7 lines inserted above everything so
+  //      every mutant's line moves. Both are a no-op with the mutant suppressed
+  //      and nothing announced as new or resolved.
+  const accepted = acceptedFor(`2026-08-19\t${id(86, 7)}`)
+  for (const shift of [0, 7]) {
+    const { out, err } = run({
+      accepted,
+      tracked: [NC(shift), id(86, 24, shift)],
+      dir: fixtureDir({ shift }),
+    })
     const problems = []
     if (err) problems.push(`threw: ${err.message}`)
     if (!out.includes('no new mutation findings — no-op')) problems.push('not a no-op')
-    if (!out.includes('re-anchoring (#4173): LEFT IN PLACE'))
-      problems.push('the stale entry was not reported as left in place')
-    if (/re-anchoring \(#4173\): (would drop|dropping|dropped)/.test(out))
-      problems.push('a run that wrote nothing claimed it dropped an entry')
-    if (problems.length === 0)
-      ok('a run that rewrites nothing does not claim it dropped a stale entry (#4173)')
-    else
-      fail(
-        'a run that rewrites nothing does not claim it dropped a stale entry (#4173)',
-        `${problems.join('; ')} — out=${out.slice(0, 900)}`,
-      )
+    if (out.includes('no longer present')) problems.push('announced as resolved')
+    if (!out.includes('accepted-equivalent (#5986): 1 mutant(s) suppressed; 0 of 1'))
+      problems.push('suppression not reported')
+    verdict(
+      `an accepted mutant stays suppressed after its line moved by ${shift} (#5986)`,
+      problems,
+      out,
+    )
   }
 
-  // 14g. THE DURABLE TRACE, and that it survives the NEXT rewrite. A run that
-  //      does drop an entry records it in the body — outside the markers, so a
-  //      historical id can never come back as a live entry — and the run after
-  //      it carries the note forward instead of quietly losing it with the
-  //      workflow log.
+  // 14b. A CHANGED LINE makes the entry inert: the mutant reports as new, and
+  //      the entry is counted as matching nothing.
   {
-    const path = bodyFile(
-      'drops-one.md',
-      buildIssueBody({
-        all: [NC_ID, SV_COL7].toSorted(),
-        resolvedOnes: [],
-        today: '2026-08-01',
-        firstSeen: new Map([
-          [NC_ID, '2026-08-01'],
-          [SV_COL7, '2026-08-01'],
-        ]),
-        childLinks: new Map([[AREA, 4242]]),
-        accepted: [STALE],
-        acceptedOn: new Map([[STALE, '2026-08-19']]),
-      }),
-    )
-    const first = runDry(root, path)
-    const written = bodyOf(first.out)
-    const notes = parseReanchorNotes(written)
+    const { out } = run({
+      accepted,
+      tracked: [NC(), id(86, 24)],
+      dir: fixtureDir({ edit: '  if (start >= end && ready) return null' }),
+    })
     const problems = []
-    if (first.err) problems.push(`threw: ${first.err.message}`)
-    if (notes.length !== 1) problems.push(`${notes.length} note(s) in the body, expected 1`)
-    else if (!notes[0].includes(STALE)) problems.push('the note does not name the dropped entry')
-    // Not just "the id string is absent": ANY live accepted entry that the
-    // note text contains is the history parsing back as state. Checking only
-    // `has(STALE)` passed even with the note rendered INSIDE the markers, where
-    // the whole note line became a live entry.
-    const leaked = [...parseAcceptedSurvivors(written)].filter((id) =>
-      notes.some((n) => n.includes(id)),
-    )
-    if (leaked.length > 0)
-      problems.push(`the note leaked back as live entries: ${leaked.join(' | ')}`)
-
-    // The run after it: a genuinely new mutant, so the body IS rewritten, and
-    // nothing is stale this time. The note must still be there — a trace that
-    // only survives until the next Monday is the expiring log again.
-    const grown = structuredClone(STRYKER_FIXTURE)
-    grown.files['src/lib/date-utils.ts'].mutants.push({
-      id: '6',
-      mutatorName: 'ArithmeticOperator',
-      status: 'Survived',
-      location: { start: { line: 200, column: 5 }, end: { line: 200, column: 9 } },
-    })
-    const second = runDry(
-      writeStrykerFixture('date-utils', grown),
-      bodyFile('carried-forward.md', written),
-    )
-    const carried = parseReanchorNotes(bodyOf(second.out))
-    if (second.err) problems.push(`second run threw: ${second.err.message}`)
-    if (!second.out.includes('new findings: 1')) problems.push('the second run did not rewrite')
-    if (carried.length !== 1 || !carried[0].includes(STALE))
-      problems.push(`the note did not survive the next rewrite (${carried.length} note(s))`)
-    if (problems.length === 0)
-      ok('a dropped accepted entry leaves a note in the body that outlives the run log (#4173)')
-    else
-      fail(
-        'a dropped accepted entry leaves a note in the body that outlives the run log (#4173)',
-        problems.join('; '),
-      )
+    if (!out.includes('new findings: 1, resolved: 0'))
+      problems.push('the edited line stayed hidden')
+    if (!out.includes('1 of 1 frontend entries matched nothing')) problems.push('inert not counted')
+    verdict('an accepted entry whose line text changed is inert (#5986)', problems, out)
   }
 
-  selfTestReanchorNoteCannotParseBack({ ok, fail })
-}
-
-/**
- * #4173 residual — THE LOAD-BEARING CLAIM of the durable note, pinned on its
- * own because the note is the one place this filer writes hand-edited body text
- * back into the body, un-fenced, ABOVE the markers.
- *
- * "Above the markers, therefore outside the block" is not a proof. Both markers
- * are HTML comments located by a bare `indexOf` over the WHOLE body, so an id
- * carrying a marker delimiter does not sit outside the block — it MOVES it. The
- * accepted fence is hand-edited free text, so a marker-shaped entry is one bad
- * paste away (re-seeding "the whole block, markers included" INTO the fence).
- *
- * Both directions, both reproducible before `noteSafeId`, and the second is the
- * worse one — it is not a wrong line in a report, it is the silent destruction
- * of every recorded triage verdict on an issue nobody re-reads:
- *
- *   begin -> the FIRST start marker lands inside the note, so the block read
- *            next run starts mid-prose: the note's own tail and the real marker
- *            line come back as LIVE accepted entries.
- *   end   -> the FIRST end marker precedes the start marker, `markerBlockLines`
- *            returns nothing, the block reads EMPTY for ever (the poisoned note
- *            is carried forward with no expiry), every accepted mutant
- *            re-reports as new, and the next rewrite renders an empty block.
- *
- * One assertion covers both, and it needs both halves: the real verdict must
- * still be readable (the `end` failure zeroes it) AND nothing else may appear
- * (the `begin` failure mints entries). Assert only "no bogus entry" and the
- * erasure passes; assert only "the verdict survives" and the injection does.
- *
- * And it needs both PATHS. A note reaches a body two ways — this run wrote it
- * (`appendReanchorNote`) or this run read it out of the last body
- * (`parseReanchorNotes`) — and only the first is the filer's own text. Driving
- * the poison through `appendReanchorNote` alone proves the claim exactly where
- * it was never in doubt, so the arms below plant it in the INPUT BODY as well,
- * in the shape a maintainer annotating the history by hand would leave. That
- * one is the reachable failure and the non-convergent one: the note is copied
- * forward unchanged every week, so `end` erases the accepted block for ever
- * rather than for a run.
- */
-function selfTestReanchorNoteCannotParseBack({ ok, fail }) {
-  // 14h. A NOTE CAN NEVER PARSE BACK AS A LIVE ACCEPTED ENTRY.
-  const LIVE = SV_COL7
-  const problems = []
-  for (const [dir, poison] of [
-    ['begin', `${ACCEPTED_MARKER_START} smuggled`],
-    ['end', `smuggled ${ACCEPTED_MARKER_END}`],
-  ]) {
-    const notes = appendReanchorNote([], [poison], '2026-08-08')
-    const body = buildIssueBody({
-      all: [LIVE],
-      resolvedOnes: [],
-      today: '2026-08-08',
-      accepted: [LIVE],
-      acceptedOn: new Map([[LIVE, '2026-07-01']]),
-      reanchored: notes,
-    })
-    const back = parseAcceptedSurvivors(body)
-    if (!back.has(LIVE)) problems.push(`${dir}: the recorded verdict became unreadable`)
-    if (back.size !== 1)
-      problems.push(`${dir}: minted ${back.size - 1} phantom entr(y|ies): ${[...back].join(' | ')}`)
-    // And the note is still THERE — "fixing" it by dropping the history would
-    // pass the two checks above while losing the record they exist to protect.
-    if (parseReanchorNotes(body).length !== 1) problems.push(`${dir}: the note itself was lost`)
-  }
-  if (problems.length === 0)
-    ok('a re-anchoring note cannot move the accepted markers or parse back as an entry (#4173)')
-  else
-    fail(
-      'a re-anchoring note cannot move the accepted markers or parse back as an entry (#4173)',
-      problems.join('; '),
-    )
-
-  // 14h (read path). THE SAME CLAIM, ON THE PATH THAT WAS ACTUALLY UNGUARDED.
-  //      The two arms above hand the poison to `appendReanchorNote`, so they
-  //      only ever exercise ids THIS run dropped — text the filer authored,
-  //      which is the half `noteSafeId` already covered. A note reaches the
-  //      next body the other way too: it is READ out of the previous body and
-  //      spliced back in. That path needs no stale mutant at all — the history
-  //      renders as ordinary prose in an inviting `- **Re-anchored …** — …`
-  //      shape, so a maintainer annotating it, or a paste, is enough to put a
-  //      raw marker into a line the next run copies forward verbatim.
-  //
-  //      The composition is production's, from the one place notes are carried:
-  //      `appendReanchorNote(parseReanchorNotes(existingIssue.body), stale,
-  //      today)`. `stale` is EMPTY on purpose — the quiet path, where the write
-  //      path contributes nothing and everything rendered is what was read.
-  //
-  //      The third check is convergence, and it is the one that separates this
-  //      from a run-of-the-mill wrong line: unsanitised, the poisoned note is
-  //      re-rendered unchanged every week, so `end` does not erase the block for
-  //      a run, it erases it for ever. A second round-trip must therefore leave
-  //      the body no worse than the first, and must leave the note itself still
-  //      on the page — deleting the history would satisfy the other checks
-  //      while losing exactly what the mechanism exists to keep.
+  // 14c. THE SIBLING ON THE SAME LINE STILL REPORTS. The accepted mutant is
+  //      tracked AND accepted (so the `known`-side subtraction is exercised:
+  //      without it it would be announced as resolved). The column-24 mutant is
+  //      not accepted and is new.
   {
-    const readProblems = []
-    for (const [dir, poison] of [
-      ['begin', `${ACCEPTED_MARKER_START} smuggled`],
-      ['end', `smuggled ${ACCEPTED_MARKER_END}`],
-    ]) {
-      const render = (reanchored) =>
-        buildIssueBody({
-          all: [LIVE],
-          resolvedOnes: [],
-          today: '2026-08-15',
-          accepted: [LIVE],
-          acceptedOn: new Map([[LIVE, '2026-07-01']]),
-          reanchored,
-        })
-      // Not `appendReanchorNote`'s output: a hand-written annotation, raw, in
-      // the body the next run will read. This is the input the filer does not
-      // control and never sanitised.
-      const handAnnotated = render([
-        `${REANCHOR_NOTE_PREFIX}2026-08-08** — 1 accepted entry dropped, matching no observed mutant: \`${poison}\``,
-      ])
-      let body = handAnnotated
-      for (const round of ['first', 'second']) {
-        body = render(appendReanchorNote(parseReanchorNotes(body), [], '2026-08-15'))
-        const back = parseAcceptedSurvivors(body)
-        if (!back.has(LIVE))
-          readProblems.push(`${dir}/${round}: the recorded verdict became unreadable`)
-        // `> 1`, not `!== 1`: the empty case is already reported above by the
-        // verdict check, and subtracting from a zero-size set printed
-        // "minted -1 phantom entries" next to it.
-        if (back.size > 1)
-          readProblems.push(
-            `${dir}/${round}: minted ${back.size - 1} phantom entr(y|ies): ${[...back].join(' | ')}`,
-          )
-        if (parseReanchorNotes(body).length !== 1)
-          readProblems.push(`${dir}/${round}: the note itself was lost`)
-      }
-    }
-    if (readProblems.length === 0)
-      ok('a note READ BACK from a hand-edited body cannot move the accepted markers either (#4173)')
-    else
-      fail(
-        'a note READ BACK from a hand-edited body cannot move the accepted markers either (#4173)',
-        readProblems.join('; '),
-      )
+    const { out } = run({
+      accepted,
+      tracked: [NC(), id(86, 7)],
+      dir: fixtureDir(),
+    })
+    const problems = []
+    if (!out.includes('new findings: 1, resolved: 0, total known: 2'))
+      problems.push('wrong new/resolved counts (the accepted id must be neither, its sibling new)')
+    verdict('a sibling mutant on the SAME LINE still reports (#5986)', problems, out)
   }
 
-  // 14h (scoping). A NOTE IS PROSE ABOVE THE MARKERS, NOT ANY LINE THAT LOOKS
-  //      LIKE ONE. `parseReanchorNotes` used to scan the whole body, fences
-  //      included, so a line pasted INTO the accepted fence in the note shape —
-  //      the same bad paste that motivates the arms above, re-seeding a whole
-  //      rendered section into the block — was read twice: once as an accepted
-  //      id, which is what it now is, and once as a note, which duplicated it
-  //      into the history above the markers where it then never expired.
-  //
-  //      Pinned on the rendered body rather than on the parser alone, because
-  //      the duplication is the thing that matters: the line must appear
-  //      EXACTLY once in the body the next run would write.
+  // 14d. THE OCCURRENCE INDEX. Two lines with identical text, one mutant each:
+  //      accepting the first leaves the second reporting.
   {
-    const scopeProblems = []
-    const pasted = `${REANCHOR_NOTE_PREFIX}2026-05-01** — 1 accepted entry dropped: \`m9\``
-    const seeded = buildIssueBody({
-      all: [LIVE],
-      resolvedOnes: [],
-      today: '2026-08-15',
-      accepted: [LIVE, pasted],
-      acceptedOn: new Map([[LIVE, '2026-07-01']]),
+    const lines = [...FIXTURE_LINES]
+    lines[89] = lines[85]
+    writeFileSync(join(repoRoot, FIXTURE_FILE), `${lines.join('\n')}\n`)
+    const twice = acceptedFor(id(86, 7))
+    const dir = writeStrykerFixture('date-utils', {
+      files: {
+        [FIXTURE_FILE]: { source: lines.join('\n'), mutants: [mutant(86, 7), mutant(90, 7)] },
+      },
     })
-    const notes = parseReanchorNotes(seeded)
-    if (notes.length > 0)
-      scopeProblems.push(`a line inside the fence was read as ${notes.length} note(s)`)
-    const rewritten = buildIssueBody({
-      all: [LIVE],
-      resolvedOnes: [],
-      today: '2026-08-15',
-      accepted: [LIVE, pasted],
-      acceptedOn: new Map([[LIVE, '2026-07-01']]),
-      reanchored: appendReanchorNote(notes, [], '2026-08-15'),
-    })
-    const copies = rewritten.split(pasted).length - 1
-    if (copies !== 1) scopeProblems.push(`the pasted line appears ${copies} time(s), expected 1`)
-    // The other direction of the same rule, so the scoping cannot be "read
-    // nothing": a genuine note, above the markers, is still read.
-    const genuine = buildIssueBody({
-      all: [LIVE],
-      resolvedOnes: [],
-      today: '2026-08-15',
-      accepted: [LIVE],
-      acceptedOn: new Map([[LIVE, '2026-07-01']]),
-      reanchored: appendReanchorNote([], ['m9'], '2026-05-01'),
-    })
-    if (parseReanchorNotes(genuine).length !== 1)
-      scopeProblems.push('a genuine note above the markers stopped being read')
-    if (scopeProblems.length === 0)
-      ok('only prose outside the marker blocks counts as a re-anchoring note (#4173)')
-    else
-      fail(
-        'only prose outside the marker blocks counts as a re-anchoring note (#4173)',
-        scopeProblems.join('; '),
-      )
+    const { out } = run({ accepted: twice, dir })
+    const tracked = parseKnownSurvivors(out.slice(out.indexOf('[dry-run] --- issue body ---')))
+    const problems = []
+    if (tracked.size !== 1 || !tracked.has(id(90, 7)))
+      problems.push(`tracked ${JSON.stringify([...tracked])}`)
+    verdict('an entry covers one occurrence of identical text, not its twin (#5986)', problems, out)
   }
 
-  // 14i. BOUNDED GROWTH, on BOTH paths. The history is capped so it cannot eat
-  //      the body budget the state block needs, and the cap has to hold on READ
-  //      as well as on append: capping only where a note is added leaves a body
-  //      that already carries more — a paste, a hand-edit, an older revision of
-  //      this script — carrying them forward for ever, which is the unbounded
-  //      growth the cap exists to prevent, just entered by a different door.
-  //
-  //      And it must keep the NEWEST. A cap that keeps the oldest five is the
-  //      same size and answers the opposite question: the reader asking why a
-  //      mutant is back needs the recent drops, not the first five ever made.
+  // 14e. A malformed line fails the run (exit 1 in the CLI), naming the line;
+  //      comments and blank lines are fine.
   {
-    const many = Array.from(
-      { length: MAX_REANCHOR_NOTES + 2 },
-      (_, i) => `${REANCHOR_NOTE_PREFIX}2026-0${i + 1}-01** — 1 accepted entry dropped: \`m${i}\``,
+    const dir = fixtureDir()
+    const bad = run({ accepted: `# note\n\n${accepted}\nnot an entry\n`, dir })
+    const good = run({ accepted: `# note\n\n${accepted}\n`, dir })
+    const problems = []
+    if (!bad.err || !/:4: not an accepted-equivalent entry/.test(bad.err.message))
+      problems.push(`bad file: ${bad.err?.message ?? 'did not throw'}`)
+    if (good.err) problems.push(`comments rejected: ${good.err.message}`)
+    verdict(
+      'a malformed accepted line fails the run; comments and blanks do not (#5986)',
+      problems,
+      '',
     )
-    const capProblems = []
-    const newest = (notes) => notes.at(-1)?.includes(`\`m${many.length - 1}\``)
-    const onRead = parseReanchorNotes(many.join('\n'))
-    if (onRead.length !== MAX_REANCHOR_NOTES)
-      capProblems.push(`read kept ${onRead.length}, expected ${MAX_REANCHOR_NOTES}`)
-    if (!newest(onRead)) capProblems.push('read kept the oldest notes, not the newest')
-    // The quiet path: nothing dropped this run, so nothing is appended — and
-    // that is exactly the path where an over-full history used to sail through.
-    const carried = appendReanchorNote(many, [], '2026-09-01')
-    if (carried.length !== MAX_REANCHOR_NOTES)
-      capProblems.push(`carry-forward kept ${carried.length}, expected ${MAX_REANCHOR_NOTES}`)
-    if (!newest(carried)) capProblems.push('carry-forward kept the oldest notes, not the newest')
-    if (capProblems.length === 0)
-      ok(`the re-anchoring history is capped at ${MAX_REANCHOR_NOTES}, newest kept (#4173)`)
-    else
-      fail(
-        `the re-anchoring history is capped at ${MAX_REANCHOR_NOTES}, newest kept (#4173)`,
-        capProblems.join('; '),
-      )
   }
 }
 
@@ -4902,6 +4226,12 @@ async function runSelfTest() {
     failures.push(name)
     console.error(`  FAIL - ${name}: ${detail}`)
   }
+
+  // Every fixture run reads an EMPTY accepted file unless it passes its own, so
+  // none depends on the repo's `mutation-accepted.tsv` (and the detached copy
+  // of #3373 has no repo at all).
+  defaultAcceptedPath = join(mkdtempSync(join(tmpdir(), 'accepted-default-')), 'empty.tsv')
+  writeFileSync(defaultAcceptedPath, '')
 
   const survivor = (i) =>
     `[frontend] glob-validate: src/lib/search-query/glob-validate.ts:${i} [ConditionalExpression]`
@@ -5037,13 +4367,11 @@ async function runSelfTest() {
   //     block still refuses to be cut at all.
   selfTestBodyCap({ ok, fail })
 
-  // 14. #4173 — the accepted-equivalent block: proven-unkillable mutants are
+  // 14. #5986 — the accepted-equivalent file: proven-unkillable mutants are
   //     subtracted from the OBSERVED set instead of being re-filed every week,
-  //     one id at a time (a same-line sibling still reports), and a stale
-  //     entry re-anchors rather than suppressing forever.
-  selfTestAcceptedGaps({ ok, fail, survivor })
-  selfTestAcceptedBlockShape({ ok, fail })
-  selfTestAcceptedReanchorTrace({ ok, fail })
+  //     by a line-independent fingerprint (a line shift keeps an entry valid, an
+  //     edited line makes it inert, a same-line sibling still reports).
+  selfTestAcceptedGaps({ ok, fail })
 
   // 15. #3667 — the default child-creation cap is DERIVED, not pinned, so it
   //     cannot silently go stale the way the hardcoded 43 did.

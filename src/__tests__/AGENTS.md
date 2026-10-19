@@ -85,6 +85,7 @@ Changing `src/lib/tauri-mock/`: [`e2e/AGENTS.md` § The mock is a contract](../.
 - A new test file kills nothing until it is listed in the module's `tests` in [`stryker.modules.mjs`](../../stryker.modules.mjs). Before writing a test for a survivor, check whether an existing one already pins it and is only missing from that list.
 - Locate a survivor by mutator and source text, not the issue's line number, which is from the run's commit. A mutation issue stays open until the next weekly run finds nothing, so `git log origin/main --grep '#N'` before starting.
 - A survivor in an unobservable guard: delete the guard, do not write equivalence prose. An "unreachable" claim must match a `NoCoverage` status in that JSON.
+- A mutant proven unkillable goes in [`mutation-accepted.tsv`](../../mutation-accepted.tsv), in the PR that proves it, not in an issue body: paste the survivor-block ids into `node scripts/file-mutation-survivors.mjs --accept` (stdin, on the commit they were reported for) and append the output. Entries are keyed by line text, so a line shift keeps them valid and an edit to the line makes them inert. Format and rules: the filer's header.
 
 ## Quality standards
 
