@@ -452,7 +452,7 @@ jobs:
   # returns 404, and that 404 does NOT mean `main` is unprotected: it is the
   # LEGACY endpoint and it cannot see rulesets. `main` is protected by a
   # ruleset — the one `branch-protection-assert.yml` in this same directory
-  # already asserts against drift — with required contexts `validate / validate-all` +
+  # already asserts against drift — with required contexts `validate / validate-all`, `e2e-tauri-gate` +
   # `dco` AND `strict_required_status_checks_policy: true`, i.e. GitHub's
   # "require branches to be up to date before merging" is already ON, and
   # `validate-all` runs `prek run --all-files` (ratchet guards included) on

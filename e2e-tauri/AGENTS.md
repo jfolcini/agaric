@@ -9,7 +9,7 @@ gh workflow run e2e-tauri-weekly.yml --ref <branch>     # on demand
 gh run list --workflow e2e-tauri-weekly.yml --branch <branch> --limit 3
 ```
 
-It also runs weekly, on every release tag (where `publish-release` requires it), and on every PR to `main`, where it is skipped unless the diff touches something the lane builds or runs (the `real_backend` output of `scripts/classify-changes.sh`; when the diff's only lane paths are specs, it runs just those, `real_backend_specs`); the `e2e-tauri-gate` job reports either way. It is not a required check (#4671), so read its result on the PR before merging; a new spec has shown nothing until its control case has run there.
+It also runs weekly, on every release tag (where `publish-release` requires it), and on every PR to `main`, where it is skipped unless the diff touches something the lane builds or runs (the `real_backend` output of `scripts/classify-changes.sh`; when the diff's only lane paths are specs, it runs just those, `real_backend_specs`); the `e2e-tauri-gate` job reports either way. `e2e-tauri-gate` is a required check (#4671); a new spec has shown nothing until its control case has run there.
 
 Locally you need Linux with `webkit2gtk-driver`, `xvfb`, `dbus-daemon`, `openbox`, `xdotool`, and `cargo install tauri-driver --locked`. Run one spec with:
 

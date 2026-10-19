@@ -1,0 +1,7 @@
+# Session 2745 — the real-backend lane becomes a required check
+
+#4671 asked for the real-backend lane to gate merges. The maintainer decided on 2026-10-17 to make `e2e-tauri-gate` a required context from Monday 2026-10-19 if it stayed green, and asked for it on that day. From 2026-10-17 the lane's PR runs were 45 green, 10 cancelled (superseded pushes) and 5 red. Four reds were real failures on their own branches, fixed before merge. The fifth was the new `sync-qr-scan` spec, which passed on rerun; if it fails again it gets an issue.
+
+Shipped: `branch-protection-assert.yml` expects `["dco","e2e-tauri-gate","validate / validate-all"]`, and the ruleset adds the context right after this merges. The assert job runs daily and on dispatch, so it is dispatched once after the flip to confirm. The workflow header, `.github/AGENTS.md`, `e2e-tauri/AGENTS.md`, `docs/architecture/ci-and-tooling.md`, the comments that list the required contexts, the `batch-issues` merge rule, and root `AGENTS.md` now say the lane gates. The maintainer asked for the gate, which covers the `AGENTS.md` edit: the CI paragraph's contexts list, and testing invariant 4 loses its "not a required context, so pair the spec" sentence.
+
+The workflow already had what a required context needs: no `paths:` filter, and a `gate` job with `if: always()` that fails closed when `detect` fails. Nothing ran beyond the YAML; the PR's own CI is the check.
