@@ -1595,6 +1595,8 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await page.keyboard.press('Escape')
     await expect(drawer).toHaveCount(0)
     await expect(inBlock(ids[1], '.due-date-chip')).toHaveCount(0)
+    // The closed drawer gives the focus back a task later; an Escape before that reaches nothing.
+    await expect(page.locator(EDITOR)).toBeFocused()
 
     // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
     await page.keyboard.press('Escape')
