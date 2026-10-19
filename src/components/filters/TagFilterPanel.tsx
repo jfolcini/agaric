@@ -22,6 +22,7 @@ import { Label } from '@/components/ui/label'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
@@ -160,7 +161,7 @@ function PrefixPillBar({
   )
 }
 
-/** Flat simple-mode All/Any/None toggle (3 tooltip buttons over the IPC `mode`). */
+/** Flat simple-mode AND/OR/NOT segmented control over the IPC `mode`. */
 function FlatModeToggle({
   mode,
   onSetMode,
@@ -169,6 +170,7 @@ function FlatModeToggle({
   onSetMode: (mode: 'and' | 'or' | 'not') => void
 }): React.ReactElement {
   const { t } = useTranslation()
+  const labelId = useId()
   const options: { value: 'and' | 'or' | 'not'; label: string; tooltip: string }[] = [
     { value: 'and', label: t('tagFilter.andMode'), tooltip: t('tagFilter.andModeTooltip') },
     { value: 'or', label: t('tagFilter.orMode'), tooltip: t('tagFilter.orModeTooltip') },
@@ -176,24 +178,30 @@ function FlatModeToggle({
   ]
   return (
     <div className="flex items-center gap-2">
-      <span className="text-sm text-muted-foreground">{t('tagFilter.modeLabel')}</span>
-      {options.map(({ value, label, tooltip }) => (
-        <Tooltip key={value}>
-          <TooltipTrigger asChild>
-            <Button
-              variant={mode === value ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => onSetMode(value)}
-              aria-pressed={mode === value}
-            >
-              {label}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>{tooltip}</p>
-          </TooltipContent>
-        </Tooltip>
-      ))}
+      <span id={labelId} className="text-sm text-muted-foreground">
+        {t('tagFilter.modeLabel')}
+      </span>
+      <ToggleGroup
+        type="single"
+        aria-labelledby={labelId}
+        value={mode}
+        onValueChange={(next) => {
+          // Pressing the checked segment again reports '', which matches none.
+          const option = options.find((o) => o.value === next)
+          if (option) onSetMode(option.value)
+        }}
+      >
+        {options.map(({ value, label, tooltip }) => (
+          <Tooltip key={value}>
+            <TooltipTrigger asChild>
+              <ToggleGroupItem value={value}>{label}</ToggleGroupItem>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{tooltip}</p>
+            </TooltipContent>
+          </Tooltip>
+        ))}
+      </ToggleGroup>
     </div>
   )
 }

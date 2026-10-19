@@ -97,8 +97,8 @@ test.describe('Linked references link kind @editor @pages', () => {
     const rows = references.locator('[data-backlink-item]')
     const kind = (name: string) =>
       references
-        .getByRole('group', { name: 'Filter by link kind', exact: true })
-        .getByRole('button', { name, exact: true })
+        .getByRole('radiogroup', { name: 'Filter by link kind', exact: true })
+        .getByRole('radio', { name, exact: true })
 
     // Groups order by source-page title: Projects, then Quick Notes.
     await expect(header).toHaveText('2 References')

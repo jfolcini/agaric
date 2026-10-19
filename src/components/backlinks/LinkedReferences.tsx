@@ -18,7 +18,7 @@ import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { SourcePageFilter } from '@/components/filters/SourcePageFilter'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useBacklinkGroups } from '@/hooks/useBacklinkGroups'
 import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
@@ -48,12 +48,45 @@ export interface LinkedReferencesProps {
   onNavigateToPage?: NavigateToPageFn | undefined
 }
 
+/** The ToggleGroup value standing in for "every kind" (`null`). */
+const ALL_KINDS = 'all'
+
 /** The three states of the link-kind segmented control, in render order. */
 const KIND_OPTIONS: ReadonlyArray<{ value: LinkKind | null; labelKey: string }> = [
   { value: null, labelKey: 'references.kindAll' },
   { value: 'page_link', labelKey: 'references.kindPageLinks' },
   { value: 'block_ref', labelKey: 'references.kindBlockRefs' },
 ]
+
+/** The All / Page links / Block refs segmented control. */
+function KindToggle({
+  kind,
+  onKindChange,
+}: {
+  kind: LinkKind | null
+  onKindChange: (kind: LinkKind | null) => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  return (
+    <ToggleGroup
+      type="single"
+      aria-label={t('references.kindFilterLabel')}
+      className="linked-references-kind-filter"
+      value={kind ?? ALL_KINDS}
+      onValueChange={(next) => {
+        // Pressing the checked segment again reports '', which matches none.
+        const option = KIND_OPTIONS.find((o) => (o.value ?? ALL_KINDS) === next)
+        if (option) onKindChange(option.value)
+      }}
+    >
+      {KIND_OPTIONS.map((opt) => (
+        <ToggleGroupItem key={opt.labelKey} value={opt.value ?? ALL_KINDS}>
+          {t(opt.labelKey)}
+        </ToggleGroupItem>
+      ))}
+    </ToggleGroup>
+  )
+}
 
 export function LinkedReferences({
   targetId,
@@ -344,27 +377,11 @@ export function LinkedReferences({
       {/* The kind toggle sits OUTSIDE `ListViewState`, beside the header: that
           machine swaps its children for a skeleton on every key change and for
           `empty` when a kind matches nothing, either of which would unmount the
-          button just pressed — dropping keyboard focus to <body>, and leaving
+          segment just checked — dropping keyboard focus to <body>, and leaving
           no way back to "All" from an empty result. */}
       {expanded && (
-        <div
-          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a segmented toggle: <fieldset>/<optgroup> would add form/list semantics these three buttons do not have
-          role="group"
-          aria-label={t('references.kindFilterLabel')}
-          className="linked-references-kind-filter mt-1 flex items-center gap-1 px-2"
-        >
-          {KIND_OPTIONS.map((opt) => (
-            <Button
-              key={opt.labelKey}
-              type="button"
-              size="xs"
-              variant={kind === opt.value ? 'secondary' : 'ghost'}
-              aria-pressed={kind === opt.value}
-              onClick={() => setKind(opt.value)}
-            >
-              {t(opt.labelKey)}
-            </Button>
-          ))}
+        <div className="mt-1 px-2">
+          <KindToggle kind={kind} onKindChange={setKind} />
         </div>
       )}
 

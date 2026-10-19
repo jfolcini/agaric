@@ -1805,7 +1805,7 @@ describe('DuePanel', () => {
       expect(screen.getByText(t('duePanel.headerOne'))).toBeInTheDocument()
     })
 
-    it('toggle button shows correct label', async () => {
+    it('the hide-future-scheduled switch starts off', async () => {
       mockedListBlocks.mockResolvedValue({
         items: [makeBlock({ id: 'B1', content: 'label test block' })],
         next_cursor: null,
@@ -1815,9 +1815,8 @@ describe('DuePanel', () => {
 
       render(<DuePanel date="2026-04-03" />)
 
-      // Default: show all
-      const toggle = await screen.findByRole('button', { name: /Scheduled: show all/i })
-      expect(toggle).toHaveAttribute('aria-pressed', 'false')
+      const toggle = await screen.findByRole('switch', { name: 'Hide future scheduled' })
+      expect(toggle).toHaveAttribute('aria-checked', 'false')
     })
   })
 

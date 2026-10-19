@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/select'
 import { SheetBody } from '@/components/ui/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useDialogOrSheet } from '@/components/ui/use-dialog-or-sheet'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -122,7 +123,6 @@ export function QueryBuilderModal({
   // unchanged; editing a `v2:` block switches to advanced automatically.
   const [mode, setMode] = useState<'simple' | 'advanced'>('simple')
   const [queryType, setQueryType] = useState<QueryType>('tag')
-  const radioRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const [tagExpr, setTagExpr] = useState('')
   const [propertyKey, setPropertyKey] = useState('')
   const [propertyValue, setPropertyValue] = useState('')
@@ -299,43 +299,6 @@ export function QueryBuilderModal({
     onSave(expression)
   }
 
-  // WAI-ARIA radiogroup: vertical+horizontal roving tabindex with automatic
-  // activation — arrow keys move focus AND select the radio. Up/Left go to the
-  // previous option, Down/Right to the next, both with wraparound; Home/End
-  // jump to the ends.
-  const handleRadioGroupKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    const count = QUERY_TYPES.length
-    const currentIndex = QUERY_TYPES.indexOf(queryType)
-    let nextIndex: number
-    switch (e.key) {
-      case 'ArrowDown':
-      case 'ArrowRight': {
-        nextIndex = (currentIndex + 1) % count
-        break
-      }
-      case 'ArrowUp':
-      case 'ArrowLeft': {
-        nextIndex = (currentIndex - 1 + count) % count
-        break
-      }
-      case 'Home': {
-        nextIndex = 0
-        break
-      }
-      case 'End': {
-        nextIndex = count - 1
-        break
-      }
-      default: {
-        return
-      }
-    }
-    e.preventDefault()
-    const target = QUERY_TYPES[nextIndex] as QueryType
-    setQueryType(target)
-    radioRefs.current[target]?.focus()
-  }
-
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description, Footer } = parts
   // Mobile bottom-sheet path uses the Sheet body primitive so
@@ -366,31 +329,22 @@ export function QueryBuilderModal({
             </TabsList>
             <TabsContent value="simple" className="mt-4 space-y-4">
               {/* ---- Query Type Selector ---- */}
-              <div
-                className="flex flex-wrap gap-2"
-                role="radiogroup"
+              <ToggleGroup
+                type="single"
                 aria-label={t('queryBuilder.typeLabel')}
-                tabIndex={-1}
-                onKeyDown={handleRadioGroupKeyDown}
+                value={queryType}
+                onValueChange={(next) => {
+                  // Pressing the checked segment again reports '', which matches none.
+                  const type = QUERY_TYPES.find((q) => q === next)
+                  if (type) setQueryType(type)
+                }}
               >
                 {QUERY_TYPES.map((type) => (
-                  <Button
-                    key={type}
-                    ref={(el) => {
-                      radioRefs.current[type] = el
-                    }}
-                    variant={queryType === type ? 'default' : 'outline'}
-                    size="sm"
-                    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="radio" on a styled <Button> inside a roving-tabindex radiogroup; a native <input type="radio"> would lose the Button styling and the aria-checked/roving-focus toggle behavior
-                    role="radio"
-                    aria-checked={queryType === type}
-                    tabIndex={queryType === type ? 0 : -1}
-                    onClick={() => setQueryType(type)}
-                  >
+                  <ToggleGroupItem key={type} value={type}>
                     {t(`queryBuilder.type.${type}`)}
-                  </Button>
+                  </ToggleGroupItem>
                 ))}
-              </div>
+              </ToggleGroup>
 
               {/* ---- Tag Query Form ---- */}
               {queryType === 'tag' && (

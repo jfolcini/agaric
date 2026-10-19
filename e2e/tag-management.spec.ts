@@ -188,16 +188,16 @@ test.describe('Tag filter panel @pages', () => {
 
   test('AND/OR mode toggle switches active mode', async ({ page }) => {
     // By default AND is active
-    const andBtn = page.getByRole('button', { name: 'AND', exact: true })
-    const orBtn = page.getByRole('button', { name: 'OR', exact: true })
+    const andBtn = page.getByRole('radio', { name: 'AND', exact: true })
+    const orBtn = page.getByRole('radio', { name: 'OR', exact: true })
 
-    await expect(andBtn).toHaveAttribute('aria-pressed', 'true')
-    await expect(orBtn).toHaveAttribute('aria-pressed', 'false')
+    await expect(andBtn).toHaveAttribute('aria-checked', 'true')
+    await expect(orBtn).toHaveAttribute('aria-checked', 'false')
 
     // Switch to OR
     await orBtn.click()
-    await expect(orBtn).toHaveAttribute('aria-pressed', 'true')
-    await expect(andBtn).toHaveAttribute('aria-pressed', 'false')
+    await expect(orBtn).toHaveAttribute('aria-checked', 'true')
+    await expect(andBtn).toHaveAttribute('aria-checked', 'false')
   })
 
   test('feedback message shows when no tags selected', async ({ page }) => {

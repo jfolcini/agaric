@@ -138,9 +138,9 @@ describe('TagFilterPanel', () => {
 
   it('renders AND/OR/NOT mode toggle', () => {
     render(<TagFilterPanel />)
-    expect(screen.getByRole('button', { name: /AND/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /OR/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /NOT/i })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'AND' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'OR' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'NOT' })).toBeInTheDocument()
   })
 
   it('searches tags by prefix with debounce', async () => {
@@ -296,12 +296,12 @@ describe('TagFilterPanel', () => {
 
   // Sub-fix 2 — each AND/OR/NOT button must surface its tooltip so
   // the chosen variant isn't the only thing distinguishing them visually.
-  it('exposes a tooltip on each AND/OR/NOT mode button', async () => {
+  it('exposes a tooltip on each AND/OR/NOT mode segment', async () => {
     render(<TagFilterPanel />)
 
-    const andBtn = screen.getByRole('button', { name: /^AND$/i })
-    const orBtn = screen.getByRole('button', { name: /^OR$/i })
-    const notBtn = screen.getByRole('button', { name: /^NOT$/i })
+    const andBtn = screen.getByRole('radio', { name: 'AND' })
+    const orBtn = screen.getByRole('radio', { name: 'OR' })
+    const notBtn = screen.getByRole('radio', { name: 'NOT' })
 
     expect(andBtn).toBeInTheDocument()
     expect(orBtn).toBeInTheDocument()
@@ -340,35 +340,54 @@ describe('TagFilterPanel', () => {
   it('toggles AND/OR/NOT mode', async () => {
     render(<TagFilterPanel />)
 
-    const andBtn = screen.getByRole('button', { name: /AND/i })
-    const orBtn = screen.getByRole('button', { name: /OR/i })
-    const notBtn = screen.getByRole('button', { name: /NOT/i })
+    const andBtn = screen.getByRole('radio', { name: 'AND' })
+    const orBtn = screen.getByRole('radio', { name: 'OR' })
+    const notBtn = screen.getByRole('radio', { name: 'NOT' })
 
     // AND is default active
-    expect(andBtn).toHaveAttribute('aria-pressed', 'true')
-    expect(orBtn).toHaveAttribute('aria-pressed', 'false')
-    expect(notBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(andBtn).toHaveAttribute('aria-checked', 'true')
+    expect(orBtn).toHaveAttribute('aria-checked', 'false')
+    expect(notBtn).toHaveAttribute('aria-checked', 'false')
 
     // Switch to OR
     await user.click(orBtn)
 
-    expect(andBtn).toHaveAttribute('aria-pressed', 'false')
-    expect(orBtn).toHaveAttribute('aria-pressed', 'true')
-    expect(notBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(andBtn).toHaveAttribute('aria-checked', 'false')
+    expect(orBtn).toHaveAttribute('aria-checked', 'true')
+    expect(notBtn).toHaveAttribute('aria-checked', 'false')
 
     // Switch to NOT
     await user.click(notBtn)
 
-    expect(andBtn).toHaveAttribute('aria-pressed', 'false')
-    expect(orBtn).toHaveAttribute('aria-pressed', 'false')
-    expect(notBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(andBtn).toHaveAttribute('aria-checked', 'false')
+    expect(orBtn).toHaveAttribute('aria-checked', 'false')
+    expect(notBtn).toHaveAttribute('aria-checked', 'true')
 
     // Switch back to AND
     await user.click(andBtn)
 
-    expect(andBtn).toHaveAttribute('aria-pressed', 'true')
-    expect(orBtn).toHaveAttribute('aria-pressed', 'false')
-    expect(notBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(andBtn).toHaveAttribute('aria-checked', 'true')
+    expect(orBtn).toHaveAttribute('aria-checked', 'false')
+    expect(notBtn).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('an arrow key moves the AND/OR/NOT mode, and only the checked mode is a tab stop', async () => {
+    render(<TagFilterPanel />)
+
+    const andRadio = screen.getByRole('radio', { name: 'AND' })
+    andRadio.focus()
+    await user.keyboard('{ArrowRight}')
+
+    const orRadio = screen.getByRole('radio', { name: 'OR' })
+    expect(orRadio).toHaveFocus()
+    expect(orRadio).toHaveAttribute('aria-checked', 'true')
+    expect(andRadio).toHaveAttribute('aria-checked', 'false')
+    const group = screen.getByRole('radiogroup', { name: 'Mode:' })
+    expect(
+      within(group)
+        .getAllByRole('radio')
+        .filter((r) => r.tabIndex === 0),
+    ).toEqual([orRadio])
   })
 
   it('queries blocks when a tag is selected', async () => {
@@ -528,7 +547,7 @@ describe('TagFilterPanel', () => {
     stubTagQuery(() => pendingQuery.promise)
 
     // Switch from AND to OR → fires a new query that stays pending
-    await user.click(screen.getByRole('button', { name: /^OR$/i }))
+    await user.click(screen.getByRole('radio', { name: 'OR' }))
     await vi.advanceTimersByTimeAsync(0)
 
     // While the new query is in flight:
@@ -970,7 +989,7 @@ describe('TagFilterPanel', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     // Switch to NOT mode
-    const notBtn = screen.getByRole('button', { name: /^NOT$/i })
+    const notBtn = screen.getByRole('radio', { name: 'NOT' })
     await user.click(notBtn)
     await vi.advanceTimersByTimeAsync(0)
 
@@ -995,7 +1014,7 @@ describe('TagFilterPanel', () => {
     render(<TagFilterPanel />)
 
     // Switch to NOT mode first
-    const notBtn = screen.getByRole('button', { name: /^NOT$/i })
+    const notBtn = screen.getByRole('radio', { name: 'NOT' })
     await user.click(notBtn)
 
     const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
@@ -1032,7 +1051,7 @@ describe('TagFilterPanel', () => {
     render(<TagFilterPanel />)
 
     // Switch to NOT mode first
-    const notBtn = screen.getByRole('button', { name: /^NOT$/i })
+    const notBtn = screen.getByRole('radio', { name: 'NOT' })
     await user.click(notBtn)
 
     const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
@@ -1058,7 +1077,7 @@ describe('TagFilterPanel', () => {
     )
 
     // Switch to AND mode
-    const andBtn = screen.getByRole('button', { name: /^AND$/i })
+    const andBtn = screen.getByRole('radio', { name: 'AND' })
     await user.click(andBtn)
     await vi.advanceTimersByTimeAsync(0)
 
@@ -1078,7 +1097,7 @@ describe('TagFilterPanel', () => {
     render(<TagFilterPanel />)
 
     // Switch to NOT mode first
-    const notBtn = screen.getByRole('button', { name: /^NOT$/i })
+    const notBtn = screen.getByRole('radio', { name: 'NOT' })
     await user.click(notBtn)
 
     const input = screen.getByPlaceholderText(t('tagFilter.searchPlaceholder'))
@@ -1098,7 +1117,7 @@ describe('TagFilterPanel', () => {
     await vi.advanceTimersByTimeAsync(0)
 
     // Switch to OR mode
-    const orBtn = screen.getByRole('button', { name: /^OR$/i })
+    const orBtn = screen.getByRole('radio', { name: 'OR' })
     await user.click(orBtn)
     await vi.advanceTimersByTimeAsync(0)
 
@@ -1804,7 +1823,7 @@ describe('TagFilterPanel — include inherited (#4548)', () => {
     // The switch survives the composer swap (the AND/OR/NOT row does not).
     await user.click(screen.getByTestId('tag-filter-composer-toggle'))
     await vi.advanceTimersByTimeAsync(0)
-    expect(screen.queryByRole('button', { name: /^AND$/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: 'AND' })).not.toBeInTheDocument()
     await user.click(inheritedSwitch())
 
     const group = screen.getByTestId('tag-composer-group')

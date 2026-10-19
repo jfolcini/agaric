@@ -401,6 +401,22 @@ const THEME_PAIRS = [
   { pair: 'selected tab bar', fg: 'tab-indicator', bg: 'background', min: NON_TEXT },
   // Query builder and Pair device put a tab strip on a dialog (#5920).
   { pair: 'selected tab bar in a dialog', fg: 'tab-indicator', bg: 'popover', min: NON_TEXT },
+  // The checked ToggleGroup segment: its outline against the track and the
+  // unchecked segments, and against its own fill (#5921).
+  {
+    pair: 'checked segment outline on the track',
+    fg: 'foreground',
+    bg: 'background',
+    min: NON_TEXT,
+  },
+  { pair: 'checked segment outline on its fill', fg: 'foreground', bg: 'secondary', min: NON_TEXT },
+  // Unchecked labels are muted, so the track stays --background (#5921).
+  {
+    pair: 'unchecked segment label on the track',
+    fg: 'muted-foreground',
+    bg: 'background',
+    min: AA_NORMAL,
+  },
   {
     pair: 'sidebar hover / active item',
     fg: 'sidebar-accent-foreground',

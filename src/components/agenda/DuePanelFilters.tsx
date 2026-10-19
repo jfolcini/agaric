@@ -2,24 +2,26 @@
  * DuePanelFilters — source filter segments and hide-before-scheduled toggle.
  *
  * Renders the filter bar for DuePanel with a single-select ToggleGroup of
- * source types (All, Due, Scheduled, Properties) and a toggle for hiding
- * future-scheduled blocks. Both use the ToggleGroup look: a quiet `bg-secondary`
- * active fill, because a brand-red fill reads as an error beside the red Overdue
+ * source types (All, Due, Scheduled, Properties) and a switch for hiding
+ * future-scheduled blocks. The segments use the ToggleGroup's neutral outline
+ * rather than a brand-red fill, which reads as an error beside the red Overdue
  * section.
  *
  * Extracted from DuePanel.tsx for testability (#651-R6).
  */
 
 import type React from 'react'
+import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 // Radix ToggleGroup values are strings; the "All" source (no filter) is `null`
 // upstream, so it needs a string stand-in.
 const ALL_SOURCES = 'all'
-const HIDE_BEFORE_SCHEDULED = 'hide-before-scheduled'
 
 export interface DuePanelFiltersProps {
   sourceFilter: string | null
@@ -37,6 +39,7 @@ export function DuePanelFilters({
   sourceCounts,
 }: DuePanelFiltersProps): React.ReactElement {
   const { t } = useTranslation()
+  const hideFutureId = useId()
 
   // Tooltips clarify the axis of each pill, especially the
   // Due-vs-Scheduled distinction (hard deadline vs soft planned start).
@@ -91,50 +94,30 @@ export function DuePanelFilters({
             : 0
           return (
             <Tooltip key={opt.label}>
-              {/* The trigger is a wrapper, not the item: TooltipTrigger writes its own
-                  `data-state` onto its child, which would overwrite the item's on/off
-                  state and lose the active fill. Trade: `aria-describedby` lands on the
-                  wrapper, so the hint is visual only (it still opens on keyboard focus). */}
               <TooltipTrigger asChild>
-                <span className="inline-flex">
-                  <ToggleGroupItem
-                    value={opt.value ?? ALL_SOURCES}
-                    className="whitespace-nowrap [@media(pointer:coarse)]:px-3"
-                  >
-                    {opt.label}
-                    {sourceCounts && count > 0 ? ` (${count})` : ''}
-                  </ToggleGroupItem>
-                </span>
+                <ToggleGroupItem
+                  value={opt.value ?? ALL_SOURCES}
+                  className="whitespace-nowrap [@media(pointer:coarse)]:px-3"
+                >
+                  {opt.label}
+                  {sourceCounts && count > 0 ? ` (${count})` : ''}
+                </ToggleGroupItem>
               </TooltipTrigger>
               <TooltipContent className="max-w-xs">{opt.tooltip}</TooltipContent>
             </Tooltip>
           )
         })}
       </ToggleGroup>
-      <ToggleGroup
-        type="multiple"
-        value={hideBeforeScheduled ? [HIDE_BEFORE_SCHEDULED] : []}
-        onValueChange={() => onToggleHideBeforeScheduled()}
-      >
-        <ToggleGroupItem
-          value={HIDE_BEFORE_SCHEDULED}
-          className="whitespace-nowrap"
-          title={
-            hideBeforeScheduled
-              ? t('duePanel.showingScheduledTodayTooltip')
-              : t('duePanel.showingAllTasksTooltip')
-          }
-          aria-label={
-            hideBeforeScheduled
-              ? t('duePanel.scheduledHideFutureButton')
-              : t('duePanel.scheduledShowAllButton')
-          }
-        >
-          {hideBeforeScheduled
-            ? t('duePanel.scheduledHideFutureButton')
-            : t('duePanel.scheduledShowAllButton')}
-        </ToggleGroupItem>
-      </ToggleGroup>
+      <div className="flex items-center gap-2">
+        <Switch
+          id={hideFutureId}
+          checked={hideBeforeScheduled}
+          onCheckedChange={() => onToggleHideBeforeScheduled()}
+        />
+        <Label htmlFor={hideFutureId} className="font-normal whitespace-nowrap">
+          {t('duePanel.hideFutureScheduled')}
+        </Label>
+      </div>
     </div>
   )
 }
