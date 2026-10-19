@@ -16,7 +16,7 @@
 // Each page ends in its referrer's space, where the Pages list shows both
 // facts the app must still hold: sorted by Last opened, the opened page comes
 // before its never-opened (and newer) referrer, and carries the referrer's
-// link as its `1 ↗` inbound count. The referrer's other block holds the ref,
+// link as its inbound count of 1. The referrer's other block holds the ref,
 // which shows only in its property drawer: a ref-only property has no inline
 // chip (`useExtraBlockProperties`).
 //
@@ -87,7 +87,7 @@ interface ListedPage {
   inbound: string
 }
 
-/** The Pages list's rows in order: title and the `N ↗` inbound count (PageRow.tsx). */
+/** The Pages list's rows in order: title and the inbound count (PageRow.tsx). */
 function listedPages(): Promise<ListedPage[]> {
   return browser.execute(() => {
     const rows = [...document.querySelectorAll('[data-page-item]')]
@@ -220,7 +220,7 @@ describe('Agaric real-backend cross-space moves keep what the app holds (#5712) 
       await waitForPagesList(
         space,
         (pages) =>
-          pages[0]?.title === mover && pages[0].inbound === '1 ↗' && pages[1]?.title === referrer,
+          pages[0]?.title === mover && pages[0].inbound === '1' && pages[1]?.title === referrer,
         `${mover} is not listed first, last opened and linked once, ahead of ${referrer}`,
       )
       await reopenPageByTitle(referrer)

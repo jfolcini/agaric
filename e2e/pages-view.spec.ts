@@ -878,10 +878,10 @@ test.describe('metadata badges @pages', () => {
     // Getting Started: 1 inbound link, 5 child blocks, a relative-time stamp.
     const row = grid(page).locator('[data-page-item]:has-text("Getting Started")')
     await expect(row.locator('[data-metadata-inbound]')).toBeVisible()
-    await expect(row.locator('[data-metadata-inbound]')).toContainText('1')
+    await expect(row.locator('[data-metadata-inbound] > [aria-hidden="true"]')).toHaveText('1')
     await expect(row.locator('[data-metadata-inbound] svg')).toBeVisible()
     await expect(row.locator('[data-metadata-children]')).toBeVisible()
-    await expect(row.locator('[data-metadata-children]')).toContainText('5')
+    await expect(row.locator('[data-metadata-children] > [aria-hidden="true"]')).toHaveText('5')
     await expect(row.locator('[data-metadata-children] svg')).toBeVisible()
     await expect(row.locator('[data-metadata-relative]')).toBeVisible()
   })
@@ -898,15 +898,13 @@ test.describe('metadata badges @pages', () => {
   test('cross-page inbound links render the inbound badge', async ({ page }) => {
     await bootPages(page)
     // Quick Notes has exactly one cross-page inbound edge (from BLOCK_GS_2 on
-    // Getting Started), so its inbound badge reads "1 ↗". (The same-page
+    // Getting Started), so its inbound badge reads 1. (The same-page
     // exclusion mirrored from migration 0070 is covered by the mock unit test
     // `excludes a same-page link` — the shared Quick Notes seed deliberately
     // carries no same-page edge to keep the editor/inner-links specs stable.)
     const row = grid(page).locator('[data-page-item]:has-text("Quick Notes")')
     await expect(row.locator('[data-metadata-inbound]')).toBeVisible()
-    await expect(row.locator('[data-metadata-inbound]')).toContainText('1')
-    await expect(row.locator('[data-metadata-inbound] svg')).toBeVisible()
-    await expect(row.locator('[data-metadata-inbound]')).not.toContainText('2 ↗')
+    await expect(row.locator('[data-metadata-inbound] > [aria-hidden="true"]')).toHaveText('1')
   })
 })
 

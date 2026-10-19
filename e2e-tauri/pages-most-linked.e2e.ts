@@ -64,7 +64,7 @@ interface ListedPage {
   inbound: string
 }
 
-/** The Pages list's first two rows: title and the `N ↗` inbound count (PageRow.tsx). */
+/** The Pages list's first two rows: title and the inbound count (PageRow.tsx). */
 function topTwo(): Promise<ListedPage[]> {
   return browser.execute(() => {
     const rows = [...document.querySelectorAll('[data-page-item]')]
@@ -93,8 +93,8 @@ describe('Agaric real-backend Most linked sort (#5366) @pages', () => {
     await $('[data-testid="page-browser-count"]').waitForDisplayed({ timeout: NAV_TIMEOUT })
     await chooseSelectOption('[aria-label="Sort order"]', 'Most linked')
     const expected = [
-      { title: TARGET, inbound: '2 ↗' },
-      { title: RIVAL, inbound: '1 ↗' },
+      { title: TARGET, inbound: '2' },
+      { title: RIVAL, inbound: '1' },
     ]
     let seen: ListedPage[] = []
     await browser
