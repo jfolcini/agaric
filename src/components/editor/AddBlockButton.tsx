@@ -12,6 +12,8 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { useIsTouch } from '@/hooks/useIsTouch'
+import { cn } from '@/lib/utils'
 
 export interface AddBlockButtonProps {
   onClick: () => void
@@ -26,12 +28,15 @@ export function AddBlockButton({
   className,
 }: AddBlockButtonProps): React.ReactElement {
   const { t } = useTranslation()
+  const isTouch = useIsTouch()
 
   return (
     <Button
       variant="ghost"
       size="sm"
-      className={className ?? 'text-muted-foreground'}
+      // On touch the block rows hang into the gutter (`BlockListRenderer`); the
+      // button's padding hangs with them so its icon sits on the text edge.
+      className={cn(className ?? 'text-muted-foreground', isTouch && '-ml-3')}
       // Keeps the edited block focused through a tap. A tap's blur runs before
       // its click, unlike a mouse press's, which `useEditorBlur` holds until the
       // release. On a tap, that blur drops an empty block being edited, and the

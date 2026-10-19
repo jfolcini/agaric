@@ -62,7 +62,7 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                 // while syncing fine.
                 const lastActivity = lastSyncActivityAt(peer)
                 return (
-                  <Card key={peer.peer_id} className="pairing-peer-item p-3">
+                  <Card key={peer.peer_id} variant="item" className="pairing-peer-item p-3">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />

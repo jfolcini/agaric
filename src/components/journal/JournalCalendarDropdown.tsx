@@ -289,11 +289,11 @@ export function JournalCalendarDropdown({
       <Sheet open onOpenChange={(open) => !open && onClose()}>
         <SheetContent
           side="bottom"
-          className="px-2"
+          className="px-2 sm:px-2"
           aria-busy={loading}
           aria-describedby={undefined}
         >
-          <SheetHeader className="px-4">
+          <SheetHeader className="px-2">
             <SheetTitle>{t('journal.datePickerLabel')}</SheetTitle>
           </SheetHeader>
           {content}

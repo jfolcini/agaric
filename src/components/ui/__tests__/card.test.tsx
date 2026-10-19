@@ -40,6 +40,22 @@ describe('Card', () => {
     expect(el).not.toHaveClass('rounded-xl')
   })
 
+  // #5929: a settings section sheds its box on a phone so its text sits on the
+  // view's gutter; a list item keeps its box at every width.
+  it('drops its chrome below sm as a section, keeps it as an item', () => {
+    render(
+      <>
+        <Card data-testid="section">Section</Card>
+        <Card data-testid="item" variant="item">
+          Item
+        </Card>
+      </>,
+    )
+    expect(screen.getByTestId('section')).toHaveClass('border', 'max-sm:border-0', 'max-sm:*:px-0')
+    expect(screen.getByTestId('item')).toHaveClass('border')
+    expect(screen.getByTestId('item').className).not.toContain('max-sm:')
+  })
+
   it('forwards ref', () => {
     const ref = React.createRef<HTMLDivElement>()
     render(<Card ref={ref}>Content</Card>)
