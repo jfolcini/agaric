@@ -45,7 +45,9 @@ async function pointCameraAtQr(svg: string): Promise<void> {
     // A canvas stream emits a frame only when the canvas changes.
     draw()
     setInterval(draw, 100)
-    navigator.mediaDevices.getUserMedia = () => Promise.resolve(canvas.captureStream(10))
+    // On the prototype: WebKit can collect the `navigator.mediaDevices` wrapper
+    // and hand the page a new one, which drops a property set on the old one.
+    MediaDevices.prototype.getUserMedia = () => Promise.resolve(canvas.captureStream(10))
   }, svg)
 }
 
