@@ -60,7 +60,7 @@ export function PeerSyncProgress({
       {progress != null && (
         <div className="device-peer-progress space-y-1">
           {/* Hidden from screen readers, which read the throttled copy below. */}
-          <p className="text-xs text-muted-foreground truncate" aria-hidden="true">
+          <p className="text-xs text-muted-foreground" aria-hidden="true">
             {text}
           </p>
           {progress.phase !== 'ops' && progress.bytesTotal > 0 && (
