@@ -72,16 +72,20 @@ export function PairingEntryForm({
         activationMode="manual"
         className="pairing-entry-toggle mb-4"
       >
-        <TabsList aria-label={t('pairing.entryModeLabel')}>
-          {/* On a phone the badge wraps under the label, so both tabs fit. */}
-          <TabsTrigger value="scan" className="flex-wrap">
+        <TabsList aria-label={t('pairing.entryModeLabel')} className="items-stretch">
+          {/* On a phone the badge wraps under its label so both tabs fit; the
+              triggers stretch to one height and pack their content at the top
+              so the two labels still share a line. */}
+          <TabsTrigger value="scan" className="flex-wrap content-start">
             <Camera aria-hidden="true" />
             {t('pairing.scanQrCodeButton')}
             <Badge tone="secondary" className="text-xs py-0 px-1.5">
               {t('pairing.recommendedBadge')}
             </Badge>
           </TabsTrigger>
-          <TabsTrigger value="manual">{t('pairing.typePassphraseButton')}</TabsTrigger>
+          <TabsTrigger value="manual" className="flex-wrap content-start">
+            {t('pairing.typePassphraseButton')}
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="manual" className="mt-4">
           <div className="pairing-word-inputs grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -91,9 +95,8 @@ export function PairingEntryForm({
               const ordinal = t(`pairing.ordinal.${slot}`)
               const inputId = `${inputIdPrefix}-pairing-word-${i}`
               return (
-                // Each word slot gets a visible ordinal Label so users
-                // can confirm which position they're typing into without
-                // relying on placeholders alone.
+                // A visible ordinal Label, not a placeholder, names each
+                // slot: a placeholder repeating it vanishes once typed into.
                 <div key={slot} className="pairing-word-slot flex flex-col gap-1">
                   <Label
                     htmlFor={inputId}
@@ -108,7 +111,6 @@ export function PairingEntryForm({
                     value={words[i]}
                     onChange={(e) => onWordChange(i, e.target.value)}
                     onKeyDown={(e) => onWordKeyDown(i, e)}
-                    placeholder={t('pairing.wordPlaceholder', { ordinal })}
                     aria-label={t('pairing.wordLabel', { num: i + 1 })}
                     className="text-center touch-target"
                     disabled={pairLoading || isExpired}

@@ -20,7 +20,8 @@
  * Sections (each extracted as a sub-component for testability):
  *  1. QR code + passphrase display (PairingQrDisplay) — host only
  *  2. Passphrase entry (PairingEntryForm) — joiner only
- *  3. List of already-paired devices (PairingPeersList) — either role
+ *  3. List of already-paired devices (PairingPeersList) — either role, only
+ *     when there is one (the Settings page behind owns the empty state)
  *
  * Props: open (boolean), onOpenChange (callback), triggerRef (optional).
  *
@@ -1238,7 +1239,7 @@ export function PairingDialog({
                   <Button
                     variant="link"
                     size="sm"
-                    className="pairing-switch-to-host-btn self-start px-0 h-auto mb-2"
+                    className="pairing-switch-to-host-btn self-start px-0 h-auto"
                     onClick={() => void handleSwitchToHost()}
                   >
                     {t('pairing.switchToHostLink')}

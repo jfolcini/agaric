@@ -90,7 +90,6 @@ export const sync: Record<string, string> = {
   'pairing.scanQrCodeButton': 'Scan QR code',
   'pairing.recommendedBadge': 'Recommended',
   'pairing.entryModeLabel': 'Enter the code',
-  'pairing.wordPlaceholder': '{{ordinal}} word',
   'pairing.wordLabel': 'Passphrase word {{num}}',
   'pairing.entryFormWord': '{{ordinal}} word',
   'pairing.ordinal.first': '1st',
@@ -101,7 +100,6 @@ export const sync: Record<string, string> = {
   'pairing.cancelButton': 'Cancel',
   'pairing.pairButton': 'Pair',
   'pairing.pairedDevicesTitle': 'Paired devices',
-  'pairing.noPairedDevices': 'No paired devices yet.',
   'pairing.confirmCloseTitle': 'Cancel pairing?',
   'pairing.confirmCloseDescription':
     'Pairing is in progress. Closing this dialog will cancel the handshake and the other device will need to start over.',
