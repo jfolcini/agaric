@@ -43,6 +43,7 @@ use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use iroh::endpoint::{RecvStream, SendStream};
 
 use crate::apply_host::ApplyHost;
+use crate::sync_constants::CANCEL_POLL_INTERVAL;
 use crate::sync_protocol::SyncMessage;
 use crate::transport::bulk::{recv_bulk, send_bulk};
 use crate::transport::session::{
@@ -1620,13 +1621,6 @@ pub async fn receive_request_and_send_files(
 // ---------------------------------------------------------------------------
 // File transfer protocol — receiver side
 // ---------------------------------------------------------------------------
-
-/// How often the receive loop wakes to re-read the cancel flag while waiting.
-///
-/// Short enough to abort promptly on the rare cancel race, long enough that on the
-/// common path — where the next message is already in flight — we wake at most a handful
-/// of times per multi-gigabyte transfer.
-const CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// Await one [`SyncMessage`] with the cancel flag polled while we wait.
 ///

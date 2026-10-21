@@ -24,7 +24,7 @@ pub enum SyncProgressUpdate {
     /// Op-sync state transitions (Tier 1). Mirrors the
     /// [`SyncEvent::Progress`] / [`SyncEvent::Complete`] /
     /// [`SyncEvent::Error`] envelope, with `state` carrying
-    /// `"complete"` / `"error"` / `"failed"` for the terminal cases.
+    /// `"complete"` / `"error"` for the terminal cases.
     Sync {
         state: String,
         remote_device_id: String,
@@ -107,9 +107,11 @@ pub enum SyncEvent {
     Error {
         message: String,
         remote_device_id: String,
-        /// `Some` for a failure the frontend words itself, in the user's
-        /// language; `message` stays the English text for logs. Omitted when
-        /// `None`, so every other error serializes as it always has.
+        /// `Some` for an error the frontend words itself, in the user's
+        /// language, or reads as something other than a failure (a user cancel,
+        /// [`SyncErrorCode::Cancelled`]); `message` stays the English text for
+        /// logs. Omitted when `None`, so every other error serializes as it
+        /// always has.
         #[serde(skip_serializing_if = "Option::is_none")]
         code: Option<SyncErrorCode>,
     },
@@ -206,6 +208,9 @@ pub enum SyncErrorCode {
     /// The peer runs another engine format (#2130). Only updating both
     /// devices to the same release lets them sync again.
     EngineFormatMismatch,
+    /// The user cancelled the session (`cancel_sync`, #5739): the frontend
+    /// reads it as idle, not as a failure.
+    Cancelled,
 }
 
 // ---------------------------------------------------------------------------
@@ -598,6 +603,19 @@ mod tests {
         };
         let json = serde_json::to_value(&event).expect("serialize Error");
         assert_eq!(json["code"], "engine_format_mismatch");
+    }
+
+    /// #5739: a user cancel reaches the frontend as `cancelled`, the code
+    /// `useSyncEvents.ts` reads as idle rather than as a failure.
+    #[test]
+    fn sync_event_error_serializes_a_cancel_as_cancelled_5739() {
+        let event = SyncEvent::Error {
+            message: "Sync cancelled: [transport::driver] session cancelled".into(),
+            remote_device_id: "DEV_B".into(),
+            code: Some(SyncErrorCode::Cancelled),
+        };
+        let json = serde_json::to_value(&event).expect("serialize Error");
+        assert_eq!(json["code"], "cancelled");
     }
 
     #[test]

@@ -8,7 +8,7 @@ Agaric syncs across your own devices over local WiFi. **No cloud, no accounts, a
 - **Pair a new device** via QR code (scan with the new device's camera) or by typing a 4-word passphrase.
 - **See your paired devices** in Settings → Sync & devices (the **DeviceManagement** tab).
 - **Manually trigger a sync** from the sidebar's Sync button.
-- **Cancel an in-flight sync** while it's running.
+- **Cancel a running sync** from the device's row in Settings → Sync & devices: *Cancel sync* shows while that device's sync runs, from the moment it starts dialling, and ends the sync while it dials or waits for the other device's next message, even if that device has not answered. A cancelled sync reads as idle, with no failure toast, and costs the device no retry backoff (#5739). The cancel is device-wide: it stops every sync running on this device, one the other device started included, not only the one on that row. Changes already being applied, and a snapshot catch-up, finish first.
 - **Unpair** a device (with confirmation).
 - **Rename a device** so it's recognisable in your list.
 - **Set a manual address** for an already-paired peer on your subnet, when mDNS discovery is unavailable. This does not help a device you have not paired yet, and does not reach across subnets — see the pitfalls below.
@@ -34,7 +34,7 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
   - Strikethrough WiFi: offline.
 - **"Last synced N ago"** in the Sync icon's tooltip, with the state.
 - **Settings › Sync & devices**, at the top once a device is paired: the overall sync state, the last successful sync, and the peer count. To retry, use the device list's *Sync all* or a device's *Sync now*.
-- **Per-peer progress** in the device's row while a sync is running: sync messages sent and received, then the attachment transfer with files and bytes done of total and a progress bar; the row clears when the sync ends (#5842). It shows for syncs this device starts (*Sync now*, *Sync all*, and its own periodic sync), not for a session the other device dialled in.
+- **Per-peer progress** in the device's row while a sync is running: sync messages sent and received, then the attachment transfer with files and bytes done of total and a progress bar; the row clears when the sync ends (#5842). It shows for syncs this device starts (*Sync now*, *Sync all*, and its own periodic sync), not for a session the other device dialled in. While it shows, the row offers *Cancel sync* (#5739).
 - **Retry toast** per peer on failure — partial failures don't blow up the whole batch.
 
 ## How sync runs

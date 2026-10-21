@@ -412,8 +412,8 @@ pub async fn start_sync_inner(
 
 /// Cancel an active sync session.
 ///
-/// Sets the cancel flag that is checked each iteration of the sync message
-/// exchange loops (initiator and responder).
+/// Sets the cancel flag that the dial and every receive of the sync message
+/// exchange loops (initiator and responder) race against (#5739).
 ///
 /// #2537: the flag is only latched while a session is actually live
 /// ([`SyncScheduler::request_cancel`] gates on the scheduler's

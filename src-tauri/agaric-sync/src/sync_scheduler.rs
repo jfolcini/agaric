@@ -64,18 +64,18 @@ pub struct PeerSyncGuard {
 
 /// RAII guard returned by [`SyncScheduler::begin_session_activity`].
 ///
-/// #2537: marks a *committed* sync session (initiator: connection
-/// established and `run_sync_session` about to run; responder: identity
-/// verified and the per-peer lock held). While at least one guard is
+/// #2537: marks a *committed* sync session (initiator: about to dial, #5739;
+/// responder: identity verified and the per-peer lock held). While at least one guard is
 /// alive, [`SyncScheduler::request_cancel`] will latch the shared cancel
 /// flag; with none alive it is a no-op — so a cancel issued when nothing
 /// is running can never latch the flag and poison future sessions.
 ///
 /// Dropping the guard decrements the live-session count. The session's
 /// own cancel-ownership guard (`CancelGuard` in the daemon) is declared
-/// *before* this one, so on unwind the activity count drops to zero
-/// first and the flag is cleared last — `request_cancel`'s post-store
-/// re-check (see there) then closes the set-after-teardown race.
+/// *before* this one, so on unwind the activity count drops first and the
+/// guard clears the flag last, and only once the count reads zero —
+/// `request_cancel`'s post-store re-check (see there) then closes the
+/// set-after-teardown race.
 pub struct SessionActivityGuard<'a> {
     scheduler: &'a SyncScheduler,
 }
@@ -103,8 +103,8 @@ pub struct SyncScheduler {
     channels: std::sync::Mutex<HashMap<String, SessionSinkWrapper>>,
 
     /// #2537: number of sync sessions currently *committed to run*
-    /// (initiator sessions past connection establishment; responder
-    /// sessions past identity checks + peer lock). Incremented by
+    /// (initiator sessions from the moment they commit to dialling, #5739;
+    /// responder sessions past identity checks + peer lock). Incremented by
     /// [`Self::begin_session_activity`], decremented when the returned
     /// guard drops. Read by [`Self::request_cancel`] so a user cancel
     /// only ever latches the shared flag while a session exists to
@@ -678,9 +678,9 @@ impl SyncScheduler {
 
     /// Mark a sync session as *live* for cancellation purposes.
     ///
-    /// #2537: called by the initiator once a connection is established and
-    /// it commits to running `run_sync_session` (the same point at which it
-    /// takes ownership of the shared cancel flag), and by the responder once
+    /// #2537: called by the initiator once it commits to a session, before
+    /// the dial (#5739; the same point at which it takes ownership of the
+    /// shared cancel flag), and by the responder once
     /// identity checks pass and the per-peer lock is held. The returned
     /// guard decrements the count on drop.
     pub fn begin_session_activity(&self) -> SessionActivityGuard<'_> {
@@ -725,9 +725,10 @@ impl SyncScheduler {
         // reset it. SeqCst orders the store before the re-check load, so:
         //   * re-check sees 0  → our own SeqCst `false` below is final;
         //   * re-check sees ≥1 → that owner's activity decrement had not
-        //     run at the re-check, so its `CancelGuard`'s SeqCst `false`
-        //     (sequenced after the decrement) is ordered after our `true`
-        //     in the flag's modification order.
+        //     run at the re-check, so the last owner out, whose
+        //     `CancelGuard` reads the count after its own decrement and then
+        //     stores a SeqCst `false`, is ordered after our `true` in the
+        //     flag's modification order.
         // Either way the flag cannot outlive its consumers.
         cancel_flag.store(true, Ordering::SeqCst);
         // Close the check→store race: if every session ended between the
@@ -2215,8 +2216,9 @@ mod tests {
 
         // Session thread: begin activity, then immediately tear down in the
         // production drop order — activity guard first (count → 0), owning
-        // cancel-clear second (mirrors `SessionActivityGuard` being declared
-        // after `CancelGuard`, so it drops first).
+        // cancel-clear second, gated on the count as `CancelGuard`'s is
+        // (mirrors `SessionActivityGuard` being declared after `CancelGuard`,
+        // so it drops first).
         let session = {
             let sched = sched.clone();
             let flag = flag.clone();
@@ -2226,7 +2228,9 @@ mod tests {
                 for _ in 0..ROUNDS {
                     let activity = sched.begin_session_activity();
                     drop(activity); // count → 0
-                    flag.store(false, Ordering::SeqCst); // owning guard's clear
+                    if !sched.has_active_session() {
+                        flag.store(false, Ordering::SeqCst); // owning guard's clear
+                    }
                 }
             })
         };

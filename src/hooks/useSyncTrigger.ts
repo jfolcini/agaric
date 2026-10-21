@@ -135,7 +135,13 @@ async function syncOnePeerWithToast(
       startSync(peerId, (update) => {
         store.recordPeerProgress(peerId, update)
         if (update.kind === 'sync') {
-          store.setState(mapBackendState(update.state))
+          // The terminal `error` follows the `sync:error` event of the same outcome
+          // (`useSyncEvents`), which set `error` for a failure and `idle` for a cancel
+          // (#5739): it must not undo that. It only ends a `syncing` no event ended,
+          // a failure whose report was suppressed (#4120).
+          if (update.state !== 'error' || useSyncStore.getState().state === 'syncing') {
+            store.setState(mapBackendState(update.state))
+          }
           store.setOpsReceived(update.ops_received)
           store.setOpsSent(update.ops_sent)
         }

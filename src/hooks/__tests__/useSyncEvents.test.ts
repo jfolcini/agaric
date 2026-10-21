@@ -266,6 +266,7 @@ function getListenerCallback<T>(eventName: string): (event: { payload: T }) => v
 
 describe('mapBackendState', () => {
   it.each([
+    ['connecting', 'syncing'],
     ['exchanging_heads', 'syncing'],
     ['streaming_ops', 'syncing'],
     ['applying_ops', 'syncing'],
@@ -1157,6 +1158,48 @@ describe('useSyncEvents', () => {
           'error',
           'This device and the other device run different versions of Agaric. Update both to the latest version, then sync again.',
         )
+        unmount()
+      })
+    })
+
+    // #5739 — the device row's Cancel ends the session with an error coded
+    // `cancelled`. The user asked for that; nothing failed.
+    describe('#5739 a user cancel reads as idle', () => {
+      const ended = (code?: 'cancelled') => ({
+        payload: {
+          type: 'error',
+          message: 'Sync cancelled: the peer had not answered the dial',
+          remote_device_id: 'device-42',
+          ...(code === undefined ? {} : { code }),
+        },
+      })
+
+      it('sets the store idle, with no failure toast or announcement', async () => {
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(ended('cancelled'))
+
+        expect(mockSetState).toHaveBeenCalledWith('idle')
+        expect(mockSetState).not.toHaveBeenCalledWith('error', expect.anything())
+        expect(mockedToastError).not.toHaveBeenCalled()
+        expect(mockedAnnounce).not.toHaveBeenCalled()
+        unmount()
+      })
+
+      it('the same text without the code is still a failure', async () => {
+        const { unmount } = renderHook(() => useSyncEvents())
+        await vi.waitFor(() => expect(mockListen).toHaveBeenCalledTimes(3))
+
+        getListenerCallback('sync:error')(ended())
+
+        const { message } = ended().payload
+        expect(mockSetState).toHaveBeenCalledWith('error', message)
+        expect(mockedToastError).toHaveBeenCalledWith(
+          `Sync failed: ${message}`,
+          expect.objectContaining({ id: 'sync-error' }),
+        )
+        expect(mockedAnnounce).toHaveBeenCalledWith('Sync failed')
         unmount()
       })
     })

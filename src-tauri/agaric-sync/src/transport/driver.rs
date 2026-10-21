@@ -94,7 +94,7 @@ use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 
 use agaric_core::error::AppError;
 
-use crate::sync_constants::HANDSHAKE_TIMEOUT;
+use crate::sync_constants::{CANCEL_POLL_INTERVAL, HANDSHAKE_TIMEOUT};
 use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
 use crate::transport::session::{recv_sync_message, send_sync_message};
 
@@ -306,6 +306,31 @@ async fn dispatch_within<T>(
     })?
 }
 
+/// `wait`'s output, or `None` once `cancel` is set, at once if it already is.
+///
+/// For waits on the peer, the dial and each receive, so a cancel does not sit out
+/// their clocks (#5739). `wait` is dropped on a cancel, so it is never a dispatch
+/// (local work, mid-apply), and never a read of a stream that is read again: a
+/// dropped `recv_sync_message` loses the bytes it consumed.
+pub(crate) async fn unless_cancelled<T>(
+    cancel: Option<&AtomicBool>,
+    wait: impl Future<Output = T>,
+) -> Option<T> {
+    let cancelled = async {
+        let Some(cancel) = cancel else {
+            return std::future::pending().await;
+        };
+        while !cancel.load(Ordering::Acquire) {
+            tokio::time::sleep(CANCEL_POLL_INTERVAL).await;
+        }
+    };
+    tokio::select! {
+        biased;
+        () = cancelled => None,
+        done = wait => Some(done),
+    }
+}
+
 /// Drive `orch` until it reaches a terminal state.
 ///
 /// Returns the terminal [`SyncState`] — which may be `Failed`. A caller that needs
@@ -362,30 +387,29 @@ pub async fn run_session(
     }
 
     while !orch.is_terminal() {
-        // Checked before every receive, matching the guard both replaced loops had
-        // (`server.rs:590`, `session_supervisor.rs:1054`, #1605). Without it a
-        // shutdown does not land until the recv clock expires, pinning the responder
-        // permit and the per-peer lock for up to 180 s instead of one recv cycle.
+        // Every receive races the cancel (#1605, #5739): otherwise a cancel waits for
+        // the peer's next frame, pinning the responder permit and the per-peer lock
+        // for up to the 180 s receive clock. A cancelled session never reads this
+        // stream again, so the receive it drops loses nothing.
+        //
         // The daemon's own shared flag, not a wrapper around it. `sync_daemon` keys
         // #2537's cancel-ownership proof on this exact `AtomicBool` and on `SeqCst`
         // specifically ("a release store does not join the SC total order, which would
         // let a racing cancel's buffered `true` become visible after `false`"). A second
         // representation bridged to it would be one more thing to keep in step, and the
         // failure of that bridge would be a cancel that silently does not land.
-        if cancel.is_some_and(|c| c.load(Ordering::Acquire)) {
+        let receive = tokio::time::timeout(limits.recv, recv_sync_message(recv));
+        let Some(received) = unless_cancelled(cancel, receive).await else {
             return Err(AppError::InvalidOperation(
                 "[transport::driver] session cancelled".to_owned(),
             ));
-        }
-
-        let incoming = tokio::time::timeout(limits.recv, recv_sync_message(recv))
-            .await
-            .map_err(|_| {
-                AppError::InvalidOperation(format!(
-                    "[transport::driver] peer sent nothing for {}s",
-                    limits.recv.as_secs()
-                ))
-            })??;
+        };
+        let incoming = received.map_err(|_| {
+            AppError::InvalidOperation(format!(
+                "[transport::driver] peer sent nothing for {}s",
+                limits.recv.as_secs()
+            ))
+        })??;
 
         let reply = dispatch_within(limits.dispatch, orch.handle_message(incoming)).await?;
         spoke_last = false;
@@ -1107,6 +1131,84 @@ mod tests {
         assert!(
             err.to_string().contains("cancelled"),
             "expected the cancellation guard to fire, got: {err}"
+        );
+
+        mute.abort();
+        conn.close(0u32.into(), b"done");
+        listener.close().await;
+        connector.close().await;
+    }
+
+    /// A cancel that arrives while the session waits on a silent peer ends that wait
+    /// (#5739). The flag is clear when the receive starts, so a check made only before
+    /// each receive never sees it and the session sits out the 180 s receive clock.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_cancel_during_a_receive_ends_it_without_waiting_for_the_peer() {
+        let (pool, _dir) = test_pool().await;
+        let host = Arc::new(RecordingApplyHost::new());
+
+        let listener = lan_builder()
+            .alpns(vec![SYNC_ALPN.to_vec()])
+            .bind()
+            .await
+            .expect("listener binds");
+        let listener_addr = listener.addr();
+        let connector = lan_builder().bind().await.expect("connector binds");
+
+        // Reads the opening frame, says so, then never answers: once it has said so the
+        // initiator is past its send and waiting on its first receive.
+        let (read_opening, opening_read) = tokio::sync::oneshot::channel();
+        let mute = tokio::spawn({
+            let listener = listener.clone();
+            async move {
+                let conn = listener
+                    .accept()
+                    .await
+                    .expect("inbound connection")
+                    .await
+                    .expect("handshake completes");
+                let (_send, mut recv) = conn.accept_bi().await.expect("bi-stream");
+                recv_sync_message(&mut recv)
+                    .await
+                    .expect("the initiator's opening frame arrives");
+                read_opening.send(()).expect("the test is waiting");
+                tokio::time::sleep(TEST_TIMEOUT).await;
+            }
+        });
+
+        let conn = connector
+            .connect(listener_addr, SYNC_ALPN)
+            .await
+            .expect("connects");
+        let (mut send, mut recv) = conn.open_bi().await.expect("bi-stream");
+        let mut orch = orchestrator(&pool, "device-initiator", "device-responder", &host);
+        let cancel = AtomicBool::new(false);
+
+        let (outcome, ()) = tokio::time::timeout(TEST_TIMEOUT, async {
+            tokio::join!(
+                run_session(
+                    Role::Initiator,
+                    &mut orch,
+                    &mut send,
+                    &mut recv,
+                    Some(&cancel),
+                    SessionLimits::default(),
+                ),
+                async {
+                    opening_read
+                        .await
+                        .expect("the peer reads the opening frame");
+                    cancel.store(true, Ordering::SeqCst);
+                },
+            )
+        })
+        .await
+        .expect("a cancel must end a receive the peer never answers");
+        let err = outcome.expect_err("a cancelled session must fail rather than proceed");
+
+        assert!(
+            err.to_string().contains("session cancelled"),
+            "expected the cancel to end the receive, got: {err}"
         );
 
         mute.abort();

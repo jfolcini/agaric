@@ -282,9 +282,9 @@ impl Rejection {
 ///
 /// #1605: `cancel` is the daemon's shared cancellation `AtomicBool` — the SAME flag the
 /// initiator path and the shutdown path observe. A shutdown or user-cancel that flips it
-/// aborts this session within one recv cycle and releases the per-peer lock and the
-/// concurrency permit, rather than letting a slow initiator pin both for up to
-/// `RECV_TIMEOUT` (180 s) per recv.
+/// aborts this session at its next receive of the message loop (#5739: each races the
+/// flag) and releases the per-peer lock and the concurrency permit, rather than letting a
+/// slow initiator pin both for up to `RECV_TIMEOUT` per recv.
 ///
 /// # Errors
 /// If the session loop, a sub-flow, or the shutdown fails. A *rejection* is not an
@@ -1217,6 +1217,7 @@ async fn handle_incoming_sync_inner(
     // early-exit paths (#637).
     let mut cancel_guard = super::session_supervisor::CancelGuard {
         cancel: &cancel,
+        scheduler: &scheduler,
         owns: false,
     };
     // #2537: live-session marker for `SyncScheduler::request_cancel`; armed together
