@@ -29,7 +29,7 @@ import { blockRefPickerPluginKey } from '@/editor/extensions/block-ref-picker'
 import { emojiPickerPluginKey } from '@/editor/extensions/emoji-picker'
 import { propertyPickerPluginKey } from '@/editor/extensions/property-picker'
 import { queryPickerPluginKey } from '@/editor/extensions/query-picker'
-import { slashCommandPluginKey } from '@/editor/extensions/slash-command'
+import { openSlashPicker, slashCommandPluginKey } from '@/editor/extensions/slash-command'
 import { hiddenBlocks, isCollapsed } from '@/editor/page-mode/page-collapse'
 import {
   depthOf,
@@ -301,15 +301,23 @@ export const PageKeys = Extension.create({
     }
   },
   addProseMirrorPlugins() {
+    const { editor } = this
     return [
       new Plugin({
         props: {
           // The rebindable shortcuts, which still indent where Tab is left to move focus.
           handleKeyDown(view, event) {
+            if (pickerOpen(view.state)) return false
+            // Block mode's chord for Turn into: the slash picker on `/turn`, in the caret's block.
+            if (matchesShortcutBinding(event, 'turnIntoBlock')) {
+              event.preventDefault()
+              openSlashPicker(editor, 'turn')
+              return true
+            }
             let command: Command | null = null
             if (matchesShortcutBinding(event, 'indentBlock')) command = indentBlocks
             else if (matchesShortcutBinding(event, 'dedentBlock')) command = outdentBlocks
-            if (command === null || pickerOpen(view.state)) return false
+            if (command === null) return false
             return command(view.state, view.dispatch, view)
           },
         },

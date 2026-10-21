@@ -27,6 +27,7 @@ import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
+import { addRecentCommand, getRecentCommands, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
@@ -186,9 +187,8 @@ describe('PageBlockMenu: opening', () => {
     expect(names.join('|')).toContain(t('contextMenu.copyBlockRef'))
     expect(names.join('|')).toContain(t('contextMenu.history'))
     expect(names.join('|')).toContain(t('contextMenu.delete'))
-    for (const gone of [t('contextMenu.turnInto'), t('contextMenu.zoomIn')]) {
-      expect(names.join('|')).not.toContain(gone)
-    }
+    expect(names.join('|')).toContain(t('contextMenu.turnInto'))
+    expect(names.join('|')).not.toContain(t('contextMenu.zoomIn'))
     expect(await axe(menu)).toHaveNoViolations()
   })
 
@@ -556,6 +556,189 @@ describe('PageBlockMenu: the commands’ rows', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalled())
     expect(backendBlock(view.ids[0] as string).todo_state).toBeNull()
     expect(backendTree(view.pageId)).toEqual([[view.ids[0], 0, 'a']])
+  })
+})
+
+describe('PageBlockMenu: Turn into', () => {
+  const turnInto = (type: string) => t(`contextMenu.turnIntoType.${type}`)
+
+  it('turns the block under the pointer into a heading in the document, and the save writes it', async () => {
+    const view = await open([
+      [0, 'first'],
+      [0, 'second'],
+    ])
+    await rightClick(view, view.ids[1] as string)
+
+    fireEvent.click(row(t('contextMenu.turnInto')))
+    await choose(view, turnInto('h1'))
+
+    await waitFor(() =>
+      expect(backendTree(view.pageId)).toEqual([
+        [view.ids[0], 0, 'first'],
+        [view.ids[1], 0, '# second'],
+      ]),
+    )
+    expect(view.container.querySelector(`[data-page-block-id="${view.ids[1]}"] h1`)).not.toBeNull()
+  })
+
+  it('leaves the slash menu’s recent commands alone, as block mode’s menu does', async () => {
+    addRecentCommand('todo', RECENT_SLASH_PREFIX)
+    const view = await open([[0, 'first']])
+    await rightClick(view, view.ids[0] as string)
+
+    fireEvent.click(row(t('contextMenu.turnInto')))
+    await choose(view, turnInto('h1'))
+
+    await waitFor(() => expect(backendBlock(view.ids[0] as string).content).toBe('# first'))
+    expect(getRecentCommands(RECENT_SLASH_PREFIX).map((c) => c.id)).toEqual(['todo'])
+  })
+
+  it('marks the block’s current type', async () => {
+    const view = await open([[0, '# first']])
+    const heading = view.container.querySelector(`[data-page-block-id="${view.ids[0]}"] h1`)
+    await rightClick(view, view.ids[0] as string, heading as Element)
+    fireEvent.click(row(t('contextMenu.turnInto')))
+
+    expect(row(turnInto('h1'))).toHaveAttribute('aria-current', 'true')
+    expect(row(turnInto('h2'))).not.toHaveAttribute('aria-current')
+  })
+
+  it('turns a block into a bulleted list, which writes its list style, and into a heading, which clears it', async () => {
+    const view = await open([[0, 'first']])
+    const id = view.ids[0] as string
+    const listStyle = () =>
+      (dispatch('get_properties', { blockId: id }) as Array<{ key: string; value_text: string }>)
+        .filter((p) => p.key === 'listStyle')
+        .map((p) => p.value_text)
+    await rightClick(view, id)
+    fireEvent.click(row(t('contextMenu.turnInto')))
+    await choose(view, turnInto('bulletList'))
+    await waitFor(() => expect(listStyle()).toEqual(['bullet']))
+
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    await rightClick(view, id)
+    fireEvent.click(row(t('contextMenu.turnInto')))
+    await choose(view, turnInto('h1'))
+    await waitFor(() => expect(listStyle()).toEqual([]))
+  })
+
+  it('keeps what was typed in the block, and in another, before it converts', async () => {
+    const view = await open([
+      [0, 'a'],
+      [0, 'b'],
+    ])
+    const typeAt = (index: number, text: string) => {
+      let start = 0
+      for (let i = 0; i < index; i += 1) start += view.editor.state.doc.child(i).nodeSize
+      act(() => {
+        view.editor
+          .chain()
+          .setTextSelection(start + 1 + 1)
+          .insertContent(text)
+          .run()
+      })
+    }
+    typeAt(1, '!')
+    typeAt(0, '?')
+    await rightClick(view, view.ids[1] as string)
+
+    fireEvent.click(row(t('contextMenu.turnInto')))
+    await choose(view, turnInto('h2'))
+
+    await waitFor(() =>
+      expect(backendTree(view.pageId)).toEqual([
+        [view.ids[0], 0, '?a'],
+        [view.ids[1], 0, '## !b'],
+      ]),
+    )
+  })
+
+  it('waits for the save that creates a new block before it writes the block’s list style', async () => {
+    const view = await open([[0, 'a']])
+    act(() => {
+      view.editor.commands.setTextSelection(3)
+      view.editor.view.focus()
+    })
+    act(() => {
+      view.editor.view.someProp('handleKeyDown', (f) =>
+        f(view.editor.view, new KeyboardEvent('keydown', { key: 'Enter' })),
+      )
+    })
+    const fresh = view.editor.state.doc.child(1).attrs['blockId'] as string
+    // As the backend does: a property of a block that does not exist yet is refused.
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'set_property' || cmd === 'delete_property') {
+        dispatch('get_block', { blockId: (args as { blockId: string }).blockId })
+      }
+      return structuredClone(dispatch(cmd, args))
+    })
+    await rightClick(view, fresh)
+
+    fireEvent.click(row(t('contextMenu.turnInto')))
+    await choose(view, turnInto('bulletList'))
+
+    await waitFor(() =>
+      expect(
+        (dispatch('get_properties', { blockId: fresh }) as Array<{ key: string }>).map(
+          (p) => p.key,
+        ),
+      ).toEqual(['listStyle']),
+    )
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('converts a collapsed block’s own text and leaves the blocks it hides alone', async () => {
+    const view = await open([
+      [0, 'parent'],
+      [1, 'child'],
+      [0, 'leaf'],
+    ])
+    await rightClick(view, view.ids[0] as string)
+    await choose(view, t('contextMenu.collapse'))
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+
+    await rightClick(view, view.ids[0] as string)
+    fireEvent.click(row(t('contextMenu.turnInto')))
+    await choose(view, turnInto('h1'))
+
+    await waitFor(() =>
+      expect(backendTree(view.pageId)).toEqual([
+        [view.ids[0], 0, '# parent'],
+        [view.ids[1], 1, 'child'],
+        [view.ids[2], 0, 'leaf'],
+      ]),
+    )
+    expect(readPreference(PREFERENCES.blockCollapse, view.pageId)).toEqual([view.ids[0]])
+  })
+
+  it('converts only the block under the pointer when a selection across blocks is open', async () => {
+    const view = await open([
+      [0, 'a'],
+      [0, 'b'],
+      [0, 'c'],
+    ])
+    selectBlocks(view.editor, 0, 1)
+    vi.spyOn(view.editor.view, 'posAtCoords').mockReturnValue({ pos: 3, inside: 1 })
+    await rightClick(view, view.ids[0] as string)
+
+    fireEvent.click(row(t('contextMenu.turnInto')))
+    await choose(view, turnInto('h1'))
+
+    await waitFor(() =>
+      expect(backendTree(view.pageId).map((r) => r[2])).toEqual(['# a', 'b', 'c']),
+    )
+  })
+
+  it('turns a block into the callout variant picked', async () => {
+    const view = await open([[0, 'first']])
+    await rightClick(view, view.ids[0] as string)
+    fireEvent.click(row(t('contextMenu.turnInto')))
+    fireEvent.click(row(turnInto('callout')))
+    await choose(view, t('callout.warning'))
+
+    await waitFor(() =>
+      expect(backendBlock(view.ids[0] as string).content).toBe('> [!WARNING] first'),
+    )
   })
 })
 

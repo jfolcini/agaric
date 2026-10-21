@@ -103,7 +103,10 @@ function blockAt(editor: Editor, id: string): { pos: number; node: PMNode } | nu
 }
 
 /** Block `id`'s text in the document: read, and replaced with the caret at its end. */
-function blockText(editor: Editor, id: string): NonNullable<SlashCommandContext['blockText']> {
+export function blockText(
+  editor: Editor,
+  id: string,
+): NonNullable<SlashCommandContext['blockText']> {
   return {
     read: () => {
       const at = blockAt(editor, id)

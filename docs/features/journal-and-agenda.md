@@ -15,6 +15,8 @@ stepper and date display while keeping the calendar picker available:
 | **Stream** | One continuous column, today pinned at the top and older days loading in as you scroll down. | Toggle in the Journal header. |
 | **Agenda** | Flat task list across a date range, with filters and grouping. | Toggle in the Journal header. |
 
+The Daily, Weekly and Stream views edit in blocks even with Settings › Editor › *Edit pages as* set to Page; page mode is for a page opened on its own (see [editor.md](editor.md#page-mode)).
+
 Per-space: every space has its own date cursor and mode. Switching spaces restores wherever you left off.
 
 A new day is born with the space's journal template, whichever way it is created — the journal, Quick Capture, a date link or picker, or an agent (see [spaces.md](spaces.md)). An existing day is never filled in after the fact.

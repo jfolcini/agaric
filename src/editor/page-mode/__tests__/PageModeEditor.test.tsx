@@ -4063,6 +4063,36 @@ describe('PageModeEditor slash menu and pickers (#5743)', () => {
     expect(callsTo('set_todo_state')).toBe(1)
   })
 
+  it('the Turn into chord opens the Turn into picker on the caret’s block, which a pick converts, and Escape leaves the text alone', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const chord = { ctrlKey: true, shiftKey: true }
+    act(() => {
+      editor.view.focus()
+      editor.commands.setTextSelection(at(editor, 0, 2))
+    })
+
+    expect(press(editor, 'L', chord)).toBe(true)
+    expect(await screen.findByRole('option', { name: /TURN INTO Heading 1/ })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /TURN INTO Bullet list/ })).toBeInTheDocument()
+    expect(press(editor, 'Escape')).toBe(true)
+    await waitFor(() => {
+      expect(screen.queryByRole('listbox')).toBeNull()
+    })
+    expect(docTexts(editor)).toEqual(['first', 'second'])
+
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 1, 2))
+    })
+    expect(press(editor, 'L', chord)).toBe(true)
+    await pick(/TURN INTO Heading 1/)
+    await waitFor(() => {
+      expect(backendText(ids[1] as string)).toBe('# second')
+    })
+    expect(backendText(ids[0] as string)).toBe('first')
+  })
+
   it('a task command writes the caret’s block, a new empty one too, and its checkbox shows', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
     const { container, handle } = renderPageMode(pageId)

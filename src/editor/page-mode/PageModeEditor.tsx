@@ -358,6 +358,8 @@ function PageModeDocument({
       attachPicked: (id: string, files: File[]) => void
       /** The block menu's History, once the block is saved. */
       openHistory: (id: string) => void
+      /** The block menu's Turn into: a slash command, run on the block once it is saved. */
+      turnInto: (id: string, item: PickerItem) => void
     }
   >({
     cycle: () => {},
@@ -376,6 +378,7 @@ function PageModeDocument({
     command: () => {},
     attachPicked: () => {},
     openHistory: () => {},
+    turnInto: () => {},
   })
   const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)
   const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
@@ -695,6 +698,16 @@ function PageModeDocument({
         if (!editor.isDestroyed) await bringIn(await read())
       })
     }
+    const runAfterSave = (id: string, item: PickerItem): void => {
+      void afterSave(id, async () => {
+        running = true
+        try {
+          await runCommand(id, item)
+        } finally {
+          running = false
+        }
+      }).then(readAgain)
+    }
     actions.current = {
       cycle: (id) => afterSave(id, () => cycleTask(id)),
       cyclePriority: (id) => afterSave(id, () => cyclePriority(id)),
@@ -781,15 +794,9 @@ function PageModeDocument({
           void runCommand(id, item)
           return
         }
-        void afterSave(id, async () => {
-          running = true
-          try {
-            await runCommand(id, item)
-          } finally {
-            running = false
-          }
-        }).then(readAgain)
+        runAfterSave(id, item)
       },
+      turnInto: runAfterSave,
     }
 
     const onTransaction = ({

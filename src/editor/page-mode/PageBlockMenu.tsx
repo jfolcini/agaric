@@ -10,9 +10,9 @@
  * A right click inside text selected within one block keeps the webview's own
  * menu, so Copy and Paste stay one click away. On a selection across blocks the
  * block menu takes over, in its bulk form, with Copy selection as Markdown.
- * Left out: Turn into (a document edit page mode has yet to get, #5743), Zoom
- * in (page mode has none), and the touch gesture, which keeps the pinned
- * toolbar.
+ * Turn into is the slash menu's (`page-slash-commands.tsx`), run on the menu's
+ * block. Left out: Zoom in (page mode has none), and the touch gesture, which
+ * keeps the pinned toolbar.
  */
 
 import type { Editor } from '@tiptap/core'
@@ -40,7 +40,11 @@ import {
 import { type Fold, foldOf, toggleFold } from '@/editor/page-mode/page-collapse'
 import { GRIP } from '@/editor/page-mode/page-gutter'
 import { indentIds, outdentIds, treeRows } from '@/editor/page-mode/page-keys'
+import { blockText } from '@/editor/page-mode/page-slash-commands'
+import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
+import { type BlockTypeToken, detectBlockType } from '@/lib/block-type-convert'
+import { CALLOUT_COMMANDS, TURN_INTO_COMMANDS } from '@/lib/slash-commands'
 import { computeSelectionRoots, type FlatBlock } from '@/lib/tree-utils'
 import type { PageBlockState } from '@/stores/page-blocks'
 
@@ -50,6 +54,8 @@ export interface PageBlockMenuActions {
   cyclePriority: (id: string) => void
   openPropertyDrawer: (id: string) => void
   openHistory: (id: string) => void
+  /** Run slash item `turn-*` or `callout-*` on a block, once it is saved. */
+  turnInto: (id: string, item: PickerItem) => void
 }
 
 export interface PageBlockMenuProps {
@@ -70,6 +76,8 @@ interface OpenMenu {
   selectedIds: string[]
   /** The block's row as the store held it once saved; none while it is not saved yet. */
   row: FlatBlock | undefined
+  /** The block's type as the document holds it, which the store lags while it is typed in. */
+  blockType: BlockTypeToken
   fold: Fold | null
   /** The gutter control it opened from with the keyboard, which takes the focus back; else the editor. */
   trigger: HTMLElement | null
@@ -115,10 +123,14 @@ export function PageBlockMenu({
   useEffect(() => {
     if (editor === null || editor.isDestroyed) return
     const { view } = editor
-    const show = (menu: Omit<OpenMenu, 'row' | 'fold' | 'trigger'>, trigger?: Element): void => {
+    const show = (
+      menu: Omit<OpenMenu, 'row' | 'blockType' | 'fold' | 'trigger'>,
+      trigger?: Element,
+    ): void => {
       setOpen({
         ...menu,
         row: pageStore.getState().blocksById.get(menu.blockId),
+        blockType: detectBlockType(blockText(editor, menu.blockId).read()),
         fold: foldOf(view.state, menu.blockId),
         trigger:
           trigger instanceof HTMLElement && trigger === document.activeElement ? trigger : null,
@@ -233,6 +245,7 @@ export function PageBlockMenu({
       selectedBlockIds={open.selectedIds}
       hasChildren={open.fold !== null}
       isCollapsed={open.fold === 'collapsed'}
+      activeBlockType={open.blockType}
       todoState={open.row?.todo_state}
       priority={open.row?.priority}
       linkUrl={open.linkUrl}
@@ -275,6 +288,11 @@ function menuActions(
     onDelete: once('delete', () => run(deleteBlocks(roots))),
     onDuplicate: (id) => run(duplicateBlock(id)),
     onToggleCollapse: (id) => run(toggleFold(id)),
+    onTurnInto: (id, blockType, calloutType) => {
+      const itemId = calloutType === undefined ? `turn-${blockType}` : `callout-${calloutType}`
+      const item = [...TURN_INTO_COMMANDS, ...CALLOUT_COMMANDS].find((c) => c.id === itemId)
+      if (item !== undefined) actions.current.turnInto(id, item)
+    },
     ...(mergeable ? { onMerge: (id: string) => run(mergeBlock(id)) } : {}),
     ...(onOpenLinkInNewTab === undefined ? {} : { onOpenLinkInNewTab }),
   }

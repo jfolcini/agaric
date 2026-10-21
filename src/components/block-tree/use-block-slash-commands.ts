@@ -46,7 +46,7 @@ import { useSlashCommandTemplate } from '@/components/block-tree/use-block-slash
 import type { PickerItem } from '@/editor/SuggestionList'
 import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
 import { useListStyleSyntax } from '@/hooks/useListStyleSyntax'
-import { searchSlashCommands } from '@/lib/slash-commands'
+import { SLASH_COMMANDS, searchSlashCommands } from '@/lib/slash-commands'
 import { addRecentCommand, getRecentCommands, RECENT_SLASH_PREFIX } from '@/stores/recent-commands'
 
 export type {
@@ -84,17 +84,19 @@ export function mergeSlashHandlerTables(
 /**
  * Run the picked command on `ctx.blockId`, and record it in the slash menu's
  * MRU (#1105, its own namespace) so an empty `/` can show a "Recent" band.
- * Recorded before dispatch; the band join (in `searchSlashCommands`) skips ids
- * absent from the base catalog, so recording expanded sub-option ids (e.g.
- * `priority-high`) is harmless. Block mode and page mode (#5743) both run
- * commands through here.
+ * Only base commands are recorded: the band shows nothing else (expanded
+ * sub-options such as `turn-*` and `priority-*` are reached by typing), and a
+ * recorded sub-option would still take one of the five slots from a real
+ * recent. Block mode and page mode (#5743) both run commands through here.
  */
 export async function runSlashCommand(
   tables: SlashHandlerTables,
   ctx: SlashCommandContext,
   item: PickerItem,
 ): Promise<void> {
-  addRecentCommand(item.id, RECENT_SLASH_PREFIX)
+  if (SLASH_COMMANDS.some((command) => command.id === item.id)) {
+    addRecentCommand(item.id, RECENT_SLASH_PREFIX)
+  }
   const exact = tables.exact[item.id]
   if (exact) {
     await exact(ctx, item)
