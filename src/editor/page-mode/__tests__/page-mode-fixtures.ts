@@ -51,6 +51,7 @@ export function openPage(
       resolveTagName: (id) => `#${id}`,
       resolveBlockTitle: (id) => id,
       resolveBlockStatus: () => 'active',
+      resolveTagStatus: () => 'active',
       searchTags: noPickerItems,
       searchPages: noPickerItems,
       searchBlockRefs: noPickerItems,

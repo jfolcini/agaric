@@ -609,6 +609,7 @@ export function BlockTree({
     resolveBlockTitle: resolve.resolveBlockTitle,
     resolveBlockStatus: resolve.resolveBlockStatus,
     resolveTagName: resolve.resolveTagName,
+    resolveTagStatus: resolve.resolveTagStatus,
     onNavigate: (id: string) => handleNavigateRef.current(id),
     onTagClick,
     searchTags: resolve.searchTags,
