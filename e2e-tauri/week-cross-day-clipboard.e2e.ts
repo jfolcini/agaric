@@ -34,11 +34,21 @@ function rowIn(day: string, marker: string) {
 }
 
 /**
- * How many rows of day `day` hold each marker. The day is scrolled into view
- * first: the week mounts a day's tree, and a tree its rows, only on screen.
+ * Scroll day `day` to the top of the journal's scroll area: the week mounts a
+ * day's tree, and a tree its rows, only on screen. The platform's
+ * `scrollIntoView`, not WebdriverIO's, which scrolls by the day's offset from
+ * the window's top and so parks its first row under the view header, where
+ * WebKit will neither measure nor click it. A row parked there can stay there:
+ * when a day mounting its tree shrinks the week, WebKitGTK can leave the scroll
+ * area scrolled past its end, and no `scrollIntoView` moves it until it settles.
  */
+async function scrollToDay(day: string): Promise<void> {
+  await browser.execute((id: string) => document.getElementById(id)?.scrollIntoView(), day)
+}
+
+/** How many rows of day `day` hold each marker. */
 async function countsIn(day: string): Promise<[number, number]> {
-  await $(`#${day}`).scrollIntoView()
+  await scrollToDay(day)
   const texts = await browser.execute(
     (id: string) =>
       Array.from(
@@ -85,12 +95,9 @@ async function clearSelection(): Promise<void> {
  */
 async function selectAcrossDays(...rows: [string, string][]): Promise<void> {
   for (const [day, marker] of rows) {
-    await $(`#${day}`).scrollIntoView()
+    await scrollToDay(day)
     const row = rowIn(day, marker)
     await row.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-    // scrollIntoView aligns to the window's top, under the view header, where
-    // a click lands on the header instead of the row.
-    await row.scrollIntoView({ block: 'center' })
     await ctrlClick(row)
   }
   await browser.waitUntil(
@@ -125,13 +132,12 @@ describe('Agaric real-backend week-view clipboard across two days @editor @journ
     })
     expect(today).not.toBe('')
     expect(empty).not.toBe('')
-    await $(`#${today}`).scrollIntoView()
+    await scrollToDay(today)
     await rowIn(today, TODAY).waitForDisplayed({ timeout: ACTION_TIMEOUT })
 
     // The empty day's "Add block" creates its page and seeds its first block.
-    const otherDay = $(`#${empty}`)
-    await otherDay.scrollIntoView()
-    await otherDay.$('button[aria-label="Add block"]').click()
+    await scrollToDay(empty)
+    await $(`#${empty}`).$('button[aria-label="Add block"]').click()
     await browser.waitUntil(
       async () => (await $$(`#${empty} [data-testid="sortable-block"]`).getElements()).length === 1,
       { timeout: ACTION_TIMEOUT, timeoutMsg: `Add block did not seed one block row in ${empty}` },

@@ -1,0 +1,10 @@
+# Session 2832 — the week-view clipboard spec scrolls a day below the header, not under it
+
+`e2e-tauri/week-cross-day-clipboard.e2e.ts` failed once in CI on #6023 with "element did not become interactable" on a week-view row, and passed on re-run. The fault is in the spec.
+
+- **Cause.** WebdriverIO's `scrollIntoView()` aligns an element to the window's top, but the app's scroll area starts 48 px lower, under the view header, so the spec parked each day's first row across the header's edge. Usually harmless; but after the Tags→Journal round trip a day can still be a 200 px lazy placeholder when scrolled to, and when its tree mounts the week shrinks. WebKitGTK then sometimes leaves the scroll area scrolled past its end, where every `Element.scrollIntoView` does nothing, so the row stays under the header. WebKit's WebDriver reports an element whose in-view centre does not hit-test to it as not interactable, which is the error `ctrlClick`'s Get Element Rect returned, and the middleware's 20 s `waitForClickable` could not scroll it free. The CI screenshot shows only the row's descenders below the header and blank space past Sunday.
+- **Fix.** The spec scrolls with the platform's `scrollIntoView` through `browser.execute` (`scrollToDay`), which aligns the day to the top of the scroll area, below the header; the `block: 'center'` patch that undid the window-top parking is gone. `e2e-tauri/AGENTS.md` says to scroll anything a spec will click that way.
+
+Reproduced against WebKitGTK 2.52.6 (MiniBrowser and WebKitWebDriver under Xvfb) on the mock with 400 ms of random IPC latency: the old spec failed 3 of 10 runs with CI's exact signature, the fixed one passed 18 of 18, 9 of 10 at 600 ms (the one failure, a typed marker lost under extreme reordering, happens with the old spec too) and 8 of 8 on seeded data. Sibling specs that scroll in the week view only read the DOM afterwards, so they keep WebdriverIO's scroll. The real-backend run is CI's.
+
+Suites run: `typecheck:e2e-tauri`, `vitest run e2e-tauri`, lint, oxfmt, prek on the changed files.
