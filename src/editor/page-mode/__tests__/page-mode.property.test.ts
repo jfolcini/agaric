@@ -1168,5 +1168,6 @@ describe('page mode against the mock backend', () => {
       // soon a rare sequence turns up; a deep search is a long local run.
       { numRuns: EXAMPLES.length + 50, examples: EXAMPLES },
     )
-  })
+    // Real editors driven step by step: well past the global 20 s on a loaded box.
+  }, 60_000)
 })

@@ -509,6 +509,13 @@ describe('custom extension keyboard shortcuts', () => {
     expect(editor.extensionManager.extensions.some((e) => e.name === 'codeBlock')).toBe(true)
   })
 
+  // Plugin keys are `<name>$` plus a process-wide counter, so count them rather than name them.
+  it('CodeBlockWithShortcut installs the lowlight plugin exactly once', () => {
+    editor = createEditor([CodeBlockWithShortcut.configure({ lowlight: createLowlight(common) })])
+    const keys = editor.state.plugins.map((p) => (p as unknown as { key: string }).key)
+    expect(keys.filter((k) => k.startsWith('lowlight'))).toHaveLength(1)
+  })
+
   it('CodeBlockWithShortcut renders a plain <pre><code> node view (no React wrapper)', () => {
     editor = createCodeBlockEditor()
     const pre = editor.view.dom.querySelector('pre')
