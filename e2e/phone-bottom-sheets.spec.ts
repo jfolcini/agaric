@@ -3,9 +3,10 @@
  * properties panel, History, Outline, Keyboard shortcuts, New page and the
  * block date picker are bottom sheets, and the block long-press menu and the
  * page ⋮ menu are bottom-sheet lists. Each must sit on the bottom edge and span
- * the width. Toasts sit at the bottom too, clear of the header, the floating
- * capture button, the soft keyboard and the field being typed in. The search
- * sheet keeps one close button and a 44 px drag handle (#5930).
+ * the width, and a tall one stops at the header. Toasts sit at the bottom too,
+ * clear of the header, the floating capture button, the soft keyboard and the
+ * field being typed in. The search sheet keeps one close button and a 44 px
+ * drag handle (#5930).
  *
  * A sheet's bottom is the viewport's: `SheetContent` anchors at `bottom-0` and
  * Chromium reports no safe-area inset.
@@ -134,6 +135,24 @@ test.describe('Phone overlays are bottom sheets (#5931) @mobile @editor @pages @
     await page.keyboard.type('?')
     await expect(page.getByTestId('shortcuts-table')).toBeVisible()
     await expectBottomSheet(page, activeSheet(page))
+  })
+
+  // Keyboard shortcuts overflow the screen, so the sheet runs up to its cap.
+  test('a tall sheet docks under the header without covering its contents', async ({ page }) => {
+    await page.keyboard.type('?')
+    await expect(page.getByTestId('shortcuts-table')).toBeVisible()
+    const edges = await activeSheet(page).evaluate((sheet) => {
+      const header = document.querySelector('header')
+      if (!header) throw new Error('no app header')
+      const bottom = header.getBoundingClientRect().bottom
+      return {
+        sheetTop: sheet.getBoundingClientRect().top,
+        headerContentBottom: bottom - Number.parseFloat(getComputedStyle(header).borderBottomWidth),
+        headerBottom: bottom,
+      }
+    })
+    expect(edges.sheetTop).toBeGreaterThanOrEqual(edges.headerContentBottom)
+    expect(edges.sheetTop).toBeLessThanOrEqual(edges.headerBottom)
   })
 
   test('New page opens as a bottom sheet', async ({ page }) => {

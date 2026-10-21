@@ -10,7 +10,10 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80',
+        // A light primary at half opacity on a dark ground is a muddy grey slab;
+        // dark themes recede to the muted surface instead.
+        default:
+          'bg-primary text-primary-foreground hover:bg-primary/90 active:bg-primary/80 dark:disabled:bg-muted dark:disabled:text-muted-foreground dark:disabled:opacity-100',
         destructive:
           'bg-destructive text-destructive-foreground hover:bg-destructive/90 active:bg-destructive/80 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40',
         outline:

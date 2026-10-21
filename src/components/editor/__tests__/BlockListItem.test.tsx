@@ -176,7 +176,9 @@ describe('BlockListItem', () => {
 
     await user.click(screen.getByRole('button', { name: 'Edit date' }))
 
-    expect(screen.getByTestId('due-date-sheet')).toHaveClass('max-h-[calc(100dvh-2rem)]')
+    expect(screen.getByTestId('due-date-sheet')).toHaveClass(
+      'max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]',
+    )
     expect(screen.getByTestId('due-date-sheet')).not.toHaveClass('max-h-[80vh]')
   })
 

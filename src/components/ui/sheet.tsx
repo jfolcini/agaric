@@ -4,7 +4,7 @@ import { Dialog as SheetPrimitive } from 'radix-ui'
 import type * as React from 'react'
 
 import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-button'
-import { DIALOG_BODY_VIEWPORT_CLASS } from '@/components/ui/dialog-shared'
+import { DIALOG_BODY_VIEWPORT_CLASS, OVERLAY_SCRIM_CLASS } from '@/components/ui/dialog-shared'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useSoftKeyboardInset } from '@/hooks/useSoftKeyboardInset'
 import { cn } from '@/lib/utils'
@@ -49,10 +49,7 @@ const SheetOverlay = ({
   <SheetPrimitive.Overlay
     ref={ref}
     data-slot="sheet-overlay"
-    className={cn(
-      'fixed inset-0 z-50 bg-black/20 dark:bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0',
-      className,
-    )}
+    className={cn(OVERLAY_SCRIM_CLASS, className)}
     {...props}
   />
 )
@@ -91,8 +88,10 @@ const SheetContent = ({
             'inset-y-0 left-0 h-full w-3/4 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm',
           side === 'top' &&
             'inset-x-0 top-0 h-auto max-h-[calc(100dvh-2rem)] border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
+          // A tall bottom sheet stops at the phone header's edge (`min-h-14` in
+          // App.tsx) rather than slicing through the view title.
           side === 'bottom' &&
-            'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-2rem)] border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
+            'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-3.5rem-var(--safe-area-top))] border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
           className,
         )}
         // While the soft keyboard is up, lift the bottom anchor above it

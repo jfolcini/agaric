@@ -137,7 +137,7 @@ describe('#3336 mobile command palette shell', () => {
     // The mobile shell must inherit the sheet's height cap rather than the
     // desktop-only `max-h-[80dvh]`, so a tall result list gets a bounded
     // scroll region instead of pushing the input off-screen.
-    expect(palette).toHaveClass('max-h-[calc(100dvh-2rem)]')
+    expect(palette).toHaveClass('max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]')
     // Asserted one class per expectation: `.not.toHaveClass(a, b, c)` only
     // requires that *some* member is absent, so a single grouped negative
     // would still pass with the right-drawer anchor present.

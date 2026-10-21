@@ -25,6 +25,8 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet'
 
+const BOTTOM_CAP = 'max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]'
+
 // ---------------------------------------------------------------------------
 // displayName
 // ---------------------------------------------------------------------------
@@ -121,7 +123,7 @@ describe('Sheet a11y', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1)
 
     // The shell contract still holds with content and focus inside it.
-    expect(screen.getByRole('dialog')).toHaveClass('max-h-[calc(100dvh-2rem)]')
+    expect(screen.getByRole('dialog')).toHaveClass(BOTTOM_CAP)
     expect(input.closest('[data-slot="scroll-area-viewport"]')).toHaveClass('[&>div]:!block')
 
     const results = await axe(baseElement, { rules: { region: { enabled: false } } })
@@ -148,25 +150,25 @@ describe('SheetContent base classes', () => {
     expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-4', 'sm:p-6')
   })
 
-  it.each(['top', 'bottom'] as const)(
-    '%s sheets use the exact dynamic viewport height cap',
-    (side) => {
-      render(
-        <Sheet open>
-          <SheetContent side={side} aria-describedby={undefined}>
-            <SheetHeader>
-              <SheetTitle>{side} Sheet</SheetTitle>
-            </SheetHeader>
-          </SheetContent>
-        </Sheet>,
-      )
-      // The cap must live *in the primitive*, so an edge-anchored sheet whose
-      // content exceeds the viewport bounds itself instead of pushing its
-      // header off-screen under `overflow-hidden`. Exact token, and `dvh` —
-      // `vh` measures against the tallest mobile-chrome state (docs/UX.md).
-      expect(screen.getByRole('dialog')).toHaveClass('max-h-[calc(100dvh-2rem)]')
-    },
-  )
+  it.each([
+    ['top', 'max-h-[calc(100dvh-2rem)]'],
+    ['bottom', BOTTOM_CAP],
+  ] as const)('%s sheets use the exact dynamic viewport height cap', (side, cap) => {
+    render(
+      <Sheet open>
+        <SheetContent side={side} aria-describedby={undefined}>
+          <SheetHeader>
+            <SheetTitle>{side} Sheet</SheetTitle>
+          </SheetHeader>
+        </SheetContent>
+      </Sheet>,
+    )
+    // The cap must live *in the primitive*, so an edge-anchored sheet whose
+    // content exceeds the viewport bounds itself instead of pushing its
+    // header off-screen under `overflow-hidden`. Exact token, and `dvh` —
+    // `vh` measures against the tallest mobile-chrome state (docs/UX.md).
+    expect(screen.getByRole('dialog')).toHaveClass(cap)
+  })
 
   it('a caller className still wins over the primitive cap (deliberate overrides)', () => {
     render(
@@ -180,7 +182,7 @@ describe('SheetContent base classes', () => {
     )
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveClass('max-h-[90dvh]')
-    expect(dialog).not.toHaveClass('max-h-[calc(100dvh-2rem)]')
+    expect(dialog).not.toHaveClass(BOTTOM_CAP)
   })
 
   it.each(['top', 'right', 'bottom', 'left'] as const)('%s sheets have square corners', (side) => {
@@ -214,6 +216,7 @@ describe('SheetContent base classes', () => {
       const dialog = screen.getByRole('dialog')
       expect(dialog).toHaveClass('h-full')
       expect(dialog).not.toHaveClass('max-h-[calc(100dvh-2rem)]')
+      expect(dialog).not.toHaveClass(BOTTOM_CAP)
     },
   )
 })
@@ -382,7 +385,7 @@ describe('SheetContent soft-keyboard avoidance (#760)', () => {
     const dialog = renderBottomSheet()
     expect(dialog.style.bottom).toBe('300px')
     expect(dialog.style.maxHeight).toBe('calc(100% - 300px)')
-    expect(dialog).toHaveClass('max-h-[calc(100dvh-2rem)]')
+    expect(dialog).toHaveClass(BOTTOM_CAP)
   })
 
   it('tracks visualViewport resize: keyboard up → lifted, keyboard down → class anchoring restored', () => {

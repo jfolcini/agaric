@@ -10,6 +10,12 @@
 export const DIALOG_CONTENT_BASE =
   'bg-popover text-popover-foreground outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 flex flex-col w-full max-w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-hidden rounded-xl border p-6 shadow-(--shadow-overlay) duration-moderate sm:max-w-lg'
 
+// Scrim behind every dialog, alert dialog and sheet. A dark page's text is
+// light, so dark themes take the heavier wash to sink it below the overlay's
+// own muted text.
+export const OVERLAY_SCRIM_CLASS =
+  'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/20 dark:bg-black/65'
+
 // Radix ScrollArea's Viewport wraps its children in an inner
 // `<div style="min-width:100%; display:table">`. `display:table` shrink-wraps
 // wide content instead of respecting the viewport width, which can make modal
