@@ -1115,6 +1115,32 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
+  // The Markdown reveal reads a chip's `resolveStatus` to tell a broken tag or
+  // block ref, whose label already carries its syntax, from one still loading.
+  it('passes the tag and block statuses through to the tag and block-ref chips', async () => {
+    const hook = renderHook(() =>
+      useRovingEditor({
+        resolveTagStatus: (id) => (id === 'GONE' ? 'deleted' : 'active'),
+        resolveBlockStatus: (id) => (id === 'GONE' ? 'deleted' : 'active'),
+      }),
+    )
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+    const statusOf = (chip: string, id: string): unknown => {
+      const ext = (hook.result.current.editor as Editor).extensionManager.extensions.find(
+        (e) => e.name === chip,
+      )
+      return (ext?.options.resolveStatus as ((id: string) => string) | undefined)?.(id)
+    }
+
+    for (const chip of ['tag_ref', 'block_ref', 'block_link']) {
+      expect(statusOf(chip, 'GONE')).toBe('deleted')
+      expect(statusOf(chip, 'HERE')).toBe('active')
+    }
+
+    hook.result.current.editor?.destroy()
+    hook.unmount()
+  })
+
   it('passes an explicit placeholder through to the extension', async () => {
     const hook = renderHook(() => useRovingEditor({ placeholder: 'custom hint' }))
     await waitFor(() => expect(hook.result.current.editor).not.toBeNull())

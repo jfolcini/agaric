@@ -549,6 +549,8 @@ export interface ContentExtensionOptions {
   resolveBlockTitle: (id: string) => string
   /** A `'deleted'` page link is broken, and clicking it removes it. */
   resolveBlockStatus: (id: string) => 'active' | 'deleted'
+  /** A `'deleted'` tag is broken; the Markdown reveal then draws no `#` beside it. */
+  resolveTagStatus: (id: string) => 'active' | 'deleted'
   onNavigate: (id: string) => void
   onTagClick: (id: string) => void
   searchTags: (query: string) => PickerItem[] | Promise<PickerItem[]>
@@ -615,7 +617,11 @@ export function contentExtensions(o: ContentExtensionOptions) {
     Image,
   ]
   const chips: Extensions = [
-    TagRef.configure({ resolveName: o.resolveTagName, onClick: o.onTagClick }),
+    TagRef.configure({
+      resolveName: o.resolveTagName,
+      resolveStatus: o.resolveTagStatus,
+      onClick: o.onTagClick,
+    }),
     BlockLink.configure({
       resolveTitle: o.resolveBlockTitle,
       resolveStatus: o.resolveBlockStatus,
@@ -632,6 +638,7 @@ export function contentExtensions(o: ContentExtensionOptions) {
         const resolved = o.resolveBlockTitle(id)
         return resolved === unresolvedBlockLabel(id) ? unresolvedBlockRefLabel(id) : resolved
       },
+      resolveStatus: o.resolveBlockStatus,
       onNavigate: o.onNavigate,
     }),
     AtTagPicker.configure({ items: o.searchTags, onCreate: o.onCreateTag }),
@@ -702,7 +709,7 @@ export interface RovingEditorOptions {
   searchBlockRefs?: (query: string) => PickerItem[] | Promise<PickerItem[]>
   /** Whether a linked block is active or deleted; a deleted `[[link]]` is broken. */
   resolveBlockStatus?: ((id: string) => 'active' | 'deleted') | undefined
-  /** Phase 4 — no-op; kept for test backward compat. Remove in Phase 5. */
+  /** Whether a tag is active or deleted; a deleted tag is broken. */
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
@@ -828,6 +835,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     // this default and the app's resolvers can't drift on the shape.
     resolveBlockTitle = (id: string) => unresolvedBlockLabel(id),
     resolveBlockStatus = () => 'active',
+    resolveTagStatus = () => 'active',
     // / #544: callers own the placeholder text and pass the
     // i18n-keyed translation (e.g. BlockTree → t('block.emptyPlaceholder')).
     // The default is empty rather than a hardcoded English string so a caller
@@ -868,6 +876,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const placeholderRef = useRef(placeholder)
   const resolveBlockTitleRef = useRef(resolveBlockTitle)
   const resolveBlockStatusRef = useRef(resolveBlockStatus)
+  const resolveTagStatusRef = useRef(resolveTagStatus)
   const onNavigateRef = useRef(onNavigate)
   const onTagClickRef = useRef(onTagClick)
   const onCreatePageRef = useRef(onCreatePage)
@@ -889,6 +898,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     placeholderRef.current = placeholder
     resolveBlockTitleRef.current = resolveBlockTitle
     resolveBlockStatusRef.current = resolveBlockStatus
+    resolveTagStatusRef.current = resolveTagStatus
     onNavigateRef.current = onNavigate
     onTagClickRef.current = onTagClick
     onCreatePageRef.current = onCreatePage
@@ -922,6 +932,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       resolveTagName: (id: string) => resolveTagNameRef.current(id),
       resolveBlockTitle: (id: string) => resolveBlockTitleRef.current(id),
       resolveBlockStatus: (id: string) => resolveBlockStatusRef.current(id),
+      resolveTagStatus: (id: string) => resolveTagStatusRef.current(id),
       onNavigate: (id: string) => onNavigateRef.current?.(id),
       onTagClick: (id: string) => onTagClickRef.current?.(id),
       searchTags: (query: string) => searchTagsRef.current(query),
