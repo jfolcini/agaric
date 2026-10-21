@@ -195,13 +195,6 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
 
       dispatch('undo_op', { opRef: second.op_refs[0] })
       expect(opLog.at(-1)?.op_type, `reverse of a second ${key} write`).toBe('set_property')
-
-      // #5057 — the same scan answers reversibility, not just the reverse
-      // TYPE. A `delete_property` after a real prior IS reversible; keying on
-      // the op's own `from_value` said otherwise for a reserved key, because
-      // `setReservedColumnProperty` writes that field null by design.
-      const del = dispatch('delete_property', { blockId: A, key }) as WithOpsResp
-      expect(() => dispatch('undo_op', { opRef: del.op_refs[0] }), key).not.toThrow()
     }
   })
 
@@ -232,38 +225,38 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     expect(opLog.length).toBe(opCount + 1)
   })
 
-  it('deleting a property no op wrote appends its op, but undoing it is not_found', () => {
-    // Held, so it appends; but no `set_property` is in the log to restore
-    // (`build_reverse_delete_property` → NotFound).
+  it('undoing the delete of a property no op wrote restores it (#5918)', () => {
+    // A value a peer set has no op in this device's log. The delete records
+    // the value it removes, so its undo needs none.
     seedPropertyWithoutOp(A)
 
     const del = dispatch('delete_property', { blockId: A, key: 'effort' }) as WithOpsResp
     expect(del.op_refs).toHaveLength(1)
-    const err = captureRejection(() => dispatch('undo_op', { opRef: del.op_refs[0] }))
-    expect(err.kind).toBe('not_found')
-    expect(err.message).toMatch(/no prior set_property/)
+    dispatch('undo_op', { opRef: del.op_refs[0] })
+
+    const restored = dispatch('get_property', { blockId: A, key: 'effort' }) as {
+      value_text: string | null
+    } | null
+    expect(restored?.value_text).toBe('2h')
   })
 
-  it('restore_page_to_op refuses a priorless delete_property before it reverts anything', () => {
-    // A newer edit sits ABOVE the offender, so a check made op-by-op would
-    // revert it before refusing; the backend computes the whole reverse batch
-    // first (`compute_reverse_batch`), so nothing is written.
+  it('restore_page_to_op restores a property no op wrote (#5918)', () => {
     const target = dispatch('edit_block', { blockId: B, toText: 'target' }) as WithOpsResp
     seedPropertyWithoutOp(A)
     dispatch('delete_property', { blockId: A, key: 'effort' })
     dispatch('edit_block', { blockId: B, toText: 'after' })
-    const opCount = opLog.length
 
-    const err = captureRejection(() =>
-      dispatch('restore_page_to_op', {
-        pageId: PAGE,
-        targetDeviceId: target.op_refs[0]?.device_id,
-        targetSeq: target.op_refs[0]?.seq,
-      }),
-    )
-    expect(err.kind).toBe('not_found')
-    expect(rowOf(B)['content']).toBe('after')
-    expect(opLog.length).toBe(opCount)
+    dispatch('restore_page_to_op', {
+      pageId: PAGE,
+      targetDeviceId: target.op_refs[0]?.device_id,
+      targetSeq: target.op_refs[0]?.seq,
+    })
+
+    expect(rowOf(B)['content']).toBe('target')
+    const restored = dispatch('get_property', { blockId: A, key: 'effort' }) as {
+      value_text: string | null
+    } | null
+    expect(restored?.value_text).toBe('2h')
   })
 
   it('add_tag / remove_tag repeats surface empty op_refs (idempotent no-op)', () => {

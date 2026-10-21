@@ -1,22 +1,9 @@
 //! Reverse functions for property ops (set, delete).
 
 use agaric_core::error::AppError;
-use agaric_core::ulid::BlockId;
-use agaric_store::op::{DeletePropertyPayload, OpPayload, SetPropertyPayload};
+use agaric_store::op::{DeletePropertyPayload, OpPayload, PropertyValueFields, SetPropertyPayload};
 use agaric_store::op_log::OpRecord;
 use sqlx::SqlitePool;
-
-struct PriorPropertyRow {
-    value_text: Option<String>,
-    value_num: Option<f64>,
-    value_date: Option<String>,
-    value_ref: Option<String>,
-    /// Undoing `set_property` / `delete_property` must restore the
-    /// prior typed value across all five columns. Dropping `value_bool` here
-    /// would silently emit an all-None payload that fails
-    /// `validate_set_property` (count == 0) when the prior op was a boolean.
-    value_bool: Option<bool>,
-}
 
 pub async fn reverse_set_property(
     pool: &SqlitePool,
@@ -33,19 +20,19 @@ pub async fn reverse_set_property(
     )
     .await?;
     match prior {
-        Some(p) => Ok(OpPayload::SetProperty(SetPropertyPayload {
-            block_id: payload.block_id,
-            key: payload.key,
-            value_text: p.value_text,
-            value_num: p.value_num,
-            value_date: p.value_date,
-            value_ref: p.value_ref.map(BlockId::from),
-            value_bool: p.value_bool,
-        })),
-        None => Ok(OpPayload::DeleteProperty(DeletePropertyPayload {
-            block_id: payload.block_id,
-            key: payload.key,
-        })),
+        Some(p) => Ok(OpPayload::SetProperty(SetPropertyPayload::with_value(
+            payload.block_id,
+            payload.key,
+            p,
+        ))),
+        None => {
+            let prior = Some(payload.value());
+            Ok(OpPayload::DeleteProperty(DeletePropertyPayload {
+                block_id: payload.block_id,
+                key: payload.key,
+                prior,
+            }))
+        }
     }
 }
 
@@ -54,30 +41,30 @@ pub async fn reverse_delete_property(
     record: &OpRecord,
 ) -> Result<OpPayload, AppError> {
     let payload: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
-    let prior = find_prior_property(
-        pool,
-        payload.block_id.as_str(),
-        &payload.key,
-        record.created_at,
-        record.seq,
-        &record.device_id,
-    )
-    .await?
-    .ok_or_else(|| {
-        AppError::NotFound(format!(
-            "no prior set_property found for block '{}' key '{}' — cannot reverse delete_property",
-            payload.block_id, payload.key
-        ))
-    })?;
-    Ok(OpPayload::SetProperty(SetPropertyPayload {
-        block_id: payload.block_id,
-        key: payload.key,
-        value_text: prior.value_text,
-        value_num: prior.value_num,
-        value_date: prior.value_date,
-        value_ref: prior.value_ref.map(BlockId::from),
-        value_bool: prior.value_bool,
-    }))
+    let prior = match payload.prior {
+        Some(prior) => prior,
+        // An op written before #5918 records no value.
+        None => find_prior_property(
+            pool,
+            payload.block_id.as_str(),
+            &payload.key,
+            record.created_at,
+            record.seq,
+            &record.device_id,
+        )
+        .await?
+        .ok_or_else(|| {
+            AppError::NotFound(format!(
+                "no prior set_property found for block '{}' key '{}' — cannot reverse delete_property",
+                payload.block_id, payload.key
+            ))
+        })?,
+    };
+    Ok(OpPayload::SetProperty(SetPropertyPayload::with_value(
+        payload.block_id,
+        payload.key,
+        prior,
+    )))
 }
 
 async fn find_prior_property(
@@ -87,7 +74,7 @@ async fn find_prior_property(
     created_at: i64,
     seq: i64,
     device_id: &str,
-) -> Result<Option<PriorPropertyRow>, AppError> {
+) -> Result<Option<PropertyValueFields>, AppError> {
     // Switch the block_id predicate from `json_extract(payload, '$.block_id')`
     // to the indexed `block_id` column added by migration 0030 (idx_op_log_block_id).
     // The key predicate stays on `json_extract` — there is no covering index for
@@ -156,13 +143,7 @@ async fn find_prior_property(
         // Most recent prior op was a set — its value is the prior state.
         Some(r) if r.op_type == "set_property" => {
             let p: SetPropertyPayload = serde_json::from_str(&r.payload)?;
-            Ok(Some(PriorPropertyRow {
-                value_text: p.value_text,
-                value_num: p.value_num,
-                value_date: p.value_date,
-                value_ref: p.value_ref.map(BlockId::into_string),
-                value_bool: p.value_bool,
-            }))
+            Ok(Some(p.value()))
         }
         // Most recent prior op was a delete (or there is no prior op at all):
         // the property was ABSENT immediately before the op being reversed.
@@ -322,6 +303,7 @@ mod tests_m64 {
             OpPayload::DeleteProperty(DeletePropertyPayload {
                 block_id: BlockId::test_id("BLK_M64C"),
                 key: "color".into(),
+                prior: None,
             }),
             1_736_942_460_000,
         )
@@ -446,6 +428,7 @@ mod tests_m64 {
             OpPayload::DeleteProperty(DeletePropertyPayload {
                 block_id: blk(),
                 key: "space".into(),
+                prior: None,
             }),
             1_736_942_430_000,
         )

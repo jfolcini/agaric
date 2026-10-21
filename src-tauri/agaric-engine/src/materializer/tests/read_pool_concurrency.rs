@@ -110,6 +110,7 @@ async fn delete_reserved_key() {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: BlockId::test_id("BLK-DEL"),
             key: "todo_state".into(),
+            prior: None,
         }),
     )
     .await;

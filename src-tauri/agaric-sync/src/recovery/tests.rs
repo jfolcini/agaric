@@ -3792,6 +3792,7 @@ async fn crash_tail_ops_on_blocks_deleted_later_reach_the_engine_5630() {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: id(X),
             key: "due_date".into(),
+            prior: None,
         }),
         OpPayload::AddTag(AddTagPayload {
             block_id: id(X),

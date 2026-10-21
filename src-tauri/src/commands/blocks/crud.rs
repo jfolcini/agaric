@@ -3080,11 +3080,12 @@ pub(crate) async fn delete_property_in_tx(
     let del_payload = DeletePropertyPayload {
         block_id: BlockId::from_trusted(block_id),
         key: key.to_owned(),
+        prior: agaric_engine::block_ops::held_property_value(tx, block_id, key).await?,
     };
     let op_record = op_log::append_local_op_in_tx(
         &mut *tx,
         device_id,
-        OpPayload::DeleteProperty(del_payload.clone()),
+        OpPayload::DeleteProperty(del_payload),
         crate::db::now_ms(),
     )
     .await?;

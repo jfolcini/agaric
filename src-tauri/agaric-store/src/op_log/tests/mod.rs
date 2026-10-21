@@ -157,6 +157,7 @@ pub(super) fn all_op_payloads() -> Vec<(&'static str, OpPayload)> {
             OpPayload::DeleteProperty(DeletePropertyPayload {
                 block_id: BlockId::test_id("BLK001"),
                 key: "priority".into(),
+                prior: None,
             }),
         ),
         (

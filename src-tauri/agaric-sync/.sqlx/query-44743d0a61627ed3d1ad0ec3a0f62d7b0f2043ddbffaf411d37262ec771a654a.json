@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_text, value_num, value_date,\n                      value_ref AS \"value_ref: BlockId\", value_bool AS \"value_bool: bool\"\n               FROM block_properties WHERE block_id = ? AND key = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_text",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_text"
+          }
+        }
+      },
+      {
+        "name": "value_num",
+        "ordinal": 1,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_num"
+          }
+        }
+      },
+      {
+        "name": "value_date",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_date"
+          }
+        }
+      },
+      {
+        "name": "value_ref: BlockId",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_ref"
+          }
+        }
+      },
+      {
+        "name": "value_bool: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_bool"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "44743d0a61627ed3d1ad0ec3a0f62d7b0f2043ddbffaf411d37262ec771a654a"
+}

@@ -4256,6 +4256,7 @@ async fn apply_reverse_delete_property_on_nonexistent_is_idempotent() {
     let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
         block_id: BlockId::test_id("GHOST_BLK"),
         key: "priority".into(),
+        prior: None,
     });
     let result = apply_reverse_in_tx(
         &mut tx,
@@ -4411,6 +4412,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
         &OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: block_id.clone(),
             key: "scheduled_date".into(),
+            prior: None,
         }),
         agaric_lib::db::now_ms(),
         None,
@@ -4484,6 +4486,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
         &OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: page_id.clone(),
             key: "space".into(),
+            prior: None,
         }),
         agaric_lib::db::now_ms(),
         None,
@@ -5362,6 +5365,224 @@ async fn undo_page_group_survives_deleting_absent_properties() {
     assert_eq!(after.content, Some("v0".into()));
 
     mat.shutdown();
+}
+
+/// What [`peer_set_properties_synced_to_a`] leaves on device A.
+struct PeerSetProperties {
+    pool: SqlitePool,
+    mat: Materializer,
+    page: BlockId,
+    block: BlockId,
+    _dir: tempfile::TempDir,
+}
+
+/// `status`, `due_date`, `repeat` and `repeat-count` on a block.
+type PeerValues = (Option<String>, Option<String>, Option<String>, Option<f64>);
+
+/// The values device B sets in [`peer_set_properties_synced_to_a`].
+fn values_b_set() -> PeerValues {
+    (
+        Some("active".into()),
+        Some("2026-09-10".into()),
+        Some("daily".into()),
+        Some(3.0),
+    )
+}
+
+async fn peer_values(pool: &SqlitePool, block: &BlockId) -> PeerValues {
+    let props = get_properties_inner(pool, block.clone()).await.unwrap();
+    let prop = |key: &str| props.iter().find(|p| p.key == key);
+    let due_date: Option<String> = sqlx::query_scalar("SELECT due_date FROM blocks WHERE id = ?")
+        .bind(block.as_str())
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    (
+        prop("status").and_then(|p| p.value_text.clone()),
+        due_date,
+        prop("repeat").and_then(|p| p.value_text.clone()),
+        prop("repeat-count").and_then(|p| p.value_num),
+    )
+}
+
+/// #5918 — device B sets a freeform key, a column-backed one and a `repeat`
+/// rule with its `repeat-count` bound on a block, and ships the space to A as
+/// the catch-up does. The values reach A through the engine, so A's op log
+/// holds no op that set them: the lookup a delete's undo used to rely on finds
+/// nothing there.
+async fn peer_set_properties_synced_to_a() -> PeerSetProperties {
+    use agaric_sync::sync_protocol::loro_sync::{apply_remote, prepare_outgoing_for_pool};
+
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_b = Materializer::new(pool_b.clone());
+    agaric_lib::spaces::bootstrap::bootstrap_spaces(&pool_b, OTHER_DEV, &mat_b)
+        .await
+        .unwrap();
+    let space = create_space_inner(&pool_b, OTHER_DEV, &mat_b, "Shared".into(), None)
+        .await
+        .unwrap();
+    let page = create_page_in_space_inner(
+        &pool_b,
+        OTHER_DEV,
+        &mat_b,
+        None,
+        "Plan".into(),
+        space.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    let block = create_block_inner(
+        &pool_b,
+        OTHER_DEV,
+        &mat_b,
+        "content".into(),
+        "water the plants".into(),
+        Some(page.clone()),
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    for (key, text, num) in [
+        ("status", Some("active"), None),
+        ("repeat", Some("daily"), None),
+        ("repeat-count", None, Some(3.0)),
+    ] {
+        set_property_inner(
+            &pool_b,
+            OTHER_DEV,
+            &mat_b,
+            block.as_str().into(),
+            key.into(),
+            text.map(String::from),
+            num,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    set_due_date_inner(
+        &pool_b,
+        OTHER_DEV,
+        &mat_b,
+        block.as_str().into(),
+        Some("2026-09-10".into()),
+    )
+    .await
+    .unwrap();
+    settle(&mat_b).await;
+    let msg = prepare_outgoing_for_pool(
+        &pool_b,
+        &mat_b.loro_state().registry,
+        &SpaceId::from_trusted(space.as_str()),
+        OTHER_DEV,
+        None,
+    )
+    .await
+    .unwrap()
+    .expect("#1257 freshness gate must not refuse a consistent engine");
+    mat_b.shutdown();
+
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    agaric_lib::spaces::bootstrap::bootstrap_spaces(&pool, DEV, &mat)
+        .await
+        .unwrap();
+    apply_remote(&pool, &mat.loro_state().registry, DEV, msg)
+        .await
+        .unwrap();
+    settle(&mat).await;
+    assert_eq!(
+        peer_values(&pool, &block).await,
+        values_b_set(),
+        "sanity: B's values reached A"
+    );
+    let ops_on_block: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE block_id = ?")
+        .bind(block.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ops_on_block, 0, "sanity: no op on A set them");
+    PeerSetProperties {
+        pool,
+        mat,
+        page,
+        block,
+        _dir: dir,
+    }
+}
+
+/// #5918 — A deletes the values B set, then undoes the page's group: every
+/// value comes back and the group reverts whole. Each delete's undo used to
+/// look for a local `set_property` to restore, find none, and answer
+/// `NotFound`, which aborted the group. Covers both writers (the command's
+/// own delete and the `repeat` bound it deletes in the same transaction) and
+/// the batch kernel the group undo runs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_group_restores_properties_a_peer_set_5918() {
+    let a = peer_set_properties_synced_to_a().await;
+    for key in ["status", "due_date", "repeat"] {
+        delete_property_inner(&a.pool, DEV, &a.mat, a.block.as_str().into(), key.into())
+            .await
+            .unwrap();
+    }
+    settle(&a.mat).await;
+    assert_eq!(
+        peer_values(&a.pool, &a.block).await,
+        (None, None, None, None),
+        "sanity: the deletes removed every value, `repeat-count` with its rule"
+    );
+
+    let results =
+        undo_page_group_inner(&a.pool, DEV, &a.mat, a.page.as_str().to_owned(), 0, 60_000)
+            .await
+            .expect("#5918: undoing the deletes of a peer's values must not fail");
+    settle(&a.mat).await;
+
+    assert_eq!(
+        results.len(),
+        4,
+        "the group is the four deletes, `repeat-count` among them"
+    );
+    assert_eq!(
+        peer_values(&a.pool, &a.block).await,
+        values_b_set(),
+        "every value B set is back"
+    );
+    a.mat.shutdown();
+}
+
+/// #5918 — the positional undo runs the single-op kernel: the same delete
+/// comes back the same way.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_op_restores_a_property_a_peer_set_5918() {
+    let a = peer_set_properties_synced_to_a().await;
+    delete_property_inner(
+        &a.pool,
+        DEV,
+        &a.mat,
+        a.block.as_str().into(),
+        "status".into(),
+    )
+    .await
+    .unwrap();
+    settle(&a.mat).await;
+
+    let undo = undo_page_op_inner(&a.pool, DEV, &a.mat, a.page.as_str().to_owned(), 0)
+        .await
+        .expect("#5918: undoing the delete of a peer's value must not fail");
+    settle(&a.mat).await;
+
+    assert_eq!(undo.reversed_op_type, "delete_property");
+    assert_eq!(
+        peer_values(&a.pool, &a.block).await,
+        values_b_set(),
+        "`status` is back"
+    );
+    a.mat.shutdown();
 }
 
 /// A single-op group degenerates to one reverse (the batch command is a
@@ -8627,10 +8848,11 @@ async fn undo_op_refuses_a_replicated_foreign_delete_listed_by_history_4328() {
 /// `write_todo_timestamp_transitions_in_tx` clears the lifecycle stamps on the
 /// edges out of a state. Emitted unconditionally, the clear over two plain
 /// `TODO` blocks appended a `DeleteProperty(completed_at)` per block for a key
-/// neither had; `reverse_delete_property` resolves a delete's prior value from
-/// the op log, finds none, and answers `NotFound`, which is not a skippable
-/// non-reversible — so `compute_reverse_batch` aborted the WHOLE group and
-/// Ctrl+Z after the gesture restored nothing.
+/// neither had; such a delete records no prior value, so
+/// `reverse_delete_property` looks in the op log, finds none, and answers
+/// `NotFound`, which is not a skippable non-reversible — so
+/// `compute_reverse_batch` aborted the WHOLE group and Ctrl+Z after the
+/// gesture restored nothing.
 ///
 /// The third block is `CANCELLED`, which is a task with no `created_at` (that
 /// stamp is written only on the edges into `TODO` / `DOING`), so this covers
@@ -9934,4 +10156,204 @@ async fn undo_of_deleting_a_peers_attachment_restores_it_5608() {
         ("kept.png".to_owned(), "attachments/LOCALPATH".to_owned()),
         "as it stood when deleted"
     );
+}
+
+/// `(todo_state, priority, due_date, scheduled_date)` of a block, and its
+/// `block_properties` rows as `(key, value_text, value_num, value_date,
+/// value_ref, value_bool)`.
+type ValueSlots = (
+    (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ),
+    Vec<(
+        String,
+        Option<String>,
+        Option<f64>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+    )>,
+);
+
+async fn value_slots(pool: &SqlitePool, id: &str) -> ValueSlots {
+    let columns =
+        sqlx::query_as::<
+            _,
+            (
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+            ),
+        >("SELECT todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            Option<String>,
+            Option<f64>,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+        ),
+    >(
+        "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
+         FROM block_properties WHERE block_id = ? ORDER BY key",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    (columns, rows)
+}
+
+/// The refs of every `delete_property` op on `block`, oldest first.
+async fn delete_property_refs(pool: &SqlitePool, block: &str) -> Vec<OpRef> {
+    sqlx::query_as::<_, (String, i64)>(
+        "SELECT device_id, seq FROM op_log WHERE op_type = 'delete_property' AND block_id = ? \
+         ORDER BY seq",
+    )
+    .bind(block)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(device_id, seq)| OpRef { device_id, seq })
+    .collect()
+}
+
+/// #5918 — a delete records the value it removes in the slot that value lives
+/// in, so its undo restores every column-backed key and every typed
+/// `block_properties` slot exactly. The values are written to the tables
+/// directly: no local op set them, as when a peer's sync projected them, so the
+/// op-log lookup the undo used to rely on finds nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_restores_every_value_slot_of_a_deleted_property_5918() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let (_page_id, child_ids) = create_page_with_children(&pool, &mat).await;
+    let target = child_ids[0].clone();
+    let ref_target = child_ids[1].clone();
+
+    sqlx::query(
+        "UPDATE blocks SET todo_state = 'TODO', priority = '2', due_date = '2026-09-10', \
+         scheduled_date = '2026-09-11' WHERE id = ?",
+    )
+    .bind(&target)
+    .execute(&pool)
+    .await
+    .unwrap();
+    for (key, text, num, date, reference, boolean) in [
+        ("p_text", Some("hello"), None, None, None, None),
+        ("p_num", None, Some(4.5_f64), None, None, None),
+        ("p_date", None, None, Some("2026-01-02"), None, None),
+        ("p_ref", None, None, None, Some(ref_target.as_str()), None),
+        ("p_bool", None, None, None, None, Some(1_i64)),
+    ] {
+        sqlx::query(
+            "INSERT INTO block_properties \
+             (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&target)
+        .bind(key)
+        .bind(text)
+        .bind(num)
+        .bind(date)
+        .bind(reference)
+        .bind(boolean)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let before = value_slots(&pool, &target).await;
+
+    let keys = [
+        "todo_state",
+        "priority",
+        "due_date",
+        "scheduled_date",
+        "p_text",
+        "p_num",
+        "p_date",
+        "p_ref",
+        "p_bool",
+    ];
+    for key in keys {
+        delete_property_inner(&pool, DEV, &mat, target.clone().into(), key.into())
+            .await
+            .unwrap();
+    }
+    settle(&mat).await;
+    assert_eq!(
+        value_slots(&pool, &target).await,
+        ((None, None, None, None), Vec::new()),
+        "sanity: the deletes removed every value"
+    );
+    let deletes = delete_property_refs(&pool, &target).await;
+    assert_eq!(deletes.len(), keys.len(), "sanity: one delete op per key");
+
+    revert_ops_inner(&pool, DEV, &mat, deletes)
+        .await
+        .expect("#5918: undoing the deletes of values no local op set must not fail");
+    settle(&mat).await;
+
+    assert_eq!(
+        value_slots(&pool, &target).await,
+        before,
+        "every column and every typed slot is back exactly"
+    );
+    mat.shutdown();
+}
+
+/// #5918 — the same for `space`, which `held_property_value` reads from
+/// `blocks.space_id`: a page a peer placed in a space is in it again once the
+/// delete is undone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_restores_the_space_a_peer_placed_a_page_in_5918() {
+    let a = peer_set_properties_synced_to_a().await;
+    let space_of = |pool: SqlitePool, page: String| async move {
+        sqlx::query_scalar::<_, Option<String>>("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(page)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let page = a.page.as_str().to_owned();
+    let before = space_of(a.pool.clone(), page.clone()).await;
+    assert!(
+        before.is_some(),
+        "sanity: the peer placed the page in a space"
+    );
+
+    delete_property_inner(&a.pool, DEV, &a.mat, page.clone().into(), "space".into())
+        .await
+        .unwrap();
+    settle(&a.mat).await;
+    assert_eq!(
+        space_of(a.pool.clone(), page.clone()).await,
+        None,
+        "sanity: the delete cleared the page's space"
+    );
+    let deletes = delete_property_refs(&a.pool, &page).await;
+    assert_eq!(deletes.len(), 1, "sanity: one delete op");
+
+    revert_ops_inner(&a.pool, DEV, &a.mat, deletes)
+        .await
+        .expect("#5918: undoing the delete of a peer's space must not fail");
+    settle(&a.mat).await;
+
+    assert_eq!(
+        space_of(a.pool.clone(), page).await,
+        before,
+        "the page is back in the space the peer placed it in"
+    );
+    a.mat.shutdown();
 }

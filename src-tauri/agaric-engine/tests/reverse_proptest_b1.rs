@@ -605,6 +605,7 @@ async fn regression_reverse_set_property_after_delete_should_be_delete() {
         OpPayload::DeleteProperty(agaric_store::op::DeletePropertyPayload {
             block_id: bid.clone(),
             key: key.into(),
+            prior: None,
         }),
         1_736_942_460_000,
     )

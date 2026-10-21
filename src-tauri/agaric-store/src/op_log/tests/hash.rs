@@ -176,3 +176,36 @@ async fn verify_op_record_detects_tamper_on_stored_op() {
         );
     }
 }
+
+/// #5918: a `delete_property` with no `prior` is stored as exactly the bytes a
+/// delete was stored as before the field existed, so it hashes as one did, and
+/// those stored bytes still decode.
+#[tokio::test]
+async fn delete_property_without_prior_keeps_its_pre_5918_bytes_and_hash() {
+    const PRE_5918_PAYLOAD: &str = r#"{"block_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","key":"effort"}"#;
+    let (pool, _dir) = test_pool().await;
+    let payload: DeletePropertyPayload = serde_json::from_str(PRE_5918_PAYLOAD).unwrap();
+    assert_eq!(
+        payload.prior, None,
+        "a pre-#5918 delete decodes with no prior"
+    );
+
+    let record = append_local_op_at(
+        &pool,
+        "dev-5918",
+        OpPayload::DeleteProperty(payload),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        record.payload, PRE_5918_PAYLOAD,
+        "stored bytes are unchanged"
+    );
+    assert_eq!(
+        record.hash,
+        compute_op_hash("dev-5918", 1, None, "delete_property", PRE_5918_PAYLOAD),
+        "the hash is the one the pre-#5918 bytes give"
+    );
+}

@@ -236,6 +236,7 @@ mod engine_apply_unit_tests {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: BlockId::from_trusted(block_id),
             key: key.into(),
+            prior: None,
         })
     }
 
