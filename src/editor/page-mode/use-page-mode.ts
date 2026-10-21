@@ -11,6 +11,7 @@
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { getActiveEditor } from '@/editor/active-editor'
 import { blockerIn, blockerMessage, type PageModeBlocker } from '@/editor/page-mode/page-mode-fit'
 import type { PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -34,7 +35,7 @@ export interface PageModeState {
   cursorBlockId: string | null
   onBlocked: (blocker: PageModeBlocker) => void
   changeMode: (mode: EditMode) => void
-  /** Run `then` once page mode's unsaved text is saved; at once outside page mode. */
+  /** Run `then` once page mode's text is saved: at once outside it, never if the save failed. */
   afterFlush: (then: () => void) => void
 }
 
@@ -45,9 +46,9 @@ export function usePageMode(pageId: string): PageModeState {
   const [setting] = usePreference(PREFERENCES.editMode)
   const [chosen, setChosen] = useState<ForPage<{ mode: EditMode }> | null>(null)
   const mode = chosen?.pageId === pageId ? chosen.mode : setting
-  const blocks = usePageBlockStore((s) => s.blocks)
+  const blockCount = usePageBlockStore((s) => s.blocks.length)
   const total = usePageBlockStore((s) => s.truncatedTotal)
-  const blocker = useMemo(() => blockerIn(total ?? blocks.length), [blocks.length, total])
+  const blocker = useMemo(() => blockerIn(total ?? blockCount), [blockCount, total])
   const [cursor, setCursor] = useState<ForPage<{ blockId: string }> | null>(null)
   const editorRef = useRef<PageModeEditorHandle>(null)
   const switching = useRef(false)
@@ -58,6 +59,8 @@ export function usePageMode(pageId: string): PageModeState {
   const takeCursor = useCallback(() => {
     const focused = useBlockStore.getState().focusedBlockId
     setCursor(focused === null ? null : { pageId, blockId: focused })
+    // The shortcut leaves the block focused: its blur commits it to the store page mode opens on.
+    getActiveEditor()?.view.dom.blur()
     setFocused(null)
   }, [pageId, setFocused])
 
@@ -70,11 +73,23 @@ export function usePageMode(pageId: string): PageModeState {
     if (returned && available && mode === 'page') takeCursor()
   }, [available, blocker, mode, takeCursor])
 
-  const afterFlush = useCallback((then: () => void) => {
-    const editor = editorRef.current
-    if (editor === null) then()
-    else void editor.flush().then(then)
-  }, [])
+  /** Whether page mode's text is saved, once its save has run; true outside page mode. */
+  const saved = useCallback(
+    (): Promise<boolean> => editorRef.current?.flush() ?? Promise.resolve(true),
+    [],
+  )
+
+  // A failed save keeps page mode open (its toast says so), not showing the page without the text.
+  const afterFlush = useCallback(
+    (then: () => void) => {
+      if (editorRef.current === null) then()
+      else
+        void saved().then((ok) => {
+          if (ok) then()
+        })
+    },
+    [saved],
+  )
 
   const onBlocked = useCallback(
     (next: PageModeBlocker) => {
@@ -82,12 +97,12 @@ export function usePageMode(pageId: string): PageModeState {
       if (editorRef.current !== null) {
         notify.info(t('pageMode.switchedToBlocks', { reason: blockerMessage(next) }))
         // Page mode's text first, then the store the block tree reads, fresh after it.
-        afterFlush(() => void pageStore.getState().load())
+        void saved().then(() => pageStore.getState().load())
       } else if (chosen?.pageId === pageId && chosen.mode === 'page') {
         notify.info(blockerMessage(next))
       }
     },
-    [afterFlush, chosen, pageId, pageStore],
+    [saved, chosen, pageId, pageStore],
   )
 
   const changeMode = useCallback(
@@ -105,7 +120,11 @@ export function usePageMode(pageId: string): PageModeState {
       switching.current = true
       const at = editorRef.current?.cursorBlockId() ?? null
       // Page mode's text first, then the store the block tree reads, fresh after it.
-      afterFlush(() => {
+      void saved().then((ok) => {
+        if (!ok) {
+          switching.current = false
+          return
+        }
         void pageStore
           .getState()
           .load()
@@ -116,7 +135,7 @@ export function usePageMode(pageId: string): PageModeState {
           })
       })
     },
-    [afterFlush, blocker, pageId, pageStore, setFocused, takeCursor],
+    [saved, blocker, pageId, pageStore, setFocused, takeCursor],
   )
 
   return {

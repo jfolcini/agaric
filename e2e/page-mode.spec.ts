@@ -5,8 +5,10 @@
  * what keeps the page whole: changes made elsewhere (an edit, a block created,
  * moved or deleted, one deleted while typed in), cut and paste as a move,
  * paragraphs pasted from outside, Shift+Tab as block mode's, and the text saved
- * before an export and before leaving. Then what behaves as block mode: chips,
- * the `[[`, `#` and `((` pickers, and the slash menu and `::` and `{{` pickers.
+ * before an export and before leaving. A new page taking typing at once. Then
+ * what behaves as block mode: chips, the `[[`, `#` and `((` pickers, the switch
+ * and its shortcut from a block being edited, and the slash menu and `::` and
+ * `{{` pickers.
  */
 
 import { createRequire } from 'node:module'
@@ -613,6 +615,46 @@ test.describe('page mode keeps the page whole (#5691) @editor @pages', () => {
   })
 })
 
+test.describe('a new page in page mode (#5691) @editor @pages', () => {
+  test('New page, a title and Enter: typing goes into the page, and stays', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('agaric-edit-mode', 'page'))
+    await waitForBoot(page)
+
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'New Page', exact: true })
+      .click()
+    const title = page
+      .getByTestId('new-page-dialog')
+      .getByRole('textbox', { name: 'New page title' })
+    await expect(title).toBeFocused()
+    await title.fill('Fresh in page mode')
+    await title.press('Enter')
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Fresh in page mode')
+    await expect(page.locator(EDITOR)).toBeFocused()
+
+    // `?` included: away from the document it opens the shortcuts dialog.
+    await page.keyboard.type('First line?')
+
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    const pages = await ipc<Array<{ id: string; content: string | null }>>(
+      page,
+      'list_all_pages_in_space',
+      { scope: SCOPE, tagIds: null },
+    )
+    const pageId = pages.find((p) => p.content === 'Fresh in page mode')?.id as string
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((b) => b.text))
+      .toEqual(['First line?'])
+    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    await page.keyboard.press('Escape')
+    await expect(page.locator(EDITOR)).not.toBeFocused()
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Fresh in page mode')
+    await expect(page.locator(EDITOR)).toHaveText('First line?')
+  })
+})
+
 test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
@@ -732,6 +774,38 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 0 })
     await page.keyboard.type('x ')
     await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('x two edited')
+  })
+
+  // The shortcut, unlike a press on the switch, leaves the block focused: within the idle
+  // commit its text reaches the backend, but not the page store page mode opens on, unless
+  // the switch commits it there first.
+  test('Ctrl+Shift+M pressed just after typing opens page mode on that text, which stays', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Shortcut while typing', [
+      [0, 'one'],
+      [0, 'two'],
+    ])
+    await openViaPalette(page, 'Shortcut while typing')
+    await focusBlockById(page, ids[1] as string)
+    await page.keyboard.press('End')
+    await page.keyboard.type(' typed')
+
+    await page.keyboard.press('Control+Shift+M')
+
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(2)
+    await expect.poll(async () => (await shown(page))[1]?.text).toBe('two typed')
+    // The block's first page-mode edit writes over what page mode opened on.
+    await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 0 })
+    await page.keyboard.type('x ')
+    await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('x two typed')
+    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    await page.keyboard.press('Escape')
+    await expect(page.locator(EDITOR)).not.toBeFocused()
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Shortcut while typing')
+    await expect(page.locator('.page-editor')).toContainText('x two typed')
+    expect((await backend(page, pageId))[1]?.text).toBe('x two typed')
   })
 
   test('a page of tasks opens in page mode; a click, Ctrl+Enter and a typed marker set them, and they stay', async ({
