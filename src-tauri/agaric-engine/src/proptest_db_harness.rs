@@ -698,6 +698,7 @@ impl ChainModel {
                 Some(OpPayload::DeleteProperty(DeletePropertyPayload {
                     block_id: BlockId::from_trusted(&target),
                     key,
+                    prior: None,
                 }))
             }
             OpKind::AddTag {

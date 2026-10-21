@@ -277,11 +277,61 @@ pub struct SetPropertyPayload {
     pub value_bool: Option<bool>,
 }
 
+impl SetPropertyPayload {
+    /// The payload that sets `key` on `block_id` to `value`.
+    pub fn with_value(block_id: BlockId, key: String, value: PropertyValueFields) -> Self {
+        let PropertyValueFields {
+            value_text,
+            value_num,
+            value_date,
+            value_ref,
+            value_bool,
+        } = value;
+        Self {
+            block_id,
+            key,
+            value_text,
+            value_num,
+            value_date,
+            value_ref,
+            value_bool,
+        }
+    }
+
+    /// The value this payload sets.
+    pub fn value(&self) -> PropertyValueFields {
+        PropertyValueFields {
+            value_text: self.value_text.clone(),
+            value_num: self.value_num,
+            value_date: self.value_date.clone(),
+            value_ref: self.value_ref.clone(),
+            value_bool: self.value_bool,
+        }
+    }
+}
+
+/// A property's typed value, in the five slots [`SetPropertyPayload`] carries.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PropertyValueFields {
+    pub value_text: Option<String>,
+    pub value_num: Option<f64>,
+    pub value_date: Option<String>,
+    pub value_ref: Option<BlockId>,
+    pub value_bool: Option<bool>,
+}
+
 /// Payload for the `delete_property` op — removes a property by key from a block.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeletePropertyPayload {
     pub block_id: BlockId,
     pub key: String,
+    /// The value the delete removed, which its undo restores. The op log
+    /// cannot always supply it: a value set on a peer arrives through the
+    /// engine with no local op behind it, and compaction prunes old ones
+    /// (#5918). `None` on ops written before it existed and on a delete of a
+    /// key the block did not hold; omitted then, so those ops keep their hash.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior: Option<PropertyValueFields>,
 }
 
 /// Payload for the `add_attachment` op — records a new file attachment linked to a block.
@@ -757,6 +807,7 @@ mod tests {
             OpPayload::DeleteProperty(DeletePropertyPayload {
                 block_id: BlockId::from_string(TEST_BID).unwrap(),
                 key: "priority".into(),
+                prior: None,
             }),
             OpPayload::AddAttachment(AddAttachmentPayload {
                 attachment_id: BlockId::test_id("A1"),

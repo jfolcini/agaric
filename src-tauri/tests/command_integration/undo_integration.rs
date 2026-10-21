@@ -1587,6 +1587,7 @@ async fn undo_delete_property_converges_engine_2838() {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: BlockId::from_trusted(BLK),
             key: KEY.into(),
+            prior: None,
         }),
     )
     .await;

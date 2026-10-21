@@ -425,6 +425,7 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value, created_ids
         "delete_property" => OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: label_block_id("blockId"),
             key: arg_str("key").expect("delete_property.key"),
+            prior: None,
         }),
         other => panic!("conformance op '{other}' is not wired in the Rust runner"),
     };

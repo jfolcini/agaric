@@ -1890,14 +1890,10 @@ export const MOCK_LOCAL_DEVICE = 'mock-device'
  * `set_property` / `delete_property` on the same pair — a set left a value, a
  * delete left none, and nothing at all left none.
  *
- * #5057 — the op's own `from_value` cannot answer this, twice over. The
- * backend's `DeletePropertyPayload` is `{block_id, key}` and carries no such
- * field at all, and on the mock side `setReservedColumnProperty`
+ * #5057 — the op's own `from_value` cannot answer this: `setReservedColumnProperty`
  * (`handlers/properties.ts`) writes `from_value: null` unconditionally — by
  * design, to keep the revert a no-op against the properties map. Reading it
- * would make every reserved-key write look priorless. Shared by
- * {@link reverseOpTypeFor} and {@link assertDeletePropertyHasPrior} so the two
- * cannot answer the same question differently.
+ * would make every reserved-key write look priorless.
  */
 function hasPriorPropertyValue(op: MockOpLogEntry): boolean {
   let key: unknown
@@ -2156,10 +2152,7 @@ export function timesReversedNet(target: MockOpLogEntry): number {
  *     foreign-device entry onto `opLog` directly);
  *   - ref to an `is_undo` op          → `validation` (undoing an undo is
  *     redo's job — `redo_page_op` takes those refs);
- *   - already-reversed op             → `validation` (net of undos/redos);
- *   - `delete_property` with no prior value → `not_found` (backend parity:
- *     `build_reverse_delete_property` cannot compute an inverse without a
- *     prior `set_property`, so the revert phase rejects the whole batch).
+ *   - already-reversed op             → `validation` (net of undos/redos).
  * A REDO ref is ACCEPTED — redo appends a new op that re-applies the
  * original, and the FE pushes the redo's `new_op_ref` as the next undo
  * target; its effective revert target is the stashed original op.
@@ -2193,34 +2186,7 @@ export function resolveUndoTarget(opRef: { device_id: string; seq: number }): Mo
         'refusing to undo it twice',
     )
   }
-  assertDeletePropertyHasPrior(effective)
   return effective
-}
-
-/**
- * Backend parity: a `delete_property` with no prior `set_property` in the log
- * (a property seeded without one) cannot be reversed — there is nothing to
- * restore. `build_reverse_delete_property`
- * (agaric-engine `reverse/batch.rs`) surfaces that as `NotFound`, and
- * `is_skippable_non_reversible` matches only `NonReversible`, so it is NOT
- * skipped: it aborts the whole batch.
- *
- * #5057 — shared by the ref-addressed undo path and `restore_page_to_op`'s
- * sweep. Written once because the sweep having its own idea of reversibility
- * is exactly the two-paths-different-coverage shape this cluster kept finding.
- */
-export function assertDeletePropertyHasPrior(entry: MockOpLogEntry): void {
-  if (entry.op_type !== 'delete_property') return
-  if (hasPriorPropertyValue(entry)) return
-  let key = ''
-  try {
-    key = ((JSON.parse(entry.payload) as Record<string, unknown>)['key'] as string) ?? ''
-  } catch {
-    key = ''
-  }
-  throw notFoundRejection(
-    `no prior set_property found for key '${key}' — cannot reverse delete_property`,
-  )
 }
 
 /**

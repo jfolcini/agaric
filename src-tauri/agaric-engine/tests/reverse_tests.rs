@@ -644,6 +644,7 @@ async fn reverse_delete_property_produces_set_property_with_prior() {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: BlockId::test_id("BLK10"),
             key: "color".into(),
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -653,6 +654,97 @@ async fn reverse_delete_property_produces_set_property_with_prior() {
         OpPayload::SetProperty(ref p) => assert_eq!(p.value_text, Some("blue".into())),
         _ => panic!("expected SetProperty"),
     }
+}
+
+/// `effort` as a number, the value shape both #5918 tests below carry.
+fn effort(block_id: &BlockId, value_num: f64) -> SetPropertyPayload {
+    SetPropertyPayload::with_value(
+        block_id.clone(),
+        "effort".into(),
+        PropertyValueFields {
+            value_num: Some(value_num),
+            ..Default::default()
+        },
+    )
+}
+
+/// #5918: a delete restores the value it recorded, in both kernels, over the
+/// op log's last local set. The value can change after that set without a
+/// local op (a peer's write arrives through the engine), so the log answers
+/// with a stale value or none at all.
+#[tokio::test]
+async fn reverse_delete_property_restores_its_recorded_prior_5918() {
+    let (pool, _dir) = test_pool().await;
+    let block_id = BlockId::test_id("BLK_5918_DEL");
+    append_op(
+        &pool,
+        OpPayload::SetProperty(effort(&block_id, 1.0)),
+        FIXED_TS,
+    )
+    .await;
+    let delete = append_op(
+        &pool,
+        OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: block_id.clone(),
+            key: "effort".into(),
+            prior: Some(effort(&block_id, 2.5).value()),
+        }),
+        FIXED_TS + 1_000,
+    )
+    .await;
+
+    let expected = OpPayload::SetProperty(effort(&block_id, 2.5));
+    assert_eq!(
+        compute_reverse(&pool, TEST_DEVICE, delete.seq)
+            .await
+            .unwrap(),
+        expected,
+        "single-op kernel: the recorded value, not the logged 1.0"
+    );
+    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, std::slice::from_ref(&delete))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        batched,
+        vec![expected],
+        "batch kernel: the recorded value, not the logged 1.0"
+    );
+}
+
+/// #5918: undoing a set that created its key appends a delete, and that
+/// delete records the value the set wrote, so its own reverse (the redo)
+/// needs no lookup either.
+#[tokio::test]
+async fn reverse_of_a_first_set_records_the_set_value_as_prior_5918() {
+    let (pool, _dir) = test_pool().await;
+    let block_id = BlockId::test_id("BLK_5918_SET");
+    let set = append_op(
+        &pool,
+        OpPayload::SetProperty(effort(&block_id, 3.0)),
+        FIXED_TS,
+    )
+    .await;
+
+    let expected = OpPayload::DeleteProperty(DeletePropertyPayload {
+        block_id: block_id.clone(),
+        key: "effort".into(),
+        prior: Some(effort(&block_id, 3.0).value()),
+    });
+    assert_eq!(
+        compute_reverse(&pool, TEST_DEVICE, set.seq).await.unwrap(),
+        expected,
+        "single-op kernel"
+    );
+    let batched: Vec<OpPayload> = compute_reverse_batch(&pool, std::slice::from_ref(&set))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(batched, vec![expected], "batch kernel");
 }
 
 /// `reverse_add_attachment` mints a SYNTHETIC `delete_attachment` — the only
@@ -947,6 +1039,7 @@ async fn reverse_delete_property_without_prior_returns_not_found() {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: BlockId::test_id("ORPHAN_PROP"),
             key: "color".into(),
+            prior: None,
         }),
         FIXED_TS,
     )
@@ -1293,6 +1386,7 @@ async fn reverse_delete_property_restores_value_bool() {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: BlockId::test_id("BLK_PBD"),
             key: "flag".into(),
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -1772,6 +1866,7 @@ async fn reverse_delete_reserved_property_todo_state() {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: BlockId::test_id("BLK_TS3"),
             key: "todo_state".into(),
+            prior: None,
         }),
         1_736_942_460_000,
     )
@@ -2111,6 +2206,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             OpPayload::DeleteProperty(DeletePropertyPayload {
                 block_id: BlockId::test_id(bid),
                 key: "todo_state".into(),
+                prior: None,
             }),
             next_ts(&mut ts),
         )
@@ -2610,6 +2706,7 @@ async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: bid.clone(),
             key: key.into(),
+            prior: None,
         }),
         FIXED_TS + 120_000,
     )
@@ -3976,6 +4073,7 @@ async fn compute_reverse_batch_aborts_on_a_fatal_non_skippable_error_4656() {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: bid.clone(),
             key: "never_set".into(),
+            prior: None,
         }),
         3_000,
     )

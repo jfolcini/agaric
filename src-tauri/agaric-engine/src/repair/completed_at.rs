@@ -36,7 +36,7 @@ use agaric_store::task_locals::ACTOR;
 
 use super::{RepairOp, housekeeping};
 use crate::apply::kernel::apply_op_projected;
-use crate::block_ops::set_property_in_tx;
+use crate::block_ops::{held_property_value, set_property_in_tx};
 use crate::loro::shared::LoroState;
 
 /// What one run of the `completed_at` repair did.
@@ -144,6 +144,7 @@ async fn clear_completed_at(
     let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
         block_id: BlockId::from_trusted(block_id),
         key: "completed_at".to_owned(),
+        prior: held_property_value(tx, block_id, "completed_at").await?,
     });
     let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_ms()).await?;
     apply_op_projected(tx, &record, state, false).await?;
@@ -394,6 +395,40 @@ mod tests {
                 Actor::Housekeeping.origin_tag()
             )],
             "an op, not a raw DELETE, and housekeeping so it is outside undo"
+        );
+    }
+
+    /// #5918: the clear records the stamp it removed, so reverting it (History
+    /// or a point-in-time restore) brings the stamp back. Stamps like these
+    /// have no local op behind them, so the op log has nothing to offer.
+    #[tokio::test]
+    async fn reversing_a_clear_restores_the_stamp_it_removed() {
+        let (pool, _tmp) = pool_with_spaces().await;
+        let state = LoroState::new();
+        let stale = next_id();
+        insert_task(&pool, &stale, Some("CANCELLED")).await;
+        date_property(&pool, &stale, "completed_at", "2026-03-03").await;
+
+        let report = run(&pool, &state).await;
+        let [RepairOp::Plain(clear)] = report.ops.as_slice() else {
+            panic!("expected the one clear, got {:?}", report.ops);
+        };
+
+        let reverse = crate::reverse::compute_reverse(&pool, DEV, clear.seq)
+            .await
+            .expect("the clear must be reversible");
+        assert_eq!(
+            reverse,
+            OpPayload::SetProperty(agaric_store::op::SetPropertyPayload {
+                block_id: BlockId::from_trusted(&stale),
+                key: "completed_at".into(),
+                value_text: None,
+                value_num: None,
+                value_date: Some("2026-03-03".into()),
+                value_ref: None,
+                value_bool: None,
+            }),
+            "the reverse sets the stamp back"
         );
     }
 

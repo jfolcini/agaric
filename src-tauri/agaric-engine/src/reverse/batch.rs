@@ -982,20 +982,20 @@ fn build_reverse_set_property(
     match prior_payload {
         Some(p_json) => {
             let p: SetPropertyPayload = serde_json::from_str(p_json)?;
-            Ok(OpPayload::SetProperty(SetPropertyPayload {
+            Ok(OpPayload::SetProperty(SetPropertyPayload::with_value(
+                payload.block_id,
+                payload.key,
+                p.value(),
+            )))
+        }
+        None => {
+            let prior = Some(payload.value());
+            Ok(OpPayload::DeleteProperty(DeletePropertyPayload {
                 block_id: payload.block_id,
                 key: payload.key,
-                value_text: p.value_text,
-                value_num: p.value_num,
-                value_date: p.value_date,
-                value_ref: p.value_ref,
-                value_bool: p.value_bool,
+                prior,
             }))
         }
-        None => Ok(OpPayload::DeleteProperty(DeletePropertyPayload {
-            block_id: payload.block_id,
-            key: payload.key,
-        })),
     }
 }
 
@@ -1004,22 +1004,24 @@ fn build_reverse_delete_property(
     prior_payload: Option<&str>,
 ) -> Result<OpPayload, AppError> {
     let payload: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
-    let p_json = prior_payload.ok_or_else(|| {
-        AppError::NotFound(format!(
-            "no prior set_property found for block '{}' key '{}' — cannot reverse delete_property",
-            payload.block_id, payload.key
-        ))
-    })?;
-    let prior: SetPropertyPayload = serde_json::from_str(p_json)?;
-    Ok(OpPayload::SetProperty(SetPropertyPayload {
-        block_id: payload.block_id,
-        key: payload.key,
-        value_text: prior.value_text,
-        value_num: prior.value_num,
-        value_date: prior.value_date,
-        value_ref: prior.value_ref,
-        value_bool: prior.value_bool,
-    }))
+    let prior = match payload.prior {
+        Some(prior) => prior,
+        // An op written before #5918 records no value.
+        None => {
+            let p_json = prior_payload.ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "no prior set_property found for block '{}' key '{}' — cannot reverse delete_property",
+                    payload.block_id, payload.key
+                ))
+            })?;
+            serde_json::from_str::<SetPropertyPayload>(p_json)?.value()
+        }
+    };
+    Ok(OpPayload::SetProperty(SetPropertyPayload::with_value(
+        payload.block_id,
+        payload.key,
+        prior,
+    )))
 }
 
 /// Batch twin of [`attachment_ops::reverse_delete_attachment`]. Keep the two

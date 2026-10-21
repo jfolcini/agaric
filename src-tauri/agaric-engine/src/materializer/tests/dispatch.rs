@@ -280,6 +280,7 @@ async fn dispatch_op_delete_property() {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: BlockId::test_id("blk-dp"),
             key: "due".into(),
+            prior: None,
         }),
     )
     .await;
@@ -380,6 +381,7 @@ async fn dispatch_op_set_property_space_sql_only_802() {
         OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: BlockId::test_id("page-802"),
             key: "space".into(),
+            prior: None,
         }),
     )
     .await;

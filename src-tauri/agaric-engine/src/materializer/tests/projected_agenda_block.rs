@@ -49,6 +49,7 @@ fn delete_op(key: &str) -> OpPayload {
     OpPayload::DeleteProperty(DeletePropertyPayload {
         block_id: BlockId::test_id(SUBJECT),
         key: key.into(),
+        prior: None,
     })
 }
 

@@ -927,6 +927,7 @@ async fn apply_op_tx_delete_property_engine_path() {
     let payload = OpPayload::DeleteProperty(DeletePropertyPayload {
         block_id: BlockId::from_trusted(BLOCK_ID),
         key: "effort".into(),
+        prior: None,
     });
     let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await

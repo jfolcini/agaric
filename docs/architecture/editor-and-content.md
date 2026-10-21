@@ -112,7 +112,7 @@ Reverse-op table (canonical):
 | `purge_block` | **non-reversible** |
 | `move_block` | `move_block` to the previous parent + position |
 | `set_property` | `set_property` with previous value (or `delete_property` if absent) |
-| `delete_property` | `set_property` with captured previous value |
+| `delete_property` | `set_property` with the value the delete recorded (`prior`) |
 | `add_tag` | `remove_tag` |
 | `remove_tag` | `add_tag` |
 | `add_page_alias` | `remove_page_alias` |
@@ -120,7 +120,7 @@ Reverse-op table (canonical):
 | `add_attachment` | `delete_attachment` |
 | `delete_attachment` | conditional: `add_attachment` with captured metadata if available; otherwise non-reversible |
 
-Prior-state lookups for `edit_block` / `set_property` / `delete_property` reverses use the **op log** (walk backwards from the target seq to find the predecessor value), not the materialised `blocks` row. The materialised state is the current value; the op log holds history.
+Prior-state lookups for `edit_block` / `set_property` reverses use the **op log** (walk backwards from the target seq to find the predecessor value), not the materialised `blocks` row. The materialised state is the current value; the op log holds history. A `delete_property` records the value it removed as `prior`, read from the materialised state in its transaction, because the op log cannot always supply it: a value a peer set arrives through the engine with no local op behind it (#5918). Its reverse looks in the op log only for a delete written before `prior` existed.
 
 ## Recurrence
 

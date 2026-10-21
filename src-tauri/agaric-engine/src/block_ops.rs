@@ -38,7 +38,7 @@
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_store::op::{
-    CreateBlockPayload, OpPayload, SPACE_PROPERTY_KEY, SetPropertyPayload,
+    CreateBlockPayload, OpPayload, PropertyValueFields, SPACE_PROPERTY_KEY, SetPropertyPayload,
     is_reserved_property_key, validate_set_property,
 };
 use agaric_store::op_log;
@@ -826,6 +826,58 @@ pub async fn fetch_live_block_in_tx(
         )));
     }
     Ok(existing)
+}
+
+/// The value `block_id` holds for `key`, or `None` when it holds none: a
+/// column-backed key is read from its `blocks` column, in the slot
+/// `project_set_property_to_sql` writes it from; any other key from its
+/// `block_properties` row. A delete records it as the `prior` its undo
+/// restores (#5918).
+pub async fn held_property_value(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    key: &str,
+) -> Result<Option<PropertyValueFields>, AppError> {
+    let Some(col) = agaric_store::db::reserved_key_blocks_column(key) else {
+        return Ok(sqlx::query!(
+            r#"SELECT value_text, value_num, value_date,
+                      value_ref AS "value_ref: BlockId", value_bool AS "value_bool: bool"
+               FROM block_properties WHERE block_id = ? AND key = ?"#,
+            block_id,
+            key,
+        )
+        .fetch_optional(conn)
+        .await?
+        .map(|r| PropertyValueFields {
+            value_text: r.value_text,
+            value_num: r.value_num,
+            value_date: r.value_date,
+            value_ref: r.value_ref,
+            value_bool: r.value_bool,
+        }));
+    };
+    // dynamic-sql: `col` is a fixed literal from the helper's allowlist.
+    let held = sqlx::query_scalar::<_, Option<String>>(sqlx::AssertSqlSafe(format!(
+        "SELECT {col} FROM blocks WHERE id = ?"
+    )))
+    .bind(block_id)
+    .fetch_optional(conn)
+    .await?
+    .flatten();
+    Ok(held.map(|v| match key {
+        "due_date" | "scheduled_date" => PropertyValueFields {
+            value_date: Some(v),
+            ..Default::default()
+        },
+        SPACE_PROPERTY_KEY => PropertyValueFields {
+            value_ref: Some(BlockId::from(v)),
+            ..Default::default()
+        },
+        _ => PropertyValueFields {
+            value_text: Some(v),
+            ..Default::default()
+        },
+    }))
 }
 
 /// #533/#612/#708: `space` key registration backstop for

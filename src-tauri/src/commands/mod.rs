@@ -806,30 +806,6 @@ pub async fn get_block_history_inner(
     pagination::list_block_history(pool, &block_id, op_type_filter.as_deref(), &page).await
 }
 
-/// Whether `block_id` holds `key`: a non-NULL `blocks` column for a
-/// column-backed key, a `block_properties` row for any other.
-async fn property_is_held(
-    conn: &mut sqlx::SqliteConnection,
-    block_id: &str,
-    key: &str,
-) -> Result<bool, AppError> {
-    let held = match crate::db::reserved_key_blocks_column(key) {
-        Some(col) => {
-            // dynamic-sql: `col` is a fixed literal from the helper's allowlist.
-            sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(format!(
-                "SELECT {col} IS NOT NULL FROM blocks WHERE id = ?"
-            )))
-            .bind(block_id)
-            .fetch_one(conn)
-            .await?
-        }
-        None => properties::get_property_inner(conn, &BlockId::from_trusted(block_id), key)
-            .await?
-            .is_some(),
-    };
-    Ok(held)
-}
-
 /// Standalone deletion path that owns and commits its transaction.
 ///
 /// Its sole production caller is `delete_property_inner`, which applies the
@@ -879,7 +855,8 @@ async fn delete_property_core(
     };
 
     // 3. Append DeleteProperty op, unless there is nothing to delete.
-    let held = property_is_held(&mut tx, &block_id, &key).await?;
+    let prior = agaric_engine::block_ops::held_property_value(&mut tx, &block_id, &key).await?;
+    let held = prior.is_some();
     if held {
         let op_record = op_log::append_local_op_in_tx(
             &mut tx,
@@ -887,6 +864,7 @@ async fn delete_property_core(
             OpPayload::DeleteProperty(DeletePropertyPayload {
                 block_id: BlockId::from_trusted(&block_id),
                 key: key.clone(),
+                prior,
             }),
             crate::db::now_ms(),
         )

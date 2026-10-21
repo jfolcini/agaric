@@ -17,7 +17,6 @@ import { type SortKey, compareSortKeysDesc, paginateKeyset } from '@/lib/tauri-m
 import {
   type TypedHandlers,
   applyUndoForTarget,
-  assertDeletePropertyHasPrior,
   notFoundRejection,
   pageRequestLimit,
   payloadBlockId,
@@ -792,15 +791,6 @@ export const historyHandlers = {
     const newer = sortOpLogNewestFirst(
       opLog.filter((o) => o.seq > targetSeq && opInPageScope(o, scope)),
     )
-    // A PRE-PASS, not a check inside the loop below: the backend computes the
-    // whole reverse batch before applying any of it (`compute_reverse_batch`,
-    // then `revert_ops_in_tx`), so an op it cannot reverse aborts with nothing
-    // written. Checking per-op as the loop went would revert everything newer
-    // than the offender first and only then throw — indistinguishable while
-    // the offender is the newest op, which is exactly where a test that pins
-    // the refusal naturally puts it (`undo-op-refs.test.ts` puts an edit above).
-    for (const op of newer) assertDeletePropertyHasPrior(op)
-
     const results: Array<Record<string, unknown>> = []
     let nonReversibleSkipped = 0
     for (const op of newer) {

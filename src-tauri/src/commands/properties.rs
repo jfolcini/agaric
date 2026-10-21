@@ -295,10 +295,10 @@ pub(crate) async fn set_property_inner_in_tx(
 ///
 /// The two presence flags are correctness, not an optimisation.
 /// [`write_todo_timestamp_transitions_in_tx`] clears a stamp on the edges out
-/// of a state, and `build_reverse_delete_property` resolves a
-/// `DeleteProperty`'s prior value from the op log: a clear for a key the
-/// block never carried answers `NotFound`, which is not a skippable
-/// non-reversible, so `compute_reverse_batch` aborts the whole undo group.
+/// of a state, and a clear for a key the block never carried records no prior
+/// value, so `build_reverse_delete_property` looks in the op log, finds none
+/// and answers `NotFound`, which is not a skippable non-reversible, so
+/// `compute_reverse_batch` aborts the whole undo group.
 /// Multi-selecting TODO blocks and hitting *Clear* is the gesture that hit it
 /// — every one of those blocks got a `DeleteProperty(completed_at)` for a key
 /// it never had, and the next Ctrl+Z restored nothing (#5074).

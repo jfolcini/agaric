@@ -354,8 +354,8 @@ const PROJECTED_AGENDA_PROPERTY_KEYS: [&str; 10] = [
 ];
 
 /// #2037: minimal payload view for `set_property` / `delete_property` dispatch
-/// narrowing. `delete_property` has no value fields, so `value_date` defaults to
-/// `None` there.
+/// narrowing. `delete_property` keeps its removed value under `prior`, which this
+/// view does not read, so `value_date` is `None` there.
 #[derive(serde::Deserialize)]
 struct PropertyOpHint {
     block_id: agaric_core::ulid::BlockId,
@@ -1882,9 +1882,9 @@ fn push_property_op_invalidations(
     // rebuild. `agenda_cache` depends on date-VALUED properties + the
     // `template`/`due`/`scheduled` keys; `projected_agenda_cache` depends
     // on the recurrence keys + date columns + `template`. A
-    // `delete_property` payload carries no value, so its date-ness is
-    // unknown — keep its agenda rebuild (a deleted key may have held a
-    // date) and narrow only its projected rebuild by key. A corrupt
+    // `delete_property`'s date-ness is not read here — keep its agenda
+    // rebuild (a deleted key may have held a date) and narrow only its
+    // projected rebuild by key. A corrupt
     // payload falls back to both rebuilds.
     //
     // #5423: the projected refresh is the op's block alone, except for
@@ -1897,7 +1897,7 @@ fn push_property_op_invalidations(
             let agenda_relevant = if is_set {
                 has_date_value || AGENDA_PROPERTY_KEYS.contains(&key)
             } else {
-                // delete_property: value unknown ⇒ conservative.
+                // delete_property: value not read ⇒ conservative.
                 true
             };
             let projected_relevant =
