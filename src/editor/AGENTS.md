@@ -23,6 +23,16 @@ Embeds, zoom, dialogs and anything that blurs on purpose race the focus-leave cl
 ## Keyboard
 
 - A native `keydown` listener tests Tab with `isTabKey` (`src/lib/keyboard-config/keys.ts`), never `e.key === 'Tab'`: WebKitGTK reports Shift+Tab as `key: 'Unidentified'`, so the check misses it on Linux, where only the e2e-tauri lane can see it. React's synthetic `key` and ProseMirror keymaps already normalise it.
+- Among TipTap extensions of equal priority the last registered handles a key first. A plugin that moves the caret checks `pickerOpen` (`src/editor/page-mode/page-keys.ts`) or takes a lower priority (`page-rendered.ts`), or it steals an open picker's arrows; pin the order with a test that reds when it is registered earlier.
+
+## Input rules
+
+- TipTap runs input rules on Enter with the text `\n`, so a negated class excludes it (`[^[\n]`). `find` sees only the text before the caret: a handler rewrites the matched range and keeps the rest of the paragraph, never rebuilds it from the match.
+
+## Page mode
+
+- Page mode is a second editor. An extension, plugin, context-menu entry or block-data writer added to the roving editor does nothing there until it is also wired into `src/editor/page-mode/page-mode-extensions.ts` or its page-mode writer. Land a page-mode test beside the block-mode one; `page-mode-parity.test.ts` drives one edit through both save paths, so extend it for new commit behaviour.
+- A command that opens a file dialog, the clipboard or fullscreen runs inside the user's gesture (`runsAtOnce`, `page-slash-commands.tsx`), never after an awaited save or IPC: WebKitGTK and WKWebView drop it silently, and Chromium keeps the activation long enough that Playwright cannot show it red.
 
 ## Tests
 

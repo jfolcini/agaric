@@ -24,7 +24,7 @@ A non-zero exit or `panicked at` in `bench-smoke` is a real fixture failure. An 
 
 `bench-perf-gates` runs under nextest's `profile.default` (no `--profile`), so an ignored test is killed at 2x30 s unless `src-tauri/.config/nextest.toml` overrides it, as it does for the `_perf_gate_20k_pages` gates.
 
-**Budgets.** A new probe reports through `report_measurement_only` until `bench-slo` has measured it, then gets a budget of about twice the mean of recent warm runs, never one run or a placeholder. An `assert_under_budget` panic aborts every later probe in the run, so before raising a budget on a branch whose SQL matches `main`, normalise the probe against a sibling probe in the same log: a shared rise is runner noise.
+**Budgets.** A new probe reports through `report_measurement_only` until `bench-slo` has measured it, then gets the smallest 1-2-5 budget at least 3x the worst mean of recent green warm runs, never one run or a placeholder; an existing budget is tightened only once it is 10x that mean. An `assert_under_budget` panic aborts every later probe in the run, so before raising a budget on a branch whose SQL matches `main`, normalise the probe against a sibling probe in the same log: a shared rise is runner noise.
 
 Optional probes: `if problem_skipped("<name> @ 100K") { return }` gates the cache and MostLinked probes behind `SLO_INCLUDE_PROBLEM=1`; the permanently over-budget revert probe has its own `SLO_INCLUDE_REVERT=1`.
 
