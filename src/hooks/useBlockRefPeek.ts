@@ -25,6 +25,14 @@
  *
  * Coarse pointers keep the chip's native `title=`: long-press is not wired
  * (it collides with `use-block-touch-long-press.ts`).
+ *
+ * A `[[page]]` chip peeks too, as Obsidian's page preview does in its editor:
+ * only while Ctrl (Cmd) is held, because a page link is what a writer's
+ * pointer rests on all day. Holding the key as the pointer arrives, or
+ * pressing it with the pointer already resting there, waits out the same
+ * dwell, and any other key cancels it: Ctrl+B or Ctrl+← typed with the pointer
+ * over a link is a chord, not a request to preview. It has no keyboard chord,
+ * so `Alt+ArrowDown` stays block-ref only.
  */
 
 import type React from 'react'
@@ -33,15 +41,20 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 
 /** Both the TipTap NodeView chip and the read-only chip carry this pair. */
-const CHIP_SELECTOR = '[data-type="block-ref"][data-id]'
+const BLOCK_REF_SELECTOR = '[data-type="block-ref"][data-id]'
+const PAGE_LINK_SELECTOR = '[data-type="block-link"][data-id]'
+const CHIP_SELECTOR = `${BLOCK_REF_SELECTOR}, ${PAGE_LINK_SELECTOR}`
 
 const HOVER_INTENT_MS = 350
 /** Grace for the pointer to cross the gap from chip to peek (WCAG 1.4.13). */
 const CLOSE_GRACE_MS = 250
 
+export type PeekKind = 'block-ref' | 'page-link'
+
 export interface BlockRefPeekState {
   /** Target of the open peek, or `null` when nothing is open. */
   refId: string | null
+  kind: PeekKind
   anchorRect: DOMRect | null
   /** True when the open came from the keyboard, so the peek must take focus. */
   fromKeyboard: boolean
@@ -61,11 +74,17 @@ export interface BlockRefPeekState {
   activateChip: () => void
 }
 
-const INITIAL = { refId: null, anchorRect: null, fromKeyboard: false }
+const INITIAL = {
+  refId: null,
+  kind: 'block-ref' as PeekKind,
+  anchorRect: null,
+  fromKeyboard: false,
+}
 
 export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekState {
   const [state, setState] = useState<{
     refId: string | null
+    kind: PeekKind
     anchorRect: DOMRect | null
     fromKeyboard: boolean
   }>(INITIAL)
@@ -75,6 +94,8 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
    *  tooltip cannot race the popover, and put back on close. */
   const parkedTitleRef = useRef<string | null>(null)
   const peekRef = useRef<HTMLDivElement | null>(null)
+  /** The page-link chip under the pointer, for a Ctrl (Cmd) pressed after it arrived. */
+  const hoveredPageLinkRef = useRef<HTMLElement | null>(null)
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -119,6 +140,8 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
 
   const open = useCallback(
     (chip: HTMLElement, fromKeyboard: boolean) => {
+      // A click that navigates inside the dwell unmounts the chip before its timer fires.
+      if (!chip.isConnected) return
       clearOpenTimer()
       clearCloseTimer()
       const refId = chip.getAttribute('data-id')
@@ -133,7 +156,12 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
         if (chip.hasAttribute('aria-expanded')) chip.setAttribute('aria-expanded', 'true')
         chipRef.current = chip
       }
-      setState({ refId, anchorRect: chip.getBoundingClientRect(), fromKeyboard })
+      setState({
+        refId,
+        kind: chip.matches(PAGE_LINK_SELECTOR) ? 'page-link' : 'block-ref',
+        anchorRect: chip.getBoundingClientRect(),
+        fromKeyboard,
+      })
     },
     [clearOpenTimer, clearCloseTimer, releaseChip],
   )
@@ -182,9 +210,14 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     (e: Event) => {
       // Coarse pointers stay on the chip's `title=` for now — see the module
       // docblock.
-      if ((e as PointerEvent).pointerType === 'touch') return
+      const pointer = e as PointerEvent
+      if (pointer.pointerType === 'touch') return
       const chip = (e.target as HTMLElement | null)?.closest(CHIP_SELECTOR) as HTMLElement | null
       if (!chip) return
+      if (chip.matches(PAGE_LINK_SELECTOR)) {
+        hoveredPageLinkRef.current = chip
+        if (!pointer.ctrlKey && !pointer.metaKey) return
+      }
       clearCloseTimer()
       if (chipRef.current === chip) return
       clearOpenTimer()
@@ -205,6 +238,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
       // so neither the pending open nor the open peek may be cancelled.
       const to = (e as PointerEvent).relatedTarget as Node | null
       if (to !== null && chip.contains(to)) return
+      if (hoveredPageLinkRef.current === chip) hoveredPageLinkRef.current = null
       clearOpenTimer()
       // Any open peek, not only the one this chip owns: skimming from chip A onto
       // B and off before B's dwell would otherwise leave A's peek open with no
@@ -228,24 +262,41 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      const hovered = hoveredPageLinkRef.current
+      const modifier = e.key === 'Control' || e.key === 'Meta'
+      // Ahead of `defaultPrevented`: the editor consumes the chords it binds.
+      if (!modifier && hovered !== null) {
+        clearOpenTimer()
+        if (chipRef.current === hovered) dismiss(false)
+      }
       if (e.defaultPrevented) return
+      if (modifier) {
+        if (e.repeat || hovered === null || chipRef.current === hovered) return
+        clearOpenTimer()
+        openTimerRef.current = setTimeout(() => {
+          open(hovered, false)
+        }, HOVER_INTENT_MS)
+        return
+      }
       if (e.key === 'Escape') {
         if (dismissHoldingFocus()) e.preventDefault()
         return
       }
       if (e.key !== 'ArrowDown' || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
       const chip = (document.activeElement as HTMLElement | null)?.closest(
-        CHIP_SELECTOR,
+        BLOCK_REF_SELECTOR,
       ) as HTMLElement | null
       if (!chip || container?.contains(chip) !== true) return
       e.preventDefault()
       open(chip, true)
     },
-    [container, dismissHoldingFocus, open],
+    [container, clearOpenTimer, dismiss, dismissHoldingFocus, open],
   )
 
   // A click on the chip itself navigates and unmounts the subtree, so neither
   // `pointerleave` nor `focusin` would ever close the peek it left behind.
+  // Heard on `window`, ahead of any capture handler between it and the chip
+  // that stops the click (the Ctrl+click that opens a link in a new tab).
   const handleClick = useCallback(
     (event: MouseEvent) => {
       const chip = chipRef.current
@@ -263,7 +314,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     // enters.
     container.addEventListener('pointerenter', handlePointerEnter, true)
     container.addEventListener('pointerleave', handlePointerLeave, true)
-    container.addEventListener('click', handleClick, true)
+    window.addEventListener('click', handleClick, true)
     window.addEventListener('focusin', handleFocusIn)
     window.addEventListener('keydown', handleKeyDown)
     // The app's `closeOverlays` shortcut (Escape, rebindable) fires exactly
@@ -278,7 +329,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
     return () => {
       container.removeEventListener('pointerenter', handlePointerEnter, true)
       container.removeEventListener('pointerleave', handlePointerLeave, true)
-      container.removeEventListener('click', handleClick, true)
+      window.removeEventListener('click', handleClick, true)
       window.removeEventListener('focusin', handleFocusIn)
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener(CLOSE_ALL_OVERLAYS_EVENT, dismissHoldingFocus)
@@ -286,6 +337,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
       openTimerRef.current = null
       closeTimerRef.current = null
+      hoveredPageLinkRef.current = null
       releaseChip()
     }
   }, [
@@ -301,6 +353,7 @@ export function useBlockRefPeek(container: HTMLElement | null): BlockRefPeekStat
 
   return {
     refId: state.refId,
+    kind: state.kind,
     anchorRect: state.anchorRect,
     fromKeyboard: state.fromKeyboard,
     peekRef,
