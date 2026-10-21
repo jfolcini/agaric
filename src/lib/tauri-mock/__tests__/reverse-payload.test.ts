@@ -192,10 +192,10 @@ describe('#4870 — reverse rows carry a real reverse payload', () => {
   })
 
   it('set_priority: the reverse swaps level and from_level', () => {
-    dispatch('set_priority', { blockId: A, level: 'C' })
-    dispatch('set_priority', { blockId: A, level: 'A' })
+    dispatch('set_priority', { blockId: A, level: '3' })
+    dispatch('set_priority', { blockId: A, level: '1' })
     undoThenRevertTheReverse()
-    expect(blocks.get(A)?.['priority']).toBe('A')
+    expect(blocks.get(A)?.['priority']).toBe('1')
   })
 
   it('set_due_date: the reverse swaps date and from_date', () => {

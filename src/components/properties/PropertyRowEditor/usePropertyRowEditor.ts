@@ -25,7 +25,6 @@ import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { setPriorityLevels } from '@/lib/priority-levels'
 import { useSpaceStore } from '@/stores/space'
 
 export interface UsePropertyRowEditorArgs {
@@ -227,12 +226,6 @@ export function usePropertyRowEditor({
       )
       onDefUpdated?.(updatedDef)
       setEditOptionsOpen(false)
-      // Keep the priority-levels cache in sync when editing the
-      // `priority` definition from the block-level editor.
-      if (def.key === 'priority') {
-        const levels = editingOptions.filter((v) => typeof v === 'string' && v.trim() !== '')
-        if (levels.length > 0) setPriorityLevels(levels)
-      }
     } catch (err) {
       logger.error(
         'PropertyRowEditor',

@@ -1008,7 +1008,8 @@ fn tool_desc_list_property_defs() -> ToolDescription {
     ToolDescription {
         name: TOOL_LIST_PROPERTY_DEFS.to_string(),
         description:
-            "List every property definition (typed property schema), with cursor pagination."
+            "List every property definition (typed property schema), with cursor pagination. \
+             A built-in definition is marked `builtin: true` and cannot be changed."
                 .to_string(),
         input_schema: json!({
             "type": "object",

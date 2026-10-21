@@ -542,8 +542,9 @@ test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
     )
     expect(overflowing).toEqual([])
 
-    // Line 1 is the name with Delete or Built-in at its right end; a select row's
-    // options (Edit options, or Locked) start line 2 flush with the name, right under it.
+    // Line 1 is the name with Delete or Built-in at its right end; a user select row's
+    // Edit options, or todo_state's cycle help, start line 2 flush with the name, right
+    // under it. A built-in's options are fixed (#5841), so it offers no Edit options.
     const misaligned = await rows.evaluateAll((els) =>
       els.flatMap((el) => {
         const key = el.textContent ?? ''
@@ -567,13 +568,13 @@ test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
         // Line 1 is the name's line box, which is 44 px tall on touch either way.
         const nameLine = (nameEl.parentElement ?? nameEl).getBoundingClientRect()
         const line1Bottom = Math.max(nameLine.bottom, control.bottom)
-        const isSelect = [...el.querySelectorAll('[data-slot="badge"]')].some(
-          (b) => b.textContent === 'select',
-        )
+        const isUserSelect =
+          !el.querySelector('[data-testid^="builtin-lock-"]') &&
+          [...el.querySelectorAll('[data-slot="badge"]')].some((b) => b.textContent === 'select')
         const optionsEl = el.querySelector(
-          'button[aria-label="Edit options"], [data-testid^="locked-options-"]',
+          'button[aria-label="Edit options"], [data-testid="todo-state-cycle-help"]',
         )
-        if (isSelect && !optionsEl) problems.push(`${key}: a select row without its options`)
+        if (isUserSelect && !optionsEl) problems.push(`${key}: a select row without its options`)
         if (optionsEl) {
           const options = optionsEl.getBoundingClientRect()
           if (Math.abs(options.left - name.left) > 1)
@@ -586,7 +587,7 @@ test.describe('phone at 360 × 780 @mobile @journal @settings', () => {
         const below = [...el.querySelectorAll('*')].some(
           (n) => n.getBoundingClientRect().top >= line1Bottom,
         )
-        if (!isSelect && below) problems.push(`${key}: a row without options takes two lines`)
+        if (!optionsEl && below) problems.push(`${key}: a row without options takes two lines`)
         return problems
       }),
     )

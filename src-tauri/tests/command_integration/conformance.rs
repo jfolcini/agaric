@@ -1242,11 +1242,12 @@ pub async fn replay_fixture(fixture: &Value, name: &str) -> FixtureReplay {
         }
     }
     // Seed the property-definition registry (#3830). A fixture that declares
-    // this section declares the WHOLE registry: migrations 0011/0014/0016/0035/
-    // 0103 pre-seed the backend's `property_definitions` with ~20 builtin
-    // declarations, while the mock's map starts empty (`clearMock`), so the
-    // builtins are cleared to put both stacks in the state the fixture spells
-    // out. A fixture WITHOUT the section keeps them, untouched.
+    // this section declares the WHOLE set of user rows: migrations 0011/0014
+    // pre-seed the backend's `property_definitions` with a few editable
+    // declarations, while the mock's map starts empty (`clearMock`), so they
+    // are cleared to put both stacks in the state the fixture spells out. A
+    // fixture WITHOUT the section keeps them, untouched. The built-ins (#5841)
+    // are constants on both stacks and are never cleared.
     if let Some(defs) = seed["property_defs"].as_array() {
         sqlx::query("DELETE FROM property_definitions")
             .execute(&pool)

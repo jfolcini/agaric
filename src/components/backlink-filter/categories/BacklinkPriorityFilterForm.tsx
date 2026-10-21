@@ -2,13 +2,10 @@
  * BacklinkPriorityFilterForm — priority selector for the `priority` filter
  * category, applied as a `Priority` filter.
  *
- * Issue #2281 item 10 — the vocabulary is now the same user-configurable
- * `usePriorityLevels()` set the search `priority:` form uses (plus the
- * `none` sentinel), so the option set and value space match across both
- * surfaces instead of this surface keeping a fixed 1/2/3 shortlist
- * (the pre-#2281 per-surface split from #1647). The legacy default
- * levels 1/2/3 keep their translated High/Medium/Low labels;
- * user-defined levels render verbatim.
+ * Issue #2281 item 10 — the vocabulary is the same `PRIORITY_LEVELS` set the
+ * search `priority:` form uses (plus the `none` sentinel), so the option set
+ * and value space match across both surfaces. Levels 1/2/3 carry their
+ * translated High/Medium/Low labels.
  */
 
 import type React from 'react'
@@ -17,7 +14,7 @@ import { useTranslation } from 'react-i18next'
 
 import type { FilterFormHandle } from '@/components/backlink-filter/categories/types'
 import { FilterValueSelect } from '@/components/filters/forms/FilterValueSelect'
-import { usePriorityLevels } from '@/hooks/usePriorityLevels'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 
 export interface BacklinkPriorityFilterFormProps {
   ref?: React.Ref<FilterFormHandle>
@@ -27,25 +24,22 @@ export function BacklinkPriorityFilterForm({
   ref,
 }: BacklinkPriorityFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
-  const priorityLevels = usePriorityLevels()
 
-  // Same vocabulary as the search `priority:` form: configured levels plus
-  // the `none` sentinel ("no priority set", see `buildPriorityFilter`).
+  // Same vocabulary as the search `priority:` form: the levels plus the
+  // `none` sentinel ("no priority set", see `buildPriorityFilter`).
   const options = useMemo(() => {
-    // Legacy 1/2/3 defaults keep their descriptive labels; anything the
-    // user configured beyond that renders as its raw value.
-    const legacyLabels: Record<string, string> = {
+    const labels: Record<string, string> = {
       '1': t('backlink.highPriority'),
       '2': t('backlink.mediumPriority'),
       '3': t('backlink.lowPriority'),
     }
     return [
-      ...priorityLevels.map((p) => ({ value: p, label: legacyLabels[p] })),
+      ...PRIORITY_LEVELS.map((p) => ({ value: p, label: labels[p] })),
       { value: 'none', label: t('filterState.none') },
     ]
-  }, [priorityLevels, t])
+  }, [t])
 
-  const [priorityValue, setPriorityValue] = useState<string>(priorityLevels[0] ?? 'none')
+  const [priorityValue, setPriorityValue] = useState<string>(PRIORITY_LEVELS[0] ?? 'none')
 
   useImperativeHandle(ref, () => ({ getState: () => ({ priorityValue }) }), [priorityValue])
 

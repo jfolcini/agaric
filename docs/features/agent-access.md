@@ -97,7 +97,7 @@ Every tool takes a required `space_id` except `list_spaces`, which lists the spa
 | Pattern | Tools | Behaviour |
 | --- | --- | --- |
 | **`space_id` required** | every other tool | The call runs inside the named space. Listings and searches return only that space's rows; a tool that addresses a block or page by id refuses a target in another space with a validation error. `create_page`, `create_tag` and `capture` create in that space; `move_page_to_space` moves the page into a live `target_space_id`. |
-| **`space_id` absent** | `list_spaces`, `list_property_defs` | `list_spaces` lists the spaces the agent may use; `list_property_defs` is the property schema every space shares. |
+| **`space_id` absent** | `list_spaces`, `list_property_defs` | `list_spaces` lists the spaces the agent may use; `list_property_defs` is the property schema every space shares, a built-in definition marked `builtin`. |
 
 An agent limited to some spaces is refused, before the tool runs, any call whose `space_id` or `target_space_id` names another space; the refusal reaches the activity feed.
 

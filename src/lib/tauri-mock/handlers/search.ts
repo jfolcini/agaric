@@ -643,7 +643,8 @@ export function cursorValueFor(term: ResolvedSortTerm, m: MatchedEntry): CursorV
  *
  * Goes through `utf8ToBase64Url` (`@/lib/base64url`) rather than a bare
  * `btoa`, because `values` carries USER TEXT — the `Title` term is the raw
- * page title and `Priority` is a user-configurable label. The engine encodes
+ * page title and `Priority` is stored text (a level from before #5841 can be
+ * any string). The engine encodes
  * `json.as_bytes()`, i.e. UTF-8; `btoa` maps each string CODE UNIT to a byte,
  * which THROWS `InvalidCharacterError` above U+00FF (an em dash, CJK or emoji
  * title would have escaped the IPC boundary as a raw DOMException, since

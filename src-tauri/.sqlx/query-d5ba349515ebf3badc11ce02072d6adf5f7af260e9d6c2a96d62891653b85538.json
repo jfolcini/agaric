@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
+  "query": "SELECT key, value_type, options, created_at, 0 AS \"builtin!: bool\" FROM property_definitions WHERE key = ?",
   "describe": {
     "columns": [
       {
@@ -46,6 +46,12 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "name": "builtin!: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -55,8 +61,9 @@
       false,
       false,
       true,
+      false,
       false
     ]
   },
-  "hash": "b473109c16b7ca05e4ae75b51ec3101b4841ebb13fdac9926c53474b49850312"
+  "hash": "d5ba349515ebf3badc11ce02072d6adf5f7af260e9d6c2a96d62891653b85538"
 }

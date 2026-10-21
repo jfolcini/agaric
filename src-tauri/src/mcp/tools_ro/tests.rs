@@ -1406,8 +1406,8 @@ async fn list_tags_rejects_unknown_field() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_property_defs_happy_path() {
-    // A fresh DB ships built-in property definitions seeded by
-    // migrations. The exact wire shape is snapshot-locked by
+    // A fresh DB lists the built-in property definitions and the rows
+    // seeded by migrations. The exact wire shape is snapshot-locked by
     // `tool_response_list_property_defs.snap`; this test just pins
     // (a) a stable subset of must-be-present keys (the four reserved
     // keys named in AGENTS.md "Architectural Stability — properties
@@ -1442,17 +1442,19 @@ async fn list_property_defs_happy_path() {
         );
     }
 
-    // (b) Cross-check against the live DB so this test detects
-    //     drift in either direction (added or removed migrations)
-    //     without requiring a hand-edited count constant.
+    // (b) Cross-check against the live DB and the built-ins (#5841) so this
+    //     test detects drift in either direction without requiring a
+    //     hand-edited count constant.
     let live_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM property_definitions")
         .fetch_one(&tools.pool)
         .await
         .expect("count property_definitions");
+    let builtin_count = i64::try_from(agaric_store::op::BUILTIN_PROPERTY_DEFS.len())
+        .expect("built-in count fits i64");
     assert_eq!(
         i64::try_from(arr.len()).expect("test response length fits i64"),
-        live_count,
-        "list_property_defs response count must match live property_definitions row count",
+        live_count + builtin_count,
+        "list_property_defs lists every property_definitions row and every built-in",
     );
     // Seeded defaults fit under the default limit — no second page.
     assert!(

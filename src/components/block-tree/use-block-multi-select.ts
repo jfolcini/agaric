@@ -42,7 +42,7 @@ export interface UseBlockMultiSelectParams {
    * #1734 — single-block priority cycle, fanned out across the selection by
    * `handleBatchSetPriority`. Mirrors the bulk priority path the context menu
    * already exposes; passed in so the hook reuses the canonical cycle logic
-   * (configurable level set, optimistic update, undo bookkeeping).
+   * (optimistic update, undo bookkeeping).
    */
   handleTogglePriority: (blockId: string) => void | Promise<void>
 }

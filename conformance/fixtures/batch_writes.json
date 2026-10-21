@@ -260,6 +260,12 @@
     },
     {
       "code": null,
+      "error": "validation",
+      "name": "priority_outside_the_levels_is_refused",
+      "returns": []
+    },
+    {
+      "code": null,
       "error": null,
       "name": "due_date_is_a_date_column",
       "returns": ["set_property_batch#updated=1"]
@@ -412,6 +418,18 @@
       "command": "set_property_batch",
       "comment": "`set_property_batch` routes a reserved key to its value column; `priority` is value_text, and its vocabulary is \"1\"/\"2\"/\"3\" — a stack that accepts an org-mode-style \"A\" here diverges.",
       "name": "priority_on_two_blocks",
+      "via": "command"
+    },
+    {
+      "args": {
+        "blockIds": ["S3", "S4"],
+        "key": "priority",
+        "value": "P0"
+      },
+      "command": "set_property_batch",
+      "comment": "#5841 — the priority levels are fixed at 1/2/3: a level outside them refuses the whole batch, and neither block changes.",
+      "expect_error": "validation",
+      "name": "priority_outside_the_levels_is_refused",
       "via": "command"
     },
     {

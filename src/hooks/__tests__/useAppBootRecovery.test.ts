@@ -1,18 +1,17 @@
 /**
  * Unit tests for useAppBootRecovery (stretch).
  *
- * Validates the two mount-only IPC effects in isolation. Integration
+ * Validates the mount-only orphan-draft flush in isolation. Integration
  * coverage (App-level boot path) remains in `App.test.tsx`.
  */
 
 import { invoke } from '@tauri-apps/api/core'
 import { renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAppBootRecovery } from '@/hooks/useAppBootRecovery'
 import { logger } from '@/lib/logger'
-import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -35,11 +34,6 @@ const mockedInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
   vi.clearAllMocks()
-  __resetPriorityLevelsForTests()
-})
-
-afterEach(() => {
-  __resetPriorityLevelsForTests()
 })
 
 describe('useAppBootRecovery — orphan-draft flush', () => {
@@ -50,7 +44,6 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
   it('issues exactly one flush_all_drafts IPC and no per-draft fan-out', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'flush_all_drafts') return { flushed: 2 }
-      if (cmd === 'get_property_def') return null
       return null
     })
 
@@ -70,7 +63,6 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
   it('logs a warning when flush_all_drafts itself fails', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'flush_all_drafts') throw new Error('IPC down')
-      if (cmd === 'get_property_def') return null
       return null
     })
 
@@ -92,7 +84,6 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
   it('fires toast.info with the recovered count when ≥1 draft is flushed', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'flush_all_drafts') return { flushed: 3 }
-      if (cmd === 'get_property_def') return null
       return null
     })
 
@@ -110,7 +101,6 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
   it('uses singular form when exactly one draft is recovered', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'flush_all_drafts') return { flushed: 1 }
-      if (cmd === 'get_property_def') return null
       return null
     })
 
@@ -124,7 +114,6 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
   it('does NOT fire any toast when zero drafts are pending', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'flush_all_drafts') return { flushed: 0 }
-      if (cmd === 'get_property_def') return null
       return null
     })
 
@@ -145,7 +134,6 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
   it('still emits logger.info with the recovered count (regression guard)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'flush_all_drafts') return { flushed: 2 }
-      if (cmd === 'get_property_def') return null
       return null
     })
 
@@ -154,84 +142,5 @@ describe('useAppBootRecovery — orphan-draft flush', () => {
     await waitFor(() => {
       expect(vi.mocked(logger.info)).toHaveBeenCalledWith('boot', 'Recovered 2 unsaved draft(s)')
     })
-  })
-})
-
-describe('useAppBootRecovery — priority levels', () => {
-  // Priority lookup now goes through the dedicated
-  // `get_property_def(key)` PK SELECT instead of paginating the entire
-  // property-definition vocabulary via `list_property_defs`.
-  it('hydrates the priority-levels cache from get_property_def(priority)', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
-      if (cmd === 'flush_all_drafts') return { flushed: 0 }
-      if (cmd === 'get_property_def') {
-        const a = args as { key: string } | undefined
-        if (a?.key === 'priority') {
-          return {
-            key: 'priority',
-            value_type: 'select',
-            options: JSON.stringify(['urgent', 'high', 'low']),
-            created_at: '2025-01-01T00:00:00Z',
-          }
-        }
-        return null
-      }
-      return null
-    })
-
-    renderHook(() => useAppBootRecovery())
-
-    await waitFor(() => {
-      expect(getPriorityLevels()).toEqual(['urgent', 'high', 'low'])
-    })
-    // Regression guard — only the targeted PK lookup is in flight.
-    expect(mockedInvoke).toHaveBeenCalledWith('get_property_def', { key: 'priority' })
-    expect(mockedInvoke).not.toHaveBeenCalledWith('list_property_defs', expect.anything())
-  })
-
-  it('keeps defaults when the priority definition is missing', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'flush_all_drafts') return { flushed: 0 }
-      if (cmd === 'get_property_def') return null
-      return null
-    })
-
-    const before = getPriorityLevels()
-    renderHook(() => useAppBootRecovery())
-
-    // Wait a tick for the IPC promise to settle
-    await waitFor(() => {
-      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_property_def')
-      expect(calls.length).toBeGreaterThanOrEqual(1)
-    })
-    expect(getPriorityLevels()).toEqual(before)
-  })
-
-  it('keeps defaults and warns on invalid JSON options', async () => {
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'flush_all_drafts') return { flushed: 0 }
-      if (cmd === 'get_property_def') {
-        return {
-          key: 'priority',
-          value_type: 'select',
-          options: '{not-json',
-          created_at: '2025-01-01T00:00:00Z',
-        }
-      }
-      return null
-    })
-
-    const before = getPriorityLevels()
-    renderHook(() => useAppBootRecovery())
-
-    await waitFor(() => {
-      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
-        'App',
-        'priority property definition has invalid JSON options',
-        expect.any(Object),
-        expect.any(Error),
-      )
-    })
-    expect(getPriorityLevels()).toEqual(before)
   })
 })

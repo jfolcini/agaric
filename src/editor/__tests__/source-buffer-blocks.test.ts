@@ -7,7 +7,7 @@
 
 import { Editor } from '@tiptap/core'
 import type { Command } from '@tiptap/pm/state'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { linesContent, readLines, sourceBufferExtensions } from '@/editor/source-buffer'
 import {
@@ -28,7 +28,6 @@ import {
   toggleWrap,
   turnInto,
 } from '@/editor/source-buffer-blocks'
-import { __resetPriorityLevelsForTests } from '@/lib/priority-levels'
 
 const A = '01J0000000000000000000000A'
 const B = '01J0000000000000000000000B'
@@ -37,10 +36,6 @@ const C = '01J0000000000000000000000C'
 type Line = [text: string, id: string | null]
 
 let editor: Editor | null = null
-
-beforeEach(() => {
-  __resetPriorityLevelsForTests()
-})
 
 afterEach(() => {
   editor?.destroy()

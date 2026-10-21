@@ -83,6 +83,7 @@ function makeDef(key: string, valueType = 'text'): PropertyDefinition {
     value_type: valueType,
     options: null,
     created_at: '2026-01-01T00:00:00Z',
+    builtin: false,
   }
 }
 
@@ -1125,6 +1126,7 @@ describe('BlockPropertyDrawer', () => {
         value_type: 'boolean',
         options: null,
         created_at: '2026-01-01T00:00:00.000Z',
+        builtin: false,
       })
       properties.set(
         blockId,
@@ -1183,6 +1185,7 @@ describe('BlockPropertyDrawer', () => {
         value_type: 'ref',
         options: null,
         created_at: '2026-01-01T00:00:00.000Z',
+        builtin: false,
       })
       useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
       mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))

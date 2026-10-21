@@ -101,6 +101,10 @@ pub enum ValidationCode {
     /// (`create_mcp_agent`, #5667). Coded so the create dialog can name the
     /// clash beside the name field.
     DuplicateAgentName,
+    /// A create, options edit or delete of a built-in property definition
+    /// (`agaric_store::op::BUILTIN_PROPERTY_DEFS`, #5841): those are fixed in
+    /// code and the same in every vault.
+    BuiltinPropertyLocked,
 }
 
 /// Helper struct matching the `{ kind, message, code? }` JSON shape that
@@ -794,7 +798,7 @@ mod tests {
         // The exact strings the old `"<Code>: …"` message prefixes spelled —
         // and the strings the TS `ValidationCode` union in bindings.ts (and
         // its runtime mirror in validation-codes.ts) discriminates on.
-        let cases: [(ValidationCode, &str); 11] = [
+        let cases: [(ValidationCode, &str); 12] = [
             (ValidationCode::InvalidGlob, "InvalidGlob"),
             (ValidationCode::InvalidRegex, "InvalidRegex"),
             (ValidationCode::InvalidDateFilter, "InvalidDateFilter"),
@@ -806,6 +810,10 @@ mod tests {
             (ValidationCode::DuplicatePageAlias, "DuplicatePageAlias"),
             (ValidationCode::InvalidAgentName, "InvalidAgentName"),
             (ValidationCode::DuplicateAgentName, "DuplicateAgentName"),
+            (
+                ValidationCode::BuiltinPropertyLocked,
+                "BuiltinPropertyLocked",
+            ),
         ];
         for (code, expected) in cases {
             assert_eq!(
@@ -847,6 +855,7 @@ mod tests {
                 ValidationCode::DuplicatePageAlias => "DuplicatePageAlias",
                 ValidationCode::InvalidAgentName => "InvalidAgentName",
                 ValidationCode::DuplicateAgentName => "DuplicateAgentName",
+                ValidationCode::BuiltinPropertyLocked => "BuiltinPropertyLocked",
             }
         }
         for code in [
@@ -861,6 +870,7 @@ mod tests {
             ValidationCode::DuplicatePageAlias,
             ValidationCode::InvalidAgentName,
             ValidationCode::DuplicateAgentName,
+            ValidationCode::BuiltinPropertyLocked,
         ] {
             assert_eq!(
                 serde_json::to_value(code).expect("code serializes"),

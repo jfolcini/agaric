@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { AgendaFilterDimension } from '@/lib/filter-dimension-metadata'
 import {
@@ -9,16 +9,7 @@ import {
   getTaskStates,
   TASK_STATES,
 } from '@/lib/filter-dimension-metadata'
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 import { TASK_STATES as CANONICAL_TASK_STATES } from '@/lib/task-states'
-
-beforeEach(() => {
-  __resetPriorityLevelsForTests()
-})
-
-afterEach(() => {
-  __resetPriorityLevelsForTests()
-})
 
 describe('filter-dimension-metadata', () => {
   // -----------------------------------------------------------------------
@@ -80,18 +71,10 @@ describe('filter-dimension-metadata', () => {
       expect(choices).toEqual(['1', '2', '3'])
     })
 
-    it('priority choices reflect user-configured levels', () => {
-      setPriorityLevels(['A', 'B', 'C', 'D'])
-      const choices = (DIMENSION_OPTIONS.priority.choices as () => string[])()
-      expect(choices).toEqual(['A', 'B', 'C', 'D'])
-    })
-
-    it('getPriorityChoices returns a copy (callers cannot mutate the cache)', () => {
-      setPriorityLevels(['A', 'B', 'C'])
+    it('getPriorityChoices returns a copy (callers cannot mutate the levels)', () => {
       const copy = getPriorityChoices()
       copy[0] = 'MUTATED'
-      const second = getPriorityChoices()
-      expect(second[0]).toBe('A')
+      expect(getPriorityChoices()[0]).toBe('1')
     })
 
     it('dueDate has 7 choices including Overdue and Next N days', () => {

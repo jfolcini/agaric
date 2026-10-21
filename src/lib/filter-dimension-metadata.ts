@@ -1,5 +1,5 @@
 import { i18n } from '@/lib/i18n'
-import { getPriorityLevels } from '@/lib/priority-levels'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 import { TASK_STATES } from '@/lib/task-states'
 
 export { TASK_STATES } from '@/lib/task-states'
@@ -33,13 +33,9 @@ export function getTaskStates(): string[] {
   return [...TASK_STATES]
 }
 
-/**
- * Priority filter choices. User-configurable via the `priority` property
- * Definition's options — returns a fresh copy of the active
- * levels at call time.
- */
+/** Priority filter choices: a fresh copy of the levels. */
 export function getPriorityChoices(): string[] {
-  return [...getPriorityLevels()]
+  return [...PRIORITY_LEVELS]
 }
 
 export const DIMENSION_OPTIONS: Record<

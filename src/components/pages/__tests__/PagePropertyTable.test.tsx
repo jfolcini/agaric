@@ -88,6 +88,7 @@ function makeDef(key: string, valueType: string, options?: string): PropertyDefi
     value_type: valueType,
     options: options ?? null,
     created_at: '2026-01-01T00:00:00Z',
+    builtin: false,
   }
 }
 
@@ -1714,12 +1715,14 @@ describe('PagePropertyTable add-from-definition against the real tauri-mock (#27
       value_type: 'number',
       options: null,
       created_at: new Date().toISOString(),
+      builtin: false,
     })
     propertyDefs.set('is_featured', {
       key: 'is_featured',
       value_type: 'boolean',
       options: null,
       created_at: new Date().toISOString(),
+      builtin: false,
     })
 
     render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)

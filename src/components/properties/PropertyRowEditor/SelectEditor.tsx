@@ -1,12 +1,12 @@
 /**
  * SelectEditor — renders a Radix Select with the property's allowed options.
  *
- * The trailing "edit options" / "locked" affordance lives in
- * {@link SelectOptionsAffordance} so the orchestrator can place it outside
+ * The trailing "edit options" affordance lives in
+ * {@link SelectOptionsPopover} so the orchestrator can place it outside
  * the editor slot (the affordance is a sibling of the editor, not a child).
  */
 
-import { ArrowDown, ArrowUp, Lock, Pencil, Plus, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Pencil, Plus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -25,7 +25,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 export interface SelectEditorProps {
   state: SelectEditorState
@@ -52,39 +51,12 @@ export function SelectEditor({ state, ariaLabel }: SelectEditorProps) {
   )
 }
 
-export interface SelectOptionsAffordanceProps {
-  propKey: string
-  locked: boolean
-  state: SelectOptionsEditorState
-}
-
-export function SelectOptionsAffordance({ propKey, locked, state }: SelectOptionsAffordanceProps) {
-  const { t } = useTranslation()
-  if (locked) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground"
-            data-testid={`locked-options-${propKey}`}
-          >
-            <Lock className="h-3 w-3" aria-hidden="true" />
-            {t('propertiesView.optionsLocked')}
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>{t('propertiesView.optionsLockedTooltip')}</TooltipContent>
-      </Tooltip>
-    )
-  }
-  return <SelectOptionsPopover propKey={propKey} state={state} />
-}
-
-interface SelectOptionsPopoverProps {
+export interface SelectOptionsPopoverProps {
   propKey: string
   state: SelectOptionsEditorState
 }
 
-function SelectOptionsPopover({ propKey, state }: SelectOptionsPopoverProps) {
+export function SelectOptionsPopover({ propKey, state }: SelectOptionsPopoverProps) {
   const { t } = useTranslation()
   const {
     open,

@@ -13,11 +13,10 @@
 
 import { render, screen } from '@testing-library/react'
 import * as React from 'react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { Badge } from '@/components/ui/badge'
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 describe('Badge', () => {
   it('renders with default tone/size/shape', () => {
@@ -174,13 +173,6 @@ describe('Badge', () => {
   })
 
   describe('tone="priority"', () => {
-    beforeEach(() => {
-      __resetPriorityLevelsForTests()
-    })
-    afterEach(() => {
-      __resetPriorityLevelsForTests()
-    })
-
     it('applies urgent colour for priority "1"', () => {
       render(
         <Badge tone="priority" priorityLevel="1" size="sm" shape="rounded">
@@ -212,15 +204,15 @@ describe('Badge', () => {
       expect(badge.className).toContain('bg-priority-normal')
     })
 
-    it('honours custom level keys', () => {
-      setPriorityLevels(['A', 'B', 'C'])
+    it('applies the neutral colour for an out-of-range level', () => {
       render(
-        <Badge tone="priority" priorityLevel="A" size="sm" shape="rounded">
-          PA
+        <Badge tone="priority" priorityLevel="P0" size="sm" shape="rounded">
+          PP0
         </Badge>,
       )
-      const badge = screen.getByText('PA')
-      expect(badge.className).toContain('bg-priority-urgent')
+      const badge = screen.getByText('PP0')
+      expect(badge.className).toContain('bg-muted')
+      expect(badge.className).not.toContain('bg-priority-')
     })
 
     it('a11y: no violations for priority tone', async () => {

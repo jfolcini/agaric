@@ -466,4 +466,48 @@ test.describe('Property definitions view @editor', () => {
     await expect(projectRow).toBeVisible()
     await expect(projectRow.getByRole('button', { name: 'Edit options' })).toBeVisible()
   })
+
+  // #5841 — built-in definitions are fixed: a lock, and no edit or delete.
+  test('built-in definitions show a lock and offer no action', async ({ page }) => {
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Settings', exact: true })
+      .click()
+    await page.getByRole('tab', { name: 'Properties' }).click()
+
+    const settingsPanel = page.locator('[data-testid="settings-panel-properties"]')
+    for (const key of ['priority', 'todo_state', 'repeat']) {
+      await expect(settingsPanel.getByTestId(`builtin-lock-${key}`)).toBeVisible()
+      // `has` resolves inside each row, so it is rooted at the page.
+      const row = settingsPanel
+        .locator('ul > li')
+        .filter({ has: page.getByTestId(`builtin-lock-${key}`) })
+      await expect(row).toHaveCount(1)
+      await expect(row.getByRole('button', { name: 'Edit options' })).toHaveCount(0)
+      await expect(row.getByRole('button', { name: /^Delete property/ })).toHaveCount(0)
+    }
+    const projectRow = settingsPanel.locator('ul > li', { hasText: 'project' })
+    await expect(projectRow.getByTestId('builtin-lock-project')).toHaveCount(0)
+
+    const refusal = await page.evaluate(async () => {
+      try {
+        await (
+          window as unknown as {
+            __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> }
+          }
+        ).__TAURI_INTERNALS__.invoke('update_property_def_options', {
+          key: 'priority',
+          options: '["P0","1","2","3"]',
+        })
+        return null
+      } catch (err) {
+        const e = err as { kind?: string; code?: string }
+        return { kind: e.kind, code: e.code }
+      }
+    })
+    expect(refusal).toEqual({ kind: 'validation', code: 'BuiltinPropertyLocked' })
+    await expect
+      .poll(() => storedDefinition(page, 'priority'))
+      .toMatchObject({ options: '["1","2","3"]', builtin: true })
+  })
 })

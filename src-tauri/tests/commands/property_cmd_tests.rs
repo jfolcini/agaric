@@ -1609,55 +1609,6 @@ async fn set_todo_state_rejects_empty_string() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn set_todo_state_accepts_custom_keyword_cancelled() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "custom keyword test".into(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-
-    mat.flush_background().await.unwrap();
-
-    // Backend validates todo_state against the property_definitions
-    // options. To accept a custom keyword like CANCELLED, the user must
-    // first extend the options list for the todo_state definition.
-    update_property_def_options_inner(
-        &pool,
-        "todo_state".into(),
-        r#"["TODO","DOING","DONE","CANCELLED"]"#.into(),
-    )
-    .await
-    .unwrap();
-
-    let result = set_todo_state_inner(
-        &pool,
-        DEV,
-        &mat,
-        block.id.as_str().into(),
-        Some("CANCELLED".into()),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(
-        result.todo_state.as_deref(),
-        Some("CANCELLED"),
-        "todo_state should be CANCELLED after options update"
-    );
-
-    mat.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_todo_state_nonexistent_block_returns_not_found() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -5349,18 +5300,48 @@ async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibli
     mat.shutdown();
 }
 
-// ─── delete_property_def builtin guard ─────────────────
+// ─── built-in definitions are locked (#5841) ─────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn delete_property_def_rejects_builtin_key() {
+async fn every_builtin_definition_refuses_create_update_and_delete_5841() {
+    use agaric_core::error::ValidationCode;
+
     let (pool, _dir) = test_pool().await;
-
-    let result = delete_property_def_inner(&pool, "todo_state".into()).await;
-
-    assert!(
-        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("builtin")),
-        "deleting a builtin property key must return Validation error, got: {result:?}"
-    );
+    for def in agaric_store::op::BUILTIN_PROPERTY_DEFS {
+        let key = def.key;
+        let created =
+            create_property_def_inner(&pool, key.into(), def.value_type.into(), def.options_json())
+                .await;
+        assert_eq!(
+            created.err().and_then(|e| e.validation_code()),
+            Some(ValidationCode::BuiltinPropertyLocked),
+            "creating '{key}' is refused"
+        );
+        let updated = update_property_def_options_inner(&pool, key.into(), r#"["x"]"#.into()).await;
+        assert_eq!(
+            updated.err().and_then(|e| e.validation_code()),
+            Some(ValidationCode::BuiltinPropertyLocked),
+            "editing the options of '{key}' is refused"
+        );
+        let deleted = delete_property_def_inner(&pool, key.into()).await;
+        assert_eq!(
+            deleted.err().and_then(|e| e.validation_code()),
+            Some(ValidationCode::BuiltinPropertyLocked),
+            "deleting '{key}' is refused"
+        );
+    }
+    let keys: Vec<&str> = agaric_store::op::BUILTIN_PROPERTY_DEFS
+        .iter()
+        .map(|def| def.key)
+        .collect();
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM property_definitions WHERE key IN (SELECT value FROM json_each(?))",
+    )
+    .bind(serde_json::to_string(&keys).unwrap())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows, 0, "no built-in row was written");
 }
 
 // ─── command wrappers must sanitize internal errors ──────────
@@ -5729,12 +5710,12 @@ async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
 // Previously the backend only validated property *types*, not whether
 // the supplied value was one of the allowed options for select-type
 // definitions. These tests exercise the option-membership check added
-// to `set_property_in_tx` and the fallback in `set_todo_state_inner`.
+// to `set_property_in_tx`, against the built-in options of `todo_state`
+// and `priority` (#5841) and a user's select.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bug20_set_todo_state_accepts_seeded_option() {
-    // Happy path: TODO is in the seeded options list for the todo_state
-    // property definition (migration 0014).
+    // Happy path: TODO is one of the built-in todo_state options (#5841).
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -5983,12 +5964,9 @@ async fn bug20_select_property_with_null_options_is_permissive() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bug20_set_priority_rejects_value_not_in_seeded_options() {
-    // Priority definition is seeded with options ["1","2","3"] at migration
-    // 0014. Calling set_property_inner directly for "priority" with a value
-    // outside the list must be rejected by the in_tx options check.
-    //
-    // This exercises the reserved-key branch where the existing hardcoded
-    // validation in `set_priority_inner` is bypassed.
+    // The built-in `priority` options are ["1","2","3"] (#5841). Calling
+    // set_property_inner directly for "priority" with a value outside the
+    // list must be rejected by the in_tx options check.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -6029,32 +6007,19 @@ async fn bug20_set_priority_rejects_value_not_in_seeded_options() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn m20_set_priority_accepts_user_extended_options() {
-    // / docs/architecture/data-and-events.md § Property values: the priority property is a
-    // user-extensible select-type definition. Calling set_priority_inner
-    // with a value outside the seeded `["1","2","3"]` set must succeed
-    // when the user has extended the options to cover that value (e.g.
-    // an A/B/C scheme). The previous hardcoded `1|2|3` guard rejected
-    // this categorically; the fix relies on `set_property_in_tx` to
-    // validate against the live `property_definitions.options` row.
+async fn issue3124_todo_state_accepts_cancelled_and_refuses_unknown_states() {
+    // Regression for #3124: CANCELLED is one of the built-in task states
+    // (#5841), accepted like the other three, and a value outside them is
+    // refused.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-
-    // User extends priority options via the existing update path.
-    update_property_def_options_inner(
-        &pool,
-        "priority".into(),
-        "[\"1\",\"2\",\"3\",\"A\",\"B\",\"C\"]".into(),
-    )
-    .await
-    .unwrap();
 
     let block = create_block_inner(
         &pool,
         DEV,
         &mat,
         "content".into(),
-        "m20 extended".into(),
+        "issue3124 states".into(),
         None,
         None,
     )
@@ -6062,170 +6027,8 @@ async fn m20_set_priority_accepts_user_extended_options() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Happy path: extended value "A" is now permitted.
-    let result = set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("A".into()))
-        .await
-        .unwrap();
-    assert_eq!(
-        result.priority.as_deref(),
-        Some("A"),
-        "priority 'A' should be persisted after the user extends the options"
-    );
-
-    // Built-in seeded value still works alongside the extension.
-    set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("2".into()))
-        .await
-        .unwrap();
-
-    // Out-of-options value still rejected (options check inside
-    // set_property_in_tx).
-    let bad =
-        set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("Z".into())).await;
-    assert!(
-        matches!(bad, Err(AppError::Validation { message: ref msg, .. }) if msg.contains('Z') && msg.contains("allowed options")),
-        "value not in user-extended options must still be rejected, got: {bad:?}"
-    );
-
-    mat.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn m20_set_priority_fallback_when_definition_deleted() {
-    // If the `priority` property_definition row is deleted (so the
-    // Options check inside `set_property_in_tx` finds no
-    // definition), `set_priority_inner` falls back to the built-in
-    // seeded options `["1","2","3"]` so the reserved-key contract
-    // remains enforced. Mirrors `bug20_todo_state_fallback_when_definition_deleted`.
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    sqlx::query("DELETE FROM property_definitions WHERE key = 'priority'")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "m20 fallback".into(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    mat.flush_background().await.unwrap();
-
-    // Happy path: "1" is in the built-in fallback.
-    set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("1".into()))
-        .await
-        .unwrap();
-
-    // Error path: "9" is rejected via fallback defaults.
-    let result =
-        set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("9".into())).await;
-    assert!(
-        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains('9') && msg.contains("allowed options")),
-        "without definition row, priority must fall back to built-in defaults and reject unknown values, got: {result:?}"
-    );
-
-    mat.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn bug20_todo_state_fallback_when_definition_deleted() {
-    // Fallback path: if the todo_state property_definition row is deleted,
-    // set_todo_state_inner must still enforce the built-in defaults
-    // ["TODO","DOING","DONE","CANCELLED"] (see also
-    // issue3124_todo_state_fallback_accepts_cancelled for the CANCELLED-
-    // specific regression).
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    // Directly remove the row; bypass delete_property_def_inner which
-    // refuses to delete built-in keys.
-    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "bug20 fallback".into(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    mat.flush_background().await.unwrap();
-
-    // Happy path: TODO is in built-in fallback
-    set_todo_state_inner(
-        &pool,
-        DEV,
-        &mat,
-        block.id.as_str().into(),
-        Some("TODO".into()),
-    )
-    .await
-    .unwrap();
-
-    // Error path: NONSENSE is rejected via fallback defaults
-    let result = set_todo_state_inner(
-        &pool,
-        DEV,
-        &mat,
-        block.id.as_str().into(),
-        Some("NONSENSE".into()),
-    )
-    .await;
-
-    assert!(
-        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("NONSENSE") && msg.contains("TODO")),
-        "without definition row, todo_state must fall back to built-in defaults and reject unknown values, got: {result:?}"
-    );
-
-    mat.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn issue3124_todo_state_fallback_accepts_cancelled() {
-    // Regression for #3124: the `todo_state` fallback allowlist inside
-    // `validate_reserved_property_value` omitted "CANCELLED" even though
-    // migrations 0029/0031 seed the live `property_definitions.options`
-    // as `["TODO","DOING","DONE","CANCELLED"]`. With the definition row
-    // deleted (fallback path active), CANCELLED must be accepted exactly
-    // like the other three seeded states, and a genuinely invalid value
-    // must still be rejected.
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    // Directly remove the row; bypass delete_property_def_inner which
-    // refuses to delete built-in keys.
-    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "issue3124 fallback".into(),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
-    mat.flush_background().await.unwrap();
-
-    // Happy path (the bug): CANCELLED is part of the seeded vocabulary and
-    // must be accepted by the fallback just like TODO/DOING/DONE.
+    // Happy path (the bug): CANCELLED is a built-in state, accepted just like
+    // TODO/DOING/DONE.
     set_todo_state_inner(
         &pool,
         DEV,
@@ -6248,54 +6051,10 @@ async fn issue3124_todo_state_fallback_accepts_cancelled() {
 
     assert!(
         matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("BOGUS") && msg.contains("CANCELLED")),
-        "without definition row, todo_state fallback must reject genuinely invalid values while still advertising CANCELLED in the error, got: {result:?}"
+        "todo_state must reject an unknown state while advertising CANCELLED in the error, got: {result:?}"
     );
 
     mat.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn todo_state_and_priority_fallback_defaults_match_seeded_options() {
-    // Drift guard for #3124: `TODO_STATE_FALLBACK_DEFAULTS` /
-    // `PRIORITY_FALLBACK_DEFAULTS` in properties.rs are hand-maintained
-    // duplicates of the `property_definitions.options` JSON seeded by the
-    // migrations. This test spins up a freshly migrated DB (the same
-    // `test_pool()` every other test uses — no extra machinery) and
-    // asserts the fallback constants are exactly the live seeded set for
-    // both reserved-key vocabularies, so a future migration that changes
-    // the seeded options without updating the Rust constant fails loudly
-    // here instead of silently reintroducing an asymmetric-rejection bug.
-    use std::collections::HashSet;
-
-    use agaric_lib::commands::properties::{
-        PRIORITY_FALLBACK_DEFAULTS, TODO_STATE_FALLBACK_DEFAULTS,
-    };
-
-    let (pool, _dir) = test_pool().await;
-
-    for (key, fallback_defaults) in [
-        ("todo_state", TODO_STATE_FALLBACK_DEFAULTS),
-        ("priority", PRIORITY_FALLBACK_DEFAULTS),
-    ] {
-        let options_json: String =
-            sqlx::query_scalar("SELECT options FROM property_definitions WHERE key = ?")
-                .bind(key)
-                .fetch_one(&pool)
-                .await
-                .unwrap_or_else(|e| panic!("seeded '{key}' property_definitions row missing: {e}"));
-
-        let seeded: Vec<String> = serde_json::from_str(&options_json)
-            .unwrap_or_else(|e| panic!("'{key}' options is not a JSON string array: {e}"));
-
-        let seeded_set: HashSet<&str> = seeded.iter().map(String::as_str).collect();
-        let fallback_set: HashSet<&str> = fallback_defaults.iter().copied().collect();
-
-        assert_eq!(
-            fallback_set, seeded_set,
-            "'{key}' fallback defaults {fallback_defaults:?} have drifted from the live \
-             seeded options {seeded:?} — update the fallback constant in properties.rs"
-        );
-    }
 }
 
 // ======================================================================
@@ -7039,10 +6798,9 @@ async fn set_todo_state_batch_skips_missing_and_deleted() {
 /// makes the rollback assertion non-trivial.
 ///
 /// Honest scope note (the heart of #2049): `set_todo_state_batch_inner`
-/// applies ONE `state` to EVERY block, and validates that state ONCE inside the
-/// IMMEDIATE tx but BEFORE the per-block write loop (the
-/// `validate_reserved_property_value` fallback in properties.rs). The block
-/// liveness probe (`alive` set) is likewise hoisted above the loop. So there is
+/// applies ONE `state` to EVERY block, and `set_property_in_tx` refuses a bad
+/// state at the first live block, before that block's write. The block
+/// liveness probe (`alive` set) is hoisted above the loop. So there is
 /// no per-item failure mode: the batch either rejects wholesale (bad state) or
 /// every live block is written — you cannot construct "block A valid, block B
 /// fails mid-loop" for a uniform state without a production change (no per-row
@@ -7144,13 +6902,7 @@ async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
         .unwrap();
 
     // ── ATOMIC ABORT ──────────────────────────────────────────────────
-    // Delete the seeded `todo_state` definition so the in-tx fallback
-    // validation rejects. BOGUS is not in the seeded defaults (unlike
-    // CANCELLED, which #3124 fixed the fallback to accept).
-    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    // BOGUS is not a built-in task state, so the in-tx options check rejects.
 
     let pre_max: i64 = sqlx::query_scalar!(
         "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
@@ -7494,11 +7246,7 @@ async fn set_todo_state_batch_rolls_back_completed_at_with_the_rest_of_the_tx() 
     }
 
     // ── ABORT ─────────────────────────────────────────────────────────
-    // Drop the definition so the in-tx fallback validation rejects BOGUS.
-    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    // BOGUS is not a built-in task state, so the in-tx options check rejects.
     let result =
         set_todo_state_batch_inner(&pool, DEV, &mat, ids.clone(), Some("BOGUS".into())).await;
     assert!(
@@ -7758,13 +7506,7 @@ async fn set_property_batch_atomic_rollback_on_inner_failure() {
         .unwrap();
 
     // ── ATOMIC ABORT ──────────────────────────────────────────────────
-    // Delete the seeded `todo_state` definition so the in-tx fallback
-    // validation rejects. BOGUS is not in the seeded defaults (unlike
-    // CANCELLED, which #3124 fixed the fallback to accept).
-    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    // BOGUS is not a built-in task state, so the in-tx options check rejects.
 
     let pre_max: i64 = sqlx::query_scalar!(
         "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
@@ -8066,7 +7808,7 @@ async fn set_property_batch_sets_due_date_column() {
 }
 
 /// Generalisation-specific: an invalid reserved value (todo_state outside
-/// the seeded option list) rejects with `Validation` and writes nothing.
+/// the built-in options) rejects with `Validation` and writes nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_batch_rejects_invalid_reserved_value() {
     let (pool, _dir) = test_pool().await;
@@ -8085,13 +7827,7 @@ async fn set_property_batch_rejects_invalid_reserved_value() {
     .unwrap();
     settle(&mat).await;
 
-    // Delete the seeded definition so the in-tx fallback validation
-    // enforces the built-in ["TODO","DOING","DONE","CANCELLED"] set;
-    // "BOGUS" is absent.
-    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    // The built-in ["TODO","DOING","DONE","CANCELLED"] set lacks "BOGUS".
 
     let pre_max: i64 = sqlx::query_scalar!(
         "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",

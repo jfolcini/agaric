@@ -24,7 +24,7 @@ import { NumberEditor } from '@/components/properties/PropertyRowEditor/NumberEd
 import { RefEditor } from '@/components/properties/PropertyRowEditor/RefEditor'
 import {
   SelectEditor,
-  SelectOptionsAffordance,
+  SelectOptionsPopover,
 } from '@/components/properties/PropertyRowEditor/SelectEditor'
 import { TextEditor } from '@/components/properties/PropertyRowEditor/TextEditor'
 import {
@@ -34,7 +34,6 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
-import { LOCKED_PROPERTY_OPTIONS } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 
 export interface PropertyRowEditorProps {
@@ -100,12 +99,8 @@ export function PropertyRowEditor({
           hasCreateNewPage={onCreateNewPage != null}
         />
       </div>
-      {bag.valueType === 'select' && (
-        <SelectOptionsAffordance
-          propKey={prop.key}
-          locked={LOCKED_PROPERTY_OPTIONS.has(prop.key)}
-          state={bag.selectOptions}
-        />
+      {bag.valueType === 'select' && !def?.builtin && (
+        <SelectOptionsPopover propKey={prop.key} state={bag.selectOptions} />
       )}
       {onDelete && (
         <Button

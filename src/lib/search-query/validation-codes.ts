@@ -46,6 +46,8 @@ export const ValidationCode = {
   InvalidAgentName: 'InvalidAgentName',
   /** An MCP agent name another agent holds in any letter case (#5667). */
   DuplicateAgentName: 'DuplicateAgentName',
+  /** A write to a built-in property definition, which is fixed in code (#5841). */
+  BuiltinPropertyLocked: 'BuiltinPropertyLocked',
 } as const satisfies { [K in GeneratedValidationCode]: K }
 
 /**

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT key, value_type, options, created_at\n         FROM property_definitions\n         WHERE (?1 IS NULL OR key > ?2)\n         ORDER BY key ASC\n         LIMIT ?3",
+  "query": "SELECT key, value_type, options, created_at, 0 AS \"builtin!: bool\"\n         FROM property_definitions\n         WHERE (?1 IS NULL OR key > ?2)\n         ORDER BY key ASC\n         LIMIT ?3",
   "describe": {
     "columns": [
       {
@@ -46,6 +46,12 @@
             "name": "created_at"
           }
         }
+      },
+      {
+        "name": "builtin!: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -55,8 +61,9 @@
       false,
       false,
       true,
+      false,
       false
     ]
   },
-  "hash": "3c8f209713b3388477adac6e4cad711d603999e4959e94a05b26ca051cdf6ec3"
+  "hash": "cfa95e18255f6e73374e9c0f701eee77656892fcc4d96cef543ee07ba766110c"
 }

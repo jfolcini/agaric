@@ -1981,7 +1981,7 @@ async fn replay_inbox_row_replays_snapshot_slot_1054() {
 /// recover SQL types for the typed-column assertions below.
 async fn seed_property_defs(pool: &SqlitePool) {
     // `INSERT OR REPLACE` so these test-chosen types win over any
-    // builtin seed (e.g. migration 0014 seeds `effort` as `select`).
+    // seeded default (e.g. migration 0014 seeds `effort` as `select`).
     for (key, value_type) in [
         ("note", "text"),
         ("effort", "number"),

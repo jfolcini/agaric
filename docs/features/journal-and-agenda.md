@@ -57,7 +57,7 @@ Flat task list across a date range with filtering, sorting, and grouping.
 You can stack any combination of:
 
 - **Status** (TODO / DOING / DONE / CANCELLED)
-- **Priority** (the configured levels plus none; defaults P1 / P2 / P3)
+- **Priority** (P1 / P2 / P3 plus none)
 - **Due date** preset (today, this week, this month, overdue, next 7 / 14 / 30 days)
 - **Scheduled date** preset (same shape as due-date)
 - **Completed date** preset
@@ -96,7 +96,7 @@ Repeating tasks are configured via properties (see [properties.md](properties.md
 
 In the editor (any block can be a task), `Ctrl+Enter` advances the **task state cycle**:
 none → TODO → DOING → DONE → CANCELLED → none. Completing a repeating task creates its
-next occurrence according to the repeat rule. With the default priority levels,
-`Ctrl+Shift+1` / `Ctrl+Shift+2` / `Ctrl+Shift+3` set P1 / P2 / P3 directly. Due and
+next occurrence according to the repeat rule. `Ctrl+Shift+1` / `Ctrl+Shift+2` /
+`Ctrl+Shift+3` set P1 / P2 / P3 directly. Due and
 scheduled dates are set from the block toolbar; `Ctrl+Shift+D` inserts a plain date at
 the cursor.

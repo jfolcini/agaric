@@ -6640,7 +6640,8 @@ async fn property_definitions_0120_allow_url_preserves_rows_and_admits_url_4710(
         .await
         .unwrap();
 
-    apply_migrations_to_head(&pool, 119).await;
+    // Through 0120 only: 0128 deletes the built-in rows this count includes.
+    apply_migrations_through(&pool, 119, 120).await;
 
     let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM property_definitions")
         .fetch_one(&pool)
@@ -7397,7 +7398,7 @@ async fn sync_deferred_purges_0126_is_strict_and_cascades_with_its_block_5712() 
     assert_eq!(left, 0, "the row goes with its block (ON DELETE CASCADE)");
 }
 
-/// #5371 — 0128 raises each `pages_cache.last_edited_ms` below its page's
+/// #5371 — 0127 raises each `pages_cache.last_edited_ms` below its page's
 /// newest op to that op, whichever block of the page it is on. A row already
 /// above it keeps its value, since the column only ever rises, and a row still
 /// at 0123's unfilled 0 stays there for the boot-scheduled rebuild to fill.
@@ -7488,5 +7489,102 @@ async fn pages_cache_0127_last_edited_rises_to_the_newest_op_on_the_page_5371() 
         ],
         "a row below its page's newest op rises to it, its own op or a child's; \
          a row above it, or still unfilled, keeps its value"
+    );
+}
+
+/// #5841 — 0128 deletes every built-in definition row and the seeded `due`.
+/// A vault that customised `priority` keeps the level a block holds, the
+/// fixed options then refuse writing it again, and a value held under `due`
+/// stays as an undeclared property.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn property_definitions_0128_drops_builtin_rows_and_keeps_their_values_5841() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_through(&pool, 0, 127).await;
+
+    sqlx::query(
+        "UPDATE property_definitions SET options = '[\"P0\",\"1\",\"2\",\"3\"]' \
+         WHERE key = 'priority'",
+    )
+    .execute(&pool)
+    .await
+    .expect("customise the priority levels");
+    let block = "01J00000000000000000BK5841";
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, priority) \
+         VALUES (?, 'content', 'urgent', 'P0')",
+    )
+    .bind(block)
+    .execute(&pool)
+    .await
+    .expect("seed a block at the custom level");
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_date) VALUES (?, 'due', '2026-05-01')",
+    )
+    .bind(block)
+    .execute(&pool)
+    .await
+    .expect("seed a value under `due`");
+
+    apply_migrations_through(&pool, 127, 128).await;
+
+    let keys: Vec<String> = sqlx::query_scalar("SELECT key FROM property_definitions ORDER BY key")
+        .fetch_all(&pool)
+        .await
+        .expect("read the remaining definitions");
+    assert_eq!(
+        keys,
+        ["assignee", "effort", "location", "status", "url"],
+        "only the user-editable seeds are left as rows"
+    );
+    let priority: Option<String> = sqlx::query_scalar("SELECT priority FROM blocks WHERE id = ?")
+        .bind(block)
+        .fetch_one(&pool)
+        .await
+        .expect("read the block's priority");
+    assert_eq!(priority.as_deref(), Some("P0"), "the stored level survives");
+    let due: Option<String> = sqlx::query_scalar(
+        "SELECT value_date FROM block_properties WHERE block_id = ? AND key = 'due'",
+    )
+    .bind(block)
+    .fetch_one(&pool)
+    .await
+    .expect("the `due` value survives");
+    assert_eq!(
+        due.as_deref(),
+        Some("2026-05-01"),
+        "the `due` value is untouched"
+    );
+    assert!(
+        crate::commands::get_property_def_inner(&pool, "due")
+            .await
+            .expect("look up `due`")
+            .is_none(),
+        "`due` is undeclared now"
+    );
+
+    let materializer = crate::materializer::Materializer::new(pool.clone());
+    let err = crate::commands::set_priority_inner(
+        &pool,
+        "dev-5841",
+        &materializer,
+        agaric_core::ulid::ActiveBlockId::from(block.to_owned()),
+        Some("P0".to_owned()),
+    )
+    .await
+    .expect_err("the fixed levels refuse P0");
+    assert!(
+        matches!(err, agaric_core::error::AppError::Validation { .. })
+            && err.to_string().contains("allowed options"),
+        "refused by the options check, got {err:?}"
+    );
+    let priority: Option<String> = sqlx::query_scalar("SELECT priority FROM blocks WHERE id = ?")
+        .bind(block)
+        .fetch_one(&pool)
+        .await
+        .expect("re-read the block's priority");
+    assert_eq!(
+        priority.as_deref(),
+        Some("P0"),
+        "the refusal leaves the stored level"
     );
 }

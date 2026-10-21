@@ -99,8 +99,8 @@ export async function listAllPropertyDefs(): Promise<PropertyDefinition[]> {
 /**
  * The key a typed `key:: value` line names and its definition (#5160 D13):
  * the definition spelled so, else the one definition the key folds to
- * (`foldPropertyKey`), the reserved keys' included (migration 0014 declares
- * them). Two that fold alike are never guessed between, and a key none folds
+ * (`foldPropertyKey`), the built-in keys' included (`list_property_defs`
+ * lists them). Two that fold alike are never guessed between, and a key none folds
  * to is a custom key: both stay as typed. `listDefs` answers every
  * definition; a key with no definition spelled so needs the list, since a
  * definition spelled otherwise (`repeat-until`) may fold to it. Mirrors

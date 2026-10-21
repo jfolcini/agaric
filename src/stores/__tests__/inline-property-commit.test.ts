@@ -80,7 +80,8 @@ describe('commitInlineProperties (#5160 Phase 4b)', () => {
     expect(toast.error).not.toHaveBeenCalled()
   })
 
-  it('a value the seeded `due` date definition refuses stays as text, as in the app', async () => {
+  it('a value a `date` definition refuses stays as text, as in the app', async () => {
+    dispatch('create_property_def', { key: 'due', valueType: 'date', options: null })
     const edit = await commit('task\ndue:: soon')
 
     expect(edit).toHaveBeenCalledExactlyOnceWith(BLOCK, 'task\ndue:: soon')

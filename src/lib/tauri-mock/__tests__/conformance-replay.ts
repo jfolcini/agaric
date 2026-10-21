@@ -60,9 +60,10 @@ export interface Fixture {
     tags: Array<Record<string, unknown>>
     /**
      * #3830 — the property-definition registry, when the fixture pins it. A
-     * fixture that declares it declares the WHOLE registry: the Rust twin
-     * clears the migration-seeded builtins first, because this map starts
-     * empty (`clearMock`) and the two stacks must begin in the same state.
+     * fixture that declares it declares the WHOLE set of user rows: the Rust
+     * twin clears the migrations' seeded rows first, because this map starts
+     * empty (`clearMock`) and the two stacks must begin in the same state. The
+     * built-ins (#5841) are constants on both stacks.
      */
     property_defs?: Array<Record<string, unknown>>
     /**

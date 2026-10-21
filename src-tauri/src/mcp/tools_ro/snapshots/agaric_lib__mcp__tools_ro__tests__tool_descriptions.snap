@@ -225,7 +225,7 @@ expression: wire
       - space_id
     type: object
   name: list_tags
-- description: "List every property definition (typed property schema), with cursor pagination."
+- description: "List every property definition (typed property schema), with cursor pagination. A built-in definition is marked `builtin: true` and cannot be changed."
   inputSchema:
     additionalProperties: false
     properties:
