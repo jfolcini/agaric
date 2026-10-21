@@ -288,7 +288,7 @@ export function ImportSection(): React.ReactElement {
       for (const file of fileArray) {
         try {
           const buf = await file.arrayBuffer()
-          const { notes, skipped } = parseJex(new Uint8Array(buf))
+          const { notes, skipped, fileLinks } = parseJex(new Uint8Array(buf))
           // An archive that yields no notes is treated as a parse failure so the
           // user gets an explicit "not a valid Joplin export" toast rather than a
           // silent no-op (mirrors the `.enex` malformed-file behaviour).
@@ -296,6 +296,9 @@ export function ImportSection(): React.ReactElement {
             throw new Error('no importable notes found in archive')
           }
           if (skipped > 0) preWarnings.push(t('data.importJexSkipped', { count: skipped }))
+          if (fileLinks > 0) {
+            preWarnings.push(t('data.importJexFileLinks', { count: fileLinks }))
+          }
           units.push(...jexNotesToUnits(notes))
         } catch (err) {
           logger.error(

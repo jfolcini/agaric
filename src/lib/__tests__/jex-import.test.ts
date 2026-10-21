@@ -19,12 +19,10 @@
  *  - how a header's numeric field is padded, and which item kinds a resource's
  *    vault name may come from.
  *
- * ACCEPTED GAPS (#4816, re-swept in #4691). Ten mutants survive. Seven are
+ * ACCEPTED GAPS (#4816, re-swept in #4691). Eight mutants survive. Five are
  * equivalent:
  *  - unreachable operands `tsc` demands: `lines[i] ?? ''` (the index is in
- *    bounds), `.pop() ?? ''` (`split` never returns `[]`), `c === undefined` (a
- *    header block is always 512 bytes) and `cp !== undefined` (a `for…of`
- *    character always has a code point);
+ *    bounds) and `c === undefined` (a header block is always 512 bytes);
  *  - `raw === undefined` in `parseJoplinTime`: without it `Date.parse(undefined)`
  *    is `NaN`, so still `null`;
  *  - `mimeToExt`'s `?? ''` for a mime with no `/`: Stryker's stand-in has 14
@@ -40,10 +38,11 @@
 
 import { runInNewContext } from 'node:vm'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { UNTITLED_PLACEHOLDER } from '@/lib/enex-import'
-import { jexNoteToMarkdown, parseJex } from '@/lib/jex-import'
+import { scanAttachmentRefs } from '@/lib/import-attachments'
+import { type JexNote, jexNoteToMarkdown, parseJex } from '@/lib/jex-import'
 
 // --- Synthetic USTAR tar builder -------------------------------------------
 
@@ -196,8 +195,9 @@ describe('parseJex', () => {
     const note = notes.find((n) => n.title === 'Projects/Note One')
     if (note === undefined) throw new Error('expected Note One')
 
-    // `[go to beta](:/<note2 id>)` → `[[Note Two]]` (link target preserved).
-    expect(note.markdown).toContain('[[Note Two]]')
+    // `[go to beta](:/<note2 id>)` → `[[Note Two|go to beta]]`: the target and
+    // the label both survive.
+    expect(note.markdown).toContain('[[Note Two|go to beta]]')
     expect(note.markdown).not.toContain(`:/${NOTE2_ID}`)
   })
 
@@ -241,8 +241,8 @@ describe('parseJex', () => {
   })
 
   it('degrades to zero notes on an empty/garbage archive without throwing', () => {
-    expect(parseJex(new Uint8Array(0))).toEqual({ notes: [], skipped: 0 })
-    expect(parseJex(new Uint8Array(1024))).toEqual({ notes: [], skipped: 0 })
+    expect(parseJex(new Uint8Array(0))).toEqual({ notes: [], skipped: 0, fileLinks: 0 })
+    expect(parseJex(new Uint8Array(1024))).toEqual({ notes: [], skipped: 0, fileLinks: 0 })
   })
 })
 
@@ -256,6 +256,7 @@ describe('jexNoteToMarkdown', () => {
       markdown: '# Body\n\ntext',
       createdMs: Date.UTC(2021, 0, 2, 3, 4, 5),
       updatedMs: Date.UTC(2022, 2, 4, 5, 6, 7),
+      tags: [],
       attachments: [],
     })
     expect(md).toBe(
@@ -280,6 +281,7 @@ describe('jexNoteToMarkdown', () => {
       markdown: 'body',
       createdMs: null,
       updatedMs: null,
+      tags: [],
       attachments: [],
     })
     expect(md).toBe('---\nsource: joplin\n---\n\nbody\n')
@@ -291,6 +293,7 @@ describe('jexNoteToMarkdown', () => {
       markdown: '',
       createdMs: null,
       updatedMs: null,
+      tags: [],
       attachments: [],
     })
     expect(md).toBe('---\nsource: joplin\n---\n')
@@ -444,7 +447,7 @@ describe('parseJex resource naming', () => {
         metaTitle: 'C:\\photos\\my \u0001pic.png',
       },
     ]
-    expect(embeddedAttachments(specs)).toEqual([{ path: 'my pic.png', mime: 'image/png' }])
+    expect(embeddedAttachments(specs)).toEqual([{ path: 'my_pic.png', mime: 'image/png' }])
   })
 
   it('strips a trailing space that a control character shielded from the title trim', () => {
@@ -607,6 +610,7 @@ describe('parseJex malformed item and header shapes', () => {
         markdown: '',
         createdMs: null,
         updatedMs: null,
+        tags: [],
         attachments: [],
       },
     ])
@@ -718,10 +722,15 @@ describe('parseJex malformed item and header shapes', () => {
 
 // --- Where the tar scan starts and stops ------------------------------------
 
-/** A root-level note item member, optionally with a body under the title. */
-function noteMember(id: string, title: string, body = ''): TarMember {
+/** A root-level note item member, optionally with a body under the title and more metadata. */
+function noteMember(
+  id: string,
+  title: string,
+  body = '',
+  props: Record<string, string> = {},
+): TarMember {
   const content = body.length > 0 ? `${title}\n\n${body}` : title
-  return itemMember(id, joplinItem(content, { id, parent_id: '', type_: '1' }))
+  return itemMember(id, joplinItem(content, { id, parent_id: '', ...props, type_: '1' }))
 }
 
 describe('parseJex tar scan boundaries', () => {
@@ -883,7 +892,7 @@ describe('parseJex item text shapes', () => {
     const { notes, skipped } = parseJex(archive)
     expect(skipped).toBe(0)
     expect(notes.map((n) => n.title).toSorted()).toEqual(['Linker', 'Spaced Keys'])
-    expect(notes.find((n) => n.title === 'Linker')?.markdown).toBe('see [[Spaced Keys]]')
+    expect(notes.find((n) => n.title === 'Linker')?.markdown).toBe('see [[Spaced Keys|it]]')
   })
 
   it('imports a note whose metadata carries no id', () => {
@@ -898,6 +907,7 @@ describe('parseJex item text shapes', () => {
         markdown: 'body line',
         createdMs: null,
         updatedMs: null,
+        tags: [],
         attachments: [],
       },
     ])
@@ -1040,5 +1050,222 @@ describe('parseJex notebook hierarchy', () => {
       childNote('c9'.repeat(16), 'Cycled', alpha),
     ])
     expect(parseJex(archive).notes.map((n) => n.title)).toEqual(['Beta/Alpha/Cycled'])
+  })
+})
+
+// --- Joplin fidelity (#6032) --------------------------------------------------
+//
+// What a note carries besides its Markdown body: tags, to-do state, the HTML
+// format, and the reference forms Joplin writes besides `[..](:/id)`. Each
+// test asserts the Markdown the backend importer reads, and where a resource
+// ships, that the backend's image scan (`scanAttachmentRefs`) finds exactly the
+// shipped vault paths.
+
+/** The parsed note titled `title`. */
+function noteTitled(notes: JexNote[], title: string): JexNote {
+  const note = notes.find((n) => n.title === title)
+  if (note === undefined) throw new Error(`expected the note ${title}`)
+  return note
+}
+
+/** A `type_: 4` resource item plus its binary. */
+function resourceMembers(id: string, title: string, mime: string, ext: string): TarMember[] {
+  return [
+    itemMember(id, joplinItem(title, { id, mime, file_extension: ext, type_: '4' })),
+    { name: `resources/${id}.${ext}`, data: HELLO_BYTES },
+  ]
+}
+
+describe('parseJex Joplin fidelity (#6032)', () => {
+  it("writes a note's tags as front-matter page tags, each name whole", () => {
+    const tagIds = ['1a'.repeat(16), '2b'.repeat(16), '3c'.repeat(16)]
+    const tagged = '4d'.repeat(16)
+    const plain = '5e'.repeat(16)
+    const tagItem = (id: string, title: string) =>
+      itemMember(id, joplinItem(title, { id, type_: '5' }))
+    const link = (n: number, tagId: string) =>
+      itemMember(
+        `6${n}`.repeat(16),
+        joplinItem('', { id: `6${n}`.repeat(16), note_id: tagged, tag_id: tagId, type_: '6' }),
+      )
+    const archive = buildTar([
+      noteMember(tagged, 'Tagged', 'body'),
+      noteMember(plain, 'Plain', 'body'),
+      tagItem(tagIds[0] as string, 'C++'),
+      tagItem(tagIds[1] as string, '2024'),
+      tagItem(tagIds[2] as string, 'Multi Word'),
+      link(0, tagIds[0] as string),
+      link(1, tagIds[1] as string),
+      // A link to a tag the archive does not hold names nothing.
+      link(2, '7f'.repeat(16)),
+      link(3, tagIds[2] as string),
+    ])
+    const { notes, skipped } = parseJex(archive)
+    expect(skipped).toBe(0)
+    expect(noteTitled(notes, 'Plain').tags).toEqual([])
+    const note = noteTitled(notes, 'Tagged')
+    expect(note.tags).toEqual(['C++', '2024', 'Multi Word'])
+    // The importer applies front-matter `tags:` as the page's tags, taking each
+    // block-sequence item whole once its one pair of quotes is stripped.
+    expect(jexNoteToMarkdown(note)).toBe(
+      [
+        '---',
+        'tags:',
+        '  - "C++"',
+        '  - "2024"',
+        '  - "Multi Word"',
+        'source: joplin',
+        '---',
+        '',
+        'body',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('opens a to-do with a task block holding its state and due date', () => {
+    const due = new Date(2024, 4, 1, 9, 30).getTime()
+    const archive = buildTar([
+      noteMember('a1'.repeat(16), 'Open task', 'details', {
+        is_todo: '1',
+        todo_completed: '0',
+        todo_due: String(due),
+      }),
+      noteMember('b2'.repeat(16), 'Done task', 'details', {
+        is_todo: '1',
+        todo_completed: String(due),
+        todo_due: '0',
+      }),
+      noteMember('c3'.repeat(16), 'Bare task', '', { is_todo: '1', todo_completed: '0' }),
+      // A plain note keeps any stale to-do fields out of its body.
+      noteMember('d4'.repeat(16), 'Plain note', 'details', {
+        is_todo: '0',
+        todo_completed: String(due),
+        todo_due: String(due),
+      }),
+    ])
+    const { notes } = parseJex(archive)
+    // The checkbox is the task state and `due_date::` its due date, the form a
+    // Markdown export writes; the body follows as its own blocks.
+    expect(noteTitled(notes, 'Open task').markdown).toBe(
+      '- [ ] Open task\n  due_date:: 2024-05-01\n\ndetails',
+    )
+    expect(noteTitled(notes, 'Done task').markdown).toBe('- [x] Done task\n\ndetails')
+    expect(noteTitled(notes, 'Bare task').markdown).toBe('- [ ] Bare task')
+    expect(noteTitled(notes, 'Plain note').markdown).toBe('details')
+  })
+
+  it('drops a due date that is not a date instead of failing the archive', () => {
+    const archive = buildTar([
+      noteMember('a5'.repeat(16), 'Garbled', '', { is_todo: '1', todo_due: 'soon' }),
+      // Past the largest date a `Date` holds.
+      noteMember('b6'.repeat(16), 'Far', '', { is_todo: '1', todo_due: '1e20' }),
+    ])
+    const { notes } = parseJex(archive)
+    expect(noteTitled(notes, 'Garbled').markdown).toBe('- [ ] Garbled')
+    expect(noteTitled(notes, 'Far').markdown).toBe('- [ ] Far')
+  })
+
+  it("dates a to-do's due time in the local time zone", () => {
+    vi.stubEnv('TZ', 'Pacific/Auckland')
+    try {
+      // 18:00 UTC on 1 May is 06:00 on 2 May in Auckland.
+      const due = Date.UTC(2024, 4, 1, 18, 0)
+      // A worker thread ignores `process.env.TZ`: under the `pool: 'threads'`
+      // the Stryker vitest runner forces, local time is still UTC.
+      if (new Date(due).getDate() === 1) return
+      const archive = buildTar([
+        noteMember('e7'.repeat(16), 'Late', '', { is_todo: '1', todo_due: String(due) }),
+      ])
+      expect(parseJex(archive).notes[0]?.markdown).toBe('- [ ] Late\n  due_date:: 2024-05-02')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it('converts an HTML note to Markdown and resolves its references', () => {
+    const html = 'f8'.repeat(16)
+    // A web clip as Joplin's clipper API stores it: a `<style>` tag, then the
+    // page, here a whole document.
+    const body =
+      '<style>p { color: red }</style>\n<html><head><title>Page</title></head>' +
+      `<body><h1>Heading</h1><p>Some <b>bold</b> and <a href=":/${NOTE2_ID}">a link</a>.</p>` +
+      `<p><img src=":/${RES_ID}" alt="pic"></p></body></html>`
+    const { notes } = parseJex(
+      sampleJex([noteMember(html, 'Clipped', body, { markup_language: '2' })]),
+    )
+    const note = noteTitled(notes, 'Clipped')
+    expect(note.markdown).toBe(
+      '# Heading\n\nSome **bold** and [[Note Two|a link]].\n\n![pic](pic.png)',
+    )
+    expect(note.attachments.map((a) => a.path)).toEqual(['pic.png'])
+    expect(scanAttachmentRefs(note.markdown)).toEqual(['pic.png'])
+  })
+
+  it("writes an HTML note's headerless table as a pipe table and survives an empty one", () => {
+    const body =
+      '<table><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr></table><table></table>'
+    const { notes } = parseJex(
+      buildTar([noteMember('a9'.repeat(16), 'Tables', body, { markup_language: '2' })]),
+    )
+    expect(noteTitled(notes, 'Tables').markdown).toBe('| a | b |\n| --- | --- |\n| 1 | 2 |')
+  })
+
+  it('leaves a link to a file that is not an image as a link, unshipped and counted', () => {
+    const pdf = '9a'.repeat(16)
+    const other = '0b'.repeat(16)
+    const archive = sampleJex([
+      ...resourceMembers(pdf, 'report.pdf', 'application/pdf', 'pdf'),
+      noteMember(other, 'Files', `[report.pdf](:/${pdf}) and ![pic](:/${RES_ID})`),
+      noteMember('1c'.repeat(16), 'Again', `[the report](:/${pdf})`),
+    ])
+    const { notes, fileLinks } = parseJex(archive)
+    const note = noteTitled(notes, 'Files')
+    expect(note.markdown).toBe('[report.pdf](report.pdf) and ![pic](pic.png)')
+    // The backend imports only image refs, and an image ref to a PDF renders
+    // as a broken image, so the PDF's bytes do not ship.
+    expect(note.attachments.map((a) => a.path)).toEqual(['pic.png'])
+    expect(scanAttachmentRefs(note.markdown)).toEqual(['pic.png'])
+    expect(noteTitled(notes, 'Again').attachments).toEqual([])
+    expect(fileLinks).toBe(2)
+  })
+
+  it('renames a resource whose title holds a space or a parenthesis, so the importer ingests it', () => {
+    const shot = '2d'.repeat(16)
+    const archive = buildTar([
+      ...resourceMembers(shot, 'Screen shot (1).png', 'image/png', 'png'),
+      noteMember('3e'.repeat(16), 'Shots', `![](:/${shot})`),
+    ])
+    const note = noteTitled(parseJex(archive).notes, 'Shots')
+    expect(note.markdown).toBe('![](Screen_shot_1_.png)')
+    // The ref the backend finds is the path the bytes ship under.
+    expect(scanAttachmentRefs(note.markdown)).toEqual(note.attachments.map((a) => a.path))
+    expect(note.attachments.map((a) => a.path)).toEqual(['Screen_shot_1_.png'])
+  })
+
+  it("resolves Joplin's other reference forms", () => {
+    const body = [
+      `[app](joplin://${NOTE2_ID})`,
+      `[anchored](:/${NOTE2_ID}#part-2)`,
+      `[titled](:/${NOTE2_ID} "Tip")`,
+      `[](:/${NOTE2_ID})`,
+      `![shot](:/${RES_ID} "Caption")`,
+      `<img src=":/${RES_ID}" alt="sized" width="200" height="100">`,
+      `<img width="50" src='joplin://${RES_ID}'/>`,
+    ].join('\n')
+    const { notes } = parseJex(sampleJex([noteMember('4f'.repeat(16), 'Forms', body)]))
+    const note = noteTitled(notes, 'Forms')
+    expect(note.markdown).toBe(
+      [
+        '[[Note Two|app]]',
+        '[[Note Two|anchored]]',
+        '[[Note Two|titled]]',
+        '[[Note Two]]',
+        '![shot](pic.png)',
+        '![sized](pic.png)',
+        '![](pic.png)',
+      ].join('\n'),
+    )
+    expect(scanAttachmentRefs(note.markdown)).toEqual(['pic.png'])
   })
 })

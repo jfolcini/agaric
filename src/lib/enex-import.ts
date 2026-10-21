@@ -156,12 +156,12 @@ const CRYPT_PLACEHOLDER =
   '> [!warning] Encrypted content was omitted during import (Evernote en-crypt block).'
 
 /**
- * Build the shared Turndown instance used to convert ENML → Markdown.
- * ENML-specific tags (`<en-todo>`, `<en-media>`) are handled by a DOM pre-pass
- * (see {@link transformEnmlDom}) rather than rules, so this is just GFM with
- * the project's markdown style.
+ * Build the Turndown instance that converts ENML, and a Joplin HTML note, to
+ * Markdown. ENML-specific tags (`<en-todo>`, `<en-media>`) are handled by a
+ * DOM pre-pass (see {@link transformEnmlDom}) rather than rules, so this is
+ * just GFM with the project's markdown style.
  */
-function createEnmlTurndown(): TurndownService {
+export function createHtmlTurndown(): TurndownService {
   const td = new TurndownService({
     // Any value but `'setext'` behaves identically — every Turndown check is
     // against that one (#4815).
@@ -314,7 +314,7 @@ function mimeToExt(mime: string): string {
 }
 
 /** Basename-only, control-char-free resource filename (no path traversal). */
-function sanitizeResourceName(name: string): string {
+export function sanitizeResourceName(name: string): string {
   const base = name.replace(/\\/g, '/').split('/').pop() ?? ''
   // Strip C0 control characters (codepoints < 0x20) without a control-char
   // regex literal, then trim surrounding whitespace.
@@ -402,13 +402,7 @@ function uniqueResourcePath(
  *    callout). The ciphertext can't be decrypted on import, so its children are
  *    discarded (never leaked) and replaced by a clear, non-destructive marker
  *    (#2513, advanced ENML fidelity).
- *  - a nested `<table>` (one inside a `<td>`/`<th>`) → inline text. GFM pipe
- *    tables can't nest — letting Turndown emit the inner table's own rows
- *    splices newlines and `|`s into the OUTER cell and corrupts the whole
- *    table — so each nested table is flattened to a single-line
- *    `cell / cell ; row` string (see {@link flattenNestedTable}) that survives
- *    intact inside the outer pipe cell. The outer (top-level) table still
- *    renders as a real Markdown table (#2513, advanced ENML fidelity).
+ *  - each `<table>`, through {@link prepareTablesForGfm}.
  */
 function transformEnmlDom(
   root: Element,
@@ -457,6 +451,24 @@ function transformEnmlDom(
     block.append(ownerDoc.createTextNode(CRYPT_SENTINEL))
     crypt.replaceWith(block)
   }
+  prepareTablesForGfm(root)
+}
+
+/**
+ * Shape the `<table>`s under `root` into ones turndown-plugin-gfm writes as
+ * pipe tables:
+ *  - a nested `<table>` (one inside a `<td>`/`<th>`) → inline text. GFM pipe
+ *    tables can't nest — letting Turndown emit the inner table's own rows
+ *    splices newlines and `|`s into the OUTER cell and corrupts the whole
+ *    table — so each nested table is flattened to a single-line
+ *    `cell / cell ; row` string (see {@link flattenNestedTable}) that survives
+ *    intact inside the outer pipe cell. The outer (top-level) table still
+ *    renders as a real Markdown table (#2513, advanced ENML fidelity).
+ *  - a table with no rows → its contents, and one with no header row → its
+ *    first row as the header.
+ */
+export function prepareTablesForGfm(root: Element): void {
+  const ownerDoc = root.ownerDocument
   // Flatten nested tables inner-most first: once a nested table is replaced by
   // text, its former parent may itself become a leaf nested table.
   for (
@@ -474,7 +486,7 @@ function transformEnmlDom(
       table.replaceWith(...Array.from(table.childNodes))
     } else if (first.parentElement?.localName !== 'thead') {
       // The plugin keeps a table with no header row as raw HTML, and Evernote
-      // writes none: its first row is the header.
+      // writes none, nor does many a web clip: its first row is the header.
       const head = ownerDoc.createElement('thead')
       head.append(first)
       table.prepend(head)
@@ -484,7 +496,7 @@ function transformEnmlDom(
 
 /**
  * Find a nested `<table>` (a descendant of a `<td>`/`<th>`) that contains no
- * further nested table — a "leaf" — so {@link transformEnmlDom} can flatten
+ * further nested table — a "leaf" — so {@link prepareTablesForGfm} can flatten
  * from the inside out. Returns null when no nested table remains.
  */
 function findLeafNestedTable(root: Element): Element | null {
@@ -650,7 +662,7 @@ export function parseEnex(xmlText: string): EnexNote[] {
     throw new Error('Failed to parse ENEX file: malformed XML.')
   }
 
-  const td = createEnmlTurndown()
+  const td = createHtmlTurndown()
   const noteEls = Array.from(doc.querySelectorAll('note'))
   return noteEls.map((noteEl) => {
     const rawTitle = noteEl.querySelector('title')?.textContent?.trim() ?? ''
