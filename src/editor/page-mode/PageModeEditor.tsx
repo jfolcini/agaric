@@ -504,14 +504,24 @@ function PageModeDocument({
     let timer: ReturnType<typeof setTimeout> | undefined
     // The store's own reads, which the save and the patch make, are not changes from elsewhere.
     let reading = false
+    /**
+     * The page as a load started by this read, or after it, left the store; throws when none
+     * landed. A load that lands sets the rows as a new array, and only the newest one started
+     * lands: so rows unchanged mean this load failed, or a newer one overtook it and is still
+     * going (the subscription brings that one in), and the store holds rows older than the
+     * writes. Read from the store, not a subscription: the closing save reads too.
+     */
     const read = async (): Promise<FlatBlock[]> => {
+      const was = pageStore.getState().blocks
       reading = true
       try {
         await pageStore.getState().load()
       } finally {
         reading = false
       }
-      return pageStore.getState().blocks
+      const now = pageStore.getState().blocks
+      if (now === was) throw new Error('page mode could not read the page')
+      return now
     }
     const api = commandsApi(async () => treeRows(await read()))
     const cursorBlock = (): string | null => {
@@ -569,33 +579,42 @@ function PageModeDocument({
     const runSave = async (closing: boolean): Promise<void> => {
       const start = performance.now()
       let result = await savePage(editor.state.doc, save, api)
-      if (result.error !== undefined && !editor.isDestroyed) {
-        // A refused write: the page may have changed elsewhere (a block deleted
-        // under the text typed in it). Read it again, bring that in, save once more.
-        logger.warn('PageModeEditor', 'A page mode write was refused', { pageId }, result.error)
-        const refs = result.refs
-        const { failed } = result
-        const refused = failed?.kind === 'create' || failed?.kind === 'restore' ? failed.id : null
-        await bringIn(await read(), new Set(refused === null ? [] : [refused]))
-        result = await savePage(editor.state.doc, save, api)
-        result.refs.unshift(...refs)
-      }
-      performance.clearMeasures(SAVE_MEASURE)
-      performance.measure(SAVE_MEASURE, { start })
-      const typedRefs = await commitTyped(closing)
-      if (typedRefs.length > 0) {
-        result.refs.push(...typedRefs)
-        // The text the commits wrote comes back as a change from elsewhere does.
-        if (!editor.isDestroyed) await bringIn(await read())
-      } else if (result.refs.length > 0 && !editor.isDestroyed && embedsOwnBlock(save)) {
-        // Block mode's save writes the store, which an embed of this page mirrors (`mirrorToSiblings`).
-        await read()
-      }
-      const coalesce = result.structural ? undefined : `edit:${cursorBlock() ?? pageId}`
-      if (result.refs.length > 0) notifyUndoNewAction(pageId, result.refs, coalesce)
-      if (result.error !== undefined) {
-        logger.warn('PageModeEditor', 'Failed to save page mode changes', { pageId }, result.error)
-        notify.error(t('pageMode.saveFailed'), { id: `page-mode-save-${pageId}` })
+      try {
+        if (result.error !== undefined && !editor.isDestroyed) {
+          // A refused write: the page may have changed elsewhere (a block deleted
+          // under the text typed in it). Read it again, bring that in, save once more.
+          logger.warn('PageModeEditor', 'A page mode write was refused', { pageId }, result.error)
+          const refs = result.refs
+          const { failed } = result
+          const refused = failed?.kind === 'create' || failed?.kind === 'restore' ? failed.id : null
+          await bringIn(await read(), new Set(refused === null ? [] : [refused]))
+          result = await savePage(editor.state.doc, save, api)
+          result.refs.unshift(...refs)
+        }
+        performance.clearMeasures(SAVE_MEASURE)
+        performance.measure(SAVE_MEASURE, { start })
+        const typedRefs = await commitTyped(closing)
+        if (typedRefs.length > 0) {
+          result.refs.push(...typedRefs)
+          // The text the commits wrote comes back as a change from elsewhere does.
+          if (!editor.isDestroyed) await bringIn(await read())
+        } else if (result.refs.length > 0 && !editor.isDestroyed && embedsOwnBlock(save)) {
+          // Block mode's save writes the store, which an embed of this page mirrors (`mirrorToSiblings`).
+          await read()
+        }
+      } finally {
+        // A read that failed above still leaves the ops that landed to undo, and the failure to tell.
+        const coalesce = result.structural ? undefined : `edit:${cursorBlock() ?? pageId}`
+        if (result.refs.length > 0) notifyUndoNewAction(pageId, result.refs, coalesce)
+        if (result.error !== undefined) {
+          logger.warn(
+            'PageModeEditor',
+            'Failed to save page mode changes',
+            { pageId },
+            result.error,
+          )
+          notify.error(t('pageMode.saveFailed'), { id: `page-mode-save-${pageId}` })
+        }
       }
     }
     const enqueue = (step: () => Promise<void>): Promise<void> => {

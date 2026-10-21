@@ -8,7 +8,11 @@
  * undo, Enter and Backspace on list blocks among them, each step perhaps
  * followed by a peer's change (an edit, or a block created, moved or deleted) brought in
  * as a reload does, and perhaps by a save whose commands fail before a clean
- * one. After every clean save:
+ * one. A step may instead be one where the backend refuses by content the
+ * creates of some blocks (a pasted link to another space's page): the save
+ * goes on without them and what depends on them, and the next clean save
+ * writes what was held. No save, clean or not, takes a block the document
+ * shows out of the backend. After every clean save:
  *
  * - the mock backend's page equals the document: ids, depth, order and text
  *   (an empty block new in the document may be missing: it is created once it
@@ -119,8 +123,16 @@ interface MockPage {
   live: () => Row[]
   /** Fail the save's calls whose index (from 0) has its bit set in the mask. */
   failWith: (mask: number | null) => void
+  /** Refuse the create of any block whose text is one of those refused, until switched off. */
+  refuseCreates: (on: boolean) => void
   /** Run a peer's command: no local command, no event. */
   peer: (cmd: string, args: Record<string, unknown>) => void
+}
+
+function refusedText(markdown: string): boolean {
+  let sum = 0
+  for (let i = 0; i < markdown.length; i += 1) sum += markdown.charCodeAt(i)
+  return markdown !== '' && sum % 3 === 0
 }
 
 function mockPage(rows: readonly Row[]): MockPage {
@@ -144,6 +156,7 @@ function mockPage(rows: readonly Row[]): MockPage {
   }
   let mask: number | null = null
   let calls = 0
+  let refusing = false
   const command = <T>(cmd: string, args: Record<string, unknown>): T => {
     const failing = mask !== null && ((mask >> calls) & 1) === 1
     calls += 1
@@ -167,6 +180,9 @@ function mockPage(rows: readonly Row[]): MockPage {
       mask = next
       calls = 0
     },
+    refuseCreates: (on) => {
+      refusing = on
+    },
     peer: (cmd, args) => {
       dispatch(cmd, cmd === 'create_block' ? { ...args, scope: SCOPE } : args)
     },
@@ -174,6 +190,8 @@ function mockPage(rows: readonly Row[]): MockPage {
       create: (id, parentId, index, markdown) =>
         answer(() => {
           if (mockBlocks.has(id)) throw new Error(`create_block: block ${id} already exists`)
+          // A third of the texts, whichever block holds them: an edit can make one acceptable.
+          if (refusing && refusedText(markdown)) throw new Error('create_block: content refused')
           return command<WithRefs<BlockRow>>('create_block', {
             blockType: 'content',
             content: markdown,
@@ -334,6 +352,7 @@ const stepArb = fc.record({
   action: actionArb,
   peer: fc.option(peerArb, { freq: 3 }),
   failures: fc.option(fc.integer({ min: 1, max: 0xffff }), { freq: 4 }),
+  refuse: fc.integer({ min: 0, max: 3 }).map((n) => n === 0),
 })
 type Step = typeof stepArb extends fc.Arbitrary<infer T> ? T : never
 
@@ -352,7 +371,7 @@ const B2 = blockId(2)
  * block: its first character, the peer's, held the pasted block's id, so the
  * cut text came back under a new one (`restoredIds` in `page-block-ids.ts`).
  */
-const EXAMPLES: Array<[Row[], Step[]]> = [
+const EXAMPLES: Array<[Row[], Array<Omit<Step, 'refuse'>>]> = [
   [
     [
       [B1, 0, ''],
@@ -788,6 +807,12 @@ function nodeById(doc: PMNode, id: string): PMNode | null {
   return found
 }
 
+/** No save took a block the document shows out of the backend: its text would be only in the document. */
+function expectShownKept(ed: Editor, page: MockPage, liveBefore: ReadonlySet<string>): void {
+  const live = new Set(page.live().map(([id]) => id))
+  expect(idsOf(ed.state.doc).filter((id) => liveBefore.has(id) && !live.has(id))).toEqual([])
+}
+
 /** No save undid `marks`: the peers' texts, creates, deletes and moves still hold. */
 function expectPeersKept(ed: Editor, page: MockPage, marks: Map<string, PeerMark>): void {
   const rows = page.rows()
@@ -1091,6 +1116,8 @@ describe('page mode against the mock backend', () => {
           editor = ed
           const save = createSaveState(page.pageId, page.rows(), ed.state.doc)
           const seen = new Set(idsOf(ed.state.doc))
+          // Whether an earlier step's save left writes held back, for a clean save to write.
+          let held = false
           const nextPeerId = idMinter('01PEER')
           const mintKept = idMinter('01KEPT')
           const marks = new Map<string, PeerMark>()
@@ -1102,7 +1129,9 @@ describe('page mode against the mock backend', () => {
           const props = new Map<string, string>()
           const loaded = trackLoaded(ed)
 
-          for (const [stepIndex, { action, peer, failures }] of steps.entries()) {
+          for (const [stepIndex, { action, peer, failures, refuse }] of steps.entries()) {
+            // The last step is clean, so every run ends with the held writes written.
+            const refusing = refuse && stepIndex < steps.length - 1
             const before = idsOf(ed.state.doc)
             const emptyBefore: boolean[] = []
             ed.state.doc.forEach((node) => emptyBefore.push(markdownOf(node) === ''))
@@ -1118,27 +1147,48 @@ describe('page mode against the mock backend', () => {
             // Its promises settle before the next macrotask; a timer would sleep the worker as well.
             await new Promise((resolve) => setImmediate(resolve))
 
-            if (peer !== null) {
+            // Not a peer's edit while a change here is held back: the local one wins, and an undo
+            // of it back to the text last saved leaves the peer's in the backend alone until the
+            // next reload. Holding makes that wait long; it is no part of what a hold does.
+            if (peer !== null && (peer.kind !== 'edit' || !(held || refusing))) {
               const textOnly = action.kind === 'type'
               const mark = peerChange(page, ed, save, peer, textOnly, nextPeerId, mintKept)
-              if (mark !== null) marks.set(`${stepIndex}:${mark.kind}:${mark.id}`, mark)
+              // Where both sides changed a block the local change wins at the next save, so a
+              // peer's change made while writes are held back is not one to keep.
+              if (mark !== null && !held && !refusing) {
+                marks.set(`${stepIndex}:${mark.kind}:${mark.id}`, mark)
+              }
               for (const id of idsOf(ed.state.doc)) seen.add(id)
             }
 
             // A block given a style is created even if empty, as the editor's `afterSave` keeps it.
             for (const { id } of writes) save.keep.add(id)
+            // A save, then that no block the document shows left the backend with it.
+            const saveChecked = async (): Promise<Awaited<ReturnType<typeof savePage>>> => {
+              const liveBefore = new Set(page.live().map(([id]) => id))
+              const saved = await savePage(ed.state.doc, save, page.api)
+              expectShownKept(ed, page, liveBefore)
+              return saved
+            }
+            page.refuseCreates(refusing)
             if (failures !== null) {
               page.failWith(failures)
-              await savePage(ed.state.doc, save, page.api)
+              await saveChecked()
               page.failWith(null)
             }
-            let result = await savePage(ed.state.doc, save, page.api)
+            let result = await saveChecked()
             if (result.error !== undefined) {
               // As the editor does: read the page again, bring it in, save once more.
               const { failed } = result
               const refused = failed?.kind === 'create' || failed?.kind === 'restore'
               applyRemote(ed.view, save, page.rows(), mintKept, new Set(refused ? [failed.id] : []))
-              result = await savePage(ed.state.doc, save, page.api)
+              result = await saveChecked()
+            }
+            held = refusing
+            if (refusing) {
+              for (const id of idsOf(ed.state.doc)) seen.add(id)
+              expectPeersKept(ed, page, marks)
+              continue
             }
             expect(result.error).toBeUndefined()
             // A block the save gave a new id: its old one was refused.
@@ -1166,7 +1216,13 @@ describe('page mode against the mock backend', () => {
       // the random runs. A run is a real editor driven step by step, which is
       // this test's cost. Each CI run draws a new seed, so the count sets how
       // soon a rare sequence turns up; a deep search is a long local run.
-      { numRuns: EXAMPLES.length + 50, examples: EXAMPLES },
+      {
+        numRuns: EXAMPLES.length + 50,
+        examples: EXAMPLES.map(([rows, steps]): [Row[], Step[]] => [
+          rows,
+          steps.map((step) => ({ ...step, refuse: false })),
+        ]),
+      },
     )
     // Real editors driven step by step: well past the global 20 s on a loaded box.
   }, 60_000)

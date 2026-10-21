@@ -29,6 +29,7 @@ import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
 import { PageModeEditor, type PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import { blockIdOf } from '@/editor/token-ids'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
+import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import type { BlockRow, PropertyRow } from '@/lib/bindings'
 import { formatCompactDate } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
@@ -213,6 +214,206 @@ describe('PageModeEditor', () => {
     })
 
     expect(backendText(ids[0] as string)).toBe('first!')
+  })
+
+  it('a new block the backend refuses holds back only itself: the rest of the page is saved, and the user told', async () => {
+    const { pageId, ids } = seedPage(['alpha', 'beta', 'gamma'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    // Refused whatever its id, as `validate_content_refs_in_space` refuses a pasted link to
+    // another space's page.
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'create_block' && (args as { content: string }).content.includes('REFUSED')) {
+        throw new Error('cross-space reference')
+      }
+      return dispatch(cmd, args)
+    })
+
+    caretTo(editor, 1)
+    press(editor, 'Enter')
+    typeAt(editor, 1, 0, 'REFUSED')
+    typeAt(editor, 2, 4, ' one')
+    act(() => {
+      editor.view.dispatch(
+        editor.state.tr.delete(at(editor, 3, 0) - 2, editor.state.doc.content.size),
+      )
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect(docTexts(editor)).toEqual(['alpha', 'REFUSED', 'beta one'])
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'alpha'],
+      [ids[1], 'beta one'],
+    ])
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('pageMode.saveFailed'), {
+      id: `page-mode-save-${pageId}`,
+    })
+  })
+
+  it('a refused write whose reread fails still says the save failed, and what landed is undoable', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'edit_block' && (args as { blockId: string }).blockId === ids[1]) {
+        throw new Error('database is locked')
+      }
+      if (cmd === 'get_batch_properties') throw new Error('database is locked')
+      return dispatch(cmd, args)
+    })
+
+    typeAt(editor, 0, 5, 'A')
+    typeAt(editor, 1, 6, 'B')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect(backendText(ids[0] as string)).toBe('firstA')
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('pageMode.saveFailed'), {
+      id: `page-mode-save-${pageId}`,
+    })
+    expect(useUndoStore.getState().pages.get(pageId)?.undoStack).toHaveLength(1)
+  })
+
+  it('a reread a newer load overtakes brings nothing in until that load lands, so no saved text goes back', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle, store } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    typeAt(editor, 0, 5, ' saved')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(store.getState().blocks.map((block) => block.content)).toEqual(['first', 'second'])
+    // A refused edit makes the save read the page again; a sync's reload starts during that read
+    // and lands only once released.
+    let refuse = true
+    let loads = 0
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'edit_block' && refuse) {
+        refuse = false
+        throw new Error('database is locked')
+      }
+      if (cmd === 'load_page_subtree') {
+        loads += 1
+        const load = loads
+        if (load === 1) void store.getState().load()
+        if (load === 2) await held
+      }
+      return dispatch(cmd, args)
+    })
+
+    typeAt(editor, 1, 6, '!')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect(loads).toBe(2)
+    expect(docTexts(editor)).toEqual(['first saved', 'second!'])
+
+    await act(async () => {
+      release()
+      await vi.waitFor(() => {
+        expect(store.getState().loading).toBe(false)
+      })
+      await handle.current?.flush()
+    })
+
+    expect(docTexts(editor)).toEqual(['first saved', 'second!'])
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'first saved'],
+      [ids[1], 'second!'],
+    ])
+  })
+
+  it('a reread whose load fails brings nothing in, so a key typed next writes no old text back', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    typeAt(editor, 0, 5, ' saved')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    let refuse = true
+    let fail = true
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'edit_block' && refuse) {
+        refuse = false
+        throw new Error('database is locked')
+      }
+      if (cmd === 'load_page_subtree' && fail) {
+        fail = false
+        throw new Error('database is locked')
+      }
+      return dispatch(cmd, args)
+    })
+
+    typeAt(editor, 1, 6, '!')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(fail).toBe(false)
+    expect(docTexts(editor)).toEqual(['first saved', 'second!'])
+
+    typeAt(editor, 0, 11, 'X')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect(backendText(ids[0] as string)).toBe('first savedX')
+  })
+
+  it('a reread of a page that did not change is no failure: a load that lands replaces the rows', async () => {
+    const { pageId } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const loads = callsTo('load_page_subtree')
+    const error = vi.spyOn(logger, 'error')
+
+    // An attachment changed elsewhere makes the editor read the page again.
+    act(() => {
+      recordAttachmentInvalidation()
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    expect(callsTo('load_page_subtree')).toBe(loads + 1)
+    expect(error).not.toHaveBeenCalled()
+    expect(docTexts(editor)).toEqual(['first', 'second'])
+  })
+
+  it('the save made as page mode closes reads the page again like any other, so a restore in it is not reported as failed', async () => {
+    const { pageId, ids } = seedPage(['first', 'second', 'third'])
+    const closing = renderPageMode(pageId)
+    const editor = await editorIn(closing.container)
+    act(() => {
+      editor.view.dispatch(editor.state.tr.delete(at(editor, 1, 0) - 2, at(editor, 2, 0) - 2))
+    })
+    await act(async () => {
+      await closing.handle.current?.flush()
+    })
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'first'],
+      [ids[2], 'third'],
+    ])
+    // Takes the delete back; the restore waits for the save as the page closes, which reads the page.
+    act(() => {
+      editor.commands.undo()
+    })
+    vi.mocked(toast.error).mockClear()
+    closing.unmount()
+
+    // The next session waits for that save before it reads the page.
+    const reopened = await editorIn(renderPageMode(pageId).container)
+
+    expect(docTexts(reopened)).toEqual(['first', 'second', 'third'])
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
   })
 
   it('a block deleted elsewhere and then edited here keeps the text as a new block, with a notice', async () => {

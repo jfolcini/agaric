@@ -17,6 +17,7 @@ import {
   posIn,
   press,
   type Row,
+  rowsOf,
   treeRows,
   type,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
@@ -30,8 +31,10 @@ vi.mock('@/editor/content-delta', async (importOriginal) => {
 const A = blockId(1)
 const B = blockId(2)
 const C = blockId(3)
+const D = blockId(4)
 const NEW_1 = '01NEW000000000000000000001'
 const NEW_2 = '01NEW000000000000000000002'
+const NEW_3 = '01NEW000000000000000000003'
 
 let editor: Editor | null = null
 
@@ -220,7 +223,7 @@ describe('the order of a save', () => {
     ])
   })
 
-  it('stops at a failed create, leaving the split block whole', async () => {
+  it('holds back the edit of a block whose split-off half is not created, leaving it whole', async () => {
     const { ed, backend, save } = open([[A, 0, 'foo bar']])
     caret(ed, 0, 3)
     press(ed, 'Enter')
@@ -230,6 +233,45 @@ describe('the order of a save', () => {
 
     expect(backend.calls).toEqual([`create ${NEW_1}`])
     expect(backend.live()).toEqual([[A, 0, 'foo bar']])
+  })
+
+  it('holds it back with both halves typed in since the split', async () => {
+    const { ed, backend, save } = open([[A, 0, 'foo bar']])
+    caret(ed, 0, 3)
+    press(ed, 'Enter')
+    type(ed, 'X')
+    caret(ed, 0, 0)
+    type(ed, 'Z')
+    backend.failing = (kind) => kind === 'create'
+
+    await save()
+
+    expect(backend.calls).toEqual([`create ${NEW_1}`])
+    expect(backend.live()).toEqual([[A, 0, 'foo bar']])
+  })
+
+  it('holds back the edit of a child whose split-off half is outdented and not created', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 's'],
+      [B, 1, 'foo bar'],
+    ])
+    caret(ed, 1, 3)
+    press(ed, 'Enter')
+    press(ed, 'Tab', { shiftKey: true })
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 's'],
+      [B, 1, 'foo'],
+      [NEW_1, 0, ' bar'],
+    ])
+    backend.failing = (kind) => kind === 'create'
+
+    await save()
+
+    expect(backend.calls).toEqual([`create ${NEW_1}`])
+    expect(backend.live()).toEqual([
+      [A, 0, 's'],
+      [B, 1, 'foo bar'],
+    ])
   })
 
   it('moves the children of a joined block out before it deletes the block', async () => {
@@ -250,19 +292,25 @@ describe('the order of a save', () => {
     ])
   })
 
-  it('keeps the deletes back when a move fails, so no block is deleted under its child', async () => {
+  it('keeps back the delete a failed move was to take a child out from under, and no other', async () => {
     const { ed, backend, save } = open([
       [A, 0, 'a'],
       [B, 0, 'b'],
       [C, 1, 'c'],
+      [D, 0, 'd'],
     ])
     caret(ed, 1, 0)
     press(ed, 'Backspace')
+    ed.view.dispatch(ed.state.tr.delete(posIn(ed, 2, 0) - 2, ed.state.doc.content.size))
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'ab'],
+      [C, 1, 'c'],
+    ])
     backend.failing = (kind) => kind === 'move'
 
     await save()
 
-    expect(backend.calls).toEqual([`move ${C}`, `edit ${A}`])
+    expect(backend.calls).toEqual([`move ${C}`, `edit ${A}`, `delete ${D}`])
     expect(backend.live()).toEqual([
       [A, 0, 'ab'],
       [B, 0, 'b'],
@@ -272,20 +320,123 @@ describe('the order of a save', () => {
 })
 
 describe('when the backend refuses', () => {
-  it('holds the deletes back while an edit fails, so a joined block’s text is never lost', async () => {
+  it('holds back the delete of a block joined into one whose edit fails, and no other', async () => {
     const { ed, backend, save } = open([
       [A, 0, 'foo'],
       [B, 0, 'bar'],
+      [C, 0, 'baz'],
     ])
     caret(ed, 1, 0)
     press(ed, 'Backspace')
+    ed.view.dispatch(ed.state.tr.delete(posIn(ed, 1, 0) - 2, ed.state.doc.content.size))
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'foobar']])
     backend.failing = (kind) => kind === 'edit'
 
     expect(await save()).toBeInstanceOf(Error)
 
+    expect(backend.calls).toEqual([`edit ${A}`, `delete ${C}`])
     expect(backend.live()).toEqual([
       [A, 0, 'foo'],
       [B, 0, 'bar'],
+    ])
+  })
+
+  it('a new block it refuses holds back only what needs it: the blocks under it and its own text', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+      [C, 0, 'gamma'],
+    ])
+    // A new block the backend refuses (a pasted link to another space's page), a block under it,
+    // and one after it.
+    caret(ed, 0, 5)
+    press(ed, 'Enter')
+    type(ed, 'REFUSED')
+    press(ed, 'Enter')
+    type(ed, 'under')
+    press(ed, 'Tab')
+    press(ed, 'Enter')
+    press(ed, 'Tab', { shiftKey: true })
+    type(ed, 'next')
+    // Typing added inside the block before it, an edit and a delete elsewhere.
+    caret(ed, 0, 2)
+    type(ed, 'X')
+    caret(ed, 4, 4)
+    type(ed, ' one')
+    ed.view.dispatch(ed.state.tr.delete(posIn(ed, 5, 0) - 2, ed.state.doc.content.size))
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'alXpha'],
+      [NEW_1, 0, 'REFUSED'],
+      [NEW_2, 1, 'under'],
+      [NEW_3, 0, 'next'],
+      [B, 0, 'beta one'],
+    ])
+    backend.failing = (kind, id) => kind === 'create' && id === NEW_1
+
+    expect(await save()).toBeInstanceOf(Error)
+
+    expect(backend.calls).toEqual([
+      `create ${NEW_1}`,
+      `create ${NEW_3}`,
+      `edit ${A}`,
+      `edit ${B}`,
+      `delete ${C}`,
+    ])
+    expect(backend.live()).toEqual([
+      [A, 0, 'alXpha'],
+      [NEW_3, 0, 'next'],
+      [B, 0, 'beta one'],
+    ])
+  })
+
+  it('holds back the delete of a block joined into a new block it refuses', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'bravo'],
+    ])
+    caret(ed, 0, 5)
+    press(ed, 'Enter')
+    type(ed, 'new ')
+    caret(ed, 2, 0)
+    press(ed, 'Backspace')
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'alpha'],
+      [NEW_1, 0, 'new bravo'],
+    ])
+    backend.failing = (kind) => kind === 'create'
+
+    await save()
+
+    expect(backend.calls).toEqual([`create ${NEW_1}`])
+    expect(backend.live()).toEqual([
+      [A, 0, 'alpha'],
+      [B, 0, 'bravo'],
+    ])
+  })
+
+  it('holds back the delete of a block with a joined block under it, which the delete would take along, and no other', async () => {
+    const { ed, backend, save } = open([
+      [A, 0, 'a'],
+      [B, 1, 'child'],
+      [C, 0, 'zzz'],
+    ])
+    caret(ed, 0, 1)
+    press(ed, 'Enter')
+    type(ed, 'x')
+    caret(ed, 2, 0)
+    press(ed, 'Backspace')
+    // A goes, with the child that joined the new block; so does C.
+    ed.view.dispatch(ed.state.tr.delete(0, posIn(ed, 1, 0) - 2))
+    ed.view.dispatch(ed.state.tr.delete(posIn(ed, 1, 0) - 2, ed.state.doc.content.size))
+    expect(rowsOf(ed.state.doc)).toEqual([[NEW_1, 0, 'xchild']])
+    backend.failing = (kind) => kind === 'create'
+
+    await save()
+
+    expect(backend.calls).toEqual([`create ${NEW_1}`, `delete ${C}`])
+    expect(backend.live()).toEqual([
+      [A, 0, 'a'],
+      [B, 1, 'child'],
     ])
   })
 
@@ -367,7 +518,6 @@ describe('structure', () => {
   })
 
   it('after each save, holds the backend’s tree, so the next save writes nothing', async () => {
-    const D = blockId(4)
     const { ed, backend, state, save } = open([
       [A, 0, 'a'],
       [B, 0, 'b'],
@@ -434,7 +584,6 @@ describe('structure', () => {
   })
 
   it('moves two blocks cut and pasted together, in their order', async () => {
-    const D = blockId(4)
     const E = blockId(5)
     const { ed, backend, save } = open([
       [A, 0, 'a'],

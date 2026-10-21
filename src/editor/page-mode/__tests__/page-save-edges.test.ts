@@ -45,6 +45,7 @@ import {
   planCreates,
   planDeletes,
   planEdits,
+  planMoves,
   savePage,
   type TreeRow,
 } from '@/editor/page-mode/page-save'
@@ -59,6 +60,7 @@ const B = blockId(2)
 const C = blockId(3)
 const D = blockId(4)
 const NEW_1 = '01NEW000000000000000000001'
+const NEW_2 = '01NEW000000000000000000002'
 
 let editor: Editor | null = null
 
@@ -151,6 +153,27 @@ describe('the plans', () => {
     const ops = planCreates(desiredBlocks(doc, state), state)
 
     expect(ops.map((op) => (op.kind === 'create' ? op.index : op.kind))).toEqual(['restore', 1])
+  })
+
+  it('moves no block under one the backend does not hold, nor under a block still under it', () => {
+    // C goes under a new block not created yet; B goes under C, which the backend holds under B.
+    const doc = docOf([
+      [A, 0, 'a'],
+      [NEW_1, 0, 'new'],
+      [C, 1, 'c'],
+      [B, 2, 'b'],
+    ])
+    const state = createSaveState(
+      PAGE,
+      treeRows([
+        [A, 0, 'a'],
+        [B, 0, 'b'],
+        [C, 1, 'c'],
+      ]),
+      doc,
+    )
+
+    expect(planMoves(desiredBlocks(doc, state), state)).toEqual([])
   })
 
   it('edits no block it never saved', () => {
@@ -249,7 +272,7 @@ describe('what a save leaves', () => {
 })
 
 describe('which failure stops a save', () => {
-  it('a failed create stops the creates after it', async () => {
+  it('a failed create leaves the creates after it that do not need it, and the first failure the one reported', async () => {
     const { ed, backend, save } = open([[A, 0, 'a']])
     caret(ed, 0, 1)
     press(ed, 'Enter')
@@ -260,7 +283,7 @@ describe('which failure stops a save', () => {
 
     const result = await save()
 
-    expect(backend.calls).toEqual([`create ${NEW_1}`])
+    expect(backend.calls).toEqual([`create ${NEW_1}`, `create ${NEW_2}`])
     expect(result.failed?.id).toBe(NEW_1)
   })
 
