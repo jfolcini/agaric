@@ -53,10 +53,11 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 > below, and which device carries which is worth noting: the capturing tunnel was
 > on the handset.
 >
-> **A full two-way sync end to end is still unverified (#3507)**: the
-> initiator-side apply that aborted on `blocks.parent_id` (#4083) was fixed
-> afterwards and has not yet been exercised against two live devices. Nor has
-> a genuinely restrictive network: the fabric carried multicast fine and the two
+> **Two-way sync is verified.** `e2e-tauri/sync-two-device.e2e.ts` pairs with a
+> headless peer and syncs edits, properties, moves, concurrent edits to one block
+> and images in both directions on every PR that touches code the real-backend lane covers (the required `e2e-tauri-gate`), and
+> a Linux desktop and an Android phone sync both ways in daily use. A genuinely
+> restrictive network has not been tried: the fabric carried multicast fine and the two
 > blockers were host configuration on either end — though the fabric was not
 > blameless, since it was numbered out of *public* address space, and that is what
 > made the phone's VPN treat the whole subnet as internet-bound. An isolated guest
