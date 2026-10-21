@@ -93,7 +93,7 @@ vi.mock('@/components/pages/PageSourceEditor', () => ({
 }))
 
 // ── Mock page mode's slot (#5691): the editor itself is tested on its own ──
-const pageModeFlush = vi.fn(() => Promise.resolve())
+const pageModeFlush = vi.fn(() => Promise.resolve(true))
 const pageModeCursor = vi.fn((): string | null => null)
 vi.mock('@/editor/page-mode/PageModeSlot', async () => {
   const { useImperativeHandle } = await import('react')
@@ -107,7 +107,7 @@ vi.mock('@/editor/page-mode/PageModeSlot', async () => {
       pageId: string
       ready: boolean
       onBlocked: (blocker: Blocker) => void
-      editorRef: Ref<{ flush: () => Promise<void>; cursorBlockId: () => string | null }>
+      editorRef: Ref<{ flush: () => Promise<boolean>; cursorBlockId: () => string | null }>
       cursorBlockId: string | null
     }) => {
       useImperativeHandle(
@@ -1307,6 +1307,7 @@ describe('PageEditor page mode (#5691)', () => {
   beforeEach(() => {
     removePreference(PREFERENCES.editMode)
     pageModeCursor.mockReturnValue(null)
+    pageModeFlush.mockResolvedValue(true)
   })
 
   /** Waits for `get_block` to settle the page type, which gates the switch. */
@@ -1369,7 +1370,7 @@ describe('PageEditor page mode (#5691)', () => {
     const order: string[] = []
     pageModeFlush.mockImplementationOnce(() => {
       order.push('flush')
-      return Promise.resolve()
+      return Promise.resolve(true)
     })
     stubInvoke({
       load_page_subtree: () => {
@@ -1425,7 +1426,7 @@ describe('PageEditor page mode (#5691)', () => {
     const order: string[] = []
     pageModeFlush.mockImplementationOnce(() => {
       order.push('flush')
-      return Promise.resolve()
+      return Promise.resolve(true)
     })
     stubInvoke({
       load_page_subtree: () => {
@@ -1473,6 +1474,29 @@ describe('PageEditor page mode (#5691)', () => {
 
     expect(await screen.findByTestId('page-mode')).toHaveAttribute('data-cursor', 'B1')
     expect(useBlockStore.getState().focusedBlockId).toBeNull()
+  })
+
+  it('a switch back, or Edit as Markdown, whose save failed stays in page mode', async () => {
+    writePreference(PREFERENCES.editMode, 'page')
+    pageModeFlush.mockResolvedValue(false)
+    stubInvoke({ load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }) })
+    render(<PageEditor pageId="PAGE_1" title="My Page" />)
+    const switchMode = await modeSwitch()
+    await screen.findByTestId('page-mode')
+
+    await act(async () => switchMode('blocks'))
+    expect(capturedPageHeaderProps?.editMode).toBe('page')
+    expect(screen.getByTestId('page-mode')).toBeInTheDocument()
+
+    await act(async () => capturedPageHeaderProps?.onEditSource?.())
+    expect(screen.queryByTestId('page-source-mode')).not.toBeInTheDocument()
+    expect(screen.getByTestId('page-mode')).toBeInTheDocument()
+    expect(pageModeFlush).toHaveBeenCalledTimes(2)
+
+    // Saved on a later try, the switch goes ahead: the failure did not leave it stuck mid-switch.
+    pageModeFlush.mockResolvedValue(true)
+    act(() => switchMode('blocks'))
+    expect(await screen.findByTestId('block-tree')).toBeInTheDocument()
   })
 
   it('saves page mode’s text before Edit as Markdown loads the page', async () => {

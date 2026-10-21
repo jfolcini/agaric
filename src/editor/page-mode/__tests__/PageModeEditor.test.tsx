@@ -28,6 +28,8 @@ import {
 import { PAGE_MODE_BLOCK_CAP } from '@/editor/page-mode/page-mode-fit'
 import { PageModeEditor, type PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import { blockIdOf } from '@/editor/token-ids'
+import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
+import { DRAFT_MAX_LATENCY_MS } from '@/hooks/useDraftAutosave'
 import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { recordAttachmentInvalidation } from '@/lib/attachment-invalidation'
 import type { BlockRow, PropertyRow } from '@/lib/bindings'
@@ -199,21 +201,72 @@ describe('PageModeEditor', () => {
     })
 
     typeAt(editor, 0, 5, '!')
+    let saved: boolean | undefined
     await act(async () => {
-      await handle.current?.flush()
+      saved = await handle.current?.flush()
     })
 
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith(t('pageMode.saveFailed'), {
       id: `page-mode-save-${pageId}`,
     })
     expect(backendText(ids[0] as string)).toBe('first')
+    // What a mode switch reads to stay in page mode.
+    expect(saved).toBe(false)
 
     mockedInvoke.mockImplementation(passThrough)
     await act(async () => {
-      await handle.current?.flush()
+      saved = await handle.current?.flush()
     })
 
     expect(backendText(ids[0] as string)).toBe('first!')
+    expect(saved).toBe(true)
+  })
+
+  it('typing that never pauses is saved as often as block mode’s draft, not only once it stops', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+
+    // A key each 500 ms, under the idle wait, until the cap is reached.
+    const gap = 500
+    for (let elapsed = 0; elapsed < DRAFT_MAX_LATENCY_MS; elapsed += gap) {
+      typeAt(editor, 0, editor.state.doc.child(0).textContent.length, 'x')
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(gap)
+      })
+    }
+    // Real timers from here: the idle wait armed by the last key never fires, so only the cap saves.
+    vi.useRealTimers()
+
+    await waitFor(() => {
+      expect(backendText(ids[0] as string)).toBe(`first${'x'.repeat(DRAFT_MAX_LATENCY_MS / gap)}`)
+    })
+  })
+
+  it('typing after a save waits for a pause again, not for the deadline the typing before it set', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    typeAt(editor, 0, 5, 'a')
+    await waitFor(() => {
+      expect(backendText(ids[0] as string)).toBe('firsta')
+    })
+
+    // Past that deadline, then one key: its save is a pause away, not due at once.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    vi.setSystemTime(Date.now() + DRAFT_MAX_LATENCY_MS + 1000)
+    typeAt(editor, 0, 6, 'b')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS - 100)
+    })
+    // Real timers, and one task for a save's IPC answers to settle, were one started.
+    vi.useRealTimers()
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(backendText(ids[0] as string)).toBe('firsta')
   })
 
   it('a new block the backend refuses holds back only itself: the rest of the page is saved, and the user told', async () => {
@@ -626,6 +679,32 @@ describe('PageModeEditor', () => {
     await waitFor(() => {
       expect(editor.state.selection.$head.index(0)).toBe(1)
     })
+  })
+
+  it('a new or empty page takes typing at once; a page with text leaves the focus alone', async () => {
+    for (const [texts, focused] of [
+      [[], true],
+      [[''], true],
+      [['first'], false],
+    ] as const) {
+      const pageId =
+        texts.length === 0
+          ? (dispatch('create_page_in_space', {
+              parentId: null,
+              content: 'New page',
+              spaceId: SCOPE.space_id,
+            }) as string)
+          : seedPage(texts).pageId
+      const { container, unmount } = renderPageMode(pageId)
+      const editor = await editorIn(container)
+
+      // TipTap focuses a frame later.
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      })
+      expect(document.activeElement === editor.view.dom).toBe(focused)
+      unmount()
+    }
   })
 
   it('does not open a page over the block cap, and says how many blocks it holds', async () => {

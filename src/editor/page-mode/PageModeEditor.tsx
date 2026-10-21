@@ -4,15 +4,17 @@
  * and only for a page within its cap (`page-mode-fit.ts`): ProseMirror renders
  * the whole document.
  *
- * It saves continuously through the block commands (`page-save.ts`): 700 ms
- * after typing stops, on blur, on `flush` (the mode switch, an export through
- * `flushActiveDraft`), when the window is hidden or closed, and on unmount
- * (leaving the page). Saves, and what changed elsewhere, take turns on one
- * chain. A reload of the page store (a sync, MCP, a page-level undo) is
- * brought into the document by id (`remote-patch.ts`); one that overlapped a
- * save may predate it, so the store is read again first. A save a write
- * refused reads the page again and saves once more: a block deleted elsewhere
- * while edited here is then kept as a new block, with a notice.
+ * It saves continuously through the block commands (`page-save.ts`): after
+ * typing stops (`CONTENT_COMMIT_DEBOUNCE_MS`), and in typing that does not stop
+ * as often as block mode's draft (`DRAFT_MAX_LATENCY_MS`); on blur, on `flush`
+ * (the mode switch, an export through `flushActiveDraft`), when the window is
+ * hidden or closed, and on unmount (leaving the page). A switch whose save
+ * failed stays here. Saves, and what changed elsewhere, take turns on one
+ * chain. A reload of the page store (a sync, MCP, a page-level undo) is brought
+ * into the document by id (`remote-patch.ts`); one that overlapped a save may
+ * predate it, so the store is read again first. A save a write refused reads
+ * the page again and saves once more: a block deleted elsewhere while edited
+ * here is then kept as a new block, with a notice.
  *
  * A task marker, a `key:: value` line or a `#name` left as text in a block
  * becomes the block's task state, property or tag once the caret leaves that
@@ -92,8 +94,13 @@ import { type PageModeBlocker, readPageFit } from '@/editor/page-mode/page-mode-
 import { PageProperties } from '@/editor/page-mode/page-properties'
 import {
   createSaveState,
+  desiredBlocks,
   type PageSaveApi,
   type PageSaveState,
+  planCreates,
+  planDeletes,
+  planEdits,
+  planMoves,
   savePage,
   type TreeRow,
 } from '@/editor/page-mode/page-save'
@@ -109,6 +116,7 @@ import type { PickerItem } from '@/editor/SuggestionList'
 import { blockIdOf } from '@/editor/token-ids'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
+import { DRAFT_MAX_LATENCY_MS } from '@/hooks/useDraftAutosave'
 import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
@@ -149,8 +157,8 @@ export const SAVE_MEASURE = 'page-mode-save'
 const savesInFlight = new Map<string, Promise<void>>()
 
 export interface PageModeEditorHandle {
-  /** Save whatever is not saved yet; resolves once that save has run. */
-  flush: () => Promise<void>
+  /** Save whatever is not saved yet; resolves once that save has run, whether it saved all. */
+  flush: () => Promise<boolean>
   /** The block the cursor is in, for the mode switch to keep it there. */
   cursorBlockId: () => string | null
 }
@@ -287,6 +295,14 @@ function blockById(doc: PMNode, id: string): PMNode | null {
   return found
 }
 
+/** Whether `doc` holds a change `save` has not written yet: what a failed save leaves. */
+function unsaved(doc: PMNode, save: PageSaveState): boolean {
+  const desired = desiredBlocks(doc, save)
+  return [planCreates, planMoves, planEdits, planDeletes].some((plan) =>
+    plan(desired, save).some((op) => op.kind !== 'settle'),
+  )
+}
+
 /** Put the cursor at the start of block `id` and show it; false when the page has no such block. */
 function cursorInto(editor: Editor, id: string): boolean {
   let at = -1
@@ -328,7 +344,7 @@ function PageModeDocument({
   const onTagClick = useTagClickHandler()
   const { handleToggleTodo, handleTogglePriority } = useBlockProperties()
   const editorRef = useRef<Editor | null>(null)
-  const flushRef = useRef<() => Promise<void>>(() => Promise.resolve())
+  const flushRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true))
   const [properties] = useState(() => new PageProperties(openedWith))
   const [lists] = useState(() => new PageLists(openedWith, blocks))
   const [attachments] = useState(() => new PageAttachments(openedWithAttachments))
@@ -502,6 +518,12 @@ function PageModeDocument({
     const save = createSaveState(pageId, treeRows(blocks), editor.state.doc)
     let chain = Promise.resolve()
     let timer: ReturnType<typeof setTimeout> | undefined
+    // When the oldest change not yet saved must be, however long the typing runs.
+    let dueBy: number | null = null
+    const stopTimer = (): void => {
+      clearTimeout(timer)
+      dueBy = null
+    }
     // The store's own reads, which the save and the patch make, are not changes from elsewhere.
     let reading = false
     /**
@@ -624,14 +646,15 @@ function PageModeDocument({
       return chain
     }
     const flush = (closing = false): Promise<void> => {
-      clearTimeout(timer)
+      stopTimer()
       return enqueue(() => runSave(closing))
     }
     // Its callers close page mode: the mode switch, source mode, a blocker, a link away.
-    flushRef.current = () => flush(true)
+    flushRef.current = () =>
+      flush(true).then(() => editor.isDestroyed || !unsaved(editor.state.doc, save))
     // After the save, so the block exists: an empty one is created for it (`keep`).
     const afterSave = (id: string, change: () => Promise<void>): Promise<void> => {
-      clearTimeout(timer)
+      stopTimer()
       return enqueue(async () => {
         save.keep.add(id)
         try {
@@ -783,8 +806,12 @@ function PageModeDocument({
         for (const id of changedBlocks(editor.state.doc, maps)) {
           if (!typedIn.has(id)) typedIn.set(id, blockById(transaction.before, id))
         }
+        dueBy ??= Date.now() + DRAFT_MAX_LATENCY_MS
         clearTimeout(timer)
-        timer = setTimeout(() => void flush(), CONTENT_COMMIT_DEBOUNCE_MS)
+        timer = setTimeout(
+          () => void flush(),
+          Math.min(CONTENT_COMMIT_DEBOUNCE_MS, dueBy - Date.now()),
+        )
       }
       // Block mode commits what was typed as the block is left: here, as the caret leaves it.
       if (was !== caretIn && was !== null && typedIn.has(was)) void flush()
@@ -827,6 +854,8 @@ function PageModeDocument({
 
     const opening = openingCursor()
     if (opening !== null) cursorInto(editor, opening)
+    // A new or empty page takes typing at once, as block mode focuses the block it creates on one.
+    else if (blocks.length <= 1 && !blocks[0]?.content) editor.commands.focus('start')
 
     return () => {
       unsubscribe()

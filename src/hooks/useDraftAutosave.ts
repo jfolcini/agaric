@@ -15,7 +15,7 @@ const DRAFT_DEBOUNCE_MS = 2000
  * draft row and a webview kill lost the whole run). Once a save has been
  * pending longer than this, it fires immediately instead of re-arming.
  */
-const DRAFT_MAX_LATENCY_MS = 5000
+export const DRAFT_MAX_LATENCY_MS = 5000
 
 /**
  * Autosave hook for block draft content.
