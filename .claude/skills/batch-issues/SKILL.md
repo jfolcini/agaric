@@ -36,7 +36,7 @@ A `plan` issue needs its open questions answered in comments; a non-`plan` issue
 - Look for the fix already on `main`: grep the code, and `git log origin/main --grep '#N'`.
 - Re-derive the issue's named symbols, counts, and prescribed fix against the code. A false premise becomes a comment on the issue, not a build.
 
-**Claim convention** (sessions run in parallel): skip an issue that has an open PR, a remote `claude/*` branch naming it, or a live `in-progress` label. A label is live while the issue had a merged PR, a push or a comment in the last day (`git log origin/main --since=1.day --grep '#N'`, `gh issue view N --comments`); another session may be between items with no branch yet. On a multi-item issue claim the item: comment "taking item N" before building, after reading the latest comments for other sessions' claims. Add `in-progress` when you pick one; remove it when the PR exists or you abandon. On a collision, back off.
+**Claim convention** (sessions run in parallel): skip an issue that has an open PR, a remote `claude/*` branch naming it, or a live `in-progress` label. A label is live while the issue had a merged PR, a push or a comment in the last day (`git log origin/main --since=1.day --grep '#N'`, `gh issue view N --comments`); another session may be between items with no branch yet. On a multi-item issue claim the item: comment "taking item N" before building, after reading the latest comments for other sessions' claims. Add `in-progress` when you pick one; remove it when the PR exists or you abandon. On a collision, back off. Work with no issue (a flake fix, a review-note PR, a follow-up) is claimed by its paths: before building, check the open PRs and `git log origin/main -- <file>` since your base for the same file.
 
 ## Model selection
 
@@ -90,9 +90,9 @@ Prompt skeleton; keep the git and background lines verbatim:
 
 Every new or changed path gets a test that was shown red (`AGENTS.md` § Acceptance is falsification). Before every push, and before building on an inherited uncommitted diff, `git diff origin/main | grep -nE 'FALSIF|TEMPORARY|MUTATION|if false'` must print nothing.
 
-Check `uptime` before a timing- or timeout-sensitive run: on a loaded box a timing is not a measurement, and a timeout is rerun alone, not raised. A failure called a known flake names its open issue (`src/__tests__/AGENTS.md` standard 6). A change to SQL an SLO probe or perf gate times merges on a branch dispatch of the bench lanes (`src-tauri/benches/AGENTS.md`), which PR CI never runs.
+Check `uptime` before a timing- or timeout-sensitive run: on a loaded box a timing is not a measurement, and a timeout is rerun alone, not raised. A failure called a known flake names its open issue (`src/__tests__/AGENTS.md` standard 6); there is no flake list to put it on, so reproduce it under load and fix the cause, or file it. A change to SQL an SLO probe or perf gate times merges on a branch dispatch of the bench lanes (`src-tauri/benches/AGENTS.md`), which PR CI never runs.
 
-Beyond the shapes `AGENTS.md` rejects, reject an assertion true for two reasons (a negative assertion that a different early return also satisfies). "I broke the fix and the test went red" proves something covers it, not that this code does; when two guards overlap, disable them one at a time and together.
+Never edit an existing test or fixture so a new change passes: a green test gone red is the finding. Beyond the shapes `AGENTS.md` rejects, reject an assertion true for two reasons (a negative assertion that a different early return also satisfies). "I broke the fix and the test went red" proves something covers it, not that this code does; when two guards overlap, disable them one at a time and together.
 
 ## 4. Review
 

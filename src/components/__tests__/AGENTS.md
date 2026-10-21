@@ -65,6 +65,8 @@ it('has no a11y violations', async () => {
 
 One audit per distinct visual state (focused / unfocused, open / closed). axe cannot see focus loss: every dialog, menu, or popover test that closes it (confirm, cancel, Escape) asserts `document.activeElement` is back on the trigger. A dialog opened from a store or a shortcut has no `Dialog.Trigger`, so Radix returns focus to `<body>`: handle `onCloseAutoFocus` and focus the captured opener while focus is still on `<body>`, so a close that navigated keeps its focus (`CommandPalette.tsx`). The vitest DOM does not reproduce Radix's close-time focus, so pin it with `toBeFocused()` in Playwright.
 
+Informative text never fades through `opacity-*` or a `/NN` alpha on its colour token: `text-muted-foreground` already sits near 4.5:1. The vitest DOM computes no colour, so only an axe run in Playwright measures it (`e2e/closed-task-contrast.spec.ts`).
+
 ## Mocking
 
 ### Tauri IPC
@@ -82,6 +84,8 @@ vi.mock('@tiptap/react', () => ({
 }))
 ```
 
+A mock of a third-party library fails with the shape the library really throws, read from its source: `html5-qrcode` reports a `getUserMedia` failure as a string, and an `Error`-shaped mock hid a mapping that never matched.
+
 ### Virtualized lists (`@tanstack/react-virtual`)
 
 The test DOM gives the scroll container zero height, so the real `useVirtualizer` renders no rows. `vi.mock('@tanstack/react-virtual', () => mockReactVirtual())` from [`src/__tests__/mocks/react-virtual.ts`](../../__tests__/mocks/react-virtual.ts) renders every row; `{ windowSize: 80 }` mounts the first N (getter accepted); `{ scrollToOffset }` captures calls — pass `vi.hoisted` spies.
@@ -93,7 +97,8 @@ Both are mocked globally. To assert on toasts, `vi.mocked(toast.error)` from a d
 ## Changing components
 
 - **Adding an enum value** (property type, task state): grep every site that lists its siblings and drive the add flow in a test; prefer one exported set over repeated literals.
-- **`react/*` lint fixes:** `vite.config.ts` disables the React Compiler under vitest, so verify them with e2e ([`docs/architecture/frontend.md` § The hazard](../../../docs/architecture/frontend.md#the-hazard-a-reactrefs-fix-can-switch-the-react-compiler-on-4469)).
+- **The React Compiler is off under vitest** (`vite.config.ts`), so what it memoises looks right in a unit test and stale in the app: a `react/*` lint fix, a store `getState()` or ref read during render (read it in the handler and keep it in state), a `Date.now()` inside a render-time call (take `now` from `useMinuteClock`). Verify with e2e ([`docs/architecture/frontend.md` § The hazard](../../../docs/architecture/frontend.md#the-hazard-a-reactrefs-fix-can-switch-the-react-compiler-on-4469)).
+- **A heavy module (`ui/command`, TipTap) reaches a boot-path component (`TabBar`, `BlockTree`) only through `lazy()`**: `BlockTree.lazy-editor-import-graph.test.ts` fails a static import, and a vitest run of the component alone skips it. A preloaded overlay uses `lazyWithPreload` (`src/lib/lazy-with-preload.ts`): a `lazy(() => loadX().then(…))` factory returns a new promise, so the first render always suspends.
 - **IME and touch behaviour** cannot be verified in happy-dom or desktop Chromium: unit-test the math, and say in the PR that device verification is pending.
 
 ## Test-asserted production patterns
@@ -111,3 +116,5 @@ Production-code rules pinned by tests here; each fixed a shipped bug. Optimistic
 9. **`null`, not `undefined`, for Rust `Option<T>` args.** `commands.*` passes what you give it; `createBlock` in `@/lib/ipc-helpers` is the one helper that still normalizes with `?? null`.
 10. **Fetched state carries the key it was fetched for** (space, page, date range) and is compared in render. `JournalPage` and the page property table stay mounted across a switch, so state that does not carry its key renders, or acts on, the old key's data in the first render after a switch. Test the switch while mounted.
 11. **A `BlockTree` listener runs once per mounted tree**, and the journal week and stream views mount one per day. Subscribe only to ids the tree's page store owns; a clipboard or selection handler acts only in the tree that owns the selection anchor; context-bag handlers read changing values from refs. Test with two trees mounted, and pin per-row render counts (`src/components/editor/__tests__/BlockTree.focus-renders.test.tsx`).
+12. **A block's page is `block.page_id`, never `parent_id`.** A content block's parent is a block, which `load_page_subtree` accepts and answers with an empty subtree. Fixtures give every content block a `page_id`.
+13. **A control that belongs to one block (a chip, a `+N` badge) calls its `BlockActions` callback with its own id** (`onShowProperties(blockId)`, `onOpenDatePicker(blockId, mode)`), never a command-bus event (`dispatchBlockCommand`), which acts on the focused block. Test it on a block other than the one being edited.
