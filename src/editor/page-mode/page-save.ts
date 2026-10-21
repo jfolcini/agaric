@@ -10,8 +10,14 @@
  * under one about to be deleted before the delete cascades.
  *
  * A block's saved state advances only when its write succeeds, so a failed
- * write is tried again by the next save. A failed create stops the save, a
- * failed move or edit keeps the deletes back: each would otherwise leave text
+ * write is tried again by the next save, and it holds back only the writes
+ * that need it. A block whose create or restore failed holds back the blocks
+ * under it (their creates and moves) and an edit taking text out of the block
+ * before it, which may be the half split off. A failed move stops the moves
+ * after it, whose slots assumed it. A delete waits while a block under it
+ * (itself included) is one the document shows, or has its text in a block the
+ * backend does not hold as the document shows it (joined or pasted there), for
+ * the delete takes the blocks under it along. Each would otherwise leave text
  * only in the document.
  *
  * A block the document brings back after page mode deleted it (an undo) is
@@ -247,12 +253,24 @@ function createSlot(tree: PageTree, desired: readonly DesiredBlock[], i: number)
   return 0
 }
 
-/** Creates and restores, parents first. Plans against a copy of the tree. */
-export function planCreates(desired: readonly DesiredBlock[], state: PageSaveState): SaveOp[] {
+/**
+ * Creates and restores, parents first, but none of `held` (failed this save)
+ * nor under one. Plans against a copy of the tree.
+ */
+export function planCreates(
+  desired: readonly DesiredBlock[],
+  state: PageSaveState,
+  held: ReadonlySet<string> = new Set(),
+): SaveOp[] {
   const tree = cloneTree(state.tree)
   const ops: SaveOp[] = []
+  const waiting = new Set(held)
   desired.forEach((block, i) => {
     if (state.saved.has(block.id)) return
+    if (waiting.has(block.id) || waiting.has(block.parentId)) {
+      waiting.add(block.id)
+      return
+    }
     const deletedAt = state.deletedAt.get(block.id)
     if (deletedAt !== undefined) {
       ops.push({ kind: 'restore', id: block.id, deletedAt })
@@ -276,10 +294,13 @@ export function planCreates(desired: readonly DesiredBlock[], state: PageSaveSta
  * The fewest moves that give each parent its children in document order: the
  * children already in order (a longest increasing run) stay, the rest move in
  * after the child before them. Parents are visited top-down, so a block never
- * moves under one of its own descendants.
+ * moves under one of its own descendants. A block the backend does not hold
+ * (its create failed or waits) neither moves nor takes children; a block under
+ * it stays where it is, and so does a block whose new parent is still under it.
  */
 export function planMoves(desired: readonly DesiredBlock[], state: PageSaveState): SaveOp[] {
   const tree = cloneTree(state.tree)
+  const absent = (id: string): boolean => id !== state.pageId && !tree.parentOf.has(id)
   const wanted = new Map<string, string[]>()
   for (const block of desired) {
     const children = wanted.get(block.parentId) ?? []
@@ -289,7 +310,7 @@ export function planMoves(desired: readonly DesiredBlock[], state: PageSaveState
   const ops: SaveOp[] = []
   for (const parentId of [state.pageId, ...desired.map((block) => block.id)]) {
     const children = wanted.get(parentId)
-    if (children === undefined) continue
+    if (children === undefined || absent(parentId)) continue
     const current = childrenOf(tree, parentId)
     const at = new Map(current.map((id, i) => [id, i]))
     const inPlace = children.filter((id) => at.has(id))
@@ -298,6 +319,7 @@ export function planMoves(desired: readonly DesiredBlock[], state: PageSaveState
     let anchor: string | null = null
     for (const id of children) {
       if (!staying.has(id)) {
+        if (absent(id) || subtreeOf(tree, id).includes(parentId)) continue
         const op: SaveOp = {
           kind: 'move',
           id,
@@ -313,28 +335,86 @@ export function planMoves(desired: readonly DesiredBlock[], state: PageSaveState
   return ops
 }
 
-/** An edit for each block whose text changed since its last save; a settle for one that did not. */
+/** A block's text as a join carries it, an inline atom (a chip, an image) as one character. */
+function textOf(node: PMNode): string {
+  return node.textBetween(0, node.content.size, '\n', '\uFFFC')
+}
+
+/** Whether `after` lost text `before` held: anything between their common start and end. */
+function losesText(before: PMNode | null, after: PMNode): boolean {
+  if (before === null) return false
+  const [was, now] = [textOf(before), textOf(after)]
+  const shorter = Math.min(was.length, now.length)
+  let start = 0
+  while (start < shorter && was[start] === now[start]) start += 1
+  let end = 0
+  while (end < shorter - start && was.at(-1 - end) === now.at(-1 - end)) end += 1
+  return start + end < was.length
+}
+
+/**
+ * The block before each block still to be created, whatever its depth (a new
+ * half is outdented after the split): the one it may be split from. Only the
+ * block right before it, so a paste in the middle of a block, which hands the
+ * block's tail to the last block pasted, is held only while the blocks pasted
+ * before that one are not saved either.
+ */
+function splitSources(desired: readonly DesiredBlock[], state: PageSaveState): Set<string> {
+  const sources = new Set<string>()
+  desired.forEach((block, i) => {
+    const source = desired[i - 1]
+    if (source !== undefined && !state.saved.has(block.id)) sources.add(source.id)
+  })
+  return sources
+}
+
+/**
+ * An edit for each block whose text changed since its last save, but none
+ * taking text out of a block that one still to be created follows (its create
+ * failed or waits): that text may be the half split off it. A settle for a
+ * block that did not change.
+ */
 export function planEdits(desired: readonly DesiredBlock[], state: PageSaveState): SaveOp[] {
+  const sources = splitSources(desired, state)
   const ops: SaveOp[] = []
   for (const { id, node } of desired) {
     const saved = state.saved.get(id)
     if (saved === undefined || saved.node === node) continue
     const delta = computeContentDelta(saved.markdown, blockDocJson(node))
-    ops.push(
-      delta.changed
-        ? { kind: 'edit', id, markdown: delta.newMarkdown, node }
-        : { kind: 'settle', id, node },
-    )
+    if (!delta.changed) ops.push({ kind: 'settle', id, node })
+    else if (!sources.has(id) || !losesText(saved.node, node)) {
+      ops.push({ kind: 'edit', id, markdown: delta.newMarkdown, node })
+    }
   }
   return ops
 }
 
-/** A delete for each saved block gone from the document, but none under another one going. */
+/**
+ * A delete for each saved block gone from the document, but none under
+ * another one going, and none with a block under it (itself included) that
+ * the document still shows (its move out failed or waits), or whose text a
+ * block the backend does not hold as the document shows it holds (joined or
+ * pasted into a block whose create or edit failed): the delete takes the
+ * blocks under it along.
+ */
 export function planDeletes(desired: readonly DesiredBlock[], state: PageSaveState): SaveOp[] {
   const shown = new Set(desired.map((block) => block.id))
-  const gone = [...state.saved.keys()].filter((id) => !shown.has(id))
-  const going = new Set(gone)
-  return gone
+  const unwritten = desired
+    .filter((block) => state.saved.get(block.id)?.node !== block.node)
+    .map((block) => textOf(block.node))
+  const carried = (id: string): boolean => {
+    const node = state.saved.get(id)?.node ?? null
+    const text = node === null ? '' : textOf(node)
+    return text !== '' && unwritten.some((holder) => holder.includes(text))
+  }
+  const going = new Set(
+    [...state.saved.keys()].filter(
+      (id) =>
+        !shown.has(id) &&
+        !subtreeOf(state.tree, id).some((member) => shown.has(member) || carried(member)),
+    ),
+  )
+  return [...going]
     .filter((id) => !going.has(state.tree.parentOf.get(id) as string))
     .map((id) => ({ kind: 'delete', id }))
 }
@@ -412,30 +492,30 @@ async function reread(state: PageSaveState, api: PageSaveApi, restored: string):
   }
 }
 
-/** Run `ops` in order until one fails; resolves whether all succeeded. */
+/** Run `ops` in order, or until one fails with `stopOnFailure`; resolves the first that failed. */
 async function runAll(
   ops: readonly SaveOp[],
   state: PageSaveState,
   api: PageSaveApi,
   result: SaveResult,
   { stopOnFailure }: { stopOnFailure: boolean },
-): Promise<boolean> {
-  let ok = true
+): Promise<SaveOp | null> {
+  let failed: SaveOp | null = null
   for (const op of ops) {
     try {
       result.refs.push(...(await run(op, state, api)))
       if (op.kind !== 'settle') state.writes += 1
       if (op.kind !== 'settle' && op.kind !== 'edit') result.structural = true
     } catch (err) {
-      ok = false
+      failed ??= op
       if (result.failed === null) {
         result.error = err
         result.failed = op
       }
-      if (stopOnFailure) return false
+      if (stopOnFailure) break
     }
   }
-  return ok
+  return failed
 }
 
 /** Save what changed in `doc` since `state` last saved it. */
@@ -445,30 +525,29 @@ export async function savePage(
   api: PageSaveApi,
 ): Promise<SaveResult> {
   const result: SaveResult = { refs: [], structural: false, error: undefined, failed: null }
-  // A restore rereads the tree, which can make other blocks saved; plan again after one.
+  // The blocks whose create or restore failed: the ones under them wait (`planCreates`).
+  const held = new Set<string>()
+  // A restore rereads the tree, which can make other blocks saved; plan again after one, and
+  // after a failure, so the creates after it take their slots from the tree as it is.
   const restored = new Set<string>()
   for (;;) {
-    const creates = planCreates(desiredBlocks(doc, state), state)
+    const creates = planCreates(desiredBlocks(doc, state), state, held)
     const restoreAt = creates.findIndex((op) => op.kind === 'restore')
     const restoring = creates[restoreAt]?.id
     if (restoring !== undefined && restored.has(restoring)) {
       result.error ??= new Error(`restoring block ${restoring} did not bring it back to the page`)
-      return result
+      held.add(restoring)
+      continue
     }
     const batch = restoring === undefined ? creates : creates.slice(0, restoreAt + 1)
-    if (!(await runAll(batch, state, api, result, { stopOnFailure: true }))) return result
-    if (restoring === undefined) break
-    restored.add(restoring)
+    const failed = await runAll(batch, state, api, result, { stopOnFailure: true })
+    if (failed !== null) held.add(failed.id)
+    else if (restoring === undefined) break
+    else restored.add(restoring)
   }
   const desired = desiredBlocks(doc, state)
-  const moved = await runAll(planMoves(desired, state), state, api, result, {
-    stopOnFailure: true,
-  })
-  const edited = await runAll(planEdits(desired, state), state, api, result, {
-    stopOnFailure: false,
-  })
-  if (moved && edited) {
-    await runAll(planDeletes(desired, state), state, api, result, { stopOnFailure: false })
-  }
+  await runAll(planMoves(desired, state), state, api, result, { stopOnFailure: true })
+  await runAll(planEdits(desired, state), state, api, result, { stopOnFailure: false })
+  await runAll(planDeletes(desired, state), state, api, result, { stopOnFailure: false })
   return result
 }
