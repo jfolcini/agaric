@@ -200,6 +200,7 @@ function setLevel(plain: Editor, level: number): void {
   })
   if (level === 0) chain.setParagraph().run()
   else chain.setNode('heading', { level }).run()
+  plain.view.dispatch(closeHistory(plain.state.tr))
 }
 
 function deleteMarker(revealing: Editor, plain: Editor, key: 'Backspace' | 'Delete'): void {

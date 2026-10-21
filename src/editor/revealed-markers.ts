@@ -1,7 +1,7 @@
 /**
  * The Markdown markers MarkdownReveal (`extensions/markdown-reveal.ts`, #5689)
  * draws for an editor state: the delimiters of bold, italic, strikethrough,
- * code and external links, and a heading's `#` run; and the syntax drawn
+ * highlight, code and external links, and a heading's `#` run; and the syntax drawn
  * around a page, tag or block-ref chip (`revealedChipMarkers`). Kept free of ProseMirror
  * values so `useBlockKeyboard`, on the cold-start path (#2939), can ask whether
  * a marker sits beside the caret without loading the editor chunk.
@@ -25,7 +25,7 @@ import {
 } from '@/lib/block-title'
 import { isMarkdownRevealEnabled } from '@/lib/editor-preferences'
 
-const EMPHASIS_MARKS = ['bold', 'italic', 'strike', 'code'] as const
+const EMPHASIS_MARKS = ['bold', 'italic', 'strike', 'highlight', 'code'] as const
 type EmphasisMark = (typeof EMPHASIS_MARKS)[number]
 type RevealedMark = EmphasisMark | 'link'
 

@@ -1,0 +1,13 @@
+# Session 2815 — the Markdown reveal holds still under a drag, hides when unfocused, and lets the caret leave formatting at a line's end
+
+Five findings of the #5691 review of 2026-10-21 against the reveal (#5689), verified by a second pass, all in `markdown-reveal.ts` and shared by block mode and page mode.
+
+- **Drag.** A mouse drag that started inside bold, link or heading text not yet revealed selected the wrong text or nothing, because the markers were drawn under the pointer mid-drag. The plugin now keeps its decorations mapped through edits while the primary button is down, as it already did during IME composition, and redraws once the press ends, after ProseMirror's own mouseup. A press ends as `useEditorBlur` ends one, on the view's root: `mouseup`, `dragstart` or `contextmenu`; a native drag of the text sends no `mouseup`, and its `dragend` is fired at the dragged node, which a drop that moves the text away can have removed, so it may never reach the root and the markers stayed frozen after a drag and drop until the next click.
+- **Unfocused.** Page mode drew markers around the caret's old position after opening, after Escape and after a click on the title. The plugin now draws only while focus is in the editor; focus moving into an editor portal (`data-editor-portal`: the link popover, slash menu) keeps the markers.
+- **Line edges.** End in `first **bold**` landed at `**bold|**`, so typed text came out bold, and End at a link's end extended the link. End on a textblock's last line now lands past every closing marker at the end, and page mode's arrows into a block land on the near side of its markers. Home in `## Title` stays after the `## ` marker: typing `#` left of it raises the level by design, and landing there would turn Home then `#tag` into a level change.
+- **Highlight.** `==text==` now reveals like `**`; underline (`<u>`) stays out, pinned by a test with its reason.
+- **Heading-level undo.** Changing a heading's level now also ends its undo group, so a quick next edit is its own step.
+
+Left open: double-clicking unrevealed bold at the very start of a block selects past the word (as before this change); block mode's arrows between blocks go through `useBlockKeyboard` and still land inside formatting. Chromium only: WebKitGTK may differ on `mouseup` after a drag ending outside the window and on `focusout`'s `relatedTarget`.
+
+Suites run: vitest over both reveal unit files, the page-mode property test, the lists test, `use-block-keyboard` and `use-roving-editor`; typecheck; lint; Playwright on the page-mode and block-mode reveal specs and `chip-reveal`. Every new test was shown red by breaking the code it covers; the drag specs also failed on the original code.

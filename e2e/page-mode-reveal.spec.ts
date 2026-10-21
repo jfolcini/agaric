@@ -128,6 +128,65 @@ function shownText(page: Page): Promise<string[]> {
     .evaluateAll((els) => els.map((el) => el.textContent ?? '').map((t) => t.replace(/\s+/g, ' ')))
 }
 
+/** The box of the `nth` `char` of block `index`'s text, markers not counted. */
+function charBox(
+  page: Page,
+  index: number,
+  char: string,
+  nth = 0,
+): Promise<{ x: number; y: number; height: number }> {
+  return page.evaluate(
+    ({ selector, index: i, char: c, nth: n }) => {
+      const block = document.querySelectorAll(`${selector} [data-page-block]`)[i]
+      if (!block) throw new Error(`no block ${i}`)
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT)
+      let seen = 0
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.parentElement?.closest('[data-testid^="md-reveal"]')) continue
+        const text = node.textContent ?? ''
+        for (let at = text.indexOf(c); at >= 0; at = text.indexOf(c, at + 1)) {
+          if (seen++ < n) continue
+          const range = document.createRange()
+          range.setStart(node, at)
+          range.setEnd(node, at + 1)
+          const box = range.getBoundingClientRect()
+          return { x: box.left, y: box.top, height: box.height }
+        }
+      }
+      throw new Error(`no ${c} #${n} in block ${i}`)
+    },
+    { selector: EDITOR, index, char, nth },
+  )
+}
+
+/** The text the editor's selection holds. */
+function selectedText(page: Page): Promise<string> {
+  return page.evaluate((selector) => {
+    const { editor } = document.querySelector(selector) as HTMLElement & {
+      editor: {
+        state: {
+          selection: { from: number; to: number }
+          doc: { textBetween: (from: number, to: number) => string }
+        }
+      }
+    }
+    const { from, to } = editor.state.selection
+    return editor.state.doc.textBetween(from, to)
+  }, EDITOR)
+}
+
+/** Press the mouse just inside the left edge of `from`, and drag to just inside the left edge of `to`. */
+async function drag(
+  page: Page,
+  from: { x: number; y: number; height: number },
+  to: { x: number; y: number; height: number },
+): Promise<void> {
+  await page.mouse.move(from.x + 1, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(to.x + 1, to.y + to.height / 2, { steps: 10 })
+  await page.mouse.up()
+}
+
 test.describe('Markdown syntax revealed around the cursor in page mode (#5974) @editor @markdown @pages', () => {
   let pageId = ''
 
@@ -253,6 +312,94 @@ test.describe('Markdown syntax revealed around the cursor in page mode (#5974) @
     await expect.poll(() => shownMarkers(page)).toEqual([])
     await page.keyboard.press('Control+a')
     await expect.poll(() => shownMarkers(page)).toEqual([])
+  })
+
+  test('a mouse drag that starts in bold, a link or a heading not yet revealed selects what it covered', async ({
+    page,
+  }) => {
+    // `**bold** end`, from the `o` of bold to the `n` of end: the markers appear only on release.
+    await caret(page, 0, 0)
+    await drag(page, await charBox(page, 1, 'o'), await charBox(page, 1, 'n'))
+    await expect.poll(() => selectedText(page)).toBe('old e')
+    await expect(page.getByTestId('md-reveal-marker')).toHaveText(['**', '**'])
+
+    await caret(page, 0, 0)
+    await drag(page, await charBox(page, 3, 'a'), await charBox(page, 3, 'x'))
+    await expect.poll(() => selectedText(page)).toBe('abel ')
+
+    await caret(page, 0, 0)
+    await drag(page, await charBox(page, 2, 'i'), await charBox(page, 2, 'e'))
+    await expect.poll(() => selectedText(page)).toBe('itl')
+  })
+
+  test('a click still puts the caret where it lands and reveals there, and a double click selects the word', async ({
+    page,
+  }) => {
+    await caret(page, 0, 0)
+    // The left edge of `l` in `**bold** end`: the caret lands before it, `bo|ld`.
+    const l = await charBox(page, 1, 'l')
+    await page.mouse.click(l.x + 1, l.y + l.height / 2)
+    await expect(page.getByTestId('md-reveal-marker')).toHaveText(['**', '**'])
+    expect(await cursor(page)).toEqual({ index: 1, offset: 2 })
+
+    // `first **bold**`, on the `o`: the first click's markers shift the word, which stays under the pointer.
+    await caret(page, 3, 0)
+    const o = await charBox(page, 0, 'o')
+    await page.mouse.dblclick(o.x + 2, o.y + o.height / 2)
+    await expect.poll(() => selectedText(page)).toBe('bold')
+  })
+
+  test('draws nothing once focus leaves the page, and the caret’s markers again once it is back', async ({
+    page,
+  }) => {
+    await caret(page, 1, 2)
+    await expect(page.getByTestId('md-reveal-marker')).toHaveText(['**', '**'])
+    await page.locator('[aria-label="Page title"]').click()
+    await expect(page.locator('[aria-label="Page title"]')).toBeFocused()
+    await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
+
+    await caret(page, 2, 2)
+    await expect(page.getByTestId('md-reveal-marker')).toHaveText(['## '])
+    await page.keyboard.press('Escape')
+    await expect(page.locator(EDITOR)).not.toBeFocused()
+    await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
+    await caret(page, 2, 2)
+    await expect(page.getByTestId('md-reveal-marker')).toHaveText(['## '])
+  })
+
+  test('End lands past the closing marker at the line’s end, and ArrowRight into a block left of its opening one', async ({
+    page,
+  }) => {
+    // `first **bo|ld**`, then End: past the closing marker, so typing is not bold.
+    await caret(page, 0, 8)
+    await page.keyboard.press('End')
+    await page.keyboard.type('X')
+    expect((await shownText(page))[0]).toBe('first boldX')
+    await expect(page.locator(EDITOR).locator('strong').first()).toHaveText('bold')
+
+    // From `first boldX|` into `**bold** end`, left of its opening marker: typing is not bold.
+    await caret(page, 0, 11)
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 0 })
+    await page.keyboard.type('Z')
+    expect((await shownText(page))[1]).toBe('Z**bold** end')
+    await expect
+      .poll(() => stored(page, pageId))
+      .toEqual(['first **bold**X', 'Z**bold** end', '## Title', `see [label](${LINK}) x`])
+  })
+
+  test('ArrowLeft into a block ending in bold lands past its closing marker', async ({ page }) => {
+    // `**|bold** end`: over the opening marker, then into `first **bold**|`.
+    await caret(page, 1, 0)
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
+    await expect.poll(() => cursor(page)).toEqual({ index: 0, offset: 10 })
+    await page.keyboard.type('Y')
+    expect((await shownText(page))[0]).toBe('first boldY')
+    await expect(page.locator(EDITOR).locator('strong').first()).toHaveText('bold')
+    await expect
+      .poll(() => stored(page, pageId))
+      .toEqual(['first **bold**Y', '**bold** end', '## Title', `see [label](${LINK}) x`])
   })
 
   test('with the setting off, no marker is drawn', async ({ page }) => {

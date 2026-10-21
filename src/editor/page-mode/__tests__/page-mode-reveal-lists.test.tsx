@@ -55,6 +55,7 @@ describe('MarkdownReveal beside a page-mode list marker', () => {
       mounted.unmount()
       mounted.editor.destroy()
     }
+    mounted.editor.view.focus()
     caret(mounted.editor, 0, 0)
     const block = blockEl(mounted.container, A)
     const listMarker = getIn(block, '[data-testid="list-marker"]')

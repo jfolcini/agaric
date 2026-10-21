@@ -42,7 +42,10 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  for (const ed of open.splice(0)) ed.destroy()
+  for (const ed of open.splice(0)) {
+    ed.view.dom.remove()
+    ed.destroy()
+  }
   vi.useRealTimers()
 })
 
@@ -54,6 +57,9 @@ function page(rows: readonly Row[], lists?: PageLists): Editor {
     lists === undefined ? undefined : listSource(lists),
   )
   open.push(ed)
+  // Nothing is drawn while the editor is unfocused.
+  document.body.append(ed.view.dom)
+  ed.view.focus()
   return ed
 }
 
@@ -248,6 +254,40 @@ describe('MarkdownReveal in page mode', () => {
     caret(ed, 1, 0)
     expect(press(ed, 'ArrowLeft')).toBe(true)
     expect(ed.state.selection.from).toBe(posIn(ed, 1, 0))
+    expect(press(ed, 'ArrowLeft')).toBe(false)
+  })
+
+  it('an arrow into the next block lands outside the formatting at the edge it enters, either way', () => {
+    const ed = page([
+      [A, 0, 'first **bold**'],
+      [B, 0, '**bold** end'],
+    ])
+    // happy-dom lays nothing out: the caret is at its line's edge.
+    ed.view.endOfTextblock = () => true
+    // `**|bold** end`: over the opening marker, then into the block above, past its closing one.
+    caret(ed, 1, 0)
+    expect(press(ed, 'ArrowLeft')).toBe(true)
+    expect(press(ed, 'ArrowLeft')).toBe(true)
+    expect(ed.state.selection.from).toBe(posIn(ed, 0, 10))
+    typeText(ed, 'y')
+    expect(rowsOf(ed.state.doc)[0]).toEqual([A, 0, 'first **bold**y'])
+    // `first boldy|`: into the block below, left of its opening marker.
+    expect(press(ed, 'ArrowRight')).toBe(true)
+    expect(ed.state.selection.from).toBe(posIn(ed, 1, 0))
+    typeText(ed, 'x')
+    expect(rowsOf(ed.state.doc)[1]).toEqual([B, 0, 'x**bold** end'])
+  })
+
+  it('leaves an arrow into the next block to the editor with the setting off', () => {
+    writePreference(PREFERENCES.revealMarkdownSyntax, false)
+    const ed = page([
+      [A, 0, 'first **bold**'],
+      [B, 0, '**bold** end'],
+    ])
+    ed.view.endOfTextblock = () => true
+    caret(ed, 0, 10)
+    expect(press(ed, 'ArrowRight')).toBe(false)
+    caret(ed, 1, 0)
     expect(press(ed, 'ArrowLeft')).toBe(false)
   })
 
