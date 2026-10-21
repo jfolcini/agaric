@@ -97,6 +97,8 @@ export interface SaveResult {
   refs: OpRef[]
   /** Whether it created, restored, moved or deleted a block, not only edited text. */
   structural: boolean
+  /** The blocks whose text it wrote. */
+  edited: Set<string>
   /** The first write that failed; its block keeps its saved state for the next save. */
   error: unknown
   /** The op of that write. */
@@ -505,7 +507,8 @@ async function runAll(
     try {
       result.refs.push(...(await run(op, state, api)))
       if (op.kind !== 'settle') state.writes += 1
-      if (op.kind !== 'settle' && op.kind !== 'edit') result.structural = true
+      if (op.kind === 'edit') result.edited.add(op.id)
+      else if (op.kind !== 'settle') result.structural = true
     } catch (err) {
       failed ??= op
       if (result.failed === null) {
@@ -518,13 +521,19 @@ async function runAll(
   return failed
 }
 
-/** Save what changed in `doc` since `state` last saved it. */
+/** Save what changed in `doc` since `state` last saved it, adding to `result` when given. */
 export async function savePage(
   doc: PMNode,
   state: PageSaveState,
   api: PageSaveApi,
+  result: SaveResult = {
+    refs: [],
+    structural: false,
+    edited: new Set(),
+    error: undefined,
+    failed: null,
+  },
 ): Promise<SaveResult> {
-  const result: SaveResult = { refs: [], structural: false, error: undefined, failed: null }
   // The blocks whose create or restore failed: the ones under them wait (`planCreates`).
   const held = new Set<string>()
   // A restore rereads the tree, which can make other blocks saved; plan again after one, and

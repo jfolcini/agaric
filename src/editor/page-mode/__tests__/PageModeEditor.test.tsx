@@ -191,6 +191,128 @@ describe('PageModeEditor', () => {
     expect(useUndoStore.getState().pages.get(pageId)?.undoStack).toHaveLength(1)
   })
 
+  it('a save made as the caret leaves a block groups with that block, not the one entered', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    typeAt(editor, 0, 5, '!')
+    // Leaving the block saves it, with the caret already in the next one.
+    caretTo(editor, 1)
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    vi.setSystemTime(Date.now() + 5_000)
+    typeAt(editor, 1, 6, '?')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    await act(async () => {
+      await useUndoStore.getState().undo(pageId)
+    })
+
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'first!'],
+      [ids[1], 'second'],
+    ])
+  })
+
+  it('a save that writes two blocks is a step of its own, before a save of one of them', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    act(() => {
+      editor.view.dispatch(
+        editor.state.tr.insertText('?', at(editor, 1, 6)).insertText('!', at(editor, 0, 5)),
+      )
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    vi.setSystemTime(Date.now() + 5_000)
+    typeAt(editor, 0, 6, '.')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    await act(async () => {
+      await useUndoStore.getState().undo(pageId)
+    })
+
+    expect(backendPage(pageId)).toEqual([
+      [ids[0], 'first!'],
+      [ids[1], 'second?'],
+    ])
+  })
+
+  it('a save that splits a block is a step of its own, after a save of the same block', async () => {
+    const { pageId, ids } = seedPage(['first second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    typeAt(editor, 0, 12, '!')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    vi.setSystemTime(Date.now() + 5_000)
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 6))
+    })
+    press(editor, 'Enter')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(backendPage(pageId)).toHaveLength(2)
+
+    await act(async () => {
+      await useUndoStore.getState().undo(pageId)
+    })
+
+    expect(backendPage(pageId)).toEqual([[ids[0], 'first second!']])
+  })
+
+  it('a split whose write a refusal made try again is still a step of its own, before a save of the same block', async () => {
+    const { pageId } = seedPage(['first second'])
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    let refusals = 1
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'edit_block' && refusals > 0) {
+        refusals -= 1
+        throw new Error('refused')
+      }
+      return dispatch(cmd, args)
+    })
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 6))
+    })
+    press(editor, 'Enter')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(refusals).toBe(0)
+    const split = backendPage(pageId)
+    expect(split).toHaveLength(2)
+    vi.setSystemTime(Date.now() + 5_000)
+    typeAt(editor, 0, 0, 'x')
+    await act(async () => {
+      await handle.current?.flush()
+    })
+
+    await act(async () => {
+      await useUndoStore.getState().undo(pageId)
+    })
+
+    expect(backendPage(pageId)).toEqual(split)
+  })
+
   it('tells the user when a save fails, and the next save writes the text', async () => {
     const { pageId, ids } = seedPage(['first'])
     const { container, handle } = renderPageMode(pageId)

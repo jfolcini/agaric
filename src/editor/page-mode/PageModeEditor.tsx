@@ -624,18 +624,19 @@ function PageModeDocument({
 
     const runSave = async (closing: boolean): Promise<void> => {
       const start = performance.now()
-      let result = await savePage(editor.state.doc, save, api)
+      const result = await savePage(editor.state.doc, save, api)
       try {
         if (result.error !== undefined && !editor.isDestroyed) {
           // A refused write: the page may have changed elsewhere (a block deleted
           // under the text typed in it). Read it again, bring that in, save once more.
           logger.warn('PageModeEditor', 'A page mode write was refused', { pageId }, result.error)
-          const refs = result.refs
           const { failed } = result
           const refused = failed?.kind === 'create' || failed?.kind === 'restore' ? failed.id : null
           await bringIn(await read(), new Set(refused === null ? [] : [refused]))
-          result = await savePage(editor.state.doc, save, api)
-          result.refs.unshift(...refs)
+          // One save with the first, for its undo entry; only the retry's failure is told.
+          result.error = undefined
+          result.failed = null
+          await savePage(editor.state.doc, save, api, result)
         }
         performance.clearMeasures(SAVE_MEASURE)
         performance.measure(SAVE_MEASURE, { start })
@@ -650,7 +651,10 @@ function PageModeDocument({
         }
       } finally {
         // A read that failed above still leaves the ops that landed to undo, and the failure to tell.
-        const coalesce = result.structural ? undefined : `edit:${cursorBlock() ?? pageId}`
+        // As block mode groups a block's saves: by the block written, never a change to the tree.
+        const [edited] = result.edited
+        const coalesce =
+          result.structural || result.edited.size !== 1 ? undefined : `edit:${edited}`
         if (result.refs.length > 0) notifyUndoNewAction(pageId, result.refs, coalesce)
         if (result.error !== undefined) {
           logger.warn(

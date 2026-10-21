@@ -1,7 +1,8 @@
 /**
  * Page mode (#5691) against the mock backend, on a 200-block page: the page as
  * one document, its keys, its continuous save read back from the backend, undo
- * restoring a deleted block by id, the switch back to blocks, and axe. Then
+ * restoring a deleted block by id, page-level undo by block, the switch back to
+ * blocks, and axe. Then
  * what keeps the page whole: changes made elsewhere (an edit, a block created,
  * moved or deleted, one deleted while typed in), cut and paste as a move,
  * paragraphs pasted from outside, Shift+Tab as block mode's, and the text saved
@@ -17,6 +18,7 @@ import type { Page } from '@playwright/test'
 
 import {
   activeSuggestionPopup,
+  blurEditors,
   emitMockEvent,
   expect,
   focusBlockById,
@@ -24,6 +26,7 @@ import {
   installIpcRecorder,
   ipc,
   readClipboard,
+  reopenPage,
   replaceEditorText,
   selectEditorRange,
   test,
@@ -315,6 +318,30 @@ test.describe('page mode (#5691) @editor @pages', () => {
       expect.objectContaining({ blockId: seeded.ids[31] }),
     ])
     expect(await getInvokeCalls(page, 'create_block')).toEqual([])
+  })
+
+  test('a page-level Ctrl+Z takes back the last block typed in, not the one left before it', async ({
+    page,
+  }) => {
+    await caret(page, 10, 'end')
+    await page.keyboard.type(' A')
+    // Leaving the block saves it, with the cursor already in the next one.
+    await page.keyboard.press('ArrowDown')
+    await expect.poll(async () => (await backend(page, seeded.pageId))[10]?.text).toBe('block 10 A')
+    await page.keyboard.press('End')
+    await page.keyboard.type(' B')
+    await expect.poll(async () => (await backend(page, seeded.pageId))[11]?.text).toBe('block 11 B')
+
+    await blurEditors(page)
+    await page.keyboard.press('Control+z')
+    await expect(page.getByLabel('Notifications alt+T').getByText(/Und(one|id)/)).toBeVisible()
+    await reopenPage(page, 'Page mode spike')
+
+    await expect(page.getByText('block 10 A', { exact: true })).toBeVisible()
+    expect((await backend(page, seeded.pageId)).slice(10, 12).map((b) => b.text)).toEqual([
+      'block 10 A',
+      'block 11',
+    ])
   })
 
   test('a peer’s edit shows in place, outside undo, and the cursor stays put', async ({ page }) => {
