@@ -6,6 +6,7 @@
  *  - Renders truncated peer ID when no device name
  *  - Sync button click calls onSyncNow
  *  - Unpair button click calls onUnpair
+ *  - Cancel sync shows while a session runs and calls cancel_sync (#5739)
  *  - Accessibility (axe audit)
  */
 
@@ -20,6 +21,7 @@ import { stubInvoke } from '@/__tests__/helpers/invoke'
 import { PeerListItem } from '@/components/peers/PeerListItem'
 import type { PeerRef } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+import { useSyncStore } from '@/stores/sync'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -671,5 +673,83 @@ describe('PeerListItem — last-sync activity (#4084)', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+})
+
+// #5739 — the row offers to cancel a running session: shown while the sync
+// store holds progress for this peer, which starts at the dial.
+describe('Cancel sync (#5739)', () => {
+  const peer = makePeer({ device_name: 'Work Laptop' })
+  const dialling = {
+    kind: 'sync',
+    state: 'connecting',
+    remote_device_id: peer.peer_id,
+    ops_sent: 0,
+    ops_received: 0,
+  } as const
+  const cancelButton = () =>
+    screen.queryByRole('button', {
+      name: 'Cancel sync: stops every sync running on this device',
+    })
+
+  beforeEach(() => {
+    useSyncStore.getState().reset()
+  })
+
+  it("shows only while this peer's session runs", () => {
+    render(<PeerListItem peer={peer} {...defaultProps} />)
+    expect(cancelButton()).not.toBeInTheDocument()
+
+    act(() => useSyncStore.getState().recordPeerProgress('SOME_OTHER_PEER', dialling))
+    expect(cancelButton()).not.toBeInTheDocument()
+
+    act(() => useSyncStore.getState().recordPeerProgress(peer.peer_id, dialling))
+    expect(cancelButton()).toBeInTheDocument()
+
+    act(() =>
+      useSyncStore.getState().recordPeerProgress(peer.peer_id, { ...dialling, state: 'error' }),
+    )
+    expect(cancelButton()).not.toBeInTheDocument()
+  })
+
+  it('asks the backend to cancel and leaves focus on Sync now', async () => {
+    const user = userEvent.setup()
+    stubInvoke(mockedInvoke, { cancel_sync: () => null })
+    useSyncStore.getState().recordPeerProgress(peer.peer_id, dialling)
+    render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    await user.click(cancelButton() as HTMLElement)
+
+    expect(mockedInvoke).toHaveBeenCalledWith('cancel_sync')
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Sync now with device/ })).toHaveFocus()
+    })
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
+  it('reports a rejected cancel and keeps the button', async () => {
+    const user = userEvent.setup()
+    stubInvoke(mockedInvoke, {
+      cancel_sync: () => Promise.reject(new Error('backend unavailable')),
+    })
+    useSyncStore.getState().recordPeerProgress(peer.peer_id, dialling)
+    render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    await user.click(cancelButton() as HTMLElement)
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to cancel the sync')
+    })
+    await waitFor(() => {
+      expect(cancelButton()).toBeEnabled()
+    })
+  })
+
+  it('has no a11y violations while offered', async () => {
+    useSyncStore.getState().recordPeerProgress(peer.peer_id, dialling)
+    const { container } = render(<PeerListItem peer={peer} {...defaultProps} />)
+
+    expect(cancelButton()).toBeInTheDocument()
+    expect(await axe(container)).toHaveNoViolations()
   })
 })

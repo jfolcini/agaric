@@ -42,14 +42,12 @@ export type PeerSyncProgress =
     }
 
 /**
- * `null` ends the peer's progress: a terminal op state (`complete`, `error`,
- * or `failed` for a session that ended without either), or the file
- * exchange's `complete` or `failed` tick.
+ * `null` ends the peer's progress: a terminal op state (`complete` or
+ * `error`), or the file exchange's `complete` or `failed` tick.
  */
 function toPeerProgress(update: SyncProgressUpdate): PeerSyncProgress | null {
   if (update.kind === 'sync') {
-    if (update.state === 'complete' || update.state === 'error' || update.state === 'failed')
-      return null
+    if (update.state === 'complete' || update.state === 'error') return null
     return { phase: 'ops', opsSent: update.ops_sent, opsReceived: update.ops_received }
   }
   if (update.phase !== 'sending' && update.phase !== 'receiving') return null

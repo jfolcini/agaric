@@ -3,7 +3,8 @@
 //
 // The app pairs with a second device through its own pairing dialog, and one
 // edit crosses in each direction, then a property and a move, then two
-// concurrent edits to one block, then an image each way, and last an unpair.
+// concurrent edits to one block, then an image each way, then a sync cancelled
+// while the peer does not answer, and last an unpair.
 // The second device is `e2e_sync_peer`, a headless vault on the app's sync daemon
 // (sync-peer.ts). It reads the dialog's QR as a phone's camera would; the QR
 // carries the address that mDNS, which a CI runner cannot be relied on for,
@@ -58,6 +59,8 @@ const PEER_VALUE = runScopedMarker('wdio-sync-remote-prop')
 const APP_TAIL = runScopedMarker('wdio-sync-app-tail')
 const PEER_HEAD = runScopedMarker('wdio-sync-remote-head')
 const EDITOR = '[data-testid="block-editor"] [contenteditable="true"]'
+const BEFORE_PAUSE = runScopedMarker('wdio-sync-before-pause')
+const AFTER_CANCEL = runScopedMarker('wdio-sync-after-cancel')
 const APP_IMAGE = runScopedMarker('wdio-sync-app-image')
 const PEER_IMAGE = runScopedMarker('wdio-sync-remote-image')
 const FILENAME = 'wdio-sync-image.png'
@@ -91,6 +94,29 @@ async function clickSyncNow(deviceId: string): Promise<void> {
   const syncNow = peerRow(deviceId).$('button[aria-label^="Sync now with device"]')
   await syncNow.waitForClickable({ timeout: ACTION_TIMEOUT })
   await syncNow.click()
+}
+
+/**
+ * The device row of `deviceId` as one read: whether it shows a running session
+ * (its progress or its Cancel), the sync state card's label, and the open toasts.
+ */
+function readSyncSurface(deviceId: string) {
+  return browser.execute(
+    (idPrefix: string) => {
+      const row = [...document.querySelectorAll('.device-peer-item')].find((item) =>
+        (item.textContent ?? '').includes(idPrefix),
+      )
+      return {
+        rowFound: row !== undefined,
+        sessionShown: row?.querySelector('.device-peer-progress, .device-cancel-sync-btn') != null,
+        state: document.querySelector('.sync-state-label')?.textContent ?? '',
+        toasts: [...document.querySelectorAll('[data-sonner-toast]')].map(
+          (toast) => toast.textContent ?? '',
+        ),
+      }
+    },
+    deviceId.slice(0, 12),
+  )
 }
 
 /** Leave the shared page and come back, so the rows are the backend's. */
@@ -521,6 +547,55 @@ describe('Agaric real-backend two-device sync (#5365) @sync', () => {
           `the state card did not settle on Idle, 1 peer and a time: ${JSON.stringify(seen)}`,
         )
       })
+  })
+
+  // #5739 — the peer freezes, so the app's dial gets no answer. Cancel must end
+  // it at once and as idle: without the cancel the dial runs out its budget into
+  // an uncoded failure, which sets the state card to Error and raises a "Sync
+  // failed" toast in the same moment it clears the row.
+  it('a sync cancelled while the peer does not answer ends idle, and the pair syncs after', async () => {
+    if (peer === undefined || paired === undefined) throw new Error('the pairing test failed')
+    const { deviceId, pageId } = paired
+
+    // A pull first, so the daemon's own resync leaves this peer alone for a
+    // minute: the one dial to the frozen peer is the one this test starts.
+    await peer.createBlock(pageId, BEFORE_PAUSE)
+    await openSyncSettings()
+    await clickSyncNow(deviceId)
+    await peer.waitPulled()
+
+    peer.pause()
+    try {
+      await clickSyncNow(deviceId)
+      const cancel = peerRow(deviceId).$('button[aria-label^="Cancel sync:"]')
+      await cancel.waitForClickable({ timeout: ACTION_TIMEOUT })
+      await cancel.click()
+
+      let seen = await readSyncSurface(deviceId)
+      await browser
+        .waitUntil(
+          async () => {
+            seen = await readSyncSurface(deviceId)
+            return seen.rowFound && !seen.sessionShown
+          },
+          { timeout: ACTION_TIMEOUT },
+        )
+        .catch(() => {
+          throw new Error(`the row never left the cancelled sync: ${JSON.stringify(seen)}`)
+        })
+      seen = await readSyncSurface(deviceId)
+      expect(seen.state).toBe('Idle')
+      expect(seen.toasts.filter((toast) => toast.includes('Sync failed'))).toEqual([])
+    } finally {
+      peer.resume()
+    }
+
+    // The pair still works: the peer's next write reaches the app.
+    await peer.createBlock(pageId, AFTER_CANCEL)
+    await clickSyncNow(deviceId)
+    await peer.waitPulled()
+    await reopenSharedPage()
+    await blockStaticByMarker(AFTER_CANCEL).waitForDisplayed({ timeout: NAV_TIMEOUT })
   })
 
   it("unpairing refuses the peer's next sync and drops only this device's row", async () => {

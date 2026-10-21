@@ -791,15 +791,15 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
         relay_url: None,
     };
     // Wrap in a timeout to prevent the test from hanging if the dial blocks.
-    let result = tokio::time::timeout(
+    let was_cancelled = tokio::time::timeout(
         std::time::Duration::from_secs(60),
         try_sync_with_peer(&ctx, &peer, &refs, None),
     )
-    .await;
-
+    .await
+    .expect("try_sync_with_peer must complete within timeout");
     assert!(
-        result.is_ok(),
-        "try_sync_with_peer must complete within timeout"
+        !was_cancelled,
+        "a failed dial with no cancel pending is not a cancel: the round goes on"
     );
 
     let events = sink.events();
@@ -1024,6 +1024,11 @@ async fn the_repeat_report_suppression_is_wired_into_try_sync_with_peer_4120() {
         fresh_failures, 2,
         "suppressing the report must not suppress the booking — the backoff is what \
          paces the retry (#4120)"
+    );
+    assert!(
+        matches!(fresh_events.last(), Some(SyncEvent::Progress { state, .. }) if state == "error"),
+        "#5739: the report is withheld, not the outcome — the attempt's progress still \
+         ends, or the device row keeps showing the dial and its Cancel; got {fresh_events:?}"
     );
 
     // ---- Arm C (#4305): the same failure against a peer that has gone dark,
@@ -1479,30 +1484,64 @@ async fn try_sync_with_peer_skips_when_peer_locked() {
 // path, so there is no longer an "in-memory" version for it to be the socket
 // counterpart of.
 
-/// S-11 / #637: When `try_sync_with_peer` exits via the connection-failure
-/// path it runs NO real session, so it does NOT own the cancel and must
-/// LEAVE a pre-set (user) cancel flag intact — otherwise an early-exiting
-/// peer would swallow a cancel aimed at a still-running sibling. The guard
-/// only clears the flag once a real session was reached (`owns == true`).
+/// Wait until `sink` holds `count` "connecting" events: that many attempts
+/// have committed to a session and are dialling.
+async fn until_dialling(sink: &RecordingEventSink, count: usize) {
+    let started = std::time::Instant::now();
+    while sink
+        .events()
+        .iter()
+        .filter(|e| matches!(e, SyncEvent::Progress { state, .. } if state == "connecting"))
+        .count()
+        < count
+    {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the attempts never reached the dial"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// Is `event` the coded end of a user cancel for `peer_id`?
+fn is_user_cancel(event: &SyncEvent, peer_id: &str) -> bool {
+    matches!(
+        event,
+        SyncEvent::Error { remote_device_id, code: Some(crate::sync_events::SyncErrorCode::Cancelled), .. }
+            if remote_device_id == peer_id
+    )
+}
+
+/// #5739: a cancel while the peer has not answered the dial lands, ends the dial
+/// at once, and books nothing. Before, the dial was not a live session, so
+/// `request_cancel` dropped the cancel and the dial ran out its budget into a
+/// failure. The peer never answers, so only the cancel can end the attempt
+/// inside its connect budget.
+///
+/// The progress channel a `start_sync` left is taken before "connecting": the
+/// dial and its cancel are what the device row shows, and its Cancel needs the
+/// dial on screen.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn try_sync_with_peer_preserves_cancel_flag_after_connection_failure() {
+async fn a_cancel_during_the_dial_ends_it_and_books_nothing_5739() {
+    const PEER: &str = "PEER_DIAL_CANCEL_5739";
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
-    let sink = Arc::new(RecordingEventSink::new());
-    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
-    let cancel = AtomicBool::new(true); // start with cancel set
+    let base = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = base.clone();
+    let channel = Arc::new(RecordingEventSink::new());
+    let channel_sink: Arc<dyn SyncEventSink> = channel.clone();
+    scheduler.register_channel(PEER, Box::new(move |_base| channel_sink));
+    let cancel = AtomicBool::new(false);
     let harness = ServiceHarness::new().await;
 
-    let peer = unreachable_peer("PEER_FAIL");
-    let refs = vec![make_peer_ref("PEER_FAIL")];
-
-    let apply_host_ctx_1351: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
-        std::sync::Arc::new(materializer.clone());
+    let peer = unreachable_peer(PEER);
+    let refs = vec![make_peer_ref(PEER)];
+    let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL_DEV",
-        materializer: &apply_host_ctx_1351,
+        materializer: &apply_host,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -1510,24 +1549,187 @@ async fn try_sync_with_peer_preserves_cancel_flag_after_connection_failure() {
         bind_prefix_len: None,
         relay_url: None,
     };
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        try_sync_with_peer(&ctx, &peer, &refs, None),
-    )
-    .await;
 
-    assert!(result.is_ok(), "must complete within timeout");
+    let (was_cancelled, latched) =
+        tokio::time::timeout(crate::sync_constants::CONNECT_TIMEOUT, async {
+            tokio::join!(try_sync_with_peer(&ctx, &peer, &refs, None), async {
+                until_dialling(&channel, 1).await;
+                scheduler.request_cancel(&cancel)
+            })
+        })
+        .await
+        .expect("a cancel must end the dial before its connect budget does");
 
-    // #637: connection-failure early-exit ran no session → must NOT clear a
-    // pre-set user cancel (it could be aimed at a still-running sibling).
     assert!(
-        cancel.load(Ordering::Acquire),
-        "#637: connection-failure early-exit must PRESERVE a pre-set cancel flag"
+        latched,
+        "a cancel during the dial must land: the dial is a live session"
+    );
+    assert!(
+        was_cancelled,
+        "the attempt reports the cancel, so a round stops"
+    );
+    let events = channel.events();
+    assert!(
+        matches!(&events[..], [SyncEvent::Progress { state, .. }, end]
+            if state == "connecting" && is_user_cancel(end, PEER)),
+        "the dial and its coded cancel go to the progress channel, got {events:?}"
+    );
+    assert!(
+        base.events().is_empty(),
+        "the channel wraps every event of the attempt"
+    );
+    assert_eq!(
+        scheduler.failure_count(PEER),
+        0,
+        "#2537: a cancel books no failure"
+    );
+    assert!(
+        scheduler.may_retry(PEER),
+        "#2537: a cancel puts the peer in no backoff"
+    );
+    assert!(
+        !scheduler.has_active_session(),
+        "no live session is left behind"
+    );
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "the last owner out resets the flag"
+    );
+    assert!(
+        scheduler
+            .try_lock_peer(&peer_lock_key(peer.endpoint_id.unwrap()))
+            .is_some(),
+        "the per-peer lock is released"
+    );
+    assert!(
+        scheduler.take_channel(PEER).is_none(),
+        "the channel was used, not left behind"
     );
 
-    // Verify we got the error event (connection failed)
-    let events = sink.events();
-    assert_eq!(events.len(), 2, "should emit connecting + error events");
+    materializer.shutdown();
+}
+
+/// #637 / #5739: a cancel reaches every session live when it was issued. An
+/// attempt that ends on a cancel while a sibling session is still live leaves
+/// the flag set for that sibling; only the last owner out resets it (its
+/// no-sibling half is `a_cancel_during_the_dial_ends_it_and_books_nothing_5739`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dial_ended_by_a_cancel_leaves_the_flag_for_a_live_sibling_5739() {
+    const PEER: &str = "PEER_SIBLING_5739";
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let harness = ServiceHarness::new().await;
+
+    // A session still running elsewhere, and the cancel the user aimed at it.
+    let sibling = scheduler.begin_session_activity();
+    let cancel = AtomicBool::new(true);
+
+    let peer = unreachable_peer(PEER);
+    let refs = vec![make_peer_ref(PEER)];
+    let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(materializer.clone());
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_DEV",
+        materializer: &apply_host,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    let was_cancelled = tokio::time::timeout(
+        crate::sync_constants::CONNECT_TIMEOUT,
+        try_sync_with_peer(&ctx, &peer, &refs, None),
+    )
+    .await
+    .expect("a pending cancel ends the dial at once");
+
+    assert!(was_cancelled, "the dial saw the pending cancel");
+    assert!(
+        sink.events()
+            .last()
+            .is_some_and(|e| is_user_cancel(e, PEER)),
+        "the attempt ends as a user cancel, got {:?}",
+        sink.events()
+    );
+    assert!(
+        cancel.load(Ordering::Acquire),
+        "#637: an owner that ends while a sibling is live must leave the cancel for it"
+    );
+
+    drop(sibling);
+    materializer.shutdown();
+}
+
+/// #5739: with two attempts dialling at once, one cancel ends both. Each polls the
+/// flag on its own clock, so whichever notices first must not reset it under the
+/// other — that one would dial on into a failure booked against its peer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cancel_reaches_every_dialling_peer_not_only_the_first_to_notice_5739() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let cancel = AtomicBool::new(false);
+    let harness = ServiceHarness::new().await;
+
+    let (first, second) = (
+        unreachable_peer("PEER_ONE_5739"),
+        unreachable_peer("PEER_TWO_5739"),
+    );
+    let refs = vec![
+        make_peer_ref("PEER_ONE_5739"),
+        make_peer_ref("PEER_TWO_5739"),
+    ];
+    let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(materializer.clone());
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_DEV",
+        materializer: &apply_host,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+
+    let (first_cancelled, second_cancelled, latched) =
+        tokio::time::timeout(crate::sync_constants::CONNECT_TIMEOUT, async {
+            tokio::join!(
+                Box::pin(try_sync_with_peer(&ctx, &first, &refs, None)),
+                Box::pin(try_sync_with_peer(&ctx, &second, &refs, None)),
+                async {
+                    until_dialling(&sink, 2).await;
+                    scheduler.request_cancel(&cancel)
+                },
+            )
+        })
+        .await
+        .expect("one cancel must end both dials before their connect budget does");
+
+    assert!(latched, "the cancel lands on the live dials");
+    assert!(
+        first_cancelled && second_cancelled,
+        "both attempts saw the cancel"
+    );
+    for peer in ["PEER_ONE_5739", "PEER_TWO_5739"] {
+        assert!(
+            sink.events().iter().any(|e| is_user_cancel(e, peer)),
+            "{peer} ends as a user cancel, got {:?}",
+            sink.events()
+        );
+        assert_eq!(scheduler.failure_count(peer), 0, "{peer} books no failure");
+    }
+    assert!(
+        !cancel.load(Ordering::Acquire),
+        "the last owner out resets the flag"
+    );
 
     materializer.shutdown();
 }
@@ -1539,9 +1741,10 @@ async fn try_sync_with_peer_preserves_cancel_flag_after_connection_failure() {
 // once Branch B started spawning one task per peer against a single SHARED
 // cancel flag: an early-exiting task would clear a user cancel aimed at a
 // still-running sibling (#637). The corrected invariant: only a task that
-// actually ran a real session OWNS the cancel and clears it; early-exit
-// paths (backoff / lock / no-address / connect failure) PRESERVE a pre-set
-// flag so a sibling-targeted cancel survives.
+// committed to a session (from its dial, #5739) OWNS the cancel and clears
+// it, and only as the last live owner; early-exit paths (backoff / lock /
+// no endpoint id / identity refusal) PRESERVE a pre-set flag so a
+// sibling-targeted cancel survives.
 // ======================================================================
 
 /// S-11 / #637: the backoff-gate early return runs no session, so it must
@@ -8426,70 +8629,6 @@ async fn a_snapshot_past_the_old_frame_cap_syncs_over_quic_5761() {
 // Try_sync_with_peer returns bool reflecting cancel observation
 // ======================================================================
 
-/// When `try_sync_with_peer` exits via the connection-failure
-/// early-exit path (no real session ran), the function must return
-/// `false` even if the cancel flag was pre-set. The `CancelGuard` still
-/// clears the flag, but the returned bool reflects the spec: only
-/// sessions that actually executed `run_sync_session` can report a
-/// "session cancelled mid-flight" outcome.
-///
-/// Note: this test covers the FALSE-return path (connection refused,
-/// no real session ran). The TRUE-return path (`run_sync_session` ran
-/// AND cancel was observed) requires a reachable TLS loopback responder;
-/// see TODO(#497) below.
-///
-/// TODO(#497): add true-path test — needs loopback TLS responder that
-/// lets run_sync_session start before cancel is observed.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn try_sync_with_peer_returns_false_when_connect_refused_even_if_cancel_preflagged_m46() {
-    let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::new());
-    let sink = Arc::new(RecordingEventSink::new());
-    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
-    let cancel = AtomicBool::new(true); // pre-set; early-exit must still return false
-    let harness = ServiceHarness::new().await;
-
-    let peer = unreachable_peer("PEER_M46_FAIL");
-    let refs = vec![make_peer_ref("PEER_M46_FAIL")];
-
-    let apply_host_ctx_7140: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
-        std::sync::Arc::new(materializer.clone());
-    let ctx = SyncSessionContext {
-        pool: &pool,
-        device_id: "LOCAL_M46",
-        materializer: &apply_host_ctx_7140,
-        scheduler: &scheduler,
-        event_sink: &event_sink,
-        cancel: &cancel,
-        endpoint: &harness.client_endpoint,
-        bind_prefix_len: None,
-        relay_url: None,
-    };
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        try_sync_with_peer(&ctx, &peer, &refs, None),
-    )
-    .await
-    .expect("must complete within timeout");
-
-    // Spec: connect-failure early-exit returns false even when
-    // cancel was pre-set, because run_sync_session never executed.
-    assert!(
-        !result,
-        "connect-failure early-exit must return false (no real session ran), got true"
-    );
-    // #637 invariant: the early-exit task does NOT own the cancel, so it must
-    // PRESERVE a pre-set flag (it could be aimed at a still-running sibling)
-    // rather than clear it.
-    assert!(
-        cancel.load(Ordering::Acquire),
-        "#637: connect-failure early-exit must PRESERVE a pre-set cancel flag"
-    );
-
-    materializer.shutdown();
-}
-
 /// Backoff early-exit returns false (no real session ran).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
@@ -8532,16 +8671,15 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
 /// #637 (core regression): two peer tasks share a SINGLE cancel flag, as
 /// Branch B spawns them (one `&AtomicBool` cloned into every task). A user
 /// cancel is set, aimed at the still-running sibling. One peer exits early
-/// (here: backoff gate, the same shape as lock contention / no-address /
-/// connect-failure) and its `CancelGuard` drops. The sibling MUST still
+/// (here: backoff gate, the same shape as lock contention / no endpoint id /
+/// identity refusal) and its `CancelGuard` drops. The sibling MUST still
 /// observe the cancel — the early-exiter must NOT store `false` over a
 /// cancel it does not own.
 ///
 /// Before the fix, `CancelGuard::drop` cleared the shared flag
 /// unconditionally on every exit path, so the early-exiter would swallow
-/// the cancel and the sibling (and `abort_all`, which only fires on a
-/// `true` return) would never see it — the round kept syncing despite the
-/// user cancelling.
+/// the cancel and the sibling would never see it — the round kept syncing
+/// despite the user cancelling.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
     let (pool, _dir) = test_pool().await;
@@ -8617,17 +8755,16 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
     materializer.shutdown();
 }
 
-/// #637 (owns-path): when `try_sync_with_peer` actually reaches a real
-/// session it OWNS the cancel and IS the legitimate resetter — so it must
-/// clear the shared flag on the way out. Here we reach `run_sync_session`
-/// against a live loopback responder with the cancel pre-set; the session's
-/// cancel check returns immediately ("sync cancelled by user"), the function
-/// Reports `true`, and the guard clears the flag.
+/// #637 / #5739: a cancel mid-session, while the peer has gone silent, ends the
+/// session at once instead of at the 180 s receive clock, books nothing, and
+/// leaves no live session or held lock. The task owns the cancel, so it resets
+/// the flag on the way out.
 ///
-/// This also exercises the TRUE-return path that was an acknowledged
-/// TODO(#497): a real session ran AND the cancel was observed.
+/// The flag is clear when the receive starts, so a check made only before each
+/// receive never sees it: the responder reads the opening frame and answers
+/// nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn cancel_637_owns_path_clears_flag_after_real_session() {
+async fn a_cancel_mid_session_ends_the_wait_on_a_silent_peer_5739() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
@@ -8635,10 +8772,7 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let harness = ServiceHarness::new().await;
 
-    // A live loopback responder so the dial succeeds and the function commits to
-    // a real session (sets `owns = true`). It reads the initiator's opening frame
-    // and answers nothing: what is under test is the initiator giving up on its
-    // own cancel flag, not anything the peer says.
+    let (read_opening, opening_read) = tokio::sync::oneshot::channel();
     let responder = {
         let service = harness.service.clone();
         tokio::spawn(async move {
@@ -8650,25 +8784,24 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
                 .establish()
                 .await
                 .expect("the peer completes the handshake and opens its stream");
-            let _ = recv_sync_message(&mut session.recv).await;
-            // Hold the session open until the initiator has returned.
+            recv_sync_message(&mut session.recv)
+                .await
+                .expect("the initiator's opening frame arrives");
+            read_opening.send(()).expect("the test is waiting");
+            // Hold the session open, silent, until the initiator has returned.
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         })
     };
 
-    let peer = discovered_service_peer("PEER_637_OWNS", &harness);
-    let refs = vec![make_peer_ref("PEER_637_OWNS")];
+    let peer = discovered_service_peer("PEER_MID_5739", &harness);
+    let refs = vec![make_peer_ref("PEER_MID_5739")];
+    let cancel = AtomicBool::new(false);
 
-    // Cancel pre-set: once `run_sync_session` starts, its first loop iteration's
-    // cancel check fires and returns Err("sync cancelled by user").
-    let cancel = AtomicBool::new(true);
-
-    let apply_host_ctx_7341: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
-        std::sync::Arc::new(materializer.clone());
+    let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
-        device_id: "LOCAL_637_OWNS",
-        materializer: &apply_host_ctx_7341,
+        device_id: "LOCAL_MID_5739",
+        materializer: &apply_host,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -8677,50 +8810,66 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
         relay_url: None,
     };
 
-    let was_cancelled = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        try_sync_with_peer(&ctx, &peer, &refs, None),
-    )
-    .await
-    .expect("try_sync_with_peer must complete within timeout");
-
-    // The responder was only ever holding the connection open; reclaim it.
+    let (was_cancelled, latched) =
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            tokio::join!(try_sync_with_peer(&ctx, &peer, &refs, None), async {
+                opening_read
+                    .await
+                    .expect("the responder reads the opening frame");
+                scheduler.request_cancel(&cancel)
+            })
+        })
+        .await
+        .expect("a cancel must end a receive the peer never answers");
     responder.abort();
 
-    // A real session ran and observed the cancel → true (true-path / #497).
+    assert!(latched, "the cancel lands on the live session");
     assert!(
         was_cancelled,
-        "#637 owns-path: a real session that observed the cancel must return true"
+        "a session that observed the cancel reports it"
     );
-    // And because this task OWNS the cancel, the guard performs the legitimate
-    // post-run reset — the next round starts clean.
+    assert!(
+        sink.events()
+            .last()
+            .is_some_and(|e| is_user_cancel(e, "PEER_MID_5739")),
+        "the session ends as a user cancel, got {:?}",
+        sink.events()
+    );
     assert!(
         !cancel.load(Ordering::Acquire),
-        "#637 owns-path: the resetter that ran a real session must clear the flag on exit"
+        "the owner resets the flag on exit"
     );
-
-    // #2537: a user cancel is NOT a peer failure — the cancelled session
-    // must not be recorded into the scheduler's backoff (previously it was,
-    // doubling the peer's retry delay for something the peer didn't do).
     assert_eq!(
-        scheduler.failure_count("PEER_637_OWNS"),
+        scheduler.failure_count("PEER_MID_5739"),
         0,
         "#2537: a cancelled session must NOT bump the scheduler failure count"
     );
     assert!(
-        scheduler.may_retry("PEER_637_OWNS"),
+        scheduler.may_retry("PEER_MID_5739"),
         "#2537: a cancelled session must NOT push the peer into backoff"
+    );
+    assert!(
+        !scheduler.has_active_session(),
+        "no live session is left behind"
+    );
+    assert!(
+        scheduler
+            .try_lock_peer(&peer_lock_key(peer.endpoint_id.unwrap()))
+            .is_some(),
+        "the per-peer lock is released"
     );
 
     materializer.shutdown();
 }
 
-/// #5842: a session that ends in `Err` ends its progress channel with a
-/// `failed` update. `record_session_failure` reports the failure on the base
-/// sink only, so without it the peer's device row keeps its last progress.
-/// The cancelled session is the `Err` shape; a dropped peer takes the same path.
+/// #5842: a session that fails after connecting, here because the peer drops it
+/// mid-session, ends its progress channel with exactly one terminal update. The
+/// device row clears its progress only on a terminal update, so without one it
+/// keeps showing the session and its Cancel. A cancel at the dial is
+/// `a_cancel_during_the_dial_ends_it_and_books_nothing_5739`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_failed_session_ends_its_progress_channel_5842() {
+    const PEER: &str = "PEER_5842";
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
@@ -8738,20 +8887,21 @@ async fn a_failed_session_ends_its_progress_channel_5842() {
                 .establish()
                 .await
                 .expect("the peer completes the handshake and opens its stream");
-            let _ = recv_sync_message(&mut session.recv).await;
-            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            recv_sync_message(&mut session.recv)
+                .await
+                .expect("the initiator's opening frame arrives");
+            drop(session);
         })
     };
 
-    let peer = discovered_service_peer("PEER_5842", &harness);
-    let refs = vec![make_peer_ref("PEER_5842")];
+    let peer = discovered_service_peer(PEER, &harness);
+    let refs = vec![make_peer_ref(PEER)];
     let channel = Arc::new(RecordingEventSink::new());
     let channel_sink: Arc<dyn SyncEventSink> = channel.clone();
-    scheduler.register_channel("PEER_5842", Box::new(move |_base| channel_sink));
-    let cancel = AtomicBool::new(true);
+    scheduler.register_channel(PEER, Box::new(move |_base| channel_sink));
+    let cancel = AtomicBool::new(false);
 
-    let apply_host: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
-        std::sync::Arc::new(materializer.clone());
+    let apply_host: Arc<dyn crate::apply_host::ApplyHost> = Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL_5842",
@@ -8768,19 +8918,27 @@ async fn a_failed_session_ends_its_progress_channel_5842() {
         try_sync_with_peer(&ctx, &peer, &refs, None),
     )
     .await
-    .expect("try_sync_with_peer must complete within timeout");
-    responder.abort();
-    assert!(was_cancelled, "setup: the session must have run and failed");
+    .expect("a session the peer dropped must end promptly");
+    responder.await.expect("the responder drops the session");
+    assert!(!was_cancelled, "setup: no cancel was pending");
+    assert_eq!(
+        scheduler.failure_count(PEER),
+        1,
+        "setup: the session ran and failed against the peer"
+    );
 
+    // As `ChannelEventSink` sends each event to the device row.
     let channel_states: Vec<String> = channel
         .events()
         .into_iter()
         .map(|event| match event {
             SyncEvent::Progress { state, .. } => state,
-            other => panic!("only progress reaches the channel here, got {other:?}"),
+            SyncEvent::Complete { .. } => "complete".into(),
+            SyncEvent::Error { .. } => "error".into(),
+            other => panic!("only op-sync events reach the channel here, got {other:?}"),
         })
         .collect();
-    assert_eq!(channel_states, ["exchanging_heads", "failed"]);
+    assert_eq!(channel_states, ["connecting", "exchanging_heads", "error"]);
 
     materializer.shutdown();
 }
@@ -8874,9 +9032,9 @@ async fn cancel_637_owns_path_normal_reset_leaves_flag_clear() {
 /// `run_sequential_sync_round` would cause this test to fail.
 ///
 /// (Branch B no longer follows this shape post-L-61 — it dispatches
-/// peers concurrently via `JoinSet` and uses `abort_all()`. The
-/// bool→break contract this test pins down is the authoritative shape
-/// for Branch C.)
+/// peers concurrently via `JoinSet`, and each ends on a cancel by itself
+/// (#5739). The bool→break contract this test pins down is the
+/// authoritative shape for Branch C.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_loop_breaks_round_when_cancel_observed_during_first_peer_m46() {
     let peer_ids: Vec<String> = vec![

@@ -237,6 +237,13 @@ export interface SyncPeer {
   waitPulled(): Promise<void>
   /** The device ids the peer holds a pairing with. */
   listPeers(): Promise<string[]>
+  /**
+   * Freeze the peer (SIGSTOP): it holds its pairing and its socket but answers
+   * nothing, as a device asleep mid-sync does. No request may be sent until `resume`.
+   */
+  pause(): void
+  /** Thaw a paused peer (SIGCONT). */
+  resume(): void
   /** End the peer, copy its log into the diagnostics artifact, and delete its vault. */
   stop(): Promise<void>
 }
@@ -353,9 +360,16 @@ export async function startSyncPeer(): Promise<SyncPeer> {
       await request({ cmd: 'wait_pulled' }, 'pulled')
     },
     listPeers: async () => (await request({ cmd: 'list_peers' }, 'peers')).peer_ids,
+    pause: () => {
+      child.kill('SIGSTOP')
+    },
+    resume: () => {
+      child.kill('SIGCONT')
+    },
     stop: async () => {
-      // The end of stdin is the peer's shutdown.
+      // The end of stdin is the peer's shutdown, which a paused peer never reads.
       if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGCONT')
         const exited = once(child, 'exit')
         child.stdin.end()
         await exited

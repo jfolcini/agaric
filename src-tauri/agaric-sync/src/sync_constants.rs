@@ -19,6 +19,14 @@ use std::time::Duration;
 // and responder (`sync_daemon::server`) message loops.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(120);
 
+// How often a wait on the peer re-reads the daemon's cancel flag, a bare
+// `AtomicBool` nothing can await: the file-transfer receive loop
+// (`sync_files`), and the dial and each session receive
+// (`transport::driver::unless_cancelled`, #5739). Short enough that a cancel
+// lands promptly, long enough that on the common path, where the next message
+// is already in flight, a multi-gigabyte transfer wakes a handful of times.
+pub const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(150);
+
 // Granularity of the streamed reads: attachment files in `sync_files` (through
 // `transport::bulk`), and frame bodies and raw Loro bytes in
 // `transport::session`.

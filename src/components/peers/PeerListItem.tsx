@@ -4,7 +4,7 @@
  * Extracted from DeviceManagement to reduce component size.
  * Shows device name (or truncated ID), last-synced time, reset count badge,
  * address info, the running session's progress, and action buttons (rename, sync,
- * unpair).
+ * cancel the running session, unpair).
  *
  * #4298: "device name" is now a precedence, not a column — the user's local
  * override, then the name the peer advertised over the wire, then the truncated
@@ -17,9 +17,9 @@
  * dead pairing as a healthy one.
  */
 
-import { Globe, Pencil, RefreshCw, Smartphone, Unplug } from 'lucide-react'
+import { Globe, Pencil, RefreshCw, Smartphone, Unplug, X } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PeerSyncProgress } from '@/components/peers/PeerSyncProgress'
@@ -39,6 +39,8 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { peerDisplayName, peerName } from '@/lib/peer-display-name'
 import { lastSyncActivityAt } from '@/lib/peer-sync-activity'
+import { reportIpcError } from '@/lib/report-ipc-error'
+import { useSyncStore } from '@/stores/sync'
 
 export interface PeerListItemProps {
   peer: PeerRef
@@ -65,6 +67,11 @@ export function PeerListItem({
   const now = useMinuteClock()
   const [addrOpen, setAddrOpen] = useState(false)
   const [addrInput, setAddrInput] = useState('')
+  // #5739 — a session with this peer is running (its dial, op sync or file
+  // exchange), so the row offers to cancel it.
+  const sessionRunning = useSyncStore((s) => s.peerProgress[peer.peer_id] != null)
+  const [cancelling, setCancelling] = useState(false)
+  const syncNowRef = useRef<HTMLButtonElement>(null)
 
   // #4084 — see the comment at the render site.
   const lastActivityAt = lastSyncActivityAt(peer)
@@ -112,6 +119,21 @@ export function PeerListItem({
         notify.error(t('status.addressInvalidWithFormat', { format: '192.168.1.100:5000' }))
       })
   }, [addrInput, peer.peer_id, t, onAddressUpdated])
+
+  // The session's coded end resets the store to idle (`useSyncEvents`), and
+  // its progress ends, which takes this button away.
+  const handleCancelSync = useCallback(async () => {
+    setCancelling(true)
+    try {
+      unwrap(await commands.cancelSync())
+      // The button leaves with the session; keep the keyboard in the row.
+      syncNowRef.current?.focus()
+    } catch (err) {
+      reportIpcError('PeerListItem', 'device.cancelSyncFailed', err, t, { peer_id: peer.peer_id })
+    } finally {
+      setCancelling(false)
+    }
+  }, [peer.peer_id, t])
 
   // Explicit Cancel button for the address-edit popover. Outside-
   // click already dismisses the popover, but Cancel makes the affordance
@@ -327,6 +349,7 @@ export function PeerListItem({
           sm:w-auto sm:shrink-0 sm:flex-row sm:items-center"
       >
         <Button
+          ref={syncNowRef}
           variant="outline"
           size="sm"
           className="device-sync-btn w-full sm:w-auto"
@@ -339,6 +362,19 @@ export function PeerListItem({
           {syncingPeerId === peer.peer_id ? <Spinner /> : <RefreshCw />}
           {t('device.syncNowButton')}
         </Button>
+        {sessionRunning && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="device-cancel-sync-btn w-full sm:w-auto"
+            onClick={handleCancelSync}
+            disabled={cancelling}
+            aria-label={t('device.cancelSyncLabel')}
+          >
+            {cancelling ? <Spinner /> : <X />}
+            {t('device.cancelSyncButton')}
+          </Button>
+        )}
         <Button
           variant="outline"
           size="sm"

@@ -46,7 +46,7 @@ vi.mock('@/lib/announcer', () => ({
 
 import { mapPeerRefToInfo, resetReportedSyncFailures, useSyncTrigger } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
-import type { PeerRef, SyncSessionInfo } from '@/lib/bindings'
+import type { PeerRef, SyncProgressUpdate, SyncSessionInfo } from '@/lib/bindings'
 import { startSync } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
 import { useSyncStore } from '@/stores/sync'
@@ -280,6 +280,66 @@ describe('useSyncTrigger', () => {
     expect(useSyncStore.getState().peerProgress).toEqual({})
 
     await pending
+  })
+
+  // #5739 — a session's terminal `error` on the channel follows the `sync:error`
+  // event of the same outcome (`ChannelEventSink` sends the event first), which set
+  // the store to `error` for a failure and `idle` for a cancel. It must not undo
+  // that; it only ends a `syncing` that no event ended, a failure whose report was
+  // suppressed (#4120).
+  describe("a session's terminal error", () => {
+    const progress = (state: string): SyncProgressUpdate => ({
+      kind: 'sync',
+      state,
+      remote_device_id: 'PEER_END',
+      ops_received: 0,
+      ops_sent: 0,
+    })
+
+    /** Run `syncAll` against one peer and hand back the channel callback it opened. */
+    async function openSession(): Promise<NonNullable<Parameters<typeof startSync>[1]>> {
+      mockListPeerRefs.mockResolvedValue([makePeerRow({ peer_id: 'PEER_END' })])
+      let onProgress: Parameters<typeof startSync>[1]
+      mockStartSync.mockImplementation(async (_peerId, callback) => {
+        onProgress = callback
+        return {
+          state: 'complete',
+          local_device_id: 'L',
+          remote_device_id: 'R',
+          ops_received: 0,
+          ops_sent: 0,
+        }
+      })
+      const { result } = renderHook(() => useSyncTrigger())
+      await act(async () => {
+        await result.current.syncAll()
+      })
+      if (onProgress === undefined) throw new Error('syncAll never opened a session')
+      return onProgress
+    }
+
+    it('keeps the error a failure reported with it', async () => {
+      const onProgress = await openSession()
+      act(() => onProgress(progress('connecting')))
+      expect(useSyncStore.getState().state).toBe('syncing')
+
+      // What `useSyncEvents` does with the failure's `sync:error`.
+      act(() => useSyncStore.getState().setState('error', 'Connection timed out'))
+      act(() => onProgress(progress('error')))
+
+      expect(useSyncStore.getState().state).toBe('error')
+      expect(useSyncStore.getState().error).toBe('Connection timed out')
+    })
+
+    it('ends a sync whose failure was not reported again', async () => {
+      const onProgress = await openSession()
+      act(() => onProgress(progress('connecting')))
+      expect(useSyncStore.getState().state).toBe('syncing')
+
+      act(() => onProgress(progress('error')))
+
+      expect(useSyncStore.getState().state).toBe('idle')
+    })
   })
 
   it('silently skips sync when peer list is empty', async () => {

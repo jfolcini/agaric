@@ -193,13 +193,9 @@ describe('useSyncStore', () => {
       expect(useSyncStore.getState().peerProgress).toEqual({})
     })
 
-    it('ends a peer whose session or file exchange failed', () => {
+    it('ends a peer whose file exchange failed', () => {
       const record = useSyncStore.getState().recordPeerProgress
-      record('PEER_A', ops('streaming_ops', 4, 2))
       record('PEER_B', files('receiving', 1, 3_000))
-
-      record('PEER_A', ops('failed', 4, 2))
-      expect(Object.keys(useSyncStore.getState().peerProgress)).toEqual(['PEER_B'])
 
       record('PEER_B', files('failed', 0, 0))
       expect(useSyncStore.getState().peerProgress).toEqual({})

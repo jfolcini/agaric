@@ -3,7 +3,7 @@
  *
  * Handles two event types from the Rust backend:
  * - sync:complete — resets to idle, shows toast, reloads blocks if data changed
- * - sync:error — sets error state, shows error toast
+ * - sync:error — sets error state, shows error toast; a user cancel resets to idle
  *
  * Per-state-transition progress (`sync:progress` in Phase 1) was dropped
  * By Phase 2 — `useSyncTrigger` now consumes the Channel<T>
@@ -81,11 +81,12 @@ export interface SyncCompletePayload {
 }
 
 /**
- * #5728 — a sync failure the backend codes so this side can word it in the
+ * #5728 — a sync error the backend codes so this side can word it in the
  * user's language (Rust `SyncErrorCode`, `sync_events.rs`). Hand-written like
- * the payload: `SyncEvent` rides a Tauri event, not specta.
+ * the payload: `SyncEvent` rides a Tauri event, not specta. `cancelled` is a
+ * user cancel (#5739), which reads as idle, not as a failure.
  */
-export type SyncErrorCode = 'engine_format_mismatch'
+export type SyncErrorCode = 'engine_format_mismatch' | 'cancelled'
 
 export interface SyncErrorPayload {
   type: 'error'
@@ -215,6 +216,7 @@ export function reloadChangedPageStores(changedPageIds?: string[]): void {
 /** Map backend state strings to frontend SyncState enum. */
 export function mapBackendState(backendState: string): 'idle' | 'syncing' | 'error' {
   switch (backendState) {
+    case 'connecting':
     case 'exchanging_heads':
     case 'streaming_ops':
     case 'applying_ops':
@@ -318,6 +320,11 @@ export function useSyncEvents(): void {
     'sync:error',
     (event) => {
       try {
+        // #5739 — the user asked for this: the session ends, nothing failed.
+        if (event.payload.code === 'cancelled') {
+          useSyncStore.getState().setState('idle')
+          return
+        }
         const message = codedSyncErrorMessage(event.payload) ?? event.payload.message
         // The store update is unconditional: it is the signal `PairingDialog`
         // reads to turn a waiting joiner into an immediate "wrong code", and
