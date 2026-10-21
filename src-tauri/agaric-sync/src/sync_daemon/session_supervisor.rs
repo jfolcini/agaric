@@ -1980,6 +1980,19 @@ async fn run_initiator_session(
     )
     .await;
 
+    // `record_session_failure` reports an `Err` on the base sink, not this
+    // session's channel, and a repeated one not at all (#4305), so without
+    // this the peer's device row keeps its last progress (#5842).
+    if outcome.is_err() {
+        let session = orch.session();
+        event_sink_arc.on_sync_event(SyncEvent::Progress {
+            state: "failed".into(),
+            remote_device_id: peer_id.to_owned(),
+            ops_received: session.ops_received,
+            ops_sent: session.ops_sent,
+        });
+    }
+
     (orch, outcome)
 }
 

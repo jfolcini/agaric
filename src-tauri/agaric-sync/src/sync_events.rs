@@ -24,7 +24,7 @@ pub enum SyncProgressUpdate {
     /// Op-sync state transitions (Tier 1). Mirrors the
     /// [`SyncEvent::Progress`] / [`SyncEvent::Complete`] /
     /// [`SyncEvent::Error`] envelope, with `state` carrying
-    /// `"complete"` / `"error"` for the terminal cases.
+    /// `"complete"` / `"error"` / `"failed"` for the terminal cases.
     Sync {
         state: String,
         remote_device_id: String,
@@ -36,8 +36,9 @@ pub enum SyncProgressUpdate {
     /// UI can render a real bytes-done bar instead of a spinner.
     Files {
         /// `"sending"` (we are pushing files to the peer),
-        /// `"receiving"` (we are pulling files from the peer), or
-        /// `"complete"` (both halves are done for this session).
+        /// `"receiving"` (we are pulling files from the peer),
+        /// `"complete"` (both halves are done for this session), or
+        /// `"failed"` (the exchange errored part-way).
         phase: String,
         remote_device_id: String,
         /// Files fully transferred so far in the current `phase`.

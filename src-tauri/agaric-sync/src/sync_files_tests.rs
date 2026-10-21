@@ -2542,6 +2542,69 @@ async fn request_receive_partial_transfer_sender_stops_short_l72() {
     );
 }
 
+/// #5842: a transfer that fails part-way ends its progress with a `failed`
+/// tick; no `complete` follows a failure, so without it the peer's device row
+/// keeps the last frame.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn initiator_transfer_failing_part_way_ends_progress_with_failed_5842() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+    insert_test_attachment(&pool, "ATT_5842", "attachments/partial.bin", 64 * 1024).await;
+
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
+    let server_side = async move {
+        let _request = recv_sync_message(&mut server.recv).await.unwrap();
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
+                attachment_id: "ATT_5842".into(),
+                size_bytes: 64 * 1024,
+                blake3_hash: blake3::hash(b"").to_hex().to_string(),
+                content_hash: None,
+            },
+        )
+        .await
+        .unwrap();
+        server.send.write_all(&[0u8; 4 * 1024]).await.unwrap();
+        server.send.finish().expect("the sender's stream finishes");
+    };
+
+    let recorder = Arc::new(RecordingEventSink::new());
+    let sink: Arc<dyn SyncEventSink> = recorder.clone();
+    let progress = FileTransferProgress {
+        event_sink: &sink,
+        remote_device_id: "DEV_RESPONDER",
+    };
+    let cancel = AtomicBool::new(false);
+    let ((), result) = tokio::join!(
+        server_side,
+        run_file_transfer_initiator(
+            &mut client.send,
+            &mut client.recv,
+            &pool,
+            dir.path(),
+            &cancel,
+            Some(&progress),
+        ),
+    );
+    assert!(result.is_err(), "setup: the truncated transfer must fail");
+
+    let phases: Vec<String> = recorder
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            SyncEvent::FileProgress { phase, .. } => Some(phase),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        phases.last().map(String::as_str),
+        Some("failed"),
+        "{phases:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn responder_bidirectional_no_files() {
     let dir = TempDir::new().unwrap();

@@ -2252,7 +2252,27 @@ async fn consume_binary_data(recv: &mut RecvStream, size_bytes: u64) -> Result<(
 /// (partial stats returned) and the sender loop falls through to the
 /// existing `FileTransferComplete` sentinel — both without changing the
 /// wire format.
+///
+/// `progress` ends on a `complete` tick, or on a `failed` one when the
+/// exchange errors part-way, so the peer's device row never keeps a stale
+/// frame (#5842).
 pub async fn run_file_transfer_initiator(
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+    cancel: &AtomicBool,
+    progress: Option<&FileTransferProgress<'_>>,
+) -> Result<FileTransferStats, AppError> {
+    let result =
+        exchange_files_as_initiator(send, recv, pool, app_data_dir, cancel, progress).await;
+    if let (Err(_), Some(p)) = (&result, progress) {
+        p.emit("failed", 0, 0, 0, 0);
+    }
+    result
+}
+
+async fn exchange_files_as_initiator(
     send: &mut SendStream,
     recv: &mut RecvStream,
     pool: &SqlitePool,
