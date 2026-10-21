@@ -18,9 +18,10 @@ import { createElement, useState } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { EDITOR_PORTAL_SELECTOR } from '@/editor/editor-portal'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
-import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '@/hooks/useEditorBlur'
+import { useEditorBlur } from '@/hooks/useEditorBlur'
 import { useBlockStore } from '@/stores/blocks'
 
 // Only used by the findings-2/48 integration tests (real useDraftAutosave

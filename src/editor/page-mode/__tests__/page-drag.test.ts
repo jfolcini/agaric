@@ -161,7 +161,7 @@ describe('dropTarget', () => {
 
   it('follows the pointer one level per indent past block mode’s dead zone, at most one deeper than the block before', () => {
     const ed = build(FLAT)
-    const depthAt = (dx: number) => dropTarget(ed.state, 3, 1, true, dx, INDENT).depth
+    const depthAt = (dx: number) => dropTarget(ed.state, 3, 1, true, dx, INDENT)?.depth
 
     expect(depthAt(DEAD_ZONE_PX)).toBe(0)
     expect(depthAt(DEAD_ZONE_PX + INDENT)).toBe(1)
@@ -189,8 +189,32 @@ describe('dropTarget', () => {
     const ed = build([...chain, [A, 0, 'a'], [B, 1, 'b'], [C, 2, 'c']])
     const from = MAX_BLOCK_DEPTH
 
-    expect(dropTarget(ed.state, from, from - 1, true, 10_000, INDENT).depth).toBe(
+    expect(dropTarget(ed.state, from, from - 1, true, 10_000, INDENT)?.depth).toBe(
       MAX_BLOCK_DEPTH - 3,
     )
+  })
+
+  it('drops nowhere when the dragged blocks are too tall to sit as deep as the block after, which would move in under them', () => {
+    const height = 10
+    const tall: Row[] = Array.from({ length: height + 1 }, (_, depth) => [
+      blockId(100 + depth),
+      depth,
+      `tall ${depth}`,
+    ])
+    const deepest = MAX_BLOCK_DEPTH - height
+    const deep: Row[] = Array.from({ length: deepest + 1 }, (_, depth) => [
+      blockId(200 + depth),
+      depth,
+      `deep ${depth}`,
+    ])
+    const ed = build([...tall, ...deep])
+    const last = tall.length + deepest
+
+    expect(dropTarget(ed.state, 0, last, false, 0, INDENT)).toBeNull()
+    // One level shallower, the dragged blocks fit.
+    expect(dropTarget(ed.state, 0, last - 1, false, 0, INDENT)).toEqual({
+      slot: last - 1,
+      depth: deepest - 1,
+    })
   })
 })

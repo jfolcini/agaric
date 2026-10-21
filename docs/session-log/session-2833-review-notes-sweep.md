@@ -1,0 +1,17 @@
+# Session 2833 — review notes from #6010, #6015–#6017, #6019–#6023 and #6029
+
+The non-blocking notes from that sweep's reviews, batched into one PR.
+
+- **Name-filtered bench runs.** A Criterion run filtered to one routine reaches the outer bench body for every routine, so the outer-body `iters > 0` asserts panicked on the ones it skipped. `sync_import_bench`'s `report_measurement_only` and `interactive_slo`'s four reporters now print "not selected" and return, through `mean_ms_if_selected`. `interactive_slo`'s three last-value checks (`edit_block`, `set_property`, `move_block`) run only when the routine ran. No lane runs a filtered bench, so none of this is exercised in CI.
+- **`validate-all` fails closed.** `category()` accepts only a literal `true` or `false` from `detect-changes`, so an empty or misspelt output fails the gate instead of reading as "skipped". `scripts/classify-changes.sh` prints literals on every path (full suite, normal diff, workflow_dispatch, schedule, tag, empty diff), so no legitimate run changes.
+- **Dead import code.** `PropertyLines::keep_refused_as_text`'s marker branch, `ParsedBlock::task_markers` and its producers are deleted: since #6017 fixed the built-in options, a task marker maps only to a built-in `todo_state` value, so the branch could not run.
+- **`PRIORITY_LEVELS`.** One const in `agaric-store/src/op.rs` feeds `BUILTIN_PROPERTY_DEFS` and `import_priority_value`. The TS parity test resolves the `&PRIORITY_LEVELS` reference. Two comments that still spoke of a "seeded priority definition" are fixed.
+- **Mock.** The no-throw check for undoing a reserved-key `delete_property` is back in `undo-op-refs.test.ts`.
+- **Page-mode drag.** `dropTarget` returns null when no depth fits; before, such a drop moved a block the user never dragged. It now reuses `projectDepth`, so `ProjectionSim`'s `normal` variant takes a `TreeItem`; block mode's drag projects as before (its 182 drag and tree tests and five block-dnd specs pass).
+- **Page-mode paste.** `openDepth` in `page-paste.ts` is deleted: `parseFromClipboard` reopens a text paste's slice to `Slice.maxOpen`, so it had no effect (forcing it to 0 and to 1 left the paste tests green). New tests cover a paste into the middle of a line.
+- **Tests that could not fail.** `page-collapse` gains tests for the mutation survivors. The remote patch's "keeps Ctrl+Z" test asserted only that the rows changed; it now asserts the exact rows Ctrl+Z restores.
+- **Stale copies.** The `EDITOR_PORTAL_SELECTOR` re-export in `useEditorBlur.ts` is gone; its four test imports, two `MathNodeView` test comments, a `BlockPropertyEditor` comment and `src/components/__tests__/AGENTS.md` pattern 7 now name `src/editor/editor-portal.ts`. A comment in `PairingPeersList.tsx` is re-indented. `scrollToDay`'s comment in the week-view clipboard spec is cut to its rule.
+
+Shown red: `dropTarget` without its null return (the "too tall" test), a wrong third `PRIORITY_LEVELS` slot (the parity test), and `applyRemote` always forgetting history (the Ctrl+Z test).
+
+Suites run: fmt, clippy `--workspace --all-targets -D warnings`, `SQLX_OFFLINE=true cargo check --workspace --all-targets`, nextest over import, priority, property-line, paste, builtin, markdown and `ts_bindings_up_to_date`, the doc-tests, typecheck, lint, vitest over `src/editor/page-mode`, `src/lib`, `src/hooks`, `src/components/peers` and `src/components/block-tree`, `prek run --hook-stage manual --all-files`, and Playwright over the page-mode gutter, input and editor specs and the five block-dnd specs.

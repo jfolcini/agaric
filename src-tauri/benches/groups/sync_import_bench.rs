@@ -94,13 +94,14 @@ impl Acc {
 }
 
 /// Print-only, like `interactive_slo::report_measurement_only`: no budget until
-/// a warm run has measured the case.
+/// a warm run has measured the case. A case that ran no iterations was left
+/// out by a name filter: this runs in the outer body, which every run reaches.
 fn report_measurement_only(case: &str, acc: &Acc) {
     let iters = acc.iters.get();
-    assert!(
-        iters > 0,
-        "sync_import_bench: {case} ran zero iterations (Criterion harness bug?)"
-    );
+    if iters == 0 {
+        println!("sync_import_bench: {case} not selected");
+        return;
+    }
     let mean_ms = (acc.total.get().as_secs_f64() * 1000.0) / iters as f64;
     println!("sync_import_bench: {case} @ 100K = {mean_ms:.2} ms (measurement only — no budget)");
 }

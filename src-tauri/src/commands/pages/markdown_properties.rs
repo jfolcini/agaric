@@ -202,34 +202,22 @@ impl PropertyLines {
     }
 
     /// Give each of `blocks`' properties its canonical key, and keep each line
-    /// whose value [`Self::read`] refuses as text, with one warning naming it
-    /// (D11): a `key:: value` line as it was written, at the end of its block,
-    /// and a checkbox, task keyword or priority cookie back before the text
-    /// it was read off. A refused ref value names no one page, so its `[[` is
-    /// escaped: the name pass neither creates that page nor warns again.
+    /// whose value [`Self::read`] refuses as text, as it was written at the end
+    /// of its block, with one warning naming it (D11). A refused ref value
+    /// names no one page, so its `[[` is escaped: the name pass neither creates
+    /// that page nor warns again.
     pub(super) fn keep_refused_as_text(
         &self,
         blocks: &mut [import::ParsedBlock],
         warnings: &mut Vec<String>,
     ) {
         for block in blocks {
-            let mut markers = std::mem::take(&mut block.task_markers);
-            let mut restored: Vec<String> = Vec::new();
             for (typed, value) in std::mem::take(&mut block.properties) {
-                let marker = markers
-                    .iter()
-                    .position(|(key, _)| *key == typed)
-                    .map(|at| markers.remove(at).1);
                 let key = self.canonical_key(&typed);
                 let Err(reason) = self.read(&key, &value) else {
                     block.properties.push((key, value));
                     continue;
                 };
-                if let Some(marker) = marker {
-                    warnings.push(format!("`{marker}` was kept as text: {reason}"));
-                    restored.push(marker);
-                    continue;
-                }
                 let line = format!("{typed}:: {value}");
                 warnings.push(format!("`{line}` was kept as text: {reason}"));
                 let text = if self.is_ref(&key) {
@@ -238,12 +226,6 @@ impl PropertyLines {
                     line
                 };
                 push_text_line(&mut block.content, &text);
-            }
-            if !restored.is_empty() {
-                if !block.content.is_empty() {
-                    restored.push(std::mem::take(&mut block.content));
-                }
-                block.content = restored.join(" ");
             }
         }
     }

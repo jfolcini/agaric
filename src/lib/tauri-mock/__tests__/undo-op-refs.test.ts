@@ -198,6 +198,24 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     }
   })
 
+  it('#5057 — undoing a reserved-key delete_property is accepted, as on the backend', () => {
+    // The mock records a reserved-key delete with `from_value: null`, so an
+    // undo that judged reversibility by the op's own value would refuse it.
+    dispatch('set_property', {
+      blockId: A,
+      key: 'todo_state',
+      value: {
+        value_text: 'TODO',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const del = dispatch('delete_property', { blockId: A, key: 'todo_state' }) as WithOpsResp
+    expect(() => dispatch('undo_op', { opRef: del.op_refs[0] })).not.toThrow()
+  })
+
   it('delete_property echoes (block_id, key) + op_refs; a delete of an absent key appends nothing', () => {
     dispatch('set_property', {
       blockId: A,

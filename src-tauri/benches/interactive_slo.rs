@@ -1067,16 +1067,25 @@ async fn seed_single_page_history(pool: &SqlitePool, total_ops: usize) -> (Strin
 // Assertion + gating helpers
 // ---------------------------------------------------------------------------
 
+/// `acc`'s mean in ms, or `None` for a probe that ran no iterations: a name
+/// filter left it out, and the reporters run in the outer bench body, which
+/// every run reaches.
+fn mean_ms_if_selected(cmd: &str, acc: &Acc) -> Option<f64> {
+    let iters = acc.iters();
+    if iters == 0 {
+        println!("interactive_slo: {cmd} not selected");
+        return None;
+    }
+    Some((acc.total().as_secs_f64() * 1000.0) / iters as f64)
+}
+
 /// Compute mean ms from an `Acc` and panic with a grep-friendly message
 /// if it exceeds the budget. The message format is stable; PR reviewers
 /// and `grep interactive_slo:` consumers depend on it.
 fn assert_under_budget(cmd: &str, acc: &Acc, budget_ms: f64) {
-    let iters = acc.iters();
-    assert!(
-        iters > 0,
-        "interactive_slo: {cmd} ran zero iterations (Criterion harness bug?)"
-    );
-    let mean_ms = (acc.total().as_secs_f64() * 1000.0) / iters as f64;
+    let Some(mean_ms) = mean_ms_if_selected(cmd, acc) else {
+        return;
+    };
     assert!(
         mean_ms <= budget_ms,
         "interactive_slo: {cmd} = {mean_ms:.2} ms > budget {budget_ms} ms \
@@ -1119,12 +1128,9 @@ static PROBLEM_TIER_FAILURES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::
 /// `interactive_slo: {cmd} = … > budget …` format log consumers depend on;
 /// `problem_tier_verdict` fails the bench at the end if anything was recorded.
 fn assert_under_budget_deferred(cmd: &str, acc: &Acc, budget_ms: f64) {
-    let iters = acc.iters();
-    assert!(
-        iters > 0,
-        "interactive_slo: {cmd} ran zero iterations (Criterion harness bug?)"
-    );
-    let mean_ms = (acc.total().as_secs_f64() * 1000.0) / iters as f64;
+    let Some(mean_ms) = mean_ms_if_selected(cmd, acc) else {
+        return;
+    };
     if mean_ms <= budget_ms {
         println!("interactive_slo: {cmd} = {mean_ms:.2} ms <= budget {budget_ms} ms (PASS)");
     } else {
@@ -1143,12 +1149,9 @@ fn assert_under_budget_deferred(cmd: &str, acc: &Acc, budget_ms: f64) {
 /// prefix the nightly lane keys on, so the number is captured alongside the
 /// budgeted probes.
 fn report_measurement_only(cmd: &str, acc: &Acc) {
-    let iters = acc.iters();
-    assert!(
-        iters > 0,
-        "interactive_slo: {cmd} ran zero iterations (Criterion harness bug?)"
-    );
-    let mean_ms = (acc.total().as_secs_f64() * 1000.0) / iters as f64;
+    let Some(mean_ms) = mean_ms_if_selected(cmd, acc) else {
+        return;
+    };
     println!("interactive_slo: {cmd} = {mean_ms:.2} ms (measurement only — no budget)");
 }
 
@@ -2596,12 +2599,9 @@ where
 /// grep-stable `interactive_slo: {cmd} = … ms` shape. Unbudgeted: the SLO is
 /// the command's own latency, which the probe budgets beside it.
 fn report_settled(cmd: &str, acc: &Acc) {
-    let iters = acc.iters();
-    assert!(
-        iters > 0,
-        "interactive_slo: {cmd} ran zero iterations (Criterion harness bug?)"
-    );
-    let mean_ms = (acc.total().as_secs_f64() * 1000.0) / iters as f64;
+    let Some(mean_ms) = mean_ms_if_selected(cmd, acc) else {
+        return;
+    };
     println!("interactive_slo: {cmd} = {mean_ms:.2} ms (settled, with background — no budget)");
 }
 
@@ -2661,11 +2661,13 @@ fn bench_edit_block(c: &mut Criterion) {
         calls,
         "edit_block @ 100K: every timed call must append exactly one edit_block op (#3304)"
     );
-    assert_eq!(
-        content,
-        Some(format!("Write path edit {}", calls.saturating_sub(1))),
-        "edit_block @ 100K: the block must hold the last timed edit (#3304)"
-    );
+    if calls > 0 {
+        assert_eq!(
+            content,
+            Some(format!("Write path edit {}", calls - 1)),
+            "edit_block @ 100K: the block must hold the last timed edit (#3304)"
+        );
+    }
     assert_eq!(
         agaric_lib::materializer::sql_only_fallback_count(),
         fallbacks,
@@ -2762,11 +2764,13 @@ fn bench_set_property(c: &mut Criterion) {
         calls,
         "set_property @ 100K: every timed call must append exactly one todo_state op (#3304)"
     );
-    assert_eq!(
-        state.as_deref(),
-        Some(state_for(calls.saturating_sub(1))),
-        "set_property @ 100K: the block must hold the last timed state (#3304)"
-    );
+    if calls > 0 {
+        assert_eq!(
+            state.as_deref(),
+            Some(state_for(calls - 1)),
+            "set_property @ 100K: the block must hold the last timed state (#3304)"
+        );
+    }
     assert_eq!(
         agaric_lib::materializer::sql_only_fallback_count(),
         fallbacks,
@@ -2863,11 +2867,13 @@ fn bench_move_block(c: &mut Criterion) {
         calls,
         "move_block @ 100K: every timed call must append exactly one move_block op (#3304)"
     );
-    assert_eq!(
-        parent.as_deref(),
-        Some(parent_for(calls.saturating_sub(1))),
-        "move_block @ 100K: the block must sit where the last timed move put it (#3304)"
-    );
+    if calls > 0 {
+        assert_eq!(
+            parent.as_deref(),
+            Some(parent_for(calls - 1)),
+            "move_block @ 100K: the block must sit where the last timed move put it (#3304)"
+        );
+    }
     assert_eq!(
         child_count, WRITE_PATH_PAGE_CHILDREN as i64,
         "move_block @ 100K: a reparent inside the page leaves its child count unchanged"

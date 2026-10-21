@@ -18,13 +18,7 @@
  */
 
 import { Extension, type JSONContent } from '@tiptap/core'
-import {
-  Fragment,
-  type Node as PMNode,
-  type ResolvedPos,
-  type Schema,
-  Slice,
-} from '@tiptap/pm/model'
+import { Fragment, type ResolvedPos, type Schema, Slice } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorProps } from '@tiptap/pm/view'
 
@@ -97,13 +91,7 @@ function holdsLines(text: string): boolean {
   )
 }
 
-/** How deep `node`'s edge is open: into its textblock, so the text at the cursor joins it. */
-const openDepth = (node: PMNode | null): number => (node?.isTextblock === true ? 2 : 1)
-
-/**
- * `blocks` as a slice of new blocks under `depth`: the first joins the text
- * before the cursor and the last the text after it, as Enter would split them.
- */
+/** `blocks` as a slice of new blocks under `depth`. */
 function blocksSlice(schema: Schema, blocks: readonly PastedBlock[], depth: number): Slice {
   const type = schema.nodes[PAGE_BLOCK]
   if (type === undefined) throw new Error(`the schema has no ${PAGE_BLOCK}`)
@@ -113,13 +101,7 @@ function blocksSlice(schema: Schema, blocks: readonly PastedBlock[], depth: numb
       Fragment.fromJSON(schema, block.content),
     ),
   )
-  const first = nodes[0] ?? null
-  const last = nodes.at(-1) ?? null
-  return new Slice(
-    Fragment.from(nodes),
-    openDepth(first?.firstChild ?? null),
-    openDepth(last?.lastChild ?? null),
-  )
+  return new Slice(Fragment.from(nodes), 0, 0)
 }
 
 /** What `text`, pasted at `$context`, brings in; null leaves it to ProseMirror's own paste. */

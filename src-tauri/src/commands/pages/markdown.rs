@@ -786,7 +786,6 @@ fn humanise_refs_for_source(
         properties: Vec::new(),
         is_code,
         block_anchor: None,
-        task_markers: Vec::new(),
         line: None,
     };
     let blocks = std::slice::from_ref(&block);
@@ -5985,13 +5984,10 @@ async fn apply_block_properties(
 /// third built-in level, so a Logseq `[#A]` is what `Ctrl+Shift+1` sets. Any
 /// other value is what was written.
 fn import_priority_value(value: &str) -> String {
-    let levels = agaric_store::op::builtin_property_def("priority")
-        .and_then(|def| def.options)
-        .unwrap_or_default();
     ["A", "B", "C"]
         .iter()
         .position(|letter| *letter == value)
-        .and_then(|position| levels.get(position))
+        .and_then(|position| agaric_store::op::PRIORITY_LEVELS.get(position))
         .map_or_else(|| value.to_string(), |level| (*level).to_string())
 }
 
@@ -7169,7 +7165,6 @@ mod tests {
                 properties: Vec::new(),
                 is_code: vector.is_code,
                 block_anchor: None,
-                task_markers: Vec::new(),
                 line: None,
             }];
             // #3599 — the contract is the SET of distinct names each side asks
@@ -7344,7 +7339,6 @@ mod tests {
             properties: Vec::new(),
             is_code: false,
             block_anchor: None,
-            task_markers: Vec::new(),
             line: None,
         };
         let matches = fixture_matches(pages);
@@ -7692,7 +7686,6 @@ mod tests {
             properties: Vec::new(),
             is_code: false,
             block_anchor: None,
-            task_markers: Vec::new(),
             line: None,
         }];
         // Only the genuine `#realtag` is collected; the `#My` inside `[[…]]` is
@@ -7728,7 +7721,6 @@ mod tests {
             properties: Vec::new(),
             is_code: false,
             block_anchor: None,
-            task_markers: Vec::new(),
             line: None,
         }];
         let names = collect_inbound_tag_names(&blocks);
@@ -7790,7 +7782,6 @@ mod tests {
                 properties: Vec::new(),
                 is_code: false,
                 block_anchor: None,
-                task_markers: Vec::new(),
                 line: None,
             },
             import::ParsedBlock {
@@ -7799,7 +7790,6 @@ mod tests {
                 properties: Vec::new(),
                 is_code: false,
                 block_anchor: None,
-                task_markers: Vec::new(),
                 line: None,
             },
         ];
@@ -7838,7 +7828,6 @@ mod tests {
             properties: Vec::new(),
             is_code: false,
             block_anchor: None,
-            task_markers: Vec::new(),
             line: None,
         }];
         // Only the un-prefixed `[[Real Page]]` is collected as a page name.
@@ -7875,7 +7864,6 @@ mod tests {
                 properties: Vec::new(),
                 is_code: false,
                 block_anchor: None,
-                task_markers: Vec::new(),
                 line: None,
             },
             import::ParsedBlock {
@@ -7884,7 +7872,6 @@ mod tests {
                 properties: Vec::new(),
                 is_code: true,
                 block_anchor: None,
-                task_markers: Vec::new(),
                 line: None,
             },
         ];
@@ -7958,7 +7945,6 @@ mod tests {
                 properties: Vec::new(),
                 is_code: true,
                 block_anchor: None,
-                task_markers: Vec::new(),
                 line: None,
             },
             import::ParsedBlock {
@@ -7967,7 +7953,6 @@ mod tests {
                 properties: Vec::new(),
                 is_code: false,
                 block_anchor: None,
-                task_markers: Vec::new(),
                 line: None,
             },
         ];

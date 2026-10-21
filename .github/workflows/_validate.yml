@@ -1911,9 +1911,9 @@ jobs:
           # Read the classifier category outputs directly (NOT from NEEDS_JSON
           # — outputs live under .outputs there, but reading the resolved value
           # here is clearer). Each is passed via env, never inline-interpolated
-          # into the script body. Empty/anything-but-"true" is treated as the
-          # category being ABSENT (i.e. not docs-only / no vitest / no
-          # playwright / no backend); the gate normalises them below.
+          # into the script body. Each must be the literal "true" or "false":
+          # a renamed or missing output reads empty, and reading empty as
+          # "absent" would accept its category's skipped jobs.
           DOCS_ONLY: ${{ needs.detect-changes.outputs.docs_only }}
           VITEST: ${{ needs.detect-changes.outputs.vitest }}
           VITEST_E2E_TAURI: ${{ needs.detect-changes.outputs.vitest_e2e_tauri }}
@@ -1948,9 +1948,10 @@ jobs:
           echo "detect-changes result=$classifier docs_only=${DOCS_ONLY:-<empty>} vitest=${VITEST:-<empty>} vitest_e2e_tauri=${VITEST_E2E_TAURI:-<empty>} playwright=${PLAYWRIGHT:-<empty>} backend=${BACKEND:-<empty>} rust_tests=${RUST_TESTS:-<empty>}"
 
           # ---- Resolve category booleans, fail-closed -----------------------
-          # On a SUCCESSFUL classifier, trust its outputs (normalised so only
-          # the literal string "true" counts as present). Otherwise we cannot
-          # trust any category: PIN vitest=vitest_e2e_tauri=playwright=backend=rust_tests=true,
+          # On a SUCCESSFUL classifier, take each output that is the literal
+          # "true" or "false"; any other value fails the gate and keeps its
+          # pin. Otherwise we cannot trust any category: PIN
+          # vitest=vitest_e2e_tauri=playwright=backend=rust_tests=true,
           # docs_only=false (require/run everything) and fail the gate — a
           # classifier that did not succeed can never let a heavy job pass on a
           # skip.
@@ -1960,13 +1961,19 @@ jobs:
           playwright="true"
           backend="true"
           rust_tests="true"
+          category() {
+            case "$2" in
+              true|false) printf -v "$1" '%s' "$2" ;;
+              *) gate_fail "detect-changes output $1='$2' is neither 'true' nor 'false' (renamed or missing?) — failing closed." ;;
+            esac
+          }
           if [ "$classifier" = "success" ]; then
-            docs_only="false"; if [ "$DOCS_ONLY" = "true" ]; then docs_only="true"; fi
-            vitest="false"; if [ "$VITEST" = "true" ]; then vitest="true"; fi
-            vitest_e2e_tauri="false"; if [ "$VITEST_E2E_TAURI" = "true" ]; then vitest_e2e_tauri="true"; fi
-            playwright="false"; if [ "$PLAYWRIGHT" = "true" ]; then playwright="true"; fi
-            backend="false"; if [ "$BACKEND" = "true" ]; then backend="true"; fi
-            rust_tests="false"; if [ "$RUST_TESTS" = "true" ]; then rust_tests="true"; fi
+            category docs_only "$DOCS_ONLY"
+            category vitest "$VITEST"
+            category vitest_e2e_tauri "$VITEST_E2E_TAURI"
+            category playwright "$PLAYWRIGHT"
+            category backend "$BACKEND"
+            category rust_tests "$RUST_TESTS"
           else
             gate_fail "detect-changes did not succeed (result=$classifier) — failing gate (fail-closed); pinning vitest=vitest_e2e_tauri=playwright=backend=rust_tests=true, docs_only=false."
           fi

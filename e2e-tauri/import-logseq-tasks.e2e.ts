@@ -92,7 +92,7 @@ describe('Agaric real-backend Logseq task import (#5160 D7) @markdown', () => {
       async () => ((await taskMarker.getAttribute('aria-label')) ?? '').startsWith('Task: TODO'),
       { timeout: ACTION_TIMEOUT, timeoutMsg: 'the imported task never showed the TODO state' },
     )
-    // `[#A]` is the first option of the seeded priority definition, `1`.
+    // `[#A]` is the first built-in priority level, `1`.
     const badge = row.$('[data-testid="priority-badge"]')
     await badge.waitForExist({ timeout: ACTION_TIMEOUT })
     expect(await badge.getText()).toContain('1')

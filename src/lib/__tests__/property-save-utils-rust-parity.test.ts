@@ -45,7 +45,19 @@ function extractQuotedStrings(source: string): string[] {
     .filter((s): s is string => s !== undefined)
 }
 
-/** Parse the `BUILTIN_PROPERTY_DEFS` const array, one constructor call per entry. */
+/** The strings of `src`'s `pub const <name>: [&str; N] = [...];`. */
+function parseStrArrayConst(src: string, name: string): string[] {
+  const array = src.match(new RegExp(`pub const ${name}: \\[&str; \\d+\\] = \\[([^\\]]*)\\];`))
+  if (!array?.[1]) {
+    throw new Error(`Could not locate \`${name}\` in op.rs — has it been renamed or reshaped?`)
+  }
+  return extractQuotedStrings(array[1])
+}
+
+/**
+ * Parse the `BUILTIN_PROPERTY_DEFS` const array, one constructor call per
+ * entry; a `select`'s options are a literal or `&NAME` of an op.rs const.
+ */
 function parseBuiltinPropertyDefs(src: string): BuiltinPropertyDef[] {
   const array = src.match(
     /pub const BUILTIN_PROPERTY_DEFS: \[BuiltinPropertyDef; \d+\] = \[([\s\S]*?)\n\];/,
@@ -62,8 +74,11 @@ function parseBuiltinPropertyDefs(src: string): BuiltinPropertyDef[] {
     if (ctor === undefined || key === undefined || rest === undefined) {
       throw new Error(`Unparseable BUILTIN_PROPERTY_DEFS entry: ${m[0]}`)
     }
+    const named = rest.match(/^&([A-Z_]+)$/)?.[1]
+    const options =
+      named === undefined ? extractQuotedStrings(rest) : parseStrArrayConst(src, named)
     return ctor === 'select'
-      ? { key, value_type: 'select', options: extractQuotedStrings(rest) }
+      ? { key, value_type: 'select', options }
       : { key, value_type: extractQuotedStrings(rest)[0] ?? '', options: null }
   })
   if (defs.length === 0) {

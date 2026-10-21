@@ -29,7 +29,7 @@ import { blockIdOf } from '@/editor/token-ids'
 import { MAX_SPEED, SCROLL_ZONE } from '@/hooks/useAutoScrollOnDrag'
 import { shouldReduceMotion } from '@/lib/preferences'
 import { scrollParentY } from '@/lib/scroll-parent'
-import { DEAD_ZONE_PX, MAX_BLOCK_DEPTH } from '@/lib/tree-utils'
+import { MAX_BLOCK_DEPTH, projectDepth, type TreeItem } from '@/lib/tree-utils'
 
 /** Where a drag lands: the index of the block it then goes before (the page's length for its end), and its depth. */
 export interface Drop {
@@ -46,7 +46,8 @@ export interface Drop {
  * held as block mode's projection holds it: at most one deeper than the block
  * shown before, at least as deep as the block after, so that block stays where
  * it is, and shallow enough for the deepest dragged block to stay within
- * `MAX_BLOCK_DEPTH`.
+ * `MAX_BLOCK_DEPTH`. Null where no depth is both: the block after would then
+ * move in under the dragged ones.
  */
 export function dropTarget(
   state: EditorState,
@@ -55,7 +56,7 @@ export function dropTarget(
   after: boolean,
   dx: number,
   indentWidth: number,
-): Drop {
+): Drop | null {
   const { doc } = state
   const hidden = hiddenBlocks(state)
   const shown = (index: number): boolean => !hidden.has(blockIdOf(doc.child(index)) ?? '')
@@ -72,15 +73,28 @@ export function dropTarget(
   const root = depthOf(doc.child(from))
   let height = 0
   for (let i = from + 1; i < end; i += 1) height = Math.max(height, depthOf(doc.child(i)) - root)
-  const ceiling = Math.max(0, MAX_BLOCK_DEPTH - 1 - height)
-  const maxDepth = Math.min(previous < 0 ? 0 : depthOf(doc.child(previous)) + 1, ceiling)
-  const minDepth = next < doc.childCount ? depthOf(doc.child(next)) : 0
-  const travel = Math.abs(dx) > DEAD_ZONE_PX ? dx - Math.sign(dx) * DEAD_ZONE_PX : 0
-  let depth = root + Math.round(travel / indentWidth)
-  if (depth > maxDepth) depth = maxDepth
-  if (depth < minDepth) depth = minDepth
-  if (depth > ceiling) depth = ceiling
-  return { slot, depth: Math.max(0, depth) }
+  const item = (index: number): TreeItem => ({
+    id: blockIdOf(doc.child(index)) ?? '',
+    parent_id: null,
+    depth: depthOf(doc.child(index)),
+  })
+  // Only the depth is read: the save gives each block the parent its depth gives it.
+  const projection = projectDepth(
+    {
+      kind: 'normal',
+      clonedItems: [],
+      projectedIndex: 0,
+      previousItem: previous < 0 ? undefined : item(previous),
+      nextItem: next < doc.childCount ? item(next) : undefined,
+      activeItem: item(from),
+      depthCeiling: Math.max(0, MAX_BLOCK_DEPTH - 1 - height),
+      rootParentId: null,
+    },
+    dx,
+    indentWidth,
+  )
+  if (projection.maxDepth < projection.minDepth) return null
+  return { slot, depth: projection.depth }
 }
 
 /** The block at `index`'s element. */
@@ -197,6 +211,8 @@ class DragController {
       this.indentWidth,
     )
     this.drop = drop
+    bar.hidden = drop === null
+    if (drop === null) return
     const { doc } = view.state
     const hidden = hiddenBlocks(view.state)
     let edge: number | undefined

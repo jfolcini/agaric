@@ -573,7 +573,6 @@ describe('blocks created, moved and deleted elsewhere', () => {
     }
     await save()
     backend.create = create
-    const typed = rowsOf(ed.state.doc)
 
     applyRemote(ed.view, state, await backend.tree(), idMinter('01KEPT'), new Set([X]))
     backend.reset()
@@ -582,7 +581,7 @@ describe('blocks created, moved and deleted elsewhere', () => {
     expect(idsOf(ed.state.doc)).toContain(created)
     expect(backend.calls).toEqual([])
     ed.commands.undo()
-    expect(rowsOf(ed.state.doc)).not.toEqual(typed)
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'alpha']])
   })
 
   it('a block page mode deleted and undo brought back keeps its id when a create was refused', async () => {
