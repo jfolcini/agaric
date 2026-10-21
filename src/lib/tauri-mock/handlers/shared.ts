@@ -1883,14 +1883,15 @@ export type TypedHandlers = {
 export const MOCK_LOCAL_DEVICE = 'mock-device'
 
 /**
- * Did `(block_id, key)` hold a value immediately BEFORE this op? Mirrors
- * `find_prior_property`: scan the op log backwards for the nearest earlier
- * `set_property` / `delete_property` on the same pair — a set left a value, a
- * delete left none, and nothing at all left none.
+ * Did `(block_id, key)` hold a value immediately BEFORE this op? A value the
+ * op recorded (`from_value`) says yes, as `prior` does for `reverse_set_property`
+ * (#6014). Otherwise mirror `find_prior_property`: scan the op log backwards for
+ * the nearest earlier `set_property` / `delete_property` on the same pair — a
+ * set left a value, a delete left none, and nothing at all left none.
  *
- * #5057 — the op's own `from_value` cannot answer this: `setReservedColumnProperty`
+ * #5057 — a null `from_value` cannot say no: `setReservedColumnProperty`
  * (`handlers/properties.ts`) writes `from_value: null` unconditionally — by
- * design, to keep the revert a no-op against the properties map. Reading it
+ * design, to keep the revert a no-op against the properties map. Trusting it
  * would make every reserved-key write look priorless.
  */
 function hasPriorPropertyValue(op: MockOpLogEntry): boolean {
@@ -1898,6 +1899,7 @@ function hasPriorPropertyValue(op: MockOpLogEntry): boolean {
   let blockId: unknown
   try {
     const payload = JSON.parse(op.payload) as Record<string, unknown>
+    if (payload['from_value'] != null) return true
     key = payload['key']
     blockId = payload['block_id']
   } catch {

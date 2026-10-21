@@ -6801,6 +6801,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_400_100,
     )
@@ -9371,6 +9372,7 @@ async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             1_736_942_500_000,
         )

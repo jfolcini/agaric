@@ -493,6 +493,7 @@ async fn agenda_cache_after_set_property() {
             value_date: Some("2025-03-15".into()),
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
     )
     .await;

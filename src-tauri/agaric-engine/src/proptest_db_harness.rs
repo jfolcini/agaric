@@ -677,6 +677,7 @@ impl ChainModel {
                     value_date,
                     value_ref,
                     value_bool: None,
+                    prior: None,
                 }))
             }
             OpKind::DeleteProperty {

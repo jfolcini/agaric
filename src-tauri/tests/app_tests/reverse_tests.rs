@@ -586,6 +586,7 @@ async fn revert_ops_returns_results_newest_first_by_created_at_desc_seq_desc() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         })
     };
     let rec1 = append_op(&pool, mk("k1"), FIXED_TS).await;
@@ -670,6 +671,7 @@ async fn revert_ops_appends_reverse_op_without_mutating_original() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         FIXED_TS,
     )

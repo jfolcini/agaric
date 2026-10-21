@@ -258,6 +258,31 @@ describe('#2468 — op_refs capture on migrated mutation handlers', () => {
     expect(restored?.value_text).toBe('2h')
   })
 
+  it('undoing a set over a property no op wrote sets it back (#6014)', () => {
+    // A value a peer set has no op in this device's log. The set records the
+    // value it overwrites, so its undo is a set back to it, not a delete.
+    seedPropertyWithoutOp(A)
+
+    const set = dispatch('set_property', {
+      blockId: A,
+      key: 'effort',
+      value: {
+        value_text: '4h',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    }) as WithOpsResp
+    dispatch('undo_op', { opRef: set.op_refs[0] })
+
+    expect(opLog.at(-1)?.op_type).toBe('set_property')
+    const restored = dispatch('get_property', { blockId: A, key: 'effort' }) as {
+      value_text: string | null
+    } | null
+    expect(restored?.value_text).toBe('2h')
+  })
+
   it('restore_page_to_op restores a property no op wrote (#5918)', () => {
     const target = dispatch('edit_block', { blockId: B, toText: 'target' }) as WithOpsResp
     seedPropertyWithoutOp(A)

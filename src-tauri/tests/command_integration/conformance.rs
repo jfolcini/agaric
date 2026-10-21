@@ -328,6 +328,7 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value, created_ids
             value_date,
             value_ref: None,
             value_bool: None,
+            prior: None,
         })
     };
 
@@ -383,6 +384,7 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value, created_ids
                     .and_then(Value::as_str)
                     .map(|s| BlockId::from(resolve_op_arg_id(s, created_ids).as_str())),
                 value_bool: v.get("value_bool").and_then(Value::as_bool),
+                prior: None,
             })
         }
         "set_todo_state" => reserved("todo_state", arg_str("state"), false),

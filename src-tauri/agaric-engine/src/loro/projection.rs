@@ -2106,6 +2106,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         project_set_property_to_sql(&mut conn, &hot_path_payload)
@@ -2147,6 +2148,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         project_set_property_to_sql(&mut conn, &non_reserved_payload)
@@ -2194,6 +2196,7 @@ mod tests {
             value_date: Some("2026-06-21".into()),
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         project_set_property_to_sql(&mut conn, &due_payload)
@@ -2264,6 +2267,7 @@ mod tests {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         // Before the fix this aborts with the `exactly_one_value` CHECK; the
@@ -2314,6 +2318,7 @@ mod tests {
             value_date: None,
             value_ref: Some(BlockId::from_trusted(BLOCK_B)),
             value_bool: None,
+            prior: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         // Before the fix this aborts with FOREIGN KEY constraint failed (787);
@@ -2367,6 +2372,7 @@ mod tests {
             value_date: None,
             value_ref: Some(BlockId::from_trusted(BLOCK_B)),
             value_bool: None,
+            prior: None,
         };
         let mut conn = pool.acquire().await.expect("acquire");
         project_set_property_to_sql(&mut conn, &ref_payload)

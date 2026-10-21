@@ -593,6 +593,7 @@ async fn regression_reverse_set_property_after_delete_should_be_delete() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_400_000,
     )
@@ -623,6 +624,7 @@ async fn regression_reverse_set_property_after_delete_should_be_delete() {
             value_date: None,
             value_ref: None,
             value_bool: None,
+            prior: None,
         }),
         1_736_942_520_000,
     )

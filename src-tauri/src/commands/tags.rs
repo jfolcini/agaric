@@ -292,6 +292,8 @@ async fn apply_tag_to_block_resolved(
                     value_date: None,
                     value_ref: Some(BlockId::from(space_ref)),
                     value_bool: None,
+                    // An orphan holds no space, so the set overwrites nothing.
+                    prior: None,
                 });
                 let set_space_record =
                     op_log::append_local_op_in_tx(tx, device_id, set_space, crate::db::now_ms())

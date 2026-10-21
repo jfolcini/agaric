@@ -3766,6 +3766,7 @@ async fn crash_tail_ops_on_blocks_deleted_later_reach_the_engine_5630() {
             value_date: value_date.map(str::to_owned),
             value_ref: None,
             value_bool: None,
+            prior: None,
         })
     };
     let snapshotted = vec![
@@ -4430,6 +4431,7 @@ async fn crash_tail_space_move(delete_after: bool) {
         value_date: None,
         value_ref: Some(BlockId::test_id(S2)),
         value_bool: None,
+        prior: None,
     });
     apply_like_a_command(&pool, &session, device_id, move_to_s2).await;
     let deleted_at = if delete_after {

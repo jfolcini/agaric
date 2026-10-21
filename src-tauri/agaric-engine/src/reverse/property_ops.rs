@@ -10,15 +10,21 @@ pub async fn reverse_set_property(
     record: &OpRecord,
 ) -> Result<OpPayload, AppError> {
     let payload: SetPropertyPayload = serde_json::from_str(&record.payload)?;
-    let prior = find_prior_property(
-        pool,
-        payload.block_id.as_str(),
-        &payload.key,
-        record.created_at,
-        record.seq,
-        &record.device_id,
-    )
-    .await?;
+    let prior = match &payload.prior {
+        Some(prior) => prior.clone().into_held(),
+        // An op written before #6014 records nothing.
+        None => {
+            find_prior_property(
+                pool,
+                payload.block_id.as_str(),
+                &payload.key,
+                record.created_at,
+                record.seq,
+                &record.device_id,
+            )
+            .await?
+        }
+    };
     match prior {
         Some(p) => Ok(OpPayload::SetProperty(SetPropertyPayload::with_value(
             payload.block_id,
@@ -204,6 +210,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             1_736_942_400_000,
         )
@@ -223,6 +230,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             1_736_942_430_000,
         )
@@ -239,6 +247,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             1_736_942_460_000,
         )
@@ -275,6 +284,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             1_736_942_400_000,
         )
@@ -292,6 +302,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             1_736_942_430_000,
         )
@@ -346,6 +357,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             1_736_942_400_000,
         )
@@ -417,6 +429,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             1_736_942_400_000,
         )
@@ -447,6 +460,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             1_736_942_445_000,
         )
@@ -463,6 +477,7 @@ mod tests_m64 {
                 value_date: None,
                 value_ref: None,
                 value_bool: None,
+                prior: None,
             }),
             1_736_942_460_000,
         )
