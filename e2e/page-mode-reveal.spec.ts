@@ -281,6 +281,23 @@ test.describe('Markdown syntax revealed around the cursor in page mode (#5974) @
     await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 0 })
   })
 
+  test('ArrowRight at the end of a collapsed block skips the blocks it hides, though the first starts in bold', async ({
+    page,
+  }) => {
+    // `**bold** end` under `first **bold**`, then collapse the parent.
+    await caret(page, 1, 3)
+    await page.keyboard.press('Tab')
+    await caret(page, 0, 10)
+    await page.keyboard.press('Control+.')
+    const blocks = page.locator(`${EDITOR} [data-page-block]`)
+    await expect(blocks.nth(1)).toBeHidden()
+    // Out of the mark, then out of the block: to the next one shown, the hidden one stays shut.
+    await page.keyboard.press('ArrowRight')
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(() => cursor(page)).toEqual({ index: 2, offset: 0 })
+    await expect(blocks.nth(1)).toBeHidden()
+  })
+
   test('a click past the closing marker types outside the bold, and on its near half inside', async ({
     page,
   }) => {

@@ -384,7 +384,7 @@ describe('MarkdownReveal with the preference on', () => {
     outside.remove()
   })
 
-  it('keeps the markers while focus is in an overlay of the editor, and drops them once it leaves for nowhere', () => {
+  it('keeps the markers while focus is in an overlay of the editor, and drops them once it leaves for nowhere', async () => {
     const ed = createEditor(BOLD)
     ed.commands.setTextSelection(9)
     const overlay = document.createElement('div')
@@ -395,8 +395,22 @@ describe('MarkdownReveal with the preference on', () => {
     url.focus()
     expect(markers(ed)).toEqual(['**', '**'])
     url.blur()
+    await Promise.resolve()
     expect(markers(ed)).toEqual([])
     overlay.remove()
+  })
+
+  // Removing a focused node view's DOM (an image's resize handle) fires focusout inside
+  // ProseMirror's own view update, where a dispatch corrupts the view tree.
+  it('draws after focus leaves for nowhere, never inside the focusout itself', async () => {
+    const ed = createEditor(BOLD)
+    ed.commands.setTextSelection(9)
+    const dispatch = vi.spyOn(ed.view, 'dispatch')
+    ed.view.dom.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+    expect(dispatch).not.toHaveBeenCalled()
+    await Promise.resolve()
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(markers(ed)).toEqual([])
   })
 
   it('draws nothing new while the mouse button is down, and the selection’s markers once it is released', () => {

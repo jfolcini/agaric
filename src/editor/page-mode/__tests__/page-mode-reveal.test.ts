@@ -26,6 +26,7 @@ import {
   type as typeText,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
 import { listSource } from '@/editor/page-mode/__tests__/page-node-view-fixtures'
+import { toggleFold } from '@/editor/page-mode/page-collapse'
 import { PageLists } from '@/editor/page-mode/page-lists'
 import type { PropertyRow } from '@/lib/bindings'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
@@ -276,6 +277,33 @@ describe('MarkdownReveal in page mode', () => {
     expect(ed.state.selection.from).toBe(posIn(ed, 1, 0))
     typeText(ed, 'x')
     expect(rowsOf(ed.state.doc)[1]).toEqual([B, 0, 'x**bold** end'])
+  })
+
+  // The caret's block is never hidden: an arrow that landed in a hidden block would open it.
+  it('ArrowRight at the end of a collapsed block leaves the blocks it hides to the editor', () => {
+    const ed = page([
+      [A, 0, 'parent'],
+      [B, 1, '**bold** x'],
+      [C, 0, 'next'],
+    ])
+    ed.view.endOfTextblock = () => true
+    expect(toggleFold(A)(ed.state, ed.view.dispatch)).toBe(true)
+    caret(ed, 0, 6)
+    expect(press(ed, 'ArrowRight')).toBe(false)
+    expect(ed.state.selection.$head.index(0)).toBe(0)
+  })
+
+  it('ArrowLeft at the start of the block after a collapsed block leaves the blocks it hides to the editor', () => {
+    const ed = page([
+      [A, 0, 'parent'],
+      [B, 1, 'x **bold**'],
+      [C, 0, 'next'],
+    ])
+    ed.view.endOfTextblock = () => true
+    expect(toggleFold(A)(ed.state, ed.view.dispatch)).toBe(true)
+    caret(ed, 2, 0)
+    expect(press(ed, 'ArrowLeft')).toBe(false)
+    expect(ed.state.selection.$head.index(0)).toBe(2)
   })
 
   it('leaves an arrow into the next block to the editor with the setting off', () => {

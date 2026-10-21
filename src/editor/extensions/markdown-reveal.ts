@@ -49,6 +49,7 @@ import type { Mappable } from '@tiptap/pm/transform'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 
 import { EDITOR_PORTAL_SELECTOR } from '@/editor/editor-portal'
+import { isHiddenAt } from '@/editor/page-mode/page-collapse'
 import {
   type HeadingMarker,
   isOutsideHeadingMarker,
@@ -268,6 +269,8 @@ function enterTextblockOutsideMarkers(view: EditorView, dir: 1 | -1): boolean {
   const into = Selection.findFrom(doc.resolve(dir > 0 ? $head.after() : $head.before()), dir)
   // A rule or a chip on the way is the next place: the editor selects it.
   if (!into?.empty || !into.$head.parent.inlineContent) return false
+  // The native arrow goes to the next block shown; landing in a hidden one would open it.
+  if (isHiddenAt(view.state, into.head)) return false
   return landOutsideRuns(into.$head, dir > 0 ? 'from' : 'to', view)
 }
 
@@ -337,10 +340,11 @@ function createMarkdownRevealPlugin(statusOf: ChipStatus): Plugin<DecorationSet>
     if (pluginView && !pluginView.isDestroyed && !pluginView.composing)
       pluginView.dispatch(pluginView.state.tr)
   }
-  const setEditing = (next: boolean): void => {
+  const setEditing = (next: boolean, afterUpdate = false): void => {
     if (next === editing) return
     editing = next
-    redraw()
+    if (afterUpdate) queueMicrotask(redraw)
+    else redraw()
   }
   const releaseButton = (): void => {
     if (!primaryButtonDown) return
@@ -358,7 +362,9 @@ function createMarkdownRevealPlugin(statusOf: ChipStatus): Plugin<DecorationSet>
   const onFocusOut = (event: FocusEvent): void => {
     if (event.relatedTarget !== null) return
     primaryButtonDown = false
-    setEditing(false)
+    // Removing a focused node view's DOM (the image's resize handle, as its width changes) fires
+    // this inside ProseMirror's own view update, which a dispatch from here corrupts.
+    setEditing(false, true)
   }
   return new Plugin<DecorationSet>({
     key: markdownRevealPluginKey,
