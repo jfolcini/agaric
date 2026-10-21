@@ -472,6 +472,51 @@ test.describe('page mode block menu (#5972) @editor @pages', () => {
     await expect(page.locator(`${EDITOR} [data-page-block-id="${ids[0]}"] h1`)).toHaveCount(0)
   })
 
+  test('Turn into Callout makes a bulleted block a callout with no bullet, and it stays one', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Menu callout', [[0, 'alpha']])
+    const id = ids[0] as string
+    await ipc(page, 'set_property', {
+      blockId: id,
+      key: 'listStyle',
+      value: {
+        value_text: 'bullet',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const listStyle = async () =>
+      (
+        await ipc<Array<{ key: string; value_text: string | null }>>(page, 'get_properties', {
+          blockId: id,
+        })
+      ).find((row) => row.key === 'listStyle')?.value_text ?? null
+    const marker = page.locator(
+      `${EDITOR} [data-page-block-id="${id}"] > [data-testid="list-marker"]`,
+    )
+    const callout = page.locator(`${EDITOR} [data-page-block-id="${id}"] blockquote`)
+    await openInPageMode(page, 'Menu callout', 1)
+    await expect(marker).toHaveText('•')
+
+    await rightClick(page, id)
+    await item(page, 'Turn into').click()
+    await item(page, 'Callout').click()
+    await pick(page, 'Warning')
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((r) => r[2]))
+      .toEqual(['> [!WARNING] alpha'])
+    await expect.poll(listStyle).toBeNull()
+    await expect(marker).toHaveCount(0)
+
+    await reopen(page, 'Menu callout', 1)
+    await expect(callout).toHaveAttribute('data-callout-type', 'warning')
+    await expect(marker).toHaveCount(0)
+    expect(await listStyle()).toBeNull()
+  })
+
   test('Turn into is reachable from the keyboard: the menu key, the arrows and Enter', async ({
     page,
   }) => {

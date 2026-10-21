@@ -9,10 +9,12 @@
  * exactly once (in the owning tree only), and is torn down on unmount.
  */
 
+import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { renderHook } from '@testing-library/react'
 import type { TFunction } from 'i18next'
 import { createElement } from 'react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock, makeBlockRow } from '@/__tests__/fixtures'
@@ -21,8 +23,10 @@ import { useBlockProperties } from '@/components/block-tree/use-block-properties
 import type { UseBlockTreeEventListenersOptions } from '@/components/block-tree/use-block-tree-event-listeners'
 import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tree-event-listeners'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-import type { PasteInput } from '@/lib/bindings'
-import { setListStyle } from '@/lib/list-style'
+import type { PasteInput, PropertyRow } from '@/lib/bindings'
+import { listStyleFromRows, setListStyle } from '@/lib/list-style'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { __resetBlockCommandBus, dispatchBlockCommand } from '@/stores/block-command-bus'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
@@ -406,6 +410,46 @@ describe('useBlockTreeEventListeners', () => {
       await vi.waitFor(() =>
         expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'BLOCK_1', toText }),
       )
+    })
+
+    // A callout is not a list: like every Turn into target but the two lists, it
+    // drops a bulleted block's `listStyle`, read back here from the mock backend.
+    it('INSERT_CALLOUT clears the block’s list style', async () => {
+      seedBlocks()
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+      const actual = await vi.importActual<typeof import('@/lib/list-style')>('@/lib/list-style')
+      vi.mocked(setListStyle).mockImplementationOnce(actual.setListStyle)
+      const blockId = SEED_IDS.BLOCK_GS_1
+      await actual.setListStyle(blockId, 'bullet')
+      const styleOf = () =>
+        listStyleFromRows(dispatch('get_properties', { blockId }) as PropertyRow[])
+      expect(styleOf()).toBe('bullet')
+      setGlobalFocus(blockId)
+      const opts = makeOptions({
+        focusedBlockId: blockId,
+        pageStore: makePageStore([{ id: blockId, content: 'hello' }]),
+      })
+      renderHook(() => useBlockTreeEventListeners(opts))
+
+      dispatchBlockCommand('INSERT_CALLOUT', { type: 'warning' })
+
+      await vi.waitFor(() => expect(styleOf()).toBe('none'))
+      expect(toast.error).not.toHaveBeenCalled()
+    })
+
+    it('INSERT_CALLOUT toasts once when clearing the list style fails', async () => {
+      vi.mocked(setListStyle).mockRejectedValueOnce(new Error('boom'))
+      const { opts } = structuralOpts('hello')
+      renderHook(() => useBlockTreeEventListeners(opts))
+
+      dispatchBlockCommand('INSERT_CALLOUT')
+
+      await vi.waitFor(() => expect(toast.error).toHaveBeenCalledWith('slash.calloutFailed'))
+      expect(toast.error).toHaveBeenCalledTimes(1)
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'BLOCK_1',
+        toText: '> [!INFO] hello',
+      })
     })
 
     it('no-ops when no block is focused', () => {

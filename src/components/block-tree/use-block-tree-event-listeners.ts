@@ -207,14 +207,22 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       const raw = (detail as { type?: string } | undefined)?.type
       const type = raw && CALLOUT_TYPES.has(raw) ? raw : 'info'
       const ctx = buildCtx(blockId)
-      // #1960 — strip any existing block marker first so re-applying a callout
-      // (e.g. changing an existing callout's type via the Turn-into contextual
-      // picker) REPLACES the marker rather than nesting `> [!X] > [!Y] …`.
-      void applyContentEdit(
-        ctx,
-        `> [!${type.toUpperCase()}] ${stripBlockMarker(readCurrentContent(ctx))}`,
-        'slash.calloutFailed',
-      )
+      void (async () => {
+        // #1960 — strip any existing block marker first so re-applying a callout
+        // (e.g. changing an existing callout's type via the Turn-into contextual
+        // picker) REPLACES the marker rather than nesting `> [!X] > [!Y] …`.
+        await applyContentEdit(
+          ctx,
+          `> [!${type.toUpperCase()}] ${stripBlockMarker(readCurrentContent(ctx))}`,
+          'slash.calloutFailed',
+        )
+        try {
+          await setListStyle(blockId, listStyleForBlockType('callout'))
+        } catch (err) {
+          logger.error('BlockTree', 'setListStyle (callout) failed', { blockId }, err)
+          notify.error(t('slash.calloutFailed'))
+        }
+      })()
     }
 
     // #1960 — Turn-into menu: convert the focused block to `detail.type`

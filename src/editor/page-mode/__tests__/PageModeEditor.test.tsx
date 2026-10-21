@@ -4380,6 +4380,42 @@ describe('PageModeEditor slash menu and pickers (#5743)', () => {
     expect(styles.find((row) => row.key === 'listStyle')?.value_text).toBe('ordered')
   })
 
+  it('/callout makes a bulleted block a callout and drops its list style, as Turn into does', async () => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const blockId = ids[1] as string
+    dispatch('set_property', {
+      blockId,
+      key: 'listStyle',
+      value: {
+        value_text: 'bullet',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const marker = () =>
+      container.querySelector(`[data-page-block-id="${blockId}"] > [data-testid="list-marker"]`)
+    await waitFor(() => {
+      expect(marker()?.textContent).toBe('•')
+    })
+
+    typeIn(editor, 1, 6, ' /callout')
+    await pick(/CALLOUT — Insert callout block/)
+    await waitFor(() => {
+      expect(backendProps(blockId)).toEqual({})
+    })
+    await waitFor(() => {
+      expect(marker()).toBeNull()
+    })
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    expect(backendText(blockId)).toBe('> [!INFO] second ')
+  })
+
   it('/due gives an undated block its date through block mode’s picker; the drawer clears it', async () => {
     const { pageId, ids } = seedPage(['pay rent', 'plan trip'])
     const { container } = renderPageMode(pageId)

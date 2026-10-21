@@ -124,6 +124,7 @@ const AFTER_THE_SAVE = new Set([
   'repeat',
   'numbered-list',
   'bullet-list',
+  'callout',
   'query',
   'voice',
 ])
@@ -131,7 +132,8 @@ const AFTER_THE_SAVE = new Set([
 /**
  * The options the menu expands only for a typed query (`/turn`, `/priority`, …),
  * which `searchSlashMenu('')` leaves out. Those that write a property or the
- * list style (`turn-*` sets the block's list style) need the block saved first.
+ * list style (`turn-*` and `callout-*` set the block's list style) need the block
+ * saved first.
  */
 const AFTER_THE_SAVE_PREFIXES = [
   'priority-',
@@ -140,6 +142,7 @@ const AFTER_THE_SAVE_PREFIXES = [
   'assignee-',
   'location-',
   'turn-',
+  'callout-',
 ]
 
 const SUB_OPTION_IDS = [
