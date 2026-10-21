@@ -133,6 +133,13 @@ export function hiddenBlocks(state: EditorState): ReadonlySet<string> {
   return stateOf(state).hidden
 }
 
+/** Whether `pos` is in a block a collapsed block hides now; never in block mode, which has no such plugin. */
+export function isHiddenAt(state: EditorState, pos: number): boolean {
+  const hidden = pageCollapseKey.getState(state)?.hidden
+  const $pos = state.doc.resolve(pos)
+  return hidden !== undefined && $pos.depth >= 1 && hidden.has(idOf($pos.node(1)))
+}
+
 /** The fold of the block at `index`: none for a block with no blocks under it. */
 export function foldAt(state: EditorState, index: number): Fold | null {
   const { doc } = state

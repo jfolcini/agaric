@@ -1,10 +1,11 @@
 /**
  * MarkdownReveal (#5689) — with the "Show Markdown syntax around the cursor"
  * preference on, the selection shows the Markdown syntax it is in or touches:
- * the markers of bold, italic, code, strikethrough and external links at a
- * range's edges, and a heading's `#` run at the start of its line, drawn as
- * widget decorations (`revealed-markers.ts` says which). The marker text comes
- * from the serializer, so it is what the block stores (italic is always `*`).
+ * the markers of bold, italic, code, strikethrough, highlight and external
+ * links at a range's edges, and a heading's `#` run at the start of its line,
+ * drawn as widget decorations (`revealed-markers.ts` says which). The marker
+ * text comes from the serializer, so it is what the block stores (italic is
+ * always `*`).
  * Widgets live outside the document: they never reach the stored Markdown, the
  * clipboard or the undo history.
  *
@@ -30,23 +31,25 @@
  * A link's URL is edited through the link popover (Ctrl+K, or the selection
  * bubble's link button), not in its `](url)`.
  *
+ * Nothing is drawn while focus is outside the editor and its overlays
+ * (`data-editor-portal`, such as the link popover's URL field).
+ *
  * While an IME composes, the markers stay put, mapped through the edits:
- * adding or removing DOM beside a live composition breaks it on Android.
+ * adding or removing DOM beside a live composition breaks it on Android. So
+ * they do while the primary mouse button is down on the editor: markers drawn
+ * under the pointer mid-drag move the text the drag started in, and the
+ * selection ends up elsewhere or empty. They are drawn once the press ends.
  */
 
 import { Extension } from '@tiptap/core'
 import { closeHistory } from '@tiptap/pm/history'
-import { DOMSerializer, Mark, type Node as PMNode } from '@tiptap/pm/model'
-import {
-  type EditorState,
-  Plugin,
-  PluginKey,
-  type Selection,
-  TextSelection,
-} from '@tiptap/pm/state'
+import { DOMSerializer, Mark, type Node as PMNode, type ResolvedPos } from '@tiptap/pm/model'
+import { type EditorState, Plugin, PluginKey, Selection, TextSelection } from '@tiptap/pm/state'
 import type { Mappable } from '@tiptap/pm/transform'
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 
+import { EDITOR_PORTAL_SELECTOR } from '@/editor/editor-portal'
+import { isHiddenAt } from '@/editor/page-mode/page-collapse'
 import {
   type HeadingMarker,
   isOutsideHeadingMarker,
@@ -163,8 +166,9 @@ function setHeadingLevel(view: EditorView, marker: HeadingMarker, level: number)
   if (level > 0 && isOutsideHeadingMarker(state.selection)) {
     tr.setSelection(new OutsideHeadingMarker(tr.doc.resolve(marker.pos)))
   }
-  // Its own undo step: ProseMirror would join it to typing just before it in the heading.
+  // Its own undo step: ProseMirror would join it to an edit just before or after it.
   view.dispatch(closeHistory(tr.setStoredMarks(state.storedMarks)))
+  view.dispatch(closeHistory(view.state.tr))
 }
 
 function deleteMarkerBeside(view: EditorView, side: 'before' | 'after'): boolean {
@@ -228,6 +232,48 @@ function arriveFromRight(view: EditorView): boolean {
   return true
 }
 
+/** Put the caret at `$pos` outside every revealed run that starts (`'from'`) or ends (`'to'`) there. */
+function landOutsideRuns($pos: ResolvedPos, edge: 'from' | 'to', view: EditorView): boolean {
+  const { state } = view
+  const typed = $pos.marks()
+  let next = typed
+  for (const run of revealedRunsAt(state, $pos)) {
+    if (run[edge] === $pos.pos) next = run.mark.removeFromSet(next)
+  }
+  if (Mark.sameSet(next, typed)) return false
+  const caret = TextSelection.create(state.doc, $pos.pos)
+  view.dispatch(state.tr.setSelection(caret).setStoredMarks(next).scrollIntoView())
+  return true
+}
+
+/**
+ * End on a textblock's last line: past every closing marker at its end, as
+ * ArrowRight across each would put it, so typing there leaves the formatting.
+ */
+function endPastClosingMarkers(view: EditorView): boolean {
+  const { selection } = view.state
+  if (!selection.empty || !isMarkdownRevealEnabled() || !view.endOfTextblock('down')) return false
+  return landOutsideRuns(view.state.doc.resolve(selection.$from.end()), 'to', view)
+}
+
+/**
+ * An arrow out of a textblock into the next one (page mode's blocks): land on
+ * the near side of the markers at the edge it enters, outside the formatting,
+ * as a caret that walked there inside one block would be.
+ */
+function enterTextblockOutsideMarkers(view: EditorView, dir: 1 | -1): boolean {
+  const { selection, doc } = view.state
+  if (!selection.empty || !isMarkdownRevealEnabled()) return false
+  if (!view.endOfTextblock(dir > 0 ? 'right' : 'left')) return false
+  const { $head } = selection
+  const into = Selection.findFrom(doc.resolve(dir > 0 ? $head.after() : $head.before()), dir)
+  // A rule or a chip on the way is the next place: the editor selects it.
+  if (!into?.empty || !into.$head.parent.inlineContent) return false
+  // The native arrow goes to the next block shown; landing in a hidden one would open it.
+  if (isHiddenAt(view.state, into.head)) return false
+  return landOutsideRuns(into.$head, dir > 0 ? 'from' : 'to', view)
+}
+
 /** Where a click at a position with markers puts the caret. */
 interface ClickedStop {
   pos: number
@@ -251,7 +297,8 @@ function stopForClick(view: EditorView, event: MouseEvent): ClickedStop | null {
   const drawn = [...view.dom.querySelectorAll('.md-reveal-marker')].filter(
     (el) => view.posAtDOM(el, 0) === hit.pos,
   )
-  // A composition froze the drawn markers: they no longer match the state.
+  // The drawn markers no longer match the state: a composition froze them, or
+  // the editor is not focused and draws none.
   if (drawn.length !== markers.length) return null
   const leftOfClick = drawn.map((el) => {
     const box = el.getBoundingClientRect()
@@ -276,21 +323,72 @@ const DELETE_SIDE: Partial<Record<string, 'before' | 'after'>> = {
   deleteContentForward: 'after',
 }
 
+/**
+ * What ends a press on the editor, as `useEditorBlur` ends one. A release, or
+ * no release at all: a native drag of the text (`dragstart`, not `dragend`,
+ * which is fired at the dragged node and may never reach the root once the
+ * drop has moved the text away) and a context menu that swallows it.
+ */
+const PRESS_ENDS = ['mouseup', 'dragstart', 'contextmenu'] as const
+
 function createMarkdownRevealPlugin(statusOf: ChipStatus): Plugin<DecorationSet> {
   let pluginView: EditorView | null = null
   let clicked: ClickedStop | null = null
+  let editing = false
+  let primaryButtonDown = false
+  const redraw = (): void => {
+    if (pluginView && !pluginView.isDestroyed && !pluginView.composing)
+      pluginView.dispatch(pluginView.state.tr)
+  }
+  const setEditing = (next: boolean, afterUpdate = false): void => {
+    if (next === editing) return
+    editing = next
+    if (afterUpdate) queueMicrotask(redraw)
+    else redraw()
+  }
+  const releaseButton = (): void => {
+    if (!primaryButtonDown) return
+    primaryButtonDown = false
+    // After ProseMirror's own mouseup has placed the caret.
+    setTimeout(redraw)
+  }
+  // Focus in an overlay (`data-editor-portal`, the link popover's URL field) leaves the edit as it was.
+  const onFocusIn = ({ target }: Event): void => {
+    if (!pluginView || !(target instanceof Element) || target.closest(EDITOR_PORTAL_SELECTOR))
+      return
+    setEditing(pluginView.dom.contains(target))
+  }
+  // Focus left for nowhere: the body (Escape, a click on the page's background) or another window.
+  const onFocusOut = (event: FocusEvent): void => {
+    if (event.relatedTarget !== null) return
+    primaryButtonDown = false
+    // Removing a focused node view's DOM (the image's resize handle, as its width changes) fires
+    // this inside ProseMirror's own view update, which a dispatch from here corrupts.
+    setEditing(false, true)
+  }
   return new Plugin<DecorationSet>({
     key: markdownRevealPluginKey,
     state: {
-      init: (_, state) => revealDecorations(state, statusOf),
-      apply: (tr, previous, _old, state) =>
-        pluginView?.composing
-          ? previous.map(tr.mapping, tr.doc)
-          : revealDecorations(state, statusOf),
+      init: () => DecorationSet.empty,
+      apply: (tr, previous, _old, state) => {
+        if (pluginView?.composing || primaryButtonDown) return previous.map(tr.mapping, tr.doc)
+        return editing ? revealDecorations(state, statusOf) : DecorationSet.empty
+      },
     },
     view(view) {
       pluginView = view
-      return {}
+      editing = view.hasFocus()
+      const { root } = view
+      root.addEventListener('focusin', onFocusIn)
+      root.addEventListener('focusout', onFocusOut as EventListener)
+      for (const type of PRESS_ENDS) root.addEventListener(type, releaseButton)
+      return {
+        destroy() {
+          root.removeEventListener('focusin', onFocusIn)
+          root.removeEventListener('focusout', onFocusOut as EventListener)
+          for (const type of PRESS_ENDS) root.removeEventListener(type, releaseButton)
+        },
+      }
     },
     props: {
       decorations: (state) => markdownRevealPluginKey.getState(state),
@@ -299,8 +397,14 @@ function createMarkdownRevealPlugin(statusOf: ChipStatus): Plugin<DecorationSet>
         if (event.key === 'Backspace') return deleteMarkerBeside(view, 'before')
         if (event.key === 'Delete') return deleteMarkerBeside(view, 'after')
         if (event.key === 'ArrowLeft')
-          return crossMarkerBeside(view, 'before') || arriveFromRight(view)
-        if (event.key === 'ArrowRight') return crossMarkerBeside(view, 'after')
+          return (
+            crossMarkerBeside(view, 'before') ||
+            arriveFromRight(view) ||
+            enterTextblockOutsideMarkers(view, -1)
+          )
+        if (event.key === 'ArrowRight')
+          return crossMarkerBeside(view, 'after') || enterTextblockOutsideMarkers(view, 1)
+        if (event.key === 'End') return endPastClosingMarkers(view)
         return false
       },
       // `#` typed left of a heading's `#` run joins it.
@@ -321,6 +425,7 @@ function createMarkdownRevealPlugin(statusOf: ChipStatus): Plugin<DecorationSet>
         },
         // Judge the click against the markers the user saw, before the caret moves.
         mousedown(view, event) {
+          if (event.button === 0) primaryButtonDown = true
           clicked = stopForClick(view, event)
           return false
         },

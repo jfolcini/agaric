@@ -27,6 +27,7 @@ import { ListMarkerDecoration, setListMarkerMeta } from '@/editor/extensions/lis
 import { MarkdownReveal } from '@/editor/extensions/markdown-reveal'
 import { TagRef } from '@/editor/extensions/tag-ref'
 import { TaskParagraph } from '@/editor/extensions/task-paragraph'
+import { Underline } from '@/editor/extensions/underline'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import { isOutsideHeadingMarker, markerBesideCaret } from '@/editor/revealed-markers'
 import type { DocNode } from '@/editor/types'
@@ -73,6 +74,8 @@ function createEditor(source: string, more: AnyExtension[] = []): Editor {
     content: parse(source) as unknown as Record<string, unknown>,
   })
   editors.push({ editor, host })
+  // Nothing is drawn while the editor is unfocused.
+  editor.view.focus()
   return editor
 }
 
@@ -124,11 +127,13 @@ function layOut(ed: Editor, pos: number, boxes: Array<[number, number]>): void {
   })
 }
 
-/** A click at `clientX` the editor resolves to `pos`: mousedown, then ProseMirror's click handlers. */
+/** A click at `clientX` the editor resolves to `pos`: mousedown, ProseMirror's click handlers, then the release. */
 function clickAt(ed: Editor, pos: number, clientX: number, init: MouseEventInit = {}): boolean {
   const event = new MouseEvent('mousedown', { clientX, clientY: 0, bubbles: true, ...init })
   ed.view.dom.dispatchEvent(event)
-  return ed.view.someProp('handleClick', (f) => f(ed.view, pos, event)) ?? false
+  const handled = ed.view.someProp('handleClick', (f) => f(ed.view, pos, event)) ?? false
+  document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+  return handled
 }
 
 function markdown(ed: Editor): string {
@@ -337,6 +342,130 @@ describe('MarkdownReveal with the preference on', () => {
     expect(pressKey(ed, 'ArrowRight')).toBe(false)
   })
 
+  it('End on the last line lands past every closing marker at its end, where typing leaves the formatting', () => {
+    const ed = createEditor('first ***both***')
+    // happy-dom lays nothing out: the caret is on the textblock's last line.
+    ed.view.endOfTextblock = () => true
+    ed.commands.setTextSelection(3)
+    expect(pressKey(ed, 'End')).toBe(true)
+    expect(ed.state.selection.from).toBe(11)
+    typeKey(ed, 'x')
+    expect(markdown(ed)).toBe('first ***both***x')
+
+    const link = createEditor('see [label](https://e.com)')
+    link.view.endOfTextblock = () => true
+    link.commands.setTextSelection(6)
+    expect(pressKey(link, 'End')).toBe(true)
+    typeKey(link, 'x')
+    expect(markdown(link)).toBe('see [label](https://e.com)x')
+  })
+
+  it('leaves End to the browser where no run ends the line, or off its last line', () => {
+    const ed = createEditor('**bold** end')
+    ed.view.endOfTextblock = () => true
+    ed.commands.setTextSelection(3)
+    expect(pressKey(ed, 'End')).toBe(false)
+    const wrapped = createEditor('first **bold**')
+    wrapped.view.endOfTextblock = () => false
+    wrapped.commands.setTextSelection(3)
+    expect(pressKey(wrapped, 'End')).toBe(false)
+  })
+
+  it('draws nothing while focus is outside the editor, and the caret’s markers once it is back', () => {
+    const ed = createEditor(BOLD)
+    ed.commands.setTextSelection(9)
+    expect(markers(ed)).toEqual(['**', '**'])
+    const outside = document.createElement('button')
+    document.body.append(outside)
+    outside.focus()
+    expect(markers(ed)).toEqual([])
+    ed.view.focus()
+    expect(markers(ed)).toEqual(['**', '**'])
+    outside.remove()
+  })
+
+  it('keeps the markers while focus is in an overlay of the editor, and drops them once it leaves for nowhere', async () => {
+    const ed = createEditor(BOLD)
+    ed.commands.setTextSelection(9)
+    const overlay = document.createElement('div')
+    overlay.setAttribute('data-editor-portal', '')
+    const url = document.createElement('input')
+    overlay.append(url)
+    document.body.append(overlay)
+    url.focus()
+    expect(markers(ed)).toEqual(['**', '**'])
+    url.blur()
+    await Promise.resolve()
+    expect(markers(ed)).toEqual([])
+    overlay.remove()
+  })
+
+  // Removing a focused node view's DOM (an image's resize handle) fires focusout inside
+  // ProseMirror's own view update, where a dispatch corrupts the view tree.
+  it('draws after focus leaves for nowhere, never inside the focusout itself', async () => {
+    const ed = createEditor(BOLD)
+    ed.commands.setTextSelection(9)
+    const dispatch = vi.spyOn(ed.view, 'dispatch')
+    ed.view.dom.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+    expect(dispatch).not.toHaveBeenCalled()
+    await Promise.resolve()
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(markers(ed)).toEqual([])
+  })
+
+  it('draws nothing new while the mouse button is down, and the selection’s markers once it is released', () => {
+    vi.useFakeTimers()
+    const ed = createEditor(BOLD)
+    ed.view.posAtCoords = () => null
+    ed.commands.setTextSelection(14)
+    ed.view.dom.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }))
+    // A drag from `en|d` back into the bold: nothing is drawn under the pointer.
+    ed.commands.setTextSelection({ from: 14, to: 9 })
+    expect(markers(ed)).toEqual([])
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    vi.runAllTimers()
+    expect(markers(ed)).toEqual(['**', '**'])
+  })
+
+  it('a press whose release never comes ends when focus leaves for another window', () => {
+    const ed = createEditor(BOLD)
+    ed.view.posAtCoords = () => null
+    ed.view.dom.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }))
+    ed.view.dom.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+    ed.view.dom.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+    ed.commands.setTextSelection(9)
+    expect(markers(ed)).toEqual(['**', '**'])
+  })
+
+  // A native drag of the selected text, and a context menu on macOS' Ctrl+click, send no mouseup.
+  it.each(['dragstart', 'contextmenu'])(
+    'a %s ends the press whose mouseup does not come, and the selection’s markers are drawn',
+    (eventType) => {
+      vi.useFakeTimers()
+      const ed = createEditor(BOLD)
+      ed.view.posAtCoords = () => null
+      ed.view.dom.dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true }))
+      ed.commands.setTextSelection(9)
+      expect(markers(ed)).toEqual([])
+      ed.view.dom.dispatchEvent(new Event(eventType, { bubbles: true }))
+      vi.runAllTimers()
+      expect(markers(ed)).toEqual(['**', '**'])
+    },
+  )
+
+  it('takes its document listeners off with the editor', () => {
+    const eventTypes = ['focusin', 'focusout', 'mouseup', 'dragstart', 'contextmenu']
+    const added = vi.spyOn(document, 'addEventListener')
+    const removed = vi.spyOn(document, 'removeEventListener')
+    const ed = createEditor(BOLD)
+    const ours = added.mock.calls.filter(([name]) => eventTypes.includes(name))
+    expect(ours.map(([name]) => name).toSorted()).toEqual(eventTypes.toSorted())
+    ed.destroy()
+    for (const [name, listener] of ours) expect(removed).toHaveBeenCalledWith(name, listener)
+    added.mockRestore()
+    removed.mockRestore()
+  })
+
   it('crossing a marker adds no undo step', () => {
     const ed = createEditor(BOLD)
     type(ed, 'x')
@@ -453,23 +582,44 @@ describe('MarkdownReveal with the preference on', () => {
     expect(ed.view.dom.textContent).toBe('**~~both~~** after')
   })
 
-  it('reveals no highlight, and an arrow onto its edge is left to the editor', () => {
+  it('reveals a highlight’s == around the caret, and typing at its end stays in it until the arrow crosses it', () => {
     const ed = createEditor('==hi== z', [Highlight])
     ed.commands.setTextSelection(2)
-    expect(markers(ed)).toEqual([])
-    // `==hi== |z` and `==h|i==`: onto the highlight's end and start.
-    ed.commands.setTextSelection(4)
-    expect(pressKey(ed, 'ArrowLeft')).toBe(false)
-    const after = createEditor('hi ==lit==', [Highlight])
-    after.commands.setTextSelection(5)
-    expect(pressKey(after, 'ArrowLeft')).toBe(false)
+    expect(markers(ed)).toEqual(['==', '=='])
+    // `==hi|==`: inside the highlight's end.
+    ed.commands.setTextSelection(3)
+    typeKey(ed, 'a')
+    expect(markdown(ed)).toBe('==hia== z')
+    expect(pressKey(ed, 'ArrowRight')).toBe(true)
+    typeKey(ed, 'b')
+    expect(markdown(ed)).toBe('==hia==b z')
   })
 
-  it('draws a marker at the edge of highlighted text inside the highlight, outside the bold', () => {
-    const ed = createEditor('==**hi**== z', [Highlight])
+  it('Backspace after a highlight’s opening == takes the highlight off its whole range, and undo brings it back', () => {
+    const ed = createEditor('==hi== z', [Highlight])
+    ed.commands.setTextSelection(1)
+    expect(markers(ed)).toEqual(['==', '=='])
+    expect(pressKey(ed, 'Backspace')).toBe(true)
+    expect(markdown(ed)).toBe('hi z')
+    ed.commands.undo()
+    expect(markdown(ed)).toBe('==hi== z')
+  })
+
+  // `<u>` is HTML the serializer writes for want of a Markdown underline, not syntax to show.
+  it('reveals no underline, and an arrow onto its edge is left to the editor', () => {
+    const ed = createEditor('<u>hi</u> z', [Underline])
+    ed.commands.setTextSelection(2)
+    expect(markers(ed)).toEqual([])
+    // `<u>hi</u> |z`: onto the underline's end.
+    ed.commands.setTextSelection(4)
+    expect(pressKey(ed, 'ArrowLeft')).toBe(false)
+  })
+
+  it('draws a marker at the edge of underlined text inside the underline, outside the bold', () => {
+    const ed = createEditor('<u>**hi**</u> z', [Underline])
     ed.commands.setTextSelection(2)
     const marker = ed.view.dom.querySelector('.md-reveal-marker')
-    expect(marker?.parentElement?.tagName).toBe('MARK')
+    expect(marker?.parentElement?.tagName).toBe('U')
     expect(marker?.closest('strong')).toBeNull()
   })
 
@@ -539,6 +689,13 @@ describe('MarkdownReveal with the preference off', () => {
     expect(markers(ed)).toEqual([])
     expect(pressKey(ed, 'ArrowRight')).toBe(false)
     expect(pressKey(ed, 'Delete')).toBe(false)
+  })
+
+  it('leaves End to the browser at the end of a line ending in bold', () => {
+    const ed = createEditor('first **bold**')
+    ed.view.endOfTextblock = () => true
+    ed.commands.setTextSelection(9)
+    expect(pressKey(ed, 'End')).toBe(false)
   })
 })
 
@@ -665,6 +822,17 @@ describe('MarkdownReveal for headings', () => {
     expect(undoDepth(ed.state)).toBe(depth + 1)
     ed.commands.undo()
     expect(markdown(ed)).toBe('## xTitle')
+  })
+
+  it('an edit right after a level change is an undo step of its own', () => {
+    const ed = createEditor(HEADING)
+    ed.commands.setTextSelection(1)
+    pressKey(ed, 'ArrowLeft')
+    typeKey(ed, '#')
+    typeKey(ed, 'x')
+    expect(markdown(ed)).toBe('### xTitle')
+    ed.commands.undo()
+    expect(markdown(ed)).toBe('### Title')
   })
 
   it('undo puts the caret back left of the # run, where it was', () => {

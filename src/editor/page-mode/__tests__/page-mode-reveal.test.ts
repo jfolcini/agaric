@@ -26,6 +26,7 @@ import {
   type as typeText,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
 import { listSource } from '@/editor/page-mode/__tests__/page-node-view-fixtures'
+import { toggleFold } from '@/editor/page-mode/page-collapse'
 import { PageLists } from '@/editor/page-mode/page-lists'
 import type { PropertyRow } from '@/lib/bindings'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
@@ -42,7 +43,10 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  for (const ed of open.splice(0)) ed.destroy()
+  for (const ed of open.splice(0)) {
+    ed.view.dom.remove()
+    ed.destroy()
+  }
   vi.useRealTimers()
 })
 
@@ -54,6 +58,9 @@ function page(rows: readonly Row[], lists?: PageLists): Editor {
     lists === undefined ? undefined : listSource(lists),
   )
   open.push(ed)
+  // Nothing is drawn while the editor is unfocused.
+  document.body.append(ed.view.dom)
+  ed.view.focus()
   return ed
 }
 
@@ -248,6 +255,67 @@ describe('MarkdownReveal in page mode', () => {
     caret(ed, 1, 0)
     expect(press(ed, 'ArrowLeft')).toBe(true)
     expect(ed.state.selection.from).toBe(posIn(ed, 1, 0))
+    expect(press(ed, 'ArrowLeft')).toBe(false)
+  })
+
+  it('an arrow into the next block lands outside the formatting at the edge it enters, either way', () => {
+    const ed = page([
+      [A, 0, 'first **bold**'],
+      [B, 0, '**bold** end'],
+    ])
+    // happy-dom lays nothing out: the caret is at its line's edge.
+    ed.view.endOfTextblock = () => true
+    // `**|bold** end`: over the opening marker, then into the block above, past its closing one.
+    caret(ed, 1, 0)
+    expect(press(ed, 'ArrowLeft')).toBe(true)
+    expect(press(ed, 'ArrowLeft')).toBe(true)
+    expect(ed.state.selection.from).toBe(posIn(ed, 0, 10))
+    typeText(ed, 'y')
+    expect(rowsOf(ed.state.doc)[0]).toEqual([A, 0, 'first **bold**y'])
+    // `first boldy|`: into the block below, left of its opening marker.
+    expect(press(ed, 'ArrowRight')).toBe(true)
+    expect(ed.state.selection.from).toBe(posIn(ed, 1, 0))
+    typeText(ed, 'x')
+    expect(rowsOf(ed.state.doc)[1]).toEqual([B, 0, 'x**bold** end'])
+  })
+
+  // The caret's block is never hidden: an arrow that landed in a hidden block would open it.
+  it('ArrowRight at the end of a collapsed block leaves the blocks it hides to the editor', () => {
+    const ed = page([
+      [A, 0, 'parent'],
+      [B, 1, '**bold** x'],
+      [C, 0, 'next'],
+    ])
+    ed.view.endOfTextblock = () => true
+    expect(toggleFold(A)(ed.state, ed.view.dispatch)).toBe(true)
+    caret(ed, 0, 6)
+    expect(press(ed, 'ArrowRight')).toBe(false)
+    expect(ed.state.selection.$head.index(0)).toBe(0)
+  })
+
+  it('ArrowLeft at the start of the block after a collapsed block leaves the blocks it hides to the editor', () => {
+    const ed = page([
+      [A, 0, 'parent'],
+      [B, 1, 'x **bold**'],
+      [C, 0, 'next'],
+    ])
+    ed.view.endOfTextblock = () => true
+    expect(toggleFold(A)(ed.state, ed.view.dispatch)).toBe(true)
+    caret(ed, 2, 0)
+    expect(press(ed, 'ArrowLeft')).toBe(false)
+    expect(ed.state.selection.$head.index(0)).toBe(2)
+  })
+
+  it('leaves an arrow into the next block to the editor with the setting off', () => {
+    writePreference(PREFERENCES.revealMarkdownSyntax, false)
+    const ed = page([
+      [A, 0, 'first **bold**'],
+      [B, 0, '**bold** end'],
+    ])
+    ed.view.endOfTextblock = () => true
+    caret(ed, 0, 10)
+    expect(press(ed, 'ArrowRight')).toBe(false)
+    caret(ed, 1, 0)
     expect(press(ed, 'ArrowLeft')).toBe(false)
   })
 

@@ -411,6 +411,9 @@ test('Ctrl+K in a revealed link edits its URL in the link popover, and the new ]
   const popover = page.getByTestId('link-edit-popover')
   const url = popover.getByPlaceholder('https://...')
   await expect(url).toHaveValue('https://example.com')
+  // Focus is in the popover, an overlay of the editor: the markers stay drawn.
+  await expect(url).toBeFocused()
+  expect(await shownMarkers(page)).toEqual(['[', '](https://example.com)'])
   await url.fill('example.org/new')
   await url.press('Enter')
   await expect(popover).toHaveCount(0)
@@ -422,6 +425,109 @@ test('Ctrl+K in a revealed link edits its URL in the link popover, and the new ]
     'data-href',
     'https://example.org/new',
   )
+})
+
+/** The box of the `nth` `char` of the block editor's text, markers not counted. */
+function charBox(
+  page: Page,
+  char: string,
+  nth = 0,
+): Promise<{ x: number; y: number; height: number }> {
+  return page.locator(EDITOR).evaluate(
+    (root, { char: c, nth: n }) => {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+      let seen = 0
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.parentElement?.closest('[data-testid^="md-reveal"]')) continue
+        const text = node.textContent ?? ''
+        for (let at = text.indexOf(c); at >= 0; at = text.indexOf(c, at + 1)) {
+          if (seen++ < n) continue
+          const range = document.createRange()
+          range.setStart(node, at)
+          range.setEnd(node, at + 1)
+          const box = range.getBoundingClientRect()
+          return { x: box.left, y: box.top, height: box.height }
+        }
+      }
+      throw new Error(`no ${c} #${n} in the editor`)
+    },
+    { char, nth },
+  )
+}
+
+/** The text the editor's selection holds. */
+function selectedText(page: Page): Promise<string> {
+  return page.locator(EDITOR).evaluate((el) => {
+    const { state } = (
+      el as HTMLElement & {
+        editor: {
+          state: {
+            selection: { from: number; to: number }
+            doc: { textBetween: (from: number, to: number) => string }
+          }
+        }
+      }
+    ).editor
+    return state.doc.textBetween(state.selection.from, state.selection.to)
+  })
+}
+
+test('a mouse drag that starts in bold not yet revealed selects what it covered @editor @markdown', async ({
+  page,
+}) => {
+  await typeBlock(page, 'x **bold** and end')
+  // `|x bold and end`: no marker drawn.
+  await setCaret(page, 1)
+  await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
+  const from = await charBox(page, 'o')
+  const to = await charBox(page, 'n', 1)
+  await page.mouse.move(from.x + 1, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(to.x + 1, to.y + to.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await expect.poll(() => selectedText(page)).toBe('old and e')
+  // Drawn once the button is up.
+  await expect(page.getByTestId('md-reveal-marker')).toHaveText(['**', '**'])
+})
+
+test('after a text drag and drop the markers follow the caret again @editor @markdown', async ({
+  page,
+}) => {
+  await typeBlock(page, 'x **bold** and end')
+  const editor = page.locator(EDITOR)
+  // `x |bold| and end`: the whole bold run is selected, so both markers are drawn.
+  await selectEditorRange(page, 2, 6)
+  await expect(page.getByTestId('md-reveal-marker')).toHaveCount(2)
+  // Drag the selected word into `end`: a native drag, which sends no mouseup.
+  const from = await charBox(page, 'o')
+  const to = await charBox(page, 'n', 1)
+  await page.mouse.move(from.x + 1, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(from.x + 20, from.y + from.height / 2, { steps: 5 })
+  await page.mouse.move(to.x + 1, to.y + to.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await expect(editor).toHaveText(/^x\s+and e/)
+  await expect(editor.locator('strong')).toHaveText('bold')
+  await expect.poll(() => selectedText(page)).toBe('bold')
+  await expect(page.getByTestId('md-reveal-marker')).toHaveCount(2)
+
+  // The caret moves by the keyboard: the markers go with it.
+  await page.keyboard.press('Home')
+  await expect(page.getByTestId('md-reveal-marker')).toHaveCount(0)
+})
+
+test('End lands past the closing marker at the line’s end, where typing is not bold @editor @markdown', async ({
+  page,
+}) => {
+  await typeBlock(page, 'Make **bold**')
+  const editor = page.locator(EDITOR)
+  // `Make **bo|ld**`
+  await setCaret(page, 8)
+  await expect(page.getByTestId('md-reveal-marker')).toHaveCount(2)
+  await page.keyboard.press('End')
+  await page.keyboard.type('X')
+  await expect(editor.locator('strong')).toHaveText('bold')
+  await expect(editor).toHaveText('Make boldX')
 })
 
 test.describe('on a phone @editor @markdown @mobile', () => {
