@@ -673,14 +673,14 @@ const TAB_INDENTS_BLOCKS_PREFERENCE: PreferenceDefinition<boolean> = {
 /**
  * `agaric-reveal-markdown-syntax` — show the Markdown markers of the inline
  * mark the caret is in or touching (`src/editor/extensions/markdown-reveal.ts`,
- * #5689). Default false: the block editor stays WYSIWYG unless asked.
+ * #5689). Default true, as Obsidian's Live Preview; a stored `false` keeps it off.
  */
 const REVEAL_MARKDOWN_SYNTAX_PREFERENCE: PreferenceDefinition<boolean> = {
   key: 'agaric-reveal-markdown-syntax',
   scope: 'device',
   version: 1,
-  defaultValue: false,
-  parse: (raw) => raw === 'true',
+  defaultValue: true,
+  parse: (raw) => raw !== 'false',
   serialize: jsonSerialize<boolean>,
 }
 

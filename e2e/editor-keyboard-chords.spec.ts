@@ -48,14 +48,16 @@ test.describe('Editor keyboard chords (#5733) @editor', () => {
     await replaceEditorText(page, 'one two three')
     await expect(editor).toHaveText('one two three')
 
-    await selectEditorRange(page, 0, 3)
-    await page.keyboard.press('Control+Shift+S')
-    await selectEditorRange(page, 4, 7)
-    await page.keyboard.press('Control+Shift+H')
+    // Right to left: the markers revealed around a word just marked shift the
+    // drawn offsets after it.
     await selectEditorRange(page, 8, 13)
     // Chromium underlines on Ctrl+U natively when no handler takes it, so the
     // <u> checks pin the outcome and its persistence, not the app's binding.
     await page.keyboard.press('Control+u')
+    await selectEditorRange(page, 4, 7)
+    await page.keyboard.press('Control+Shift+H')
+    await selectEditorRange(page, 0, 3)
+    await page.keyboard.press('Control+Shift+S')
     await expect(editor.locator('s')).toHaveText('one')
     await expect(editor.locator('mark')).toHaveText('two')
     await expect(editor.locator('u')).toHaveText('three')

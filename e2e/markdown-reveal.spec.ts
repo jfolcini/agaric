@@ -1,5 +1,5 @@
 /**
- * #5689 — "Show Markdown syntax around the cursor": turned on in Settings ›
+ * #5689 — "Show Markdown syntax around the cursor": on unless turned off in Settings ›
  * Editor, the block editor shows the markers of the mark, heading or link the
  * caret is in. A marker is deleted or crossed as one unit, a heading's `#` run
  * changes its level, a link's URL is edited through the link popover, the
