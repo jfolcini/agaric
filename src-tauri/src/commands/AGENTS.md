@@ -50,6 +50,7 @@ tx.commit_and_dispatch(&materializer).await?;
 - A dropped future (Tauri cancels IPC futures) rolls the tx back.
 - A read that decides a write (exists? which ops to revert?) runs inside the tx; with two writers, a probe before `BEGIN IMMEDIATE` can be stale by commit.
 - File I/O (attachment bytes, export files) happens before BEGIN or after commit, never while holding the writer lock.
+- An op appended in the tx whose record is deliberately not dispatched (a create's follow-up space stamp) still goes through `tx.enqueue_without_dispatch`, or its page's `pages_cache.last_edited_ms` stays at the create and the integrity check reports the row diverged.
 
 ### `_in_tx` variants
 
@@ -89,6 +90,8 @@ assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob)); // tests
 ## One op, several interpreters
 
 - An op is interpreted by the local command, the apply kernel (`src-tauri/agaric-engine/src/apply/`), the recovery projection (`src-tauri/src/db/recovery.rs`) and the Loro engine (`src-tauri/agaric-engine/src/loro/engine/apply.rs`). Change them in lockstep, with a test per interpreter. Inbound sync (`loro_sync::apply_remote`) skips the command's validation, so a guard in the command does not cover it.
+- Replay runs after SQL already holds the op's effect, so a lookup keyed on pre-op SQL state (a moved block's old space, a purged row's space, a restore's cohort) comes back empty there. Resolve it from the engines (`LoroEngineRegistry::spaces_containing`) on the replay path only, with a replay test per case.
+- A command that removes something the block does not hold appends no op (`property_is_held`): an op with no prior value has no reverse, and its `NotFound` aborts the page's whole undo group. The mock mirrors it, with a conformance fixture.
 - Merged op-log rows order by `(created_at, seq, device_id)`. `seq` is per device, so ordering by it ranks a busy device's old ops above another device's new ones.
 - Created and last-edited times come from `ulid_created_ms_sql` / `last_edited_ms_sql` (`src-tauri/agaric-store/src/filters/primitive.rs`), never `MIN`/`MAX` over `op_log` alone: compaction deletes old ops.
 - An "empty" or "equal" predicate evaluated in both TS and SQL must agree. JS `.trim()` strips all Unicode whitespace; SQLite `TRIM(x)` strips only U+0020. Test a newline and an NBSP.

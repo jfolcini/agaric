@@ -9,7 +9,7 @@
 | Unit | `#[cfg(test)] mod tests` in the module, or a sibling `tests.rs` | Single-module logic |
 | Integration | `src-tauri/src/integration_tests.rs`, `src-tauri/tests/command_integration/` | Cross-module pipelines; every `*_inner` command's API contract (happy path, error variants, edge cases, op-log verification) |
 | Conformance | `src-tauri/tests/command_integration/conformance.rs`, `conformance_query.rs` | Backend-authored fixtures asserted by both the Rust backend and the TS mock |
-| Sync | `src-tauri/agaric-sync/src/` (inline `mod tests`), `src-tauri/agaric-sync/src/sync_daemon/tests.rs`, `src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer_tests.rs` | mDNS wire format, transport, discovery lifecycle, peer flows, snapshot transfer. A pairing or handshake test runs both dial directions: which side dials first is an mDNS race |
+| Sync | `src-tauri/agaric-sync/src/` (inline `mod tests`), `src-tauri/agaric-sync/src/sync_daemon/tests.rs`, `src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer_tests.rs` | mDNS wire format, transport, discovery lifecycle, peer flows, snapshot transfer. A pairing or handshake test runs both dial directions: which side dials first is an mDNS race. A pull spanning several spaces runs both import orders through `apply_remote`: the responder sends spaces in `HashMap` order |
 | Bench | `src-tauri/benches/*.rs` (`harness = false`) | Criterion microbenchmarks; weekly CI lane only, see `src-tauri/benches/AGENTS.md` |
 
 ### The three integration-test binaries
@@ -72,6 +72,8 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 
 Bind `let (pool, _dir) = test_pool().await;`: `let (pool, _) = …` drops the `TempDir` at once and the SQLite file vanishes. Split read/write pools: `test_pools()` in `src-tauri/src/db/tests.rs`.
 
+A test or proptest that builds many pools copies a per-process migrated template instead, `init_pool_from_template` (`commands::tests::common`) or `test_pool_from_template` (`src-tauri/agaric-store/src/test_support.rs`): migrating is most of what a fresh pool costs.
+
 ### Async attribute
 
 ```rust
@@ -123,7 +125,7 @@ Tests and fresh vaults have no `sqlite_stat1` (only `maintenance.rs`'s periodic 
 - `now_rfc3339()` has millisecond precision, so two calls can collide; use constants before `assert_ne!` on timestamps.
 - A fixture that stamps from `now_ms()` and code that re-reads the clock disagree by a tick, so an arm at exactly a window's edge flakes; unless the clock is injectable, pin the edge a second either side.
 - `FxHashSet` iteration order is unstable: use `BTreeSet` or sort before comparing.
-- After changing a proptest generator, run it at volume (about 20000 cases, a few times). `PROPTEST_CASES` is ignored by a `with_cases(N)` or `cases: N` config, so raise the constant locally. Delete any `proptest-regressions/*.txt` seed that recorded a mutant rather than a real defect.
+- After changing a proptest generator, run it at volume (about 20000 cases, a few times). `PROPTEST_CASES` is ignored by a `with_cases(N)` or `cases: N` config, so raise the constant locally. Delete any `proptest-regressions/*.txt` seed that recorded a mutant rather than a real defect. A seed replays only from `<crate>/proptest-regressions/`, at the source file's path below the directory holding `lib.rs` or `main.rs`; a seed file anywhere else is silently never read.
 
 ## Snapshot testing (insta)
 

@@ -62,6 +62,7 @@ GitHub GraphQL returns 403 from a Claude Code cloud session, so every `gh pr` an
 - Before migrating a timestamp or enum column, grep the column name for cross-table `> ?` / `< ?` predicates and for values copied between columns; migrate a coupled cluster in one PR. Backfill with `CAST(ROUND((julianday(col) - 2440587.5) * 86400000.0) AS INTEGER)`, NULL-guarded.
 - Bumping a ratchet baseline (`dynamic-sql-baseline.txt`, `table-ownership-baseline.txt`) is a last resort. "The safe construct can't express this" is usually an arity problem: N fixed-arity `query_scalar!` call sites beat one dynamic call. If you do bump, say what you tried.
 - Broken rustdoc intra-doc links red the push (`cargo-doc-links` hook). Links in a `mod x;` declaration resolve in the parent's scope.
+- `cargo deny` newly reds every Rust PR on an advisory with no upgrade path: find the feature that pulls the crate (`cargo tree -i <crate> --target all -e features`); if we never use it, take the dependency with `default-features = false` plus the rest of its default set, refresh both lockfiles (`src-tauri` and `src-tauri/fuzz`), and show the old manifest reds `cargo deny check`.
 - `internal compiler error: encountered incremental compilation error` is the toolchain, not the code: delete that crate's `src-tauri/target/debug/incremental/<crate>-*` directory and rebuild.
 
 ## Baseline reds in a worktree

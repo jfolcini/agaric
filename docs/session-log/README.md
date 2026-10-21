@@ -6,9 +6,9 @@ Per-session entries. **One file per session.**
 
 - `session-NNN-<slug>.md` — one file per session. `NNN` is **never zero-padded** (`session-846-...`, `session-1381-...`); the slug is derived from the session title. The padding rule is not cosmetic: a leading zero makes the guard misreport its own window, and can make it reject the *next* file in the same commit. See [Why the padding rule is not cosmetic](#why-the-padding-rule-is-not-cosmetic).
 - `session-NNNa-<slug>.md` — a merged duplicate number, split. When two merged logs share a number, every log holding it gets a, b and so on in merge order, retroactively, and its `# Session NNN` heading gains the same letter; that rename is the one change to a merged log the guards accept. New logs never take a suffix.
-- `sessions-NNNN-NNNN.md` — frozen archives of 100 sessions each (`sessions-0001-0100.md` … `sessions-2101-2200.md`), newest first, one `## Session N` section per session.
+- `sessions-NNNN-NNNN.md` — frozen archives of 100 sessions each (`sessions-0001-0100.md` … `sessions-2601-2700.md`), newest first, one `## Session N` section per session.
 
-Once a full hundred of individual files has merged (all of 2201–2300, say), fold it into the next archive in one maintainer PR: demote each file's headings one level, concatenate newest first, delete the files (`SKIP=session-log-immutable git commit …`), and point every link at the archive. Keep the newest, still-partial hundred as individual files; the numbering guard reads its max from them.
+Once a full hundred of individual files has merged (all of 2701–2800, say), fold it into the next archive in one maintainer PR: demote each file's headings one level, concatenate newest first, delete the files (`SKIP=session-log-immutable git commit …`), and point every link at the archive. Keep the newest, still-partial hundred as individual files; the numbering guard reads its max from them.
 
 ## Discovery
 
