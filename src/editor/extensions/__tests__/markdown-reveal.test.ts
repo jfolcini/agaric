@@ -30,6 +30,11 @@ import { TaskParagraph } from '@/editor/extensions/task-paragraph'
 import { parse, serialize } from '@/editor/markdown-serializer'
 import { isOutsideHeadingMarker, markerBesideCaret } from '@/editor/revealed-markers'
 import type { DocNode } from '@/editor/types'
+import {
+  unresolvedBlockLabel,
+  unresolvedBlockRefLabel,
+  unresolvedTagLabel,
+} from '@/lib/block-title'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
 
 const editors: Array<{ editor: Editor; host: HTMLElement }> = []
@@ -1159,6 +1164,22 @@ describe('MarkdownReveal beside page, tag and block-ref chips (#5974)', () => {
     expect(shown(ed)).toBe('a work [[Plan]] A block b')
     ed.commands.setNodeSelection(7)
     expect(shown(ed)).toBe('a work Plan ((A block)) b')
+  })
+
+  it('draws no syntax around an unresolved chip, whose label already is in it', () => {
+    const ed = createEditor(`${SOURCE} [[${PAGE}|Plan]]`, [
+      TagRef.configure({ resolveName: unresolvedTagLabel }),
+      BlockLink.configure({ resolveTitle: unresolvedBlockLabel }),
+      BlockRef.configure({ resolveContent: unresolvedBlockRefLabel }),
+    ])
+    const plain = 'a #01ARZ3ND... [[01ARZ3ND...]] (( 01ARZ3ND... )) b Plan'
+    for (const chip of [3, 5, 7]) {
+      ed.commands.setNodeSelection(chip)
+      expect(shown(ed)).toBe(plain)
+    }
+    // A label stands in for the unresolved title, so its syntax is drawn.
+    ed.commands.setNodeSelection(11)
+    expect(shown(ed)).toBe(`${plain.slice(0, -4)}[[Plan]]`)
   })
 
   it('shows the syntax of both chips a caret sits between', () => {

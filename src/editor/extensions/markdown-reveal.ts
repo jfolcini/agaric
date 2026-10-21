@@ -24,7 +24,8 @@
  * A page, tag or block-ref chip beside the caret (or selected) shows its
  * syntax (`[[` `]]`, `#`, `((` `))`) the same way, but only to read: the chip
  * stays an atom whose id is not text, so Backspace and Delete take it whole as
- * before and the syntax is no part of the selection.
+ * before and the syntax is no part of the selection. An unresolved chip's
+ * label already reads in its syntax (`[[01ABCDEF...]]`), so it gets none.
  *
  * A link's URL is edited through the link popover (Ctrl+K, or the selection
  * bubble's link button), not in its `](url)`.
@@ -35,7 +36,7 @@
 
 import { Extension } from '@tiptap/core'
 import { closeHistory } from '@tiptap/pm/history'
-import { Mark, type Node as PMNode } from '@tiptap/pm/model'
+import { DOMSerializer, Mark, type Node as PMNode } from '@tiptap/pm/model'
 import {
   type EditorState,
   Plugin,
@@ -108,9 +109,14 @@ function markerDom(text: string, kind = 'marker'): HTMLElement {
   return span
 }
 
+/** The label a chip shows: its `renderHTML`'s text, which its node view mirrors. */
+function chipLabel(chip: PMNode): string {
+  return DOMSerializer.fromSchema(chip.type.schema).serializeNode(chip).textContent ?? ''
+}
+
 function revealDecorations(state: EditorState): DecorationSet {
-  const chips = revealedChipMarkers(state).map((m) =>
-    // Its own class: the click and key handling above count `.md-reveal-marker`s.
+  const chips = revealedChipMarkers(state, chipLabel).map((m) =>
+    // Its own class: `stopForClick` counts the drawn `.md-reveal-marker`s against `revealedMarkers`.
     Decoration.widget(m.pos, () => markerDom(m.text, 'chip-marker'), {
       side: m.side,
       key: `md-reveal-chip:${m.text}:${m.side}`,

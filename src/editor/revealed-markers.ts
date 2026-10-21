@@ -18,6 +18,11 @@ import {
   writesBareUrl,
 } from '@/editor/markdown-serialize'
 import { PAGE_BLOCK } from '@/editor/page-mode/page-block-name'
+import {
+  unresolvedBlockLabel,
+  unresolvedBlockRefLabel,
+  unresolvedTagLabel,
+} from '@/lib/block-title'
 import { isMarkdownRevealEnabled } from '@/lib/editor-preferences'
 
 const EMPHASIS_MARKS = ['bold', 'italic', 'strike', 'code'] as const
@@ -294,11 +299,17 @@ export function markerBesideCaret(state: EditorState, side: 'before' | 'after'):
   return nearest
 }
 
-/** The syntax a chip is written with, as the serializer writes it, around its label. */
-const CHIP_SYNTAX: Readonly<Record<string, { open: string; close: string }>> = {
-  block_link: { open: '[[', close: ']]' },
-  tag_ref: { open: '#', close: '' },
-  block_ref: { open: '((', close: '))' },
+/**
+ * The syntax a chip is written with, as the serializer writes it, around its
+ * label, and the label it shows for a target nothing is resolved for, which
+ * already reads in that syntax.
+ */
+const CHIP_SYNTAX: Readonly<
+  Record<string, { open: string; close: string; unresolved: (id: string) => string }>
+> = {
+  block_link: { open: '[[', close: ']]', unresolved: unresolvedBlockLabel },
+  tag_ref: { open: '#', close: '', unresolved: unresolvedTagLabel },
+  block_ref: { open: '((', close: '))', unresolved: unresolvedBlockRefLabel },
 }
 
 /** Drawn after a caret at its position, past any mark delimiter there: the syntax of the chip itself is innermost. */
@@ -318,9 +329,13 @@ export interface ChipMarker {
  * right before and after a caret. The caret stays outside the syntax, as it is
  * outside the chip's token. Not `revealedMarkers`: those are one unit with the
  * caret's Backspace, Delete and arrows, and a chip, whose id is not editable
- * text, is deleted as an atom.
+ * text, is deleted as an atom. None for an unresolved chip: its label
+ * (`labelOf`) already shows the syntax around the id.
  */
-export function revealedChipMarkers(state: EditorState): ChipMarker[] {
+export function revealedChipMarkers(
+  state: EditorState,
+  labelOf: (chip: PMNode) => string,
+): ChipMarker[] {
   if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
   const { selection } = state
   const chips: Array<{ node: PMNode; pos: number }> = []
@@ -334,7 +349,7 @@ export function revealedChipMarkers(state: EditorState): ChipMarker[] {
   }
   return chips.flatMap(({ node, pos }) => {
     const syntax = CHIP_SYNTAX[node.type.name]
-    if (!syntax) return []
+    if (!syntax || labelOf(node) === syntax.unresolved(String(node.attrs['id']))) return []
     const out: ChipMarker[] = [{ pos, text: syntax.open, side: CHIP_OPEN_SIDE }]
     if (syntax.close)
       out.push({ pos: pos + node.nodeSize, text: syntax.close, side: CHIP_CLOSE_SIDE })
