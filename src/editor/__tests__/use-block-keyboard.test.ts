@@ -609,10 +609,10 @@ describe('handleBlockKeyDown', () => {
       expect(cbs._calls['onDuplicate']).toBeUndefined()
     })
 
-    it('Ctrl+Shift+T calls onTurnInto (turnIntoBlock)', () => {
+    it('Ctrl+Shift+L calls onTurnInto (turnIntoBlock)', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
-      const event = makeEvent('T', { ctrlKey: true, shiftKey: true })
+      const event = makeEvent('L', { ctrlKey: true, shiftKey: true })
 
       handleBlockKeyDown(event, editor, cbs)
 
@@ -621,20 +621,21 @@ describe('handleBlockKeyDown', () => {
       expect(cbs._calls['onDuplicate']).toBeUndefined()
     })
 
-    it('Meta+Shift+T calls onTurnInto (macOS)', () => {
+    it('Meta+Shift+L calls onTurnInto (macOS)', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
-      const event = makeEvent('T', { metaKey: true, shiftKey: true })
+      const event = makeEvent('L', { metaKey: true, shiftKey: true })
 
       handleBlockKeyDown(event, editor, cbs)
 
       expect(cbs._calls['onTurnInto']).toBe(1)
     })
 
-    it('plain T does NOT open turn-into', () => {
+    it('plain L, and Ctrl+Shift+T (reopen closed tab), do NOT open turn-into', () => {
       const editor = makeEditor({})
       const cbs = makeCallbacks()
-      handleBlockKeyDown(makeEvent('T'), editor, cbs)
+      handleBlockKeyDown(makeEvent('L'), editor, cbs)
+      handleBlockKeyDown(makeEvent('T', { ctrlKey: true, shiftKey: true }), editor, cbs)
       expect(cbs._calls['onTurnInto']).toBeUndefined()
     })
   })
@@ -844,6 +845,17 @@ describe('handleBlockKeyDown', () => {
       expect(event.preventDefault).toHaveBeenCalledOnce()
       expect(cbs._calls['onToggleTodo']).toBe(1)
       expect(cbs._calls['onEnterSave']).toBeUndefined()
+    })
+
+    it('Ctrl+L, as in Obsidian, calls onToggleTodo', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      const event = makeEvent('l', { ctrlKey: true })
+
+      handleBlockKeyDown(event, editor, cbs)
+
+      expect(event.preventDefault).toHaveBeenCalledOnce()
+      expect(cbs._calls['onToggleTodo']).toBe(1)
     })
 
     it('plain Enter does NOT call onToggleTodo', () => {

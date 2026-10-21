@@ -858,7 +858,7 @@ export async function waitForPickerToOffer(name: string): Promise<void> {
  * `SelectContent` is portaled to `document.body`, so the option is queried
  * globally, never chained off the trigger's ancestor. Substring (`*=`) rather
  * than exact: the SpaceSwitcher options append an aria-hidden hotkey chip
- * ("Ctrl+1") to the space name, which WDIO's exact-text match would include.
+ * ("Alt+1") to the space name, which WDIO's exact-text match would include.
  * The pointer is moved off the trigger before the option click: the
  * SpaceSwitcher trigger carries a zero-delay Tooltip whose popper can render
  * over the open option list and swallow the click (the Playwright

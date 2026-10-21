@@ -201,7 +201,7 @@ describe('SpaceSwitcher', () => {
 
     await waitFor(
       async () => {
-        const matches = await screen.findAllByText(/Tip: Ctrl\+1.+9/)
+        const matches = await screen.findAllByText(/Tip: Alt\+1.+9/)
         expect(matches.length).toBeGreaterThanOrEqual(1)
       },
       { timeout: 3000 },
@@ -209,7 +209,7 @@ describe('SpaceSwitcher', () => {
   })
 
   // Each non-disabled SelectItem must carry a digit-hotkey
-  // hint chip (`Ctrl+1`, `Ctrl+2`, … on Linux/Windows; `⌘1`, `⌘2`, … on
+  // hint chip (`Alt+1`, `Alt+2`, … on Linux/Windows; `⌥1`, `⌥2`, … on
   // macOS) so the shortcut is discoverable without consulting the
   // keyboard cheat-sheet. The chip is rendered for the first nine
   // spaces in alphabetical order; the disabled "Manage spaces…"
@@ -221,7 +221,7 @@ describe('SpaceSwitcher', () => {
     render(<SpaceSwitcher />)
 
     // jsdom's UA does not match macOS, so `isMac()` returns false and
-    // the chip text is the spelled-out modifier (`Ctrl+N`). This keeps
+    // the chip text is the spelled-out modifier (`Alt+N`). This keeps
     // the assertion deterministic across platforms running the test
     // suite.
     const select = screen.getByRole('combobox', { name: /Switch space/ })
@@ -241,16 +241,16 @@ describe('SpaceSwitcher', () => {
     // The disabled Manage placeholder must stay chip-free
     // owns it and it isn't a hotkey target.
     const manageOption = screen.getByRole('option', { name: /Manage spaces/ })
-    expect(manageOption.textContent).not.toMatch(/Ctrl\+\d/)
+    expect(manageOption.textContent).not.toMatch(/Alt\+\d/)
     // Belt-and-braces: the data-testid'd chip elements are exactly two
     // (one per space) and not attached to the placeholder, and each
-    // carries the spelled-out modifier text (`Ctrl+N`) on non-macOS.
+    // carries the spelled-out modifier text (`Alt+N`) on non-macOS.
     const chips = document.querySelectorAll('[data-testid^="space-hotkey-hint-"]')
     expect(chips).toHaveLength(2)
     expect(chips[0]?.getAttribute('data-testid')).toBe('space-hotkey-hint-1')
-    expect(chips[0]?.textContent).toBe('Ctrl+1')
+    expect(chips[0]?.textContent).toBe('Alt+1')
     expect(chips[1]?.getAttribute('data-testid')).toBe('space-hotkey-hint-2')
-    expect(chips[1]?.textContent).toBe('Ctrl+2')
+    expect(chips[1]?.textContent).toBe('Alt+2')
   })
 
   // ── trigger replaces "Space:" prefix with an accent dot ──
@@ -393,9 +393,9 @@ describe('SpaceSwitcher', () => {
 
   // ── tooltip lists the first 5 space digit mappings ──
   // The trigger tooltip used to surface only the generic
-  // "Tip: Ctrl+1..9" hint. Once the dropdown closed, the user had to
+  // "Tip: Alt+1..9" hint. Once the dropdown closed, the user had to
   // Re-open it to see what each digit mapped to. stacks the hint
-  // above a list of `Ctrl+N name` rows for the first five spaces so the
+  // above a list of `Alt+N name` rows for the first five spaces so the
   // mappings stay discoverable on hover.
   it('lists the first 5 space digit mappings in the trigger tooltip', async () => {
     const user = userEvent.setup()
@@ -412,10 +412,10 @@ describe('SpaceSwitcher', () => {
     // Both space mappings should surface inside the tooltip — Personal
     // first (alphabetical), Work second. jsdom's UA is not macOS so
     // `isMac()` returns false and the chord text is the spelled-out
-    // modifier (`Ctrl+N`).
+    // modifier (`Alt+N`).
     await waitFor(
       async () => {
-        const personalHint = await screen.findAllByText(/Ctrl\+1\s+Personal/)
+        const personalHint = await screen.findAllByText(/Alt\+1\s+Personal/)
         expect(personalHint.length).toBeGreaterThanOrEqual(1)
         // The tooltip surface is inverted: a fixed `text-muted-foreground` is
         // unreadable on it, so the dim rows use opacity instead.
@@ -423,7 +423,7 @@ describe('SpaceSwitcher', () => {
           expect(row.classList.contains('opacity-90')).toBe(true)
           expect(row.classList.contains('text-muted-foreground')).toBe(false)
         }
-        const workHint = await screen.findAllByText(/Ctrl\+2\s+Work/)
+        const workHint = await screen.findAllByText(/Alt\+2\s+Work/)
         expect(workHint.length).toBeGreaterThanOrEqual(1)
       },
       { timeout: 3000 },

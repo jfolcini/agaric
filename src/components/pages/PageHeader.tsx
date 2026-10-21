@@ -40,6 +40,7 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { invalidateNameCaches } from '@/lib/name-change-bus'
 import { notify } from '@/lib/notify'
+import { TOGGLE_PAGE_MODE_EVENT } from '@/lib/overlay-events'
 import type { EditMode } from '@/lib/preferences'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { useNavigationStore } from '@/stores/navigation'
@@ -245,11 +246,18 @@ export function PageHeader({
         showPageInGraph()
       } else if (onEditModeChange && matchesShortcutBinding(e, 'togglePageMode')) {
         e.preventDefault()
-        onEditModeChange(editMode === 'page' ? 'blocks' : 'page')
+        toggleEditMode()
       }
     }
+    function toggleEditMode() {
+      onEditModeChange?.(editMode === 'page' ? 'blocks' : 'page')
+    }
     document.addEventListener('keydown', handlePageShortcut)
-    return () => document.removeEventListener('keydown', handlePageShortcut)
+    window.addEventListener(TOGGLE_PAGE_MODE_EVENT, toggleEditMode)
+    return () => {
+      document.removeEventListener('keydown', handlePageShortcut)
+      window.removeEventListener(TOGGLE_PAGE_MODE_EVENT, toggleEditMode)
+    }
   }, [copyPageMarkdownToClipboard, editMode, onEditModeChange])
 
   // The kebab "Delete page" item calls this. `usePageDeleteAction` opens

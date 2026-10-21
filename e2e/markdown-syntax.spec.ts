@@ -13,7 +13,7 @@ import {
  *
  * Validates that users can type raw markdown syntax (headings via TipTap
  * inputRules) and apply formatting via keyboard shortcuts (Ctrl+B, Ctrl+I,
- * Ctrl+E), then save and see the correct HTML in the static view.
+ * Ctrl+Shift+K), then save and see the correct HTML in the static view.
  *
  * Also tests round-trip persistence: type/format -> save -> re-open -> verify
  * marks are still applied.
@@ -134,7 +134,7 @@ test.describe('Heading syntax (typed # prefix) @editor @markdown', () => {
 })
 
 // ===========================================================================
-// 2. Keyboard shortcut formatting — Ctrl+B (bold), Ctrl+I (italic), Ctrl+E (code)
+// 2. Keyboard shortcut formatting — Ctrl+B (bold), Ctrl+I (italic), Ctrl+Shift+K (code)
 // ===========================================================================
 
 test.describe('Keyboard shortcut formatting @editor @markdown', () => {
@@ -194,7 +194,9 @@ test.describe('Keyboard shortcut formatting @editor @markdown', () => {
     await expect(staticBlock.locator('em')).toHaveText('world')
   })
 
-  test('Ctrl+E applies inline code, save, verify <code> in static render', async ({ page }) => {
+  test('Ctrl+Shift+K applies inline code, save, verify <code> in static render', async ({
+    page,
+  }) => {
     const editor = await focusBlock(page)
 
     await page.keyboard.press('Control+a')
@@ -204,7 +206,7 @@ test.describe('Keyboard shortcut formatting @editor @markdown', () => {
     await selectEditorRange(page, 4, 15)
 
     // Apply inline code via keyboard shortcut
-    await page.keyboard.press('Control+e')
+    await page.keyboard.press('Control+Shift+K')
 
     const codeEl = editor.locator('code')
     await expect(codeEl).toBeVisible()
@@ -272,7 +274,7 @@ test.describe('Combined marks @editor @markdown', () => {
     await selectEditorRange(page, 8, 12)
     await page.keyboard.press('Control+b')
     await selectEditorRange(page, 13, 17)
-    await page.keyboard.press('Control+e')
+    await page.keyboard.press('Control+Shift+K')
 
     // Verify both marks in editor
     await expect(editor.locator('strong')).toBeVisible()
@@ -360,7 +362,7 @@ test.describe('Round-trip persistence @editor @markdown', () => {
     await expect(reopenedEditor.locator('em')).toHaveText('italic')
   })
 
-  test('Ctrl+E inline code survives save and re-open', async ({ page }) => {
+  test('Ctrl+Shift+K inline code survives save and re-open', async ({ page }) => {
     const editor = await focusBlock(page)
 
     await page.keyboard.press('Control+a')
@@ -368,7 +370,7 @@ test.describe('Round-trip persistence @editor @markdown', () => {
 
     // Select "code" — chars 11..15 ("persistent " is 11 chars)
     await selectEditorRange(page, 11, 15)
-    await page.keyboard.press('Control+e')
+    await page.keyboard.press('Control+Shift+K')
 
     await expect(editor.locator('code')).toHaveText('code')
 

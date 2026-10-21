@@ -331,10 +331,10 @@ describe('useAppKeyboardShortcuts — journal nav (document listener)', () => {
 })
 
 describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
-  it('Ctrl+2 switches to the second alphabetical space', () => {
+  it('Alt+2 switches to the second alphabetical space', () => {
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
-    fireEvent.keyDown(window, { key: '2', ctrlKey: true })
+    fireEvent.keyDown(window, { key: '2', altKey: true })
 
     // The seeded availableSpaces order in beforeEach is the order set
     // by the test (NOT alphabetical) — the production app sorts on the
@@ -343,16 +343,16 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
     expect(useSpaceStore.getState().currentSpaceId).toBe('SPACE_WORK')
   })
 
-  it('out-of-range Ctrl+9 with three spaces is a silent no-op', () => {
+  it('out-of-range Alt+9 with three spaces is a silent no-op', () => {
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
-    fireEvent.keyDown(window, { key: '9', ctrlKey: true })
+    fireEvent.keyDown(window, { key: '9', altKey: true })
 
     // Still on the original space, no toast, no error.
     expect(useSpaceStore.getState().currentSpaceId).toBe('SPACE_PERSONAL')
   })
 
-  // #1172 — only Ctrl+2 was exercised before; parametrize all nine digit
+  // #1172 — only Alt+2 was exercised before; parametrize all nine digit
   // hotkeys against a full nine-space roster so every `switchSpace{n}` →
   // `availableSpaces[n-1]` index is pinned (the verbatim-array contract).
   describe('switchSpace1..9 — each digit indexes into availableSpaces', () => {
@@ -371,17 +371,17 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
     }
 
     it.each([1, 2, 3, 4, 5, 6, 7, 8, 9] as const)(
-      'Ctrl+%i switches to availableSpaces[%i - 1]',
+      'Alt+%i switches to availableSpaces[n - 1]',
       (n) => {
         seedNineSpaces()
         const setCurrentSpace = vi.fn()
         useSpaceStore.setState({ setCurrentSpace })
         renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
-        fireEvent.keyDown(window, { key: String(n), ctrlKey: true })
+        fireEvent.keyDown(window, { key: String(n), altKey: true })
 
         if (n === 1) {
-          // Ctrl+1 targets the already-active space → no re-fetch.
+          // Alt+1 targets the already-active space → no re-fetch.
           expect(setCurrentSpace).not.toHaveBeenCalled()
         } else {
           expect(setCurrentSpace).toHaveBeenCalledTimes(1)
@@ -390,7 +390,7 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
       },
     )
 
-    it('Ctrl+9 with only five spaces is an out-of-range silent no-op', () => {
+    it('Alt+9 with only five spaces is an out-of-range silent no-op', () => {
       const availableSpaces = Array.from({ length: 5 }, (_, i) => ({
         id: `SPACE_${i + 1}`,
         name: `Space ${i + 1}`,
@@ -405,12 +405,12 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
       })
       renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
-      fireEvent.keyDown(window, { key: '9', ctrlKey: true })
+      fireEvent.keyDown(window, { key: '9', altKey: true })
 
       expect(setCurrentSpace).not.toHaveBeenCalled()
     })
 
-    it('digit hotkey is suppressed while typing in a field (so it never steals heading/editor keys)', () => {
+    it('digit hotkey is suppressed while typing in a field', () => {
       seedNineSpaces()
       const setCurrentSpace = vi.fn()
       useSpaceStore.setState({ setCurrentSpace })
@@ -419,24 +419,15 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
       const input = document.createElement('input')
       document.body.append(input)
       try {
-        fireEvent.keyDown(input, { key: '3', ctrlKey: true })
+        fireEvent.keyDown(input, { key: '3', altKey: true })
         expect(setCurrentSpace).not.toHaveBeenCalled()
       } finally {
         input.remove()
       }
     })
 
-    // #2679 — Ctrl+1-6 used to double as the (colliding) default binding
-    // for `heading1`-`heading6`, so a block-focused Ctrl+1 silently
-    // converted the block to a heading instead of switching spaces.
-    // `heading1`-`heading6` now default to `Ctrl+Alt+1`-`Ctrl+Alt+6`
-    // (see `useBlockTreeKeyboardShortcuts.test.ts`), so there is no more
-    // collision to resolve here — the space-switch hotkey keeps its
-    // pre-existing "don't steal keystrokes while typing" behavior: it
-    // stays suppressed with a block (contenteditable) focused, and a bare
-    // Ctrl+1 in that state is now a true no-op rather than a heading
-    // mutation.
-    it('#2679 — Ctrl+1 with a block (contenteditable) focused neither switches space nor mutates the block', () => {
+    // On macOS, Option+digit in a block types a character, so the chord yields to it.
+    it('Alt+1 with a block (contenteditable) focused does not switch space', () => {
       seedNineSpaces()
       const setCurrentSpace = vi.fn()
       useSpaceStore.setState({ setCurrentSpace })
@@ -446,7 +437,7 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
       block.setAttribute('contenteditable', 'true')
       document.body.append(block)
       try {
-        fireEvent.keyDown(block, { key: '1', ctrlKey: true })
+        fireEvent.keyDown(block, { key: '1', altKey: true })
         expect(setCurrentSpace).not.toHaveBeenCalled()
       } finally {
         block.remove()
@@ -454,13 +445,13 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
     })
   })
 
-  it('Ctrl+1 on the already-active space is a no-op (avoids re-fetch)', () => {
+  it('Alt+1 on the already-active space is a no-op (avoids re-fetch)', () => {
     const setCurrentSpace = vi.fn()
     useSpaceStore.setState({ setCurrentSpace })
 
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
-    fireEvent.keyDown(window, { key: '1', ctrlKey: true })
+    fireEvent.keyDown(window, { key: '1', altKey: true })
 
     expect(setCurrentSpace).not.toHaveBeenCalled()
   })
@@ -536,6 +527,157 @@ describe('useAppKeyboardShortcuts — tab shortcuts', () => {
     fireEvent.keyDown(window, { key: 'Tab', ctrlKey: true })
 
     expect(useTabsStore.getState().activeTabIndex).toBe(0)
+  })
+
+  function seedThreeTabs(): void {
+    const tabs = ['A', 'B', 'C'].map((name, i) => ({
+      id: `t${i}`,
+      pageStack: [{ pageId: `P_${name}`, title: name }],
+      label: name,
+    }))
+    useTabsStore.setState({
+      tabs,
+      activeTabIndex: 0,
+      tabsBySpace: { SPACE_PERSONAL: tabs },
+      activeTabIndexBySpace: { SPACE_PERSONAL: 0 },
+      closedTabs: [],
+    })
+  }
+
+  it('Ctrl+2 selects the second tab and Ctrl+9 the last, even from inside the editor', () => {
+    seedThreeTabs()
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    const pm = document.createElement('div')
+    pm.className = 'ProseMirror'
+    pm.setAttribute('contenteditable', 'true')
+    document.body.append(pm)
+    try {
+      fireEvent.keyDown(pm, { key: '2', ctrlKey: true })
+      expect(useTabsStore.getState().activeTabIndex).toBe(1)
+      fireEvent.keyDown(pm, { key: '9', ctrlKey: true })
+      expect(useTabsStore.getState().activeTabIndex).toBe(2)
+    } finally {
+      pm.remove()
+    }
+  })
+
+  it('Ctrl+5 past the last tab, and Ctrl+1 onto an empty tab, change nothing', () => {
+    seedThreeTabs()
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    fireEvent.keyDown(window, { key: '5', ctrlKey: true })
+    expect(useTabsStore.getState().activeTabIndex).toBe(0)
+
+    // The fresh launch: one empty tab, on the journal.
+    useTabsStore.setState({
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
+      tabsBySpace: {},
+      activeTabIndexBySpace: {},
+    })
+    fireEvent.keyDown(window, { key: '1', ctrlKey: true })
+    expect(useNavigationStore.getState().currentView).toBe('journal')
+  })
+
+  it('Ctrl+Shift+T reopens the tab Ctrl+W closed, on its page and at its place', () => {
+    seedThreeTabs()
+    useTabsStore.getState().switchTab(1)
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    fireEvent.keyDown(window, { key: 'w', ctrlKey: true })
+    expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['A', 'C'])
+
+    fireEvent.keyDown(window, { key: 'T', ctrlKey: true, shiftKey: true })
+    const { tabs, activeTabIndex } = useTabsStore.getState()
+    expect(tabs.map((tab) => tab.label)).toEqual(['A', 'B', 'C'])
+    expect(activeTabIndex).toBe(1)
+    expect(tabs[1]?.pageStack).toEqual([{ pageId: 'P_B', title: 'B' }])
+    expect(useNavigationStore.getState().currentView).toBe('page-editor')
+  })
+})
+
+describe('useAppKeyboardShortcuts — quick switcher and command palette', () => {
+  function editorSurface(): HTMLElement {
+    const pm = document.createElement('div')
+    pm.className = 'ProseMirror'
+    pm.setAttribute('contenteditable', 'true')
+    document.body.append(pm)
+    return pm
+  }
+
+  it.each([
+    ['o', 'search'],
+    ['p', 'commands'],
+  ] as const)(
+    'Ctrl+%s inside the editor opens the palette in %s mode and keeps the key',
+    async (key, mode) => {
+      const { useCommandPaletteStore } = await import('@/stores/useCommandPaletteStore')
+      useCommandPaletteStore.getState().close()
+      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+      const pm = editorSurface()
+      try {
+        const e = new KeyboardEvent('keydown', {
+          key,
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        })
+        pm.dispatchEvent(e)
+        expect(useCommandPaletteStore.getState()).toMatchObject({ open: true, mode })
+        // Ctrl+O is the WebView's open-file, Ctrl+P its print.
+        expect(e.defaultPrevented).toBe(true)
+      } finally {
+        pm.remove()
+      }
+    },
+  )
+
+  it('Ctrl+P on the open quick switcher switches it to commands', async () => {
+    const { useCommandPaletteStore } = await import('@/stores/useCommandPaletteStore')
+    useCommandPaletteStore.getState().close()
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+    fireEvent.keyDown(window, { key: 'o', ctrlKey: true })
+    expect(useCommandPaletteStore.getState().mode).toBe('search')
+    fireEvent.keyDown(window, { key: 'p', ctrlKey: true })
+    expect(useCommandPaletteStore.getState()).toMatchObject({ open: true, mode: 'commands' })
+  })
+})
+
+describe('useAppKeyboardShortcuts — Back / Forward', () => {
+  /** Pages then Tags visited, now on Tags. */
+  function seedHistory(): void {
+    useNavigationStore.setState({ currentView: 'tags' })
+    useNavigationStore.getState().setNavHistory('SPACE_PERSONAL', {
+      entries: [
+        { kind: 'view', view: 'pages' },
+        { kind: 'view', view: 'tags' },
+      ],
+      index: 1,
+    })
+  }
+
+  it('Ctrl+Alt+Left steps back and Ctrl+Alt+Right forward', () => {
+    seedHistory()
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    fireEvent.keyDown(window, { key: 'ArrowLeft', ctrlKey: true, altKey: true })
+    expect(useNavigationStore.getState().currentView).toBe('pages')
+    fireEvent.keyDown(window, { key: 'ArrowRight', ctrlKey: true, altKey: true })
+    expect(useNavigationStore.getState().currentView).toBe('tags')
+  })
+
+  it("the mouse's back (3) and forward (4) buttons step the same way, and keep the WebView's own", () => {
+    seedHistory()
+    renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+    const back = new MouseEvent('mouseup', { button: 3, bubbles: true, cancelable: true })
+    window.dispatchEvent(back)
+    expect(useNavigationStore.getState().currentView).toBe('pages')
+    expect(back.defaultPrevented).toBe(true)
+    fireEvent.mouseUp(window, { button: 4 })
+    expect(useNavigationStore.getState().currentView).toBe('tags')
+    // The middle button is not a history button.
+    fireEvent.mouseUp(window, { button: 1 })
+    expect(useNavigationStore.getState().currentView).toBe('tags')
   })
 })
 

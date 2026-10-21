@@ -23,21 +23,12 @@ import {
  * Collisions covered:
  *   1. Ctrl+K  — link popover (in editor) vs command palette (outside)
  *   2. Ctrl+B  — bold (in editor, sidebar must NOT toggle) vs sidebar toggle
- *   3. Ctrl+1/2 vs Ctrl+Alt+1/2 — space switch vs heading level (#2679)
+ *   3. Ctrl+1 vs Ctrl+Alt+1/2 vs Alt+1 — tab, heading level, space (#2679)
  *   4. List-view keyboard selection (Trash) — arrow/Space/Ctrl+A/Escape
  *
- * #2679 — Ctrl+1..6 used to ALSO be heading1-heading6's default binding, so
- * a focused block silently turned into a heading instead of switching
- * spaces. heading1-heading6 now default to Ctrl+Alt+1..6, so section 3
- * below asserts (a) Ctrl+Alt+1/2 on a focused block still produces
- * <h1>/<h2>, and (b) the bare Ctrl+1/2 chord no longer touches the block at
- * all — it's a true no-op in the editor now, same as outside it.
- *
  * The mock (`tauri-mock/handlers.ts` `list_spaces`) seeds a single space
- * ("Personal"), so the switch-space branch of Ctrl+1/2 is a deliberate
- * no-op in every context here: index 1 is the current space and index 2 is
- * out-of-range. That branch is asserted as covered-at-unit-level
- * (useAppKeyboardShortcuts.test.ts).
+ * ("Personal"), so Alt+1 is a deliberate no-op here: index 1 is the current
+ * space. Switching is covered in `spaces-management.spec.ts`.
  */
 
 // ===========================================================================
@@ -161,17 +152,11 @@ test.describe('Ctrl+B collision routing @editor', () => {
 })
 
 // ===========================================================================
-// 3. Ctrl+Alt+1 / Ctrl+Alt+2 — heading level (focused block); Ctrl+1 / Ctrl+2
-//    — space switch, and (#2679) NO LONGER a heading in a focused block.
-//
-// The mock seeds ONE space, so the space-switch branch is a no-op here (index
-// 1 == current, index 2 out-of-range). That branch is covered at unit level
-// (useAppKeyboardShortcuts.test.ts `switchSpaceN`). Below we assert the
-// in-editor heading branch fires on Ctrl+Alt+1/2 (<h1>/<h2>), and that the
-// bare Ctrl+1/2 chord is now harmless everywhere — including a focused block.
+// 3. Ctrl+Alt+1 / Ctrl+Alt+2 — heading level (focused block); Ctrl+1 selects
+//    tab 1, Alt+1 space 1, and (#2679) neither is a heading in a focused block.
 // ===========================================================================
 
-test.describe('Ctrl+1 / Ctrl+2 vs Ctrl+Alt+1 / Ctrl+Alt+2 routing (#2679) @editor', () => {
+test.describe('Ctrl+1 / Alt+1 vs Ctrl+Alt+1 / Ctrl+Alt+2 routing (#2679) @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
@@ -237,7 +222,7 @@ test.describe('Ctrl+1 / Ctrl+2 vs Ctrl+Alt+1 / Ctrl+Alt+2 routing (#2679) @edito
     await expect(staticBlock.locator('h1')).toHaveCount(0)
   })
 
-  test('Ctrl+1 outside any editor is a harmless no-op (single seeded space)', async ({ page }) => {
+  test('Alt+1 outside any editor is a harmless no-op (single seeded space)', async ({ page }) => {
     // Move focus out of any editor and onto the Pages view.
     await page
       .locator('[data-slot="sidebar"]')
@@ -247,9 +232,7 @@ test.describe('Ctrl+1 / Ctrl+2 vs Ctrl+Alt+1 / Ctrl+Alt+2 routing (#2679) @edito
 
     // The space-switch handler short-circuits (target index 1 is the current
     // space). It must not navigate away, open a heading, or crash.
-    await page.keyboard.down('Control')
-    await page.keyboard.press('1')
-    await page.keyboard.up('Control')
+    await page.keyboard.press('Alt+1')
 
     // Still on Pages — no view change, no editor heading mutation.
     await expect(page.getByTestId('header-label')).toHaveText('Pages')

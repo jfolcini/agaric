@@ -132,7 +132,7 @@ export interface BlockKeyboardCallbacks {
   onShowHistory?: (() => void) | undefined
   /** Duplicate the current block + its subtree (#976 item 13 — default Ctrl/Cmd+Shift+J). */
   onDuplicate?: (() => void) | undefined
-  /** Open the "Turn into" type picker for the current block (#976 item 14 — default Ctrl/Cmd+Shift+T). */
+  /** Open the "Turn into" type picker for the current block (#976 item 14 — default Ctrl/Cmd+Shift+L). */
   onTurnInto?: (() => void) | undefined
   /**
    * Whether the current block is the sole remaining block on the page.
@@ -352,7 +352,7 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onDedent()
     },
   },
-  // `cycleTaskState` (default Ctrl/Cmd+Enter): toggle task state
+  // `cycleTaskState` (default Ctrl/Cmd+Enter or Ctrl/Cmd+L): toggle task state
   {
     match: (e) => matchesShortcutBinding(e, 'cycleTaskState'),
     handle: (e, cb) => {
@@ -395,7 +395,7 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onDuplicate?.()
     },
   },
-  // #976 (item 14) — configurable shortcut (default Ctrl/Cmd+Shift+T): open the
+  // #976 (item 14) — configurable shortcut (default Ctrl/Cmd+Shift+L): open the
   // "Turn into" type picker for the focused block (surfaces the same conversion
   // family as the context-menu submenu and the `/turn` slash command).
   {

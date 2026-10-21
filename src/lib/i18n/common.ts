@@ -524,7 +524,7 @@ export const common: Record<string, string> = {
   'help.updateNoneFoundToast': "You're on the latest version",
   'help.updateInstallFailedToast': 'Update install failed',
   'help.updateMobileHint': 'Updates are managed by the Play Store on Android.',
-  'spaceSwitcher.shortcutHint': 'Tip: Ctrl+1–9 to switch spaces',
+  'spaceSwitcher.shortcutHint': 'Tip: Alt+1–9 to switch spaces',
   'spaceSwitcher.createAnotherHint': 'Create another space\u2026',
 
   // \u2014 in-page find toolbar.

@@ -132,7 +132,7 @@ There is one subscriber pattern underneath — adding a fifth per-space slice me
 - **SpaceSwitcher** — Radix Select dropdown in `SidebarHeader`. Shows current space + alphabetical list + `Manage spaces…` entry. On a collapsed sidebar, replaced by **SpaceAccentBadge** (32 px coloured circle; click cycles to next space).
 - **SpaceTopStripe** — 3 px accent bar across the top of the window.
 - **SpacesTab** (Settings › Spaces) — four sub-components (`SpaceRowEditor`, `SpaceAccentPicker`, `SpaceDeleteButton`, `SpaceNameEditor`) under `settings/SpacesTab/`.
-- **Digit hotkeys** — `Ctrl+1`–`Ctrl+9` (or `⌘1`–`⌘9` on macOS) switch to the first nine spaces alphabetically. The hint chip on the first nine dropdown rows shows the binding.
+- **Digit hotkeys** — `Alt+1`–`Alt+9` (`⌥1`–`⌥9` on macOS) switch to the first nine spaces alphabetically. The hint chip on the first nine dropdown rows shows the binding.
 - **OS window title prefix** — `<SpaceName> · Agaric` via Tauri's window-title API. No-op on browser-dev / vitest.
 
 ### What's per-space (full list)

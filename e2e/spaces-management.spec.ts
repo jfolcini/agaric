@@ -6,7 +6,7 @@
  * Before this spec the ONLY e2e coverage for spaces was
  * `spaces-coverage.spec.ts` (page creation routes through
  * `create_page_in_space`) and a `keyboard-collisions.spec.ts` test that
- * documents Ctrl+1 as a deliberate no-op because the mock seeded exactly
+ * documents Alt+1 as a deliberate no-op because the mock seeded exactly
  * ONE space (`list_spaces` returned a hardcoded `[SPACE_PERSONAL]`
  * array). No spec ever created or switched to a second space, so a
  * regression in the switcher, the space-scoping filter, or the
@@ -68,7 +68,7 @@ async function selectSwitcherOption(
   name: string,
 ): Promise<void> {
   await page.getByRole('combobox', { name: SWITCH_SPACE, exact: true }).click()
-  // The trigger wraps a hover Tooltip ("Tip: Ctrl+1-9 to switch spaces",
+  // The trigger wraps a hover Tooltip ("Tip: Alt+1-9 to switch spaces",
   // `delayDuration = 0` — src/components/ui/tooltip.tsx). Clicking the
   // trigger also hovers it, and its Radix popper occasionally renders on top
   // of the now-open SelectContent option list, intercepting the click below
@@ -239,12 +239,12 @@ test.describe('Spaces — create, switch, content isolation @spaces', () => {
     ).toHaveCount(1)
   })
 
-  test('Ctrl+2 switches to the second space by alphabetical index', async ({ page }) => {
+  test('Alt+2 switches to the second space by alphabetical index', async ({ page }) => {
     await createSpaceInSettings(page, 'Work')
 
-    // "Personal" < "Work" alphabetically, so Personal is Ctrl+1 (current
-    // space, no-op — see keyboard-collisions.spec.ts) and Work is Ctrl+2.
-    await page.keyboard.press('Control+2')
+    // "Personal" < "Work" alphabetically, so Personal is Alt+1 (current
+    // space, no-op — see keyboard-collisions.spec.ts) and Work is Alt+2.
+    await page.keyboard.press('Alt+2')
 
     await expect(page.getByRole('combobox', { name: SWITCH_SPACE, exact: true })).toContainText(
       'Work',

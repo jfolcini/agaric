@@ -27,6 +27,7 @@ import type { AppError } from '@/lib/app-error'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { type NameChange, subscribeToNameChanges } from '@/lib/name-change-bus'
+import { TOGGLE_PAGE_MODE_EVENT } from '@/lib/overlay-events'
 import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { propertyKeysQueryKey } from '@/lib/property-keys-cache'
 import { queryClient } from '@/lib/query-client'
@@ -849,6 +850,37 @@ describe('PageHeader editing-mode switch (#5691)', () => {
     fireEvent.keyDown(document, { key: 'M', ctrlKey: true, shiftKey: true })
 
     expect(onEditModeChange.mock.calls).toEqual([['page'], ['blocks']])
+  })
+
+  it('Ctrl+E switches the mode too, from inside the editor, and the palette’s command does', () => {
+    const onEditModeChange = vi.fn()
+    renderPageHeader(
+      <PageHeader
+        pageId="PAGE_1"
+        title="My Page"
+        editMode="blocks"
+        onEditModeChange={onEditModeChange}
+      />,
+    )
+    const pm = document.createElement('div')
+    pm.className = 'ProseMirror'
+    pm.setAttribute('contenteditable', 'true')
+    document.body.append(pm)
+    try {
+      fireEvent.keyDown(pm, { key: 'e', ctrlKey: true })
+    } finally {
+      pm.remove()
+    }
+    window.dispatchEvent(new CustomEvent(TOGGLE_PAGE_MODE_EVENT))
+
+    expect(onEditModeChange.mock.calls).toEqual([['page'], ['page']])
+  })
+
+  it('Ctrl+E does nothing where the switch is not offered (touch, Edit as Markdown)', () => {
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+    const e = new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, cancelable: true })
+    document.dispatchEvent(e)
+    expect(e.defaultPrevented).toBe(false)
   })
 
   it('passes a blocked page’s reason to the switch', () => {

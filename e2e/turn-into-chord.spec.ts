@@ -1,5 +1,5 @@
 /**
- * Turn into by the Ctrl+Shift+T chord (`turnIntoBlock`, #5733): the chord opens
+ * Turn into by the Ctrl+Shift+L chord (`turnIntoBlock`, #5733): the chord opens
  * the Turn into picker on a focused block that already has text, with the caret
  * after a non-space character, and leaves that text exactly as it was whether a
  * type is picked or the picker is dismissed. The mock can show both failures (no
@@ -20,7 +20,7 @@ import {
 const GS_3 = '0000000000000000000BLOCK03'
 const GS_3_TEXT = 'Create new blocks by pressing Enter at the end of any block.'
 
-test.describe('Turn into by the Ctrl+Shift+T chord @editor', () => {
+test.describe('Turn into by the Ctrl+Shift+L chord @editor', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
     await openPage(page, 'Getting Started')
@@ -31,7 +31,7 @@ test.describe('Turn into by the Ctrl+Shift+T chord @editor', () => {
     await expect(editor).toBeFocused()
     await expect(editor).toHaveText(GS_3_TEXT)
     await selectEditorRange(page, GS_3_TEXT.length, GS_3_TEXT.length)
-    await page.keyboard.press('Control+Shift+T')
+    await page.keyboard.press('Control+Shift+L')
     const list = activeSuggestionList(page)
     await expect(list).toBeVisible()
     return { editor, list }

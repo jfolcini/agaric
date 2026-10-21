@@ -998,8 +998,8 @@ describe('SuggestionList', () => {
         />,
       )
       const chip = screen.getByTestId('suggestion-shortcut-code-mark')
-      // inlineCode = Ctrl + E; the stray `keys: Ctrl + Z` must be ignored.
-      expect(chip).toHaveTextContent('E')
+      // inlineCode = Ctrl + Shift + K; the stray `keys: Ctrl + Z` must be ignored.
+      expect(chip).toHaveTextContent('K')
       expect(chip).not.toHaveTextContent('Z')
     })
 

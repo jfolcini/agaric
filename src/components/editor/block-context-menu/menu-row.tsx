@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils'
  * #999/#1002/#1003 — the trailing slot of an interactive row holds a keyboard
  * shortcut hint (suppressed on coarse pointers, which have no keyboard) and/or
  * a disclosure chevron (the "Turn into" toggle). #976 (item 14) — a disclosure
- * toggle that ALSO has a binding (Turn into → Ctrl+Shift+T) shows the hint
+ * toggle that ALSO has a binding (Turn into → Ctrl+Shift+L) shows the hint
  * before the chevron, so the keyboard shortcut stays discoverable.
  */
 export function renderTrailing(item: MenuItem): React.ReactNode {

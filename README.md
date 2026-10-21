@@ -51,7 +51,7 @@ Partition your notes into independent contexts — **Personal**, **Work**, custo
 
 - **Per-space journal** — each space has its own daily-note timeline keyed by `(date, space)`
 - **Per-space tabs and recents** — switching space swaps the open-tab strip and recent-pages MRU
-- **Quick switching** — `Ctrl+1` … `Ctrl+9` (or `⌘+1` … `⌘+9`) jumps to the Nth space alphabetically
+- **Quick switching** — `Alt+1` … `Alt+9` (or `⌥+1` … `⌥+9`) jumps to the Nth space alphabetically
 - **Visual identity** — accent colour, status-bar chip, window-title prefix per space
 - **Cross-space links** — `[[ULID]]` to a foreign space renders as a broken-link chip (no auto-navigation, no leakage)
 

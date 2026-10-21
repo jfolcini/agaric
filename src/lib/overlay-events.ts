@@ -64,3 +64,10 @@ export function openNewPageDialog(initialTitle = ''): void {
     new CustomEvent<string>(OPEN_NEW_PAGE_DIALOG_EVENT, { detail: initialTitle }),
   )
 }
+
+/**
+ * Global "switch the page on screen between blocks and page mode" DOM event:
+ * the command palette's entry for `togglePageMode`. The open page's
+ * `PageHeader` listens where its Blocks | Page switch is offered.
+ */
+export const TOGGLE_PAGE_MODE_EVENT = 'agaric:togglePageMode'

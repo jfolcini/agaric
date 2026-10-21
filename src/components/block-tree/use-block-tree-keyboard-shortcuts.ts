@@ -9,7 +9,7 @@
  * - Zoom-out Escape (when zoomed in, nothing else claims Escape)
  * - Task cycling Ctrl+Enter
  * - Date picker Ctrl+Shift+D
- * - Heading shortcut Ctrl+1-6
+ * - Heading shortcut Ctrl+Alt+1-6
  */
 
 import type { RefObject } from 'react'

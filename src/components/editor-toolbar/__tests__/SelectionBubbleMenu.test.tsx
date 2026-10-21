@@ -441,7 +441,7 @@ describe('SelectionBubbleMenu', () => {
       )
       expect(screen.getByRole('button', { name: t('toolbar.code') })).toHaveAttribute(
         'aria-keyshortcuts',
-        'Control+E',
+        'Control+Shift+K',
       )
       expect(screen.getByRole('button', { name: t('toolbar.strikethrough') })).toHaveAttribute(
         'aria-keyshortcuts',
@@ -836,7 +836,7 @@ describe('SelectionBubbleMenu', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
       const codeTooltip = tooltipTexts().find((text) => text.startsWith('Inline code ('))
       expect(codeTooltip).toBeDefined()
-      expect(codeTooltip).toMatch(/Ctrl\s*\+\s*E\)/i)
+      expect(codeTooltip).toMatch(/Ctrl\s*\+\s*Shift\s*\+\s*K\)/i)
     })
 
     it("External link button's tooltip appends the linkPopover keyboard binding", () => {

@@ -34,7 +34,7 @@ describe('EditModeSwitch', () => {
     await user.hover(radio(t('pageMode.page')))
 
     expect(await screen.findByRole('tooltip')).toHaveTextContent(
-      `${t('pageMode.pageHint')} (Ctrl + Shift + M)`,
+      `${t('pageMode.pageHint')} (Ctrl + E / Ctrl + Shift + M)`,
     )
   })
 

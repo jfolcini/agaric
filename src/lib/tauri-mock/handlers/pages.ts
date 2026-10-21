@@ -1255,7 +1255,7 @@ export const pagesHandlers = {
   // command.
   //
   // `ORDER BY COALESCE(content,'') ASC, id ASC` (`list_spaces_inner`), and
-  // `SpaceSwitcher`'s `Ctrl+1`..`Ctrl+9` hotkeys index into this order, so a
+  // `SpaceSwitcher`'s `Alt+1`..`Alt+9` hotkeys index into this order, so a
   // wrong collation here picks a different space in dev and E2E than in the app.
   list_spaces: () => {
     const rows = [...blocks.values()]

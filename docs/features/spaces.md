@@ -6,7 +6,7 @@ A **space** is a user-defined context that groups pages — typical setups are *
 ## What you can do
 
 - **Switch space** — pick from the dropdown at the top of the sidebar (the `SpaceSwitcher`).
-- **Switch by index** — `Ctrl+1` through `Ctrl+9` (or `⌘1`–`⌘9` on macOS) jump to the first nine spaces alphabetically. The shortcut hint appears on each dropdown row.
+- **Switch by index** — `Alt+1` through `Alt+9` (`⌥1`–`⌥9` on macOS) jump to the first nine spaces alphabetically. The shortcut hint appears on each dropdown row.
 - **Cycle the active space** — on a collapsed sidebar, click the **SpaceAccentBadge** (the coloured circle replacing the logo) to cycle to the next space.
 - **Manage spaces** — in **Settings › Spaces**, also reached from *Manage spaces…* (last item in the SpaceSwitcher dropdown).
 - **Create a new space** — use the create form in Settings › Spaces. Pick a name and an accent colour.
@@ -24,7 +24,7 @@ A **space** is a user-defined context that groups pages — typical setups are *
 - **SpaceAccentBadge** (collapsed sidebar): coloured circle with the space's first letter on its accent fill.
 - **2 px top stripe** in the space's accent colour across the top of the window.
 - **OS window title**: `<Page or View> · <SpaceName> · Agaric`.
-- **Hotkey hints** (e.g. `Ctrl+1` / `⌘1`) on the first nine rows of the SpaceSwitcher dropdown.
+- **Hotkey hints** (e.g. `Alt+1` / `⌥1`) on the first nine rows of the SpaceSwitcher dropdown.
 
 ## Scoping rules
 
@@ -61,7 +61,7 @@ If you opened Agaric before spaces existed, your existing pages migrated automat
 
 ## Pitfalls to know
 
-- **The active space dictates `Ctrl+1`…`Ctrl+9` mapping.** The first space alphabetically is `Ctrl+1`, etc. Adding or renaming a space can change the hotkey order.
+- **The active space dictates `Alt+1`…`Alt+9` mapping.** The first space alphabetically is `Alt+1`, etc. Adding or renaming a space can change the hotkey order.
 - **Deletion is guarded.** Even if the UI shows the *Delete* button enabled in a race, the backend rejects deleting a non-empty space. Move the pages out first.
 - **`Move to space` is the only safe cross-space move.** Direct property edits on `space` can leave broken links — use the kebab menu action.
 - **Templates apply at journal-page creation time only.** Editing the journal template page later doesn't retroactively fill past daily pages.

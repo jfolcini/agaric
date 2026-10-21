@@ -11,15 +11,17 @@
  * - **journal** — `prevDayWeekMonth`, `nextDayWeekMonth`, `goToToday`.
  *   Listens at `document` (everything else listens at `window`); only
  *   fires while `currentView === 'journal'`.
- * - **global** — `focusSearch`, `createNewPage`.
+ * - **global** — `focusSearch`, `createNewPage`, the palette chords, Back / Forward.
  * Routed through `matchesShortcutBinding` so Settings rebinding
  *   works for every entry.
  * - **space** — `switchSpace1` … `switchSpace9` digit hotkeys.
  *   Out-of-range indices are deliberate silent no-ops.
+ * - **mouse** — the mouse's back and forward buttons step Back / Forward.
  * - **close-overlays** — the rebindable `closeOverlays` shortcut
  *   (Escape by default). Dispatches `CLOSE_ALL_OVERLAYS_EVENT` on `window`
  *   so any non-Radix overlay can listen and close itself.
- * - **tab** — `openInNewTab`, `closeActiveTab`, `previousTab`, `nextTab`.
+ * - **tab** — `openInNewTab`, `closeActiveTab`, `reopenClosedTab`, `previousTab`, `nextTab`,
+ *   `selectTab1` … `selectTab8`, `selectLastTab`.
  *   Mobile-gated because the TabBar is hidden on touch devices.
  *
  * **Why 5 separate effects rather than one consolidated listener.**
@@ -44,10 +46,11 @@ import { notify } from '@/lib/notify'
 import { CLOSE_ALL_OVERLAYS_EVENT, openNewPageDialog } from '@/lib/overlay-events'
 import { type JournalMode, useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
+import { navigateBack, navigateForward } from '@/stores/navigation-history'
 import { addRecentCommand, getRecentCommands } from '@/stores/recent-commands'
 import { useSpaceStore } from '@/stores/space'
 import { selectActiveTabIndexForSpace, selectTabsForSpace, useTabsStore } from '@/stores/tabs'
-import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
+import { type PaletteMode, useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
 // ---------------------------------------------------------------------------
@@ -170,6 +173,10 @@ const TAB_SHORTCUTS: ReadonlyArray<TabShortcut> = [
     },
   },
   {
+    binding: 'reopenClosedTab',
+    run: (state) => state.reopenClosedTab(),
+  },
+  {
     binding: 'previousTab',
     run: (state) => {
       const spaceId = useSpaceStore.getState().currentSpaceId
@@ -192,6 +199,26 @@ const TAB_SHORTCUTS: ReadonlyArray<TabShortcut> = [
     },
   },
 ]
+
+/** The tab `selectTab1` … `selectTab8` or `selectLastTab` names, or `null` for another chord. */
+function selectedTabIndex(e: KeyboardEvent, tabCount: number): number | null {
+  if (matchesShortcutBinding(e, 'selectLastTab')) return tabCount - 1
+  for (let n = 1; n <= 8; n++) {
+    if (matchesShortcutBinding(e, `selectTab${n}`)) return n - 1
+  }
+  return null
+}
+
+/** `selectTab1` … `selectTab8` / `selectLastTab` (Ctrl+1 … Ctrl+9): switch to that tab. */
+function trySelectTab(e: KeyboardEvent, state: ReturnType<typeof useTabsStore.getState>): boolean {
+  const tabs = selectTabsForSpace(state, useSpaceStore.getState().currentSpaceId)
+  const index = selectedTabIndex(e, tabs.length)
+  if (index === null) return false
+  e.preventDefault()
+  // An empty tab has nothing to show; switching to it would open a blank editor.
+  if ((tabs[index]?.pageStack.length ?? 0) > 0) state.switchTab(index)
+  return true
+}
 
 /**
  * Open the in-page find toolbar from a global keyboard
@@ -299,6 +326,43 @@ function tryPaletteOpen(e: KeyboardEvent): boolean {
   return true
 }
 
+/** Open the palette in `mode`, or switch the open palette to it. */
+function openPaletteIn(mode: PaletteMode): void {
+  const palette = useCommandPaletteStore.getState()
+  if (!palette.open) palette.open$()
+  useCommandPaletteStore.getState().setMode(mode)
+}
+
+/**
+ * `quickSwitcher` (Ctrl+O) opens the palette's page search, `commandPalette`
+ * (Ctrl+P) its commands. Unlike `paletteOpen` they act inside the editor too,
+ * and `Ctrl+P` must not reach the WebView's print.
+ */
+function tryPaletteMode(e: KeyboardEvent): boolean {
+  let mode: PaletteMode
+  if (matchesShortcutBinding(e, 'quickSwitcher')) mode = 'search'
+  else if (matchesShortcutBinding(e, 'commandPalette')) mode = 'commands'
+  else return false
+  e.preventDefault()
+  openPaletteIn(mode)
+  return true
+}
+
+/** `navigateBack` / `navigateForward` (Ctrl+Alt+←/→) — the header's Back / Forward. */
+function tryHistoryNav(e: KeyboardEvent): boolean {
+  let step: () => void
+  if (matchesShortcutBinding(e, 'navigateBack')) step = navigateBack
+  else if (matchesShortcutBinding(e, 'navigateForward')) step = navigateForward
+  else return false
+  e.preventDefault()
+  step()
+  return true
+}
+
+/** `MouseEvent.button` of the mouse's back and forward buttons. */
+const MOUSE_BACK = 3
+const MOUSE_FORWARD = 4
+
 /** `createNewPage` — open the New page dialog (#5637). */
 function tryCreateNewPage(e: KeyboardEvent): boolean {
   if (!matchesShortcutBinding(e, 'createNewPage')) return false
@@ -358,8 +422,8 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
     return () => document.removeEventListener('keydown', handleJournalNav)
   }, [t])
 
-  // ── Global shortcuts (findInPage, focusSearch, runLastCommand,
-  //    paletteOpen, interface zoom, createNewPage) ──
+  // ── Global shortcuts (findInPage, focusSearch, runLastCommand, paletteOpen,
+  //    quickSwitcher, commandPalette, Back / Forward, interface zoom, createNewPage) ──
   // All go through matchesShortcutBinding so rebinding in Settings takes
   // Effect. Each shortcut's action lives in a module-level `try*`
   // helper that returns true once it consumes the event, keeping this
@@ -373,6 +437,8 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
       if (tryFocusSearch(e)) return
       if (tryRunLastCommand(e, t)) return
       if (tryPaletteOpen(e)) return
+      if (tryPaletteMode(e)) return
+      if (tryHistoryNav(e)) return
       if (tryInterfaceZoom(e)) return
       tryCreateNewPage(e)
     }
@@ -380,18 +446,10 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)
   }, [t])
 
-  // ── digit hotkeys for instant space switching ──────────
-  // `Ctrl+1` … `Ctrl+9` (`Cmd+1` … `Cmd+9` on macOS — `matchesShortcutBinding`
-  // already accepts `metaKey` in place of `ctrlKey`) jump directly to the
-  // Nth entry of `availableSpaces`, which the backend serves alphabetical
-  // by name. Out-of-range digits are silent no-ops, matching every other
-  // "digit-per-tab" shortcut users already know from Chrome / Slack /
-  // iTerm. The handler short-circuits when typing in an INPUT, TEXTAREA,
-  // or `[contenteditable]` so it never steals keystrokes from the editor.
-  // #2679 — `heading1`-`heading6` (`useBlockTreeKeyboardShortcuts`) used to
-  // share this exact `Ctrl + 1`-`Ctrl + 6` glyph, silently converting the
-  // focused block to a heading instead of switching spaces; they now
-  // default to `Ctrl + Alt + 1`-`Ctrl + Alt + 6` so the chords never race.
+  // ── digit hotkeys for instant space switching (`Alt+1` … `Alt+9`) ──
+  // Jump to the Nth entry of `availableSpaces`, which the backend serves
+  // alphabetical by name. Out-of-range digits are silent no-ops. Skipped while
+  // typing, where macOS's Option+digit types a character.
   useEffect(() => {
     function handleSpaceShortcuts(e: KeyboardEvent) {
       // Ignore auto-repeat so holding the chord doesn't
@@ -403,7 +461,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
         e.preventDefault()
         // Phase 1 — `availableSpaces` is server-truth alphabetical
         // by name. Out-of-range index is a deliberate silent no-op
-        // (`Ctrl+5` with three spaces does nothing, no toast, no error).
+        // (`Alt+5` with three spaces does nothing, no toast, no error).
         const { availableSpaces, currentSpaceId, setCurrentSpace } = useSpaceStore.getState()
         const target = availableSpaces[n - 1]
         if (target == null) return
@@ -414,6 +472,20 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
     }
     window.addEventListener('keydown', handleSpaceShortcuts)
     return () => window.removeEventListener('keydown', handleSpaceShortcuts)
+  }, [])
+
+  // ── The mouse's back / forward buttons step Back / Forward ──
+  // On mouseup, where preventing the default also keeps the WebView from
+  // navigating its own history.
+  useEffect(() => {
+    function handleMouseHistoryNav(e: MouseEvent) {
+      if (e.button !== MOUSE_BACK && e.button !== MOUSE_FORWARD) return
+      e.preventDefault()
+      if (e.button === MOUSE_BACK) navigateBack()
+      else navigateForward()
+    }
+    window.addEventListener('mouseup', handleMouseHistoryNav)
+    return () => window.removeEventListener('mouseup', handleMouseHistoryNav)
   }, [])
 
   // ── Global "close all overlays" shortcut (Escape by default) ────────
@@ -439,7 +511,8 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
     return () => window.removeEventListener('keydown', handleCloseOverlays)
   }, [t])
 
-  // ── Tab shortcuts (openInNewTab, closeActiveTab, nextTab, previousTab) ──
+  // ── Tab shortcuts (openInNewTab, closeActiveTab, reopenClosedTab, nextTab,
+  //    previousTab, selectTab1 … selectTab8, selectLastTab) ──
   // Routed through matchesShortcutBinding so users can rebind.
   // Dispatches through TAB_SHORTCUTS so the handler stays well under the
   // Cognitive-complexity budget.
@@ -455,6 +528,8 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
       if (e.repeat) return
       if (isMobile) return
       const state = useTabsStore.getState()
+
+      if (trySelectTab(e, state)) return
 
       const shortcut = TAB_SHORTCUTS.find((s) => matchesShortcutBinding(e, s.binding))
       if (!shortcut) return
