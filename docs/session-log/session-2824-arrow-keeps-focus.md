@@ -1,0 +1,10 @@
+# Session 2824 — an arrow into the next block keeps the keyboard focus
+
+In block mode, an arrow key that left a block (ArrowRight or ArrowDown at its end, ArrowLeft or ArrowUp at its start) made the next block's editor live but left the focus on `<body>`, so the next key typed went nowhere. It happened with the Markdown reveal on and off, in seeded and new pages and in the journal.
+
+- **Cause:** `mount()` in `use-roving-editor.ts` calls TipTap's `focus()`, which does nothing when the view already has focus and no placement is given. The arrow handlers mount with no placement while the editor is focused. The commit that shows the new block then moves the editor's DOM into its row, and moving a focused element drops the focus. Backspace passes a placement, so TipTap refocused it a frame later; Enter's mount runs from `EditableBlock`'s effect after the move, when the view no longer has focus.
+- **Fix:** `mount()` notes whether the view had focus and, if so, refocuses it on the next frame unless the editor was destroyed by then. That covers the click path too, so the `blur()` that #5722 added to `EditableBlock.handleFocus` for the same drop, with its comment, is gone.
+
+`e2e/block-editing-text.spec.ts` covers all four directions: the target block's editor has focus, a typed letter lands in it, and the text survives navigating away and back. Disabling the refocus turns all four red at the focus assertion, and the click-path case in `editor-lifecycle.spec.ts` too. A same-block remount while its row moves (indent, outdent, move up or down) kept focus with and without the fix. The review listed every `mount` caller and found no path that mounts and opens an overlay in the same frame, so the refocus cannot take the focus from a menu or dialog.
+
+Suites run: vitest on the roving editor, `EditableBlock` and the other files that use the real roving editor, typecheck, lint, and every Playwright spec in `e2e/` that presses ArrowUp or ArrowDown, with `editor-lifecycle` and the journal add-block specs.

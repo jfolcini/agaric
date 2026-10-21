@@ -421,9 +421,6 @@ function EditableBlockInner({
           rootParentId,
           pageStoreApiRef.current,
         )
-        // keepEditorUntilClick left the editor focused, and mount() refocuses
-        // only an unfocused editor, so moving it here would drop focus to body.
-        ;(document.activeElement as HTMLElement | null)?.blur()
       }
       // Mount into the new block
       logger.debug('editor', 'focus', { blockId: id })
