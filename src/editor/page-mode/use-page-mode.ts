@@ -4,15 +4,23 @@
  * says (`PREFERENCES.editMode`); the switch changes the mode of the page on
  * screen only. Desktop only. A page over page mode's cap (`page-mode-fit.ts`)
  * stays in block mode, the switch saying why, as the page store's rows show
- * it. No TipTap here: `PageEditor` imports this statically, and the editor
- * loads through `PageModeSlot`'s dynamic import.
+ * it. A switch keeps the caret and the place the page is scrolled to
+ * (`page-mode-switch.ts`). No TipTap here: `PageEditor` imports this
+ * statically, and the editor loads through `PageModeSlot`'s dynamic import.
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import { getActiveEditor } from '@/editor/active-editor'
 import { blockerIn, blockerMessage, type PageModeBlocker } from '@/editor/page-mode/page-mode-fit'
+import {
+  type BlockCaret,
+  type PageModeOpening,
+  restoreScrollPlace,
+  type ScrollPlace,
+  scrollPlace,
+} from '@/editor/page-mode/page-mode-switch'
 import type { PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { t } from '@/lib/i18n'
@@ -31,8 +39,8 @@ export interface PageModeState {
   /** Why page mode is not offered for this page, once known. */
   blocked: string | null
   editorRef: React.RefObject<PageModeEditorHandle | null>
-  /** The block page mode opens with the cursor in: the one block mode was editing. */
-  cursorBlockId: string | null
+  /** Where page mode opens: on block mode's caret, and scrolled as block mode was. */
+  opening: PageModeOpening | null
   onBlocked: (blocker: PageModeBlocker) => void
   changeMode: (mode: EditMode) => void
   /** Run `then` once page mode's text is saved: at once outside it, never if the save failed. */
@@ -40,6 +48,25 @@ export interface PageModeState {
 }
 
 type ForPage<T> = { pageId: string } & T
+
+/** Block mode's caret in block `id`, which it is editing; none when its editor is elsewhere. */
+function blockModeCaret(id: string): BlockCaret | null {
+  const editor = getActiveEditor()
+  const host = editor?.view.dom.closest('[data-block-id]')?.getAttribute('data-block-id')
+  return editor == null || host !== id ? null : { blockId: id, pos: editor.state.selection.head }
+}
+
+/** Once block mode's editor takes the focus in `caret`'s block, put its caret there. */
+function placeOnFocus(caret: BlockCaret): void {
+  const onFocusIn = (event: FocusEvent): void => {
+    document.removeEventListener('focusin', onFocusIn)
+    const editor = getActiveEditor()
+    if (editor?.view.dom === event.target && blockModeCaret(caret.blockId) !== null) {
+      editor.commands.setTextSelection(caret.pos)
+    }
+  }
+  document.addEventListener('focusin', onFocusIn)
+}
 
 export function usePageMode(pageId: string): PageModeState {
   const available = !useIsTouch()
@@ -49,16 +76,23 @@ export function usePageMode(pageId: string): PageModeState {
   const blockCount = usePageBlockStore((s) => s.blocks.length)
   const total = usePageBlockStore((s) => s.truncatedTotal)
   const blocker = useMemo(() => blockerIn(total ?? blockCount), [blockCount, total])
-  const [cursor, setCursor] = useState<ForPage<{ blockId: string }> | null>(null)
+  const [opening, setOpening] = useState<ForPage<PageModeOpening> | null>(null)
+  // Where block mode is to show the page scrolled to, and whether its tree has read the page yet.
+  const placeInBlocks = useRef<{ place: ScrollPlace; read: boolean } | null>(null)
+  const loading = usePageBlockStore((s) => s.loading)
   const editorRef = useRef<PageModeEditorHandle>(null)
   const switching = useRef(false)
   const pageStore = usePageBlockStoreApi()
   const setFocused = useBlockStore((s) => s.setFocused)
 
-  /** Open page mode on the block block mode was editing, which commits as it loses focus. */
+  /** Open page mode on block mode's caret and place, the block committing as it loses focus. */
   const takeCursor = useCallback(() => {
     const focused = useBlockStore.getState().focusedBlockId
-    setCursor(focused === null ? null : { pageId, blockId: focused })
+    setOpening({
+      pageId,
+      cursor: focused === null ? null : (blockModeCaret(focused) ?? { blockId: focused, pos: 0 }),
+      place: scrollPlace(),
+    })
     // The shortcut leaves the block focused: its blur commits it to the store page mode opens on.
     getActiveEditor()?.view.dom.blur()
     setFocused(null)
@@ -118,7 +152,8 @@ export function usePageMode(pageId: string): PageModeState {
       }
       if (switching.current) return
       switching.current = true
-      const at = editorRef.current?.cursorBlockId() ?? null
+      const at = editorRef.current?.cursor() ?? null
+      const place = scrollPlace()
       // Page mode's text first, then the store the block tree reads, fresh after it.
       void saved().then((ok) => {
         if (!ok) {
@@ -130,21 +165,37 @@ export function usePageMode(pageId: string): PageModeState {
           .load()
           .finally(() => {
             switching.current = false
+            if (place !== null) placeInBlocks.current = { place, read: false }
             setChosen({ pageId, mode: 'blocks' })
-            if (at !== null) setFocused(at)
+            if (at === null) return
+            placeOnFocus(at)
+            setFocused(at.blockId)
           })
       })
     },
     [saved, blocker, pageId, pageStore, setFocused, takeCursor],
   )
 
+  const wanted = available && mode === 'page' && blocker === null
+  // Block mode's tree reads the page as it mounts, a skeleton showing meanwhile: the place goes
+  // back once it shows the blocks it read.
+  useLayoutEffect(() => {
+    const pending = placeInBlocks.current
+    if (wanted || pending === null) return
+    if (loading) pending.read = true
+    else if (pending.read) {
+      placeInBlocks.current = null
+      restoreScrollPlace(pending.place)
+    }
+  }, [wanted, loading])
+
   return {
     available,
-    wanted: available && mode === 'page' && blocker === null,
+    wanted,
     mode: available && blocker === null ? mode : 'blocks',
     blocked: blocker === null ? null : blockerMessage(blocker),
     editorRef,
-    cursorBlockId: cursor?.pageId === pageId ? cursor.blockId : null,
+    opening: opening?.pageId === pageId ? opening : null,
     onBlocked,
     changeMode,
     afterFlush,

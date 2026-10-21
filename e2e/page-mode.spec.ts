@@ -25,6 +25,7 @@ import {
   ipc,
   readClipboard,
   replaceEditorText,
+  selectEditorRange,
   test,
   waitForBoot,
 } from './helpers'
@@ -646,7 +647,7 @@ test.describe('a new page in page mode (#5691) @editor @pages', () => {
     await expect
       .poll(async () => (await backend(page, pageId)).map((b) => b.text))
       .toEqual(['First line?'])
-    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
     await page.keyboard.press('Escape')
     await expect(page.locator(EDITOR)).not.toBeFocused()
     await openViaPalette(page, 'Getting Started')
@@ -736,7 +737,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     const tagId = tags.find((tag) => tag.name === 'newtag')?.tag_id
     expect((await backend(page, pageId))[0]?.text).toBe(`one #[${tagId}]`)
 
-    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
     await page.keyboard.press('Escape')
     await expect(page.locator(EDITOR)).not.toBeFocused()
     await openViaPalette(page, 'Getting Started')
@@ -753,9 +754,8 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     expect(violations).toEqual([])
   })
 
-  // The press on the switch blurs the block being edited, which stays in edit
-  // mode until the release (#5807): its text is saved, and page mode opens with
-  // the cursor in it, which nothing the press held back takes away.
+  // A press on the switch keeps the focus in the block being edited: its text is
+  // saved, and page mode opens with the cursor where it was in that block.
   test('Page pressed while a block is edited opens page mode with the cursor in that block', async ({
     page,
   }) => {
@@ -771,14 +771,14 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
 
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(2)
     await expect(page.locator(EDITOR)).toBeFocused()
-    await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 0 })
-    await page.keyboard.type('x ')
-    await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('x two edited')
+    await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 'two edited'.length })
+    await page.keyboard.type(' x')
+    await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('two edited x')
   })
 
-  // The shortcut, unlike a press on the switch, leaves the block focused: within the idle
-  // commit its text reaches the backend, but not the page store page mode opens on, unless
-  // the switch commits it there first.
+  // The shortcut leaves the block focused: within the idle commit its text reaches the
+  // backend, but not the page store page mode opens on, unless the switch commits it there
+  // first.
   test('Ctrl+Shift+M pressed just after typing opens page mode on that text, which stays', async ({
     page,
   }) => {
@@ -796,16 +796,16 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(2)
     await expect.poll(async () => (await shown(page))[1]?.text).toBe('two typed')
     // The block's first page-mode edit writes over what page mode opened on.
-    await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 0 })
-    await page.keyboard.type('x ')
-    await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('x two typed')
-    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 'two typed'.length })
+    await page.keyboard.type(' x')
+    await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('two typed x')
+    // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
     await page.keyboard.press('Escape')
     await expect(page.locator(EDITOR)).not.toBeFocused()
     await openViaPalette(page, 'Getting Started')
     await openViaPalette(page, 'Shortcut while typing')
-    await expect(page.locator('.page-editor')).toContainText('x two typed')
-    expect((await backend(page, pageId))[1]?.text).toBe('x two typed')
+    await expect(page.locator('.page-editor')).toContainText('two typed x')
+    expect((await backend(page, pageId))[1]?.text).toBe('two typed x')
   })
 
   test('a page of tasks opens in page mode; a click, Ctrl+Enter and a typed marker set them, and they stay', async ({
@@ -855,7 +855,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     expect((await shown(page))[1]?.text).toBe('call mom')
     expect(await state(ids[1])).toBe('TODO')
 
-    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
     await page.keyboard.press('Escape')
     await expect(page.locator(EDITOR)).not.toBeFocused()
     await openViaPalette(page, 'Getting Started')
@@ -947,7 +947,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     expect(await cursor(page)).toEqual({ index: 2, offset: 5 })
     expect((await shown(page)).map((b) => b.text)).toEqual(['pay rent', 'plan trip', 'plain'])
 
-    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
     await page.keyboard.press('Escape')
     await expect(page.locator(EDITOR)).not.toBeFocused()
     await openViaPalette(page, 'Getting Started')
@@ -1039,7 +1039,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     expect((await shown(page))[1]?.text).toBe('call mom')
     expect(await props(ids[1])).toEqual({ assignee: 'Bo', status: 'done' })
 
-    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
     await page.keyboard.press('Escape')
     await expect(page.locator(EDITOR)).not.toBeFocused()
     await openViaPalette(page, 'Getting Started')
@@ -1287,7 +1287,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     )
     await expect.poll(() => cursor(page)).toEqual({ index: 3, offset: 0 })
 
-    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
     await page.keyboard.press('Escape')
     await expect(page.locator(EDITOR)).not.toBeFocused()
     await openViaPalette(page, 'Getting Started')
@@ -1521,7 +1521,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
       .poll(async () => (await backend(page, pageId)).map((b) => b.text))
       .toEqual(['first', '{{query tag:personal}}', embed, 'last'])
 
-    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
     await page.keyboard.press('Escape')
     await expect(page.locator(EDITOR)).not.toBeFocused()
     await openViaPalette(page, 'Getting Started')
@@ -1672,7 +1672,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     // The closed drawer gives the focus back a task later; an Escape before that reaches nothing.
     await expect(page.locator(EDITOR)).toBeFocused()
 
-    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
     await page.keyboard.press('Escape')
     await expect(page.locator(EDITOR)).not.toBeFocused()
     await openViaPalette(page, 'Getting Started')
@@ -1745,7 +1745,7 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
     await caret(page, 0, 'end')
     await expect(inBlock(added, '[data-testid="query-result"]')).toContainText('4 results')
 
-    // Escape leaves the document a frame later (TipTap's blur); the palette's Ctrl+K must not reach it.
+    // Escape leaves the text for the box around it; the palette's Ctrl+K must not reach the text.
     await page.keyboard.press('Escape')
     await expect(page.locator(EDITOR)).not.toBeFocused()
     await openViaPalette(page, 'Getting Started')
@@ -1813,5 +1813,247 @@ test.describe('page mode behaves as block mode (#5691) @editor @pages', () => {
       ['buy milk ', 'TODO'],
       ['## call mom ', null],
     ])
+  })
+})
+
+/** Block mode's editor, on the block it is editing. */
+const ROVING = '[data-testid="block-editor"] [contenteditable="true"]'
+
+/** The block at the top of the page as shown, either mode's, and how far below the scroller's top it starts. */
+function topBlock(page: Page): Promise<{ id: string; top: number } | null> {
+  return page.evaluate(() => {
+    const at = (document.getElementById('main-content') as HTMLElement).getBoundingClientRect().top
+    const rows = document.querySelectorAll(
+      '.page-editor [data-page-block-id], .page-editor li[data-block-id]',
+    )
+    for (const row of rows) {
+      const box = row.getBoundingClientRect()
+      if (box.bottom > at) {
+        const id = row.getAttribute('data-page-block-id') ?? row.getAttribute('data-block-id')
+        return { id: id ?? '', top: Math.round(box.top - at) }
+      }
+    }
+    return null
+  })
+}
+
+test.describe('page mode keeps the keyboard’s place (#5691) @editor @pages', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('Tab and Shift+Tab on a chip move the focus on, and leave the blocks where they are', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Tab on a chip', [
+      [0, 'one'],
+      [0, `two #[${SEED_TAG_WORK}]`],
+      [1, 'three'],
+      [1, 'four'],
+    ])
+    await openInPageMode(page, 'Tab on a chip', 4)
+    // The caret in a block Tab would move in, and Shift+Tab out.
+    await caret(page, 3, 0)
+    const chip = page.locator(
+      `${EDITOR} [data-page-block-id="${ids[1]}"] [data-testid="tag-ref-chip"]`,
+    )
+
+    await chip.focus()
+    await page.keyboard.press('Tab')
+    await expect(chip).not.toBeFocused()
+    expect((await shown(page)).map((b) => b.depth)).toEqual([0, 0, 1, 1])
+    await chip.focus()
+    await page.keyboard.press('Shift+Tab')
+    await expect(chip).not.toBeFocused()
+    expect((await shown(page)).map((b) => b.depth)).toEqual([0, 0, 1, 1])
+    // Escape leaves the text from a chip as from the caret.
+    await chip.focus()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('[data-page-mode-surface]')).toBeFocused()
+    // Back in the text, where Escape leaves it for a place the palette's Ctrl+K reaches.
+    await caret(page, 0, 0)
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Tab on a chip')
+    expect((await backend(page, pageId)).map((b) => b.depth)).toEqual([0, 0, 1, 1])
+  })
+
+  test('Escape saves the text and leaves the focus on the editor’s box, ringed, and Tab goes back to the caret', async ({
+    page,
+  }) => {
+    const { pageId } = await seedRows(page, 'Escape to the box', [
+      [0, 'one'],
+      [0, 'two'],
+      [0, 'three'],
+    ])
+    await openInPageMode(page, 'Escape to the box', 3)
+    await caret(page, 1, 'end')
+    await page.keyboard.type(' typed')
+
+    await page.keyboard.press('Escape')
+
+    const surface = page.locator('[data-page-mode-surface]')
+    await expect(surface).toBeFocused()
+    expect(
+      await surface.evaluate(
+        (el) => el.matches(':focus-visible') && getComputedStyle(el).boxShadow !== 'none',
+      ),
+    ).toBe(true)
+    await expect.poll(async () => (await backend(page, pageId))[1]?.text).toBe('two typed')
+
+    await page.keyboard.press('Tab')
+
+    await expect(page.locator(EDITOR)).toBeFocused()
+    await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 'two typed'.length })
+    await page.keyboard.type('!')
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Escape to the box')
+    await expect(page.locator('.page-editor')).toContainText('two typed!')
+    expect((await backend(page, pageId))[1]?.text).toBe('two typed!')
+  })
+
+  test('a switch either way keeps the caret where it was in its block, and typing goes there', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Switch keeps the caret', [
+      [0, 'one'],
+      [0, 'two words'],
+      [0, 'three'],
+    ])
+    await openViaPalette(page, 'Switch keeps the caret')
+    const roving = page.locator(ROVING)
+    await focusBlockById(page, ids[1] as string)
+    await expect(roving).toBeFocused()
+    await selectEditorRange(page, 3, 3)
+
+    await modeSwitch(page, 'Page').click()
+
+    await expect(page.locator(EDITOR)).toBeFocused()
+    await expect.poll(() => cursor(page)).toEqual({ index: 1, offset: 3 })
+    await page.keyboard.type('!')
+    await expect.poll(async () => (await shown(page))[1]?.text).toBe('two! words')
+    await caret(page, 2, 2)
+
+    await modeSwitch(page, 'Blocks').click()
+
+    await expect(roving).toHaveText('three')
+    await expect(roving).toBeFocused()
+    await expect
+      .poll(() =>
+        roving.evaluate(
+          (el) =>
+            (el as HTMLElement & { editor: { state: { selection: { head: number } } } }).editor
+              .state.selection.head,
+        ),
+      )
+      // Inside the paragraph, two characters in.
+      .toBe(1 + 2)
+    await page.keyboard.type('?')
+    await expect(roving).toHaveText('th?ree')
+    await page.keyboard.press('Escape')
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Switch keeps the caret')
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((b) => b.text))
+      .toEqual(['one', 'two! words', 'th?ree'])
+  })
+
+  test('Ctrl+E pressed while typing, either way, keeps the caret in its block and the block at the top', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedPage(page, 'Ctrl+E keeps the place', 200)
+    await openViaPalette(page, 'Ctrl+E keeps the place')
+    const row = (id: string | undefined) => page.locator(`.page-editor li[data-block-id="${id}"]`)
+    await expect(row(ids[0])).toBeVisible()
+    await row(ids[60]).evaluate((el) => el.scrollIntoView({ block: 'start' }))
+    await page.locator('#main-content').evaluate((el) => el.scrollBy(0, -10))
+    const roving = page.locator(ROVING)
+    await focusBlockById(page, ids[62] as string)
+    await expect(roving).toBeFocused()
+    await selectEditorRange(page, 3, 3)
+    const inBlocks = await topBlock(page)
+    expect(inBlocks?.id).toBe(ids[59])
+
+    await page.keyboard.press('Control+e')
+
+    await expect(page.locator(EDITOR)).toBeFocused()
+    await expect.poll(() => cursor(page)).toEqual({ index: 62, offset: 3 })
+    await expect.poll(() => topBlock(page)).toEqual(inBlocks)
+    await page.keyboard.type('!')
+    await expect.poll(async () => (await shown(page))[62]?.text).toBe('blo!ck 62')
+    await caret(page, 63, 2)
+    await page
+      .locator(`${EDITOR} [data-page-block-id="${ids[60]}"]`)
+      .evaluate((el) => el.scrollIntoView({ block: 'start' }))
+    await page.locator('#main-content').evaluate((el) => el.scrollBy(0, -10))
+    const inPage = await topBlock(page)
+    expect(inPage?.id).toBe(ids[59])
+
+    await page.keyboard.press('Control+e')
+
+    await expect(roving).toHaveText('block 63')
+    await expect(roving).toBeFocused()
+    await expect
+      .poll(() =>
+        roving.evaluate(
+          (el) =>
+            (el as HTMLElement & { editor: { state: { selection: { head: number } } } }).editor
+              .state.selection.head,
+        ),
+      )
+      // Inside the paragraph, two characters in.
+      .toBe(1 + 2)
+    // Block mode's rows take their measured heights as they mount, the browser holding the
+    // focused block still, which moves the block at the top by less than a row.
+    const topOf = (id: string | undefined) =>
+      page.evaluate((rowId) => {
+        const at = (document.getElementById('main-content') as HTMLElement).getBoundingClientRect()
+        const li = document.querySelector(`.page-editor li[data-block-id="${rowId}"]`)
+        return li === null ? null : Math.round(li.getBoundingClientRect().top - at.top)
+      }, id)
+    await expect
+      .poll(async () => Math.abs(((await topOf(ids[59])) ?? Infinity) - (inPage?.top ?? 0)))
+      .toBeLessThanOrEqual(32)
+    await page.keyboard.type('?')
+    await expect(roving).toHaveText('bl?ock 63')
+    await page.keyboard.press('Escape')
+    await openViaPalette(page, 'Getting Started')
+    await openViaPalette(page, 'Ctrl+E keeps the place')
+    await expect
+      .poll(async () => (await backend(page, pageId)).slice(62, 64).map((b) => b.text))
+      .toEqual(['blo!ck 62', 'bl?ock 63'])
+  })
+
+  // Page mode's editor loads on first use: the page shows a skeleton meanwhile.
+  test('the first switch of a session, and the switch back, keep the block at the top where it was', async ({
+    page,
+  }) => {
+    const { ids } = await seedPage(page, 'Switch keeps the place', 200)
+    await openViaPalette(page, 'Switch keeps the place')
+    const row = (id: string | undefined) => page.locator(`.page-editor li[data-block-id="${id}"]`)
+    await expect(row(ids[0])).toBeVisible()
+    await row(ids[60]).evaluate((el) => el.scrollIntoView({ block: 'start' }))
+    await page.locator('#main-content').evaluate((el) => el.scrollBy(0, -10))
+    const inBlocks = await topBlock(page)
+    expect(inBlocks?.id).toBe(ids[59])
+
+    await page.keyboard.press('Control+Shift+M')
+
+    await expect(page.locator(`${EDITOR} [data-page-block]`)).toHaveCount(200)
+    await expect.poll(() => topBlock(page)).toEqual(inBlocks)
+
+    await page
+      .locator(`${EDITOR} [data-page-block-id="${ids[120]}"]`)
+      .evaluate((el) => el.scrollIntoView({ block: 'start' }))
+    await page.locator('#main-content').evaluate((el) => el.scrollBy(0, -10))
+    const inPage = await topBlock(page)
+    expect(inPage?.id).toBe(ids[119])
+
+    await page.keyboard.press('Control+Shift+M')
+
+    await expect(row(ids[119])).toBeVisible()
+    await expect.poll(async () => (await topBlock(page))?.id).toBe(inPage?.id)
+    // Block mode's rows above it take their measured heights as they mount, which moves it a little.
+    const back = await topBlock(page)
+    expect(Math.abs((back?.top ?? 0) - (inPage?.top ?? 0))).toBeLessThanOrEqual(16)
   })
 })
