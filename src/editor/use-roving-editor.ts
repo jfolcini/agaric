@@ -312,6 +312,12 @@ function patchStyleProperties(
 
 /** CodeBlockLowlight with configurable shortcut to toggle code blocks. @internal Exported for testing. */
 export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
+  // `.extend()` copies the parent's `addProseMirrorPlugins` into this config and also
+  // binds `this.parent` to the parent's result, so the inherited function runs on top of
+  // its own output and installs lowlight twice (each rescans the whole doc per transaction).
+  addProseMirrorPlugins() {
+    return this.parent?.() ?? []
+  },
   addKeyboardShortcuts() {
     return {
       ...this.parent?.(),
