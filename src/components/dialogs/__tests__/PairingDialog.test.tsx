@@ -564,7 +564,9 @@ describe('PairingDialog', () => {
     expect(screen.getByText(/Never synced/)).toBeInTheDocument()
   })
 
-  it('shows no paired devices message when empty', async () => {
+  // The Settings page behind the dialog owns the empty state; the sheet does
+  // not repeat it. The test above is the positive control for the heading.
+  it('shows no paired-devices section when there are none', async () => {
     const user = userEvent.setup()
     mockInvokeByCommand({
       start_pairing: mockPairingInfo,
@@ -574,7 +576,8 @@ describe('PairingDialog', () => {
     render(<PairingDialog open onOpenChange={vi.fn()} />)
     await selectHostRole(user)
 
-    expect(await screen.findByText('No paired devices yet.')).toBeInTheDocument()
+    expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
+    expect(screen.queryByText('Paired devices')).not.toBeInTheDocument()
   })
 
   it('Unpair button calls deletePeerRef after confirmation', async () => {

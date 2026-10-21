@@ -3,7 +3,7 @@
  *
  * Validates:
  *  - Shows "Paired devices" heading
- *  - Shows "No paired devices yet." when empty
+ *  - Renders nothing without peers (the Settings page owns that empty state)
  *  - Renders peer IDs in the list
  *  - Shows last synced time for peers
  *  - Shows "Never synced" for peers with null synced_at
@@ -66,17 +66,15 @@ if (secondPeer === undefined) throw new Error('mockPeers fixture must have at le
 
 describe('PairingPeersList', () => {
   it('shows "Paired devices" heading', () => {
-    render(<PairingPeersList peers={[]} onUnpair={vi.fn()} />)
+    render(<PairingPeersList peers={mockPeers} onUnpair={vi.fn()} />)
 
     expect(screen.getByText('Paired devices')).toBeInTheDocument()
   })
 
-  it('shows "No paired devices yet." when empty', () => {
-    render(<PairingPeersList peers={[]} onUnpair={vi.fn()} />)
+  it('renders nothing without peers', () => {
+    const { container } = render(<PairingPeersList peers={[]} onUnpair={vi.fn()} />)
 
-    expect(screen.getByRole('region', { name: 'No paired devices yet.' })).toHaveTextContent(
-      'No paired devices yet.',
-    )
+    expect(container).toBeEmptyDOMElement()
   })
 
   it('renders peer IDs in the list', () => {
@@ -258,17 +256,10 @@ describe('PairingPeersList', () => {
   })
 
   it('renders a separator', () => {
-    const { container } = render(<PairingPeersList peers={[]} onUnpair={vi.fn()} />)
+    const { container } = render(<PairingPeersList peers={mockPeers} onUnpair={vi.fn()} />)
 
     const separator = container.querySelector('[data-slot="separator"]')
     expect(separator).toBeInTheDocument()
-  })
-
-  it('has no a11y violations with empty peers', async () => {
-    const { container } = render(<PairingPeersList peers={[]} onUnpair={vi.fn()} />)
-
-    const results = await axe(container)
-    expect(results).toHaveNoViolations()
   })
 
   it('has no a11y violations with peers', async () => {

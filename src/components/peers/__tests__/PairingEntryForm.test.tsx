@@ -294,6 +294,14 @@ describe('PairingEntryForm', () => {
     expect(labels[3]?.textContent).toBe('4th word')
   })
 
+  it('word inputs carry no placeholder repeating their visible label', () => {
+    render(<PairingEntryForm {...defaultProps} />)
+
+    const inputs = screen.getAllByRole('textbox')
+    expect(inputs).toHaveLength(4)
+    for (const input of inputs) expect(input).not.toHaveAttribute('placeholder')
+  })
+
   it('associates each ordinal Label with its input via htmlFor / id', () => {
     const { container } = render(<PairingEntryForm {...defaultProps} />)
 

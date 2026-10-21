@@ -2,7 +2,8 @@
  * PairingPeersList -- list of paired devices for the pairing dialog.
  *
  * Renders each known peer with its ID, last-sync time, reset badge, and an
- * Unpair button.
+ * Unpair button. Renders nothing without peers: the Settings page that opens
+ * the dialog already says there are none, and the list is here for #4297.
  *
  * Extracted from PairingDialog (#R-9).
  */
@@ -12,7 +13,6 @@ import type React from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { EmptyState } from '@/components/common/EmptyState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -30,7 +30,10 @@ export interface PairingPeersListProps {
   onUnpair: (peerId: string) => void
 }
 
-export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): React.ReactElement {
+export function PairingPeersList({
+  peers,
+  onUnpair,
+}: PairingPeersListProps): React.ReactElement | null {
   const { t } = useTranslation()
   const now = useMinuteClock()
 
@@ -45,29 +48,28 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
   // split. Sorts a COPY — the prop belongs to the caller.
   const sortedPeers = useMemo(() => [...peers].toSorted(comparePeers), [peers])
 
+  if (sortedPeers.length === 0) return null
+
   return (
     <>
       <Separator className="my-4" />
       <div className="pairing-peers">
         <h3 className="text-sm font-medium mb-2">{t('pairing.pairedDevicesTitle')}</h3>
-        {sortedPeers.length === 0 ? (
-          <EmptyState compact headingLevel="p" message={t('pairing.noPairedDevices')} />
-        ) : (
-          <ScrollArea className="max-h-48">
-            <div className="space-y-2">
-              {sortedPeers.map((peer) => {
-                // #4084: the later of synced_at / streamed_at. A device that
-                // only ever succeeds as RESPONDER never advances synced_at
-                // (#610 forbids it) and would otherwise read "never synced"
-                // while syncing fine.
-                const lastActivity = lastSyncActivityAt(peer)
-                return (
-                  <Card key={peer.peer_id} variant="item" className="pairing-peer-item p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        <div className="min-w-0">
-                          {/* #4298: name precedence — the user's override,
+        <ScrollArea className="max-h-48">
+          <div className="space-y-2">
+            {sortedPeers.map((peer) => {
+              // #4084: the later of synced_at / streamed_at. A device that
+              // only ever succeeds as RESPONDER never advances synced_at
+              // (#610 forbids it) and would otherwise read "never synced"
+              // while syncing fine.
+              const lastActivity = lastSyncActivityAt(peer)
+              return (
+                <Card key={peer.peer_id} variant="item" className="pairing-peer-item p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        {/* #4298: name precedence — the user's override,
                               then the name the peer supplied over the wire,
                               then its truncated id, via the same
                               `peerDisplayName` the device list resolves
@@ -85,13 +87,13 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                               No `font-mono`: that was chosen when this line
                               was always a hex id, and a device name is prose.
                               The id keeps the monospace, on its own line. */}
-                          <p
-                            className="pairing-peer-name text-sm font-medium truncate"
-                            title={peer.peer_id}
-                          >
-                            {peerDisplayName(peer)}
-                          </p>
-                          {/* #4298 (review): the id line is the SUBTITLE under
+                        <p
+                          className="pairing-peer-name text-sm font-medium truncate"
+                          title={peer.peer_id}
+                        >
+                          {peerDisplayName(peer)}
+                        </p>
+                        {/* #4298 (review): the id line is the SUBTITLE under
                               a name, mirroring `PeerListItem` — this list must
                               not disagree with the device list about the same
                               peer. Replacing the id with the name was a
@@ -107,13 +109,13 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                               stay tellable apart. Gating on a name at all is
                               what stops it rendering twice on an unnamed row,
                               where the name line IS the truncated id. */}
-                          {peerName(peer) != null && (
-                            <p className="pairing-peer-id text-xs font-mono text-muted-foreground truncate">
-                              {truncateId(peer.peer_id)}
-                            </p>
-                          )}
-                          {peer.unpaired_by_peer_at_ms != null ? (
-                            /*
+                        {peerName(peer) != null && (
+                          <p className="pairing-peer-id text-xs font-mono text-muted-foreground truncate">
+                            {truncateId(peer.peer_id)}
+                          </p>
+                        )}
+                        {peer.unpaired_by_peer_at_ms != null ? (
+                          /*
                               #4297 — mirrors `PeerListItem`. This list must not
                               disagree with the device list about the same peer,
                               and this is the surface the user is looking at
@@ -121,51 +123,50 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                               "pair again" instruction can be acted on
                               immediately.
                             */
-                            <div className="pairing-peer-unpaired space-y-0.5">
-                              <Badge tone="destructive" className="mt-0.5 text-xs">
-                                {t('device.unpairedByPeerBadge')}
-                              </Badge>
-                              <p className="text-xs text-destructive">
-                                {t('device.unpairedByPeerDescription')}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {t('device.unpairedByPeerSince', {
-                                  time: formatRelativeTime(peer.unpaired_by_peer_at_ms, t, now),
-                                })}
-                              </p>
-                            </div>
-                          ) : (
-                            <p className="text-xs text-muted-foreground truncate">
-                              {t('device.lastSyncedAt', {
-                                time:
-                                  lastActivity != null
-                                    ? formatRelativeTime(lastActivity, t, now)
-                                    : t('sidebar.lastSyncedNever'),
+                          <div className="pairing-peer-unpaired space-y-0.5">
+                            <Badge tone="destructive" className="mt-0.5 text-xs">
+                              {t('device.unpairedByPeerBadge')}
+                            </Badge>
+                            <p className="text-xs text-destructive">
+                              {t('device.unpairedByPeerDescription')}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {t('device.unpairedByPeerSince', {
+                                time: formatRelativeTime(peer.unpaired_by_peer_at_ms, t, now),
                               })}
                             </p>
-                          )}
-                          {peer.reset_count > 0 && (
-                            <Badge tone="outline" className="mt-0.5 text-xs">
-                              {t('device.resetCount', { count: peer.reset_count })}
-                            </Badge>
-                          )}
-                        </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground truncate">
+                            {t('device.lastSyncedAt', {
+                              time:
+                                lastActivity != null
+                                  ? formatRelativeTime(lastActivity, t, now)
+                                  : t('sidebar.lastSyncedNever'),
+                            })}
+                          </p>
+                        )}
+                        {peer.reset_count > 0 && (
+                          <Badge tone="outline" className="mt-0.5 text-xs">
+                            {t('device.resetCount', { count: peer.reset_count })}
+                          </Badge>
+                        )}
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onUnpair(peer.peer_id)}
-                        className="pairing-unpair-btn shrink-0 touch-target"
-                      >
-                        {t('device.unpairButton')}
-                      </Button>
                     </div>
-                  </Card>
-                )
-              })}
-            </div>
-          </ScrollArea>
-        )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onUnpair(peer.peer_id)}
+                      className="pairing-unpair-btn shrink-0 touch-target"
+                    >
+                      {t('device.unpairButton')}
+                    </Button>
+                  </div>
+                </Card>
+              )
+            })}
+          </div>
+        </ScrollArea>
       </div>
     </>
   )

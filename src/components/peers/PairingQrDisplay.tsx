@@ -41,9 +41,11 @@ export function PairingQrDisplay({
 
   return (
     <div className="flex flex-col sm:flex-row [@media(pointer:coarse)]:flex-col gap-4 items-center mb-4">
-      {/* #290: Use backend QR SVG instead of react-qr-code */}
+      {/* #290: Use backend QR SVG instead of react-qr-code. The SVG paints its
+          own white quiet zone, so the tile adds no padding; it stays light in
+          every theme because scanners need dark modules on a light ground. */}
       <div
-        className="pairing-qr shrink-0 w-[200px] max-w-full rounded-lg border bg-white p-3 [&_svg]:w-full [&_svg]:h-auto"
+        className="pairing-qr shrink-0 w-[200px] max-w-full overflow-hidden rounded-lg border bg-white dark:border-0 dark:brightness-90 [&_svg]:block [&_svg]:w-full [&_svg]:h-auto"
         // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- container for a backend-generated QR SVG injected via dangerouslySetInnerHTML, not a real <img> source; role="img"+aria-label exposes it as a single graphic
         role="img"
         aria-label={t('pairing.qrCodeLabel')}
