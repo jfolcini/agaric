@@ -20,7 +20,7 @@ export interface PageModeSlotProps {
   ready: boolean
   onBlocked: PageModeState['onBlocked']
   editorRef: PageModeState['editorRef']
-  cursorBlockId: PageModeState['cursorBlockId']
+  opening: PageModeState['opening']
   onNavigateToPage?: NavigateToPageFn | undefined
 }
 
@@ -29,7 +29,7 @@ export function PageModeSlot({
   ready,
   onBlocked,
   editorRef,
-  cursorBlockId,
+  opening,
   onNavigateToPage,
 }: PageModeSlotProps): React.ReactElement {
   const loading = <LoadingSkeleton count={3} />
@@ -41,7 +41,7 @@ export function PageModeSlot({
         pageId={pageId}
         onBlocked={onBlocked}
         onNavigateToPage={onNavigateToPage}
-        cursorBlockId={cursorBlockId}
+        opening={opening}
         ref={editorRef}
       />
     </Suspense>

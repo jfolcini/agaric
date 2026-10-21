@@ -52,7 +52,7 @@
  */
 
 import type { Node as PMNode } from '@tiptap/pm/model'
-import type { Transaction } from '@tiptap/pm/state'
+import { Selection, type Transaction } from '@tiptap/pm/state'
 import { type Editor, EditorContent, useEditor } from '@tiptap/react'
 import type React from 'react'
 import {
@@ -82,15 +82,16 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
 import { PageAttachments } from '@/editor/page-mode/page-attachments'
 import { commitPageTyped } from '@/editor/page-mode/page-commit'
-import {
-  changedBlocks,
-  firstTokenPos,
-  pageDocContent,
-  REMOTE_PATCH,
-} from '@/editor/page-mode/page-document'
+import { changedBlocks, pageDocContent, REMOTE_PATCH } from '@/editor/page-mode/page-document'
+import { SURFACE } from '@/editor/page-mode/page-keys'
 import { PageLists } from '@/editor/page-mode/page-lists'
 import { pageModeExtensions } from '@/editor/page-mode/page-mode-extensions'
 import { type PageModeBlocker, readPageFit } from '@/editor/page-mode/page-mode-fit'
+import {
+  type BlockCaret,
+  type PageModeOpening,
+  restoreScrollPlace,
+} from '@/editor/page-mode/page-mode-switch'
 import { PageProperties } from '@/editor/page-mode/page-properties'
 import {
   createSaveState,
@@ -159,8 +160,8 @@ const savesInFlight = new Map<string, Promise<void>>()
 export interface PageModeEditorHandle {
   /** Save whatever is not saved yet; resolves once that save has run, whether it saved all. */
   flush: () => Promise<boolean>
-  /** The block the cursor is in, for the mode switch to keep it there. */
-  cursorBlockId: () => string | null
+  /** The caret, for the mode switch to keep it; none while the document lacks the focus. */
+  cursor: () => BlockCaret | null
 }
 
 export interface PageModeEditorProps {
@@ -168,8 +169,8 @@ export interface PageModeEditorProps {
   /** Called instead of opening, or while open, when the page is over page mode's cap. */
   onBlocked: (blocker: PageModeBlocker) => void
   onNavigateToPage?: NavigateToPageFn | undefined
-  /** The block to put the cursor in once open: the one block mode was editing. */
-  cursorBlockId?: string | null | undefined
+  /** Where to open: on block mode's caret, scrolled as block mode was. */
+  opening?: PageModeOpening | null | undefined
   ref?: React.Ref<PageModeEditorHandle>
 }
 
@@ -185,7 +186,7 @@ export function PageModeEditor({
   pageId,
   onBlocked,
   onNavigateToPage,
-  cursorBlockId,
+  opening,
   ref,
 }: PageModeEditorProps): React.ReactElement {
   const pageStore = usePageBlockStoreApi()
@@ -234,7 +235,7 @@ export function PageModeEditor({
       attachments={opened.attachments}
       onBlocked={onBlocked}
       onNavigateToPage={onNavigateToPage}
-      cursorBlockId={cursorBlockId ?? null}
+      opening={opening ?? null}
       ref={ref}
     />
   )
@@ -303,16 +304,36 @@ function unsaved(doc: PMNode, save: PageSaveState): boolean {
   )
 }
 
-/** Put the cursor at the start of block `id` and show it; false when the page has no such block. */
-function cursorInto(editor: Editor, id: string): boolean {
+/**
+ * Put the cursor `pos` into block `id`'s own document, at its start by default, and show it;
+ * false when the page has no such block.
+ */
+function cursorInto(editor: Editor, id: string, pos = 0): boolean {
   let at = -1
-  editor.state.doc.forEach((node, pos) => {
-    if (at === -1 && blockIdOf(node) === id) at = pos
+  editor.state.doc.forEach((node, start) => {
+    if (at === -1 && blockIdOf(node) === id) at = start
   })
   const node = at === -1 ? null : editor.state.doc.nodeAt(at)
   if (node === null) return false
-  editor.chain().setTextSelection(firstTokenPos(node, at)).scrollIntoView().focus().run()
+  const inBlock = Math.min(at + 1 + pos, at + node.nodeSize - 1)
+  editor
+    .chain()
+    .command(({ tr }) => {
+      tr.setSelection(Selection.near(tr.doc.resolve(inBlock)))
+      return true
+    })
+    .scrollIntoView()
+    .focus()
+    .run()
   return true
+}
+
+/** The caret as a block and a position in that block's own document. */
+function caretOf(editor: Editor): BlockCaret | null {
+  const { $head } = editor.state.selection
+  return $head.depth < 1
+    ? null
+    : { blockId: blockIdOf($head.node(1)) as string, pos: $head.pos - $head.start(1) }
 }
 
 interface PageModeDocumentProps {
@@ -324,7 +345,7 @@ interface PageModeDocumentProps {
   attachments: Record<string, AttachmentRow[]>
   onBlocked: (blocker: PageModeBlocker) => void
   onNavigateToPage?: NavigateToPageFn | undefined
-  cursorBlockId: string | null
+  opening: PageModeOpening | null
   ref?: React.Ref<PageModeEditorHandle> | undefined
 }
 
@@ -335,7 +356,7 @@ function PageModeDocument({
   attachments: openedWithAttachments,
   onBlocked,
   onNavigateToPage,
-  cursorBlockId,
+  opening,
   ref,
 }: PageModeDocumentProps): React.ReactElement {
   const { t: translate } = useTranslation()
@@ -503,7 +524,7 @@ function PageModeDocument({
   })
   // The session reads these as they are when it needs them, not as it was built with.
   const blocked = useEffectEvent((blocker: PageModeBlocker) => onBlocked(blocker))
-  const openingCursor = useEffectEvent(() => cursorBlockId)
+  const openedOn = useEffectEvent(() => opening)
   const cycleTask = useEffectEvent((id: string) => handleToggleTodo(id))
   const cyclePriority = useEffectEvent((id: string) => handleTogglePriority(id))
   const openDatePicker = useEffectEvent((id: string, mode: 'due' | 'schedule') =>
@@ -859,10 +880,11 @@ function PageModeDocument({
       })
     })
 
-    const opening = openingCursor()
-    if (opening !== null) cursorInto(editor, opening)
+    const { cursor = null, place = null } = openedOn() ?? {}
+    if (cursor !== null) cursorInto(editor, cursor.blockId, cursor.pos)
     // A new or empty page takes typing at once, as block mode focuses the block it creates on one.
     else if (blocks.length <= 1 && !blocks[0]?.content) editor.commands.focus('start')
+    if (place !== null) restoreScrollPlace(place)
 
     return () => {
       unsubscribe()
@@ -907,9 +929,9 @@ function PageModeDocument({
     ref,
     () => ({
       flush: () => flushRef.current(),
-      cursorBlockId: () => {
-        const head = editorRef.current?.state.selection.$head
-        return head === undefined || head.depth < 1 ? null : blockIdOf(head.node(1))
+      cursor: () => {
+        const current = editorRef.current
+        return current === null || !current.view.hasFocus() ? null : caretOf(current)
       },
     }),
     [],
@@ -918,7 +940,13 @@ function PageModeDocument({
   return (
     <>
       <BlockResolversProvider value={resolvers}>
-        <EditorContent editor={editor} />
+        {/* Where Escape leaves the focus: ringed, and Tab from it goes back into the text. */}
+        <EditorContent
+          editor={editor}
+          tabIndex={-1}
+          className="rounded-md focus-ring-visible"
+          {...{ [SURFACE]: '' }}
+        />
       </BlockResolversProvider>
       {/* Block mode's own: the marks and the link on a selection, and Ctrl+K. */}
       {editor !== null && <SelectionBubbleMenu editor={editor} />}

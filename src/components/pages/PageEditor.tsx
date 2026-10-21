@@ -394,7 +394,7 @@ function PageEditorInner({ pageId, title, onNavigateToPage }: PageEditorProps): 
           ready={isTagPage === false}
           onBlocked={pageMode.onBlocked}
           editorRef={pageMode.editorRef}
-          cursorBlockId={pageMode.cursorBlockId}
+          opening={pageMode.opening}
           onNavigateToPage={onNavigateToPage}
         />
       ) : (

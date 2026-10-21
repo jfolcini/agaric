@@ -3,7 +3,8 @@
  * screen edited one block at a time or as one document. Page's tooltip names
  * its shortcut; where page mode cannot show the page yet, Page is
  * `aria-disabled`, not `disabled`, so the tooltip can say why instead, and
- * choosing it does nothing.
+ * choosing it does nothing. A press keeps the focus where it was, so the switch
+ * finds the caret being typed at, in either mode, still there.
  */
 
 import type React from 'react'
@@ -48,6 +49,7 @@ export function EditModeSwitch({
         if (next === 'blocks' || (next === 'page' && !blocked)) onChange(next)
       }}
       aria-label={t('pageMode.switchLabel')}
+      onMouseDown={(event) => event.preventDefault()}
     >
       <ToggleGroupItem value="blocks">{t('pageMode.blocks')}</ToggleGroupItem>
       {/* One tooltip throughout: a reason found while it is open replaces the hint. */}

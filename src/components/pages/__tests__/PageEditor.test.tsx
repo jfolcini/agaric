@@ -94,7 +94,7 @@ vi.mock('@/components/pages/PageSourceEditor', () => ({
 
 // ── Mock page mode's slot (#5691): the editor itself is tested on its own ──
 const pageModeFlush = vi.fn(() => Promise.resolve(true))
-const pageModeCursor = vi.fn((): string | null => null)
+const pageModeCursor = vi.fn((): { blockId: string; pos: number } | null => null)
 vi.mock('@/editor/page-mode/PageModeSlot', async () => {
   const { useImperativeHandle } = await import('react')
   const { PAGE_MODE_BLOCK_CAP } = await import('@/editor/page-mode/page-mode-fit')
@@ -107,12 +107,15 @@ vi.mock('@/editor/page-mode/PageModeSlot', async () => {
       pageId: string
       ready: boolean
       onBlocked: (blocker: Blocker) => void
-      editorRef: Ref<{ flush: () => Promise<boolean>; cursorBlockId: () => string | null }>
-      cursorBlockId: string | null
+      editorRef: Ref<{
+        flush: () => Promise<boolean>
+        cursor: () => { blockId: string; pos: number } | null
+      }>
+      opening: { cursor: { blockId: string; pos: number } | null } | null
     }) => {
       useImperativeHandle(
         props.editorRef,
-        () => ({ flush: pageModeFlush, cursorBlockId: pageModeCursor }),
+        () => ({ flush: pageModeFlush, cursor: pageModeCursor }),
         [],
       )
       return (
@@ -120,7 +123,7 @@ vi.mock('@/editor/page-mode/PageModeSlot', async () => {
           data-testid="page-mode"
           data-page-id={props.pageId}
           data-ready={String(props.ready)}
-          data-cursor={props.cursorBlockId ?? ''}
+          data-cursor={props.opening?.cursor?.blockId ?? ''}
         >
           <button
             type="button"
@@ -1366,7 +1369,7 @@ describe('PageEditor page mode (#5691)', () => {
 
   it('switching back saves page mode’s text, reloads, shows the blocks, the cursor’s block focused', async () => {
     writePreference(PREFERENCES.editMode, 'page')
-    pageModeCursor.mockReturnValue('BLOCK_2')
+    pageModeCursor.mockReturnValue({ blockId: 'BLOCK_2', pos: 3 })
     const order: string[] = []
     pageModeFlush.mockImplementationOnce(() => {
       order.push('flush')

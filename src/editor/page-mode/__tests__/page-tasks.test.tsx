@@ -691,13 +691,14 @@ describe('the view follows its block', () => {
   it('a key in a control is the control’s, and one in the text the editor’s', async () => {
     const tasks = new FakeTasks()
     tasks.setBlock(A, { todo_state: 'TODO', priority: '1' })
-    const { container } = mount([[A, 0, 'one']], tasks)
+    const { container, editor } = mount([[A, 0, 'one']], tasks)
     const block = blockEl(container, A)
 
     fireEvent.keyDown(await findIn(block, MARKER), { key: 'Enter', ctrlKey: true })
     fireEvent.keyDown(await findIn(block, BADGE), { key: 'Enter', ctrlKey: true })
     expect(tasks.cycle).not.toHaveBeenCalled()
 
+    act(() => editor.view.focus())
     fireEvent.keyDown(block.querySelector('.page-block-content p') as HTMLElement, {
       key: 'Enter',
       ctrlKey: true,

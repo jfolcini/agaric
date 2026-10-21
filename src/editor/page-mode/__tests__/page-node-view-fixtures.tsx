@@ -16,6 +16,7 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { idMinter, openPage, PAGE, type Row } from '@/editor/page-mode/__tests__/page-mode-fixtures'
 import { PageAttachments } from '@/editor/page-mode/page-attachments'
 import { PageLists } from '@/editor/page-mode/page-lists'
+import type { PageModeOpening } from '@/editor/page-mode/page-mode-switch'
 import type { PageTaskSource } from '@/editor/page-mode/page-tasks'
 import { PageModeEditor, type PageModeEditorHandle } from '@/editor/page-mode/PageModeEditor'
 import type { InlineProperty } from '@/hooks/useExtraBlockProperties'
@@ -194,7 +195,7 @@ export function seedPage(
 /** `PageModeEditor` on `pageId`, as `PageEditor` mounts it. */
 export function renderPageMode(
   pageId: string,
-  props: { onNavigateToPage?: NavigateToPageFn; cursorBlockId?: string } = {},
+  props: { onNavigateToPage?: NavigateToPageFn; opening?: PageModeOpening } = {},
 ) {
   const store = createPageBlockStore(pageId)
   const handle = createRef<PageModeEditorHandle>()

@@ -7,8 +7,12 @@
  * (`block-tree-ops.ts`); with *Tab indents blocks* off, Tab is left to move
  * focus and the indent and dedent shortcuts do it, as in block mode. Arrows
  * cross blocks on their own: the page is one editable surface. Escape leaves
- * it, as it leaves a block. Inside a list, a table or a code block the keys
- * keep their meaning there, and an open picker keeps its own keys.
+ * the text for the box around it (`SURFACE`), focused and ringed, as block
+ * mode leaves its block's row; Tab from there goes back to the caret. Inside a
+ * list, a table or a code block the keys keep their meaning there, and an open
+ * picker keeps its own keys. A key pressed on a chip or a control in the
+ * document is that control's, as the keys act at the caret, which is
+ * elsewhere; Escape on a chip still leaves the text.
  */
 
 import { Extension } from '@tiptap/core'
@@ -22,6 +26,7 @@ import {
   type Transaction,
 } from '@tiptap/pm/state'
 import { canSplit } from '@tiptap/pm/transform'
+import type { EditorView } from '@tiptap/pm/view'
 
 import { atTagPickerPluginKey, hashTagPickerPluginKey } from '@/editor/extensions/at-tag-picker'
 import { blockLinkPickerPluginKey } from '@/editor/extensions/block-link-picker'
@@ -276,6 +281,15 @@ const joinForward: Command = (state, dispatch, view) => {
   return true
 }
 
+/** The attribute on the box around page mode's text: where Escape leaves the focus. */
+export const SURFACE = 'data-page-mode-surface'
+
+/** Escape: leave the text, which saves it, for the box around it. */
+function leaveText(view: EditorView): boolean {
+  view.dom.closest<HTMLElement>(`[${SURFACE}]`)?.focus({ preventScroll: true })
+  return true
+}
+
 export const PageKeys = Extension.create({
   name: 'pageKeys',
   // Ahead of the base keymap and the list, table and code-block keys.
@@ -296,8 +310,7 @@ export const PageKeys = Extension.create({
       Delete: run(joinForward),
       Tab: run(indentBlocks, tabIndents),
       'Shift-Tab': run(outdentBlocks, tabIndents),
-      // As block mode's "leave block": out of the document, which saves it.
-      Escape: run(() => this.editor.commands.blur()),
+      Escape: run((_state, _dispatch, view) => leaveText(view as EditorView)),
     }
   },
   addProseMirrorPlugins() {
@@ -305,6 +318,11 @@ export const PageKeys = Extension.create({
     return [
       new Plugin({
         props: {
+          handleDOMEvents: {
+            // True skips ProseMirror's handling, keymaps included, and keeps the key's default:
+            // a key on a chip is the chip's, but Escape leaves the text from there too.
+            keydown: (view, event) => !view.hasFocus() && event.key !== 'Escape',
+          },
           // The rebindable shortcuts, which still indent where Tab is left to move focus.
           handleKeyDown(view, event) {
             if (pickerOpen(view.state)) return false

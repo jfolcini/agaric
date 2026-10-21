@@ -671,14 +671,17 @@ describe('PageModeEditor', () => {
     expect(useNavigationStore.getState().selectedBlockId).toBeNull()
   })
 
-  it('opens with the cursor in the block block mode was editing', async () => {
+  it('opens with the cursor where block mode had it, in the block it was editing', async () => {
     const { pageId, ids } = seedPage(['first', 'second'])
-    const { container } = renderPageMode(pageId, { cursorBlockId: ids[1] as string })
+    // Three characters into the paragraph, as block mode's editor counts.
+    const cursor = { blockId: ids[1] as string, pos: 1 + 3 }
+    const { container } = renderPageMode(pageId, { opening: { cursor, place: null } })
     const editor = await editorIn(container)
 
     await waitFor(() => {
       expect(editor.state.selection.$head.index(0)).toBe(1)
     })
+    expect(editor.state.selection.$head.parentOffset).toBe(3)
   })
 
   it('a new or empty page takes typing at once; a page with text leaves the focus alone', async () => {

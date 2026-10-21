@@ -4,6 +4,7 @@
  * block's own list or code block.
  */
 
+import { fireEvent } from '@testing-library/react'
 import type { Editor } from '@tiptap/core'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -16,6 +17,7 @@ import {
   type Row,
   rowsOf,
 } from '@/editor/page-mode/__tests__/page-mode-fixtures'
+import { mountNodeViews } from '@/editor/page-mode/__tests__/page-node-view-fixtures'
 import { PREFERENCES, removePreference, writePreference } from '@/lib/preferences'
 import { MAX_BLOCK_DEPTH } from '@/lib/tree-utils'
 
@@ -293,5 +295,35 @@ describe('keys inside a block', () => {
     press(ed, 'Backspace')
 
     expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'onetwo']])
+  })
+})
+
+describe('a key on a chip in the text', () => {
+  it('is the chip’s: Tab and Shift+Tab move no block, which they do from the text', () => {
+    const rows: Row[] = [
+      [A, 0, 'a'],
+      [B, 0, `b #[${F}]`],
+      [C, 1, 'c'],
+      [D, 1, 'd'],
+    ]
+    const mounted = mountNodeViews(rows)
+    editor = mounted.editor
+    try {
+      caret(mounted.editor, 3, 0)
+      const chip = mounted.container.querySelector<HTMLElement>('[data-testid="tag-ref-chip"]')
+      chip?.focus()
+      expect(document.activeElement).toBe(chip)
+
+      fireEvent.keyDown(chip as HTMLElement, { key: 'Tab' })
+      expect(rowsOf(mounted.editor.state.doc)).toEqual(rows)
+      fireEvent.keyDown(chip as HTMLElement, { key: 'Tab', shiftKey: true })
+      expect(rowsOf(mounted.editor.state.doc)).toEqual(rows)
+
+      mounted.editor.view.focus()
+      fireEvent.keyDown(mounted.editor.view.dom, { key: 'Tab' })
+      expect(rowsOf(mounted.editor.state.doc)[3]).toEqual([D, 2, 'd'])
+    } finally {
+      mounted.unmount()
+    }
   })
 })
