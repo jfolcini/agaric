@@ -137,6 +137,13 @@ function docTexts(editor: Editor): string[] {
   return out
 }
 
+/** One task: a save started now lands, long before the idle save (`CONTENT_COMMIT_DEBOUNCE_MS`). */
+async function oneTask(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+}
+
 const passThrough = async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args)
 
 beforeEach(() => {
@@ -665,8 +672,8 @@ describe('PageModeEditor', () => {
     expect(backendText(ids[0] as string)).toBe('first!')
   })
 
-  it('saves pending text when an export asks, and when the window is hidden', async () => {
-    const { pageId, ids } = seedPage(['first', 'second'])
+  it('saves pending text when an export asks, and when the window is hidden, not when it shows', async () => {
+    const { pageId, ids } = seedPage(['first'])
     const { container } = renderPageMode(pageId)
     const editor = await editorIn(container)
     act(() => {
@@ -679,18 +686,70 @@ describe('PageModeEditor', () => {
     })
     expect(backendText(ids[0] as string)).toBe('first!')
 
-    typeAt(editor, 1, 6, '?')
-    const hidden = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    // In the caret's block: a caret leaving a block saves too.
+    typeAt(editor, 0, 6, '?')
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     try {
-      await act(async () => {
+      act(() => {
         document.dispatchEvent(new Event('visibilitychange'))
-        // One task: the save's IPC answers settle, long before the 700 ms idle save.
-        await new Promise((resolve) => setTimeout(resolve, 0))
       })
+      await oneTask()
+      expect(backendText(ids[0] as string)).toBe('first!')
+
+      visibility.mockReturnValue('hidden')
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      await oneTask()
     } finally {
-      hidden.mockRestore()
+      visibility.mockRestore()
     }
-    expect(backendText(ids[1] as string)).toBe('second?')
+    expect(backendText(ids[0] as string)).toBe('first!?')
+  })
+
+  // WebKitGTK, the desktop runtime, may send this alone as the window closes.
+  it('saves pending text when the window closes (`pagehide`)', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    act(() => {
+      editor.view.focus()
+    })
+
+    typeAt(editor, 0, 5, '!')
+    act(() => {
+      window.dispatchEvent(new Event('pagehide'))
+    })
+    await oneTask()
+
+    expect(backendText(ids[0] as string)).toBe('first!')
+  })
+
+  it('saves pending text when Escape leaves the text, and when the focus goes elsewhere', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const elsewhere = document.createElement('button')
+    document.body.append(elsewhere)
+    onTestFinished(() => elsewhere.remove())
+    act(() => {
+      editor.view.focus()
+    })
+
+    typeAt(editor, 0, 5, '!')
+    expect(press(editor, 'Escape')).toBe(true)
+    await oneTask()
+    expect(backendText(ids[0] as string)).toBe('first!')
+
+    act(() => {
+      editor.view.focus()
+    })
+    typeAt(editor, 0, 6, '?')
+    act(() => {
+      elsewhere.focus()
+    })
+    await oneTask()
+    expect(backendText(ids[0] as string)).toBe('first!?')
   })
 
   it('publishes itself as the active editor when it takes focus', async () => {
