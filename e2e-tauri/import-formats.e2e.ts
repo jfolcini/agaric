@@ -18,6 +18,7 @@
 // Globals (`$`, `$$`, `browser`, `expect`) come from @wdio/globals — see helpers.ts.
 // ---------------------------------------------------------------------------
 
+import { createHash } from 'node:crypto'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -177,17 +178,24 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     await expectImageRendered(id, 'after the round trip')
   })
 
-  it('imports a one-note .enex as one page holding its body blocks', async () => {
+  it('imports a one-note .enex as one page holding its body blocks and image', async () => {
     await waitForAppReady()
     const marker = runScopedMarker('wdio-enex')
     const title = `${marker}-note`
+    // `&nbsp;` is legal ENML that an XML parse rejects, which once emptied the
+    // whole body; a file-name with a space was once never ingested.
     const enml =
-      `<en-note><div>${marker}-first</div><div>${marker}-second</div>` +
-      `<ul><li>${marker}-item</li></ul></en-note>`
+      `<en-note><div>${marker}-first&nbsp;cell</div><div>${marker}-second</div>` +
+      `<ul><li>${marker}-item</li></ul>` +
+      `<div>${marker}-caption <en-media hash="${createHash('md5').update(PNG).digest('hex')}" type="image/png"/></div>` +
+      '</en-note>'
+    const resource =
+      `<resource><data encoding="base64">${PNG.toString('base64')}</data><mime>image/png</mime>` +
+      '<resource-attributes><file-name>Screen shot.png</file-name></resource-attributes></resource>'
     const enex = [
       '<?xml version="1.0" encoding="UTF-8"?>',
       '<en-export>',
-      `<note><title>${title}</title><content><![CDATA[${enml}]]></content></note>`,
+      `<note><title>${title}</title><content><![CDATA[${enml}]]></content>${resource}</note>`,
       '</en-export>',
     ].join('\n')
     await importFile('import-enex-input', 'export.enex', enex, `Imported “${title}”`)
@@ -200,6 +208,11 @@ describe('Agaric real-backend imports by format (#5740) @markdown', () => {
     for (const block of ['first', 'second', 'item']) {
       await blockStaticByMarker(`${marker}-${block}`).waitForDisplayed({ timeout: NAV_TIMEOUT })
     }
+    const caption = blockStaticByMarker(`${marker}-caption`)
+    await caption.waitForDisplayed({ timeout: NAV_TIMEOUT })
+    const id = await caption.getAttribute('data-block-id')
+    if (id === null) throw new Error('the caption block has no data-block-id')
+    await expectImageRendered(id, 'after the round trip')
   })
 
   it('imports a .jex with each note a page titled by its notebook path', async () => {

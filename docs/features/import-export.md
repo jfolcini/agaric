@@ -18,6 +18,10 @@ Settings → Data offers one row per source, each with its own button: `.md` fil
 - Imports land in the **active space**. To import into a specific space, switch first.
 - Pre-existing pages with the same title are kept (the importer doesn't clobber).
 
+### Evernote (`.enex`)
+
+Each note becomes a page titled by the note (a `/` in the title nests it, as a folder does), and goes through the same import as a Markdown file, so a `#word` in its text becomes a tag and a list item opening with `TODO` a task. Its tags become tags (`#[[…]]` where the bare form would cut the name short or leave it text, as `C++` or `2024`); its created and updated dates and a web clip's source URL become the page properties `created`, `updated` and `source-url`, beside `source: evernote`. The body keeps headings, lists, links, emphasis, code, checkboxes as task states and tables (a table with no header row takes its first row as the header; a merged cell stays one cell, so the cells after it shift left; a list or a nested table is flattened into its cell), and an encrypted block becomes a warning callout. An embedded image, PDF or text file becomes an attachment, a space or parenthesis in its file name replaced by `_`. Not imported: audio, Office, archive and other attachment types (each rejected with a warning), reminders and Evernote tasks, links between notes (an `evernote:///` link stays an Evernote link, not a page link), the other note attributes (author, location), and styling such as highlight, colour and underline. An ENEX export carries no notebook.
+
 The Import button shows a per-block progress count while a file imports, then a count-only summary (page title, blocks created, properties set, and a `N warning(s)` count). It does not show per-file detail or which file produced a given warning.
 
 ### Bibliography import (BibTeX / CSL-JSON)
