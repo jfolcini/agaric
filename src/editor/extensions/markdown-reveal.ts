@@ -114,8 +114,20 @@ function chipLabel(chip: PMNode): string {
   return DOMSerializer.fromSchema(chip.type.schema).serializeNode(chip).textContent ?? ''
 }
 
-function revealDecorations(state: EditorState): DecorationSet {
-  const chips = revealedChipMarkers(state, chipLabel).map((m) =>
+type ChipStatus = (chip: PMNode) => 'active' | 'deleted' | undefined
+
+/**
+ * A broken chip shows its unresolved label, which already reads in its syntax.
+ * A target not resolved yet shows that label too but is not broken: its title
+ * lands without a transaction, so the syntax drawn around it stays right.
+ */
+function showsOwnSyntax(statusOf: ChipStatus) {
+  return (chip: PMNode, unresolvedLabel: string) =>
+    statusOf(chip) === 'deleted' && chipLabel(chip) === unresolvedLabel
+}
+
+function revealDecorations(state: EditorState, statusOf: ChipStatus): DecorationSet {
+  const chips = revealedChipMarkers(state, showsOwnSyntax(statusOf)).map((m) =>
     // Its own class: `stopForClick` counts the drawn `.md-reveal-marker`s against `revealedMarkers`.
     Decoration.widget(m.pos, () => markerDom(m.text, 'chip-marker'), {
       side: m.side,
@@ -264,15 +276,17 @@ const DELETE_SIDE: Partial<Record<string, 'before' | 'after'>> = {
   deleteContentForward: 'after',
 }
 
-function createMarkdownRevealPlugin(): Plugin<DecorationSet> {
+function createMarkdownRevealPlugin(statusOf: ChipStatus): Plugin<DecorationSet> {
   let pluginView: EditorView | null = null
   let clicked: ClickedStop | null = null
   return new Plugin<DecorationSet>({
     key: markdownRevealPluginKey,
     state: {
-      init: (_, state) => revealDecorations(state),
+      init: (_, state) => revealDecorations(state, statusOf),
       apply: (tr, previous, _old, state) =>
-        pluginView?.composing ? previous.map(tr.mapping, tr.doc) : revealDecorations(state),
+        pluginView?.composing
+          ? previous.map(tr.mapping, tr.doc)
+          : revealDecorations(state, statusOf),
     },
     view(view) {
       pluginView = view
@@ -343,6 +357,15 @@ export const MarkdownReveal = Extension.create({
   // and list's keys: a marker beside the caret owns them.
   priority: 1001,
   addProseMirrorPlugins() {
-    return [createMarkdownRevealPlugin()]
+    const { extensionManager } = this.editor
+    return [
+      createMarkdownRevealPlugin((chip) => {
+        const chipExtension = extensionManager.extensions.find((e) => e.name === chip.type.name)
+        const status = chipExtension?.options?.resolveStatus as
+          | ((id: string) => 'active' | 'deleted')
+          | undefined
+        return status?.(String(chip.attrs['id']))
+      }),
+    ]
   },
 })

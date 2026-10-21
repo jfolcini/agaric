@@ -1166,11 +1166,12 @@ describe('MarkdownReveal beside page, tag and block-ref chips (#5974)', () => {
     expect(shown(ed)).toBe('a work Plan ((A block)) b')
   })
 
-  it('draws no syntax around an unresolved chip, whose label already is in it', () => {
+  it('draws no syntax around a broken chip, whose label already is in it', () => {
+    const broken = () => 'deleted' as const
     const ed = createEditor(`${SOURCE} [[${PAGE}|Plan]]`, [
-      TagRef.configure({ resolveName: unresolvedTagLabel }),
-      BlockLink.configure({ resolveTitle: unresolvedBlockLabel }),
-      BlockRef.configure({ resolveContent: unresolvedBlockRefLabel }),
+      TagRef.configure({ resolveName: unresolvedTagLabel, resolveStatus: broken }),
+      BlockLink.configure({ resolveTitle: unresolvedBlockLabel, resolveStatus: broken }),
+      BlockRef.configure({ resolveContent: unresolvedBlockRefLabel, resolveStatus: broken }),
     ])
     const plain = 'a #01ARZ3ND... [[01ARZ3ND...]] (( 01ARZ3ND... )) b Plan'
     for (const chip of [3, 5, 7]) {
@@ -1180,6 +1181,15 @@ describe('MarkdownReveal beside page, tag and block-ref chips (#5974)', () => {
     // A label stands in for the unresolved title, so its syntax is drawn.
     ed.commands.setNodeSelection(11)
     expect(shown(ed)).toBe(`${plain.slice(0, -4)}[[Plan]]`)
+  })
+
+  it('draws the syntax around a chip whose target is not resolved yet', () => {
+    // A just-created page: its title lands later, with no transaction to redraw.
+    const ed = createEditor(`[[${PAGE}]]`, [
+      BlockLink.configure({ resolveTitle: unresolvedBlockLabel, resolveStatus: () => 'active' }),
+    ])
+    ed.commands.setNodeSelection(1)
+    expect(shown(ed)).toBe('[[[[01ARZ3ND...]]]]')
   })
 
   it('shows the syntax of both chips a caret sits between', () => {

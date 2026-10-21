@@ -329,12 +329,12 @@ export interface ChipMarker {
  * right before and after a caret. The caret stays outside the syntax, as it is
  * outside the chip's token. Not `revealedMarkers`: those are one unit with the
  * caret's Backspace, Delete and arrows, and a chip, whose id is not editable
- * text, is deleted as an atom. None for an unresolved chip: its label
- * (`labelOf`) already shows the syntax around the id.
+ * text, is deleted as an atom. None for a chip `showsOwnSyntax` says already
+ * reads in its syntax, given the label its kind shows for a broken target.
  */
 export function revealedChipMarkers(
   state: EditorState,
-  labelOf: (chip: PMNode) => string,
+  showsOwnSyntax: (chip: PMNode, unresolvedLabel: string) => boolean,
 ): ChipMarker[] {
   if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
   const { selection } = state
@@ -349,7 +349,7 @@ export function revealedChipMarkers(
   }
   return chips.flatMap(({ node, pos }) => {
     const syntax = CHIP_SYNTAX[node.type.name]
-    if (!syntax || labelOf(node) === syntax.unresolved(String(node.attrs['id']))) return []
+    if (!syntax || showsOwnSyntax(node, syntax.unresolved(String(node.attrs['id'])))) return []
     const out: ChipMarker[] = [{ pos, text: syntax.open, side: CHIP_OPEN_SIDE }]
     if (syntax.close)
       out.push({ pos: pos + node.nodeSize, text: syntax.close, side: CHIP_CLOSE_SIDE })
