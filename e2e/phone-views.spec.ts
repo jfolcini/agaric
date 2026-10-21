@@ -149,7 +149,7 @@ test.describe('Phone views at 360 × 780 (#5932) @mobile @pages @journal @graph'
     await navigateToView(page, 'Pages')
     await expect(fab).toBeVisible()
     // A phone goes back with the system gesture, which the header's Back button
-    // (hidden below `md`, #5926) stands in for here: same `goBack`.
+    // (hidden on a touch phone) stands in for here: same `goBack`.
     await page.locator('button[aria-label="Back"]').dispatchEvent('click')
     await expect
       .poll(() => page.evaluate(() => document.getElementById('main-content')?.scrollTop))

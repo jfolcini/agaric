@@ -133,7 +133,7 @@ export function QuickAccessBar(): React.ReactElement | null {
 
   // #927 f6: renders on mobile too — the recents strip is the mobile
   // page-switch affordance now that there is no bottom-nav and TabBar is
-  // desktop-only. Recents-only: nothing to show when there are no recents.
+  // desktop-only. Nothing to show with no recents, and none on Settings.
   if (visible.length === 0 || isSettings) return null
 
   return (

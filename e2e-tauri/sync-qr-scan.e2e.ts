@@ -18,16 +18,19 @@ import type { SyncPeer } from './sync-peer'
 
 /**
  * Make the page's camera a canvas that shows the QR of backend SVG `svg`: the
- * backend draws a `0 0 w h` viewBox and one `M{left} {top}h{w}v{h}H{left}V{top}`
- * square per dark module.
+ * backend draws a `0 0 w h` viewBox in pixels and one
+ * `M{left} {top}h{w}v{h}H{left}V{top}` rect per dark module, drawn here 1:1.
+ *
+ * The patch goes on `MediaDevices.prototype`, which the global keeps alive. An
+ * expando on the `navigator.mediaDevices` wrapper did not always survive to the
+ * scan, which then opened WebKit's mock test pattern.
  */
 async function pointCameraAtQr(svg: string): Promise<void> {
   await browser.execute((markup: string) => {
     const viewBox = /viewBox="0 0 (\d+) (\d+)"/.exec(markup)
-    const modules = Number(viewBox?.[1])
+    const width = Number(viewBox?.[1])
     const side = 800
-    const scale = Math.floor(side / modules)
-    const offset = Math.floor((side - scale * modules) / 2)
+    const offset = Math.floor((side - width) / 2)
     const canvas = document.createElement('canvas')
     canvas.width = side
     canvas.height = side
@@ -39,13 +42,13 @@ async function pointCameraAtQr(svg: string): Promise<void> {
       context.fillStyle = '#000'
       for (const square of markup.matchAll(/M(\d+) (\d+)h(\d+)v(\d+)H\d+V\d+/g)) {
         const [left = 0, top = 0, w = 0, h = 0] = square.slice(1).map(Number)
-        context.fillRect(offset + left * scale, offset + top * scale, w * scale, h * scale)
+        context.fillRect(offset + left, offset + top, w, h)
       }
     }
     // A canvas stream emits a frame only when the canvas changes.
     draw()
     setInterval(draw, 100)
-    navigator.mediaDevices.getUserMedia = () => Promise.resolve(canvas.captureStream(10))
+    MediaDevices.prototype.getUserMedia = () => Promise.resolve(canvas.captureStream(10))
   }, svg)
 }
 

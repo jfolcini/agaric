@@ -251,12 +251,14 @@ export function PageBrowserHeader({
                 <SelectItem value="most-content">{t('pageBrowser.sortMostContent')}</SelectItem>
               </SelectContent>
             </Select>
-            {!isMobile && <SavedViewsDropdown {...savedViewsProps} />}
           </>
         )}
+        {/* With no pages there is no view to save, but the saved ones stay
+            reachable: a filter that matches nothing is how you leave one. */}
+        {!isMobile && (showSortAndViews || savedViews.length > 0) && (
+          <SavedViewsDropdown {...savedViewsProps} canSaveCurrentView={showSortAndViews} />
+        )}
         {isMobile && (
-          // With no pages there is no view to save, but the saved ones stay
-          // reachable: a filter that matches nothing is how you leave one.
           <SavedViewsDropdown
             {...savedViewsProps}
             canSaveCurrentView={showSortAndViews}

@@ -666,7 +666,7 @@ function App() {
              * above and the ViewHeaderOutletSlot below. #927 f6: now renders on
              * mobile too — the recents strip is the mobile page-switch
              * affordance (TabBar is desktop-only, no bottom-nav). Returns null
-             * only when there are no recents.
+             * when there are no recents, and on Settings.
              */}
             <FeatureErrorBoundary name="Quick access" nameKey="errorBoundary.section.quickAccess">
               <QuickAccessBar />

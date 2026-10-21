@@ -163,9 +163,8 @@ impl LoroEngine {
     pub fn rebuild_index_after_import(&mut self) {
         self.rebuild_index();
         // A pre-#400 snapshot carries sibling order only in the `position`
-        // meta; migrate it onto the fractional index exactly once. The guard (a
-        // marker-less doc that still carries a legacy `position` meta) keeps
-        // this a true "is pre-#400" signal — see the helper.
+        // meta; migrate it onto the fractional index exactly once (the version
+        // marker gates it).
         //
         // Best-effort: a migration failure must NOT fail import. Propagating it
         // would make `rehydrate_registry` skip the space and the next op mint a

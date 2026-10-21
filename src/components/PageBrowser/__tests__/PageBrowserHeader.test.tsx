@@ -202,6 +202,33 @@ describe('PageBrowserHeader', () => {
       expect(screen.queryByRole('button', { name: t('pageBrowser.savedViews.trigger') })).toBeNull()
     })
 
+    it('with no pages the saved views stay reachable but cannot save one', async () => {
+      const user = userEvent.setup()
+      const onApplySavedView = vi.fn()
+      const view = {
+        id: 'v1',
+        name: 'Recent work',
+        createdAt: '2026-01-01T00:00:00Z',
+        sort: 'recent' as const,
+        filters: [],
+      }
+      render(
+        <PageBrowserHeader
+          {...makeProps({ showSortAndViews: false, savedViews: [view], onApplySavedView })}
+        />,
+      )
+
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.savedViews.trigger') }))
+      const menu = await screen.findByTestId('saved-views-menu')
+      expect(within(menu).queryByTestId('saved-views-save-current')).toBeNull()
+      await user.click(
+        within(menu).getByRole('button', {
+          name: t('pageBrowser.savedViews.apply', { name: 'Recent work' }),
+        }),
+      )
+      expect(onApplySavedView).toHaveBeenCalledWith(view)
+    })
+
     it('New page opens the New page dialog with no title', async () => {
       const user = userEvent.setup()
       const opened: string[] = []
