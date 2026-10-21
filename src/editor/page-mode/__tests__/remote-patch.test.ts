@@ -166,6 +166,143 @@ describe('a block changed elsewhere', () => {
     expect(ed.state.selection.from).toBe(posIn(ed, 0, 6))
     expect(ed.state.doc.textBetween(ed.state.selection.from, posIn(ed, 0, 11))).toBe('three')
   })
+
+  // A peer's edit that repeats characters makes the old and new content diff
+  // against themselves (the removed or added run could sit at either end of the
+  // repetition); the patch must still touch only the run, or a cursor after it
+  // moves with the whole block's rewrite.
+  it.each([
+    ['aaa', 'aa'],
+    ['aa', 'aaa'],
+    ['abab', 'ab'],
+    ['xyyz', 'xyz'],
+    ['**aa**a', '**a**a'],
+  ])('patches %j to %j and keeps a cursor after the edit on the same text', async (a, b) => {
+    const { ed, remoteEdit } = open([[A, 0, `${a} tail`]])
+    const blockEnd = posIn(ed, 0, ed.state.doc.child(0).textContent.length)
+    ed.commands.setTextSelection(blockEnd - 2)
+
+    await remoteEdit(A, `${b} tail`)
+
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, `${b} tail`]])
+    const newEnd = posIn(ed, 0, ed.state.doc.child(0).textContent.length)
+    expect(ed.state.doc.textBetween(ed.state.selection.from, newEnd)).toBe('il')
+  })
+
+  // A diff that starts inside a table cell and ends past the table does not fit
+  // as a slice; the block is rewritten whole, so the peer's content still shows.
+  it.each([
+    [
+      'a table cell changed and a paragraph added after the table',
+      '| a |\n| --- |',
+      '| c |\n| --- |\n\nz',
+    ],
+    [
+      'a table that gained a column, the rule and quote after it gone',
+      '| a |\n| --- |\n\n---\n\n> ',
+      '| a | b |\n| --- | --- |\n\n',
+    ],
+  ])('shows %s', async (_name, before, after) => {
+    const { ed, remoteEdit } = open([[A, 0, before]])
+
+    await remoteEdit(A, after)
+
+    const expected = openPage([[A, 0, after]])
+    expect(ed.state.doc.toJSON()).toEqual(expected.state.doc.toJSON())
+    expected.destroy()
+  })
+
+  it('leaves a block be when a peer rewrote its markdown into the same content', async () => {
+    const { ed, remoteEdit } = open([[A, 0, 'alpha *beta*']])
+
+    await remoteEdit(A, 'alpha _beta_')
+
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'alpha *beta*']])
+  })
+
+  it('keeps the local text of a block edited here when only another block was changed elsewhere', async () => {
+    const { ed, backend, save, remoteEdit } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+    ])
+    caret(ed, 0, 5)
+    type(ed, '!')
+
+    await remoteEdit(B, 'beta from a peer')
+    await save()
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'alpha!'],
+      [B, 0, 'beta from a peer'],
+    ])
+    expect(backend.live()).toEqual(rowsOf(ed.state.doc))
+  })
+
+  it('empties a block whose content the backend now holds as none', async () => {
+    const { ed, state } = open([[A, 0, 'alpha']])
+
+    applyRemote(ed.view, state, [{ id: A, parent_id: PAGE, content: null }], idMinter('01KEPT'))
+
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, '']])
+  })
+
+  // The cursor keeps its place in the text it was in whichever blocks move around it.
+  it.each([
+    ['a block moved to the end, before it', 3, (b: FakeBackend) => b.move(B, PAGE, 2)],
+    ['the block moved to the front', 3, (b: FakeBackend) => b.move(X, PAGE, 0)],
+    ['a block created before it', 3, (b: FakeBackend) => b.create(blockId(7), PAGE, 0, 'new')],
+  ])('keeps the cursor on the same text with %s', async (_name, index, change) => {
+    const { ed, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+      [C, 1, 'gamma'],
+      [X, 0, 'last'],
+    ])
+    caret(ed, index, 2)
+
+    await remote(change)
+
+    const { $from } = ed.state.selection
+    expect($from.parent.textContent).toBe('last')
+    expect($from.parentOffset).toBe(2)
+  })
+
+  it('patches the text of a block after one deleted elsewhere in the same change', async () => {
+    const { ed, backend, save, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+      [C, 0, 'gamma'],
+    ])
+
+    await remote(async (b) => {
+      await b.remove(A)
+      await b.edit(C, 'gamma from a peer')
+    })
+    backend.reset()
+    await save()
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [B, 0, 'beta'],
+      [C, 0, 'gamma from a peer'],
+    ])
+    expect(backend.calls).toEqual([])
+  })
+
+  it('shows a block moved to the front of the page at the top level', async () => {
+    const { ed, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 1, 'beta'],
+      [X, 0, 'last'],
+    ])
+
+    await remote((b) => b.move(X, PAGE, 0))
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [X, 0, 'last'],
+      [A, 0, 'alpha'],
+      [B, 1, 'beta'],
+    ])
+  })
 })
 
 describe('blocks created, moved and deleted elsewhere', () => {
@@ -398,6 +535,7 @@ describe('blocks created, moved and deleted elsewhere', () => {
       [B, 0, 'beta'],
     ])
     expect(backend.calls).toEqual([])
+    expect(state.deletedAt.has(B)).toBe(false)
     expect(backend.live()).toEqual(rowsOf(ed.state.doc))
   })
 
@@ -420,6 +558,166 @@ describe('blocks created, moved and deleted elsewhere', () => {
 
     expect(backend.calls).toEqual([])
     expect(backend.live()).toEqual(rowsOf(ed.state.doc))
+  })
+
+  it('a block whose create was reported failed keeps Ctrl+Z, and its id when another create was refused', async () => {
+    const { ed, backend, state, save } = open([[A, 0, 'alpha']])
+    caret(ed, 0, 5)
+    press(ed, 'Enter')
+    type(ed, 'new')
+    const created = idsOf(ed.state.doc)[1] as string
+    const create = backend.create
+    backend.create = async (...args) => {
+      await create(...args)
+      throw new Error('the answer was lost')
+    }
+    await save()
+    backend.create = create
+    const typed = rowsOf(ed.state.doc)
+
+    applyRemote(ed.view, state, await backend.tree(), idMinter('01KEPT'), new Set([X]))
+    backend.reset()
+    await save()
+
+    expect(idsOf(ed.state.doc)).toContain(created)
+    expect(backend.calls).toEqual([])
+    ed.commands.undo()
+    expect(rowsOf(ed.state.doc)).not.toEqual(typed)
+  })
+
+  it('a block page mode deleted and undo brought back keeps its id when a create was refused', async () => {
+    const { ed, backend, state, save } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+    ])
+    caret(ed, 1, 0)
+    press(ed, 'Backspace')
+    await save()
+    ed.commands.undo()
+
+    applyRemote(ed.view, state, await backend.tree(), idMinter('01KEPT'), new Set([X]))
+    await save()
+
+    expect(idsOf(ed.state.doc)).toEqual([A, B])
+    expect(backend.live()).toEqual(rowsOf(ed.state.doc))
+  })
+
+  it('a block deleted here and not saved yet, moved elsewhere, keeps the undo history', async () => {
+    const { ed, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+      [C, 0, 'gamma'],
+    ])
+    caret(ed, 1, 0)
+    press(ed, 'Backspace')
+
+    await remote((b) => b.move(B, PAGE, 2))
+    ed.commands.undo()
+
+    expect(idsOf(ed.state.doc)).toEqual([A, B, C])
+  })
+
+  it('a block with no content in the backend, shown empty here, goes when a peer deletes it', async () => {
+    const { ed, backend, state, save } = open([[A, 0, 'alpha']])
+    caret(ed, 0, 5)
+    press(ed, 'Enter')
+    const empty = idsOf(ed.state.doc)[1] as string
+    const rows = [
+      { id: A, parent_id: PAGE, content: 'alpha' },
+      { id: empty, parent_id: PAGE, content: null },
+    ]
+    applyRemote(ed.view, state, rows, idMinter('01KEPT'))
+
+    expect(applyRemote(ed.view, state, rows.slice(0, 1), idMinter('01KEPT')).keptAsNew).toBe(0)
+    await save()
+
+    expect(idsOf(ed.state.doc)).toEqual([A])
+    expect(backend.live()).toEqual(rowsOf(ed.state.doc))
+  })
+
+  it('a block deleted here and not saved yet, deleted elsewhere too, stays gone', async () => {
+    const { ed, backend, save, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+    ])
+    caret(ed, 1, 0)
+    press(ed, 'Backspace')
+
+    await remote((b) => b.remove(B))
+    await save()
+
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'alphabeta']])
+    expect(backend.live()).toEqual(rowsOf(ed.state.doc))
+  })
+
+  it('a block created elsewhere after one deleted here lands after the nearest block before it that shows', async () => {
+    const { ed, backend, save, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+      [C, 0, 'gamma'],
+    ])
+    caret(ed, 1, 0)
+    press(ed, 'Backspace')
+
+    await remote((b) => b.create(X, PAGE, 2, 'from a peer'))
+    await save()
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'alphabeta'],
+      [X, 0, 'from a peer'],
+      [C, 0, 'gamma'],
+    ])
+    expect(backend.live()).toEqual(rowsOf(ed.state.doc))
+  })
+
+  it('a block deleted elsewhere ends the undo history, so Ctrl+Z puts back no copy of it', async () => {
+    const { ed, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+    ])
+    caret(ed, 0, 5)
+    type(ed, '!')
+
+    await remote((b) => b.remove(B))
+    ed.commands.undo()
+
+    expect(rowsOf(ed.state.doc)).toEqual([[A, 0, 'alpha!']])
+  })
+
+  // The text a split took out of a block stays in the backend until the block
+  // it went to is created, whatever a patch from elsewhere does in between.
+  it('still holds the edit that takes text out of a block whose split-off half is not created, after a patch', async () => {
+    const { ed, backend, save, remoteEdit } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+    ])
+    caret(ed, 0, 2)
+    press(ed, 'Enter')
+    backend.create = () => Promise.reject(new Error('offline'))
+    await save()
+
+    await remoteEdit(B, 'beta from a peer')
+    await save()
+
+    expect(backend.live()).toEqual([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta from a peer'],
+    ])
+  })
+
+  it('holds the same edit in a block a peer created, whose split-off half is not created', async () => {
+    const { ed, backend, save, remote } = open([[A, 0, 'alpha']])
+    await remote((b) => b.create(X, PAGE, 1, 'from a peer'))
+    caret(ed, 1, 4)
+    press(ed, 'Enter')
+    backend.create = () => Promise.reject(new Error('offline'))
+
+    await save()
+
+    expect(backend.live()).toEqual([
+      [A, 0, 'alpha'],
+      [X, 0, 'from a peer'],
+    ])
   })
 })
 
@@ -551,6 +849,31 @@ describe('what the property found', () => {
     await save()
 
     expect(idsOf(ed.state.doc)).not.toContain(B)
+    expect(backend.live()).toEqual(rowsOf(ed.state.doc))
+  })
+
+  it('a refused create rekeys only the blocks it refused or that are still to be created, not the others', async () => {
+    const { ed, backend, state, save, remote } = open([
+      [A, 0, 'alpha'],
+      [B, 0, 'beta'],
+      [C, 0, 'gamma'],
+    ])
+    ed.commands.setTextSelection({ from: posIn(ed, 2, 0), to: posIn(ed, 2, 5) })
+    const data = new DataTransfer()
+    ed.view.dom.dispatchEvent(
+      new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true }),
+    )
+    await remote((b) => b.remove(C))
+    caret(ed, 1, 0)
+    ed.view.pasteHTML(data.getData('text/html'))
+    const refused = await savePage(ed.state.doc, state, backend)
+    expect(refused.failed).toMatchObject({ kind: 'create', id: C })
+
+    applyRemote(ed.view, state, await backend.tree(), idMinter('01KEPT'), new Set([C]))
+    await save()
+
+    expect(idsOf(ed.state.doc)).toContain(A)
+    expect(idsOf(ed.state.doc)).not.toContain(C)
     expect(backend.live()).toEqual(rowsOf(ed.state.doc))
   })
 

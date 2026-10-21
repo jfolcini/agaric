@@ -243,6 +243,14 @@ export const MODULES = {
       'src/editor/page-mode/__tests__/remote-patch.test.ts',
     ],
   },
+  // A change made elsewhere patched into page mode (#5691): a survivor is a
+  // peer's edit reverted or doubled, a cursor thrown off its text, or a block
+  // moved, kept or dropped wrong. `page-mode.property.test.ts` is left out, as
+  // each mutant would run all of it.
+  'remote-patch': {
+    src: 'src/editor/page-mode/remote-patch.ts',
+    tests: ['src/editor/page-mode/__tests__/remote-patch.test.ts'],
+  },
   // Page mode's gate and its leave-time commits (#5743): a survivor is a page
   // let in that page mode cannot show, or a typed property or tag committed
   // wrong. `page-mode.property.test.ts` is left out, as each mutant would run

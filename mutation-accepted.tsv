@@ -304,3 +304,26 @@ rust	agaric-engine/src/reverse/batch.rs	replace / with % in fetch_prior_position
 rust	agaric-engine/src/reverse/batch.rs	replace / with % in fetch_prior_property_batch	let chunk_size = MAX_SQL_PARAMS / PROPERTY_BINDS_PER_OP;
 rust	agaric-engine/src/reverse/batch.rs	replace / with % in fetch_prior_text_batch	let chunk_size = MAX_SQL_PARAMS / TEXT_BINDS_PER_OP;
 rust	agaric-engine/src/reverse/batch.rs	replace / with % in reject_replicated_targets	let chunk_size = MAX_SQL_PARAMS / 2;
+frontend	src/editor/page-mode/remote-patch.ts	ArrayDeclaration	27	1	const atDepth: string[] = []
+frontend	src/editor/page-mode/remote-patch.ts	ArrayDeclaration	46	1	const before = (base.children.get(parent) ?? []).filter((id) => among.has(id))
+frontend	src/editor/page-mode/remote-patch.ts	ArrayDeclaration	48	1	const siblings = fresh.children.get(parent) ?? []
+frontend	src/editor/page-mode/remote-patch.ts	ArrayDeclaration	51	1	children.set(parent, [...(children.get(parent) ?? []), id])
+frontend	src/editor/page-mode/remote-patch.ts	ArrayDeclaration	51	1	children.set(parent, [...(children.get(parent) ?? []), row.id])
+frontend	src/editor/page-mode/remote-patch.ts	BooleanLiteral	33	1	if (saved === undefined) return false
+frontend	src/editor/page-mode/remote-patch.ts	CallExpression	1	1	save.deletedAt.delete(id)
+frontend	src/editor/page-mode/remote-patch.ts	CallExpression	1	1	shown.add(id)
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	16	1	const parent = depth === 0 ? pageId : (atDepth[depth - 1] ?? pageId)
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	23	1	if (start === null || end === null) return
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	28	1	if (saved === undefined || markdown === undefined || written.has(id)) return
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	5	1	if (at === null) return
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	5	1	if (found === null && blockIdOf(node) === id) found = { index, pos }
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	5	1	if (markdown === saved.markdown || !untouched(saved, node)) return
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	5	1	if (patch.tr.docChanged) view.dispatch(patch.tr)
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	5	1	if (saved === undefined) return false
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	5	1	if (saved.node === null) return !computeContentDelta(saved.markdown, blockDocJson(node)).changed
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	5	1	if (start === null || end === null) return
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	5	1	if (tr.docChanged) restoreSelection(tr, ends)
+frontend	src/editor/page-mode/remote-patch.ts	ConditionalExpression	8	1	return saved.node === node || saved.node.content.eq(node.content)
+frontend	src/editor/page-mode/remote-patch.ts	EqualityOperator	5	1	if (overlap > 0) {
+frontend	src/editor/page-mode/remote-patch.ts	LogicalOperator	5	1	if (start === null || end === null) return
+frontend	src/editor/page-mode/remote-patch.ts	MethodExpression	16	1	const before = (base.children.get(parent) ?? []).filter((id) => among.has(id))
