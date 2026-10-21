@@ -4,7 +4,7 @@
  * highlight, code and external links, and a heading's `#` run; and the syntax drawn
  * around a page, tag or block-ref chip (`revealedChipMarkers`). Kept free of ProseMirror
  * values so `useBlockKeyboard`, on the cold-start path (#2939), can ask whether
- * a marker sits beside the caret without loading the editor chunk.
+ * a marker, or a link (`linkAtCaret`), sits beside the caret without loading the editor chunk.
  */
 
 import type { Mark, Node as PMNode, ResolvedPos } from '@tiptap/pm/model'
@@ -337,17 +337,7 @@ export function revealedChipMarkers(
   showsOwnSyntax: (chip: PMNode, unresolvedLabel: string) => boolean,
 ): ChipMarker[] {
   if (!isMarkdownRevealEnabled() || spansPageBlocks(state)) return []
-  const { selection } = state
-  const chips: Array<{ node: PMNode; pos: number }> = []
-  if ('node' in selection) {
-    chips.push({ node: selection.node as PMNode, pos: selection.from })
-  } else if (selection.empty) {
-    const { $from } = selection
-    if ($from.nodeBefore)
-      chips.push({ node: $from.nodeBefore, pos: $from.pos - $from.nodeBefore.nodeSize })
-    if ($from.nodeAfter) chips.push({ node: $from.nodeAfter, pos: $from.pos })
-  }
-  return chips.flatMap(({ node, pos }) => {
+  return nodesAtSelection(state.selection).flatMap(({ node, pos }) => {
     const syntax = CHIP_SYNTAX[node.type.name]
     if (!syntax || showsOwnSyntax(node, syntax.unresolved(String(node.attrs['id'])))) return []
     const out: ChipMarker[] = [{ pos, text: syntax.open, side: CHIP_OPEN_SIDE }]
@@ -355,4 +345,24 @@ export function revealedChipMarkers(
       out.push({ pos: pos + node.nodeSize, text: syntax.close, side: CHIP_CLOSE_SIDE })
     return out
   })
+}
+
+/** A selected node, or the nodes right before and after a caret, with their positions. */
+function nodesAtSelection(selection: Selection): Array<{ node: PMNode; pos: number }> {
+  if ('node' in selection) return [{ node: selection.node as PMNode, pos: selection.from }]
+  if (!selection.empty) return []
+  const { $from } = selection
+  const nodes: Array<{ node: PMNode; pos: number }> = []
+  if ($from.nodeBefore)
+    nodes.push({ node: $from.nodeBefore, pos: $from.pos - $from.nodeBefore.nodeSize })
+  if ($from.nodeAfter) nodes.push({ node: $from.nodeAfter, pos: $from.pos })
+  return nodes
+}
+
+/** The id of the page link or block reference selected, or right before or after the caret: what Alt+Enter follows. */
+export function linkAtCaret(state: EditorState): string | null {
+  const link = nodesAtSelection(state.selection).find(({ node }) =>
+    ['block_link', 'block_ref'].includes(node.type.name),
+  )
+  return link === undefined ? null : String(link.node.attrs['id'])
 }

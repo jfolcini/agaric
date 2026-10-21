@@ -12,7 +12,8 @@
  * list, a table or a code block the keys keep their meaning there, and an open
  * picker keeps its own keys. A key pressed on a chip or a control in the
  * document is that control's, as the keys act at the caret, which is
- * elsewhere; Escape on a chip still leaves the text.
+ * elsewhere; Escape on a chip still leaves the text. Alt+Enter at a page link
+ * or block ref follows it, as block mode's does.
  */
 
 import { Extension } from '@tiptap/core'
@@ -46,6 +47,7 @@ import {
   startOf,
   subtreeEnd,
 } from '@/editor/page-mode/page-document'
+import { linkAtCaret } from '@/editor/revealed-markers'
 import { blockIdOf } from '@/editor/token-ids'
 import { announce } from '@/lib/announcer'
 import {
@@ -290,8 +292,16 @@ function leaveText(view: EditorView): boolean {
   return true
 }
 
-export const PageKeys = Extension.create({
+export interface PageKeysOptions {
+  /** Follows a page link or block ref, as a click on it does: Alt+Enter at one calls it. */
+  onNavigate: ((linkId: string) => void) | undefined
+}
+
+export const PageKeys = Extension.create<PageKeysOptions>({
   name: 'pageKeys',
+  addOptions() {
+    return { onNavigate: undefined }
+  },
   // Ahead of the base keymap and the list, table and code-block keys.
   priority: 1000,
   addKeyboardShortcuts() {
@@ -314,7 +324,7 @@ export const PageKeys = Extension.create({
     }
   },
   addProseMirrorPlugins() {
-    const { editor } = this
+    const { editor, options } = this
     return [
       new Plugin({
         props: {
@@ -330,6 +340,14 @@ export const PageKeys = Extension.create({
             if (matchesShortcutBinding(event, 'turnIntoBlock')) {
               event.preventDefault()
               openSlashPicker(editor, 'turn')
+              return true
+            }
+            const link = matchesShortcutBinding(event, 'followLink')
+              ? linkAtCaret(view.state)
+              : null
+            if (link !== null) {
+              event.preventDefault()
+              options.onNavigate?.(link)
               return true
             }
             let command: Command | null = null

@@ -19,7 +19,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useBlockActions } from '@/components/block-tree/use-block-actions'
-import { pageLinkIdAt } from '@/components/block-tree/use-block-touch-long-press'
 import { EmptyState } from '@/components/common/EmptyState'
 import { DragStateContext, DragStateStore } from '@/components/editor/drag-state-store'
 import { ListMarkerProvider } from '@/components/editor/ListMarkerContext'
@@ -30,7 +29,7 @@ import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useExtraBlockProperties } from '@/hooks/useExtraBlockProperties'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useListStyles } from '@/hooks/useListStyles'
-import { delegatedMiddleClickProps } from '@/hooks/useOpenInBackgroundTab'
+import { delegatedLinkClickProps } from '@/hooks/useOpenInBackgroundTab'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { computeListOrdinals } from '@/lib/list-ordinals'
 import type { ListStyle } from '@/lib/list-style'
@@ -138,14 +137,8 @@ export function BlockListRenderer({
   const { t } = useTranslation()
   const isTouch = useIsTouch()
   const { onOpenLinkInNewTab } = useBlockActions()
-  const linkMiddleClick = useMemo(
-    () =>
-      onOpenLinkInNewTab
-        ? delegatedMiddleClickProps((e) => {
-            const id = pageLinkIdAt(e.target)
-            return id === undefined ? undefined : () => onOpenLinkInNewTab(id)
-          })
-        : {},
+  const linkClick = useMemo(
+    () => (onOpenLinkInNewTab ? delegatedLinkClickProps(onOpenLinkInNewTab) : {}),
     [onOpenLinkInNewTab],
   )
 
@@ -368,7 +361,7 @@ export function BlockListRenderer({
                 data-testid="block-tree"
                 aria-label={t('blockTree.treeLabel')}
                 onPointerDown={onContainerPointerDown}
-                {...linkMiddleClick}
+                {...linkClick}
               >
                 {visibleItems.map((block, index) => {
                   const aria = siblingAriaProps.get(block.id)

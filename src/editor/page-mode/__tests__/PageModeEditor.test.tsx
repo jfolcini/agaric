@@ -43,6 +43,7 @@ import { useNavigationStore } from '@/stores/navigation'
 import { PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
 // Block mode's query builder, stood in as `QueryResult`'s own tests stand it in: Save hands back an expression.
@@ -782,6 +783,80 @@ describe('PageModeEditor', () => {
 
     await waitFor(() => {
       expect(onNavigateToPage).toHaveBeenCalledWith(other.pageId, 'Other page')
+    })
+  })
+
+  describe('a page link’s chip in a new tab', () => {
+    async function chipOnPage() {
+      useTabsStore.setState({
+        tabs: [{ id: '0', pageStack: [], label: '' }],
+        activeTabIndex: 0,
+        tabsBySpace: {},
+        activeTabIndexBySpace: {},
+      })
+      const other = seedPage(['elsewhere'], 'Other page')
+      const { pageId } = seedPage([`see [[${other.pageId}]]`])
+      const onNavigateToPage = vi.fn()
+      const { container } = renderPageMode(pageId, { onNavigateToPage })
+      const editor = await editorIn(container)
+      const chip = await waitFor(() => {
+        const found = container.querySelector('[data-testid="block-link-chip"]')
+        if (found === null) throw new Error('no chip')
+        return found
+      })
+      return { other, onNavigateToPage, editor, chip }
+    }
+
+    it('a Ctrl+click opens it in a new tab in front, and not in this one', async () => {
+      const { other, onNavigateToPage, chip } = await chipOnPage()
+
+      await act(async () => {
+        fireEvent.click(chip, { ctrlKey: true })
+      })
+
+      await waitFor(() => {
+        expect(useTabsStore.getState().activeTabIndex).toBe(1)
+      })
+      expect(useTabsStore.getState().tabs[1]?.pageStack).toEqual([
+        { pageId: other.pageId, title: 'Other page' },
+      ])
+      expect(onNavigateToPage).not.toHaveBeenCalled()
+    })
+
+    it('a middle click opens it in a tab behind this one', async () => {
+      const { other, onNavigateToPage, chip } = await chipOnPage()
+
+      await act(async () => {
+        fireEvent.mouseDown(chip, { button: 1 })
+        fireEvent(chip, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))
+      })
+
+      await waitFor(() => {
+        expect(useTabsStore.getState().tabs).toHaveLength(2)
+      })
+      expect(useTabsStore.getState().activeTabIndex).toBe(0)
+      expect(useTabsStore.getState().tabs[1]?.pageStack).toEqual([
+        { pageId: other.pageId, title: 'Other page' },
+      ])
+      expect(onNavigateToPage).not.toHaveBeenCalled()
+    })
+
+    it('Alt+Enter with the caret beside it follows it, as a click does; elsewhere it does nothing', async () => {
+      const { other, onNavigateToPage, editor } = await chipOnPage()
+
+      act(() => {
+        editor.commands.setTextSelection(at(editor, 0, 1))
+      })
+      expect(press(editor, 'Enter', { altKey: true })).toBe(false)
+      act(() => {
+        editor.commands.setTextSelection(at(editor, 0, 4))
+      })
+      expect(press(editor, 'Enter', { altKey: true })).toBe(true)
+
+      await waitFor(() => {
+        expect(onNavigateToPage).toHaveBeenCalledWith(other.pageId, 'Other page')
+      })
+      expect(onNavigateToPage).toHaveBeenCalledTimes(1)
     })
   })
 

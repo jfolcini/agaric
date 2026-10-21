@@ -86,7 +86,7 @@ export function pageModeExtensions(options: PageModeExtensionOptions): Extension
     QueryHint.extend({ priority: 1001 }),
     PagePaste,
     PageBlockIds.configure(options.mintId === undefined ? {} : { mintId: options.mintId }),
-    PageKeys,
+    PageKeys.configure({ onNavigate: options.onNavigate }),
     PageRenderedKeys,
     ...(options.lists === undefined ? [] : [pageListKeys(options.lists)]),
     // After `pageListKeys` and at its priority: among equals the one registered

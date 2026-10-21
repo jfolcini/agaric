@@ -118,7 +118,7 @@ import { blockIdOf } from '@/editor/token-ids'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { CONTENT_COMMIT_DEBOUNCE_MS } from '@/hooks/useDebouncedContentCommit'
 import { DRAFT_MAX_LATENCY_MS } from '@/hooks/useDraftAutosave'
-import { useOpenInBackgroundTab } from '@/hooks/useOpenInBackgroundTab'
+import { delegatedLinkClickProps, useOpenLinkInNewTab } from '@/hooks/useOpenInBackgroundTab'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
@@ -403,7 +403,6 @@ function PageModeDocument({
   })
   const [drawerBlockId, setDrawerBlockId] = useState<string | null>(null)
   const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
-  const openInBackgroundTab = useOpenInBackgroundTab()
   // Block mode's chip navigation: another page opens; a block of this page takes the cursor.
   const noRovingEditor = useRef<RovingEditorHandle | null>(null)
   const handleFlushRef = useRef(() => {
@@ -422,6 +421,7 @@ function PageModeDocument({
     onNavigateToPage,
     t: translate,
   })
+  const openLinkInNewTab = useOpenLinkInNewTab(handleNavigate)
   // One options object for the editor's life: `useEditor` re-applies options
   // that change identity.
   // oxlint-disable-next-line react/refs -- `handleNavigateRef` is read inside the chips' click closure, which TipTap invokes on a click, never during this render; handing a ref to a consumer that defers the read is the intended use; see #4406
@@ -950,6 +950,7 @@ function PageModeDocument({
           tabIndex={-1}
           className="rounded-md focus-ring-visible"
           {...{ [SURFACE]: '' }}
+          {...(openLinkInNewTab ? delegatedLinkClickProps(openLinkInNewTab) : {})}
         />
       </BlockResolversProvider>
       {/* Block mode's own: the marks and the link on a selection, and Ctrl+K. */}
@@ -959,10 +960,7 @@ function PageModeDocument({
         pageId={pageId}
         pageStore={pageStore}
         actions={actions}
-        onOpenLinkInNewTab={
-          openInBackgroundTab &&
-          ((id) => void handleNavigate(id, (page, title) => openInBackgroundTab(page, title ?? '')))
-        }
+        onOpenLinkInNewTab={openLinkInNewTab}
       />
       {datePickerOpen && (
         <Suspense fallback={null}>

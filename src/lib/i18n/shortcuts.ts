@@ -53,6 +53,8 @@ export const shortcuts: Record<string, string> = {
   'keyboard.condition.hasSelection': 'When items are selected',
   'keyboard.moveToPreviousBlock': 'Move to previous block',
   'keyboard.moveToNextBlock': 'Move to next block',
+  'keyboard.followLink': 'Follow the link',
+  'keyboard.condition.atLink': 'At a page link or block reference',
   'keyboard.saveBlockAndClose': 'Save block and close editor',
   'keyboard.leaveBlockAndSelect': 'Save block, close editor and select the block',
   'keyboard.deleteBlock': 'Delete block',

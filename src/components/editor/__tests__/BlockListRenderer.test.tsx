@@ -104,7 +104,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
   }
 }
 
-describe('BlockListRenderer — middle click on a link chip', () => {
+describe('BlockListRenderer — middle click and Ctrl+click on a link chip', () => {
   const blocks = [makeBlock({ id: 'BLK001', content: '[[LINK_BLK001]]' })]
 
   function renderWith(onOpenLinkInNewTab: ((id: string) => void) | undefined) {
@@ -139,10 +139,37 @@ describe('BlockListRenderer — middle click on a link chip', () => {
     expect(open).not.toHaveBeenCalled()
   })
 
+  it('opens the chip’s target in a new tab in front on a Ctrl or Cmd click', () => {
+    const open = vi.fn()
+    renderWith(open)
+    const chip = screen.getByText('link')
+
+    expect(fireEvent.click(chip, { ctrlKey: true })).toBe(false)
+    expect(fireEvent.click(chip, { metaKey: true })).toBe(false)
+
+    expect(open.mock.calls).toEqual([
+      ['LINK_BLK001', true],
+      ['LINK_BLK001', true],
+    ])
+  })
+
+  it('leaves a Ctrl+click off a chip, and a plain click on one, to the block', () => {
+    const open = vi.fn()
+    renderWith(open)
+
+    expect(fireEvent.click(screen.getByTestId('sortable-block-BLK001'), { ctrlKey: true })).toBe(
+      true,
+    )
+    expect(fireEvent.click(screen.getByText('link'))).toBe(true)
+
+    expect(open).not.toHaveBeenCalled()
+  })
+
   it('does nothing where no tab can open (mobile)', () => {
     renderWith(undefined)
 
     expect(fireEvent.mouseDown(screen.getByText('link'), { button: 1 })).toBe(true)
+    expect(fireEvent.click(screen.getByText('link'), { ctrlKey: true })).toBe(true)
   })
 })
 

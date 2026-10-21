@@ -56,6 +56,14 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.atEnd',
     rebindable: false,
   },
+  {
+    // A link chip's click handler, from the keyboard (`use-block-keyboard.ts`, `page-keys.ts`).
+    id: 'followLink',
+    keys: 'Alt + Enter',
+    category: 'keyboard.category.navigation',
+    description: 'keyboard.followLink',
+    condition: 'keyboard.condition.atLink',
+  },
 
   // Editing
   {
