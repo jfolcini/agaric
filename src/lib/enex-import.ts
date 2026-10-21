@@ -43,7 +43,7 @@
  *   1. fallbacks that cannot fire: the `?? ''` the type system forces on
  *      `Node.textContent`, `Array.pop()` and an in-bounds index;
  *   2. fallbacks whose stand-in value cannot matter, because a mime with no
- *      subtype, an empty or unparseable body, and a hash matching no resource
+ *      subtype, an empty body, and a hash matching no resource
  *      converge on the same output whatever it is;
  *   3. MD5's high length word (non-zero only for a resource ≥ 512 MB) and the
  *      one-past-the-end typed-array writes JS silently drops;
@@ -56,6 +56,8 @@
 
 import TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
+
+import { scanNameTokens } from '@/lib/name-tokens'
 
 /**
  * One decoded, referenced `<resource>` attachment for a note (#2513). Only
@@ -90,6 +92,8 @@ export interface EnexNote {
   createdMs: number | null
   /** `<updated>` as epoch milliseconds, or null when absent/unparseable. */
   updatedMs: number | null
+  /** `<note-attributes><source-url>`: the page a web clip came from, or null. */
+  sourceUrl: string | null
   /**
    * Decoded attachments referenced by the body's `<en-media>` tags (#2513),
    * in first-referenced order. Empty when the note embeds no (resolvable)
@@ -166,6 +170,19 @@ function createEnmlTurndown(): TurndownService {
     bulletListMarker: '-',
   })
   td.use(gfm)
+  // A pipe-table row is one line, and Evernote wraps each cell's text in
+  // `<div>`s, whose line breaks would end the row mid-cell; a `|` in the text
+  // would open a column. Added after the plugin's cell rule, so it wins.
+  td.addRule('enmlTableCell', {
+    filter: ['th', 'td'],
+    replacement: (cellContent, node) => {
+      const text = cellContent
+        .trim()
+        .replace(/\s*\n\s*/g, ' ')
+        .replace(/\|/g, '\\|')
+      return `${node.previousElementSibling === null ? '|' : ''} ${text} |`
+    },
+  })
   return td
 }
 
@@ -306,7 +323,10 @@ function sanitizeResourceName(name: string): string {
     const cp = ch.codePointAt(0)
     if (cp !== undefined && cp >= 0x20) out += ch
   }
-  return out.trim()
+  // The backend's image grammar (`MARKDOWN_IMAGE_RE` in import.rs) ends a ref
+  // at whitespace or `)`, so `![](Screenshot 2024.png)` would never be
+  // ingested: the name is the shipped path, so rename both to match.
+  return out.trim().replace(/[\p{White_Space}()]+/gu, '_')
 }
 
 /** A decoded resource plus the vault-relative path it will be embedded/shipped as. */
@@ -402,7 +422,9 @@ function transformEnmlDom(
     const sentinel = ownerDoc.createTextNode(
       checked ? TODO_CHECKED_SENTINEL : TODO_UNCHECKED_SENTINEL,
     )
-    todo.replaceWith(sentinel)
+    // Children appear only under the HTML parse (see `parseEnml`), where the
+    // self-closing tag swallows what follows it: keep them.
+    todo.replaceWith(sentinel, ...Array.from(todo.childNodes))
   }
   for (const media of Array.from(root.querySelectorAll('en-media'))) {
     // A missing or blank hash simply matches nothing: every key is a 32-char
@@ -411,10 +433,9 @@ function transformEnmlDom(
     const resource = resources.get(hash)
     if (resource === undefined) {
       // No matching resource (dangling hash / unsupported inline media): drop
-      // the reference rather than leaking `<en-media>` markup into the body.
-      // Turndown happens to render the leftover element as nothing too, so
-      // this is the stated contract rather than an observable transform.
-      media.remove()
+      // the reference rather than leaking `<en-media>` markup into the body,
+      // keeping any children the HTML parse gave it, as for `<en-todo>`.
+      media.replaceWith(...Array.from(media.childNodes))
       continue
     }
     if (!used.some((a) => a.path === resource.path)) {
@@ -424,6 +445,7 @@ function transformEnmlDom(
     mediaRefs.push(`![](${resource.path})`)
     media.replaceWith(
       ownerDoc.createTextNode(`${MEDIA_SENTINEL_OPEN}${index}${MEDIA_SENTINEL_CLOSE}`),
+      ...Array.from(media.childNodes),
     )
   }
   for (const crypt of Array.from(root.querySelectorAll('en-crypt'))) {
@@ -443,6 +465,20 @@ function transformEnmlDom(
     nested = findLeafNestedTable(root)
   ) {
     nested.replaceWith(ownerDoc.createTextNode(flattenNestedTable(nested)))
+  }
+  for (const table of Array.from(root.querySelectorAll('table'))) {
+    const first = table.querySelector('tr')
+    if (first === null) {
+      // turndown-plugin-gfm reads every table's first row and throws on a
+      // table with none, failing the whole file.
+      table.replaceWith(...Array.from(table.childNodes))
+    } else if (first.parentElement?.localName !== 'thead') {
+      // The plugin keeps a table with no header row as raw HTML, and Evernote
+      // writes none: its first row is the header.
+      const head = ownerDoc.createElement('thead')
+      head.append(first)
+      table.prepend(head)
+    }
   }
 }
 
@@ -507,8 +543,7 @@ function flattenNestedTable(table: Element): string {
  *      (`<en-todo …></en-todo>`), fixing the swallow — which also strips the
  *      `<en-note>` wrapper,
  *   3. hand that well-formed HTML to Turndown.
- * A content string that fails to parse yields an empty body (the note still
- * imports, just without its ENML).
+ * ENML that fails the XML parse is read as HTML instead (see {@link parseEnml}).
  */
 function enmlToMarkdown(
   td: TurndownService,
@@ -519,11 +554,7 @@ function enmlToMarkdown(
   const trimmed = enml.trim()
   if (trimmed.length === 0) return ''
 
-  const doc = new DOMParser().parseFromString(trimmed, 'application/xml')
-  if (doc.querySelector('parsererror') !== null) return ''
-  // A rootless `<content>` falls back to the document element, which a parse
-  // without a `<parsererror>` always has.
-  const enNote = doc.querySelector('en-note') ?? doc.documentElement
+  const enNote = parseEnml(trimmed)
 
   // Round-trip through an HTML document so the custom/void tags serialize
   // with explicit close tags (see the doc comment). Reading the en-note's
@@ -564,6 +595,25 @@ function enmlToMarkdown(
       .replace(new RegExp(TODO_UNCHECKED_SENTINEL, 'g'), '- [ ] ')
       .trim()
   )
+}
+
+/**
+ * The `<en-note>` element of an ENML document. ENML's DTD imports the XHTML
+ * entity sets, so `&nbsp;` and `&eacute;` are legal ENML that an XML parse,
+ * which never loads the DTD, rejects; so is any note another tool wrote
+ * malformed. Such a note is read as HTML, which keeps all of its text: the
+ * only cost is that a self-closing `<en-todo/>` or `<en-media/>` swallows its
+ * following siblings, which {@link transformEnmlDom} puts back.
+ */
+function parseEnml(enml: string): Element {
+  const xml = new DOMParser().parseFromString(enml, 'application/xml')
+  if (xml.querySelector('parsererror') === null) {
+    // A rootless `<content>` falls back to the document element, which a
+    // parse without a `<parsererror>` always has.
+    return xml.querySelector('en-note') ?? xml.documentElement
+  }
+  const html = new DOMParser().parseFromString(enml, 'text/html')
+  return html.querySelector('en-note') ?? html.body
 }
 
 /** XML-escape the `&`, `<`, `>` in a raw text run. */
@@ -622,21 +672,28 @@ export function parseEnex(xmlText: string): EnexNote[] {
 
     const createdMs = parseEnexTimestamp(noteEl.querySelector('created')?.textContent)
     const updatedMs = parseEnexTimestamp(noteEl.querySelector('updated')?.textContent)
+    const rawSourceUrl = noteEl.querySelector('note-attributes > source-url')?.textContent?.trim()
+    const sourceUrl = rawSourceUrl !== undefined && rawSourceUrl.length > 0 ? rawSourceUrl : null
 
-    return { title, markdown, tags, createdMs, updatedMs, attachments }
+    return { title, markdown, tags, createdMs, updatedMs, sourceUrl, attachments }
   })
 }
 
 /**
  * Render one Evernote tag as an inline tag token the markdown importer
- * understands (#1924/#1950): a single-word tag becomes `#tag`; a tag whose
- * (whitespace-collapsed) name contains a space becomes the multi-word form
- * `#[[Multi Word]]`, matching the importer's `#[[Tag With Space]]` syntax so
- * the tag survives as ONE tag instead of truncating at the first space.
+ * understands (#1924/#1950): `#tag` when the importer reads that bare form back
+ * as this whole tag, else `#[[…]]`, so `Multi Word`, `C++`, `v1.2`, `Q&A` and
+ * the all-digit `2024` each survive as one tag instead of being cut short or
+ * left as text. The rule is the export's (`tagText` in
+ * `source-buffer-pickers.ts`, #5160 N8).
  */
 function tagToToken(tag: string): string {
   const name = tag.trim().replace(/\s+/g, ' ')
-  return /\s/.test(name) ? `#[[${name}]]` : `#${name}`
+  const bare = `#${name}`
+  const [token] = scanNameTokens(bare)
+  return token?.kind === 'tag' && token.name === name && token.end === bare.length
+    ? bare
+    : `#[[${name}]]`
 }
 
 /**
@@ -657,9 +714,9 @@ export function sanitizeNoteTitleToFilename(title: string): string {
 /**
  * Compose the final Markdown handed to `importMarkdown` for a note:
  *
- *   1. a YAML frontmatter block (`created` / `updated` as ISO strings when
- *      known, plus `source: evernote`) — applied by the importer as page
- *      properties (#1432),
+ *   1. a YAML frontmatter block (`created` / `updated` as ISO strings and
+ *      `source-url` when known, plus `source: evernote`) — applied by the
+ *      importer as page properties (#1432),
  *   2. the note's tags as inline `#tag` / `#[[Multi Word]]` tokens on one
  *      line (omitted when there are none),
  *   3. the converted ENML body.
@@ -671,6 +728,9 @@ export function enexNoteToMarkdown(note: EnexNote): string {
   }
   if (note.updatedMs !== null) {
     frontmatter.push(`updated: "${new Date(note.updatedMs).toISOString()}"`)
+  }
+  if (note.sourceUrl !== null) {
+    frontmatter.push(`source-url: "${note.sourceUrl}"`)
   }
   frontmatter.push('source: evernote')
   frontmatter.push('---')

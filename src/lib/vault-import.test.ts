@@ -306,6 +306,7 @@ describe('enexNotesToUnits', () => {
     tags: [],
     createdMs: null,
     updatedMs: null,
+    sourceUrl: null,
     attachments,
   })
 
