@@ -94,7 +94,7 @@ Repeating tasks are configured via properties (see [properties.md](properties.md
 
 ## Inline tasks in the editor
 
-In the editor (any block can be a task), `Ctrl+Enter` advances the **task state cycle**:
+In the editor (any block can be a task), `Ctrl+Enter` or `Ctrl+L` advances the **task state cycle**:
 none → TODO → DOING → DONE → CANCELLED → none. Completing a repeating task creates its
 next occurrence according to the repeat rule. `Ctrl+Shift+1` / `Ctrl+Shift+2` /
 `Ctrl+Shift+3` set P1 / P2 / P3 directly. Due and

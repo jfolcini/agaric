@@ -102,7 +102,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   },
   {
     id: 'cycleTaskState',
-    keys: 'Ctrl + Enter',
+    keys: 'Ctrl + Enter / Ctrl + L',
     category: 'keyboard.category.editing',
     description: 'keyboard.cycleTaskState',
   },
@@ -195,14 +195,11 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.duplicateBlock',
   },
   {
-    // #976 (item 14) — open the "Turn into" type picker for the focused block
-    // from the keyboard, surfacing the same conversion family the context-menu
-    // submenu and the `/turn` slash command expose. `Alt + T` (goToToday) and
-    // `Ctrl + T` (openInNewTab) are taken; this uses the free `Ctrl + Shift + T`
-    // chord (verified against the full key list — only `Ctrl + Shift + Tab`,
-    // a distinct key, exists).
+    // #976 (item 14) — open the "Turn into" type picker for the focused block,
+    // as the context-menu submenu and the `/turn` slash command do.
+    // `Ctrl + Shift + T` belongs to `reopenClosedTab`, as in browsers and Obsidian.
     id: 'turnIntoBlock',
-    keys: 'Ctrl + Shift + T',
+    keys: 'Ctrl + Shift + L',
     category: 'keyboard.category.blockTree',
     description: 'keyboard.turnIntoBlock',
   },
@@ -533,6 +530,34 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.global',
     description: 'keyboard.paletteOpen',
   },
+  // Obsidian's quick switcher and command palette. Unlike `paletteOpen` they
+  // fire inside the editor too, which binds neither chord.
+  {
+    id: 'quickSwitcher',
+    keys: 'Ctrl + O',
+    category: 'keyboard.category.global',
+    description: 'keyboard.quickSwitcher',
+  },
+  {
+    id: 'commandPalette',
+    keys: 'Ctrl + P',
+    category: 'keyboard.category.global',
+    description: 'keyboard.commandPalette',
+  },
+  // The header's Back / Forward. GNOME can claim `Ctrl + Alt + ←/→` for
+  // workspaces, so the mouse's back and forward buttons do the same.
+  {
+    id: 'navigateBack',
+    keys: 'Ctrl + Alt + Arrow Left',
+    category: 'keyboard.category.global',
+    description: 'keyboard.navigateBack',
+  },
+  {
+    id: 'navigateForward',
+    keys: 'Ctrl + Alt + Arrow Right',
+    category: 'keyboard.category.global',
+    description: 'keyboard.navigateForward',
+  },
   // F3 / Shift+F3 cycle matches in the in-page-find toolbar.
   // The matcher is responsible for actually wiring these (it listens
   // while the toolbar is open); listing them here makes them discoverable
@@ -665,9 +690,9 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.inPageEditor',
   },
   {
-    // #5691 — the page header's Blocks | Page switch.
+    // #5691 — the page header's Blocks | Page switch; `Ctrl + E` as in Obsidian.
     id: 'togglePageMode',
-    keys: 'Ctrl + Shift + M',
+    keys: 'Ctrl + E / Ctrl + Shift + M',
     category: 'keyboard.category.pageEditor',
     description: 'keyboard.togglePageMode',
     condition: 'keyboard.condition.inPageEditor',
@@ -713,6 +738,77 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.desktopOnly',
   },
   {
+    id: 'reopenClosedTab',
+    keys: 'Ctrl + Shift + T',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.reopenClosedTab',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  // Obsidian's and the browsers' digit row: tab N, and `Ctrl + 9` the last tab.
+  {
+    id: 'selectTab1',
+    keys: 'Ctrl + 1',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.selectTab1',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  {
+    id: 'selectTab2',
+    keys: 'Ctrl + 2',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.selectTab2',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  {
+    id: 'selectTab3',
+    keys: 'Ctrl + 3',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.selectTab3',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  {
+    id: 'selectTab4',
+    keys: 'Ctrl + 4',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.selectTab4',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  {
+    id: 'selectTab5',
+    keys: 'Ctrl + 5',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.selectTab5',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  {
+    id: 'selectTab6',
+    keys: 'Ctrl + 6',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.selectTab6',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  {
+    id: 'selectTab7',
+    keys: 'Ctrl + 7',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.selectTab7',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  {
+    id: 'selectTab8',
+    keys: 'Ctrl + 8',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.selectTab8',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  {
+    id: 'selectLastTab',
+    keys: 'Ctrl + 9',
+    category: 'keyboard.category.tabs',
+    description: 'keyboard.selectLastTab',
+    condition: 'keyboard.condition.desktopOnly',
+  },
+  {
     id: 'closeTabOnFocus',
     keys: 'Delete / Backspace',
     category: 'keyboard.category.tabs',
@@ -753,8 +849,9 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     documentLevel: true,
   },
   {
+    // `Ctrl + E` belongs to `togglePageMode`, as Obsidian's edit/read toggle.
     id: 'inlineCode',
-    keys: 'Ctrl + E',
+    keys: 'Ctrl + Shift + K',
     category: 'keyboard.category.editorFormatting',
     description: 'keyboard.inlineCode',
   },
@@ -819,68 +916,60 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     rebindable: false,
   },
 
-  // Spaces — digit hotkeys for instant space switching.
-  // `Ctrl+1`…`Ctrl+9` (`Cmd+1`…`Cmd+9` on macOS — `matchesShortcutBinding`
-  // already accepts `metaKey` in place of `ctrlKey`) jump straight to the
-  // Nth space in the alphabetical `availableSpaces` order. Out-of-range
-  // digits are silent no-ops; the handler short-circuits when typing in
-  // an input/textarea/contenteditable so it never steals keystrokes.
-  // #2679 — `heading1`-`heading6` used to default to this same
-  // `Ctrl + 1`-`Ctrl + 6` chord family, so a user reaching for "switch to
-  // space N" with the caret in a block got their block silently converted
-  // to a heading instead. `heading1`-`heading6` now default to
-  // `Ctrl + Alt + 1`-`Ctrl + Alt + 6`, so there is no longer a collision.
+  // Spaces — `Alt + 1`…`Alt + 9` jump to the Nth space in the alphabetical
+  // `availableSpaces` order; `Ctrl + 1`…`Ctrl + 9` select tabs, as in Obsidian.
+  // Not `Ctrl + Alt + N`: `heading1`-`heading6` own it (#2679).
   {
     id: 'switchSpace1',
-    keys: 'Ctrl + 1',
+    keys: 'Alt + 1',
     category: 'keyboard.category.spaces',
     description: 'keyboard.switchSpace1',
   },
   {
     id: 'switchSpace2',
-    keys: 'Ctrl + 2',
+    keys: 'Alt + 2',
     category: 'keyboard.category.spaces',
     description: 'keyboard.switchSpace2',
   },
   {
     id: 'switchSpace3',
-    keys: 'Ctrl + 3',
+    keys: 'Alt + 3',
     category: 'keyboard.category.spaces',
     description: 'keyboard.switchSpace3',
   },
   {
     id: 'switchSpace4',
-    keys: 'Ctrl + 4',
+    keys: 'Alt + 4',
     category: 'keyboard.category.spaces',
     description: 'keyboard.switchSpace4',
   },
   {
     id: 'switchSpace5',
-    keys: 'Ctrl + 5',
+    keys: 'Alt + 5',
     category: 'keyboard.category.spaces',
     description: 'keyboard.switchSpace5',
   },
   {
     id: 'switchSpace6',
-    keys: 'Ctrl + 6',
+    keys: 'Alt + 6',
     category: 'keyboard.category.spaces',
     description: 'keyboard.switchSpace6',
   },
   {
     id: 'switchSpace7',
-    keys: 'Ctrl + 7',
+    keys: 'Alt + 7',
     category: 'keyboard.category.spaces',
     description: 'keyboard.switchSpace7',
   },
   {
     id: 'switchSpace8',
-    keys: 'Ctrl + 8',
+    keys: 'Alt + 8',
     category: 'keyboard.category.spaces',
     description: 'keyboard.switchSpace8',
   },
   {
     id: 'switchSpace9',
-    keys: 'Ctrl + 9',
+    keys: 'Alt + 9',
     category: 'keyboard.category.spaces',
     description: 'keyboard.switchSpace9',
   },

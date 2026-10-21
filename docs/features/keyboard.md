@@ -5,7 +5,7 @@ Every action in Agaric is keyboard-reachable. The catalog below lists the shortc
 
 ## Where to customise
 
-Settings → Keyboard. Each row shows the action, then its current keys, then an edit button that opens a field for typing the new binding (`Ctrl + Shift + K`). A binding Agaric cannot read is flagged as you type; one that clashes with another shortcut is flagged on its row once saved. A customised row also has *Reset to default*, and *Reset all to defaults* resets every row. Customisations persist in local storage and propagate live to other open tabs / windows.
+Settings → Keyboard. Each row shows the action, then its current keys, then an edit button that opens a field for typing the new binding (`Ctrl + Alt + K`). A binding Agaric cannot read is flagged as you type; one that clashes with another shortcut is flagged on its row once saved. A customised row also has *Reset to default*, and *Reset all to defaults* resets every row. Customisations persist in local storage and propagate live to other open tabs / windows.
 
 ## What's not rebindable
 
@@ -28,14 +28,14 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 | `Ctrl+.` | Collapse / expand block children |
 | `Alt+.` | Zoom in to the focused block |
 | `Escape` | Zoom back out |
-| `Ctrl+Alt+1` … `Ctrl+Alt+6` | Turn the focused block into a heading (level 1-6). Not `Ctrl+1`…`Ctrl+6` — those are reserved for switching spaces (see **Global navigation**) and are a no-op while a block is focused, same as any other digit chord typed into the editor |
-| `Ctrl+Enter` | Cycle the block's task state |
+| `Ctrl+Alt+1` … `Ctrl+Alt+6` | Turn the focused block into a heading (level 1-6). `Ctrl+1` … `Ctrl+9` select tabs and `Alt+1` … `Alt+9` switch spaces (see **Global navigation**) |
+| `Ctrl+Enter` / `Ctrl+L` | Cycle the block's task state |
 | `Ctrl+Shift+P` | Open the **Property Drawer** for the block |
 | `Ctrl+Shift+D` | Open the date picker (inserts a date at the cursor). The *due* and *scheduled* pickers are toolbar-only — they have no default binding |
 | `Ctrl+Shift+Y` | Open block history |
 | `Ctrl+Shift+J` | Duplicate block and its subtree, with its task state, priority, dates, list style and properties |
 | `Ctrl+Shift+V` | Paste as plain text: the clipboard's lines go into the block as they are, with no blocks made and no markdown read |
-| `Ctrl+Shift+T` | Turn block into another type |
+| `Ctrl+Shift+L` | Turn block into another type |
 | `Ctrl+Backspace` (on empty block) | Delete the block |
 
 ## Formatting marks
@@ -44,7 +44,7 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 | --- | --- |
 | `Ctrl+B` | Bold (inside the editor; outside it the same chord toggles the sidebar) |
 | `Ctrl+I` | Italic |
-| `Ctrl+E` | Inline code |
+| `Ctrl+Shift+K` | Inline code |
 | `Ctrl+Shift+S` | Strikethrough |
 | `Ctrl+Shift+H` | Highlight |
 | `Ctrl+U` | Underline |
@@ -59,7 +59,7 @@ Settings → Keyboard. Each row shows the action, then its current keys, then an
 | `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
 | `Ctrl+Shift+E` | Export current page as Markdown |
 | `Ctrl+Shift+G` | Show current page in the graph (local mode) |
-| `Ctrl+Shift+M` | Switch the page on screen between editing blocks and editing it as one document ([page mode](editor.md#page-mode)) |
+| `Ctrl+E` / `Ctrl+Shift+M` | Switch the page on screen between editing blocks and editing it as one document ([page mode](editor.md#page-mode)); desktop only, and nothing where the switch is not offered |
 | `Ctrl+Space` | In a block: leave it, selected, with the selection cursor (a focus ring) on it. With blocks selected and focus in the block list: add or remove the block under the cursor |
 | `Ctrl+↑` / `Ctrl+↓` | With blocks selected and focus in the block list: move the cursor to the block above / below without changing the selection. `Shift+↑` / `Shift+↓` select a range from the cursor |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste the selected blocks as a markdown outline, keeping their task state, priority, dates, list style and properties |
@@ -75,7 +75,7 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 | `Tab` / `Shift+Tab` | Indent the blocks at the cursor or selection, each with its further lines and children, two spaces / remove up to two leading spaces or a tab from them; a top-level block stays where it is. Follows *Tab indents blocks* in Settings → Editor: turned off, Tab moves focus as usual |
 | `Ctrl+Shift+→` / `Ctrl+Shift+←` | Indent / dedent, whatever the Tab setting |
 | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Move the line, with the lines indented under it, past the sibling above / below it; a selection moves the siblings it touches together. Nothing at the top or bottom, and nothing moves into or out of the front matter |
-| `Ctrl+Enter` | Step the task of the block at the cursor: none, `[ ]`, `[/]`, `[x]`, `[-]`, none again |
+| `Ctrl+Enter` / `Ctrl+L` | Step the task of the block at the cursor: none, `[ ]`, `[/]`, `[x]`, `[-]`, none again |
 | `Ctrl+S` | Save |
 | `Escape` | Close an open picker; else close the buffer, asking first when it changed |
 
@@ -87,13 +87,18 @@ The buffer uses the block editor's bindings from the catalog, your rebinds inclu
 | `F3` / `Shift+F3` | Next / previous in-page match |
 | `Ctrl+Shift+F` | Open the **Search** view (find across pages) |
 | `Ctrl+K` | Open the command palette (outside the editor); the header Search button opens the same palette |
+| `Ctrl+O` | Open the quick switcher: the palette's page search, inside the editor too |
+| `Ctrl+P` | Open the palette's commands, inside the editor too |
+| `Ctrl+Alt+←` / `Ctrl+Alt+→` | Back / forward, as the header's arrows. The mouse's back and forward buttons do the same, for desktops that keep `Ctrl+Alt+←/→` for workspaces |
 | `?` | Open the **Keyboard Shortcuts** panel |
 | `Escape` | Close all overlays; clear selection |
-| `Ctrl+1` … `Ctrl+9` | Switch to the Nth space (alphabetical) |
+| `Alt+1` … `Alt+9` | Switch to the Nth space (alphabetical) |
 | `Ctrl+B` | Toggle the sidebar (only when focus is outside the editor) |
 | `Ctrl+N` | Open the **New page** dialog (type a title, Enter creates; a blank title makes an Untitled page) |
 | `Ctrl+T` | Open in new tab (desktop) |
 | `Ctrl+W` | Close active tab (desktop) |
+| `Ctrl+Shift+T` | Reopen the last closed tab, on its pages and at its place (desktop; each window keeps its recently closed tabs for the session) |
+| `Ctrl+1` … `Ctrl+8` / `Ctrl+9` | Select the Nth tab / the last tab (desktop) |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab (desktop) |
 | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom the whole interface in / out / back to 100% (desktop; the level is kept per device and shown in Settings → Appearance → Zoom) |
 | `Ctrl+Alt+N` (`⌘⌥N` on macOS) | Open **Quick Capture**. A true global OS hotkey — fires even when the app is in the background. It is the first row of Settings → Keyboard, labelled system-wide |

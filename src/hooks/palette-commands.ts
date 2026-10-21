@@ -24,6 +24,8 @@
 
 import {
   Activity,
+  ArrowLeft,
+  ArrowRight,
   Calendar,
   CalendarCheck,
   Clock,
@@ -37,6 +39,8 @@ import {
   type LucideIcon,
   Network,
   PanelLeftIcon,
+  RotateCcw,
+  Rows3,
   Settings as SettingsIcon,
   SunMoon,
   Tag as TagIcon,
@@ -51,9 +55,15 @@ import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { openNewPageDialog, SHOW_SHORTCUTS_EVENT, TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
+import {
+  openNewPageDialog,
+  SHOW_SHORTCUTS_EVENT,
+  TOGGLE_PAGE_MODE_EVENT,
+  TOGGLE_SIDEBAR_EVENT,
+} from '@/lib/overlay-events'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
+import { navigateBack, navigateForward } from '@/stores/navigation-history'
 import { showPageInGraph } from '@/stores/show-page-in-graph'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
@@ -200,6 +210,39 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     },
   },
   {
+    id: 'navigate-back',
+    labelKey: 'palette.cmdNavigateBack',
+    category: 'navigate',
+    icon: ArrowLeft,
+    shortcutId: 'navigateBack',
+    run: ({ onClose }) => {
+      onClose()
+      navigateBack()
+    },
+  },
+  {
+    id: 'navigate-forward',
+    labelKey: 'palette.cmdNavigateForward',
+    category: 'navigate',
+    icon: ArrowRight,
+    shortcutId: 'navigateForward',
+    run: ({ onClose }) => {
+      onClose()
+      navigateForward()
+    },
+  },
+  {
+    id: 'reopen-closed-tab',
+    labelKey: 'palette.cmdReopenClosedTab',
+    category: 'navigate',
+    icon: RotateCcw,
+    shortcutId: 'reopenClosedTab',
+    run: ({ onClose }) => {
+      onClose()
+      useTabsStore.getState().reopenClosedTab()
+    },
+  },
+  {
     id: 'search-everywhere',
     labelKey: 'palette.cmdSearchEverywhere',
     category: 'action',
@@ -280,6 +323,18 @@ export const PALETTE_COMMANDS: readonly PaletteCommandSpec[] = [
     run: ({ onClose }) => {
       cycleThemePreference()
       onClose()
+    },
+  },
+  {
+    // The open page's header acts on it where its Blocks | Page switch is offered.
+    id: 'toggle-page-mode',
+    labelKey: 'palette.cmdTogglePageMode',
+    category: 'action',
+    icon: Rows3,
+    shortcutId: 'togglePageMode',
+    run: ({ onClose }) => {
+      onClose()
+      window.dispatchEvent(new CustomEvent(TOGGLE_PAGE_MODE_EVENT))
     },
   },
   {

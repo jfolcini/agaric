@@ -108,15 +108,11 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getAllByText('[[').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Escape').length).toBeGreaterThanOrEqual(1)
 
-    // Verify conditions are rendered separately from keys. moved the
-    // 4 tab shortcuts (openInNewTab, closeActiveTab, nextTab, previousTab)
-    // from the `inEditor` condition to `desktopOnly` so they fire shell-wide
-    // on desktop. inEditor count dropped 8 → 4; #213 PR4 added blockRefPicker
-    // (inEditor) → 5. #1576 added the bold/italic editor built-ins
-    // (inEditor) → 7. #5646 added the three interface-zoom shortcuts
-    // (desktopOnly) → 7.
+    // Verify conditions are rendered separately from keys: the pickers,
+    // line break and bold/italic are `inEditor`; the tab and interface-zoom
+    // shortcuts `desktopOnly`.
     expect(screen.getAllByText(t('keyboard.condition.inEditor')).length).toBe(7)
-    expect(screen.getAllByText(t('keyboard.condition.desktopOnly')).length).toBe(7)
+    expect(screen.getAllByText(t('keyboard.condition.desktopOnly')).length).toBe(17)
     expect(screen.getByText(t('keyboard.interfaceZoomIn'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.interfaceZoomOut'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.interfaceZoomReset'))).toBeInTheDocument()
@@ -290,12 +286,9 @@ describe('KeyboardShortcuts', () => {
 
     expect(screen.getByText(t('keyboard.condition.atStart'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.condition.atEnd'))).toBeInTheDocument()
-    // InEditor 8 → 4, desktopOnly 0 → 4; #213 PR4 added blockRefPicker
-    // (inEditor) → 5; #1576 added bold/italic editor built-ins (inEditor) → 7;
-    // #5646 added interface zoom (desktopOnly) → 7
-    // (see "shows all shortcut entries" above for the rationale).
+    // The same counts as "shows all shortcut entries" above.
     expect(screen.getAllByText(t('keyboard.condition.inEditor'))).toHaveLength(7)
-    expect(screen.getAllByText(t('keyboard.condition.desktopOnly'))).toHaveLength(7)
+    expect(screen.getAllByText(t('keyboard.condition.desktopOnly'))).toHaveLength(17)
   })
 
   it('shows customized shortcuts when localStorage has overrides', () => {

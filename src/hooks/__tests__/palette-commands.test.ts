@@ -23,7 +23,11 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
 })
 
 import { getPaletteCommand, PALETTE_COMMANDS } from '@/hooks/palette-commands'
-import { OPEN_NEW_PAGE_DIALOG_EVENT, SHOW_SHORTCUTS_EVENT } from '@/lib/overlay-events'
+import {
+  OPEN_NEW_PAGE_DIALOG_EVENT,
+  SHOW_SHORTCUTS_EVENT,
+  TOGGLE_PAGE_MODE_EVENT,
+} from '@/lib/overlay-events'
 import {
   type LocalGraphPreference,
   PREFERENCES,
@@ -191,5 +195,64 @@ describe('PALETTE_COMMANDS — show-page-in-graph (#5433)', () => {
 
     expect(useNavigationStore.getState().currentView).toBe('page-editor')
     expect(graphLocalKeys()).toEqual([])
+  })
+})
+
+describe('PALETTE_COMMANDS — the Obsidian keymap’s global chords', () => {
+  it.each([
+    ['navigate-back', 'navigateBack'],
+    ['navigate-forward', 'navigateForward'],
+    ['reopen-closed-tab', 'reopenClosedTab'],
+    ['toggle-page-mode', 'togglePageMode'],
+  ])('%s shows the %s chord', (id, shortcutId) => {
+    expect(getPaletteCommand(id)?.shortcutId).toBe(shortcutId)
+  })
+
+  it('reopen-closed-tab closes the palette and brings the closed tab back', () => {
+    const tabs = [
+      { id: '1', pageStack: [{ pageId: 'P_A', title: 'A' }], label: 'A' },
+      { id: '2', pageStack: [{ pageId: 'P_B', title: 'B' }], label: 'B' },
+    ]
+    useTabsStore.setState({
+      tabs,
+      activeTabIndex: 0,
+      tabsBySpace: {},
+      activeTabIndexBySpace: {},
+      closedTabs: [],
+    })
+    useTabsStore.getState().closeTab(1)
+    const onClose = vi.fn()
+
+    getPaletteCommand('reopen-closed-tab')?.run({ onClose, onEscalate: vi.fn() })
+
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['A', 'B'])
+  })
+
+  it('navigate-back steps the header’s history back', () => {
+    const space = useSpaceStore.getState().currentSpaceId ?? '__legacy__'
+    useNavigationStore.setState({ currentView: 'tags' })
+    useNavigationStore.getState().setNavHistory(space, {
+      entries: [
+        { kind: 'view', view: 'pages' },
+        { kind: 'view', view: 'tags' },
+      ],
+      index: 1,
+    })
+
+    getPaletteCommand('navigate-back')?.run({ onClose: vi.fn(), onEscalate: vi.fn() })
+
+    expect(useNavigationStore.getState().currentView).toBe('pages')
+  })
+
+  it('toggle-page-mode asks the open page’s header to switch', () => {
+    const listener = vi.fn()
+    window.addEventListener(TOGGLE_PAGE_MODE_EVENT, listener)
+    try {
+      getPaletteCommand('toggle-page-mode')?.run({ onClose: vi.fn(), onEscalate: vi.fn() })
+      expect(listener).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener(TOGGLE_PAGE_MODE_EVENT, listener)
+    }
   })
 })

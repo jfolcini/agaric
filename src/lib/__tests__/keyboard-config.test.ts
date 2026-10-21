@@ -839,10 +839,10 @@ describe('keyboard-config', () => {
       expect(s?.description).toBe('keyboard.duplicateBlock')
     })
 
-    it('turnIntoBlock defaults to Ctrl + Shift + T under blockTree', () => {
+    it('turnIntoBlock defaults to Ctrl + Shift + L under blockTree', () => {
       const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'turnIntoBlock')
       expect(s).toBeDefined()
-      expect(s?.keys).toBe('Ctrl + Shift + T')
+      expect(s?.keys).toBe('Ctrl + Shift + L')
       expect(s?.category).toBe('keyboard.category.blockTree')
       expect(s?.description).toBe('keyboard.turnIntoBlock')
     })
@@ -877,7 +877,7 @@ describe('keyboard-config', () => {
         ).toBe(true)
         expect(
           matchesShortcutBinding(
-            { altKey: false, ctrlKey: false, metaKey: false, ...opts, key: 't' },
+            { altKey: false, ctrlKey: false, metaKey: false, ...opts, key: 'l' },
             'turnIntoBlock',
           ),
         ).toBe(true)
@@ -891,7 +891,7 @@ describe('keyboard-config', () => {
       ).toBe(false)
       expect(
         matchesShortcutBinding(
-          { altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, key: 't' },
+          { altKey: false, ctrlKey: true, metaKey: false, shiftKey: true, key: 't' },
           'turnIntoBlock',
         ),
       ).toBe(false)
@@ -1123,9 +1123,9 @@ describe('keyboard-config', () => {
       }
     })
 
-    it('inlineCode defaults to Ctrl + E', () => {
+    it('inlineCode defaults to Ctrl + Shift + K, leaving Ctrl + E to togglePageMode', () => {
       const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'inlineCode')
-      expect(s?.keys).toBe('Ctrl + E')
+      expect(s?.keys).toBe('Ctrl + Shift + K')
     })
 
     it('strikethrough defaults to Ctrl + Shift + S (#211 P2-11)', () => {
@@ -1737,11 +1737,13 @@ describe('keyboard-config', () => {
     })
 
     it('setting the default chord in a non-canonical format removes the override', () => {
-      // inlineCode default is `Ctrl + E`; typing it as `Ctrl+E` must be
+      // inlineCode default is `Ctrl + Shift + K`; typing it as `Ctrl+Shift+K` must be
       // recognised as the default, not stored as a phantom customisation.
-      setCustomShortcut('inlineCode', 'Ctrl+E')
+      setCustomShortcut('inlineCode', 'Ctrl+Shift+K')
       expect(getCustomOverrides()['inlineCode']).toBeUndefined()
-      expect(matchesShortcutBinding(ev('e', { ctrlKey: true }), 'inlineCode')).toBe(true)
+      expect(matchesShortcutBinding(ev('k', { ctrlKey: true, shiftKey: true }), 'inlineCode')).toBe(
+        true,
+      )
     })
 
     it.each([
@@ -2166,19 +2168,79 @@ describe('keyboard-config', () => {
       expect(matchesShortcutBinding(ev(digit), id)).toBe(false)
     })
 
-    // ── switchSpace1..9 (#1172) — parametrize all nine, only Ctrl+N fires ──
+    // ── switchSpace1..9 (#1172) — parametrize all nine, only Alt+N fires ──
     it.each([1, 2, 3, 4, 5, 6, 7, 8, 9] as const)(
-      'switchSpace%i resolves from Ctrl+%i (and Cmd+%i) but not the bare digit',
+      'switchSpace%i resolves from Alt+N but not Ctrl+N or the bare digit',
       (n) => {
         const digit = String(n)
         const id = `switchSpace${n}`
+        expect(matchesShortcutBinding(ev(digit, { altKey: true }), id)).toBe(true)
+        expect(matchesShortcutBinding(ev(digit), id)).toBe(false)
+        // Ctrl+N selects a tab; Ctrl+Alt+N is a heading.
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), id)).toBe(false)
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true, altKey: true }), id)).toBe(false)
+      },
+    )
+
+    // ── selectTab1..8 + selectLastTab — Ctrl+N, as in Obsidian ──────────
+    it.each([1, 2, 3, 4, 5, 6, 7, 8] as const)(
+      'selectTab%i resolves from Ctrl+N and Cmd+N only',
+      (n) => {
+        const digit = String(n)
+        const id = `selectTab${n}`
         expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), id)).toBe(true)
         expect(matchesShortcutBinding(ev(digit, { metaKey: true }), id)).toBe(true)
-        expect(matchesShortcutBinding(ev(digit), id)).toBe(false)
-        // Ctrl+Shift+digit is the priority chord, NOT a space switch.
+        expect(matchesShortcutBinding(ev(digit, { altKey: true }), id)).toBe(false)
         expect(matchesShortcutBinding(ev(digit, { ctrlKey: true, shiftKey: true }), id)).toBe(false)
       },
     )
+
+    // Obsidian's chords (slice 1), each beside the one it must not be mistaken for.
+    it.each([
+      ['togglePageMode', 'e', { ctrlKey: true }],
+      ['togglePageMode', 'm', { ctrlKey: true, shiftKey: true }],
+      ['cycleTaskState', 'l', { ctrlKey: true }],
+      ['cycleTaskState', 'Enter', { ctrlKey: true }],
+      ['reopenClosedTab', 't', { ctrlKey: true, shiftKey: true }],
+      ['quickSwitcher', 'o', { ctrlKey: true }],
+      ['commandPalette', 'p', { metaKey: true }],
+      ['navigateBack', 'ArrowLeft', { ctrlKey: true, altKey: true }],
+      ['navigateForward', 'ArrowRight', { ctrlKey: true, altKey: true }],
+    ] as const)('%s resolves from %s with its modifiers', (id, key, opts) => {
+      expect(matchesShortcutBinding(ev(key, opts), id)).toBe(true)
+    })
+
+    it.each([
+      ['inlineCode', 'e', { ctrlKey: true }],
+      ['turnIntoBlock', 't', { ctrlKey: true, shiftKey: true }],
+      ['commandPalette', 'p', { ctrlKey: true, shiftKey: true }],
+      ['navigateBack', 'ArrowLeft', { altKey: true }],
+      ['openInNewTab', 't', { ctrlKey: true, shiftKey: true }],
+    ] as const)('%s does not resolve from %s with those modifiers', (id, key, opts) => {
+      expect(matchesShortcutBinding(ev(key, opts), id)).toBe(false)
+    })
+
+    it('selectLastTab resolves from Ctrl+9', () => {
+      expect(matchesShortcutBinding(ev('9', { ctrlKey: true }), 'selectLastTab')).toBe(true)
+      expect(matchesShortcutBinding(ev('9', { altKey: true }), 'selectLastTab')).toBe(false)
+    })
+
+    // macOS's Option turns Option+1 into `key: '¡'`; the digit-row key still names the chord.
+    it('Option+digit on macOS (key ¡, code Digit1) resolves switchSpace1', () => {
+      expect(
+        matchesShortcutBinding({ ...ev('¡', { altKey: true }), code: 'Digit1' }, 'switchSpace1'),
+      ).toBe(true)
+    })
+
+    // German AltGr+2 types `²` as Ctrl+Alt+2: a character, not the heading chord.
+    it('AltGr+2 typing ² (Ctrl+Alt, code Digit2) does not resolve heading2', () => {
+      expect(
+        matchesShortcutBinding(
+          { ...ev('²', { ctrlKey: true, altKey: true }), code: 'Digit2' },
+          'heading2',
+        ),
+      ).toBe(false)
+    })
 
     // ── heading1..6 (#1172, moved off Ctrl+N by #2679) ────────────────────
     it.each([1, 2, 3, 4, 5, 6] as const)(
@@ -2189,32 +2251,25 @@ describe('keyboard-config', () => {
         expect(matchesShortcutBinding(ev(digit, { ctrlKey: true, altKey: true }), id)).toBe(true)
         expect(matchesShortcutBinding(ev(digit), id)).toBe(false)
         expect(matchesShortcutBinding(ev(digit, { ctrlKey: true, shiftKey: true }), id)).toBe(false)
-        // #2679 — the bare Ctrl+N (no Alt) chord used to also resolve
-        // heading{n}, colliding with switchSpace{n}; it must not anymore.
+        // #2679 — the bare Ctrl+N (no Alt) chord must not resolve heading{n}.
         expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), id)).toBe(false)
       },
     )
 
-    // ── heading vs switchSpace no longer collide (#2679) ──────────────────
-    // Ctrl+1..6 used to map to BOTH `heading{n}` and `switchSpace{n}` in the
-    // catalog, so a block-focused Ctrl+N silently converted the block to a
-    // heading instead of switching spaces (the "collision is handler-gated"
-    // contract this test used to pin). `heading1`-`heading6` now default to
-    // Ctrl+Alt+1..6, so the bare Ctrl+N chord resolves to `switchSpace{n}`
-    // ONLY — assert that disjointness directly at the matcher level rather
-    // than relying on handler-side focus gating.
+    // ── heading, tab and space digit chords are disjoint (#2679) ──────────
     it.each([1, 2, 3, 4, 5, 6] as const)(
-      'Ctrl+%i resolves to switchSpace%i only — heading%i requires Alt',
+      'Ctrl+%i selects a tab only; Ctrl+Alt+N is the heading, Alt+N the space',
       (n) => {
         const digit = String(n)
-        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), `switchSpace${n}`)).toBe(true)
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), `selectTab${n}`)).toBe(true)
         expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), `heading${n}`)).toBe(false)
         expect(
           matchesShortcutBinding(ev(digit, { ctrlKey: true, altKey: true }), `heading${n}`),
         ).toBe(true)
         expect(
-          matchesShortcutBinding(ev(digit, { ctrlKey: true, altKey: true }), `switchSpace${n}`),
+          matchesShortcutBinding(ev(digit, { ctrlKey: true, altKey: true }), `selectTab${n}`),
         ).toBe(false)
+        expect(matchesShortcutBinding(ev(digit, { altKey: true }), `heading${n}`)).toBe(false)
       },
     )
 

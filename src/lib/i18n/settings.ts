@@ -33,7 +33,7 @@ export const settings: Record<string, string> = {
   'settings.tabEditor': 'Editor',
   'settings.editor.editModeLabel': 'Edit pages as',
   'settings.editor.editModeHelp':
-    'Blocks edits one block at a time; Page edits the whole page as one document. A page’s header switches the page on screen (Ctrl+Shift+M).',
+    'Blocks edits one block at a time; Page edits the whole page as one document. A page’s header switches the page on screen (Ctrl+E).',
   'settings.editor.editModeBlocks': 'Blocks',
   'settings.editor.editModePage': 'Page',
   'settings.editor.emojiPickerLabel': 'Emoji picker',

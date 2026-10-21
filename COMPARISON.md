@@ -308,7 +308,7 @@ Agaric's strongest domain, and the previous revision understated it.
 | Multiple contexts | One graph per instance; multi-graph = switch folders. 2.0 adds multiple tabs and windows | Multiple `space` blocks partition one DB into independent contexts | Better |
 | Per-space journal / tabs / recents | N/A | Journal keyed `(date, space)`; `tabsBySpace` + `recentPagesBySpace` | Better |
 | Per-space identity | N/A | Accent colour (6 swatches), top stripe, sidebar badge, window-title prefix | Better |
-| Quick switching | Graph switcher | `Ctrl+1` … `Ctrl+9`, rebindable | Better |
+| Quick switching | Graph switcher | `Alt+1` … `Alt+9`, rebindable | Better |
 | Cross-space links | N/A | Broken-link chip; click removes the ref, `Ctrl+Z` restores; enforced at **write** time so the link can't be created accidentally | Better |
 | Manage UI | N/A | Create, inline rename, accent picker, per-space journal template, safety-checked delete (empty spaces only, never the last) | Better |
 | **Per-space sync scope** | N/A | **Not a thing.** Messages are per-space but a session syncs **every** space in the registry. No selective sync, no per-space opt-in | Gap |

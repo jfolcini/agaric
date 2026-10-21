@@ -62,6 +62,19 @@ describe('HistoryNavButtons', () => {
     expect(screen.getByRole('button', { name: 'Forward' })).toBeDisabled()
   })
 
+  it('names the Back and Forward chords', () => {
+    render(<HistoryNavButtons />)
+
+    expect(screen.getByRole('button', { name: 'Back' })).toHaveAttribute(
+      'aria-keyshortcuts',
+      'Control+Alt+ArrowLeft',
+    )
+    expect(screen.getByRole('button', { name: 'Forward' })).toHaveAttribute(
+      'aria-keyshortcuts',
+      'Control+Alt+ArrowRight',
+    )
+  })
+
   it('Back and Forward step through the visited views', async () => {
     const user = userEvent.setup()
     render(<HistoryNavButtons />)

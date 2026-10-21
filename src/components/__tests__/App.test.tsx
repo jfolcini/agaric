@@ -2397,8 +2397,7 @@ describe('App', () => {
 
   // ── digit hotkeys for instant space switching ──────────────
   //
-  // `Ctrl+1` … `Ctrl+9` (`Cmd+1` … `Cmd+9` on macOS — `matchesShortcutBinding`
-  // already accepts `metaKey`) jump directly to the Nth space in the
+  // `Alt+1` … `Alt+9` jump directly to the Nth space in the
   // alphabetical `availableSpaces` order. Out-of-range digits are silent
   // no-ops, and the handler is suppressed while the user is typing in an
   // input/textarea/contenteditable so it never steals keystrokes.
@@ -2409,8 +2408,8 @@ describe('App', () => {
     beforeEach(() => {
       // Two seeded spaces in alphabetical order matches the v1 onboarding
       // shape: `Personal` first, `Work` second. Default
-      // `currentSpaceId === Personal` means `Ctrl+2` is the observable
-      // change for "first switch", and `Ctrl+5` is unambiguously
+      // `currentSpaceId === Personal` means `Alt+2` is the observable
+      // change for "first switch", and `Alt+5` is unambiguously
       // out-of-range without depending on test ordering.
       useSpaceStore.setState({
         currentSpaceId: PERSONAL.id,
@@ -2419,25 +2418,25 @@ describe('App', () => {
       })
     })
 
-    it('Ctrl+1 switches to first space alphabetically', async () => {
+    it('Alt+1 switches to first space alphabetically', async () => {
       render(<App />)
       await waitFor(() => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      // Start on the second space so the Ctrl+1 chord causes an
+      // Start on the second space so the Alt+1 chord causes an
       // observable change to the first alphabetical entry.
       useSpaceStore.getState().setCurrentSpace(WORK.id)
       expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
 
-      fireEvent.keyDown(window, { key: '1', ctrlKey: true })
+      fireEvent.keyDown(window, { key: '1', altKey: true })
 
       await waitFor(() => {
         expect(useSpaceStore.getState().currentSpaceId).toBe(PERSONAL.id)
       })
     })
 
-    it('Ctrl+5 with only 2 spaces is a silent no-op (no toast, no error)', async () => {
+    it('Alt+5 with only 2 spaces is a silent no-op (no toast, no error)', async () => {
       const mockedToastError = vi.mocked(toast.error)
       render(<App />)
       await waitFor(() => {
@@ -2447,8 +2446,8 @@ describe('App', () => {
       // Clear any toast.error / logger.error calls fired during the
       // App's mount-time effects (e.g. JournalPage auto-create using
       // a default-mocked `create_page_in_space` result) so the
-      // assertions below scope cleanly to the Ctrl+5 keydown alone.
-      // intent is "Ctrl+5 is a silent no-op" — not "the
+      // assertions below scope cleanly to the Alt+5 keydown alone.
+      // intent is "Alt+5 is a silent no-op" — not "the
       // App shell never fires any toast at any point during its
       // boot-time auto-create wiring".
       mockedToastError.mockClear()
@@ -2457,7 +2456,7 @@ describe('App', () => {
       // Capture the active id so we can assert it never moved.
       const before = useSpaceStore.getState().currentSpaceId
 
-      fireEvent.keyDown(window, { key: '5', ctrlKey: true })
+      fireEvent.keyDown(window, { key: '5', altKey: true })
       // Let the synchronous handler + any microtasks settle.
       await Promise.resolve()
 
@@ -2466,13 +2465,13 @@ describe('App', () => {
       expect(vi.mocked(logger.error)).not.toHaveBeenCalled()
     })
 
-    it('Ctrl+1 inside a textarea does NOT switch space (typing is preserved)', async () => {
+    it('Alt+1 inside a textarea does NOT switch space (typing is preserved)', async () => {
       render(<App />)
       await waitFor(() => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      // Pin the active space to Work so the would-be Ctrl+1 fallback to
+      // Pin the active space to Work so the would-be Alt+1 fallback to
       // Personal is the observable signal that the handler fired
       // erroneously.
       useSpaceStore.getState().setCurrentSpace(WORK.id)
@@ -2480,7 +2479,7 @@ describe('App', () => {
       const textarea = document.createElement('textarea')
       document.body.append(textarea)
       try {
-        fireEvent.keyDown(textarea, { key: '1', ctrlKey: true })
+        fireEvent.keyDown(textarea, { key: '1', altKey: true })
         await Promise.resolve()
         expect(useSpaceStore.getState().currentSpaceId).toBe(WORK.id)
       } finally {

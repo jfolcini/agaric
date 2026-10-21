@@ -30,6 +30,7 @@ import { isDateFormattedPage } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
 import { parseDate } from '@/lib/parse-date'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
+import { activeSpaceKey } from '@/stores/active-space'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 import { useJournalStore } from '@/stores/journal'
 import { coerceView, useNavigationStore } from '@/stores/navigation'
@@ -89,6 +90,16 @@ let nextTabId = 1
  */
 export const MAX_PAGE_STACK_DEPTH = 50
 
+/** A closed tab, kept for `reopenClosedTab`: its stack, its place, and the space it was in. */
+export interface ClosedTab {
+  tab: Tab
+  index: number
+  spaceKey: string
+}
+
+/** How many closed tabs `reopenClosedTab` can bring back; the oldest drops first. */
+export const MAX_CLOSED_TABS = 20
+
 /**
  * Where leaving the page editor lands when the tab has no recorded
  * `enteredFrom` (see `Tab.enteredFrom`). `pages` is the page list — the
@@ -129,6 +140,11 @@ interface TabsStore {
   tabsBySpace: Record<string, Tab[]>
   /** Per-space active-tab indices. Keyed identically to `tabsBySpace`. */
   activeTabIndexBySpace: Record<string, number>
+  /**
+   * Tabs `closeTab` closed, newest last. Not persisted, so each window keeps
+   * its own for the session, as a browser does.
+   */
+  closedTabs: ClosedTab[]
 
   /** Push a page onto the active tab's stack and switch to page-editor. */
   navigateToPage: (pageId: string, title: string, blockId?: string) => void
@@ -154,6 +170,8 @@ interface TabsStore {
   openInBackgroundTab: (pageId: string, title: string) => void
   /** Close a tab by index. If last tab closed, switch to 'pages' view. */
   closeTab: (tabIndex: number) => void
+  /** Reopen the active space's last closed tab at its old place, and switch to it. */
+  reopenClosedTab: () => void
   /**
    * Switch to a different tab by index. When invoked from a non-`page-editor`
    * view, also flips `currentView` back to `page-editor` so the user actually
@@ -493,6 +511,7 @@ export const useTabsStore = create<TabsStore>()(
       activeTabIndex: 0,
       tabsBySpace: {},
       activeTabIndexBySpace: {},
+      closedTabs: [],
 
       navigateToPage: (pageId: string, title: string, blockId?: string) => {
         // PERF-REVIEW #11 (2026-05-09): this action chains up to four
@@ -759,10 +778,18 @@ export const useTabsStore = create<TabsStore>()(
         const state = get()
         const { tabs, activeTabIndex } = readActiveSlice(state)
         if (tabIndex < 0 || tabIndex >= tabs.length) return
+        const closing = tabs[tabIndex]
+        const closedTabs =
+          closing === undefined || closing.pageStack.length === 0
+            ? state.closedTabs
+            : [
+                ...state.closedTabs,
+                { tab: closing, index: tabIndex, spaceKey: activeSpaceKey() },
+              ].slice(-MAX_CLOSED_TABS)
 
         if (tabs.length <= 1) {
           // Closing last tab — go to pages view
-          set(spliceTabs(state, emptyTabList(), 0))
+          set({ ...spliceTabs(state, emptyTabList(), 0), closedTabs })
           setNavigationView('pages')
           setNavigationSelectedBlockId(null)
           return
@@ -777,7 +804,31 @@ export const useTabsStore = create<TabsStore>()(
         } else {
           newIndex = activeTabIndex
         }
-        set(spliceTabs(state, newTabs, newIndex))
+        set({ ...spliceTabs(state, newTabs, newIndex), closedTabs })
+        setNavigationSelectedBlockId(null)
+      },
+
+      reopenClosedTab: () => {
+        const state = get()
+        const spaceKey = activeSpaceKey()
+        const at = state.closedTabs.findLastIndex((closed) => closed.spaceKey === spaceKey)
+        const closed = state.closedTabs[at]
+        if (closed === undefined) return
+        const { tabs } = readActiveSlice(state)
+        // Closing the last tab leaves one empty tab, which the reopened one replaces.
+        const kept = tabs.length === 1 && tabs[0]?.pageStack.length === 0 ? [] : tabs
+        const index = Math.min(closed.index, kept.length)
+        // A fresh id: the old one may be in use again (the empty tab closing the last leaves is '0').
+        const tab: Tab = {
+          ...closed.tab,
+          id: String(nextTabId++),
+          enteredFrom: nextEnteredFrom(closed.tab),
+        }
+        set({
+          ...spliceTabs(state, kept.toSpliced(index, 0, tab), index),
+          closedTabs: state.closedTabs.toSpliced(at, 1),
+        })
+        setNavigationView('page-editor')
         setNavigationSelectedBlockId(null)
       },
 

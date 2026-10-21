@@ -68,7 +68,7 @@ Representative scope rules (see [Keyboard](features/keyboard.md) for the current
 
 - **Editor** — block split / merge, collapse, mark toggles, link insertion, and the slash menu. `Tab` / `Shift+Tab` indent / dedent by default; users can restore browser focus navigation in Settings → Editor, while `Ctrl+Shift+Arrow` remains available.
 - **Formatting** — bold / italic / strike / code / highlight + heading levels + code block.
-- **Search and navigation** — `Ctrl+F` finds within the current page, `Ctrl+Shift+F` opens the cross-page Search view, and `Ctrl+K` opens the command palette outside the editor. `?`, `Escape`, and `Ctrl+1`-`Ctrl+9` expose shortcuts, close overlays, and switch spaces.
+- **Search and navigation** — `Ctrl+F` finds within the current page, `Ctrl+Shift+F` opens the cross-page Search view, and `Ctrl+K` opens the command palette outside the editor. `?`, `Escape`, `Ctrl+1`-`Ctrl+9` and `Alt+1`-`Alt+9` expose shortcuts, close overlays, select tabs, and switch spaces.
 - **Undo / redo** — `Ctrl+Z` and `Ctrl+Y` / `Ctrl+Shift+Z` use editor history while editing and page-level history when focus is outside the editor on a PageEditor view.
 - **Journal** — `Alt+←` / `Alt+→` (prev / next), `Alt+T` (today).
 - **List navigation** — `Home` / `End` / `PageUp` / `PageDown` + optional wrap-around via `useKeyboardNavigableList`.
@@ -128,7 +128,7 @@ The cross-feature primitives most worth knowing (not exhaustive — see `src/com
 
 ## App-specific features
 
-- **Spaces.** Each space has its own slice of nav state (`currentView`, recent pages, tabs, journal mode). Switching spaces flips them. `Ctrl+1`-`Ctrl+9` switch by index. The sidebar header collapses **SpaceSwitcher** to **SpaceAccentBadge** in icon-rail mode. Cross-space links to a foreign-space target render via the existing broken-link variant; the actual block is never resolved across spaces.
+- **Spaces.** Each space has its own slice of nav state (`currentView`, recent pages, tabs, journal mode). Switching spaces flips them. `Alt+1`-`Alt+9` switch by index. The sidebar header collapses **SpaceSwitcher** to **SpaceAccentBadge** in icon-rail mode. Cross-space links to a foreign-space target render via the existing broken-link variant; the actual block is never resolved across spaces.
 - **Journal.** Dated modes use the date cursor to scope their content; the continuous
   Stream and task-focused Agenda do not, so they hide the previous/next stepper and date
   display. **DuePanel** / **DonePanel** are children of journal modes, not standalone views

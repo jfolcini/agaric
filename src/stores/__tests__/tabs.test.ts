@@ -15,7 +15,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useNavigationStore } from '@/stores/navigation'
 import { useRecentPagesStore } from '@/stores/recent-pages'
-import { MAX_PAGE_STACK_DEPTH, selectPageStack, useTabsStore } from '@/stores/tabs'
+import { useSpaceStore } from '@/stores/space'
+import {
+  MAX_CLOSED_TABS,
+  MAX_PAGE_STACK_DEPTH,
+  selectPageStack,
+  type Tab,
+  useTabsStore,
+} from '@/stores/tabs'
 
 const migrate = useTabsStore.persist.getOptions().migrate
 
@@ -444,5 +451,112 @@ describe('activeTabIndex out-of-range clamp (#1608)', () => {
     // never -1. With no tab to push onto, it bails cleanly (no throw).
     expect(() => useTabsStore.getState().navigateToPage('PAGE_A', 'A')).not.toThrow()
     expect(selectPageStack(useTabsStore.getState())).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The closed-tab stack behind `reopenClosedTab` (Ctrl+Shift+T).
+// ---------------------------------------------------------------------------
+
+describe('reopenClosedTab', () => {
+  function tab(id: string, ...pages: string[]): Tab {
+    const pageStack = pages.map((p) => ({ pageId: `P_${p}`, title: p }))
+    return { id, pageStack, label: pages.at(-1) ?? '' }
+  }
+
+  function seed(tabs: Tab[], activeTabIndex = 0): void {
+    useTabsStore.setState({
+      tabs,
+      activeTabIndex,
+      tabsBySpace: {},
+      activeTabIndexBySpace: {},
+      closedTabs: [],
+    })
+  }
+
+  const labels = () => useTabsStore.getState().tabs.map((t) => t.label)
+
+  beforeEach(() => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    useNavigationStore.setState({ currentView: 'page-editor', selectedBlockId: null })
+  })
+
+  it('puts the tab back at its place with its whole page stack, and switches to it', () => {
+    seed([tab('1', 'A'), tab('2', 'B1', 'B2'), tab('3', 'C')])
+    useTabsStore.getState().closeTab(1)
+    useNavigationStore.setState({ currentView: 'journal' })
+
+    useTabsStore.getState().reopenClosedTab()
+
+    const { tabs, activeTabIndex, closedTabs } = useTabsStore.getState()
+    expect(labels()).toEqual(['A', 'B2', 'C'])
+    expect(tabs[1]?.pageStack).toEqual([
+      { pageId: 'P_B1', title: 'B1' },
+      { pageId: 'P_B2', title: 'B2' },
+    ])
+    expect(activeTabIndex).toBe(1)
+    expect(useNavigationStore.getState().currentView).toBe('page-editor')
+    expect(closedTabs).toEqual([])
+  })
+
+  it('reopens the most recently closed first', () => {
+    seed([tab('1', 'A'), tab('2', 'B'), tab('3', 'C')])
+    useTabsStore.getState().closeTab(0)
+    useTabsStore.getState().closeTab(1)
+    useTabsStore.getState().reopenClosedTab()
+    expect(labels()).toEqual(['B', 'C'])
+    useTabsStore.getState().reopenClosedTab()
+    expect(labels()).toEqual(['A', 'B', 'C'])
+  })
+
+  it('replaces the empty tab closing the last tab leaves, under a fresh id', () => {
+    seed([tab('0', 'A')])
+    useTabsStore.getState().closeTab(0)
+    expect(useTabsStore.getState().tabs).toEqual([{ id: '0', pageStack: [], label: '' }])
+
+    useTabsStore.getState().reopenClosedTab()
+
+    const { tabs } = useTabsStore.getState()
+    expect(labels()).toEqual(['A'])
+    expect(tabs[0]?.id).not.toBe('0')
+  })
+
+  it('keeps no empty tab, and does nothing with none closed', () => {
+    seed([tab('1', 'A'), tab('2')])
+    useTabsStore.getState().closeTab(1)
+    expect(useTabsStore.getState().closedTabs).toEqual([])
+    useTabsStore.getState().reopenClosedTab()
+    expect(labels()).toEqual(['A'])
+  })
+
+  it(`keeps the last ${MAX_CLOSED_TABS} closed tabs, dropping the oldest`, () => {
+    seed(Array.from({ length: MAX_CLOSED_TABS + 2 }, (_, i) => tab(String(i + 1), `T${i}`)))
+    for (let i = 0; i < MAX_CLOSED_TABS + 1; i++) useTabsStore.getState().closeTab(0)
+
+    const { closedTabs } = useTabsStore.getState()
+    expect(closedTabs).toHaveLength(MAX_CLOSED_TABS)
+    expect(closedTabs[0]?.tab.label).toBe('T1')
+    expect(closedTabs.at(-1)?.tab.label).toBe(`T${MAX_CLOSED_TABS}`)
+  })
+
+  it("reopens only the active space's tabs", () => {
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+    seed([tab('1', 'A1'), tab('2', 'A2')])
+    useTabsStore.getState().closeTab(1)
+
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    useTabsStore.getState().reopenClosedTab()
+    expect(labels()).toEqual([''])
+
+    useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+    useTabsStore.getState().reopenClosedTab()
+    expect(labels()).toEqual(['A1', 'A2'])
+  })
+
+  it('is not persisted: each window keeps its own', () => {
+    seed([tab('1', 'A'), tab('2', 'B')])
+    useTabsStore.getState().closeTab(1)
+    const persisted = useTabsStore.persist.getOptions().partialize?.(useTabsStore.getState())
+    expect(persisted).not.toHaveProperty('closedTabs')
   })
 })

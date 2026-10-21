@@ -1097,10 +1097,10 @@ describe('FormattingToolbar', () => {
     })
 
     it('renders the LIVE catalog chord (not a frozen i18n string) for a mapped button', () => {
-      // 'toolbar.code' → 'inlineCode' (catalog default 'Ctrl + E').
+      // 'toolbar.code' → 'inlineCode' (catalog default 'Ctrl + Shift + K').
       const tooltip = renderButton(makeConfig('toolbar.code', 'toolbar.codeTip'))
       // Label + live chord, sourced from the catalog — NOT the tip string.
-      expect(tooltip).toBe(`${t('toolbar.code')} (Ctrl + E)`)
+      expect(tooltip).toBe(`${t('toolbar.code')} (Ctrl + Shift + K)`)
     })
 
     it('updates the tooltip when the shortcut is rebound (proves it derives from the catalog)', () => {

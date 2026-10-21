@@ -505,7 +505,7 @@ describe('BlockContextMenu', () => {
     const menu = screen.getByRole('menu')
     // Hints on rows that stay top-level (tasks, view, history, delete).
     expect(within(menu).getByText('Ctrl+.')).toBeInTheDocument()
-    expect(within(menu).getByText('Ctrl+Enter')).toBeInTheDocument()
+    expect(within(menu).getByText('Ctrl+Enter/Ctrl+L')).toBeInTheDocument()
     // #976 (item 19) — alternation notation, no longer the ambiguous "1-3".
     expect(within(menu).getByText('Ctrl+Shift+1/2/3')).toBeInTheDocument()
     expect(within(menu).queryByText('Ctrl+Shift+1-3')).not.toBeInTheDocument()
@@ -1583,10 +1583,10 @@ describe('BlockContextMenu', () => {
 
     // #976 (item 14) — the Turn into toggle surfaces its new keyboard binding
     // hint alongside the disclosure chevron.
-    it('shows the Ctrl+Shift+T binding hint on the Turn into toggle', () => {
+    it('shows the Ctrl+Shift+L binding hint on the Turn into toggle', () => {
       renderMenu({ onTurnInto: vi.fn() })
       const toggle = screen.getByRole('menuitem', { name: new RegExp(t('contextMenu.turnInto')) })
-      expect(within(toggle).getByText('Ctrl+Shift+T')).toBeInTheDocument()
+      expect(within(toggle).getByText('Ctrl+Shift+L')).toBeInTheDocument()
       // The chevron still renders next to the hint (toggle keeps its disclosure
       // affordance — both svgs present).
       expect(toggle.querySelectorAll('svg').length).toBeGreaterThanOrEqual(2)

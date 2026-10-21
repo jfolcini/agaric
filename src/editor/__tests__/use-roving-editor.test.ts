@@ -761,12 +761,12 @@ describe('editor keymap key→action firing (#1172)', () => {
     }
   })
 
-  it('priority chord does NOT fire on a bare Ctrl+digit (that is heading/space)', () => {
+  it('priority chord does NOT fire on a bare Ctrl+digit (that selects a tab)', () => {
     editor = createEditor([PriorityShortcuts])
     const spy = vi.fn()
     document.addEventListener('set-priority-1', spy)
     try {
-      // Ctrl+1 (no Shift) is the heading / switchSpace chord — the priority
+      // Ctrl+1 (no Shift) is the selectTab1 chord — the priority
       // keymap (Mod-Shift-1) must not claim it.
       dispatchKeydown(editor, '1', { ctrlKey: true })
       expect(spy).not.toHaveBeenCalled()
@@ -793,6 +793,16 @@ describe('editor keymap key→action firing (#1172)', () => {
 
     expect(handled).toBe(false)
     expect(editor.isActive('strike')).toBe(false)
+  })
+
+  it('inline code — former Ctrl+E is unhandled, so it reaches togglePageMode alone', () => {
+    editor = createEditor([CodeWithShortcut])
+    setHelloSelected(editor)
+
+    const handled = dispatchKeydown(editor, 'e', { ctrlKey: true })
+
+    expect(handled).toBe(false)
+    expect(editor.isActive('code')).toBe(false)
   })
 
   it('former Ctrl+Shift+X strike chord is available for an inline-code rebind', () => {
@@ -856,7 +866,7 @@ describe('shortcut bindings are frozen at editor creation (#752)', () => {
   // If live rebinding is ever implemented (handleKeyDown dispatch instead
   // of a static keymap), update this test deliberately.
   it('does NOT pick up a rebind made AFTER the editor was created (reload required)', () => {
-    editor = createEditor([CodeWithShortcut]) // default binding: Ctrl + E
+    editor = createEditor([CodeWithShortcut]) // default binding: Ctrl + Shift + K
     setCustomShortcut('inlineCode', 'Ctrl + M')
     setHelloContentSelected(editor)
 
@@ -865,7 +875,7 @@ describe('shortcut bindings are frozen at editor creation (#752)', () => {
     expect(editor.isActive('code')).toBe(false)
 
     // …while the binding captured at creation still fires.
-    expect(dispatchKeydown(editor, 'e', { ctrlKey: true })).toBe(true)
+    expect(dispatchKeydown(editor, 'k', { ctrlKey: true, shiftKey: true })).toBe(true)
     expect(editor.isActive('code')).toBe(true)
   })
 })

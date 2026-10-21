@@ -55,7 +55,7 @@ test.describe('Back / Forward history @pages', () => {
 })
 
 test.describe('Back / Forward on a narrow desktop window @pages', () => {
-  // Below 768 px but with a mouse: no system back gesture, no shortcut.
+  // Below 768 px but with a mouse: no system back gesture.
   test.use({ viewport: { width: 700, height: 900 } })
 
   test('are reachable and step, without touch', async ({ page }) => {

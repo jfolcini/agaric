@@ -118,7 +118,7 @@ Composed from category sub-hooks under `src/components/block-tree/use-block-slas
   - **In-page find toolbar** — `Ctrl+F`, with `F3` / `Shift+F3` to cycle matches (`findInPage` in `src/lib/keyboard-config/catalog.ts`). Browser-style find over the current page; state in `src/stores/useInPageFindStore.ts`, UI in `src/components/query/InPageFind.tsx`. Does **not** open the Search view.
   - **Search view** — `Ctrl+Shift+F` (`focusSearch`) or the sidebar Search button. Lands in `SearchPanel`, the cross-page FTS view.
   - **Command palette** — `Ctrl+K` (`paletteOpen`). Action / navigation palette; state in `src/stores/useCommandPaletteStore.ts`, UI in `src/components/common/CommandPalette.tsx`.
-- **Space switcher**: `Ctrl+1`-`Ctrl+9` map to the first nine spaces. `currentSpaceId` lives in `useSpaceStore`; each space has its own `currentView` slice, so switching spaces restores the last view that space was on.
+- **Space switcher**: `Alt+1`-`Alt+9` map to the first nine spaces. `currentSpaceId` lives in `useSpaceStore`; each space has its own `currentView` slice, so switching spaces restores the last view that space was on.
 
 ## Dialogs, popovers, sheets
 

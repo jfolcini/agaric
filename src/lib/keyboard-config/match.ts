@@ -68,7 +68,7 @@ function matchesSingleBinding(
   const parsed = parseChord(binding)
   if (!parsed) return false
   const normalizedKey = normalizeKey(parsed.key)
-  const normalizedEventKey = normalizeKey(isTabKey(e) ? 'Tab' : e.key)
+  const normalizedEventKey = normalizeKey(chordKey(e))
   const symbolKey = isSymbolKey(normalizedKey)
   // Relax shift check for symbol punctuation keys — on many layouts
   // the same physical key produces different glyphs with/without shift
@@ -88,6 +88,19 @@ function matchesSingleBinding(
   const matchCtrl = altGrLayoutShift ? true : (e.ctrlKey || e.metaKey) === parsed.ctrl
   const matchAlt = altGrLayoutShift ? true : e.altKey === parsed.alt
   return matchCtrl && matchShift && matchAlt && normalizedEventKey === normalizedKey
+}
+
+/**
+ * The key a chord names. With Alt alone, a digit-row key is its digit: macOS's
+ * Option turns `Option+1` into `key: '¡'`. Not with Ctrl too, which on Windows
+ * is AltGr typing a character (`²` is AltGr+2 on a German layout).
+ */
+function chordKey(
+  e: Pick<KeyboardEvent, 'key' | 'altKey' | 'ctrlKey'> & { code?: string },
+): string {
+  if (isTabKey(e)) return 'Tab'
+  const digit = e.altKey && !e.ctrlKey ? /^Digit(\d)$/.exec(e.code ?? '') : null
+  return digit?.[1] ?? e.key
 }
 
 /** True when a keystroke on `target` is typing into an input, textarea or contenteditable. */

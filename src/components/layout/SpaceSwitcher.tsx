@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { formatChordTokens, getShortcutKeys } from '@/lib/keyboard-config'
 import { isMac } from '@/lib/platform'
 import { accentVar } from '@/lib/space-accent'
 import { cn } from '@/lib/utils'
@@ -50,23 +51,19 @@ const CREATE_SENTINEL = '__create__'
 
 /**
  * Only the first nine spaces get a digit hotkey hint
- * (`Ctrl+1` … `Ctrl+9` / `⌘1` … `⌘9` on macOS). Tenth-and-later spaces
+ * (`switchSpace1` … `switchSpace9`). Tenth-and-later spaces
  * still render as selectable rows; they just don't carry a chip because
  * there is no shortcut bound to them.
  */
 const MAX_HOTKEY_SPACES = 9
 
 /**
- * Render the platform-correct hint chip text. macOS users
- * see the bare command-glyph chord (`⌘1`) per Apple's HIG; Windows /
- * Linux users see the spelled-out modifier (`Ctrl+1`) that matches the
- * rest of the app's keyboard help. The display string is decoupled
- * from the underlying binding (which always stores `Ctrl + N` and
- * matches both `ctrlKey` and `metaKey` via `matchesShortcutBinding`),
- * so re-using it across platforms is safe.
+ * The hint chip for the Nth space's `switchSpaceN` binding: glyphs on macOS
+ * (`⌥1`), the spelled-out chord elsewhere (`Alt+1`).
  */
 function spaceHotkeyHint(index: number): string {
-  return isMac() ? `\u2318${index + 1}` : `Ctrl+${index + 1}`
+  const keys = getShortcutKeys(`switchSpace${index + 1}`)
+  return isMac() ? formatChordTokens(keys).join('') : keys.replaceAll(' + ', '+')
 }
 
 interface SpaceSwitcherProps {
@@ -99,7 +96,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
   return (
     <Select value={currentSpaceId ?? ''} onValueChange={handleValueChange}>
       {/*
-       * Surface the `Ctrl+1..9` / `⌘1..9` space-switching
+       * Surface the `Alt+1..9` / `⌥1..9` space-switching
        * shortcuts via a tooltip on the trigger so users discover
        * them without opening the `?` keyboard help dialog. The
        * tooltip wraps a `<span>` rather than the SelectTrigger
@@ -158,7 +155,7 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
         {/*
          * Stack the existing shortcut hint above a list of
          * the first five space → digit mappings so the user can see
-         * what each `Ctrl+1..5` / `⌘1..5` chord switches to without
+         * what each `Alt+1..5` / `⌥1..5` chord switches to without
          * re-opening the dropdown. The dropdown rows still carry the
          * digit-hint chip via `SelectItem`'s `endContent` slot — that
          * Is contribution and is kept untouched.
@@ -182,8 +179,8 @@ export function SpaceSwitcher({ onNavigate }: SpaceSwitcherProps = {}): React.JS
             endContent={
               idx < MAX_HOTKEY_SPACES ? (
                 /*
-                 * Right-aligned digit-hint chip (`Ctrl+1` /
-                 * `⌘1`) for the first nine spaces. Rendered via
+                 * Right-aligned digit-hint chip (`Alt+1` /
+                 * `⌥1`) for the first nine spaces. Rendered via
                  * `SelectItem`'s `endContent` slot so it stays out of
                  * `<SelectPrimitive.ItemText>` and therefore out of
                  * Radix's auto-mirror into the trigger label.
