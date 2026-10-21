@@ -169,6 +169,7 @@
     "highlight.js": "^11.12.0",
     "js-yaml": "^4.2.0",
     "katex": "$katex",
+    "markdown-it": "^15.0.3",
     "postcss": "^8.5.18",
     "qs": "^6.16.0",
     "serialize-javascript": "^7.0.5",
