@@ -39,6 +39,10 @@
  * writes to the block runs after the save, on the same chain, and the page is
  * read again after it.
  *
+ * Each block's grip drags it with the blocks under it, an edit of the
+ * document the save writes as block mode's moves, and its chevron collapses
+ * it in block mode's own layout of the page (`page-gutter.ts`).
+ *
  * Chips go where block mode's go (`useBlockNavigateToLink`, a block of this
  * page by moving the cursor to it), and each save's ops reach `UndoStore`
  * as block mode records them. `PageEditor` reaches this module only through a
@@ -387,6 +391,7 @@ function PageModeDocument({
       onNavigate: (id: string) => handleNavigateRef.current(id),
       onTagClick,
       placeholder: t('pageMode.placeholder'),
+      pageId,
       tasks: {
         blockOf: (id: string) => pageStore.getState().blocksById.get(id),
         propertiesOf: (id: string) => properties.of(id),

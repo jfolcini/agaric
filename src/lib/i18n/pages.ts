@@ -207,6 +207,7 @@ export const pages: Record<string, string> = {
   'pageMode.page': 'Page',
   'pageMode.pageHint': 'Edit the whole page as one document',
   'pageMode.editorLabel': 'Page text',
+  'pageMode.gripTip': 'Drag to move · Click for the block menu',
   'pageMode.saveFailed':
     'Some changes to this page could not be saved yet; they are tried again with your next edit.',
   'pageMode.placeholder':

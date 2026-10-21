@@ -1,8 +1,9 @@
 /**
  * Page mode's current block (#5691): while the document has focus, the block
- * holding the cursor wears block mode's editing box (`page-block-current`).
- * Built from the selection alone, never by walking the document. A node view
- * reads it from its decorations (`isCurrentBlock`).
+ * holding the cursor wears block mode's editing box (`page-block-current`),
+ * and shows its grip and chevron as block mode's focused row does
+ * (`block-active`). Built from the selection alone, never by walking the
+ * document. A node view reads it from its decorations (`isCurrentBlock`).
  */
 
 import { Extension } from '@tiptap/core'
@@ -19,7 +20,7 @@ function currentBlock(state: EditorState): DecorationSet {
     Decoration.node(
       start,
       start + $head.node(1).nodeSize,
-      { class: 'page-block-current' },
+      { class: 'page-block-current block-active' },
       CURRENT,
     ),
   ])

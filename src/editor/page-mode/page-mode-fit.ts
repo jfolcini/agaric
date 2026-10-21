@@ -6,8 +6,8 @@
  * A page longer than `PAGE_MODE_BLOCK_CAP` stays in block mode:
  * ProseMirror renders the whole document.
  *
- * Collapse is block mode's view of the tree, not something blocks hold: page
- * mode shows every block, and the collapse state is there again in block mode.
+ * Collapse is block mode's view of the tree, not something blocks hold, so it
+ * keeps no page out: page mode hides what block mode hides (`page-collapse.ts`).
  */
 
 import { unwrap } from '@/lib/app-error'

@@ -158,6 +158,23 @@ export function changedBlocks(doc: PMNode, maps: readonly StepMap[]): Set<string
   return ids
 }
 
+/** The index of block `id` in `doc`, or null. */
+export function blockIndex(doc: PMNode, id: string): number | null {
+  let found: number | null = null
+  doc.forEach((node, _pos, index) => {
+    if (blockIdOf(node) === id) found = index
+  })
+  return found
+}
+
+/** The index past the last block under the block at `index`. */
+export function subtreeEnd(doc: PMNode, index: number): number {
+  const depth = depthOf(doc.child(index))
+  let end = index + 1
+  while (end < doc.childCount && depthOf(doc.child(end)) > depth) end += 1
+  return end
+}
+
 /** The start of the block at `index`, or the document's end past the last. */
 export function startOf(doc: PMNode, index: number): number {
   let pos = 0

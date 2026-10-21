@@ -37,8 +37,8 @@ import { useBlockStore } from '@/stores/blocks'
  * diverge.
  */
 
-/** Shared visibility / interaction classes for every gutter button. */
-const GUTTER_BUTTON_BASE =
+/** Shared visibility / interaction classes for every gutter button, page mode's grip's too. */
+export const GUTTER_BUTTON_BASE =
   'flex-shrink-0 p-0.5 rounded-sm text-muted-foreground opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto transition-opacity focus-ring-visible active:scale-95 touch-target'
 
 /* ── GutterButton ───────────────────────────────────────────────── */

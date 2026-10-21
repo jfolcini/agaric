@@ -1,8 +1,9 @@
 /**
  * What page mode's block menu does to the document (#5972): each structural
  * row of block mode's menu, as a command on the blocks it names by id, not on
- * the selection. The document owns structure, so these edit it and the save
- * writes the result, as it writes a key's.
+ * the selection; and what a drop of a block's grip does (`page-drag.ts`). The
+ * document owns structure, so these edit it and the save writes the result, as
+ * it writes a key's.
  */
 
 import type { Node as PMNode } from '@tiptap/pm/model'
@@ -95,6 +96,54 @@ export const moveBlocks =
         ),
       )
       if (moved) dispatch(restoreSelection(tr, ends).scrollIntoView())
+    }
+    return true
+  }
+
+/**
+ * The page with block `id` and the blocks under it moved to `slot`, the index
+ * of the block they then go before (the page's length for its end), `id` at
+ * `depth` and the others as deep under it as they were. A slot among them, or
+ * just past them, is where they are. Null where nothing changes.
+ */
+function droppedRows(
+  rows: readonly TreeItem[],
+  id: string,
+  slot: number,
+  depth: number,
+): TreeItem[] | null {
+  const from = rows.findIndex((row) => row.id === id)
+  if (from === -1) return null
+  const end = subtreeEnd(rows, from)
+  const at = slot > from && slot <= end ? from : slot
+  const shift = depth - (rows[from] as TreeItem).depth
+  if (at === from && shift === 0) return null
+  const moved = rows
+    .slice(from, end)
+    .map((row) => ({ id: row.id, parent_id: row.parent_id, depth: row.depth + shift }))
+  const rest = [...rows.slice(0, from), ...rows.slice(end)]
+  const into = at <= from ? at : at - moved.length
+  return [...rest.slice(0, into), ...moved, ...rest.slice(into)]
+}
+
+/**
+ * Move block `id` with the blocks under it to `slot` at `depth` (`droppedRows`),
+ * and the caret to its start, as block mode's drop focuses the block dragged.
+ */
+export const dropBlock =
+  (id: string, slot: number, depth: number): Command =>
+  (state, dispatch) => {
+    const rows = droppedRows(treeRows(state.doc), id, slot, depth)
+    if (rows === null) return false
+    if (dispatch) {
+      const tr = state.tr
+      applyRows(tr, rows)
+      const at = startOf(
+        tr.doc,
+        rows.findIndex((row) => row.id === id),
+      )
+      const start = firstTokenPos(tr.doc.nodeAt(at) as PMNode, at)
+      dispatch(tr.setSelection(TextSelection.near(tr.doc.resolve(start))).scrollIntoView())
     }
     return true
   }

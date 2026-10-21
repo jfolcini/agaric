@@ -18,7 +18,7 @@ import type React from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 
-const chevronToggleVariants = cva('shrink-0 transition-transform', {
+export const chevronToggleVariants = cva('shrink-0 transition-transform', {
   variants: {
     size: {
       sm: 'h-3 w-3',

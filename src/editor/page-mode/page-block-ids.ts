@@ -59,7 +59,7 @@ function holdsPageBlock(fragment: Fragment, type: NodeType): boolean {
  * step outside a single block's content, or one that brings blocks in or sets
  * a block's attributes. Typing inside a block cannot, and is the common case.
  */
-function changesBlocks(tr: Transaction, type: NodeType): boolean {
+export function changesBlocks(tr: Transaction, type: NodeType): boolean {
   return tr.steps.some((step, i) => {
     const doc = tr.docs[i] as PMNode
     // Duck-typed: ProseMirror can be loaded twice, so no `instanceof` (AGENTS.md).

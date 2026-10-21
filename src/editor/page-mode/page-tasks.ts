@@ -54,7 +54,9 @@ import {
 import { StaticBlock, type StaticBlockProps } from '@/components/editor/StaticBlock'
 import { serialize } from '@/editor/markdown-serializer'
 import { isCurrentBlock } from '@/editor/page-mode/page-block-focus'
+import { foldIn, toggleFold } from '@/editor/page-mode/page-collapse'
 import { blockDocJson, PageBlock } from '@/editor/page-mode/page-document'
+import { PageGutter } from '@/editor/page-mode/page-gutter'
 import type { PageLists } from '@/editor/page-mode/page-lists'
 import { RENDERED, renderedText } from '@/editor/page-mode/page-rendered'
 import type { PageSaveApi, PageSaveState } from '@/editor/page-mode/page-save'
@@ -255,14 +257,15 @@ const sameMetadata = (a: Metadata | null, b: Metadata): boolean =>
 
 /**
  * A block as a node view: its text; before it, outside the editable text,
- * block mode's checkbox while the block holds a task state; after it a query's
- * results or an embed while its text is one (`page-rendered.ts`); and under it
- * the attachments, priority badge, date chips, repeat rule and property chips
- * while it holds any.
+ * block mode's grip and chevron (`page-gutter.ts`), and its checkbox while the
+ * block holds a task state; after it a query's results or an embed while its
+ * text is one (`page-rendered.ts`); and under it the attachments, priority
+ * badge, date chips, repeat rule and property chips while it holds any.
  */
 class PageBlockView implements NodeView {
   readonly dom = document.createElement('div')
   readonly contentDOM = document.createElement('div')
+  private readonly gutter = new PageGutter(() => this.fold())
   private checkbox: Control<BlockInlineControlsProps> | null = null
   private rendered: Control<StaticBlockProps> | null = null
   private metadata: Control<PageBlockMetadataProps> | null = null
@@ -280,6 +283,7 @@ class PageBlockView implements NodeView {
   constructor(
     node: PMNode,
     attributes: Record<string, unknown>,
+    decorations: readonly Decoration[],
     editor: Editor,
     tasks: PageTaskSource,
     lists: PageLists,
@@ -290,8 +294,11 @@ class PageBlockView implements NodeView {
     this.gate = gateOf(editor)
     this.dom.setAttribute('data-page-block', '')
     for (const [key, value] of Object.entries(attributes)) this.dom.setAttribute(key, String(value))
+    // The gutter's controls show on hovering the block, as block mode's row (`GUTTER_BUTTON_BASE`).
+    this.dom.classList.add('group')
+    this.gutter.show(foldIn(decorations))
     this.contentDOM.className = 'page-block-content'
-    this.dom.append(this.contentDOM)
+    this.dom.append(this.gutter.element, this.contentDOM)
     this.show()
     this.showRendered(renderedText(node))
     this.unsubscribe = tasks.subscribe(() => this.show())
@@ -363,7 +370,7 @@ class PageBlockView implements NodeView {
     if (checkbox === null) {
       checkbox = new Control(BlockInlineControls, props, this.editor, 'page-block-controls')
       this.checkbox = checkbox
-      this.dom.prepend(checkbox.element)
+      this.gutter.element.after(checkbox.element)
       if (this.revealed) checkbox.mount()
     } else {
       checkbox.update(props)
@@ -463,8 +470,13 @@ class PageBlockView implements NodeView {
       return false
     }
     this.node = node
+    this.gutter.show(foldIn(decorations))
     if (!isCurrentBlock(decorations)) this.showRendered(renderedText(node))
     return true
+  }
+
+  private fold(): void {
+    toggleFold(blockIdOf(this.node) as string)(this.editor.state, this.editor.view.dispatch)
   }
 
   /** Only the text is the document's: the controls are redrawn by React, and added or removed here. */
@@ -475,7 +487,7 @@ class PageBlockView implements NodeView {
   /** The controls' own clicks and keys are their buttons', not the editor's. */
   stopEvent(event: Event): boolean {
     const target = event.target as Node | null
-    return [this.checkbox, this.rendered, this.metadata].some((control) =>
+    return [this.gutter, this.checkbox, this.rendered, this.metadata].some((control) =>
       control?.element.contains(target),
     )
   }
@@ -601,8 +613,8 @@ export function pageTasks(tasks: PageTaskSource, lists: PageLists) {
     PageBlock.extend({
       addNodeView:
         () =>
-        ({ node, HTMLAttributes, editor }) =>
-          new PageBlockView(node, HTMLAttributes, editor, tasks, lists),
+        ({ node, HTMLAttributes, decorations, editor }) =>
+          new PageBlockView(node, HTMLAttributes, decorations, editor, tasks, lists),
     }),
     PageTaskKeys.configure({ tasks }),
   ]
