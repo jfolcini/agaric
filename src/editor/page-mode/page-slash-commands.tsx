@@ -79,7 +79,6 @@ const AT_ONCE = new Set([
   'quote',
   'table',
   'divider',
-  'callout',
   'turn',
   'h1',
   'h2',
@@ -91,7 +90,7 @@ const AT_ONCE = new Set([
 
 /** Whether command `id` runs as it is picked, not once a save has created its block. */
 export function runsAtOnce(id: string): boolean {
-  return AT_ONCE.has(id) || id.startsWith('callout-')
+  return AT_ONCE.has(id)
 }
 
 function blockAt(editor: Editor, id: string): { pos: number; node: PMNode } | null {

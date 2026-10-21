@@ -4,19 +4,24 @@
  * the link/tag/query insert chains.
  */
 
+import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { renderHook, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlockRow } from '@/__tests__/fixtures'
 import { makeSyntheticCtx } from '@/components/block-tree/use-block-slash-commands/__tests__/test-utils'
 import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
 import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
+import type { PropertyRow } from '@/lib/bindings'
 import {
   _resetGraphStructureEventsForTest,
   getGraphStructureKey,
 } from '@/lib/graph-structure-events'
-import { setListStyle } from '@/lib/list-style'
+import { listStyleFromRows, setListStyle } from '@/lib/list-style'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { SEED_IDS, seedBlocks } from '@/lib/tauri-mock/seed'
 import { useSpaceStore } from '@/stores/space'
 import { useUndoStore } from '@/stores/undo'
 
@@ -165,6 +170,44 @@ describe('useSlashCommandStructural — callouts', () => {
       blockId: 'BLOCK_1',
       toText: expected,
     })
+  })
+
+  // A callout is not a list: like every Turn into target but the two lists, it
+  // drops a bulleted block's `listStyle`, read back here from the mock backend.
+  it.each(['callout', 'callout-warning'])('%s clears the block’s list style', async (id) => {
+    seedBlocks()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+    const actual = await vi.importActual<typeof import('@/lib/list-style')>('@/lib/list-style')
+    mockedSetListStyle.mockImplementationOnce(actual.setListStyle)
+    const blockId = SEED_IDS.BLOCK_GS_1
+    await actual.setListStyle(blockId, 'bullet')
+    const styleOf = () =>
+      listStyleFromRows(dispatch('get_properties', { blockId }) as PropertyRow[])
+    expect(styleOf()).toBe('bullet')
+
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx } = makeSyntheticCtx({ blockId })
+    const handler =
+      result.current.exact[id] ?? result.current.prefix.find(([p]) => p === 'callout-')?.[1]
+    await handler?.(ctx, { id, label: id })
+
+    expect(styleOf()).toBe('none')
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('/callout toasts once when clearing the list style fails', async () => {
+    mockedSetListStyle.mockRejectedValueOnce(new Error('boom'))
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx } = makeSyntheticCtx()
+
+    await result.current.exact['callout']?.(ctx, { id: 'callout', label: 'Callout' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+      blockId: 'BLOCK_1',
+      toText: '> [!INFO] hello',
+    })
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.error).toHaveBeenCalledWith('slash.calloutFailed')
   })
 })
 

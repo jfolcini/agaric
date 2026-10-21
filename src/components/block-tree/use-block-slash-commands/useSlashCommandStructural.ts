@@ -37,6 +37,12 @@ async function handleHeading(ctx: SlashCommandContext, level: number): Promise<v
 async function handleCallout(ctx: SlashCommandContext, calloutType: string): Promise<void> {
   const newContent = `> [!${calloutType.toUpperCase()}] ${readCurrentContent(ctx)}`
   await applyContentEdit(ctx, newContent, 'slash.calloutFailed')
+  try {
+    await setListStyle(ctx.blockId, listStyleForBlockType('callout'))
+  } catch (err) {
+    logger.error('useSlashCommandStructural', 'setListStyle (callout) failed', undefined, err)
+    notify.error(ctx.t('slash.calloutFailed'))
+  }
 }
 
 /**

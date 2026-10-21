@@ -20,9 +20,10 @@ import {
   renderPageMode,
   SCOPE,
 } from '@/editor/page-mode/__tests__/page-node-view-fixtures'
-import type { BlockRow } from '@/lib/bindings'
+import type { BlockRow, PropertyRow } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
+import { LIST_STYLE_KEY, listStyleFromRows } from '@/lib/list-style'
 import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
@@ -739,6 +740,37 @@ describe('PageBlockMenu: Turn into', () => {
     await waitFor(() =>
       expect(backendBlock(view.ids[0] as string).content).toBe('> [!WARNING] first'),
     )
+  })
+
+  it('turns a bulleted block into a callout that is no longer a list', async () => {
+    const seeded = seedTree([[0, 'first']])
+    const id = seeded.ids[0] as string
+    dispatch('set_property', {
+      blockId: id,
+      key: LIST_STYLE_KEY,
+      value: {
+        value_text: 'bullet',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const rendered = renderPageMode(seeded.pageId)
+    const view = { ...seeded, ...rendered, editor: await editorIn(rendered.container) }
+    const marker = () =>
+      view.container.querySelector(`[data-page-block-id="${id}"] > [data-testid="list-marker"]`)
+    expect(marker()?.textContent).toBe('•')
+
+    await rightClick(view, id)
+    fireEvent.click(row(t('contextMenu.turnInto')))
+    fireEvent.click(row(turnInto('callout')))
+    await choose(view, t('callout.warning'))
+
+    await waitFor(() => expect(backendBlock(id).content).toBe('> [!WARNING] first'))
+    const rows = dispatch('get_properties', { blockId: id }) as PropertyRow[]
+    expect(listStyleFromRows(rows)).toBe('none')
+    await waitFor(() => expect(marker()).toBeNull())
   })
 })
 
