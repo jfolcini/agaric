@@ -538,9 +538,9 @@ export const EXPECTED_FRONTEND_REPORTS = AREA_UNIVERSE?.frontend
 // writes goes into the child's HEAD, which the truncation path does not cut
 // — an area holding roughly 700+ accepted ids would 422 `gh issue edit` on
 // close. `buildChildCloseComment` used to clamp exactly that list, and went
-// with the other comment builders. Today's whole accepted set is 155 across
-// every area, so this is a claim being half-true rather than a live failure;
-// fixing it now would be engineering for a case 4x away.
+// with the other comment builders. The whole accepted set across every area
+// is well under that today, so this is a claim being half-true rather than a
+// live failure, and fixing it now would be engineering for a case not hit.
 export const MAX_BODY_CHARS = 60_000
 
 // ---------------------------------------------------------------------------

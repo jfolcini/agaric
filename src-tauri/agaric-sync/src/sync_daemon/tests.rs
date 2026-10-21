@@ -8715,6 +8715,76 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
     materializer.shutdown();
 }
 
+/// #5842: a session that ends in `Err` ends its progress channel with a
+/// `failed` update. `record_session_failure` reports the failure on the base
+/// sink only, so without it the peer's device row keeps its last progress.
+/// The cancelled session is the `Err` shape; a dropped peer takes the same path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_session_ends_its_progress_channel_5842() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let harness = ServiceHarness::new().await;
+
+    let responder = {
+        let service = harness.service.clone();
+        tokio::spawn(async move {
+            let mut session = service
+                .accept()
+                .await
+                .expect("the accept loop does not error")
+                .expect("an inbound connection is admitted")
+                .establish()
+                .await
+                .expect("the peer completes the handshake and opens its stream");
+            let _ = recv_sync_message(&mut session.recv).await;
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        })
+    };
+
+    let peer = discovered_service_peer("PEER_5842", &harness);
+    let refs = vec![make_peer_ref("PEER_5842")];
+    let channel = Arc::new(RecordingEventSink::new());
+    let channel_sink: Arc<dyn SyncEventSink> = channel.clone();
+    scheduler.register_channel("PEER_5842", Box::new(move |_base| channel_sink));
+    let cancel = AtomicBool::new(true);
+
+    let apply_host: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL_5842",
+        materializer: &apply_host,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        endpoint: &harness.client_endpoint,
+        bind_prefix_len: None,
+        relay_url: None,
+    };
+    let was_cancelled = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(&ctx, &peer, &refs, None),
+    )
+    .await
+    .expect("try_sync_with_peer must complete within timeout");
+    responder.abort();
+    assert!(was_cancelled, "setup: the session must have run and failed");
+
+    let channel_states: Vec<String> = channel
+        .events()
+        .into_iter()
+        .map(|event| match event {
+            SyncEvent::Progress { state, .. } => state,
+            other => panic!("only progress reaches the channel here, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(channel_states, ["exchanging_heads", "failed"]);
+
+    materializer.shutdown();
+}
+
 /// #637 (normal reset): the owns-path post-run reset still happens when NO
 /// cancel is pending. A real session is reached (live loopback) with the
 /// cancel flag clear; after the session ends the flag remains clear — the

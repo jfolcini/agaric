@@ -46,7 +46,13 @@ export function TabSwitcherList({
   })
 
   return (
-    <Command shouldFilter={false} loop label={t('tabs.switcher')}>
+    // Opens on the active tab, as the strip's menu did; typing moves to the first match.
+    <Command
+      shouldFilter={false}
+      loop
+      label={t('tabs.switcher')}
+      defaultValue={tabs[activeTabIndex]?.id ?? ''}
+    >
       <CommandInput
         value={query}
         onValueChange={setQuery}

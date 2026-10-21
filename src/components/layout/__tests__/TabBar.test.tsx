@@ -646,6 +646,21 @@ describe('TabBar', () => {
       expect(optionLabels()).toEqual(['Page 1', 'Page 2', 'Page 3'])
     })
 
+    it('opens with the active tab highlighted', async () => {
+      setupTabs(['Page 1', 'Page 2', 'Page 3'], 1)
+      const user = userEvent.setup()
+      render(<TabBar />)
+
+      await openSwitcher(user)
+      expect(screen.getByRole('option', { name: /Page 2/ })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      )
+      await user.keyboard('{ArrowDown}{Enter}')
+
+      expect(useTabsStore.getState().activeTabIndex).toBe(2)
+    })
+
     it('typing narrows the list by a case-insensitive substring of the label or full path', async () => {
       setupTabs(['Work/Alpha', 'Beta', 'work notes'], 1)
       const user = userEvent.setup()

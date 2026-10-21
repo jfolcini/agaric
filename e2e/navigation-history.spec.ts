@@ -65,8 +65,6 @@ test.describe('Back / Forward on a narrow desktop window @pages', () => {
     const forward = header.getByRole('button', { name: 'Forward', exact: true })
     await expect(back).toBeVisible()
     await expect(forward).toBeVisible()
-    const box = await back.boundingBox()
-    expect(box?.width).toBeGreaterThan(0)
     // The phone's 56 px bar is padded for 44 px touch targets a mouse window has not.
     expect((await header.boundingBox())?.height).toBeLessThan(56)
 

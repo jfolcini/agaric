@@ -24,7 +24,8 @@
  * A page, tag or block-ref chip beside the caret (or selected) shows its
  * syntax (`[[` `]]`, `#`, `((` `))`) the same way, but only to read: the chip
  * stays an atom whose id is not text, so Backspace and Delete take it whole as
- * before and the syntax is no part of the selection.
+ * before and the syntax is no part of the selection. An unresolved chip's
+ * label already reads in its syntax (`[[01ABCDEF...]]`), so it gets none.
  *
  * A link's URL is edited through the link popover (Ctrl+K, or the selection
  * bubble's link button), not in its `](url)`.
@@ -35,7 +36,7 @@
 
 import { Extension } from '@tiptap/core'
 import { closeHistory } from '@tiptap/pm/history'
-import { Mark, type Node as PMNode } from '@tiptap/pm/model'
+import { DOMSerializer, Mark, type Node as PMNode } from '@tiptap/pm/model'
 import {
   type EditorState,
   Plugin,
@@ -108,9 +109,26 @@ function markerDom(text: string, kind = 'marker'): HTMLElement {
   return span
 }
 
-function revealDecorations(state: EditorState): DecorationSet {
-  const chips = revealedChipMarkers(state).map((m) =>
-    // Its own class: the click and key handling above count `.md-reveal-marker`s.
+/** The label a chip shows: its `renderHTML`'s text, which its node view mirrors. */
+function chipLabel(chip: PMNode): string {
+  return DOMSerializer.fromSchema(chip.type.schema).serializeNode(chip).textContent ?? ''
+}
+
+type ChipStatus = (chip: PMNode) => 'active' | 'deleted' | undefined
+
+/**
+ * A broken chip shows its unresolved label, which already reads in its syntax.
+ * A target not resolved yet shows that label too but is not broken: its title
+ * lands without a transaction, so the syntax drawn around it stays right.
+ */
+function showsOwnSyntax(statusOf: ChipStatus) {
+  return (chip: PMNode, unresolvedLabel: string) =>
+    statusOf(chip) === 'deleted' && chipLabel(chip) === unresolvedLabel
+}
+
+function revealDecorations(state: EditorState, statusOf: ChipStatus): DecorationSet {
+  const chips = revealedChipMarkers(state, showsOwnSyntax(statusOf)).map((m) =>
+    // Its own class: `stopForClick` counts the drawn `.md-reveal-marker`s against `revealedMarkers`.
     Decoration.widget(m.pos, () => markerDom(m.text, 'chip-marker'), {
       side: m.side,
       key: `md-reveal-chip:${m.text}:${m.side}`,
@@ -258,15 +276,17 @@ const DELETE_SIDE: Partial<Record<string, 'before' | 'after'>> = {
   deleteContentForward: 'after',
 }
 
-function createMarkdownRevealPlugin(): Plugin<DecorationSet> {
+function createMarkdownRevealPlugin(statusOf: ChipStatus): Plugin<DecorationSet> {
   let pluginView: EditorView | null = null
   let clicked: ClickedStop | null = null
   return new Plugin<DecorationSet>({
     key: markdownRevealPluginKey,
     state: {
-      init: (_, state) => revealDecorations(state),
+      init: (_, state) => revealDecorations(state, statusOf),
       apply: (tr, previous, _old, state) =>
-        pluginView?.composing ? previous.map(tr.mapping, tr.doc) : revealDecorations(state),
+        pluginView?.composing
+          ? previous.map(tr.mapping, tr.doc)
+          : revealDecorations(state, statusOf),
     },
     view(view) {
       pluginView = view
@@ -337,6 +357,15 @@ export const MarkdownReveal = Extension.create({
   // and list's keys: a marker beside the caret owns them.
   priority: 1001,
   addProseMirrorPlugins() {
-    return [createMarkdownRevealPlugin()]
+    const { extensionManager } = this.editor
+    return [
+      createMarkdownRevealPlugin((chip) => {
+        const chipExtension = extensionManager.extensions.find((e) => e.name === chip.type.name)
+        const status = chipExtension?.options?.resolveStatus as
+          | ((id: string) => 'active' | 'deleted')
+          | undefined
+        return status?.(String(chip.attrs['id']))
+      }),
+    ]
   },
 })
