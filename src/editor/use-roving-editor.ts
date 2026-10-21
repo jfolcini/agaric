@@ -1199,7 +1199,15 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // #752 — honour the caller's cursor-placement hint (previously the
       // `DeleteBlockOpts.cursorPlacement` contract was documented + passed
       // but silently dropped by this bare `focus()`).
+      const hadFocus = editor.view.hasFocus()
       editor.commands.focus(opts?.cursorPlacement ?? null)
+      // `focus()` skips a view that already has focus, but the commit that
+      // shows the new block moves the view's DOM into its row, which drops it.
+      if (hadFocus) {
+        requestAnimationFrame(() => {
+          if (!editor.isDestroyed) editor.view.focus()
+        })
+      }
       // #3000 — reset the list marker to `none` so the freshly-mounted block
       // does not inherit the previous block's marker. The focused
       // `EditableBlock` immediately re-sets the correct marker via its effect

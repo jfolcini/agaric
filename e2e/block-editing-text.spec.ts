@@ -1,4 +1,12 @@
-import { expect, focusBlock, installIpcRecorder, openPage, test, waitForBoot } from './helpers'
+import {
+  expect,
+  focusBlock,
+  installIpcRecorder,
+  openPage,
+  reopenPage,
+  test,
+  waitForBoot,
+} from './helpers'
 
 /**
  * E2E for cross-block caret landing (#911). The two *mobile* search specs and
@@ -61,4 +69,59 @@ test.describe('Cross-block caret landing @editor', () => {
     await live.press('ArrowDown')
     await expect.poll(async () => liveEditorBlockId(page)).toBe(ids[2])
   })
+})
+
+/** Put the live editor's caret at its start or end, past ProseMirror's post-focus sync. */
+async function placeCaret(page: import('@playwright/test').Page, at: 'start' | 'end') {
+  await page
+    .locator('[data-testid="block-editor"] [contenteditable="true"]')
+    .evaluate((el, end) => {
+      const { editor } = el as HTMLElement & {
+        editor: {
+          state: { doc: { content: { size: number } } }
+          commands: { setTextSelection: (pos: number) => boolean }
+        }
+      }
+      editor.commands.setTextSelection(end ? editor.state.doc.content.size - 1 : 1)
+      // ProseMirror writes its selection back 20 ms after a focus; wait past it.
+      return new Promise((resolve) => setTimeout(resolve, 20))
+    }, at === 'end')
+}
+
+test.describe('Typing right after an arrow crosses a block boundary @editor', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  const cases = [
+    { key: 'ArrowRight', from: 0, at: 'end' },
+    { key: 'ArrowDown', from: 0, at: 'end' },
+    { key: 'ArrowLeft', from: 2, at: 'start' },
+    { key: 'ArrowUp', from: 2, at: 'start' },
+  ] as const
+
+  for (const { key, from, at } of cases) {
+    test(`${key} at a block's ${at} keeps the keyboard in the block it lands on`, async ({
+      page,
+    }) => {
+      await openPage(page, PAGE)
+      const target = (await renderedBlockIds(page))[1] as string
+      const staticTarget = page.locator(`[data-testid="block-static"][data-block-id="${target}"]`)
+      const original = (await staticTarget.textContent()) ?? ''
+
+      await focusBlock(page, from)
+      await placeCaret(page, at)
+      await page.keyboard.press(key)
+
+      const live = page.locator(
+        `[data-testid="block-editor"][data-block-id="${target}"] [contenteditable="true"]`,
+      )
+      await expect(live).toBeFocused()
+      await page.keyboard.type('Q')
+      await expect(live).toHaveText(`${original}Q`)
+
+      await reopenPage(page, PAGE)
+      await expect(staticTarget).toHaveText(`${original}Q`)
+    })
+  }
 })
