@@ -67,8 +67,6 @@ for (const type of ['pointerup', 'pointercancel', 'dragstart', 'contextmenu']) {
 }
 window.addEventListener('blur', endPress)
 
-export { EDITOR_PORTAL_SELECTOR }
-
 export function useEditorBlur(params: {
   rovingEditor: Pick<
     RovingEditorHandle,

@@ -621,6 +621,9 @@ impl BuiltinPropertyDef {
     }
 }
 
+/// The built-in `priority` options, highest first.
+pub const PRIORITY_LEVELS: [&str; 3] = ["1", "2", "3"];
+
 /// Every built-in property definition (#5841): the reserved column keys,
 /// the task-lifecycle and recurrence keys the app writes itself, the space
 /// membership keys and the list style. Mirrored by `BUILTIN_PROPERTY_DEFS` in
@@ -628,7 +631,7 @@ impl BuiltinPropertyDef {
 /// `property-save-utils-rust-parity.test.ts` parses this array against.
 pub const BUILTIN_PROPERTY_DEFS: [BuiltinPropertyDef; 14] = [
     BuiltinPropertyDef::select("todo_state", &["TODO", "DOING", "DONE", "CANCELLED"]),
-    BuiltinPropertyDef::select("priority", &["1", "2", "3"]),
+    BuiltinPropertyDef::select("priority", &PRIORITY_LEVELS),
     BuiltinPropertyDef::of("due_date", "date"),
     BuiltinPropertyDef::of("scheduled_date", "date"),
     BuiltinPropertyDef::of("created_at", "date"),

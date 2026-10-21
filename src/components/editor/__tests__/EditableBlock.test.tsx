@@ -25,8 +25,8 @@ import {
   EditorSurfaceContext,
   type EditorSurfaceProps,
 } from '@/components/editor/editor-surface-context'
+import { EDITOR_PORTAL_SELECTOR } from '@/editor/editor-portal'
 import { BatchAttachmentsProvider, useBatchAttachments } from '@/hooks/useBatchAttachments'
-import { EDITOR_PORTAL_SELECTOR } from '@/hooks/useEditorBlur'
 import type { AttachmentRow } from '@/lib/bindings'
 
 // ── Mocks ────────────────────────────────────────────────────────────────

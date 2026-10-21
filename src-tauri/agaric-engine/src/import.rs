@@ -61,12 +61,6 @@ pub struct ParsedBlock {
     /// OWNING block (a real Agaric `((ULID))` block-ref) instead of only the
     /// page (#1282's fallback).
     pub block_anchor: Option<String>,
-    /// The first-line token each of the block's first `todo_state` and
-    /// `priority` properties was read from, as written: a checkbox (`[/]`),
-    /// a task keyword (`NOW`) or an Org cookie (`[#C]`). An import or a paste
-    /// puts it back in the text when the definition refuses the value
-    /// (#5160 D11), so nothing is lost.
-    pub task_markers: Vec<(String, String)>,
     /// The line the block starts on, counting from 1, in text read as a
     /// source buffer is (the buffer, a paste), so a refused save can name it
     /// (#5160 X3). `None` otherwise: an import, an HTML paste.
@@ -573,32 +567,6 @@ fn bullet_body(text: &str, ordered: bool, mode: ParseMode) -> BulletBody<'_> {
         priority,
         text,
     }
-}
-
-/// The tokens `body`'s `todo_state` and `priority` were read from on a
-/// bullet's first line, `text` (see [`ParsedBlock::task_markers`]): what the
-/// task syntax took between the list marker and the block's own text, a
-/// checkbox (`[ ]`, three bytes) or a keyword first, then a cookie.
-fn read_task_markers(text: &str, ordered: bool, body: &BulletBody<'_>) -> Vec<(String, String)> {
-    let after_list = if ordered {
-        text
-    } else {
-        split_block_list_marker(text).1
-    };
-    let mut rest = &after_list[..after_list.len() - body.text.len()];
-    let mut markers = Vec::new();
-    for (key, value) in [("todo_state", body.todo_state), ("priority", body.priority)] {
-        if value.is_none() {
-            continue;
-        }
-        let len = match rest.get(..3) {
-            Some(checkbox) if key == "todo_state" && checkbox.starts_with('[') => 3,
-            _ => rest.find(' ').unwrap_or(rest.len()),
-        };
-        markers.push((key.to_string(), rest[..len].to_string()));
-        rest = rest[len..].trim_start_matches(' ');
-    }
-    markers
 }
 
 /// A code fence's character and the length of its opening run (CommonMark
@@ -1324,7 +1292,6 @@ pub fn pasted_block(content: String, depth: usize) -> ParsedBlock {
     else {
         return verbatim_block(content, depth);
     };
-    let checkbox = first.unwrap_or(&content)[2..5].to_string();
     let text = match rest {
         Some(rest) => format!("{text}\n{rest}"),
         None => text.to_string(),
@@ -1333,9 +1300,6 @@ pub fn pasted_block(content: String, depth: usize) -> ParsedBlock {
     block
         .properties
         .push(("todo_state".to_string(), state.to_string()));
-    block
-        .task_markers
-        .push(("todo_state".to_string(), checkbox));
     block
 }
 
@@ -1348,7 +1312,6 @@ pub fn verbatim_block(content: String, depth: usize) -> ParsedBlock {
         depth,
         properties: Vec::new(),
         block_anchor: None,
-        task_markers: Vec::new(),
         line: None,
     }
 }
@@ -1871,7 +1834,6 @@ impl<'a> Scan<'a> {
     /// is its own.
     fn bullet(&mut self, trimmed: &str, indent: usize, len: usize, ordered: bool, number: usize) {
         let body = bullet_body(bullet_text(trimmed, len), ordered, self.mode);
-        let task_markers = read_task_markers(bullet_text(trimmed, len), ordered, &body);
         let text = body.text;
         let properties: Vec<(String, String)> = [
             (LIST_STYLE_KEY, body.list_style),
@@ -1892,9 +1854,6 @@ impl<'a> Scan<'a> {
             content,
             Kind::Bullet,
         );
-        if let Some(block) = self.blocks.last_mut() {
-            block.task_markers = task_markers;
-        }
         if let Some(run) = fence {
             self.fence = Some(Fence {
                 run,
@@ -1980,7 +1939,6 @@ impl<'a> Scan<'a> {
             properties,
             is_code,
             block_anchor: None,
-            task_markers: Vec::new(),
             line: (self.mode == ParseMode::Source).then_some(self.line),
         });
         self.ends_in_code.push(is_code);
@@ -4752,14 +4710,12 @@ bare line (({UUID_B})) too"
         blocks
             .into_iter()
             .map(|block| {
-                // The markers are the tokens `properties` were read from.
                 let ParsedBlock {
                     content,
                     depth,
                     properties,
                     is_code,
                     block_anchor,
-                    task_markers: _,
                     line: _,
                 } = block;
                 serde_json::json!({

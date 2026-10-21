@@ -70,23 +70,23 @@ export function PairingPeersList({
                       <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
                       <div className="min-w-0">
                         {/* #4298: name precedence — the user's override,
-                              then the name the peer supplied over the wire,
-                              then its truncated id, via the same
-                              `peerDisplayName` the device list resolves
-                              through, so the two never disagree about what to
-                              call the same peer. A raw peer_id is a 36-char
-                              UUID; at 360px the untruncated string pushed
-                              Unpair off the screen edge, which is why the
-                              fallback is truncated. `title` keeps the full id
-                              available on hover / to assistive tech
-                              regardless of which name is shown — it stays on
-                              this one line rather than being repeated on the
-                              id below, so the full id has exactly one home on
-                              the row whether or not the row has a name.
+                            then the name the peer supplied over the wire,
+                            then its truncated id, via the same
+                            `peerDisplayName` the device list resolves
+                            through, so the two never disagree about what to
+                            call the same peer. A raw peer_id is a 36-char
+                            UUID; at 360px the untruncated string pushed
+                            Unpair off the screen edge, which is why the
+                            fallback is truncated. `title` keeps the full id
+                            available on hover / to assistive tech
+                            regardless of which name is shown — it stays on
+                            this one line rather than being repeated on the
+                            id below, so the full id has exactly one home on
+                            the row whether or not the row has a name.
 
-                              No `font-mono`: that was chosen when this line
-                              was always a hex id, and a device name is prose.
-                              The id keeps the monospace, on its own line. */}
+                            No `font-mono`: that was chosen when this line
+                            was always a hex id, and a device name is prose.
+                            The id keeps the monospace, on its own line. */}
                         <p
                           className="pairing-peer-name text-sm font-medium truncate"
                           title={peer.peer_id}
@@ -94,21 +94,21 @@ export function PairingPeersList({
                           {peerDisplayName(peer)}
                         </p>
                         {/* #4298 (review): the id line is the SUBTITLE under
-                              a name, mirroring `PeerListItem` — this list must
-                              not disagree with the device list about the same
-                              peer. Replacing the id with the name was a
-                              regression on the very device that motivated
-                              #4298: stock Android reports the hostname
-                              `localhost` for every device, so two paired
-                              phones rendered as two identical rows,
-                              distinguishable only by a hover `title`, where
-                              this list previously showed two distinct ids. The
-                              backend now declines to advertise a name that
-                              identifies nothing, and this line is the second
-                              half: two devices that legitimately share a name
-                              stay tellable apart. Gating on a name at all is
-                              what stops it rendering twice on an unnamed row,
-                              where the name line IS the truncated id. */}
+                            a name, mirroring `PeerListItem` — this list must
+                            not disagree with the device list about the same
+                            peer. Replacing the id with the name was a
+                            regression on the very device that motivated
+                            #4298: stock Android reports the hostname
+                            `localhost` for every device, so two paired
+                            phones rendered as two identical rows,
+                            distinguishable only by a hover `title`, where
+                            this list previously showed two distinct ids. The
+                            backend now declines to advertise a name that
+                            identifies nothing, and this line is the second
+                            half: two devices that legitimately share a name
+                            stay tellable apart. Gating on a name at all is
+                            what stops it rendering twice on an unnamed row,
+                            where the name line IS the truncated id. */}
                         {peerName(peer) != null && (
                           <p className="pairing-peer-id text-xs font-mono text-muted-foreground truncate">
                             {truncateId(peer.peer_id)}
@@ -116,13 +116,13 @@ export function PairingPeersList({
                         )}
                         {peer.unpaired_by_peer_at_ms != null ? (
                           /*
-                              #4297 — mirrors `PeerListItem`. This list must not
-                              disagree with the device list about the same peer,
-                              and this is the surface the user is looking at
-                              when they re-pair, so it is the one place the
-                              "pair again" instruction can be acted on
-                              immediately.
-                            */
+                            #4297 — mirrors `PeerListItem`. This list must not
+                            disagree with the device list about the same peer,
+                            and this is the surface the user is looking at
+                            when they re-pair, so it is the one place the
+                            "pair again" instruction can be acted on
+                            immediately.
+                          */
                           <div className="pairing-peer-unpaired space-y-0.5">
                             <Badge tone="destructive" className="mt-0.5 text-xs">
                               {t('device.unpairedByPeerBadge')}

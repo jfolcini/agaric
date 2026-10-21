@@ -5,7 +5,7 @@
  * sibling and positions it with `@floating-ui/dom` (`computePosition` +
  * `autoUpdate`). This mirrors `suggestion-renderer.ts` so the popup escapes
  * `overflow: hidden` ancestors and reflows on scroll/resize. The portal carries
- * `data-editor-portal` so `EDITOR_PORTAL_SELECTORS` (see `useEditorBlur.ts`)
+ * `data-editor-portal` so `EDITOR_PORTAL_SELECTOR` (`@/editor/editor-portal`)
  * recognises it as transient editor UI and does not blur the surrounding block.
  */
 

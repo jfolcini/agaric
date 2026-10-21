@@ -34,13 +34,9 @@ function rowIn(day: string, marker: string) {
 }
 
 /**
- * Scroll day `day` to the top of the journal's scroll area: the week mounts a
- * day's tree, and a tree its rows, only on screen. The platform's
- * `scrollIntoView`, not WebdriverIO's, which scrolls by the day's offset from
- * the window's top and so parks its first row under the view header, where
- * WebKit will neither measure nor click it. A row parked there can stay there:
- * when a day mounting its tree shrinks the week, WebKitGTK can leave the scroll
- * area scrolled past its end, and no `scrollIntoView` moves it until it settles.
+ * Scroll day `day` to the top of the journal's scroll area (the week mounts a
+ * day's rows only on screen) with the platform's `scrollIntoView`: WebdriverIO's
+ * aligns to the window top, under the view header, where WebKit will not click.
  */
 async function scrollToDay(day: string): Promise<void> {
   await browser.execute((id: string) => document.getElementById(id)?.scrollIntoView(), day)

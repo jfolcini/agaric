@@ -82,7 +82,7 @@ describe('MathInlineNodeView (#1437)', () => {
  * `[data-editor-portal]` ancestor on the relatedTarget) saved + unmounted the
  * block, destroying the input mid-interaction. The node view must:
  *  - tag the source-editor span with `data-editor-portal` (the blur guard's
- *    single opt-in escape hatch — see useEditorBlur's EDITOR_PORTAL_SELECTOR),
+ *    single opt-in escape hatch — see EDITOR_PORTAL_SELECTOR, editor-portal.ts),
  *  - focus the input when the source is revealed (the reveal click keeps the
  *    editor focused via preventDefault, so nothing else focuses it),
  *  - contain its keydowns so use-block-keyboard's capture-phase container
@@ -95,7 +95,7 @@ describe('MathNodeView source editor focus retention (finding 44)', () => {
     render(<MathInlineNodeView {...makeProps('a^2')} />)
     fireEvent.click(await screen.findByTestId('math-rendered'))
     const input = await screen.findByTestId('math-source-input')
-    // `[data-editor-portal]` is useEditorBlur's EDITOR_PORTAL_SELECTOR — the
+    // `[data-editor-portal]` is EDITOR_PORTAL_SELECTOR (editor-portal.ts) — the
     // single opt-in that stops Step 5 (unmount + save) when focus moves here.
     expect(input.closest('[data-editor-portal]')).not.toBeNull()
   })

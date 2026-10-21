@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { BlockTablePicker } from '@/components/block-tree/BlockTablePicker'
-import { EDITOR_PORTAL_SELECTOR } from '@/hooks/useEditorBlur'
+import { EDITOR_PORTAL_SELECTOR } from '@/editor/editor-portal'
 
 const run = vi.fn()
 const insertTable = vi.fn(() => ({ run }))

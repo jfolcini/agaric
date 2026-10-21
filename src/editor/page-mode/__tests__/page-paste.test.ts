@@ -128,6 +128,34 @@ describe('pasting Markdown text in page mode', () => {
     ])
   })
 
+  it('in a block’s text, a heading first joins the text before the cursor as text, and a fence last takes the text after', () => {
+    const ed = open([[A, 0, 'beforeafter']])
+    caret(ed, 0, 6)
+
+    paste(ed, '# Title\n\n```\nx\n```')
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'beforeTitle'],
+      [N1, 0, '```\nxafter\n```'],
+    ])
+    const { $head } = ed.state.selection
+    expect([$head.index(0), $head.parentOffset]).toEqual([1, 'x'.length])
+  })
+
+  it('in a block’s text, a fence first joins the text before the cursor as text, and a heading last takes the text after', () => {
+    const ed = open([[A, 0, 'beforeafter']])
+    caret(ed, 0, 6)
+
+    paste(ed, '```\nx\n```\n\n# Title')
+
+    expect(rowsOf(ed.state.doc)).toEqual([
+      [A, 0, 'beforex'],
+      [N1, 0, '# Titleafter'],
+    ])
+    const { $head } = ed.state.selection
+    expect([$head.index(0), $head.parentOffset]).toEqual([1, 'Title'.length])
+  })
+
   it('keeps a task item’s checkbox as text, which the block takes as its state once left', () => {
     const ed = open([[A, 0, '']])
     caret(ed, 0, 0)

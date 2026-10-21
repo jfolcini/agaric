@@ -209,7 +209,7 @@ export function BlockRefPeek({ container }: BlockRefPeekProps): React.ReactEleme
       ref={peekRef}
       data-testid="ref-peek"
       // Keeps the roving editor mounted when the peek takes focus
-      // (`EDITOR_PORTAL_SELECTOR`, `@/hooks/useEditorBlur`).
+      // (`EDITOR_PORTAL_SELECTOR`, `@/editor/editor-portal`).
       // Only a keyboard-opened peek takes focus, so only that one needs the
       // editor-blur exemption; on a hover peek the attribute would abort the
       // blur save for a click landing during the close grace.

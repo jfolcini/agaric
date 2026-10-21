@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import { EmojiPickerDialog } from '@/components/EmojiPicker/EmojiPickerDialog'
-import { EDITOR_PORTAL_SELECTOR } from '@/hooks/useEditorBlur'
+import { EDITOR_PORTAL_SELECTOR } from '@/editor/editor-portal'
 
 vi.mock('@/components/EmojiPicker/EmojiPicker', () => ({
   EmojiPicker: () => <div data-testid="emoji-picker" />,

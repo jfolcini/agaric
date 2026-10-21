@@ -1411,7 +1411,7 @@ async fn list_property_defs_happy_path() {
     // `tool_response_list_property_defs.snap`; this test just pins
     // (a) a stable subset of must-be-present keys (the four reserved
     // keys named in AGENTS.md "Architectural Stability — properties
-    // system", which any future migration must preserve), and
+    // system", built in since #5841), and
     // (b) cross-checks the response count against the live
     // `property_definitions` table so adding/removing seeded defs
     // does not silently desync this assertion from reality.

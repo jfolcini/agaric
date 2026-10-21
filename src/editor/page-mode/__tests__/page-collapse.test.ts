@@ -7,6 +7,7 @@
 
 import type { Editor } from '@tiptap/core'
 import type { NodeType } from '@tiptap/pm/model'
+import { TextSelection } from '@tiptap/pm/state'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { loadCollapsedIds } from '@/components/block-tree/use-block-collapse'
@@ -127,6 +128,8 @@ describe('collapse', () => {
 
     expect(hidden(ed)).toEqual([])
     expect(readPreference(PREFERENCES.blockCollapse, PAGE)).toEqual([A])
+    caret(ed, 3, 1)
+    expect(hidden(ed)).toEqual([])
     caret(ed, 4, 0)
     expect(hidden(ed)).toEqual([B, C, D])
   })
@@ -163,6 +166,16 @@ describe('collapse', () => {
     expect(hidden(ed)).toEqual([B, C, D])
     expect(press(ed, '.', { ctrlKey: true })).toBe(false)
     expect(hidden(ed)).toEqual([B, C, D])
+  })
+
+  it('the block menu collapses and expands a block while the whole page is selected', () => {
+    const ed = build(TREE)
+    ed.commands.selectAll()
+
+    expect(toggle(ed, A)).toBe(true)
+    expect(hidden(ed)).toEqual([B, C, D])
+    expect(toggle(ed, A)).toBe(true)
+    expect(hidden(ed)).toEqual([])
   })
 
   it('a block left first with its parent cut away is under no collapsed block', () => {
@@ -248,17 +261,31 @@ describe('collapse', () => {
     expect(hidden(ed)).toEqual([B, C, D, E])
   })
 
+  it('Tab on the caret’s block into a collapsed block shows it there, with what the block hides', () => {
+    const ed = build(TREE)
+    caret(ed, 0, 0)
+    toggle(ed, A)
+    caret(ed, 4, 1)
+
+    expect(press(ed, 'Tab')).toBe(true)
+
+    expect(rowsOf(ed.state.doc)[4]).toEqual([E, 1, 'e'])
+    expect(caretBlock(ed)).toBe(4)
+    expect(hidden(ed)).toEqual([])
+  })
+
   it('typing in a block works out nothing again: what is hidden is mapped', () => {
     const ed = build(TREE)
-    caret(ed, 4, 1)
+    caret(ed, 0, 1)
     toggle(ed, A)
     const before = pageCollapseKey.getState(ed.state)?.hidden
 
-    type(ed, 'xy')
+    // Longer than a block after it, so what it hides moves past where it was.
+    type(ed, ' and more')
 
     expect(pageCollapseKey.getState(ed.state)?.hidden).toBe(before)
     expect(hidden(ed)).toEqual([B, C, D])
-    expect(rowsOf(ed.state.doc)[4]).toEqual([E, 0, 'exy'])
+    expect(rowsOf(ed.state.doc)[0]).toEqual([A, 0, 'a and more'])
   })
 })
 
@@ -479,6 +506,26 @@ describe('a block put between a collapsed block and what it hides', () => {
     expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([A, B, C])
     ed.view.dispatch(ed.state.tr.delete(startOf(ed.state.doc, 1), startOf(ed.state.doc, 2)))
     expect(rowsOf(ed.state.doc).map(([id]) => id)).toEqual([A, C])
+  })
+
+  it('with nothing put between, Tab on a selection from a block below back into the collapsed block keeps that selection', () => {
+    const ed = build(ROWS)
+    caret(ed, 0, 1)
+    toggle(ed, A)
+    const { doc, tr } = ed.state
+    ed.view.dispatch(tr.setSelection(TextSelection.create(doc, posIn(ed, 2, 1), posIn(ed, 0, 1))))
+
+    expect(press(ed, 'Tab')).toBe(true)
+
+    expect(rowsOf(ed.state.doc).map(([id, depth]) => [id, depth])).toEqual([
+      [A, 0],
+      [B, 1],
+      [C, 1],
+    ])
+    expect([ed.state.selection.anchor, ed.state.selection.head]).toEqual([
+      posIn(ed, 2, 1),
+      posIn(ed, 0, 1),
+    ])
   })
 
   it('is left where it is when the collapsed block is expanded, or the cursor is not in it', () => {

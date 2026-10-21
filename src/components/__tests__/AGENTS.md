@@ -111,7 +111,7 @@ Production-code rules pinned by tests here; each fixed a shipped bug. Optimistic
 4. **`onPointerDown` (with `onClick` keyboard fallback)** for buttons that must fire before a focus/blur cycle, e.g. delete in a hover gutter.
 5. **Capture-phase keydown on `parentElement`** for handlers that must beat ProseMirror (Enter for block split); they yield while a suggestion popup is open.
 6. **Blur splitting uses `shouldSplitOnBlur()`**, not `content.includes('\n')` — code blocks contain newlines. `useEditorBlur`'s early-persist path checks it too, or `edit()` and `splitBlock()` both run.
-7. **Editor-area overlays carry `data-editor-portal=""`** on their outermost portal element (`EDITOR_PORTAL_SELECTOR`, `src/hooks/useEditorBlur.ts`), or clicking them fires `handleBlur`.
+7. **Editor-area overlays carry `data-editor-portal=""`** on their outermost portal element (`EDITOR_PORTAL_SELECTOR`, `src/editor/editor-portal.ts`), or clicking them fires `handleBlur`.
 8. **`Dialog` for modals with text inputs; `AlertDialog` only for confirm/cancel** — its focus trap makes input `autoFocus` unreliable.
 9. **`null`, not `undefined`, for Rust `Option<T>` args.** `commands.*` passes what you give it; `createBlock` in `@/lib/ipc-helpers` is the one helper that still normalizes with `?? null`.
 10. **Fetched state carries the key it was fetched for** (space, page, date range) and is compared in render. `JournalPage` and the page property table stay mounted across a switch, so state that does not carry its key renders, or acts on, the old key's data in the first render after a switch. Test the switch while mounted.

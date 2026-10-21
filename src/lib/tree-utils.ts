@@ -261,11 +261,11 @@ export type ProjectionSim =
     }
   | {
       kind: 'normal'
-      clonedItems: FlatBlock[]
+      clonedItems: TreeItem[]
       projectedIndex: number
-      previousItem: FlatBlock | undefined
-      nextItem: FlatBlock | undefined
-      activeItem: FlatBlock
+      previousItem: TreeItem | undefined
+      nextItem: TreeItem | undefined
+      activeItem: TreeItem
       depthCeiling: number
       rootParentId: string | null
     }
