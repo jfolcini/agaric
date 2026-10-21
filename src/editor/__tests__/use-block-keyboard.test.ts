@@ -2104,7 +2104,7 @@ describe('#5689 — a revealed Markdown marker beside the caret keeps its keys i
 
   /** `**bold** rest`, or `rest **bold**` with `boldLast`; the preference on unless `off`. */
   function setup(opts: { boldLast?: boolean; off?: boolean } = {}) {
-    if (!opts.off) writePreference(PREFERENCES.revealMarkdownSyntax, true)
+    writePreference(PREFERENCES.revealMarkdownSyntax, !opts.off)
     const element = document.createElement('div')
     document.body.append(element)
     const bold = { type: 'text', text: 'bold', marks: [{ type: 'bold' }] }
@@ -2241,7 +2241,7 @@ describe('#5689 — a revealed heading or link marker beside the caret keeps its
   })
 
   function setup(content: Record<string, unknown>, opts: { off?: boolean } = {}) {
-    if (!opts.off) writePreference(PREFERENCES.revealMarkdownSyntax, true)
+    writePreference(PREFERENCES.revealMarkdownSyntax, !opts.off)
     const element = document.createElement('div')
     document.body.append(element)
     const editor = new Editor({

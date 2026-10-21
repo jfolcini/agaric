@@ -662,6 +662,10 @@ describe('MarkdownReveal with the preference on', () => {
 })
 
 describe('MarkdownReveal with the preference off', () => {
+  beforeEach(() => {
+    writePreference(PREFERENCES.revealMarkdownSyntax, false)
+  })
+
   it('draws no marker and leaves Delete and the arrows to the editor', () => {
     const ed = createEditor(BOLD)
     ed.commands.setTextSelection(11)

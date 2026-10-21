@@ -508,9 +508,11 @@ test('perf: core journeys on a seeded vault @editor @pages @journal @search', as
   const blocks = page.locator('[data-testid="block-static"]')
   const rows: Row[] = []
   await page.addInitScript(installProbes)
-  if (REVEAL) {
-    await page.addInitScript(() => localStorage.setItem('agaric-reveal-markdown-syntax', 'true'))
-  }
+  // The reveal is on by default in the app; the journeys run with it off unless asked.
+  await page.addInitScript(
+    (on) => localStorage.setItem('agaric-reveal-markdown-syntax', String(on)),
+    REVEAL,
+  )
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Performance.enable')
   await cdp.send('Profiler.enable')

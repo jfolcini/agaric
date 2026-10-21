@@ -960,7 +960,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       Document,
       ...content.text,
       // #5689 — the caret's inline marks show their Markdown markers, behind the
-      // off-by-default `revealMarkdownSyntax` preference.
+      // `revealMarkdownSyntax` preference.
       MarkdownReveal,
       ...content.lists,
       // #3000 — paints the focused block's list marker (bullet / computed

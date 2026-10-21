@@ -49,7 +49,7 @@ export function isTabIndentEnabled(): boolean {
 
 /**
  * Whether the block editor shows Markdown markers around the caret's inline
- * marks (#5689). Off by default and on any read failure.
+ * marks (#5689). On unless the user turned it off.
  */
 export function isMarkdownRevealEnabled(): boolean {
   return readPreference(PREFERENCES.revealMarkdownSyntax)
