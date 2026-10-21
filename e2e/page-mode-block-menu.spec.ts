@@ -451,6 +451,79 @@ test.describe('page mode block menu (#5972) @editor @pages', () => {
     await expect.poll(() => readClipboard(page)).toBe('https://example.com/docs')
   })
 
+  test('Turn into Heading 1 makes the block under the pointer a heading, and it stays one', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Menu turn into', [
+      [0, 'alpha'],
+      [0, 'beta'],
+    ])
+    await openInPageMode(page, 'Menu turn into', 2)
+
+    await rightClick(page, ids[1])
+    await item(page, 'Turn into').click()
+    await pick(page, 'Heading 1')
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((r) => r[2]))
+      .toEqual(['alpha', '# beta'])
+
+    await reopen(page, 'Menu turn into', 2)
+    await expect(page.locator(`${EDITOR} [data-page-block-id="${ids[1]}"] h1`)).toHaveText('beta')
+    await expect(page.locator(`${EDITOR} [data-page-block-id="${ids[0]}"] h1`)).toHaveCount(0)
+  })
+
+  test('Turn into is reachable from the keyboard: the menu key, the arrows and Enter', async ({
+    page,
+  }) => {
+    const { pageId } = await seedRows(page, 'Menu turn into keys', [
+      [0, 'alpha'],
+      [0, 'beta'],
+    ])
+    await openInPageMode(page, 'Menu turn into keys', 2)
+    await caretIn(page, 1)
+
+    await page.keyboard.press('ContextMenu')
+    await expect(menu(page)).toBeVisible()
+    const focusOn = async (name: string): Promise<void> => {
+      for (let i = 0; i < 30; i += 1) {
+        const text = await page.evaluate(() => document.activeElement?.textContent ?? '')
+        if (text.startsWith(name)) return
+        await page.keyboard.press('ArrowDown')
+      }
+      throw new Error(`the arrows never reached ${name}`)
+    }
+    await focusOn('Turn into')
+    await page.keyboard.press('Enter')
+    await focusOn('Heading 1')
+    await page.keyboard.press('Enter')
+    await expect(menu(page)).toBeHidden()
+
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((r) => r[2]))
+      .toEqual(['alpha', '# beta'])
+  })
+
+  test('the Turn into chord opens the picker on the caret’s block, and the heading it picks stays one', async ({
+    page,
+  }) => {
+    const { pageId, ids } = await seedRows(page, 'Chord turn into', [
+      [0, 'alpha'],
+      [0, 'beta'],
+    ])
+    await openInPageMode(page, 'Chord turn into', 2)
+    await caretIn(page, 1)
+
+    await page.keyboard.press('Control+Shift+L')
+    await page.getByRole('option', { name: /TURN INTO Heading 1/ }).click()
+    await expect
+      .poll(async () => (await backend(page, pageId)).map((r) => r[2]))
+      .toEqual(['alpha', '# beta'])
+
+    await reopen(page, 'Chord turn into', 2)
+    await expect(page.locator(`${EDITOR} [data-page-block-id="${ids[1]}"] h1`)).toHaveText('beta')
+    await expect(page.locator(`${EDITOR} [data-page-block-id="${ids[0]}"] h1`)).toHaveCount(0)
+  })
+
   test('Properties and History open on the block they were chosen for', async ({ page }) => {
     const { ids } = await seedRows(page, 'Menu dialogs', [
       [0, 'one'],

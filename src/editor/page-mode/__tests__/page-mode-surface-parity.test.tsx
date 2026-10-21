@@ -77,7 +77,6 @@ const PAGE_MODE_ONLY = new Set([
 
 /** The block menu's rows page mode leaves out, and why. */
 const MENU_NOT_IN_PAGE_MODE: Partial<Record<BlockMenuActionId, string>> = {
-  turnInto: 'a document edit page mode has yet to get (#5743)',
   zoomIn: 'page mode shows the whole page; it has no zoom',
 }
 
@@ -235,6 +234,7 @@ describe('the block menu', () => {
         cyclePriority: vi.fn(),
         openPropertyDrawer: vi.fn(),
         openHistory: vi.fn(),
+        turnInto: vi.fn(),
       },
     }
     render(

@@ -358,6 +358,19 @@ describe('useBlockSlashCommands handleSlashCommand', () => {
     expect(recents[0]?.id).toBe('todo')
   })
 
+  it('records a base command but not its sub-options, which the Recent band never shows', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+      await result.current.handleSlashCommand({ id: 'priority-high', label: 'PRIORITY 1' })
+      await result.current.handleSlashCommand({ id: 'turn-h1', label: 'TURN INTO Heading 1' })
+    })
+
+    expect(getRecentCommands(RECENT_SLASH_PREFIX).map((c) => c.id)).toEqual(['todo'])
+  })
+
   it('does not record into the MRU when focusedBlockId is null (#1105)', async () => {
     const params = makeDefaultParams({ focusedBlockId: null })
     const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
