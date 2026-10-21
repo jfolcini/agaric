@@ -61,9 +61,7 @@ import {
  * used to keep the registered key and the resolved `i18n.language` byte-
  * identical) that is temporarily registered with a distinguishable
  * `date-fns` `Locale` (`es`, imported here as a TEST FIXTURE only —
- * production code never imports it). This is the same
- * "temporarily-registered test locale" seam `__resetPriorityLevelsForTests`
- * uses for `priority-levels.ts`.
+ * production code never imports it).
  */
 const TEST_LOCALE_TAG = 'xx'
 

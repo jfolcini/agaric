@@ -2,7 +2,8 @@
  * PropertyDefinitionsList -- CRUD for property definitions.
  *
  * Search/filter, create form, list rendering, delete confirmation,
- * and edit options for select-type properties.
+ * and edit options for select-type properties. A built-in definition
+ * (#5841) shows a lock and offers no action.
  */
 
 import { HelpCircle, Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
@@ -33,17 +34,14 @@ import { unwrap } from '@/lib/app-error'
 import type { PropertyDefinition } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
-import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { setPriorityLevels } from '@/lib/priority-levels'
-import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName, selectOptionsJson } from '@/lib/property-utils'
 import { reportIpcError, reportIpcErrorWithReason } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref', 'boolean', 'url'] as const
 
-/** Every space block carries this key, so deleting its definition always fails. */
+/** The space marker every space block carries is app bookkeeping (#5629). */
 const SPACE_MARKER_KEY = 'is_space'
 
 export function PropertyDefinitionsList(): React.ReactElement {
@@ -86,9 +84,9 @@ export function PropertyDefinitionsList(): React.ReactElement {
     setLoadError(false)
     try {
       // `listPropertyDefs` is paginated. The settings panel is
-      // single-page-by-design — it surfaces the seeded vocabulary
-      // (~19 built-ins plus user-authored entries), which fits well
-      // under one page; we destructure `.items` and ignore the cursor.
+      // single-page-by-design — it surfaces the built-ins plus the user's
+      // definitions, which fit well under one page; we destructure `.items`
+      // and ignore the cursor.
       const { items: defs } = unwrap(await commands.listPropertyDefs(null, null))
       setDefinitions(defs)
     } catch (error) {
@@ -163,26 +161,6 @@ export function PropertyDefinitionsList(): React.ReactElement {
         const updated = unwrap(await commands.updatePropertyDefOptions(key, editOptionsValue))
         setDefinitions((prev) => prev.map((d) => (d.key === key ? updated : d)))
         setEditingOptionsKey(null)
-        // Sync the active priority level cache when the user
-        // edits `priority.options`. Other property keys are untouched.
-        if (key === 'priority' && updated.options != null) {
-          try {
-            const parsed: unknown = JSON.parse(updated.options)
-            if (Array.isArray(parsed)) {
-              const levels = parsed.filter((v): v is string => typeof v === 'string')
-              if (levels.length > 0) setPriorityLevels(levels)
-            }
-          } catch (parseErr) {
-            // Server already accepted the payload; the cache just won't
-            // update. Log so silent drift doesn't mask real bugs.
-            logger.warn(
-              'PropertyDefinitionsList',
-              'Could not parse saved priority options after successful update',
-              { options: updated.options },
-              parseErr,
-            )
-          }
-        }
       } catch (err) {
         // See loadDefinitions above — unified error reporting.
         reportIpcError('PropertyDefinitionsList', 'property.errorUpdate', err, t, { key })
@@ -287,144 +265,134 @@ export function PropertyDefinitionsList(): React.ReactElement {
         {() =>
           filteredDefs.length > 0 ? (
             <ul className="space-y-1">
-              {filteredDefs.map((def) => (
-                // On a phone the options take a second line, flush with the name, while
-                // Delete or Built-in stays on the name's line; one row when wider (#5925).
-                // Tab order follows the DOM (name, options, Delete), which is the wide row's
-                // left-to-right order; on a phone Delete is drawn above the options, so the
-                // two swap. Matching them would put Delete before the options on desktop.
-                <ListItem
-                  key={def.key}
-                  className="max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-y-0"
-                >
-                  <div className="flex min-w-0 items-center gap-3 [@media(pointer:coarse)]:min-h-11">
-                    <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
-                    <Badge tone="secondary">{def.value_type}</Badge>
-                  </div>
-                  {def.value_type === 'select' && (
-                    <div className="flex items-center gap-3 max-sm:col-span-2 sm:ml-auto">
-                      {LOCKED_PROPERTY_OPTIONS.has(def.key) && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span
-                              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground max-sm:px-0"
-                              data-testid={`locked-options-${def.key}`}
-                              title={t('propertiesView.optionsLockedTitle')}
-                            >
-                              <Lock
-                                className="h-3 w-3"
-                                aria-label={t('propertiesView.optionsLockedTitle')}
-                              />
-                              {t('propertiesView.optionsLocked')}
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            {t('propertiesView.optionsLockedTooltip')}
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {def.key === 'todo_state' && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              className="text-muted-foreground"
-                              data-testid="todo-state-cycle-help"
-                              aria-label={t('propertiesView.taskCycleHelpLabel')}
-                            >
-                              <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">
-                            {t('propertiesView.taskCycleHelpContent')}
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                      {!LOCKED_PROPERTY_OPTIONS.has(def.key) && (
-                        <Popover
-                          open={editingOptionsKey === def.key}
-                          onOpenChange={(open) => {
-                            if (open) {
-                              setEditingOptionsKey(def.key)
-                              setEditOptionsValue(def.options ?? '')
-                            } else {
-                              setEditingOptionsKey(null)
-                            }
-                          }}
-                        >
-                          <PopoverTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              className="max-sm:px-0!"
-                              aria-label={t('propertiesView.editOptionsTooltip')}
-                            >
-                              <Settings2 />
-                              {t('propertiesView.editOptions')}
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent aria-label={t('propertiesView.editOptionsPopoverLabel')}>
-                            <div className="space-y-2">
-                              <Input
-                                value={editOptionsValue}
-                                onChange={(e) => setEditOptionsValue(e.target.value)}
-                                placeholder={t('propertiesView.optionsJsonPlaceholder')}
-                                aria-label={t('propertiesView.optionsJsonLabel')}
-                                aria-invalid={jsonError != null}
-                                aria-describedby={
-                                  jsonError != null ? 'property-options-json-error' : undefined
-                                }
-                              />
-                              {jsonError && (
-                                <p
-                                  id="property-options-json-error"
-                                  className="text-xs text-destructive"
-                                  role="alert"
-                                >
-                                  {t('propertiesView.invalidJsonHint', { error: jsonError })}
-                                </p>
-                              )}
-                              <Button
-                                size="sm"
-                                disabled={jsonError != null}
-                                onClick={() => handleSaveOptions(def.key)}
-                              >
-                                {t('action.save')}
-                              </Button>
-                            </div>
-                          </PopoverContent>
-                        </Popover>
-                      )}
+              {filteredDefs.map((def) => {
+                // A built-in's options are fixed (#5841); `todo_state` keeps the cell for
+                // its cycle help.
+                const hasOptionsCell =
+                  def.value_type === 'select' && (!def.builtin || def.key === 'todo_state')
+                return (
+                  // On a phone the options take a second line, flush with the name, while
+                  // Delete or Built-in stays on the name's line; one row when wider (#5925).
+                  // Tab order follows the DOM (name, options, Delete), which is the wide row's
+                  // left-to-right order; on a phone Delete is drawn above the options, so the
+                  // two swap. Matching them would put Delete before the options on desktop.
+                  <ListItem
+                    key={def.key}
+                    className="max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-y-0"
+                  >
+                    <div className="flex min-w-0 items-center gap-3 [@media(pointer:coarse)]:min-h-11">
+                      <span className="font-medium text-sm">{formatPropertyName(def.key)}</span>
+                      <Badge tone="secondary">{def.value_type}</Badge>
                     </div>
-                  )}
-                  {NON_DELETABLE_PROPERTIES.has(def.key) ? (
-                    <Badge
-                      tone="outline"
-                      className={cn(
-                        'shrink-0 text-xs text-muted-foreground max-sm:col-start-2 max-sm:row-start-1',
-                        def.value_type !== 'select' && 'sm:ml-auto',
-                      )}
-                    >
-                      {t('propertiesView.builtIn')}
-                    </Badge>
-                  ) : (
-                    <IconButton
-                      variant="ghost"
-                      size="icon-xs"
-                      tooltip={t('propertiesView.deleteTooltip')}
-                      ariaLabel={t('properties.deleteDefinition', { key: def.key })}
-                      className={cn(
-                        'max-sm:col-start-2 max-sm:row-start-1 [@media(pointer:coarse)]:-mr-3 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95',
-                        def.value_type !== 'select' && 'sm:ml-auto',
-                      )}
-                      onClick={() => setDeleteTarget(def.key)}
-                    >
-                      <Trash2 />
-                    </IconButton>
-                  )}
-                </ListItem>
-              ))}
+                    {hasOptionsCell && (
+                      <div className="flex items-center gap-3 max-sm:col-span-2 sm:ml-auto">
+                        {def.key === 'todo_state' && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                className="text-muted-foreground"
+                                data-testid="todo-state-cycle-help"
+                                aria-label={t('propertiesView.taskCycleHelpLabel')}
+                              >
+                                <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              {t('propertiesView.taskCycleHelpContent')}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                        {!def.builtin && (
+                          <Popover
+                            open={editingOptionsKey === def.key}
+                            onOpenChange={(open) => {
+                              if (open) {
+                                setEditingOptionsKey(def.key)
+                                setEditOptionsValue(def.options ?? '')
+                              } else {
+                                setEditingOptionsKey(null)
+                              }
+                            }}
+                          >
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="xs"
+                                className="max-sm:px-0!"
+                                aria-label={t('propertiesView.editOptionsTooltip')}
+                              >
+                                <Settings2 />
+                                {t('propertiesView.editOptions')}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              aria-label={t('propertiesView.editOptionsPopoverLabel')}
+                            >
+                              <div className="space-y-2">
+                                <Input
+                                  value={editOptionsValue}
+                                  onChange={(e) => setEditOptionsValue(e.target.value)}
+                                  placeholder={t('propertiesView.optionsJsonPlaceholder')}
+                                  aria-label={t('propertiesView.optionsJsonLabel')}
+                                  aria-invalid={jsonError != null}
+                                  aria-describedby={
+                                    jsonError != null ? 'property-options-json-error' : undefined
+                                  }
+                                />
+                                {jsonError && (
+                                  <p
+                                    id="property-options-json-error"
+                                    className="text-xs text-destructive"
+                                    role="alert"
+                                  >
+                                    {t('propertiesView.invalidJsonHint', { error: jsonError })}
+                                  </p>
+                                )}
+                                <Button
+                                  size="sm"
+                                  disabled={jsonError != null}
+                                  onClick={() => handleSaveOptions(def.key)}
+                                >
+                                  {t('action.save')}
+                                </Button>
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        )}
+                      </div>
+                    )}
+                    {def.builtin ? (
+                      <Badge
+                        tone="outline"
+                        data-testid={`builtin-lock-${def.key}`}
+                        className={cn(
+                          'shrink-0 text-xs text-muted-foreground max-sm:col-start-2 max-sm:row-start-1',
+                          !hasOptionsCell && 'sm:ml-auto',
+                        )}
+                      >
+                        <Lock aria-hidden="true" />
+                        {t('propertiesView.builtIn')}
+                      </Badge>
+                    ) : (
+                      <IconButton
+                        variant="ghost"
+                        size="icon-xs"
+                        tooltip={t('propertiesView.deleteTooltip')}
+                        ariaLabel={t('properties.deleteDefinition', { key: def.key })}
+                        className={cn(
+                          'max-sm:col-start-2 max-sm:row-start-1 [@media(pointer:coarse)]:-mr-3 text-muted-foreground hover:text-destructive active:text-destructive active:scale-95',
+                          !hasOptionsCell && 'sm:ml-auto',
+                        )}
+                        onClick={() => setDeleteTarget(def.key)}
+                      >
+                        <Trash2 />
+                      </IconButton>
+                    )}
+                  </ListItem>
+                )
+              })}
             </ul>
           ) : searchFilter ? (
             <EmptyState icon={Search} message={t('propertiesView.noFilterResults')} compact />

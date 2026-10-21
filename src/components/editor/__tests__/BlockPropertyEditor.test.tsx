@@ -10,22 +10,6 @@ import { axe } from 'vitest-axe'
 const RESERVED_KEYS = new Set(['todo_state', 'priority', 'due_date', 'scheduled_date'])
 
 /**
- * The keys `is_builtin_property_key` (`src-tauri/agaric-store/src/op.rs`)
- * covers — the four reserved ones plus the lifecycle keys — i.e. exactly the
- * set `delete_property_def_inner` refuses to delete a definition for.
- */
-const BUILTIN_KEYS = new Set([
-  ...RESERVED_KEYS,
-  'created_at',
-  'completed_at',
-  'repeat',
-  'repeat-until',
-  'repeat-count',
-  'repeat-seq',
-  'repeat-origin',
-])
-
-/**
  * Payload-shape rules of `validate_set_property`
  * (`src-tauri/agaric-store/src/op.rs:531`), returning the backend's error
  * string or `null` when the payload is accepted.
@@ -167,6 +151,7 @@ import {
   type BlockPropertyEditorProps,
 } from '@/components/editor/BlockPropertyEditor'
 import { logger } from '@/lib/logger'
+import { NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 
 // Make rAF synchronous so the deferred outside-click registration runs
 // immediately within the test's microtask flush.
@@ -1028,8 +1013,14 @@ describe('BlockPropertyEditor', () => {
       mockGetPropertyDef.mockImplementation((key: string) =>
         Promise.resolve({ status: 'ok', data: defs.get(key) ?? null }),
       )
+      // `create_property_def_inner` refuses every built-in key (#5841).
       mockCreatePropertyDef.mockImplementation(
         (key: string, valueType: string, options: string | null) => {
+          if (NON_DELETABLE_PROPERTIES.has(key))
+            return Promise.resolve({
+              status: 'error',
+              error: `property '${key}' is built in and cannot be changed`,
+            })
           if (!defs.has(key))
             defs.set(key, { key, value_type: valueType, options, created_at: 'T' })
           return Promise.resolve({ status: 'ok', data: defs.get(key) })
@@ -1042,10 +1033,10 @@ describe('BlockPropertyEditor', () => {
       // refuses every builtin key outright, refuses while any
       // `block_properties` row references the key, and 404s an absent row.
       mockDeletePropertyDef.mockImplementation((key: string) => {
-        if (BUILTIN_KEYS.has(key))
+        if (NON_DELETABLE_PROPERTIES.has(key))
           return Promise.resolve({
             status: 'error',
-            error: 'cannot delete builtin property definition',
+            error: `property '${key}' is built in and cannot be changed`,
           })
         if (keysInUse.includes(key))
           return Promise.resolve({

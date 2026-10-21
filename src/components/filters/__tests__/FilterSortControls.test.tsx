@@ -22,7 +22,7 @@ import { queryClient } from '@/lib/query-client'
 const mockedInvoke = vi.mocked(invoke)
 
 function def(key: string, value_type: string): PropertyDefinition {
-  return { key, value_type, options: null, created_at: '2026-01-01T00:00:00Z' }
+  return { key, value_type, options: null, created_at: '2026-01-01T00:00:00Z', builtin: false }
 }
 
 const DEFS: PropertyDefinition[] = [

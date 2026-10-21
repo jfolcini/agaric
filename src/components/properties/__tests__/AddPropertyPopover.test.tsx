@@ -50,6 +50,7 @@ function makeDef(key: string, valueType = 'text'): PropertyDefinition {
     value_type: valueType,
     options: null,
     created_at: '2026-01-01T00:00:00Z',
+    builtin: false,
   }
 }
 

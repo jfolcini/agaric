@@ -156,7 +156,7 @@ test.describe('Autocomplete @editor', () => {
     const popover = page.getByTestId('autocomplete-popover')
     await expect(popover).toBeVisible()
 
-    // Default priority levels are the numeric 1/2/3, with `none` appended
+    // The priority levels are the numeric 1/2/3, with `none` appended
     // to mirror the cycle.
     for (const value of ['1', '2', '3', 'none']) {
       await expect(page.getByTestId(`autocomplete-item-${value}`)).toBeVisible()

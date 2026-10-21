@@ -508,9 +508,9 @@ async fn copy_repeat_bounds(
 ///     `tests_l99_l100::repeat_seq_not_incremented_without_repeat_count`.
 ///
 /// Cross-references:
-///   - The property-definition seed migration that registers
-///     `repeat`, `repeat-until`, `repeat-count`, `repeat-seq`,
-///     and `repeat-origin` is `migrations/0016_seed_repeat_properties.sql`.
+///   - `repeat`, `repeat-until`, `repeat-count`, `repeat-seq` and
+///     `repeat-origin` are built-in definitions
+///     (`agaric_store::op::BUILTIN_PROPERTY_DEFS`).
 ///   - ISO-date validation for the *value* written to
 ///     `repeat-until` (and other date columns) is enforced by
 ///     `crate::block_ops::is_valid_iso_date` inside

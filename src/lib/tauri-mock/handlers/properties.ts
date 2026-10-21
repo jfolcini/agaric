@@ -10,6 +10,7 @@
  */
 
 import {
+  BUILTIN_PROPERTY_DEFS,
   NON_DELETABLE_PROPERTIES,
   REPEAT_RULE_BOUNDS,
   SYSTEM_MANAGED_PROPERTY_KEYS,
@@ -22,6 +23,7 @@ import {
   assertValidSetPropertyValue,
   notFoundRejection,
   ownerSpaceOf,
+  propertyDefinition,
   returnEmptyPage,
   validationRejection,
   readActiveSpaceScope,
@@ -208,12 +210,24 @@ function parsePropertyDefOptions(options: string): string[] {
   return parsed as string[]
 }
 
+/** Mock twin of `refuse_builtin_definition_write` (`commands/properties.rs`, #5841). */
+function refuseBuiltinDefinitionWrite(key: string): void {
+  if (NON_DELETABLE_PROPERTIES.has(key)) {
+    throw appErrorRejection({
+      kind: 'validation',
+      code: 'BuiltinPropertyLocked',
+      message: `property '${key}' is built in and cannot be changed`,
+    })
+  }
+}
+
 /**
  * Mock twin of `validate_property_def_shape` (`commands/properties.rs`). The
  * mock used to accept every key, every value_type and every options blob, so a
  * conformance op could not tell a refusal from a write (#3830).
  */
 function validatePropertyDefShape(key: string, valueType: string, options: string | null): void {
+  refuseBuiltinDefinitionWrite(key)
   if (key.length === 0 || key.length > 64) {
     throw validationRejection('property definition key must be 1-64 characters')
   }
@@ -384,7 +398,7 @@ export const propertiesHandlers = {
     if (
       valueText !== null &&
       valueRef === null &&
-      propertyDefs.get(key)?.['value_type'] === 'ref'
+      propertyDefinition(key)?.['value_type'] === 'ref'
     ) {
       const block = blocks.get(blockId)
       const spaceId = block ? ((block['space_id'] as string | null) ?? ownerSpaceOf(block)) : null
@@ -651,6 +665,11 @@ export const propertiesHandlers = {
 
   set_priority: (args) => {
     const a = args as Record<string, unknown>
+    assertValidReservedPropertyValue(
+      'priority',
+      'value_text',
+      (a['level'] as string | null) ?? null,
+    )
     const b = blocks.get(a['blockId'] as string)
     if (!b) throw notFoundRejection(`block '${a['blockId'] as string}' not found`)
     const fromLevel = (b['priority'] as string | null) ?? null
@@ -749,8 +768,8 @@ export const propertiesHandlers = {
     // INSERT OR IGNORE (`create_property_def_inner`): an existing declaration
     // wins untouched, so re-asserting a key under a different value_type
     // answers with the FIRST one rather than overwriting it.
-    const existing = propertyDefs.get(key)
-    if (existing) return { ...existing }
+    const existing = propertyDefinition(key)
+    if (existing) return existing
     const def = {
       key,
       value_type: valueType,
@@ -758,34 +777,36 @@ export const propertiesHandlers = {
       created_at: new Date().toISOString(),
     }
     propertyDefs.set(key, def)
-    return def
+    return { ...def, builtin: false }
   },
 
   list_property_defs: () => ({
     // Paginated; the mock returns every def in one page (the
     // mock fixtures stay small enough that pagination is irrelevant).
-    // `key ASC` is the backend's ORDER BY (#3830); insertion order was the
-    // mock's own, and the two differ as soon as defs are declared out of
+    // `key ASC` is the backend's ORDER BY (#3830), over the built-ins
+    // (#5841) and the user's rows together; insertion order was the mock's
+    // own, and the two differ as soon as defs are declared out of
     // alphabetical order.
-    items: [...propertyDefs.values()].toSorted((a, b) =>
-      compareUtf8Bytes(a['key'] as string, b['key'] as string),
-    ),
+    items: [...BUILTIN_PROPERTY_DEFS.map((def) => def.key), ...propertyDefs.keys()]
+      .toSorted(compareUtf8Bytes)
+      .map((key) => propertyDefinition(key)),
     next_cursor: null,
     has_more: false,
     total_count: null,
   }),
 
-  // Single-key PK lookup. Returns the entry or null.
+  // Single-key lookup: the built-in, else the user's row, else null.
   get_property_def: (args) => {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
-    return propertyDefs.get(key) ?? null
+    return propertyDefinition(key) ?? null
   },
 
   update_property_def_options: (args) => {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
     const options = a['options'] as string
+    refuseBuiltinDefinitionWrite(key)
     // The backend parses the array BEFORE it looks the key up, so a malformed
     // or empty array on an unknown key is a validation refusal, not NotFound.
     if (parsePropertyDefOptions(options).length === 0) {
@@ -799,16 +820,13 @@ export const propertiesHandlers = {
     }
     const updated = { ...def, options }
     propertyDefs.set(key, updated)
-    return updated
+    return { ...updated, builtin: false }
   },
 
   delete_property_def: (args) => {
     const a = args as Record<string, unknown>
     const key = a['key'] as string
-    // A built-in reserved key is not the user's to remove.
-    if (NON_DELETABLE_PROPERTIES.has(key)) {
-      throw validationRejection(`property key '${key}' is built in and cannot be deleted`)
-    }
+    refuseBuiltinDefinitionWrite(key)
     // A definition still referenced by a live `block_properties` row is
     // refused rather than orphaning the rows, in the backend's words: the
     // Settings screen shows them.

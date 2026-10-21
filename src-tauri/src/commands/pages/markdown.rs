@@ -1995,12 +1995,11 @@ async fn load_page_properties(
     // 4. Get page properties for frontmatter.
     //
     // #384: exclude internal/system-managed keys so they don't leak into the
-    // exported frontmatter. The explicit list is required because
-    // `op::is_builtin_property_key` does NOT cover `space` / `is_space` /
-    // `template` (those are space-membership + template markers, not
-    // builtin lifecycle keys). The list below is the union of those three
-    // plus the lifecycle keys from `is_builtin_property_key` that get
-    // stored in `block_properties` (the reserved-column keys —
+    // exported frontmatter. The explicit list is required because it is not
+    // `op::is_builtin_property_key`'s set: `template` is not built in, and
+    // the repeat rule is built in but exported. The list below is `space` /
+    // `is_space` / `template` plus the lifecycle keys that get stored in
+    // `block_properties` (the reserved-column keys —
     // todo_state/priority/due_date/scheduled_date — live on the `blocks`
     // table, never in `block_properties`, so they never appear here).
     //
@@ -2029,8 +2028,8 @@ async fn load_page_properties(
     //     line as well would render the marker twice on re-import (once as
     //     structure, once as a visible property row).
     //   * IMPORT ("must this key be refused when it appears in a file?") — NO,
-    //     it must be accepted. `listStyle` is an ordinary user-settable
-    //     `select` property (migration 0103): typing `listStyle:: bullet`
+    //     it must be accepted. `listStyle` is a user-settable `select`
+    //     property (built in since #5841): typing `listStyle:: bullet`
     //     inline, or hand-writing it in a markdown file, must keep working.
     //     The reserved keys are excluded there because they are column-backed
     //     or lifecycle-managed and would FAIL `set_property_in_tx`;
@@ -5983,22 +5982,17 @@ async fn apply_block_properties(
 
 /// The `priority` an import stores for `value`: an Org priority letter, which
 /// the parser writes for `[#A]`–`[#C]` (#5160 D7), is the first, second or
-/// third option of the `priority` definition (`options`, its JSON list), or of
-/// the seeded defaults when the definition is gone, so a Logseq `[#A]` is what
-/// `Ctrl+Shift+1` sets. Any other value, and a letter the options do not
-/// reach, is what was written.
-fn import_priority_value(value: &str, options: Option<&str>) -> String {
-    let Some(position) = ["A", "B", "C"].iter().position(|letter| *letter == value) else {
-        return value.to_string();
-    };
-    let declared: Option<Vec<String>> = options.and_then(|json| serde_json::from_str(json).ok());
-    let option = match declared {
-        Some(declared) => declared.get(position).cloned(),
-        None => super::super::properties::PRIORITY_FALLBACK_DEFAULTS
-            .get(position)
-            .map(|option| (*option).to_string()),
-    };
-    option.unwrap_or_else(|| value.to_string())
+/// third built-in level, so a Logseq `[#A]` is what `Ctrl+Shift+1` sets. Any
+/// other value is what was written.
+fn import_priority_value(value: &str) -> String {
+    let levels = agaric_store::op::builtin_property_def("priority")
+        .and_then(|def| def.options)
+        .unwrap_or_default();
+    ["A", "B", "C"]
+        .iter()
+        .position(|letter| *letter == value)
+        .and_then(|position| levels.get(position))
+        .map_or_else(|| value.to_string(), |level| (*level).to_string())
 }
 
 /// #662 — chunked block-insertion loop + final commit. Accumulates into the

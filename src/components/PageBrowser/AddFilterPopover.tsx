@@ -46,7 +46,6 @@ import {
 } from '@/components/PageBrowser/add-filter/vocab'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import type {
@@ -57,6 +56,7 @@ import type {
   PropertyValue,
 } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 import { EXCLUDE_JOURNAL_PAGES_FILTER } from '@/stores/pageBrowserFilters'
 
 export interface AddFilterPopoverProps {
@@ -107,12 +107,6 @@ export function AddFilterPopover({
   renderHasParentEditor,
 }: AddFilterPopoverProps): React.ReactElement {
   const { t } = useTranslation()
-  // E1 — the offered Priority values must mirror the user-configured priority
-  // levels (default `1/2/3`), NOT a hardcoded `A/B/C`. The backend matches
-  // `b.priority = ?` against the stored level strings, so an `A/B/C` popover
-  // returned zero pages out of the box. Subscribe like `GraphFilterBar` so the
-  // list reflects live edits in the Properties tab without a reload.
-  const priorityLevels = usePriorityLevels()
   const [open, setOpen] = useState(false)
   const [editor, setEditor] = useState<EditorKey>(null)
   const [pathValue, setPathValue] = useState('')
@@ -474,7 +468,7 @@ export function AddFilterPopover({
                   <span className="self-center text-xs text-muted-foreground">
                     {t('pageBrowser.filter.facetPriority')}
                   </span>
-                  {priorityLevels.map((p) => (
+                  {PRIORITY_LEVELS.map((p) => (
                     <Button
                       key={p}
                       type="button"

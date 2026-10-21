@@ -1,28 +1,14 @@
 /**
- * Tests for priorityColor — index-based colour mapping driven by the
- * User-configurable priority levels.
- *
- * Validates:
- *  - Default levels (1/2/3) map to urgent / high / normal (regression).
- *  - `null` returns empty string (no classes).
- *  - Unknown levels fall back to `normal`.
- *  - Custom levels at index 0/1/2 get urgent/high/normal; levels 4+ fall back.
+ * Tests for priorityColor — the three levels map to urgent / high / normal,
+ * `null` to no classes, and a level from before the levels were fixed
+ * (#5841) to the neutral muted tokens.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { priorityColor } from '@/lib/priority-color'
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
-beforeEach(() => {
-  __resetPriorityLevelsForTests()
-})
-
-afterEach(() => {
-  __resetPriorityLevelsForTests()
-})
-
-describe('priorityColor: default levels', () => {
+describe('priorityColor', () => {
   it('returns urgent classes for "1"', () => {
     expect(priorityColor('1')).toBe('bg-priority-urgent text-priority-urgent-foreground')
   })
@@ -39,32 +25,7 @@ describe('priorityColor: default levels', () => {
     expect(priorityColor(null)).toBe('')
   })
 
-  it('returns normal (fallback) for an unknown level', () => {
-    expect(priorityColor('999')).toBe('bg-priority-normal text-priority-normal-foreground')
-  })
-})
-
-describe('priorityColor: custom levels', () => {
-  it('assigns urgent/high/normal to index 0/1/2', () => {
-    setPriorityLevels(['A', 'B', 'C', 'D', 'E'])
-    expect(priorityColor('A')).toBe('bg-priority-urgent text-priority-urgent-foreground')
-    expect(priorityColor('B')).toBe('bg-priority-high text-priority-high-foreground')
-    expect(priorityColor('C')).toBe('bg-priority-normal text-priority-normal-foreground')
-  })
-
-  it('falls back to normal for levels at index 3+', () => {
-    setPriorityLevels(['A', 'B', 'C', 'D', 'E'])
-    expect(priorityColor('D')).toBe('bg-priority-normal text-priority-normal-foreground')
-    expect(priorityColor('E')).toBe('bg-priority-normal text-priority-normal-foreground')
-  })
-
-  it('returns normal fallback for unknown value with custom levels', () => {
-    setPriorityLevels(['A', 'B'])
-    expect(priorityColor('Z')).toBe('bg-priority-normal text-priority-normal-foreground')
-  })
-
-  it('single-level config still assigns urgent to the only level', () => {
-    setPriorityLevels(['ONLY'])
-    expect(priorityColor('ONLY')).toBe('bg-priority-urgent text-priority-urgent-foreground')
+  it('returns the neutral colour for an out-of-range level like P0', () => {
+    expect(priorityColor('P0')).toBe('bg-muted text-muted-foreground')
   })
 })

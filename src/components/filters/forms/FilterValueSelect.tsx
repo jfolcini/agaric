@@ -12,14 +12,14 @@
  *
  *   - Search State      passes the shared `useStateFilterOptions()` vocab
  *   - Backlink Status   passes the SAME `useStateFilterOptions()` vocab
- *   - Search Priority   passes `usePriorityLevels()` + `none`
- *   - Backlink Priority passes the SAME `usePriorityLevels()` + `none`
- *                       (legacy 1/2/3 keep translated labels — #2281)
+ *   - Search Priority   passes `PRIORITY_LEVELS` + `none`
+ *   - Backlink Priority passes the SAME `PRIORITY_LEVELS` + `none`
+ *                       (with translated labels — #2281)
  *
  * State/Status are unified (issue #1647 follow-up): both source the one
  * canonical set from `components/filters/forms/stateVocabulary.ts`, so the
  * value set can't drift. Priority is unified too (#2281 item 10): both
- * surfaces read `usePriorityLevels()` plus the `none` sentinel. This
+ * surfaces read `PRIORITY_LEVELS` plus the `none` sentinel. This
  * control is vocabulary-agnostic — it just renders whatever `options` a
  * caller passes; `label` may differ from `value`, so options carry both.
  */

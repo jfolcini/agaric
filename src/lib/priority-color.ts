@@ -1,26 +1,24 @@
 /**
- * Badge color class for a given priority level (theme-aware, index-based).
+ * Badge color class for a given priority level (theme-aware).
  *
- * Priority levels are user-configurable, so the color mapping is
- * index-based rather than keyed on the string value. The first three levels
- * get distinct semantic tokens (urgent / high / normal); level 4+ and any
- * unknown value (not in the current level set) fall back to `normal`.
+ * The three levels get distinct semantic tokens (urgent / high / normal). A
+ * level from before the levels were fixed (#5841) gets the neutral muted
+ * tokens, so it never reads as one of the three.
  *
  * `null` → empty string so callers can spread without conditionals.
  */
 
-import { getPriorityLevels } from '@/lib/priority-levels'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 
-const INDEX_COLORS = [
+const LEVEL_COLORS = [
   'bg-priority-urgent text-priority-urgent-foreground',
   'bg-priority-high text-priority-high-foreground',
   'bg-priority-normal text-priority-normal-foreground',
 ] as const
 
+const OUT_OF_RANGE_COLOR = 'bg-muted text-muted-foreground'
+
 export function priorityColor(p: string | null): string {
   if (p == null) return ''
-  const levels = getPriorityLevels()
-  const idx = levels.indexOf(p)
-  const safeIdx = idx < 0 ? INDEX_COLORS.length - 1 : Math.min(idx, INDEX_COLORS.length - 1)
-  return INDEX_COLORS[safeIdx] as string
+  return LEVEL_COLORS[PRIORITY_LEVELS.indexOf(p)] ?? OUT_OF_RANGE_COLOR
 }

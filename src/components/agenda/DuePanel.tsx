@@ -3,9 +3,8 @@
  *
  * Renders on JournalPage. Groups blocks by todo_state in order:
  * DOING > TODO > DONE > CANCELLED > null (Other). Within each group, sorts by
- * the configurable priority rank (`priorityRank` from
- * `@/lib/priority-levels`) so the order follows the user's configured
- * levels, with null/unknown sorting last. Uses cursor-based pagination
+ * priority rank (`priorityRank` from `@/lib/priority-levels`), with
+ * null/unknown sorting last. Uses cursor-based pagination
  * with a `t('duePanel.loadMore')` button.
  *
  * Orchestrator that connects useDuePanelData to extracted section
@@ -30,7 +29,6 @@ import { SectionGroupHeader } from '@/components/ui/section-group-header'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useDuePanelData } from '@/hooks/useDuePanelData'
 import { useKeyboardNavigableList } from '@/hooks/useKeyboardNavigableList'
-import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { useLocalStoragePreference } from '@/lib/local-storage-preference'
@@ -66,7 +64,6 @@ export function DuePanel({
   excludePageId,
 }: DuePanelProps): React.ReactElement | null {
   const { t } = useTranslation()
-  const priorityLevels = usePriorityLevels()
   const [collapsed, setCollapsed] = useState(false)
   const [sourceFilter, setSourceFilter] = useState<string | null>(null)
 
@@ -166,12 +163,7 @@ export function DuePanel({
         items,
       }
     }).filter((g) => g.items.length > 0)
-    // `priorityLevels` is an intentional re-sort trigger: `priorityRank` reads the
-    // configured levels from module state (not a captured variable), so it isn't
-    // referenced directly in the callback, but the memo MUST recompute when the
-    // user changes levels or the group keeps its stale order.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional re-sort trigger (see above)
-  }, [visibleBlocks, t, priorityLevels])
+  }, [visibleBlocks, t])
 
   // Deduplicate: exclude projected entries whose block already appears in real
   // agenda. Computed once here so the result is shared by the keyboard nav

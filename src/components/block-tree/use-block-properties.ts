@@ -20,7 +20,7 @@ import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { getPriorityCycle } from '@/lib/priority-levels'
+import { PRIORITY_CYCLE } from '@/lib/priority-levels'
 import { reloadIfRepeating } from '@/lib/repeat-utils'
 import { nextTaskState, type TodoState } from '@/lib/task-states'
 import { type PageBlockState, usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -192,16 +192,11 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
     [pageStore, enqueueTodoToggle],
   )
 
-  /**
-   * Cycle through priority levels. The cycle is
-   * `[null, ...getPriorityLevels()]` — user-configurable via the
-   * `priority` property definition's options. Called at click
-   * time so the cycle always reflects the current level set.
-   */
+  /** Cycle through the priority levels: `PRIORITY_CYCLE`. */
   const handleTogglePriority = useCallback(
     (blockId: string) =>
       enqueuePriorityToggle(blockId, async () => {
-        const cycle = getPriorityCycle()
+        const cycle = PRIORITY_CYCLE
         const current = pageStore.getState().blocksById.get(blockId)?.priority ?? null
         const currentIdx = cycle.indexOf(current)
         const nextIdx = (currentIdx + 1) % cycle.length

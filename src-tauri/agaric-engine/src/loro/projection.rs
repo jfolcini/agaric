@@ -1281,13 +1281,17 @@ pub async fn project_block_full_to_sql(
     }
 }
 
-/// [`reproject_property_row_from_engine`]'s `property_definitions.value_type`
-/// lookup, defaulting to `text` for an undefined key.
+/// [`reproject_property_row_from_engine`]'s `value_type` lookup: the
+/// built-in definition's (#5841), else the `property_definitions` row's in
+/// `value_types`, defaulting to `text` for an undefined key.
 fn declared_value_type_or_text<'a>(
     value_types: &'a std::collections::HashMap<String, String>,
     key: &str,
     block_id: &agaric_core::ulid::BlockId,
 ) -> &'a str {
+    if let Some(def) = agaric_store::op::builtin_property_def(key) {
+        return def.value_type;
+    }
     value_types.get(key).map_or_else(
         || {
             tracing::warn!(
@@ -3792,7 +3796,7 @@ mod tests {
         .await
         .unwrap();
         // `INSERT OR REPLACE` so these test-chosen types win over any
-        // builtin seed (e.g. migration 0014 seeds `effort` as `select`).
+        // seeded default (e.g. migration 0014 seeds `effort` as `select`).
         for (key, value_type) in [
             ("note", "text"),
             ("effort", "number"),
@@ -3810,6 +3814,42 @@ mod tests {
             .await
             .unwrap();
         }
+    }
+
+    /// #5841 — a built-in key has no `property_definitions` row (0128), so
+    /// its type comes from the constant: a synced `completed_at` stamp lands
+    /// in `value_date`, where `DonePanel` reads it, not in `value_text`.
+    #[tokio::test]
+    async fn reproject_routes_a_builtin_date_without_a_definition_row_5841() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_property_defs(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let props = vec![("completed_at".to_string(), pv("2026-05-01"))];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_properties_from_engine(
+            &mut conn,
+            &bid,
+            &props,
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .expect("reproject");
+        drop(conn);
+
+        let stamp: PropValueColumns = sqlx::query_as(
+            "SELECT value_text, value_num, value_date, value_ref, value_bool \
+                 FROM block_properties WHERE block_id = ? AND key = 'completed_at'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch completed_at");
+        assert_eq!(
+            stamp,
+            (None, None, Some("2026-05-01".into()), None, None),
+            "a built-in date routes to value_date"
+        );
     }
 
     #[tokio::test]

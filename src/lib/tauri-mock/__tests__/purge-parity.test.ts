@@ -8,8 +8,8 @@
  *     columns, attachments): `purge_block_sql_cascade`
  *     (agaric-engine/apply/loro_apply.rs) + `purge_subtree_tables`
  *     (commands/block_cleanup.rs) + migrations 0034/0061;
- *   - reserved-value validation: `validate_reserved_property_value`
- *     (commands/properties.rs), `validate_set_property` (agaric-store/op.rs).
+ *   - reserved-value validation: `validate_property_value`
+ *     (agaric-engine/block_ops.rs), `validate_set_property` (agaric-store/op.rs).
  *
  * Every assertion re-reads the durable store AFTER the op (the #3086
  * re-queried-effect invariant), not just the command's return value.

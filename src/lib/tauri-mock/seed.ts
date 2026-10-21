@@ -325,31 +325,17 @@ export function makeBlock(
 }
 
 /**
- * The definitions every backend database holds from its migrations (0011;
- * 0014 with 0029/0031; 0016; 0035 with 0039; 0103), so a typed `due:: soon`
- * meets the same `date` definition here as in the app.
+ * The user definitions every backend database holds from its migrations
+ * (0011, 0014, less what 0128 removed), so a typed `effort:: soon` meets the
+ * same `select` definition here as in the app. The built-ins (#5841) are not
+ * rows: `propertyDefinition` serves them.
  */
-const BUILTIN_PROPERTY_DEFS: ReadonlyArray<[string, string, readonly string[] | null]> = [
+const SEEDED_PROPERTY_DEFS: ReadonlyArray<[string, string, readonly string[] | null]> = [
   ['status', 'select', ['active', 'paused', 'done', 'archived']],
-  ['due', 'date', null],
   ['url', 'text', null],
-  ['todo_state', 'select', ['TODO', 'DOING', 'DONE', 'CANCELLED']],
-  ['priority', 'select', ['1', '2', '3']],
-  ['due_date', 'date', null],
-  ['scheduled_date', 'date', null],
-  ['created_at', 'date', null],
-  ['completed_at', 'date', null],
   ['effort', 'select', ['15m', '30m', '1h', '2h', '4h', '1d']],
   ['assignee', 'text', null],
   ['location', 'text', null],
-  ['repeat', 'text', null],
-  ['repeat-until', 'date', null],
-  ['repeat-count', 'number', null],
-  ['repeat-seq', 'number', null],
-  ['repeat-origin', 'text', null],
-  ['space', 'ref', null],
-  ['is_space', 'select', ['true']],
-  ['listStyle', 'select', ['bullet', 'ordered']],
 ]
 
 // ---------------------------------------------------------------------------
@@ -730,7 +716,7 @@ export function seedBlocks(): void {
   blockTags.set(SEED_IDS.BLOCK_DAILY_3, new Set([SEED_IDS.TAG_PERSONAL]))
 
   // -- Seed property definitions --
-  for (const [key, valueType, options] of BUILTIN_PROPERTY_DEFS) {
+  for (const [key, valueType, options] of SEEDED_PROPERTY_DEFS) {
     propertyDefs.set(key, {
       key,
       value_type: valueType,
@@ -938,8 +924,8 @@ function seedFacetFixturePage(): void {
   if (!enabled) return
   const pageId = fakeId()
   const page = makeBlock(pageId, 'page', 'Facet Fixture', null, 99)
-  // The Priority facet now offers the configured levels
-  // (`DEFAULT_PRIORITY_LEVELS` = '1'/'2'/'3'), not the old 'A'/'B'/'C'. The
+  // The Priority facet offers the levels (`PRIORITY_LEVELS` = '1'/'2'/'3'),
+  // not the old 'A'/'B'/'C'. The
   // canonical seed sets no page-level priority, so '1' here is unique and the
   // facet narrows to exactly this page.
   page['priority'] = '1'

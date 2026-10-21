@@ -1,21 +1,22 @@
 /**
  * `priority:` / `not-priority:` builder form.
  *
- * Priority vocabulary is the user-configurable `usePriorityLevels()` set
- * plus the appended `none` sentinel — mirrors the `priorityValues` memo
- * in `useAutocompleteSources`, NOT the backlink 1/2/3 shortlist. Emits a
+ * Priority vocabulary is `PRIORITY_LEVELS` plus the appended `none`
+ * sentinel — mirrors `PRIORITY_VALUES` in `useAutocompleteSources`. Emits a
  * `priority` or `notPriority` `FilterToken` and closes the popover.
  */
 
 import type React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { FilterValueSelect } from '@/components/filters/forms/FilterValueSelect'
 import { IncludeExcludeToggle } from '@/components/search/filter-forms/IncludeExcludeToggle'
 import { Button } from '@/components/ui/button'
-import { usePriorityLevels } from '@/hooks/usePriorityLevels'
+import { PRIORITY_LEVELS } from '@/lib/priority-levels'
 import type { FilterToken } from '@/lib/search-query'
+
+const PRIORITY_VALUES: readonly string[] = [...PRIORITY_LEVELS, 'none']
 
 export interface SearchPriorityFilterFormProps {
   onAddFilter: (token: FilterToken) => void
@@ -27,9 +28,7 @@ export function SearchPriorityFilterForm({
   onBack,
 }: SearchPriorityFilterFormProps): React.ReactElement {
   const { t } = useTranslation()
-  const priorityLevels = usePriorityLevels()
-  const priorityValues = useMemo(() => [...priorityLevels, 'none'], [priorityLevels])
-  const [value, setValue] = useState<string>(priorityValues[0] ?? 'none')
+  const [value, setValue] = useState<string>(PRIORITY_VALUES[0] ?? 'none')
   const [negate, setNegate] = useState(false)
 
   // Move focus into the sub-form on open (see SearchStateFilterForm).
@@ -63,7 +62,7 @@ export function SearchPriorityFilterForm({
           excludeLabel={t('search.filterHelper.exclude')}
         />
         <FilterValueSelect
-          options={priorityValues.map((p) => ({ value: p }))}
+          options={PRIORITY_VALUES.map((p) => ({ value: p }))}
           value={value}
           onValueChange={setValue}
           triggerRef={triggerRef}

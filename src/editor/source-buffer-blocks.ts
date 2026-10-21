@@ -17,7 +17,7 @@ import { type Command, type EditorState, TextSelection, type Transaction } from 
 
 import { type BlockTypeToken, convertBlockContent, detectBlockType } from '@/lib/block-type-convert'
 import { type ListStyle, listStyleForBlockType } from '@/lib/list-style'
-import { getPriorityCycle } from '@/lib/priority-levels'
+import { PRIORITY_CYCLE } from '@/lib/priority-levels'
 import { type TodoState, taskStateFromMarker } from '@/lib/task-states'
 
 /** The positions where `doc`'s lines start, before each one's first character. */
@@ -446,10 +446,10 @@ export function setBlockProperty(block: SourceBlock, key: string, value: string 
   }
 }
 
-/** Step `block`'s priority through the block editor's cycle (`getPriorityCycle`). */
+/** Step `block`'s priority through the block editor's cycle (`PRIORITY_CYCLE`). */
 export function cyclePriority(block: SourceBlock): Command {
   return (state, dispatch) => {
-    const cycle = getPriorityCycle()
+    const cycle = PRIORITY_CYCLE
     const current = blockProperty(state.doc, block, 'priority')
     const next = cycle[(cycle.indexOf(current) + 1) % cycle.length] ?? null
     return setBlockProperty(block, 'priority', next)(state, dispatch)

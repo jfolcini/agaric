@@ -501,7 +501,7 @@ async fn set_property_happy_path() {
     let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
     settle(&mat).await;
 
-    // `assignee` is a text-typed built-in property (migration 0014)
+    // `assignee` is a text-typed default definition (migration 0014)
     // — using it avoids conflating set_property dispatch with the
     // per-definition type validation.
     let result = tools

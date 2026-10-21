@@ -7,7 +7,6 @@ import { describe, expect, it } from 'vitest'
 import {
   applyGraphFilters,
   GRAPH_FILTER_TYPES,
-  GRAPH_PRIORITY_VALUES,
   GRAPH_STATUS_VALUES,
   type GraphFilter,
   type GraphFilterableNode,
@@ -340,9 +339,5 @@ describe('constants', () => {
   it('GRAPH_STATUS_VALUES matches the locked task cycle', () => {
     expect(GRAPH_STATUS_VALUES).toBe(TASK_STATES)
     expect(GRAPH_STATUS_VALUES).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
-  })
-
-  it('GRAPH_PRIORITY_VALUES is 1-3', () => {
-    expect(GRAPH_PRIORITY_VALUES).toEqual(['1', '2', '3'])
   })
 })

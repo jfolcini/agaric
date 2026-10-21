@@ -38,8 +38,8 @@
 use agaric_core::error::AppError;
 use agaric_core::ulid::BlockId;
 use agaric_store::op::{
-    CreateBlockPayload, OpPayload, PropertyValueFields, SPACE_PROPERTY_KEY, SetPropertyPayload,
-    is_reserved_property_key, validate_set_property,
+    BuiltinPropertyDef, CreateBlockPayload, OpPayload, PropertyValueFields, SPACE_PROPERTY_KEY,
+    SetPropertyPayload, builtin_property_def, is_reserved_property_key, validate_set_property,
 };
 use agaric_store::op_log;
 use agaric_store::pagination::BlockRow;
@@ -541,22 +541,52 @@ pub async fn create_block_in_tx(
     ))
 }
 
-/// Snapshot of a `property_definitions` row's validation-relevant fields.
+/// The validation-relevant fields of a key's definition: a built-in's, or a
+/// `property_definitions` row's ([`property_declaration`]).
 ///
 /// Pre-fetched by the caller of [`set_property_in_tx`] and
 /// passed to `validate_property_value` so the helper stays sync and
 /// trivially unit-testable. The full `PropertyDefinition` struct carries
 /// `key` and `created_at` fields that the validation logic does not need;
 /// this slimmer view keeps the helper signature minimal.
-///
-/// `Clone` (#2201): the move-to-space batch fetches the `space` declaration
-/// ONCE and feeds a clone to each per-block
-/// [`set_property_in_tx_with_declaration`] call, hoisting the per-iteration
-/// `property_definitions` SELECT out of the loop.
 #[derive(Clone)]
 pub struct PropertyDeclaration {
     pub value_type: String,
     pub options: Option<String>,
+}
+
+impl From<&BuiltinPropertyDef> for PropertyDeclaration {
+    fn from(def: &BuiltinPropertyDef) -> Self {
+        Self {
+            value_type: def.value_type.to_owned(),
+            options: def.options_json(),
+        }
+    }
+}
+
+/// The declaration `key` has: its built-in definition (#5841), else its
+/// `property_definitions` row, else `None` for an undeclared key.
+///
+/// # Errors
+///
+/// Returns [`AppError`] if the row lookup fails.
+pub async fn property_declaration(
+    conn: &mut sqlx::SqliteConnection,
+    key: &str,
+) -> Result<Option<PropertyDeclaration>, AppError> {
+    if let Some(def) = builtin_property_def(key) {
+        return Ok(Some(def.into()));
+    }
+    Ok(sqlx::query!(
+        "SELECT value_type, options FROM property_definitions WHERE key = ?",
+        key,
+    )
+    .fetch_optional(conn)
+    .await?
+    .map(|row| PropertyDeclaration {
+        value_type: row.value_type,
+        options: row.options,
+    }))
 }
 
 /// Step 4 of [`validate_property_value`]: the payload's populated field must
@@ -635,9 +665,8 @@ fn validate_select_option(key: &str, opts_json: &str, actual: &str) -> Result<()
 ///    `value_type = "select"` with a non-NULL `options` JSON array, the
 ///    supplied `value_text` must be one of the listed options.
 ///
-/// `declaration` is `None` when no `property_definitions` row exists for
-/// the key — type/options checks are skipped (custom keys without a
-/// declaration are permissive).
+/// `declaration` is `None` for an undeclared key — type/options checks are
+/// skipped (custom keys without a declaration are permissive).
 pub(crate) fn validate_property_value(
     payload: &SetPropertyPayload,
     declaration: Option<&PropertyDeclaration>,
@@ -756,12 +785,11 @@ pub async fn set_property_in_tx(
     value_ref: Option<String>,
     value_bool: Option<bool>,
 ) -> Result<(BlockRow, op_log::OpRecord), AppError> {
-    // Thin wrapper (#1921): fetch the key's `property_definitions` row (the
-    // current behaviour) and delegate. A "clear" (all-null) write needs no
-    // declaration, so the lookup is skipped exactly as before. Callers that
-    // ALREADY hold the declaration (e.g. the batched import frontmatter path)
-    // call [`set_property_in_tx_with_declaration`] directly to avoid the
-    // per-key round-trip.
+    // Thin wrapper (#1921): look up the key's declaration and delegate. A
+    // "clear" (all-null) write needs no declaration, so the lookup is skipped.
+    // Callers that ALREADY hold the declaration (e.g. the batched import
+    // frontmatter path) call [`set_property_in_tx_with_declaration`] directly
+    // to avoid the per-key round-trip.
     let is_clear = value_text.is_none()
         && value_num.is_none()
         && value_date.is_none()
@@ -770,16 +798,7 @@ pub async fn set_property_in_tx(
     let declaration = if is_clear {
         None
     } else {
-        sqlx::query!(
-            "SELECT value_type, options FROM property_definitions WHERE key = ?",
-            key,
-        )
-        .fetch_optional(&mut **tx)
-        .await?
-        .map(|row| PropertyDeclaration {
-            value_type: row.value_type,
-            options: row.options,
-        })
+        property_declaration(tx, key).await?
     };
     set_property_in_tx_with_declaration(
         tx,

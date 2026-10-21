@@ -586,31 +586,75 @@ pub fn is_column_backed_property_key(key: &str) -> bool {
     COLUMN_BACKED_PROPERTY_KEYS.contains(&key)
 }
 
-/// Property keys that are system-managed, whose definitions cannot be deleted.
-///
-/// Reserved column keys (`todo_state`, `priority`, `due_date`,
-/// `scheduled_date`) live on the `blocks` table and are managed via
-/// dedicated setters.  System-lifecycle keys (`created_at`, `completed_at`,
-/// `repeat-*`) are written by internal state-transition helpers.
+/// A built-in property definition (#5841): a code constant, so it is the same
+/// in every vault and on every device, and nothing can create, edit or delete
+/// it. `property_definitions` holds only the user's own definitions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuiltinPropertyDef {
+    pub key: &'static str,
+    pub value_type: &'static str,
+    /// A `select`'s allowed values, in display order; `None` for other types.
+    pub options: Option<&'static [&'static str]>,
+}
+
+impl BuiltinPropertyDef {
+    const fn of(key: &'static str, value_type: &'static str) -> Self {
+        Self {
+            key,
+            value_type,
+            options: None,
+        }
+    }
+
+    const fn select(key: &'static str, options: &'static [&'static str]) -> Self {
+        Self {
+            key,
+            value_type: "select",
+            options: Some(options),
+        }
+    }
+
+    /// The options as the JSON array `property_definitions.options` stores.
+    pub fn options_json(&self) -> Option<String> {
+        self.options
+            .map(|options| serde_json::to_string(options).expect("a list of strings serializes"))
+    }
+}
+
+/// Every built-in property definition (#5841): the reserved column keys,
+/// the task-lifecycle and recurrence keys the app writes itself, the space
+/// membership keys and the list style. Mirrored by `BUILTIN_PROPERTY_DEFS` in
+/// `src/lib/property-save-utils.ts`, which
+/// `property-save-utils-rust-parity.test.ts` parses this array against.
+pub const BUILTIN_PROPERTY_DEFS: [BuiltinPropertyDef; 14] = [
+    BuiltinPropertyDef::select("todo_state", &["TODO", "DOING", "DONE", "CANCELLED"]),
+    BuiltinPropertyDef::select("priority", &["1", "2", "3"]),
+    BuiltinPropertyDef::of("due_date", "date"),
+    BuiltinPropertyDef::of("scheduled_date", "date"),
+    BuiltinPropertyDef::of("created_at", "date"),
+    BuiltinPropertyDef::of("completed_at", "date"),
+    BuiltinPropertyDef::of("repeat", "text"),
+    BuiltinPropertyDef::of("repeat-until", "date"),
+    BuiltinPropertyDef::of("repeat-count", "number"),
+    BuiltinPropertyDef::of("repeat-seq", "number"),
+    BuiltinPropertyDef::of("repeat-origin", "text"),
+    BuiltinPropertyDef::of("space", "ref"),
+    BuiltinPropertyDef::select("is_space", &["true"]),
+    BuiltinPropertyDef::select("listStyle", &["bullet", "ordered"]),
+];
+
+/// The built-in definition of `key`, or `None` for a user's key.
+pub fn builtin_property_def(key: &str) -> Option<&'static BuiltinPropertyDef> {
+    BUILTIN_PROPERTY_DEFS.iter().find(|def| def.key == key)
+}
+
+/// Whether `key` has a built-in definition, which nothing can create, edit or
+/// delete (#5841).
 ///
 /// User-settable properties like `effort`, `assignee`, and `location` are
-/// intentionally **not** included — users must be able to remove them.
+/// intentionally **not** built in — users must be able to remove them.
 pub fn is_builtin_property_key(key: &str) -> bool {
-    // #589: the reserved-column subset is sourced from
-    // [`RESERVED_PROPERTY_KEYS`] rather than re-spelled here, so the two
-    // sets cannot drift. The lifecycle keys are this function's own
-    // domain and stay enumerated locally.
-    is_reserved_property_key(key)
-        || matches!(
-            key,
-            "created_at"
-                | "completed_at"
-                | "repeat"
-                | "repeat-until"
-                | "repeat-count"
-                | "repeat-seq"
-                | "repeat-origin"
-        )
+    builtin_property_def(key).is_some()
 }
 
 /// The schema allows multiple value columns (text, num, date, ref) but the
@@ -2112,6 +2156,9 @@ mod tests {
             "repeat-count",
             "repeat-seq",
             "repeat-origin",
+            "space",
+            "is_space",
+            "listStyle",
         ];
         for key in builtin_keys {
             assert!(
@@ -2135,7 +2182,7 @@ mod tests {
 
     #[test]
     fn user_settable_properties_are_not_builtin() {
-        for key in ["effort", "assignee", "location"] {
+        for key in ["status", "url", "effort", "assignee", "location"] {
             assert!(
                 !is_builtin_property_key(key),
                 "'{key}' is user-settable and must NOT be treated as built-in"

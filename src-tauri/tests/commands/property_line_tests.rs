@@ -263,8 +263,8 @@ async fn apply_page_source_keeps_a_line_with_no_value_for_a_key_not_held_as_text
 }
 
 /// A key names the reserved key or definition it folds to, whatever its case
-/// or `-`/`_` (#5160 D13), and is written back canonical; `due` is its own
-/// definition, not `due_date`.
+/// or `-`/`_` (#5160 D13), and is written back canonical; `due` is a key of
+/// its own, not `due_date`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_page_source_folds_a_key_to_its_canonical_spelling() {
     let (pool, _dir) = test_pool().await;
@@ -287,7 +287,7 @@ async fn apply_page_source_folds_a_key_to_its_canonical_spelling() {
         dup_storage(&pool, &block).await,
         vec![
             r#"columns todo=None priority=Some("2") scheduled=Some("2026-04-01") due=Some("2026-05-01")"#.to_owned(),
-            r#"due text=None num=None date=Some("2026-06-01") ref=None bool=None"#.to_owned(),
+            r#"due text=Some("2026-06-01") num=None date=None ref=None bool=None"#.to_owned(),
             r#"repeat text=Some("+1d") num=None date=None ref=None bool=None"#.to_owned(),
         ]
     );
@@ -494,7 +494,7 @@ async fn import_markdown_folds_a_key_to_its_canonical_spelling() {
         vec![
             r#"columns todo=None priority=Some("1") scheduled=Some("2026-04-01") due=Some("2026-05-01")"#.to_owned(),
             r#"Owner text=Some("ann") num=None date=None ref=None bool=None"#.to_owned(),
-            r#"due text=None num=None date=Some("2026-06-01") ref=None bool=None"#.to_owned(),
+            r#"due text=Some("2026-06-01") num=None date=None ref=None bool=None"#.to_owned(),
         ],
         "a key no definition folds to stays as typed"
     );
@@ -698,6 +698,9 @@ async fn paste_blocks_keeps_a_refused_value_as_text_with_a_warning() {
     create_property_def_inner(&pool, "reviewer".into(), "ref".into(), None)
         .await
         .unwrap();
+    create_property_def_inner(&pool, "due".into(), "date".into(), None)
+        .await
+        .unwrap();
     let anchor = dup_child(&pool, &mat, &page, "anchor").await;
     settle(&mat).await;
     let text = "- a\n  priority:: high\n- b\n  due:: tomorrow\n- c\n  Priority:: 1\n  \
@@ -786,123 +789,7 @@ async fn copy_then_paste_keeps_a_repeating_task_repeating() {
     );
 }
 
-/// Import `md` as `Tasks.md` with `key`'s options narrowed to `options`, and
-/// return the import's warnings and the page's blocks as `(content, columns)`.
-async fn import_with_options(
-    md: &str,
-    key: &str,
-    options: &str,
-) -> (Vec<String>, Vec<(String, String)>) {
-    let (pool, dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    ensure_test_space(&pool).await;
-    mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    update_property_def_options_inner(&pool, key.into(), options.into())
-        .await
-        .unwrap();
-    let result = import(&pool, &mat, dir.path(), md, "Tasks.md").await;
-    let page = page_titled(&pool, "Tasks").await;
-    let mut blocks = Vec::new();
-    for (id, content) in dup_children(&pool, &page).await {
-        let columns = dup_storage(&pool, &BlockId::from_trusted(&id)).await;
-        blocks.push((content, columns[0].clone()));
-    }
-    (result.warnings, blocks)
-}
-
 const NO_COLUMNS: &str = "columns todo=None priority=None scheduled=None due=None";
-
-/// A checkbox whose state the narrowed `todo_state` options refuse stays in
-/// the block's text with a warning naming it (#5160 D11); the file imports.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_markdown_keeps_a_refused_checkbox_as_text() {
-    let (warnings, blocks) =
-        import_with_options("- [/] x\n- [x] y\n", "todo_state", r#"["TODO","DONE"]"#).await;
-
-    assert_eq!(
-        blocks,
-        [
-            ("[/] x".to_owned(), NO_COLUMNS.to_owned()),
-            (
-                "y".to_owned(),
-                r#"columns todo=Some("DONE") priority=None scheduled=None due=None"#.to_owned()
-            ),
-        ]
-    );
-    assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(
-        warnings[0].starts_with("`[/]` was kept as text"),
-        "{warnings:?}"
-    );
-}
-
-/// A Logseq task keyword whose state the options refuse stays in the text as
-/// written (D7, D11).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_markdown_keeps_a_refused_task_keyword_as_text() {
-    let (warnings, blocks) =
-        import_with_options("- NOW x\n", "todo_state", r#"["TODO","DONE"]"#).await;
-
-    assert_eq!(blocks, [("NOW x".to_owned(), NO_COLUMNS.to_owned())]);
-    assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(
-        warnings[0].starts_with("`NOW` was kept as text"),
-        "{warnings:?}"
-    );
-}
-
-/// An Org priority cookie the options do not reach stays in the text, and
-/// the task keyword before it is still read (D7, D11).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn import_markdown_keeps_a_refused_priority_cookie_as_text() {
-    let (warnings, blocks) =
-        import_with_options("- TODO [#C] x\n- [#A] y\n", "priority", r#"["High","Low"]"#).await;
-
-    assert_eq!(
-        blocks,
-        [
-            (
-                "[#C] x".to_owned(),
-                r#"columns todo=Some("TODO") priority=None scheduled=None due=None"#.to_owned()
-            ),
-            (
-                "y".to_owned(),
-                r#"columns todo=None priority=Some("High") scheduled=None due=None"#.to_owned()
-            ),
-        ]
-    );
-    assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert!(
-        warnings[0].starts_with("`[#C]` was kept as text"),
-        "{warnings:?}"
-    );
-}
-
-/// A pasted checkbox the options refuse stays in the pasted block's text.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn paste_blocks_keeps_a_refused_checkbox_as_text() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    let page = dup_page(&pool, &mat, "Paste").await;
-    let anchor = dup_child(&pool, &mat, &page, "anchor").await;
-    update_property_def_options_inner(&pool, "todo_state".into(), r#"["TODO","DONE"]"#.into())
-        .await
-        .unwrap();
-    settle(&mat).await;
-
-    let pasted = paste_blocks_inner(&pool, DEV, &mat, anchor, paste_text("- [/] x\n"), None)
-        .await
-        .unwrap();
-    settle(&mat).await;
-
-    assert_eq!(pasted.warnings.len(), 1, "{:?}", pasted.warnings);
-    let copy = &pasted.blocks[0].id;
-    assert_eq!(
-        dup_children(&pool, &page).await[1],
-        (copy.clone().into_string(), "[/] x".to_owned())
-    );
-    assert_eq!(dup_storage(&pool, copy).await, vec![NO_COLUMNS]);
-}
 
 /// A front-matter value its definition refuses is skipped with a warning
 /// naming it (D11): front matter has no block to keep it in as text, and the

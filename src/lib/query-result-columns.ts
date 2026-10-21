@@ -25,7 +25,6 @@ export const CUSTOM_COLUMN_PREFIX = 'prop:'
 const EXCLUDED_COLUMN_KEYS: ReadonlySet<string> = new Set<string>([
   ...NON_DELETABLE_PROPERTIES,
   ...INTERNAL_PROPERTY_KEYS,
-  'space',
 ])
 
 /** Render a property row to a display string, or `null` when it carries no

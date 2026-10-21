@@ -17,15 +17,6 @@ import {
 } from '@/lib/agenda-sort'
 import { getAppLocaleTag } from '@/lib/date-locale'
 import { i18n } from '@/lib/i18n'
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
-
-beforeEach(() => {
-  __resetPriorityLevelsForTests()
-})
-
-afterEach(() => {
-  __resetPriorityLevelsForTests()
-})
 
 describe('sortAgendaBlocks', () => {
   it('sorts by date ascending', () => {
@@ -822,65 +813,6 @@ describe('sortByPage', () => {
   })
 })
 
-// -----------------------------------------------------------------------
-// Priority sort / group with user-configured levels.
-// -----------------------------------------------------------------------
-describe('custom priority levels', () => {
-  it('sortByPriority honours extended level set (A > B > C > D)', () => {
-    setPriorityLevels(['A', 'B', 'C', 'D'])
-    const blocks = [
-      makeBlock({ id: 'd', priority: 'D', due_date: '2025-06-10' }),
-      makeBlock({ id: 'a', priority: 'A', due_date: '2025-06-10' }),
-      makeBlock({ id: 'c', priority: 'C', due_date: '2025-06-10' }),
-      makeBlock({ id: 'b', priority: 'B', due_date: '2025-06-10' }),
-      makeBlock({ id: 'n', priority: null, due_date: '2025-06-10' }),
-    ]
-    const sorted = sortByPriority(blocks)
-    expect(sorted.map((x) => x.id)).toEqual(['a', 'b', 'c', 'd', 'n'])
-  })
-
-  it('sortAgendaBlocks tiebreaker uses configured level order', () => {
-    setPriorityLevels(['High', 'Mid', 'Low'])
-    const blocks = [
-      makeBlock({
-        id: 'low',
-        due_date: '2025-06-10',
-        todo_state: 'TODO',
-        priority: 'Low',
-      }),
-      makeBlock({
-        id: 'high',
-        due_date: '2025-06-10',
-        todo_state: 'TODO',
-        priority: 'High',
-      }),
-    ]
-    const sorted = sortAgendaBlocks(blocks)
-    expect(sorted.map((x) => x.id)).toEqual(['high', 'low'])
-  })
-
-  it('groupByPriority produces a group per configured level', () => {
-    setPriorityLevels(['1', '2', '3', '4'])
-    const blocks = [
-      makeBlock({ id: 'p1', priority: '1' }),
-      makeBlock({ id: 'p2', priority: '2' }),
-      makeBlock({ id: 'p3', priority: '3' }),
-      makeBlock({ id: 'p4', priority: '4' }),
-      makeBlock({ id: 'pn', priority: null }),
-    ]
-    const groups = groupByPriority(blocks)
-    expect(groups.map((g) => g.label)).toEqual(['P1', 'P2', 'P3', 'P4', 'No priority'])
-    expect(groups[3]?.blocks[0]?.id).toBe('p4')
-  })
-
-  it('groupByPriority handles alphabetical custom level keys', () => {
-    setPriorityLevels(['A', 'B'])
-    const blocks = [makeBlock({ id: 'a', priority: 'A' }), makeBlock({ id: 'b', priority: 'B' })]
-    const groups = groupByPriority(blocks)
-    expect(groups.map((g) => g.label)).toEqual(['PA', 'PB'])
-  })
-})
-
 // ---------------------------------------------------------------------------
 // Mutation-testing regression coverage (GitHub #3142 StrykerJS survivors).
 // These pin behaviour the specs above exercised but never asserted precisely
@@ -1195,13 +1127,6 @@ describe('mutation coverage: groupByPriority routing and className', () => {
       'text-status-active-foreground',
       'text-muted-foreground',
     ])
-  })
-
-  it('clamps level 4+ to the same "active" class as level 3 (index out of range)', () => {
-    setPriorityLevels(['1', '2', '3', '4'])
-    const blocks = [makeBlock({ id: 'p4', priority: '4' })]
-    const groups = groupByPriority(blocks)
-    expect(groups[0]?.className).toBe('text-status-active-foreground')
   })
 })
 
