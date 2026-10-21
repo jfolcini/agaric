@@ -63,7 +63,9 @@ describe('AddPropertyPopover', () => {
     mockUseIsTouch.mockReturnValue(true)
     render(<AddPropertyPopover definitions={[]} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)
 
-    expect(screen.getByTestId('add-property-sheet')).toHaveClass('max-h-[calc(100dvh-2rem)]')
+    expect(screen.getByTestId('add-property-sheet')).toHaveClass(
+      'max-h-[calc(100dvh-3.5rem-var(--safe-area-top))]',
+    )
     expect(screen.getByTestId('add-property-sheet')).not.toHaveClass('max-h-[80vh]')
   })
 
