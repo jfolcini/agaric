@@ -10,7 +10,9 @@
  * bullet or numbered block, as block mode's list-style rule does
  * (`page-lists.ts`). In page mode the document owns text and structure. With
  * the *Show Markdown syntax around the cursor* setting on, block mode's reveal
- * draws the syntax around the caret here too (`MarkdownReveal`).
+ * draws the syntax around the caret here too (`MarkdownReveal`). A collapsed
+ * block hides the deeper blocks after it (`page-collapse.ts`), and a block's
+ * grip drags it with them (`page-drag.ts`).
  */
 
 import type { Extensions } from '@tiptap/core'
@@ -22,7 +24,9 @@ import { QueryPicker } from '@/editor/extensions/query-picker'
 import { SlashCommand } from '@/editor/extensions/slash-command'
 import { PageBlockFocus } from '@/editor/page-mode/page-block-focus'
 import { PageBlockIds } from '@/editor/page-mode/page-block-ids'
+import { PageCollapse } from '@/editor/page-mode/page-collapse'
 import { PageBlock, PageDocument } from '@/editor/page-mode/page-document'
+import { PageDrag } from '@/editor/page-mode/page-drag'
 import { PageKeys } from '@/editor/page-mode/page-keys'
 import { type PageListSource, pageListKeys } from '@/editor/page-mode/page-lists'
 import { PageRenderedKeys } from '@/editor/page-mode/page-rendered'
@@ -47,6 +51,8 @@ export interface PageModeExtensionOptions extends Omit<ContentExtensionOptions, 
   placeholder: string
   /** Mints a new block's id; a test passes a deterministic one. */
   mintId?: () => string
+  /** The page whose collapsed blocks (block mode's layout) the document hides and saves; none keeps them in memory. */
+  pageId?: string
   /** The blocks' task states, drawn as block mode's checkbox; none, or no `lists`, draws none. */
   tasks?: PageTaskSource
   /** The blocks' list styles, drawn as block mode's marker, with its list keys; none draws none. */
@@ -79,6 +85,8 @@ export function pageModeExtensions(options: PageModeExtensionOptions): Extension
     // list key and the block join do.
     MarkdownReveal,
     PageBlockFocus,
+    PageCollapse.configure({ pageId: options.pageId ?? null }),
+    PageDrag,
     // Block mode's placeholder, on the empty paragraph the cursor is in.
     Placeholder.configure({
       placeholder: options.placeholder,

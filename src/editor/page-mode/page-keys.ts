@@ -1,8 +1,9 @@
 /**
  * Page mode's keys (#5691). Enter in a block's own paragraph or heading splits
  * the block; Backspace at its start joins its text to the block before, and
- * Delete at its end joins the next one's. Tab and Shift+Tab move a block and
- * the blocks under it a level in or out, by block mode's own rules
+ * Delete at its end joins the next one's, both past the blocks a collapsed
+ * block hides, which they leave alone. Tab and Shift+Tab move a block and the
+ * blocks under it a level in or out, by block mode's own rules
  * (`block-tree-ops.ts`); with *Tab indents blocks* off, Tab is left to move
  * focus and the indent and dedent shortcuts do it, as in block mode. Arrows
  * cross blocks on their own: the page is one editable surface. Escape leaves
@@ -13,7 +14,13 @@
 import { Extension } from '@tiptap/core'
 import { joinTextblockBackward, joinTextblockForward } from '@tiptap/pm/commands'
 import type { Node as PMNode, NodeType, ResolvedPos } from '@tiptap/pm/model'
-import { type Command, type EditorState, Plugin, type Transaction } from '@tiptap/pm/state'
+import {
+  type Command,
+  EditorState,
+  Plugin,
+  TextSelection,
+  type Transaction,
+} from '@tiptap/pm/state'
 import { canSplit } from '@tiptap/pm/transform'
 
 import { atTagPickerPluginKey, hashTagPickerPluginKey } from '@/editor/extensions/at-tag-picker'
@@ -22,13 +29,16 @@ import { blockRefPickerPluginKey } from '@/editor/extensions/block-ref-picker'
 import { propertyPickerPluginKey } from '@/editor/extensions/property-picker'
 import { queryPickerPluginKey } from '@/editor/extensions/query-picker'
 import { slashCommandPluginKey } from '@/editor/extensions/slash-command'
+import { hiddenBlocks, isCollapsed } from '@/editor/page-mode/page-collapse'
 import {
   depthOf,
+  firstTokenPos,
   insideListOrTable,
   PAGE_BLOCK,
   restoreSelection,
   selectionEnds,
   startOf,
+  subtreeEnd,
 } from '@/editor/page-mode/page-document'
 import { blockIdOf } from '@/editor/token-ids'
 import { announce } from '@/lib/announcer'
@@ -199,24 +209,69 @@ export const outdentIds =
 /** Shift+Tab: the selected blocks (`outdentIds`). */
 export const outdentBlocks = outdentIds((state) => selectedRoots(state, treeRows(state.doc)))
 
-/** Backspace at the start of a block's first textblock: join it to the text before. */
+/** The index of the block shown above the block at `index`, past the blocks a collapsed block hides. */
+function shownAbove(state: EditorState, index: number): number {
+  const hidden = hiddenBlocks(state)
+  let above = index - 1
+  while (above > 0 && hidden.has(blockIdOf(state.doc.child(above)) as string)) above -= 1
+  return above
+}
+
+/**
+ * Backspace at the start of a block's first textblock: join it to the text
+ * before. After the blocks a collapsed block hides, the text joins that block,
+ * as block mode's merge does, and they stay under it, unseen and unchanged.
+ */
 export const joinBackward: Command = (state, dispatch, view) => {
   const { $from, empty } = state.selection
   if (!empty || !inOwnTextblock($from) || $from.parentOffset !== 0 || $from.index(1) !== 0) {
     return false
   }
-  if ($from.index(0) === 0) return false
-  return joinTextblockBackward(state, dispatch, view)
+  const index = $from.index(0)
+  if (index === 0) return false
+  const above = shownAbove(state, index)
+  if (above === index - 1) return joinTextblockBackward(state, dispatch, view)
+  // ProseMirror joins a block to the one just before it: the block goes there first.
+  const tr = state.tr
+  const block = $from.node(1)
+  tr.delete(startOf(tr.doc, index), startOf(tr.doc, index + 1))
+  const at = startOf(tr.doc, above + 1)
+  tr.insert(at, block)
+  const moved = EditorState.create({
+    doc: tr.doc,
+    selection: TextSelection.create(tr.doc, firstTokenPos(block, at)),
+  })
+  return joinTextblockBackward(
+    moved,
+    dispatch &&
+      ((joined) => {
+        for (const step of joined.steps) tr.step(step)
+        tr.setSelection(TextSelection.create(tr.doc, joined.selection.from))
+        dispatch(tr.scrollIntoView())
+      }),
+  )
 }
 
-/** Delete at the end of a block's last textblock: join the next block's text to it. */
+/**
+ * Delete at the end of a block's last textblock: join the next block's text to
+ * it; a collapsed block's, the next block shown, not the first it hides.
+ */
 const joinForward: Command = (state, dispatch, view) => {
   const { $from, empty } = state.selection
   if (!empty || !inOwnTextblock($from)) return false
   const atEnd = $from.parentOffset === $from.parent.content.size
   if (!atEnd || $from.index(1) !== $from.node(1).childCount - 1) return false
-  if ($from.index(0) === state.doc.childCount - 1) return false
-  return joinTextblockForward(state, dispatch, view)
+  const index = $from.index(0)
+  if (index === state.doc.childCount - 1) return false
+  const hides = isCollapsed(state, blockIdOf($from.node(1)) as string)
+  const next = hides ? subtreeEnd(state.doc, index) : index + 1
+  if (next === index + 1) return joinTextblockForward(state, dispatch, view)
+  if (next < state.doc.childCount) {
+    const at = startOf(state.doc, next)
+    const selection = TextSelection.create(state.doc, firstTokenPos(state.doc.child(next), at))
+    joinBackward(state.apply(state.tr.setSelection(selection)), dispatch, view)
+  }
+  return true
 }
 
 export const PageKeys = Extension.create({

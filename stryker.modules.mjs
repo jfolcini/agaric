@@ -286,7 +286,28 @@ export const MODULES = {
   'page-tasks': {
     setup: true,
     src: 'src/editor/page-mode/page-tasks.ts',
-    tests: ['src/editor/page-mode/__tests__/page-tasks.test.tsx'],
+    tests: [
+      'src/editor/page-mode/__tests__/page-tasks.test.tsx',
+      'src/editor/page-mode/__tests__/page-gutter.test.tsx',
+    ],
+  },
+  // Page mode's gutter (#5691): a survivor is a block hidden that should show,
+  // or shown that should hide, a collapse saved where block mode does not read
+  // it, or a chevron that says the wrong state. The drag's pointer handling
+  // (`page-drag.ts`) is Playwright's, so it is not enrolled.
+  'page-collapse': {
+    setup: true,
+    src: 'src/editor/page-mode/page-collapse.ts',
+    tests: [
+      'src/editor/page-mode/__tests__/page-collapse.test.ts',
+      'src/editor/page-mode/__tests__/page-drag.test.ts',
+      'src/editor/page-mode/__tests__/page-gutter.test.tsx',
+    ],
+  },
+  'page-gutter': {
+    setup: true,
+    src: 'src/editor/page-mode/page-gutter.ts',
+    tests: ['src/editor/page-mode/__tests__/page-gutter.test.tsx'],
   },
   'page-lists': {
     setup: true,

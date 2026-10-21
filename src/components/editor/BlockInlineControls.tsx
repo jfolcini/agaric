@@ -188,6 +188,14 @@ export interface BlockMetadataRowProps {
   onNavigate?: ((id: string) => void) | undefined
 }
 
+/** The collapse chevron's classes, page mode's chevron's too. */
+export const COLLAPSE_TOGGLE_BASE =
+  'collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-target'
+
+/** An expanded parent's chevron on a fine pointer: hidden at rest (see `BlockCollapseControl`). */
+export const COLLAPSE_TOGGLE_HIDDEN_AT_REST =
+  'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto'
+
 export interface BlockCollapseControlProps {
   blockId: string
   hasChildren: boolean
@@ -221,7 +229,7 @@ export function BlockCollapseControl({
         <button
           type="button"
           className={cn(
-            'collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-target',
+            COLLAPSE_TOGGLE_BASE,
             // #1243: an EXPANDED parent hides its chevron at rest. Its
             // children are already visible below, so a persistent caret
             // just floats in the empty left gutter, detached from the
@@ -230,9 +238,7 @@ export function BlockCollapseControl({
             // contract as the gutter controls and the zoom bullet, so the
             // tree reads clean at rest and the toggle is right there the
             // moment you engage a block. Touch has no hover → always shown.
-            !isCollapsed &&
-              !isTouch &&
-              'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto [.block-active_&]:opacity-100 [.block-active_&]:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto',
+            !isCollapsed && !isTouch && COLLAPSE_TOGGLE_HIDDEN_AT_REST,
             // C4 (#216): the chevron signals collapsed/expanded by rotation
             // alone, which colour-blind users (and anyone who misses the
             // subtle 90° turn) can't reliably perceive, so the collapsed

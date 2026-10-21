@@ -92,8 +92,9 @@ interface UseBlockDnDParams {
  * pointers and 12px on ≤640px viewports (see index.css). Reading the constant
  * made the drag disagree with the guides on those viewports. Falls back to
  * `INDENT_WIDTH` when unset / unparseable / SSR (no `window`/`document`).
+ * Page mode's drag reads it too.
  */
-function resolveIndentWidth(): number {
+export function resolveIndentWidth(): number {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return INDENT_WIDTH
   }

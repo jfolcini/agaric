@@ -36,19 +36,37 @@ import type { FlatBlock } from '@/lib/tree-utils'
  * collapse state until the page's first scoped write. `hasPreference` (not
  * merely "the scoped list is non-empty") mirrors the original presence
  * check — a page that scoped-wrote an empty list (everything expanded)
- * must NOT fall through to the legacy list.
+ * must NOT fall through to the legacy list. Page mode reads the same layout.
  */
-function loadCollapsedIds(pageKey: string | null | undefined): Set<string> {
+export function loadCollapsedIds(pageKey: string | null | undefined): Set<string> {
   if (pageKey && hasPreference(PREFERENCES.blockCollapse, pageKey)) {
     return new Set(readPreference(PREFERENCES.blockCollapse, pageKey))
   }
   return new Set(readPreference(PREFERENCES.blockCollapseLegacy))
 }
 
+/**
+ * #752 — save page `pageKey`'s collapsed ids, pruned to the ids it still holds
+ * (`known`) so deleted blocks (and ids inherited from the legacy global key)
+ * can't accumulate forever. Page mode writes the same layout.
+ * Storage-unavailable failures are logged and swallowed by writePreference.
+ */
+export function saveCollapsedIds(
+  pageKey: string,
+  ids: Iterable<string>,
+  known: ReadonlySet<string>,
+): void {
+  writePreference(
+    PREFERENCES.blockCollapse,
+    [...ids].filter((id) => known.has(id)),
+    pageKey,
+  )
+}
+
 /** Shared empty transient overlay, so "nothing revealed" stays reference-stable. */
 const NO_REVEAL: ReadonlySet<string> = new Set<string>()
 
-function sameIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+export function sameIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a === b) return true
   if (a.size !== b.size) return false
   for (const id of a) if (!b.has(id)) return false
@@ -180,13 +198,7 @@ export function useBlockCollapse(
         const next = updater(prev)
         if (next === prev) return prev
         if (pageKey) {
-          // #752 — prune to ids that still exist on this page so deleted
-          // blocks (and ids inherited from the legacy global key) can't
-          // accumulate forever. Storage-unavailable failures are logged and
-          // swallowed by writePreference.
-          const known = new Set(blocksRef.current.map((b) => b.id))
-          const pruned = [...next].filter((id) => known.has(id))
-          writePreference(PREFERENCES.blockCollapse, pruned, pageKey)
+          saveCollapsedIds(pageKey, next, new Set(blocksRef.current.map((b) => b.id)))
         }
         return next
       })

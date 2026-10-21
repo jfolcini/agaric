@@ -1194,6 +1194,26 @@
 .page-mode-editor .page-block-controls {
   @apply absolute top-0 right-full mr-1 select-none;
 }
+/* A block's grip and chevron (`page-gutter.ts`) sit where block mode's control
+   lane does: left of the checkbox's slot, on the first line, the chevron
+   nearer the text. */
+.page-mode-editor .page-block-gutter {
+  @apply absolute top-0 right-full mr-7 flex min-h-8 min-w-12 items-center justify-end gap-0.5 select-none;
+}
+/* The gap between the gutter and the block (the gutter's margin) is the block's
+   too, so its hover, and the controls it shows, hold while the pointer crosses it. */
+.page-mode-editor [data-page-block]::before {
+  content: '';
+  @apply absolute inset-y-0 right-full w-7;
+}
+/* What a collapsed block hides (`page-collapse.ts`). */
+.page-mode-editor [data-page-block].page-block-hidden {
+  display: none;
+}
+/* The blocks a drag carries (`page-drag.ts`), faded as block mode's lifted row. */
+.page-mode-editor .page-block-dragging {
+  @apply opacity-35 outline-dashed outline-1 outline-border;
+}
 /* A bullet or numbered block's marker (`page-lists.ts`) leads the text's first
    line, which wraps under it as block mode's does. It sits outside the
    editable text, so it floats beside it rather than inline; a click on it

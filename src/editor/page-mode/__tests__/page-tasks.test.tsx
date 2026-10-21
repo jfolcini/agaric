@@ -170,8 +170,15 @@ describe('the checkbox', () => {
     expect(block).toHaveAttribute('data-todo-state', 'TODO')
     expect(block).toHaveAttribute('data-page-block', '')
     expect(block).toHaveAttribute('data-depth', '0')
-    expect(block.firstElementChild).toHaveClass('page-block-controls')
-    expect((block.firstElementChild as HTMLElement).contentEditable).toBe('false')
+    // After the gutter, as block mode's row has the grip lane, then the checkbox, then the text.
+    expect([...block.children].map((child) => child.className)).toEqual([
+      'page-block-gutter',
+      'page-block-controls',
+      'page-block-content',
+    ])
+    expect((block.querySelector('.page-block-controls') as HTMLElement).contentEditable).toBe(
+      'false',
+    )
     expect(block.querySelector('.page-block-content')?.contains(checkbox)).toBe(false)
     expect(blockEl(container, B).querySelector(MARKER)).toBeNull()
     expect(blockEl(container, B)).not.toHaveAttribute('data-todo-state')

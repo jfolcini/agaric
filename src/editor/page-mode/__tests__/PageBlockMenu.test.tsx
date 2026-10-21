@@ -1,12 +1,13 @@
 /**
- * Page mode's block menu (#5972) over the mock backend: a right click, or the
- * menu key, on a block opens block mode's menu on it, and each row's effect is
- * read back from the backend after the save.
+ * Page mode's block menu (#5972) over the mock backend: a right click, a click
+ * on its grip, or the menu key, on a block opens block mode's menu on it, and
+ * each row's effect is read back from the backend after the save.
  */
 
 import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { Editor } from '@tiptap/core'
 import { TextSelection } from '@tiptap/pm/state'
 import { toast } from 'sonner'
@@ -22,6 +23,7 @@ import {
 import type { BlockRow } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { seedBlocks } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
@@ -95,6 +97,13 @@ function blockText(view: Opened, id: string): HTMLElement {
   return el
 }
 
+/** Block `id`'s grip. */
+function grip(view: Opened, id: string): HTMLElement {
+  const el = view.container.querySelector(`[data-page-block-id="${id}"] [data-page-grip]`)
+  if (!(el instanceof HTMLElement)) throw new Error(`no grip for block ${id}`)
+  return el
+}
+
 /** Right-click block `id`'s text, and wait for the menu. */
 async function rightClick(view: Opened, id: string, target?: Element): Promise<HTMLElement> {
   await act(async () => {
@@ -148,6 +157,7 @@ const passThrough = async (cmd: string, args?: InvokeArgs) => structuredClone(di
 
 beforeEach(() => {
   vi.clearAllMocks()
+  localStorage.clear()
   vi.stubGlobal('IntersectionObserver', EnteringIntersectionObserver)
   seedBlocks()
   useSpaceStore.setState({ currentSpaceId: SCOPE.space_id })
@@ -176,11 +186,7 @@ describe('PageBlockMenu: opening', () => {
     expect(names.join('|')).toContain(t('contextMenu.copyBlockRef'))
     expect(names.join('|')).toContain(t('contextMenu.history'))
     expect(names.join('|')).toContain(t('contextMenu.delete'))
-    for (const gone of [
-      t('contextMenu.turnInto'),
-      t('contextMenu.collapse'),
-      t('contextMenu.zoomIn'),
-    ]) {
+    for (const gone of [t('contextMenu.turnInto'), t('contextMenu.zoomIn')]) {
       expect(names.join('|')).not.toContain(gone)
     }
     expect(await axe(menu)).toHaveNoViolations()
@@ -233,6 +239,84 @@ describe('PageBlockMenu: opening', () => {
     })
     fireEvent.click(await screen.findByRole('menuitem', { name: /^Copy block reference/ }))
     await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(`((${view.ids[0]}))`))
+  })
+
+  it('opens from a click on a block’s grip, on that block, not the caret’s', async () => {
+    const view = await open([
+      [0, 'first'],
+      [0, 'second'],
+    ])
+    act(() => {
+      view.editor.commands.setTextSelection(3)
+    })
+
+    await act(async () => {
+      fireEvent.click(grip(view, view.ids[1] as string))
+    })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Copy block reference/ }))
+
+    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(`((${view.ids[1]}))`))
+  })
+
+  it('opens from Enter or the menu key on a focused grip, on its block, and gives the grip the focus back', async () => {
+    const user = userEvent.setup()
+    const view = await open([
+      [0, 'first'],
+      [0, 'second'],
+    ])
+    act(() => {
+      view.editor.commands.setTextSelection(3)
+    })
+    const handle = grip(view, view.ids[1] as string)
+    act(() => handle.focus())
+
+    await user.keyboard('{Enter}')
+    expect(await screen.findByRole('menu')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    expect(handle).toHaveFocus()
+
+    await act(async () => {
+      fireEvent.keyDown(handle, { key: 'ContextMenu' })
+    })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Copy block reference/ }))
+    await waitFor(() => expect(mockedWriteText).toHaveBeenCalledWith(`((${view.ids[1]}))`))
+  })
+
+  it('offers Collapse on a block with blocks under it, which hides them as block mode saves it, and Expand then', async () => {
+    const view = await open([
+      [0, 'parent'],
+      [1, 'child'],
+      [0, 'leaf'],
+    ])
+    const child = () =>
+      view.container.querySelector(`[data-page-block-id="${view.ids[1]}"]`) as HTMLElement
+    act(() => {
+      view.editor.commands.setTextSelection(view.editor.state.doc.content.size - 2)
+    })
+
+    // The menu key on the parent's focused chevron: the parent's menu, not the caret's block's.
+    const fold = view.container.querySelector(
+      `[data-page-block-id="${view.ids[0]}"] [data-testid="collapse-toggle"]`,
+    ) as HTMLElement
+    act(() => fold.focus())
+    await act(async () => {
+      fireEvent.keyDown(fold, { key: 'ContextMenu' })
+    })
+    await screen.findByRole('menu')
+    await choose(view, t('contextMenu.collapse'))
+
+    expect(child()).toHaveClass('page-block-hidden')
+    expect(readPreference(PREFERENCES.blockCollapse, view.pageId)).toEqual([view.ids[0]])
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    await rightClick(view, view.ids[0] as string)
+    await choose(view, t('contextMenu.expand'))
+    expect(child()).not.toHaveClass('page-block-hidden')
+
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
+    await rightClick(view, view.ids[2] as string)
+    expect(maybeRow(t('contextMenu.collapse'))).toBeNull()
+    expect(maybeRow(t('contextMenu.expand'))).toBeNull()
   })
 
   it('returns the focus to the document when it closes', async () => {

@@ -44,6 +44,8 @@ export function openPage(
   onCreateTag: (name: string) => Promise<string> = () => Promise.resolve(''),
   lists?: PageListSource,
   tasks?: PageTaskSource,
+  /** The page whose saved collapse layout it opens with and writes. */
+  pageId?: string,
 ): Editor {
   return new Editor({
     element: document.createElement('div'),
@@ -63,6 +65,7 @@ export function openPage(
       mintId,
       ...(lists === undefined ? {} : { lists }),
       ...(tasks === undefined ? {} : { tasks }),
+      ...(pageId === undefined ? {} : { pageId }),
     }),
     content: pageDocContent(
       rows.map(([id, depth, content]) => ({ id, depth, content })),

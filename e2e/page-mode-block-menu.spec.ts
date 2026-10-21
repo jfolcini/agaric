@@ -47,6 +47,10 @@ async function seedRows(page: Page, title: string, rows: readonly Row[]): Promis
 
 async function openViaPalette(page: Page, title: string): Promise<void> {
   await page.keyboard.press('Escape')
+  // Escape leaves page mode's editor a frame later (TipTap's `blur`); a Ctrl+K before is its link's.
+  await expect
+    .poll(() => page.evaluate((sel) => document.activeElement?.matches(sel) ?? false, EDITOR))
+    .toBe(false)
   await page.keyboard.press('Control+k')
   const input = page.locator('[cmdk-input]').first()
   await input.fill(title)

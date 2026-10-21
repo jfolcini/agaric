@@ -35,6 +35,7 @@ import {
   restoreSelection,
   selectionEnds,
   startOf,
+  subtreeEnd,
 } from '@/editor/page-mode/page-document'
 import {
   longestIncreasing,
@@ -145,14 +146,6 @@ function find(doc: PMNode, id: string): { index: number; pos: number } | null {
     if (found === null && blockIdOf(node) === id) found = { index, pos }
   })
   return found
-}
-
-/** The index past the last block under the block at `index`. */
-function subtreeEnd(doc: PMNode, index: number): number {
-  const depth = depthOf(doc.child(index))
-  let end = index + 1
-  while (end < doc.childCount && depthOf(doc.child(end)) > depth) end += 1
-  return end
 }
 
 /**
