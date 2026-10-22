@@ -1032,7 +1032,9 @@ describe('files pasted or dropped', () => {
     const at = vi.spyOn(editor.view, 'posAtCoords').mockReturnValue({ pos, inside: -1 })
     let taken = false
     act(() => {
-      const event = { dataTransfer: { files }, clientX: 1, clientY: 1 } as unknown as DragEvent
+      // Every editor drop prop reads the drop; a DataTransfer answers '' for a type it lacks.
+      const dataTransfer = { files, getData: () => '' }
+      const event = { dataTransfer, clientX: 1, clientY: 1 } as unknown as DragEvent
       taken =
         editor.view.someProp('handleDrop', (f) =>
           f(editor.view, event, editor.state.doc.slice(0, 0), false),
