@@ -3,6 +3,8 @@
  *
  * Shared by DailyView, WeeklyView, and StreamView. MonthlyView does NOT use
  * it — it renders a `MonthlyDayCell` calendar grid and mounts no BlockTree.
+ * Daily mode's day page goes through `DayPageEditor`, which may open it in
+ * page mode; the multi-day views mount a `BlockTree` per day.
  */
 
 import { Calendar as CalendarIcon, ExternalLink, Plus } from 'lucide-react'
@@ -18,6 +20,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
+import { DayPageEditor } from '@/components/journal/DayPageEditor'
 import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
@@ -277,6 +280,31 @@ function DaySectionInner({
     }
   }, [isWindowControlled, hasEntered])
 
+  // In daily mode (heading hidden), still the "open in editor" link and the
+  // page's star and delete, on the row the day page's Blocks | Page switch ends.
+  const dailyActions =
+    hideHeading && entry.pageId && onNavigateToPage ? (
+      <>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-muted-foreground"
+          aria-label={`Open ${entry.dateStr} in editor`}
+          onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
+        >
+          <ExternalLink className="mr-1" />
+          {t('journal.openInEditor')}
+        </Button>
+        <PageQuickActions
+          pageId={entry.pageId}
+          title={entry.displayDate}
+          variant="journal"
+          deleting={isDeletingThisDay}
+          onDeleteRequest={handleRequestDayDelete}
+        />
+      </>
+    ) : null
+
   return (
     <section
       // #4551 — the day is the peek's delegation container. `PageEditor`'s
@@ -406,31 +434,8 @@ function DaySectionInner({
           )}
         </div>
       )}
-      {/* In daily mode (heading hidden), still show the "open in editor" link */}
-      {hideHeading && entry.pageId && onNavigateToPage && (
-        <div className="flex items-center gap-2 mb-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground"
-            aria-label={`Open ${entry.dateStr} in editor`}
-            onClick={() => onNavigateToPage(entry.pageId as string, entry.dateStr)}
-          >
-            <ExternalLink className="mr-1" />
-            {t('journal.openInEditor')}
-          </Button>
-          {/*  Part A — same affordance for daily mode (hideHeading). */}
-          <PageQuickActions
-            pageId={entry.pageId}
-            title={entry.displayDate}
-            variant="journal"
-            deleting={isDeletingThisDay}
-            onDeleteRequest={handleRequestDayDelete}
-          />
-        </div>
-      )}
-      {/* Single delete-confirm dialog (Part A) — both header
-          branches above route through `usePageDeleteAction.requestDelete`. */}
+      {/* Single delete-confirm dialog (Part A) — the heading's and the daily
+          row's delete both route through `usePageDeleteAction.requestDelete`. */}
       <ConfirmDialog {...deleteConfirmDialogProps} />
 
       {entry.pageId &&
@@ -446,11 +451,20 @@ function DaySectionInner({
         ) : (
           <div ref={contentRef}>
             <PageBlockStoreProvider pageId={entry.pageId}>
-              <BlockTree
-                parentId={entry.pageId}
-                onNavigateToPage={onNavigateToPage}
-                autoCreateFirstBlock={mode === 'daily' || firstBlockRequested}
-              />
+              {mode === 'daily' ? (
+                <DayPageEditor
+                  pageId={entry.pageId}
+                  actions={dailyActions}
+                  onNavigateToPage={onNavigateToPage}
+                  onAddBlock={() => onAddBlock(entry.dateStr)}
+                />
+              ) : (
+                <BlockTree
+                  parentId={entry.pageId}
+                  onNavigateToPage={onNavigateToPage}
+                  autoCreateFirstBlock={firstBlockRequested}
+                />
+              )}
             </PageBlockStoreProvider>
           </div>
         ))}
@@ -479,8 +493,9 @@ function DaySectionInner({
         />
       )}
 
-      {/* "Add block" button — only shown when there IS content (otherwise the empty state has the CTA) */}
-      {entry.pageId && (
+      {/* "Add block" button — only shown when there IS content (otherwise the empty state has
+          the CTA); the daily view's day page has its own. */}
+      {entry.pageId && mode !== 'daily' && (
         <div className="mt-1">
           <AddBlockButton onClick={() => onAddBlock(entry.dateStr)} />
         </div>

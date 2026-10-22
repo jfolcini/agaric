@@ -589,9 +589,10 @@ export const useTabsStore = create<TabsStore>()(
           useJournalStore.getState().navigateToDate(parsedDate, 'daily')
           // Journal view does not use pageStack at all, so we never push
           // Onto it here. Tabs / activeTabIndex are preserved.
-          // DailyView reads selectedBlockId on mount and scrolls
-          // the matching block into view + restores focus, then clears
-          // the selection (one-shot). See src/components/journal/DailyView.tsx.
+          // The day's editor reads selectedBlockId on mount: block mode scrolls
+          // the matching block into view + restores focus, page mode puts its
+          // cursor there; either clears the selection (one-shot). See
+          // src/components/journal/DayPageEditor.tsx.
           setNavigationView('journal')
           setNavigationSelectedBlockId(blockId ?? null)
           return

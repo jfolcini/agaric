@@ -7,12 +7,9 @@ import { useState } from 'react'
 
 import { DaySection } from '@/components/journal/DaySection'
 import { UnfinishedTasks } from '@/components/journal/UnfinishedTasks'
-import { useScrollToFocus } from '@/hooks/useScrollToFocus'
 import { useToday } from '@/hooks/useToday'
 import type { DayEntry } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
-import { useBlockStore } from '@/stores/blocks'
-import { useNavigationStore } from '@/stores/navigation'
 
 interface DailyViewProps {
   entry: DayEntry
@@ -33,27 +30,6 @@ export function DailyView({
   // Every day navigated to after that fades in.
   const [mountDay, setMountDay] = useState<string | null>(entry.dateStr)
   if (mountDay !== null && entry.dateStr !== mountDay) setMountDay(null)
-
-  // When navigating into a date-titled page with a target
-  // selectedBlockId (search result, breadcrumb, graph node click, …),
-  // scroll that block into view + restore focus on first paint, then
-  // clear the navigation store one-shot. Mirrors `scrollFocusedBlockIntoView`
-  // From useBlockActionOrchestration: rAF + scrollIntoView({ block: 'nearest' }).
-  const selectedBlockId = useNavigationStore((s) => s.selectedBlockId)
-  const clearSelection = useNavigationStore((s) => s.clearSelection)
-
-  useScrollToFocus(selectedBlockId, {
-    block: 'nearest',
-    resolveElement: (id) => document.querySelector(`[data-block-id="${id}"]`),
-    // Run inside the hook's rAF callback — restoring focus + clearing the
-    // navigation marker AFTER the scroll keeps the cancel-on-unmount logic
-    // tight: only a true unmount cancels the rAF, not the state change we
-    // make ourselves here.
-    onComplete: (id) => {
-      useBlockStore.getState().setFocused(id)
-      clearSelection()
-    },
-  })
 
   return (
     <div

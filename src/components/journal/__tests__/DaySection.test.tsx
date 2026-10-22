@@ -99,12 +99,30 @@ vi.mock('@/components/editor/AddBlockButton', () => ({
   ),
 }))
 
-// ── Mock PageBlockStoreProvider ─────────────────────────────────────
-vi.mock('@/stores/page-blocks', () => ({
-  PageBlockStoreProvider: ({ pageId, children }: { pageId: string; children: React.ReactNode }) => (
-    <div data-testid="page-block-store-provider" data-page-id={pageId}>
-      {children}
-    </div>
+// ── Wrap PageBlockStoreProvider: marked here, the real store inside ──
+// Daily mode's `DayPageEditor` reads the page's store for page mode (#5691).
+vi.mock('@/stores/page-blocks', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/stores/page-blocks')>()
+  return {
+    ...actual,
+    PageBlockStoreProvider: ({
+      pageId,
+      children,
+    }: {
+      pageId: string
+      children: React.ReactNode
+    }) => (
+      <div data-testid="page-block-store-provider" data-page-id={pageId}>
+        <actual.PageBlockStoreProvider pageId={pageId}>{children}</actual.PageBlockStoreProvider>
+      </div>
+    ),
+  }
+})
+
+// ── Mock page mode's slot (#5691): the editor itself is tested on its own ──
+vi.mock('@/editor/page-mode/PageModeSlot', () => ({
+  PageModeSlot: ({ pageId }: { pageId: string }) => (
+    <div data-testid="page-mode" data-page-id={pageId} />
   ),
 }))
 
@@ -128,6 +146,7 @@ vi.mock('@/components/ui/button', () => ({
 
 import { DaySection } from '@/components/journal/DaySection'
 import type { DayEntry } from '@/lib/date-utils'
+import { PREFERENCES, removePreference, writePreference } from '@/lib/preferences'
 import { useJournalStore } from '@/stores/journal'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -272,6 +291,32 @@ describe('DaySection', () => {
 
     const tree = screen.getByTestId('block-tree')
     expect(tree).toHaveAttribute('data-auto-create', 'false')
+  })
+
+  // #5691 — with the setting on Page, only the daily view's day opens in page mode.
+  describe('page mode', () => {
+    beforeEach(() => writePreference(PREFERENCES.editMode, 'page'))
+    afterEach(() => removePreference(PREFERENCES.editMode))
+
+    it('opens the daily view’s day in page mode, with no Add block button', () => {
+      render(
+        <DaySection entry={makeDayEntry({ pageId: 'PAGE_1' })} mode="daily" onAddBlock={noop} />,
+      )
+
+      expect(screen.getByTestId('page-mode')).toHaveAttribute('data-page-id', 'PAGE_1')
+      expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('add-block-button')).not.toBeInTheDocument()
+    })
+
+    it.each(['weekly', 'stream'] as const)('keeps a %s day in block mode', (mode) => {
+      render(
+        <DaySection entry={makeDayEntry({ pageId: 'PAGE_1' })} mode={mode} onAddBlock={noop} />,
+      )
+
+      expect(screen.getByTestId('block-tree')).toHaveAttribute('data-parent-id', 'PAGE_1')
+      expect(screen.queryByTestId('page-mode')).not.toBeInTheDocument()
+      expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument()
+    })
   })
 
   // 8. Shows full EmptyState when no pageId and not compact

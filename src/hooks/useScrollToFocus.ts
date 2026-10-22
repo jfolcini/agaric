@@ -3,7 +3,7 @@
  * current paint settles.
  *
  * Two callsites used to inline this pattern with minor variations
- * (JournalPage's day/panel scroll, DailyView's `selectedBlockId` scroll
+ * (JournalPage's day/panel scroll, DayPageEditor's `selectedBlockId` scroll
  * For). Each wrapped a `requestAnimationFrame` around an element
  * lookup + `scrollIntoView`, returning a `cancelAnimationFrame` cleanup.
  *

@@ -11,7 +11,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { DayEntry } from '@/lib/date-utils'
@@ -64,8 +64,6 @@ vi.mock('@/components/journal/DaySection', () => ({
 vi.mocked(invoke)
 
 import { DailyView } from '@/components/journal/DailyView'
-import { useBlockStore } from '@/stores/blocks'
-import { useNavigationStore } from '@/stores/navigation'
 
 const ENTRY: DayEntry = {
   date: new Date(2025, 0, 15),
@@ -164,117 +162,5 @@ describe('DailyView', () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
     })
-  })
-})
-
-// ── scroll selectedBlockId into view + restore focus on mount ────
-describe('DailyView  selectedBlockId scroll-into-view', () => {
-  let scrollSpy: ReturnType<typeof vi.spyOn>
-  const seededElements: HTMLElement[] = []
-
-  function seedBlockElement(id: string): HTMLElement {
-    const el = document.createElement('div')
-    el.setAttribute('data-block-id', id)
-    document.body.append(el)
-    seededElements.push(el)
-    return el
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-    scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
-    useNavigationStore.setState({ selectedBlockId: null })
-    useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
-  })
-
-  afterEach(() => {
-    scrollSpy.mockRestore()
-    while (seededElements.length > 0) {
-      const el = seededElements.pop()
-      el?.parentNode?.removeChild(el)
-    }
-  })
-
-  it('scrolls matching block into view, sets focus, and clears selectedBlockId on arming', async () => {
-    seedBlockElement('BLOCK_X')
-    useNavigationStore.setState({ selectedBlockId: 'BLOCK_X' })
-
-    render(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
-
-    // The rAF callback runs asynchronously; wait for scrollIntoView to be invoked.
-    await vi.waitFor(() => {
-      expect(scrollSpy).toHaveBeenCalledWith({ block: 'nearest' })
-    })
-
-    await vi.waitFor(() => {
-      expect(useBlockStore.getState().focusedBlockId).toBe('BLOCK_X')
-    })
-
-    // selectedBlockId is cleared inside the rAF callback — by the time the
-    // scroll/focus assertions above resolve, the clear has run too.
-    await vi.waitFor(() => {
-      expect(useNavigationStore.getState().selectedBlockId).toBeNull()
-    })
-  })
-
-  it('clears selectedBlockId without scrolling when the DOM node is absent', async () => {
-    useNavigationStore.setState({ selectedBlockId: 'MISSING_BLOCK' })
-
-    render(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
-
-    // Drain one rAF tick so any scheduled callback runs (clearSelection runs
-    // inside the rAF callback) and we can prove no scroll fired.
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => resolve())
-    })
-
-    expect(useNavigationStore.getState().selectedBlockId).toBeNull()
-    expect(scrollSpy).not.toHaveBeenCalled()
-  })
-
-  it('is a no-op when selectedBlockId is null', async () => {
-    useNavigationStore.setState({ selectedBlockId: null })
-
-    render(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
-
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => resolve())
-    })
-
-    expect(scrollSpy).not.toHaveBeenCalled()
-    expect(useBlockStore.getState().focusedBlockId).toBeNull()
-    expect(useNavigationStore.getState().selectedBlockId).toBeNull()
-  })
-
-  it('scroll fires exactly once per arming — re-renders do not re-trigger', async () => {
-    seedBlockElement('BLOCK_Y')
-    useNavigationStore.setState({ selectedBlockId: 'BLOCK_Y' })
-
-    const { rerender } = render(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
-
-    await vi.waitFor(() => {
-      expect(scrollSpy).toHaveBeenCalledTimes(1)
-    })
-
-    // selectedBlockId has been cleared by the first arming. A forced re-render
-    // must not re-fire the effect because its dep value is now null.
-    rerender(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
-
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => resolve())
-    })
-
-    expect(scrollSpy).toHaveBeenCalledTimes(1)
-  })
-
-  it('cancels the pending requestAnimationFrame on unmount', () => {
-    const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame')
-    useNavigationStore.setState({ selectedBlockId: 'BLOCK_Z' })
-
-    const { unmount } = render(<DailyView entry={ENTRY} onAddBlock={vi.fn()} />)
-    unmount()
-
-    expect(cancelSpy).toHaveBeenCalled()
-    cancelSpy.mockRestore()
   })
 })

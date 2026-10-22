@@ -1,6 +1,6 @@
 /**
  * Tests for useScrollToFocus — the rAF + scrollIntoView pattern shared
- * between JournalPage (date/panel scroll) and DailyView (selectedBlockId
+ * between JournalPage (date/panel scroll) and DayPageEditor (selectedBlockId
  * Scroll).
  *
  * Validates:
