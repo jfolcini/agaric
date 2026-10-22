@@ -57,27 +57,25 @@ function highlightBlock(node: PMNode, pos: number, o: Options): Decoration[] {
   return decorations
 }
 
-/** The code blocks in `doc` overlapping `from`…`to`, by position. */
-function codeBlocksIn(
-  doc: PMNode,
-  from: number,
-  to: number,
-  o: Options,
-  found: Map<number, PMNode>,
-) {
+/** The textblocks in `doc` overlapping `from`…`to`, by position. */
+function textblocksIn(doc: PMNode, from: number, to: number, found: Map<number, PMNode>) {
   doc.nodesBetween(from, to, (node, pos) => {
-    if (node.type.name === o.name) found.set(pos, node)
+    if (node.isTextblock) found.set(pos, node)
     return !node.isTextblock
   })
 }
 
-/** The code blocks `tr` changed, in its resulting document. */
-function touched(tr: Transaction, o: Options): Map<number, PMNode> {
+/**
+ * The textblocks `tr` changed, in its resulting document. Not only code blocks:
+ * a code block turned into a paragraph, or joined onto one, keeps its mapped
+ * colours until they are taken off there.
+ */
+function touched(tr: Transaction): Map<number, PMNode> {
   const found = new Map<number, PMNode>()
   tr.mapping.maps.forEach((map, i) => {
     const after = tr.mapping.slice(i + 1)
     map.forEach((_oldFrom, _oldTo, from, to) => {
-      codeBlocksIn(tr.doc, after.map(from, -1), after.map(to, 1), o, found)
+      textblocksIn(tr.doc, after.map(from, -1), after.map(to, 1), found)
     })
   })
   return found
@@ -89,18 +87,20 @@ export function codeHighlightPlugin(o: Options): Plugin<DecorationSet> {
     state: {
       init: (_, { doc }) => {
         const found = new Map<number, PMNode>()
-        codeBlocksIn(doc, 0, doc.content.size, o, found)
+        textblocksIn(doc, 0, doc.content.size, found)
         return DecorationSet.create(
           doc,
-          [...found].flatMap(([pos, node]) => highlightBlock(node, pos, o)),
+          [...found].flatMap(([pos, node]) =>
+            node.type.name === o.name ? highlightBlock(node, pos, o) : [],
+          ),
         )
       },
       apply: (tr, set) => {
         if (!tr.docChanged) return set
         let next = set.map(tr.mapping, tr.doc)
-        for (const [pos, node] of touched(tr, o)) {
-          const stale = next.find(pos + 1, pos + node.nodeSize - 1)
-          next = next.remove(stale).add(tr.doc, highlightBlock(node, pos, o))
+        for (const [pos, node] of touched(tr)) {
+          next = next.remove(next.find(pos + 1, pos + node.nodeSize - 1))
+          if (node.type.name === o.name) next = next.add(tr.doc, highlightBlock(node, pos, o))
         }
         return next
       },

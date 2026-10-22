@@ -105,4 +105,18 @@ describe('code highlighting (#5691)', () => {
     expect(highlight).toHaveBeenCalledTimes(1)
     expect(tokens('hljs-keyword')).toEqual(['const'])
   })
+
+  // The step maps of both touch only the paragraph: the colours mapped into it must come off.
+  it('a code block turned into a paragraph, or joined onto one, keeps no colours', () => {
+    setup()
+    editor.commands.setTextSelection(endOfCode(0))
+    editor.commands.toggleCodeBlock()
+    expect(editor.state.doc.child(1).type.name).toBe('paragraph')
+    expect(tokens('hljs-keyword')).toEqual(['let'])
+
+    editor.commands.setTextSelection(endOfCode(0) - 'let b = 2'.length)
+    editor.commands.joinBackward()
+    expect(editor.state.doc.child(2).textContent).toBe('middlelet b = 2')
+    expect(tokens('hljs-keyword')).toEqual([])
+  })
 })
