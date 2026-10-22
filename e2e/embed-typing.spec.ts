@@ -88,9 +88,19 @@ test.describe('typing `![[` embeds a page (#5691) @editor @pages', () => {
     const first = editor.locator(`[data-page-block-id="${ids[0]}"] .page-block-content`)
     await expect(first).toHaveText('first')
 
+    // A key pressed before the editor has placed the caret is lost or lands at
+    // the start of the block, so wait for each step to take.
+    const caretText = () =>
+      page.evaluate(() => {
+        const selection = document.getSelection()
+        return { text: selection?.anchorNode?.textContent, offset: selection?.anchorOffset }
+      })
     await first.click()
+    await expect.poll(async () => (await caretText()).text).toBe('first')
     await page.keyboard.press('End')
+    await expect.poll(caretText).toEqual({ text: 'first', offset: 'first'.length })
     await page.keyboard.press('Enter')
+    await expect.poll(caretText).toEqual({ text: '', offset: 0 })
     await embedGettingStarted(page)
     // The embed renders once the caret leaves its block.
     await editor.locator(`[data-page-block-id="${ids[1]}"] .page-block-content`).click()
