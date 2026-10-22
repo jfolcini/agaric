@@ -616,7 +616,9 @@ export function PageBrowserBatchToolbar({
             variant="default"
             size="sm"
             onClick={handleMoveToSpace}
-            disabled={busy || selectedSpaceId === ''}
+            // Not `busy`: a disabled button drops the focus the confirmation hands back
+            // on Cancel, and `handleMoveToSpace` already ignores a click while busy.
+            disabled={selectedSpaceId === ''}
             data-testid="page-batch-space-confirm"
           >
             {t('pageBrowser.batch.confirmMove')}

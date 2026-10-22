@@ -206,6 +206,29 @@ impl Fixture {
             .unwrap()
     }
 
+    /// The keys `space`'s doc holds for `block`, sorted; `None` when the doc
+    /// does not hold the block.
+    fn doc_keys(&self, space: &str, block: &BlockId) -> Option<Vec<String>> {
+        let space = agaric_store::space::SpaceId::from_trusted(space);
+        let mut guard = self
+            .mat
+            .loro_state()
+            .registry
+            .for_space(&space, DEV)
+            .expect("the space's doc");
+        let engine = guard.engine_mut();
+        engine.contains_block(block.as_str()).then(|| {
+            let mut keys: Vec<String> = engine
+                .read_all_properties_typed(block.as_str())
+                .expect("read the block's properties")
+                .into_iter()
+                .map(|(key, _)| key)
+                .collect();
+            keys.sort();
+            keys
+        })
+    }
+
     async fn max_seq(&self) -> i64 {
         sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?")
             .bind(DEV)
@@ -322,6 +345,64 @@ async fn move_refuses_a_missing_or_stale_acknowledgement() {
         f.values(&f.child).await,
         pairs(&[("onlya", "c"), ("onlyb", "b"), ("size", "3.0")]),
         "nothing was dropped"
+    );
+}
+
+/// The drops and the moves are one transaction. A content block cannot change
+/// space, so a list holding one fails on it after the page's drops and its own
+/// move were appended: the op log, the values, the memberships and both
+/// spaces' docs are as they were.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_move_that_fails_after_its_drops_writes_nothing() {
+    let f = fixture().await;
+    let before = f.max_seq().await;
+    let held = (
+        f.values(&f.page).await,
+        f.values(&f.child).await,
+        f.values(&f.trashed).await,
+    );
+    let page_in_a = f.doc_keys(&f.a, &f.page);
+    assert!(
+        page_in_a.is_some(),
+        "precondition: A's doc holds the page and its values"
+    );
+
+    let err = move_blocks_to_space_inner(
+        &f.pool,
+        DEV,
+        &f.mat,
+        vec![f.page.clone(), f.child.clone()],
+        f.b.clone(),
+        &fixture_losses(),
+    )
+    .await
+    .expect_err("a content block cannot change space");
+    settle(&f.mat).await;
+
+    assert!(
+        err.to_string().contains("can only be set on a page"),
+        "the list fails on the content block, past the acknowledgement: {err}"
+    );
+    assert_eq!(f.max_seq().await, before, "no drop or move survived");
+    assert_eq!(f.space_of(&f.page).await, f.a, "the page did not move");
+    assert_eq!(
+        (
+            f.values(&f.page).await,
+            f.values(&f.child).await,
+            f.values(&f.trashed).await
+        ),
+        held,
+        "no value was dropped"
+    );
+    assert_eq!(
+        f.doc_keys(&f.a, &f.page),
+        page_in_a,
+        "A's doc still holds the page with its values"
+    );
+    assert_eq!(
+        f.doc_keys(&f.b, &f.page),
+        None,
+        "B's doc was not seeded with the page"
     );
 }
 

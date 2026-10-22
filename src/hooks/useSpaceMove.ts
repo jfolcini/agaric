@@ -70,7 +70,8 @@ async function moveOrAskAgain(
   }
   const losses = unwrap(await commands.previewSpaceMove(request.ids, request.targetSpaceId))
   if (losses.length === 0) return moveOrAskAgain(request, null, ask)
-  ask({ request, losses, changed: true })
+  // Only a refused acknowledgement means something changed since the user confirmed.
+  ask({ request, losses, changed: ack !== null })
   return false
 }
 

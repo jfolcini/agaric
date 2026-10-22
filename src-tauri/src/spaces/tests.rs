@@ -2096,6 +2096,154 @@ async fn a_moved_page_survives_on_its_peer_when_the_old_space_arrives_first_5712
     a_move_reaches_b_whole(true).await;
 }
 
+/// A device's `block_properties` rows, the text values included.
+async fn property_rows(pool: &SqlitePool) -> Vec<(String, String, Option<String>)> {
+    sqlx::query_as("SELECT block_id, key, value_text FROM block_properties ORDER BY block_id, key")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// The keys `mat`'s doc for `space` holds on each live block, by id.
+fn doc_property_keys(
+    mat: &crate::materializer::Materializer,
+    device: &str,
+    space: &BlockId,
+) -> Vec<(String, Vec<String>)> {
+    let space_id = agaric_store::space::SpaceId::from_trusted(space.as_str());
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space_id, device)
+        .unwrap();
+    let engine = guard.engine_mut();
+    let mut live = engine.live_block_ids().unwrap();
+    live.sort_unstable();
+    live.into_iter()
+        .map(|id| {
+            let mut keys: Vec<String> = engine
+                .read_all_properties_typed(&id)
+                .unwrap()
+                .into_iter()
+                .map(|(key, _)| key)
+                .collect();
+            keys.sort();
+            (id, keys)
+        })
+        .collect()
+}
+
+/// #5841 S0.6: `onlyold`, declared in `old` alone, is held by the page and
+/// one of its blocks on both devices. A moves the page to `new`, which drops
+/// both values once A acknowledges them; B pulls both docs in the given order
+/// and ends with A's rows and docs, without the values.
+async fn a_lossy_move_reaches_b_without_the_dropped_values(old_space_first: bool) {
+    use crate::commands::{
+        PropertyLoss, create_property_def_inner, move_blocks_to_space_inner,
+        preview_space_move_inner, set_property_inner,
+    };
+    let fx = move_fixture().await;
+    for pool in [&fx.pool_a, &fx.pool_b] {
+        create_property_def_inner(pool, fx.old.as_str(), "onlyold".into(), "text".into(), None)
+            .await
+            .unwrap();
+    }
+    for block in [&fx.page, &fx.first] {
+        set_property_inner(
+            &fx.pool_a,
+            "device-A",
+            &fx.mat_a,
+            block.as_str().into(),
+            "onlyold".into(),
+            Some("value".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    fx.mat_a.flush_background().await.unwrap();
+    fx.pull(&[&fx.old, &fx.new], SessionEnd::Completed).await;
+    let onlyold_values = |rows: Vec<(String, String, Option<String>)>| {
+        rows.into_iter().filter(|row| row.1 == "onlyold").count()
+    };
+    assert_eq!(
+        onlyold_values(property_rows(&fx.pool_b).await),
+        2,
+        "precondition: B holds both values"
+    );
+
+    let losses = preview_space_move_inner(
+        &fx.pool_a,
+        vec![fx.page.clone()],
+        fx.new.as_str().to_owned(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        losses,
+        vec![PropertyLoss {
+            key: "onlyold".into(),
+            count: 2
+        }],
+        "the move would drop both values"
+    );
+    move_blocks_to_space_inner(
+        &fx.pool_a,
+        "device-A",
+        &fx.mat_a,
+        vec![fx.page.clone()],
+        fx.new.as_str().to_owned(),
+        &losses,
+    )
+    .await
+    .unwrap();
+    fx.mat_a.flush_background().await.unwrap();
+    assert_eq!(
+        onlyold_values(property_rows(&fx.pool_a).await),
+        0,
+        "A dropped them"
+    );
+
+    let first = if old_space_first { &fx.old } else { &fx.new };
+    fx.pull(&fx.spaces_with_first(first), SessionEnd::Completed)
+        .await;
+    fx.assert_b_matches_a("lossy move").await;
+    assert_eq!(
+        onlyold_values(property_rows(&fx.pool_b).await),
+        0,
+        "the dropped values left B too"
+    );
+    assert_eq!(
+        property_rows(&fx.pool_b).await,
+        property_rows(&fx.pool_a).await,
+        "B's property rows equal A's"
+    );
+    for space in [&fx.old, &fx.new] {
+        assert_eq!(
+            doc_property_keys(&fx.mat_b, "device-B", space),
+            doc_property_keys(&fx.mat_a, "device-A", space),
+            "B's doc for space {space} holds A's properties"
+        );
+    }
+    fx.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lossy_move_reaches_its_peer_without_the_dropped_values_when_the_new_space_arrives_first_5841()
+ {
+    a_lossy_move_reaches_b_without_the_dropped_values(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_lossy_move_reaches_its_peer_without_the_dropped_values_when_the_old_space_arrives_first_5841()
+ {
+    a_lossy_move_reaches_b_without_the_dropped_values(true).await;
+}
+
 /// #5712: A moves the page to `new` and back. B pulls in between or not,
 /// and in either order each time; it ends with A's rows and its own.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

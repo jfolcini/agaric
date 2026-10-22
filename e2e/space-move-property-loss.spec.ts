@@ -68,6 +68,27 @@ test('a batch move lists the properties it drops and their blocks, and drops the
   await expect(chips(page)).toHaveCount(0)
 })
 
+test('Cancel from the batch toolbar moves nothing and gives focus back to Move @spaces @pages', async ({
+  page,
+}) => {
+  await navigateToView(page, 'Pages')
+  await page.getByTestId(`page-select-${PAGE_MEETINGS}`).click()
+  const toolbar = page.getByRole('toolbar', { name: '1 selected', exact: true })
+  await toolbar.getByTestId('page-batch-move-btn').click()
+  await chooseSelectOption(page, 'Choose a space…', 'Work')
+  const move = toolbar.getByTestId('page-batch-space-confirm')
+  await move.click()
+
+  const dialog = activeAlertDialog(page)
+  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  // The preview ran with Move pressed: it must not have dropped the focus the
+  // dialog hands back.
+  await expect(move).toBeFocused()
+  // The selection stands: nothing moved.
+  await expect(toolbar).toBeVisible()
+})
+
 test('the page header asks the same, and Cancel leaves the page where it was @spaces @editor', async ({
   page,
 }) => {

@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
 import { spaceMoveFailureMessage } from '@/hooks/useSpaceMove'
 
 const CAP =
-  'this move would remove 1200 property values, more than one undo can restore; move fewer pages'
+  'undoing this move would take 1201 steps, its pages and the 1200 property values it removes, more than one undo can take; move fewer pages'
 
 describe('spaceMoveFailureMessage', () => {
   it("shows a validation refusal's own reason", () => {

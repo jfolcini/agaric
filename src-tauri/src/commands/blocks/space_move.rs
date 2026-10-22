@@ -159,8 +159,8 @@ pub(super) async fn drop_acknowledged_losses_in_tx(
         .saturating_add(roots);
     if ops > crate::commands::history::MAX_REVERT_OPS {
         return Err(AppError::validation(format!(
-            "this move would remove {values} property values, more than one undo can restore; \
-             move fewer pages"
+            "undoing this move would take {ops} steps, its pages and the {values} property \
+             values it removes, more than one undo can take; move fewer pages"
         )));
     }
     let mut acknowledged = acknowledged.to_vec();

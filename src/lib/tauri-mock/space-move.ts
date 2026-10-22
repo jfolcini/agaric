@@ -91,10 +91,11 @@ export function dropAcknowledgedLosses(ids: string[], target: string, rawAck: un
   const losses = spaceMoveLosses(ids, target)
   const values = losses.reduce((n, loss) => n + loss.count, 0)
   if (values === 0) return
-  if (values + new Set(ids.filter(isLive)).size > MAX_REVERT_OPS) {
+  const ops = values + new Set(ids.filter(isLive)).size
+  if (ops > MAX_REVERT_OPS) {
     throw validationRejection(
-      `this move would remove ${values} property values, more than one undo can restore; ` +
-        'move fewer pages',
+      `undoing this move would take ${ops} steps, its pages and the ${values} property ` +
+        'values it removes, more than one undo can take; move fewer pages',
     )
   }
   const ack = ((rawAck as PropertyLoss[] | null | undefined) ?? []).toSorted((x, y) =>

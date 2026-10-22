@@ -195,6 +195,36 @@ describe('SpaceMoveConfirmDialog', () => {
     ])
   })
 
+  it('lists the holders a page at a time, and Load more brings the rest', async () => {
+    const user = userEvent.setup()
+    // 60 more blocks of the page hold `stage`: 62 values in all, past one page.
+    for (let i = 0; i < 60; i++) {
+      const id = `${'0'.repeat(19)}H${String(i).padStart(6, '0')}`
+      blocks.set(id, makeBlock(id, 'content', `holder ${i}`, PAGE, 3 + i))
+      properties.set(id, new Map([['stage', row(id, 'stage', { value_text: 'draft' })]]))
+    }
+    render(<Harness />)
+    const dialog = await openConfirmation(user)
+
+    const stage = within(dialog).getByRole('button', { name: /^stage/ })
+    await user.click(stage)
+    const holders = document.getElementById(
+      stage.getAttribute('aria-controls') ?? '',
+    ) as HTMLElement
+    await waitFor(() => {
+      expect(within(holders).getAllByRole('listitem')).toHaveLength(50)
+    })
+
+    await user.click(within(holders).getByRole('button', { name: t('action.loadMore') }))
+
+    await waitFor(() => {
+      expect(within(holders).getAllByRole('listitem')).toHaveLength(62)
+    })
+    expect(
+      within(holders).queryByRole('button', { name: t('action.loadMore') }),
+    ).not.toBeInTheDocument()
+  })
+
   it('moves straight through when nothing would be lost', async () => {
     const user = userEvent.setup()
     properties.get(PAGE)?.delete('stage')
@@ -237,6 +267,28 @@ describe('SpaceMoveConfirmDialog', () => {
       expect(onMoved).toHaveBeenCalledWith(1)
     })
     expect(keysOf(CHILD)).toEqual([])
+  })
+
+  it('asks without saying anything changed when a move that needed no confirmation turns lossy', async () => {
+    const user = userEvent.setup()
+    properties.get(PAGE)?.delete('stage')
+    properties.get(CHILD)?.delete('due')
+    properties.get(TRASHED)?.delete('stage')
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      // Another write lands between the lossless preview and the move.
+      if (cmd === 'move_blocks_to_space' && !properties.get(CHILD)?.has('stage')) {
+        properties.get(CHILD)?.set('stage', row(CHILD, 'stage', { value_text: 'draft' }))
+      }
+      return dispatch(cmd, args)
+    })
+    render(<Harness />)
+
+    await user.click(screen.getByRole('button', { name: 'Move' }))
+
+    const dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).queryByRole('status')).not.toBeInTheDocument()
+    expect(onMoved).not.toHaveBeenCalled()
+    expect(properties.get(PAGE)?.get('space')?.['value_ref']).toBe(SPACE_A)
   })
 
   it('cancel leaves the page and its values where they were', async () => {
