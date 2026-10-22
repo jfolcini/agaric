@@ -807,7 +807,7 @@ describe('PageModeEditor', () => {
       return { other, onNavigateToPage, editor, chip }
     }
 
-    it('a Ctrl+click opens it in a new tab in front, and not in this one', async () => {
+    it('a Ctrl+click opens it in a tab behind this one', async () => {
       const { other, onNavigateToPage, chip } = await chipOnPage()
 
       await act(async () => {
@@ -815,8 +815,9 @@ describe('PageModeEditor', () => {
       })
 
       await waitFor(() => {
-        expect(useTabsStore.getState().activeTabIndex).toBe(1)
+        expect(useTabsStore.getState().tabs).toHaveLength(2)
       })
+      expect(useTabsStore.getState().activeTabIndex).toBe(0)
       expect(useTabsStore.getState().tabs[1]?.pageStack).toEqual([
         { pageId: other.pageId, title: 'Other page' },
       ])
@@ -4489,6 +4490,87 @@ describe('PageModeEditor slash menu and pickers (#5743)', () => {
       await handle.current?.flush()
     })
     expect(backendText(blockId)).toBe('> [!INFO] second ')
+  })
+
+  // As a callout, a heading, a code block or a quote is no list (#5691). These run as they are
+  // picked, so the style goes at once and is written once the block is saved.
+  it.each([
+    ['h2', /Heading 2/],
+    ['code', /CODE — Insert code block/],
+    ['quote', /QUOTE — Insert blockquote/],
+  ])('/%s drops a bulleted block’s list style', async (id, name) => {
+    const { pageId, ids } = seedPage(['first', 'second'])
+    const blockId = ids[1] as string
+    dispatch('set_property', {
+      blockId,
+      key: 'listStyle',
+      value: {
+        value_text: 'bullet',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const { container } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    const marker = () =>
+      container.querySelector(`[data-page-block-id="${blockId}"] > [data-testid="list-marker"]`)
+    await waitFor(() => {
+      expect(marker()?.textContent).toBe('•')
+    })
+
+    typeIn(editor, 1, 6, ` /${id}`)
+    await pick(name)
+
+    expect(marker()).toBeNull()
+    await waitFor(() => {
+      expect(backendProps(blockId)).toEqual({})
+    })
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
+  it('/h2 in the list block Enter has just made drops the style that block was given', async () => {
+    const { pageId, ids } = seedPage(['first'])
+    dispatch('set_property', {
+      blockId: ids[0],
+      key: 'listStyle',
+      value: {
+        value_text: 'bullet',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      },
+    })
+    const { container, handle } = renderPageMode(pageId)
+    const editor = await editorIn(container)
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="list-marker"]')?.textContent).toBe('•')
+    })
+    act(() => {
+      editor.commands.setTextSelection(at(editor, 0, 5))
+    })
+    expect(press(editor, 'Enter')).toBe(true)
+    const added = blockIdOf(editor.state.doc.child(1)) as string
+
+    // Before any save has created the block.
+    typeIn(editor, 1, 0, 'x /h2')
+    await pick(/Heading 2/)
+
+    await act(async () => {
+      await handle.current?.flush()
+    })
+    await waitFor(() => {
+      expect(backendText(added)).toBe('## x ')
+    })
+    await waitFor(() => {
+      expect(backendProps(added)).toEqual({})
+    })
+    expect(
+      container.querySelector(`[data-page-block-id="${added}"] > [data-testid="list-marker"]`),
+    ).toBeNull()
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
   })
 
   it('/due gives an undated block its date through block mode’s picker; the drawer clears it', async () => {

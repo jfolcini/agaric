@@ -69,6 +69,12 @@ export interface Tab {
    * on a fresh launch with no history yet.
    */
   enteredFrom?: View | undefined
+  /**
+   * The block a background tab was opened on (`openInBackgroundTab`), shown
+   * once the tab comes to the front: `enterTab` hands it to the navigation
+   * store's one-shot `selectedBlockId` and takes it off the tab.
+   */
+  blockId?: string | undefined
 }
 
 // FE-L-4: module-scoped counter is safe because the renderer is
@@ -164,10 +170,13 @@ interface TabsStore {
    * the way `goBack` leaves it on the last tab. No-op when no tab holds any of them.
    */
   removePages: (pageIds: readonly string[]) => void
-  /** Open a page in a new tab and switch to it; `blockId` takes the cursor, as with `navigateToPage`. */
-  openInNewTab: (pageId: string, title: string, blockId?: string) => void
-  /** Open a page in a new tab behind the active one, leaving the view and active tab as they are. */
-  openInBackgroundTab: (pageId: string, title: string) => void
+  /** Open a page in a new tab and switch to it. */
+  openInNewTab: (pageId: string, title: string) => void
+  /**
+   * Open a page in a new tab behind the active one, leaving the view and active tab as they
+   * are; `blockId` takes the cursor once the tab is brought to the front.
+   */
+  openInBackgroundTab: (pageId: string, title: string, blockId?: string) => void
   /** Close a tab by index. If last tab closed, switch to 'pages' view. */
   closeTab: (tabIndex: number) => void
   /** Reopen the active space's last closed tab at its old place, and switch to it. */
@@ -365,6 +374,16 @@ function currentEntryView(): View | undefined {
 /** Cross-store coordination: forward to navigation store's setSelectedBlockId. */
 function setNavigationSelectedBlockId(id: string | null): void {
   useNavigationStore.setState({ selectedBlockId: id })
+}
+
+/**
+ * `tabs` with `tabs[index]` brought to the front: its `blockId`, if a
+ * background open left one, becomes `selectedBlockId` and leaves the tab.
+ */
+function enterTab(tabs: Tab[], index: number): Tab[] {
+  const tab = tabs[index]
+  setNavigationSelectedBlockId(tab?.blockId ?? null)
+  return tab?.blockId === undefined ? tabs : tabs.with(index, { ...tab, blockId: undefined })
 }
 
 /**
@@ -648,8 +667,7 @@ export const useTabsStore = create<TabsStore>()(
           if (tabs.length > 1) {
             const newTabs = tabs.filter((_, i) => i !== activeTabIndex)
             const newIndex = Math.min(activeTabIndex, newTabs.length - 1)
-            set(spliceTabs(state, newTabs, newIndex))
-            setNavigationSelectedBlockId(null)
+            set(spliceTabs(state, enterTab(newTabs, newIndex), newIndex))
           } else {
             // Last tab — leave the editor for the route this stack was opened
             // from (#4287), falling back to `DEFAULT_PAGE_EXIT_VIEW`. The
@@ -705,6 +723,7 @@ export const useTabsStore = create<TabsStore>()(
           // rejects spreading inside a `map`.
           const renamed: Tab = { id: tab.id, pageStack: newStack, label: tabLabel(newStack) }
           if (tab.enteredFrom !== undefined) renamed.enteredFrom = tab.enteredFrom
+          if (tab.blockId !== undefined) renamed.blockId = tab.blockId
           return renamed
         })
         if (!changed) return
@@ -732,11 +751,12 @@ export const useTabsStore = create<TabsStore>()(
           }
         }
         if (!changed) return
-        setNavigationSelectedBlockId(null)
         if (kept.length > 0) {
-          set(spliceTabs(state, kept, clampIndex(keptActiveIndex, kept.length)))
+          const index = clampIndex(keptActiveIndex, kept.length)
+          set(spliceTabs(state, enterTab(kept, index), index))
           return
         }
+        setNavigationSelectedBlockId(null)
         const activeTab = tabs[activeTabIndex]
         set(spliceTabs(state, [{ id: activeTab?.id ?? '0', pageStack: [], label: '' }], 0))
         if (useNavigationStore.getState().currentView === 'page-editor') {
@@ -744,7 +764,7 @@ export const useTabsStore = create<TabsStore>()(
         }
       },
 
-      openInNewTab: (pageId: string, title: string, blockId?: string) => {
+      openInNewTab: (pageId: string, title: string) => {
         const state = get()
         const { tabs } = readActiveSlice(state)
         const newStack: PageEntry[] = [{ pageId, title }]
@@ -760,10 +780,10 @@ export const useTabsStore = create<TabsStore>()(
         const newIndex = newTabs.length - 1
         set(spliceTabs(state, newTabs, newIndex))
         setNavigationView('page-editor')
-        setNavigationSelectedBlockId(blockId ?? null)
+        setNavigationSelectedBlockId(null)
       },
 
-      openInBackgroundTab: (pageId: string, title: string) => {
+      openInBackgroundTab: (pageId: string, title: string, blockId?: string) => {
         const state = get()
         const { tabs, activeTabIndex } = readActiveSlice(state)
         // No `enteredFrom`: the tab is entered later through `switchTab`,
@@ -772,6 +792,7 @@ export const useTabsStore = create<TabsStore>()(
           id: String(nextTabId++),
           pageStack: [{ pageId, title }],
           label: title,
+          blockId,
         }
         set(spliceTabs(state, [...tabs, newTab], activeTabIndex))
       },
@@ -806,8 +827,7 @@ export const useTabsStore = create<TabsStore>()(
         } else {
           newIndex = activeTabIndex
         }
-        set({ ...spliceTabs(state, newTabs, newIndex), closedTabs })
-        setNavigationSelectedBlockId(null)
+        set({ ...spliceTabs(state, enterTab(newTabs, newIndex), newIndex), closedTabs })
       },
 
       reopenClosedTab: () => {
@@ -827,11 +847,10 @@ export const useTabsStore = create<TabsStore>()(
           enteredFrom: nextEnteredFrom(closed.tab),
         }
         set({
-          ...spliceTabs(state, kept.toSpliced(index, 0, tab), index),
+          ...spliceTabs(state, enterTab(kept.toSpliced(index, 0, tab), index), index),
           closedTabs: state.closedTabs.toSpliced(at, 1),
         })
         setNavigationView('page-editor')
-        setNavigationSelectedBlockId(null)
       },
 
       switchTab: (tabIndex: number) => {
@@ -869,13 +888,12 @@ export const useTabsStore = create<TabsStore>()(
           return
         }
         if (inEditor) {
-          set(spliceTabs(state, tabs, tabIndex))
-          setNavigationSelectedBlockId(null)
+          set(spliceTabs(state, enterTab(tabs, tabIndex), tabIndex))
           return
         }
-        set(spliceTabs(state, withRecordedOrigin(tabs, tabIndex, target, entered), tabIndex))
+        const withOrigin = withRecordedOrigin(tabs, tabIndex, target, entered)
+        set(spliceTabs(state, enterTab(withOrigin, tabIndex), tabIndex))
         setNavigationView('page-editor')
-        setNavigationSelectedBlockId(null)
       },
 
       moveTab: (from: number, to: number) => {

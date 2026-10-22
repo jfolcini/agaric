@@ -67,6 +67,12 @@ export interface SlashCommandContext {
    * click that asked for it.
    */
   attachFiles?: (files: File[]) => void
+  /**
+   * Clears the block's list style in place of `setListStyle`: page mode's
+   * shows the change at once and writes it once a save has created the block
+   * (#5743), so a command that runs as it is picked can clear it too.
+   */
+  clearListStyle?: () => void
 }
 
 export type SlashHandler = (ctx: SlashCommandContext, item: PickerItem) => Promise<void> | void

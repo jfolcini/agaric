@@ -15,8 +15,8 @@ import {
 
 /**
  * Happy paths for slash commands no other spec drives end to end (#5734):
- * `/cancelled`, `/schedule`, `/bullet-list`, `/code`, `/duplicate`, and the
- * menu's Recent group. Each test runs the command from the `/` menu and reads
+ * `/cancelled`, `/schedule`, `/bullet-list`, `/code`, `/h2` on a list block,
+ * `/duplicate`, and the menu's Recent group. Each test runs the command from the `/` menu and reads
  * its effect back from the mock, which shows a failure of each, so it lives
  * in `e2e/`.
  *
@@ -74,6 +74,23 @@ test('/bullet-list gives the block a bullet marker that persists @editor', async
   // hands back on the next mount (it emits no `block:properties-changed`).
   await reopenPage(page, PAGE)
   await expect(row(page, GS1).getByTestId('list-marker')).toHaveText('•')
+})
+
+test('/h2 on a bulleted block makes it a heading and takes its bullet off @editor', async ({
+  page,
+}) => {
+  const bullet = await typeSlashCommand(page, 'bullet')
+  await bullet.getByRole('option', { name: 'BULLET LIST — Insert unordered list' }).click()
+  await reopenPage(page, PAGE)
+  await expect(row(page, GS1).getByTestId('list-marker')).toHaveText('•')
+
+  await focusBlockById(page, GS1)
+  const list = await typeSlashCommand(page, 'h2')
+  await list.getByRole('option', { name: 'Heading 2 — Medium heading' }).click()
+
+  await reopenPage(page, PAGE)
+  await expect(row(page, GS1).locator('[data-testid="block-static"] h2')).toBeVisible()
+  await expect(row(page, GS1).getByTestId('list-marker')).toHaveCount(0)
 })
 
 test('/code turns the block into a code block that persists @editor', async ({ page }) => {

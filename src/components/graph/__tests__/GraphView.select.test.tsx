@@ -165,9 +165,9 @@ describe('GraphView — select, then open on purpose (#5435)', () => {
     fireEvent(node(container, 'Charlie'), new MouseEvent('auxclick', { button: 1, bubbles: true }))
 
     expect(openInBackgroundTab.mock.calls).toEqual([
-      ['a', 'Alpha'],
-      ['b', 'Bravo'],
-      ['c', 'Charlie'],
+      ['a', 'Alpha', undefined],
+      ['b', 'Bravo', undefined],
+      ['c', 'Charlie', undefined],
     ])
     expect(navigateToPage).not.toHaveBeenCalled()
     expect(container.querySelectorAll('g.node[aria-selected="true"]')).toHaveLength(0)

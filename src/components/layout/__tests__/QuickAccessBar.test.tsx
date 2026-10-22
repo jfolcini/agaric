@@ -191,7 +191,7 @@ describe('QuickAccessBar', () => {
       fireEvent.click(chip, { ctrlKey: true })
 
       expect(openInBackgroundTabSpy).toHaveBeenCalledTimes(1)
-      expect(openInBackgroundTabSpy).toHaveBeenCalledWith('A', 'Alpha')
+      expect(openInBackgroundTabSpy).toHaveBeenCalledWith('A', 'Alpha', undefined)
       expect(navigateSpy).not.toHaveBeenCalled()
     })
 
@@ -211,7 +211,7 @@ describe('QuickAccessBar', () => {
       fireEvent.click(chip, { metaKey: true })
 
       expect(openInBackgroundTabSpy).toHaveBeenCalledTimes(1)
-      expect(openInBackgroundTabSpy).toHaveBeenCalledWith('A', 'Alpha')
+      expect(openInBackgroundTabSpy).toHaveBeenCalledWith('A', 'Alpha', undefined)
       expect(navigateSpy).not.toHaveBeenCalled()
     })
 
@@ -231,7 +231,7 @@ describe('QuickAccessBar', () => {
       fireEvent(chip, new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }))
 
       expect(openInBackgroundTabSpy).toHaveBeenCalledTimes(1)
-      expect(openInBackgroundTabSpy).toHaveBeenCalledWith('A', 'Alpha')
+      expect(openInBackgroundTabSpy).toHaveBeenCalledWith('A', 'Alpha', undefined)
       expect(navigateSpy).not.toHaveBeenCalled()
     })
 

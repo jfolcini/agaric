@@ -999,6 +999,41 @@ describe('useNavigationStore', () => {
 
       expect(useTabsStore.getState().tabs[1]?.enteredFrom).toBe('journal')
     })
+
+    it('opens on its block once the tab comes to the front, and only then', () => {
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      useTabsStore.getState().openInBackgroundTab('P2', 'Page 2', 'B2')
+      expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+
+      useTabsStore.getState().switchTab(1)
+      expect(useNavigationStore.getState().selectedBlockId).toBe('B2')
+
+      useNavigationStore.getState().clearSelection()
+      useTabsStore.getState().switchTab(0)
+      useTabsStore.getState().switchTab(1)
+      expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+    })
+
+    it('opens on its block when closing the active tab brings it to the front', () => {
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      useTabsStore.getState().openInBackgroundTab('P2', 'Page 2', 'B2')
+
+      useTabsStore.getState().closeTab(0)
+
+      expect(selectPageStack(useTabsStore.getState())).toEqual([{ pageId: 'P2', title: 'Page 2' }])
+      expect(useNavigationStore.getState().selectedBlockId).toBe('B2')
+    })
+
+    it('keeps its block when its page is renamed before it comes to the front', () => {
+      useTabsStore.getState().navigateToPage('P1', 'Page 1')
+      useTabsStore.getState().openInBackgroundTab('P2', 'Page 2', 'B2')
+
+      useTabsStore.getState().renamePage('P2', 'Renamed')
+      useTabsStore.getState().switchTab(1)
+
+      expect(selectPageStack(useTabsStore.getState())).toEqual([{ pageId: 'P2', title: 'Renamed' }])
+      expect(useNavigationStore.getState().selectedBlockId).toBe('B2')
+    })
   })
 
   // ---------------------------------------------------------------------------

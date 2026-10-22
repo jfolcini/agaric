@@ -6,7 +6,9 @@
  *
  * - A command that rewrites the block's text (a heading, a callout, a
  *   divider, *Turn into*) rewrites it in the document (`blockText`), which
- *   saves it; block mode writes it with `edit_block`.
+ *   saves it; block mode writes it with `edit_block`. A heading, code, a quote
+ *   or a callout clears the block's list style as page mode's list keys do
+ *   (`clearListStyle`): at once on screen, written once the block is saved.
  * - A command that writes to the block (its task state, priority, a property,
  *   a list style) or opens what writes to it (the date picker on a due, a
  *   scheduled or an until date, the property drawer, the query builder, the
@@ -138,6 +140,8 @@ export interface PageSlashCommandsOptions {
   saveQuery: (id: string, expression: string) => Promise<boolean>
   /** Attach files to a block once a save has created it, as block mode's `/attach` does. */
   attach: (id: string, files: File[]) => void
+  /** Clear a block's list style: shown at once, written once a save has created it. */
+  clearListStyle: (id: string) => void
 }
 
 export interface PageSlashCommands {
@@ -158,6 +162,7 @@ export function usePageSlashCommands({
   openPropertyDrawer,
   saveQuery,
   attach,
+  clearListStyle,
 }: PageSlashCommandsOptions): PageSlashCommands {
   const handlers = useSlashHandlers()
   const [queryBlockId, setQueryBlockId] = useState<string | null>(null)
@@ -193,6 +198,7 @@ export function usePageSlashCommands({
       openVoiceNoteRecorder: setVoiceBlockId,
       blockText: blockText(editor, id),
       attachFiles: (files) => attach(id, files),
+      clearListStyle: () => clearListStyle(id),
     }
     await runSlashCommand(handlers, ctx, item)
   }

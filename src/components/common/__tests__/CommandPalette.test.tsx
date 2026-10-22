@@ -122,6 +122,26 @@ function resetStore(): void {
   })
 }
 
+/** One tab, on the page the palette is opened over. */
+function seedOneTab(): void {
+  useTabsStore.setState({
+    tabs: [{ id: '0', pageStack: [{ pageId: 'CUR', title: 'Current' }], label: 'Current' }],
+    activeTabIndex: 0,
+    tabsBySpace: {},
+    activeTabIndexBySpace: {},
+  })
+}
+
+/** A second tab holds the page, and the first, still on screen, stays active. */
+function expectOpenedBehind(pageId: string, title: string): void {
+  const { tabs, activeTabIndex } = useTabsStore.getState()
+  expect(tabs.map((tab) => tab.pageStack)).toEqual([
+    [{ pageId: 'CUR', title: 'Current' }],
+    [{ pageId, title }],
+  ])
+  expect(activeTabIndex).toBe(0)
+}
+
 function makePageRow(id: string, content: string): SearchRow {
   return {
     id,
@@ -349,23 +369,16 @@ describe('CommandPalette — action menu (Phase 5)', () => {
     expect(useCommandPaletteStore.getState().open).toBe(true)
   })
 
-  it('selecting "Open in new tab" calls openInNewTab and closes', async () => {
+  it('selecting "Open in new tab" opens the page in a background tab and closes', async () => {
     seedRecents()
-    const openInNewTabSpy = vi.fn()
-    useTabsStore.setState({ openInNewTab: openInNewTabSpy } as never, true)
-    useTabsStore.setState({
-      tabs: [{ id: '0', pageStack: [], label: '' }],
-      activeTabIndex: 0,
-    })
-    // Re-set openInNewTab after the partial setState above which clobbers the spy.
-    useTabsStore.setState({ openInNewTab: openInNewTabSpy } as never)
+    seedOneTab()
     render(<CommandPalette />)
     openPalette()
     const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
     recentRow.setAttribute('aria-selected', 'true')
     fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
     fireEvent.click(await screen.findByTestId('palette-action-open-new-tab'))
-    expect(openInNewTabSpy).toHaveBeenCalledWith('PAGE_R', 'Recent')
+    expectOpenedBehind('PAGE_R', 'Recent')
     expect(useCommandPaletteStore.getState().open).toBe(false)
   })
 
@@ -799,10 +812,68 @@ describe('CommandPalette — click semantics', () => {
     expect(navigateToPage).toHaveBeenCalledWith('PAGE_A', 'Alpha')
   })
 
-  it('Cmd/Ctrl+Enter opens in a new tab', async () => {
+  it.each([{ metaKey: true }, { ctrlKey: true }])(
+    'Enter with %o opens the page in a background tab, leaving the active one',
+    async (modifier) => {
+      seedOneTab()
+      mockedSearchBlocksPartitioned.mockResolvedValue(
+        partitionedResp([makePageRow('PAGE_A', 'Alpha')], []),
+      )
+      render(<CommandPalette />)
+      openPalette()
+      const input = screen.getByTestId('command-palette-input')
+      fireEvent.change(input, { target: { value: 'alpha' } })
+      await waitFor(() => {
+        expect(screen.getByTestId('palette-page-header-PAGE_A')).toBeInTheDocument()
+      })
+      // The component's new-tab detector lives on the `<CommandList>` /
+      // `<CommandInput>` wrappers (cmdk's `onSelect` doesn't expose
+      // modifier keys). Firing keyDown on the input bubbles up through
+      // the wrapper handler before cmdk's internal Enter handler fires.
+      fireEvent.keyDown(input, { key: 'Enter', ...modifier })
+      expectOpenedBehind('PAGE_A', 'Alpha')
+      expect(useCommandPaletteStore.getState().open).toBe(false)
+    },
+  )
+
+  it('a Ctrl+click on a recent page opens it in a background tab', async () => {
+    seedRecentPagesStore([{ pageId: 'PAGE_R', title: 'Recent', visitedAt: '2026-05-19T00:00:00Z' }])
+    seedOneTab()
+    render(<CommandPalette />)
+    openPalette()
+
+    fireEvent.click(await screen.findByTestId('palette-recent-PAGE_R'), { ctrlKey: true })
+
+    expectOpenedBehind('PAGE_R', 'Recent')
+  })
+
+  it('a Ctrl+click on a block result opens its page behind, on the block once in front', async () => {
+    seedOneTab()
+    mockedSearchBlocksPartitioned.mockResolvedValue(
+      partitionedResp(
+        [makePageRow('PAGE_X', 'Alpha')],
+        [makeBlockRow('BLOCK_42', 'alpha note', 'PAGE_X')],
+      ),
+    )
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: 'alpha' } })
+
+    fireEvent.click(await screen.findByTestId('palette-block-BLOCK_42'), { ctrlKey: true })
+
+    expect(useTabsStore.getState().activeTabIndex).toBe(0)
+    expect(useTabsStore.getState().tabs[1]?.pageStack.map((entry) => entry.pageId)).toEqual([
+      'PAGE_X',
+    ])
+    useTabsStore.getState().switchTab(1)
+    expect(useNavigationStore.getState().selectedBlockId).toBe('BLOCK_42')
+  })
+
+  it('on mobile, which shows no tabs, Ctrl+Enter opens the page in place', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    seedOneTab()
     const navigateToPage = vi.fn()
-    const openInNewTab = vi.fn()
-    useTabsStore.setState({ navigateToPage, openInNewTab })
+    useTabsStore.setState({ navigateToPage })
     mockedSearchBlocksPartitioned.mockResolvedValue(
       partitionedResp([makePageRow('PAGE_A', 'Alpha')], []),
     )
@@ -817,9 +888,9 @@ describe('CommandPalette — click semantics', () => {
     // `<CommandInput>` wrappers (cmdk's `onSelect` doesn't expose
     // modifier keys). Firing keyDown on the input bubbles up through
     // the wrapper handler before cmdk's internal Enter handler fires.
-    fireEvent.keyDown(input, { key: 'Enter', metaKey: true })
-    expect(openInNewTab).toHaveBeenCalledWith('PAGE_A', 'Alpha')
-    expect(navigateToPage).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+    expect(navigateToPage).toHaveBeenCalledWith('PAGE_A', 'Alpha')
+    expect(useTabsStore.getState().tabs).toHaveLength(1)
   })
 })
 

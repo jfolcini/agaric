@@ -1,7 +1,7 @@
 /**
- * A link chip's new-tab paths, through the tabs store: a middle click opens the
- * target behind the active tab, a Ctrl/Cmd+click opens it in front, and a click
- * anywhere else is left to the element under it.
+ * A link chip's new-tab paths, through the tabs store: a middle click or a
+ * Ctrl/Cmd+click opens the target behind the active tab, and a click anywhere
+ * else is left to the element under it.
  */
 
 import { fireEvent, render, screen } from '@testing-library/react'
@@ -58,24 +58,41 @@ beforeEach(() => {
 
 describe('link chips and new tabs', () => {
   it.each([{ ctrlKey: true }, { metaKey: true }])(
-    'a click with %o on a page link opens it in a new tab in front, without the chip’s own click',
+    'a click with %o on a page link opens it behind the active tab, without the chip’s own click',
     (modifier) => {
       render(<Links />)
 
       expect(fireEvent.click(screen.getByText('page link'), modifier)).toBe(false)
 
       expect(useTabsStore.getState().tabs).toHaveLength(2)
-      expect(useTabsStore.getState().activeTabIndex).toBe(1)
-      expect(activeTop()).toEqual({ pageId: 'LINKED', title: 'Linked page' })
+      expect(useTabsStore.getState().activeTabIndex).toBe(0)
+      expect(activeTop()).toEqual({ pageId: 'CUR', title: 'Current' })
+      expect(useTabsStore.getState().tabs[1]?.pageStack).toEqual([
+        { pageId: 'LINKED', title: 'Linked page' },
+      ])
       expect(useNavigationStore.getState().currentView).toBe('page-editor')
       expect(onChipClick).not.toHaveBeenCalled()
     },
   )
 
-  it('a Ctrl+click on a block ref opens its page in front, on the block', () => {
+  it.each([
+    ['a Ctrl+click', (chip: HTMLElement) => fireEvent.click(chip, { ctrlKey: true })],
+    [
+      'a middle click',
+      (chip: HTMLElement) => userEvent.setup().pointer({ keys: '[MouseMiddle]', target: chip }),
+    ],
+  ])('%s on a block ref opens its page behind the active tab, on the block', async (_, click) => {
     render(<Links />)
 
-    fireEvent.click(screen.getByText('block ref'), { ctrlKey: true })
+    await click(screen.getByText('block ref'))
+
+    expect(activeTop()).toEqual({ pageId: 'CUR', title: 'Current' })
+    expect(useTabsStore.getState().tabs[1]?.pageStack).toEqual([
+      { pageId: 'REF_PAGE', title: 'Ref page' },
+    ])
+    expect(useNavigationStore.getState().selectedBlockId).toBeNull()
+
+    useTabsStore.getState().switchTab(1)
 
     expect(activeTop()).toEqual({ pageId: 'REF_PAGE', title: 'Ref page' })
     expect(useNavigationStore.getState().selectedBlockId).toBe('REF')

@@ -55,6 +55,8 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // A `…Once` stub a test leaves unconsumed would otherwise answer the next test's call.
+  mockedSetListStyle.mockReset().mockResolvedValue(undefined)
   // #2468 — `edit_block` (the applyContentEdit backbone) resolves a `WithOps`
   // envelope; give it a wire-faithful default so the undo-ref capture path is
   // exercised instead of tripping on an `undefined` response.
@@ -132,7 +134,7 @@ describe('useSlashCommandStructural — headings', () => {
   })
 })
 
-describe('useSlashCommandStructural — callouts', () => {
+describe('useSlashCommandStructural — callouts, and the list style they and headings clear', () => {
   it('/callout uses the info type', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
     const { ctx } = makeSyntheticCtx()
@@ -172,27 +174,46 @@ describe('useSlashCommandStructural — callouts', () => {
     })
   })
 
-  // A callout is not a list: like every Turn into target but the two lists, it
-  // drops a bulleted block's `listStyle`, read back here from the mock backend.
-  it.each(['callout', 'callout-warning'])('%s clears the block’s list style', async (id) => {
-    seedBlocks()
-    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
-    const actual = await vi.importActual<typeof import('@/lib/list-style')>('@/lib/list-style')
-    mockedSetListStyle.mockImplementationOnce(actual.setListStyle)
-    const blockId = SEED_IDS.BLOCK_GS_1
-    await actual.setListStyle(blockId, 'bullet')
-    const styleOf = () =>
-      listStyleFromRows(dispatch('get_properties', { blockId }) as PropertyRow[])
-    expect(styleOf()).toBe('bullet')
+  // A heading or a callout is not a list: like every Turn into target but the two
+  // lists, it drops a bulleted block's `listStyle`, read back here from the mock
+  // backend. `/code` and `/quote` are pinned in the edge-case file, on a real editor.
+  it.each(['h1', 'h2', 'h6', 'callout', 'callout-warning'])(
+    '%s clears the block’s list style',
+    async (id) => {
+      seedBlocks()
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+      const actual = await vi.importActual<typeof import('@/lib/list-style')>('@/lib/list-style')
+      mockedSetListStyle.mockImplementationOnce(actual.setListStyle)
+      const blockId = SEED_IDS.BLOCK_GS_1
+      await actual.setListStyle(blockId, 'bullet')
+      const styleOf = () =>
+        listStyleFromRows(dispatch('get_properties', { blockId }) as PropertyRow[])
+      expect(styleOf()).toBe('bullet')
 
+      const { result } = renderHook(() => useSlashCommandStructural())
+      const { ctx } = makeSyntheticCtx({ blockId })
+      const handler =
+        result.current.exact[id] ?? result.current.prefix.find(([p]) => p === 'callout-')?.[1]
+      await handler?.(ctx, { id, label: id })
+
+      expect(styleOf()).toBe('none')
+      expect(toast.error).not.toHaveBeenCalled()
+    },
+  )
+
+  it('/h2 toasts once when clearing the list style fails', async () => {
+    mockedSetListStyle.mockRejectedValueOnce(new Error('boom'))
     const { result } = renderHook(() => useSlashCommandStructural())
-    const { ctx } = makeSyntheticCtx({ blockId })
-    const handler =
-      result.current.exact[id] ?? result.current.prefix.find(([p]) => p === 'callout-')?.[1]
-    await handler?.(ctx, { id, label: id })
+    const { ctx } = makeSyntheticCtx()
 
-    expect(styleOf()).toBe('none')
-    expect(toast.error).not.toHaveBeenCalled()
+    await result.current.exact['h2']?.(ctx, { id: 'h2', label: 'H2' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+      blockId: 'BLOCK_1',
+      toText: '## hello',
+    })
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.error).toHaveBeenCalledWith('blockTree.clearListStyleFailed')
   })
 
   it('/callout toasts once when clearing the list style fails', async () => {
