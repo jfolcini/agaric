@@ -9,7 +9,8 @@
  *
  * A right click inside text selected within one block keeps the webview's own
  * menu, so Copy and Paste stay one click away. On a selection across blocks the
- * block menu takes over, in its bulk form, with Copy selection as Markdown.
+ * block menu takes over, in its bulk form, with Copy selection as Markdown and
+ * the rows of block mode's batch toolbar that set one task state on all of it.
  * Turn into is the slash menu's (`page-slash-commands.tsx`), run on the menu's
  * block. Left out: Zoom in (page mode has none), and the touch gesture, which
  * keeps the pinned toolbar.
@@ -52,6 +53,8 @@ import type { PageBlockState } from '@/stores/page-blocks'
 /** What the menu asks of the session: block mode's commands, run after the save. */
 export interface PageBlockMenuActions {
   cycle: (id: string) => void
+  /** Set one task state, none to clear it, on every block of `ids`, once they are saved. */
+  setTodo: (ids: string[], state: string | null) => void
   cyclePriority: (id: string) => void
   openPropertyDrawer: (id: string) => void
   openHistory: (id: string) => void
@@ -279,6 +282,7 @@ function menuActions(
   const mergeable = menu.selectedIds.length === 1 && canMerge(view.state, menu.blockId)
   const bag: BlockActions = {
     onToggleTodo: (id) => actions.current.cycle(id),
+    onBatchSetTodo: (state) => actions.current.setTodo(menu.selectedIds, state),
     onTogglePriority: (id) => actions.current.cyclePriority(id),
     onShowProperties: (id) => actions.current.openPropertyDrawer(id),
     onShowHistory: (id) => actions.current.openHistory(id),

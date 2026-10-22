@@ -308,10 +308,18 @@ function buildCollapseGroup(ctx: MenuGroupContext): MenuItem[] {
   ]
 }
 
-/** Group 4: TODO cycle, Priority cycle. */
+/** The states a selection's task state can be set to, `null` clearing it, as block mode's batch toolbar offers them. */
+const BATCH_TODO_STATES = [
+  ['TODO', 'blockContext.todoLabel'],
+  ['DOING', 'blockContext.doingLabel'],
+  ['DONE', 'blockContext.doneLabel'],
+  [null, null],
+] as const
+
+/** Group 4: TODO cycle, on a selection one state set on all of it, Priority cycle. */
 function buildTaskGroup(ctx: MenuGroupContext): MenuItem[] {
-  const { t, dispatch, isBulk, actions, todoState, priority } = ctx
-  const { onToggleTodo, onTogglePriority } = actions
+  const { t, dispatch, handleAction, isBulk, actions, todoState, priority } = ctx
+  const { onToggleTodo, onTogglePriority, onBatchSetTodo } = actions
   return [
     {
       id: 'cycleTodo',
@@ -320,6 +328,17 @@ function buildTaskGroup(ctx: MenuGroupContext): MenuItem[] {
       action: onToggleTodo ? () => dispatch(onToggleTodo) : undefined,
       shortcut: shortcutHint('cycleTaskState'),
     },
+    ...(isBulk && onBatchSetTodo
+      ? BATCH_TODO_STATES.map(([state, labelKey]) => ({
+          id: 'setTodo' as const,
+          label:
+            labelKey === null
+              ? t('contextMenu.clearTodoSelected')
+              : t('contextMenu.setTodoSelected', { state: t(labelKey) }),
+          icon: <CheckSquare className="h-3.5 w-3.5" />,
+          action: () => handleAction(() => onBatchSetTodo(state)),
+        }))
+      : []),
     {
       id: 'cyclePriority',
       label: isBulk ? t('contextMenu.cyclePrioritySelected') : getPriorityLabel(priority, t),

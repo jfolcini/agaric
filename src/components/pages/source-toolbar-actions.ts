@@ -123,6 +123,7 @@ export const SOURCE_MENU_EXCLUDED: Readonly<Partial<Record<BlockMenuActionId, st
   copyBlockContent: 'The buffer is the block’s markdown: select its lines and copy them.',
   copySubtreeContent: 'The buffer is the subtree’s markdown: select its lines and copy them.',
   copySelectionContent: 'It copies selected blocks; the buffer selects text, which copies as text.',
+  setTodo: 'It sets a task state on selected blocks; the buffer selects text, not blocks.',
   merge:
     'Backspace at the start of a line is the buffer’s merge: it joins the line to the one above, keeping that block.',
   collapse: 'Folding hides a block’s children in the tree; the buffer shows every line.',

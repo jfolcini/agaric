@@ -72,6 +72,7 @@ import {
   collectUncachedLinkIds,
   fetchAndCacheLinks,
 } from '@/components/block-tree/use-block-link-resolve'
+import { setTodoStateOnBlocks } from '@/components/block-tree/use-block-multi-select'
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
 import { setBlockPriority, useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
@@ -381,9 +382,12 @@ function PageModeDocument({
       openHistory: (id: string) => void
       /** The block menu's Turn into: a slash command, run on the block once it is saved. */
       turnInto: (id: string, item: PickerItem) => void
+      /** The block menu's task state set on a selection, once its blocks are saved. */
+      setTodo: (ids: string[], state: string | null) => void
     }
   >({
     cycle: () => {},
+    setTodo: () => {},
     cyclePriority: () => {},
     setPriority: () => {},
     openDatePicker: () => {},
@@ -681,22 +685,30 @@ function PageModeDocument({
     // Its callers close page mode: the mode switch, source mode, a blocker, a link away.
     flushRef.current = () =>
       flush(true).then(() => editor.isDestroyed || !unsaved(editor.state.doc, save))
-    // After the save, so the block exists: an empty one is created for it (`keep`).
-    const afterSave = (id: string, change: () => Promise<void>): Promise<void> => {
+    // After the save, so the blocks exist: an empty one is created for them (`keep`).
+    // `change` gets those of `ids` the save holds.
+    const afterSaveAll = (
+      ids: readonly string[],
+      change: (saved: string[]) => Promise<void>,
+    ): Promise<void> => {
       stopTimer()
       return enqueue(async () => {
-        save.keep.add(id)
+        for (const id of ids) save.keep.add(id)
         try {
           await runSave(false)
         } finally {
-          save.keep.delete(id)
+          for (const id of ids) save.keep.delete(id)
         }
-        if (editor.isDestroyed || !save.saved.has(id)) return
+        const saved = ids.filter((id) => save.saved.has(id))
+        if (editor.isDestroyed || saved.length === 0) return
         // A block created here since the store last loaded: the change reads its row there.
-        if (!pageStore.getState().blocksById.has(id)) await read()
-        await change()
+        const { blocksById } = pageStore.getState()
+        if (saved.some((id) => !blocksById.has(id))) await read()
+        await change(saved)
       })
     }
+    const afterSave = (id: string, change: () => Promise<void>): Promise<void> =>
+      afterSaveAll([id], change)
     // Block mode's upload, once the block exists; with `inline`, as block mode's paste and drop,
     // an image also goes in at the caret if the caret is still in that block once uploaded. It
     // reads the page again itself.
@@ -736,6 +748,11 @@ function PageModeDocument({
     }
     actions.current = {
       cycle: (id) => afterSave(id, () => cycleTask(id)),
+      // Block mode's batch toolbar's write; read again, as its failure leaves the state it showed.
+      setTodo: (ids, state) =>
+        void afterSaveAll(ids, (saved) =>
+          setTodoStateOnBlocks(pageStore, pageId, saved, state, t),
+        ).then(readAgain),
       cyclePriority: (id) => afterSave(id, () => cyclePriority(id)),
       setPriority: (id, level) =>
         afterSave(id, () => setBlockPriority(pageStore, pageId, id, level)),

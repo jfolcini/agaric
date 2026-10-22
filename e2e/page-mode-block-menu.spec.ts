@@ -399,6 +399,45 @@ test.describe('page mode block menu (#5972) @editor @pages', () => {
       .toEqual([ids[0], ids[4]])
   })
 
+  test('a selection across blocks sets one task state on all of it, as block mode’s batch toolbar does, and it stays', async ({
+    page,
+  }) => {
+    const { ids } = await seedRows(page, 'Menu bulk state', [
+      [0, 'top'],
+      [0, 'one'],
+      [0, 'two'],
+      [0, 'three'],
+      [1, 'three child'],
+      [0, 'last'],
+    ])
+    await ipc(page, 'set_todo_state', { blockId: ids[2], state: 'DOING' })
+    await ipc(page, 'set_todo_state', { blockId: ids[4], state: 'TODO' })
+    await openInPageMode(page, 'Menu bulk state', 6)
+    const states = async () =>
+      await Promise.all(
+        ids.map(
+          async (id) =>
+            (await ipc<{ todo_state: string | null }>(page, 'get_block', { blockId: id }))
+              .todo_state,
+        ),
+      )
+    const expected = [null, 'DONE', 'DONE', 'DONE', 'TODO', null]
+
+    await selectBlocks(page, 1, 3)
+    await rightClick(page, ids[2])
+    await pick(page, 'Set task state to DONE')
+    await expect.poll(states).toEqual(expected)
+
+    await reopen(page, 'Menu bulk state', 6)
+    expect(await states()).toEqual(expected)
+    for (const [i, state] of expected.entries()) {
+      if (state === null) continue
+      await expect(
+        page.locator(`${EDITOR} [data-page-block-id="${ids[i]}"] [data-testid="task-marker"]`),
+      ).toHaveAttribute('aria-label', `Task: ${state}. Click to cycle.`)
+    }
+  })
+
   test('a typed word not saved yet is saved before the row runs, and an empty block’s menu has no reference to copy', async ({
     page,
   }) => {
