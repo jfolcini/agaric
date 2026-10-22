@@ -5,6 +5,7 @@
 
 import {
   type Announcements,
+  type KeyboardCoordinateGetter,
   KeyboardCode,
   KeyboardSensor,
   type KeyboardSensorOptions,
@@ -15,7 +16,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
+import { hasSortableData } from '@dnd-kit/sortable'
 import type { TFunction } from 'i18next'
 
 import { MOUSE_DRAG_ACTIVATION_DISTANCE } from '@/components/block-tree/use-block-dnd'
@@ -25,12 +26,42 @@ import {
 } from '@/components/block-tree/use-block-touch-long-press'
 import { useIsTouch } from '@/hooks/useIsTouch'
 
+const ARROW_STEPS: Partial<Record<string, { axis: 'x' | 'y'; step: 1 | -1 }>> = {
+  [KeyboardCode.Right]: { axis: 'x', step: 1 },
+  [KeyboardCode.Left]: { axis: 'x', step: -1 },
+  [KeyboardCode.Down]: { axis: 'y', step: 1 },
+  [KeyboardCode.Up]: { axis: 'y', step: -1 },
+}
+
+/**
+ * An arrow carries the item to the centre of its neighbour in list order,
+ * along the arrow's axis, so `closestCenter` settles on that neighbour whatever
+ * the two sizes. dnd-kit's `sortableKeyboardCoordinates` lines up their far
+ * edges instead, and a wide tab beside a narrow one stays over itself.
+ */
+const neighbourCoordinates: KeyboardCoordinateGetter = (
+  event,
+  { currentCoordinates, context: { active, over, collisionRect, droppableRects } },
+) => {
+  const arrow = ARROW_STEPS[event.code]
+  if (arrow === undefined) return undefined
+  event.preventDefault()
+  if (!hasSortableData(active) || collisionRect === null) return undefined
+  const { items } = active.data.current.sortable
+  const neighbour = items[items.indexOf(over?.id ?? active.id) + arrow.step]
+  const rect = neighbour === undefined ? undefined : droppableRects.get(neighbour)
+  if (rect === undefined) return undefined
+  return arrow.axis === 'x'
+    ? { x: rect.left + (rect.width - collisionRect.width) / 2, y: currentCoordinates.y }
+    : { x: currentCoordinates.x, y: rect.top + (rect.height - collisionRect.height) / 2 }
+}
+
 /**
  * Space picks an item up; Enter is left to the button, so it still opens or
  * activates it. Enter and Tab still drop one that is already up.
  */
 const KEYBOARD_SENSOR_OPTIONS: KeyboardSensorOptions = {
-  coordinateGetter: sortableKeyboardCoordinates,
+  coordinateGetter: neighbourCoordinates,
   keyboardCodes: {
     start: [KeyboardCode.Space],
     cancel: [KeyboardCode.Esc],

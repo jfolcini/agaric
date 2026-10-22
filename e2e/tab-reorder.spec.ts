@@ -39,6 +39,10 @@ async function dragAlongStrip(page: Page, source: Locator, target: Locator): Pro
     page.getByRole('status').filter({ hasText: `${dragged} moved over ${over}.` }),
   ).toBeAttached()
   await page.mouse.up()
+  // dnd-kit swallows every click until a 50 ms timer set at the drop runs, to
+  // eat the drop's own; a click sent at machine speed beats that timer. A 50 ms
+  // timer set after the drop runs after it.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 50)))
 }
 
 test.describe('Tab strip: middle click and reorder (#5691) @pages', () => {
@@ -81,6 +85,9 @@ test.describe('Tab strip: middle click and reorder (#5691) @pages', () => {
     // Each arrow moves from where the last one left the tab, once its move is announced.
     const announced = (text: string) => page.getByRole('status').filter({ hasText: text })
     await page.keyboard.press('Space')
+    // dnd-kit's keyboard sensor starts listening on a timer the Space sets; an
+    // arrow sent at machine speed beats it. A timer set after the Space runs after it.
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)))
     await page.keyboard.press('ArrowRight')
     await expect(announced('Getting Started moved over Quick Notes.')).toBeAttached()
     await page.keyboard.press('ArrowRight')

@@ -43,3 +43,14 @@ A separate review:
 - vitest: about 9,450 tests over the changed areas, the editor and `src/__tests__`;
 - typecheck, lint, and `prek` (including the manual stage);
 - 235 Playwright tests over tabs, drag, bookmarks, recents, page mode, references, search, the Pages view and the page tree.
+
+## CI fix
+
+Both tab-reorder specs failed in CI, which runs two workers on a loaded runner. Each was the spec racing one of dnd-kit's own timers:
+
+- **Drag.** After a pointer drag ends, dnd-kit keeps its click blocker on the document for 50 ms (`core.esm.js`) to swallow the drop's own click. The spec clicked Journal inside that window. A person can't click that fast, so the spec now waits out the window after `mouse.up`.
+- **Keyboard.** After Space picks a tab up, the keyboard sensor attaches its key listener on a zero-delay timer. CI's ArrowRight arrived first and was dropped. The spec now waits one timer tick after Space.
+
+Both were reproduced by stretching the page's timers, and both pass under the same stretch with the fix.
+
+A real bug turned up on the way. With dnd-kit's default arrow handling, an arrow could not move a wide tab past a narrow neighbour: the wide tab stayed over itself. `neighbourCoordinates` in `reorder-dnd.ts` now moves the item to its neighbour's centre in list order, and the bookmarks list shares it. Shown red with the default handling put back: two new `TabBar` cases, with widths 200/44/90 and 44/200/90.
