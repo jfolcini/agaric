@@ -1,0 +1,11 @@
+# Session 2869 — the frozen-peer cancel spec waits out a session the daemon started
+
+`e2e-tauri/sync-two-device.e2e.ts` › "a sync cancelled while the peer does not answer ends idle, and the pair syncs after" failed on PR #6066 (run 39791503163, job 119870628175) with `button[aria-label^="Cancel sync:"]` not clickable after 60 s. It had passed in every earlier real-backend run since #5739.
+
+**Cause.** The app's daemon dialled the peer on its own, about 100 ms before the spec's "pull first" press, so that press was refused with "Sync already in progress for this peer". That session's op phase satisfied `peer.waitPulled()`, and the spec then froze the peer while the session was still in its file phase. The frozen-peer press was refused the same way, so no dial started and no Cancel appeared. A session started by the daemon, or dialled by the peer, takes no progress channel from a press, so the row shows nothing for it. Its file phase shows nothing either, because the row's progress ends with the op phase and only file ticks bring it back. The app has no other way to show the spec that a session is running.
+
+**Fix: test only.** `freezeAndDial` freezes the peer and presses "Sync now" until the row shows the dial's Cancel. When a press shows none, it thaws the peer for a fixed time so the session holding it can finish, then tries again. That pause is timed because the session's end shows nowhere in the app. Without the thaw, the frozen peer holds the session until a transport timeout. The test's assertions are unchanged. A Rust change that let a refused press show a cancellable state would remove the need for the retry; none was made.
+
+**Shown red:** a variant forced the race. Before the freeze, it pastes a 12 MB attachment in the app and runs `peer.sync()`. The peer's pull returns at the end of its op phase, and the freeze lands in the long file phase. The old spec then failed exactly as CI did. The fixed spec, with the same injection, passed after one refused press.
+
+**Suites run** (CI-built binary, `WDIO_SKIP_TAURI_BUILD=1`): the unmodified spec once, green. The forced-race variant on the old spec: red. The forced-race variant on the fixed spec: green. The fixed spec 4 times: it passed every time, with no retries. Also `npm run typecheck:e2e-tauri`, type-aware `oxlint` and `oxfmt --check` on the spec.
