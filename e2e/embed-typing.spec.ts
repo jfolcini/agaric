@@ -68,8 +68,11 @@ test.describe('typing `![[` embeds a page (#5691) @editor @pages', () => {
       content: 'Embed host',
       spaceId: SCOPE.space_id,
     })
+    // The embed is typed into a seeded empty block, whose only caret position
+    // is its start. A caret moved by End reaches ProseMirror a moment after the
+    // key, so End then Enter could split `first` at the stale caret.
     const ids: string[] = []
-    for (const content of ['first', 'last']) {
+    for (const content of ['first', '', 'last']) {
       const row = await ipc<{ id: string }>(page, 'create_block', {
         blockType: 'content',
         content,
@@ -85,25 +88,23 @@ test.describe('typing `![[` embeds a page (#5691) @editor @pages', () => {
       .getByRole('radio', { name: 'Page' })
       .click()
     const editor = page.locator('[data-testid="page-mode-editor"]')
-    const first = editor.locator(`[data-page-block-id="${ids[0]}"] .page-block-content`)
-    await expect(first).toHaveText('first')
-
-    // A key pressed before the editor has placed the caret is lost or lands at
-    // the start of the block, so wait for each step to take.
-    const caretText = () =>
-      page.evaluate(() => {
-        const selection = document.getSelection()
-        return { text: selection?.anchorNode?.textContent, offset: selection?.anchorOffset }
-      })
-    await first.click()
-    await expect.poll(async () => (await caretText()).text).toBe('first')
-    await page.keyboard.press('End')
-    await expect.poll(caretText).toEqual({ text: 'first', offset: 'first'.length })
-    await page.keyboard.press('Enter')
-    await expect.poll(caretText).toEqual({ text: '', offset: 0 })
+    await expect(editor.locator(`[data-page-block-id="${ids[0]}"] .page-block-content`)).toHaveText(
+      'first',
+    )
+    await editor.locator(`[data-page-block-id="${ids[1]}"] .page-block-content`).click()
+    // Keys typed before the editor holds the caret are lost.
+    await expect
+      .poll(() =>
+        page.evaluate((id) => {
+          const anchor = document.getSelection()?.anchorNode
+          const element = anchor instanceof Element ? anchor : anchor?.parentElement
+          return element?.closest(`[data-page-block-id="${id}"]`) != null
+        }, ids[1]),
+      )
+      .toBe(true)
     await embedGettingStarted(page)
     // The embed renders once the caret leaves its block.
-    await editor.locator(`[data-page-block-id="${ids[1]}"] .page-block-content`).click()
+    await editor.locator(`[data-page-block-id="${ids[2]}"] .page-block-content`).click()
 
     await expect(editor.getByTestId('embed-container')).toContainText(WELCOME)
     const texts = async () => {
