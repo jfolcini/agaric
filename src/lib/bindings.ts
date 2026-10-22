@@ -633,6 +633,13 @@ export const commands = {
 	notes?: string[],
 } | null, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, vault, progress })),
 	/**
+	 *  Tauri command: the end of a folder import, linking the references its notes
+	 *  left (`ImportResult::deferred`) to the blocks their anchors name
+	 *  (`ImportResult::anchors`). Delegates to [`link_import_anchors_inner`];
+	 *  returns its warnings.
+	 */
+	linkImportAnchors: (spaceId: SpaceId, anchors: ImportAnchor[], blocks: BlockId[]) => typedError<string[], AppError>(__TAURI_INVOKE("link_import_anchors", { spaceId, anchors, blocks })),
+	/**
 	 *  Tauri command: import a BibTeX / CSL-JSON bibliography into `space_id`
 	 *  as reference pages. Delegates to [`import_bibliography_inner`].
 	 * 
@@ -2330,6 +2337,18 @@ export type HistoryEntry = {
 };
 
 /**
+ *  A block an imported note's anchor names: its trailing Obsidian `^id`
+ *  (without the `^`) or its Logseq `id::` uuid, on the page `page_id`. A
+ *  folder import hands these to `link_import_anchors`, which links another
+ *  note's reference to the block.
+ */
+export type ImportAnchor = {
+	page_id: string,
+	anchor: string,
+	block_id: string,
+};
+
+/**
  *  Outcome of one `import_bibliography` call. Field shapes are part of the
  *  agreed IPC contract — do not change.
  */
@@ -2437,6 +2456,16 @@ export type ImportResult = {
 	 *  `warn!` on completion so a lossy import is never silent.
 	 */
 	warnings: string[],
+	/**
+	 *  The blocks the file's anchors name: each Obsidian `^id` and Logseq
+	 *  `id::` uuid it carried.
+	 */
+	anchors: ImportAnchor[],
+	/**
+	 *  On a folder import, the blocks still holding a reference into another
+	 *  note, which `link_import_anchors` links once every note is imported.
+	 */
+	deferred: string[],
 };
 
 /**
@@ -4650,7 +4679,11 @@ export type VaultFile = {
 	bytes: number[],
 };
 
-/**  What a folder pick sends with one of its notes ([`import_markdown`]). */
+/**
+ *  What a folder pick sends with one of its notes ([`import_markdown`]). A note
+ *  sent with it leaves its references into other notes for
+ *  [`link_import_anchors`], which the pick calls once every note is imported.
+ */
 export type VaultImport = {
 	/**  The bytes of the sibling files the note references (#1925). */
 	files?: VaultFile[],

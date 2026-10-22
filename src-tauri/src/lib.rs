@@ -243,6 +243,8 @@ macro_rules! agaric_commands {
             $crate::commands::notifier::set_reminder_settings,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown,
+            // The end of a folder import: links between its notes.
+            $crate::commands::pages::link_import_anchors,
             // BibTeX / CSL-JSON bibliography import (#1454 tier a)
             $crate::commands::pages::import_bibliography,
             // Attachments (F-7)

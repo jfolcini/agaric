@@ -21,7 +21,7 @@ import { useCallback, useRef, useState } from 'react'
 
 import { invalidateCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import { unwrap } from '@/lib/app-error'
-import { commands } from '@/lib/bindings'
+import { type ImportAnchor, commands } from '@/lib/bindings'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { importMarkdown } from '@/lib/ipc-helpers'
 import { logger } from '@/lib/logger'
@@ -218,6 +218,9 @@ export function useImportRunner(): UseImportRunner {
       const failedFiles: FailedFile[] = initialFailures ? [...initialFailures] : []
       let succeededFiles = 0
       const importedPageIds = new Set<string>()
+      // A folder's notes link into one another once all of them are imported.
+      const anchors: ImportAnchor[] = []
+      const deferred: string[] = []
       let lastTitle = ''
       // #1927 — true once the user hits Cancel mid-loop.
       let cancelled = false
@@ -273,6 +276,8 @@ export function useImportRunner(): UseImportRunner {
           totalBlocks += result.blocks_created
           totalProps += result.properties_set
           allWarnings.push(...result.warnings)
+          anchors.push(...result.anchors)
+          deferred.push(...result.deferred)
           succeededFiles += 1
           importedPageIds.add(result.page_id)
           lastTitle = result.page_title
@@ -296,6 +301,17 @@ export function useImportRunner(): UseImportRunner {
         totalBytes += unit.bytes
         setBlocksProcessed(totalBlocks)
         setBytesProcessed(totalBytes)
+      }
+
+      // A cancelled run links what it imported too: each note's blocks exist.
+      if (deferred.length > 0) {
+        try {
+          const linked = await commands.linkImportAnchors(activeSpaceId, anchors, deferred)
+          allWarnings.push(...unwrap(linked))
+        } catch (err) {
+          logger.error('DataSettingsTab', 'linking the imported notes failed', undefined, err)
+          allWarnings.push(importErrorReason(err))
+        }
       }
 
       // #5258 — an imported journal day must not hide behind a cached range.

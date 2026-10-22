@@ -625,6 +625,7 @@ async fn resolve_new_names(
         device_id,
         space_id: space.as_str(),
         file_page: None,
+        defer_anchors: false,
         warnings,
         created: Vec::new(),
     };

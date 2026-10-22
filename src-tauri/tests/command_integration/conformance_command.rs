@@ -35,6 +35,7 @@ use super::conformance_query::{
     PROJECTING_STEP, PROPERTY_DEF_ATTRS, SPACE_TOKEN, relabel_token, row_token,
 };
 use agaric_core::ulid::{ActiveBlockId, AttachmentId, BlockId};
+use agaric_engine::import::ImportAnchor;
 use agaric_store::op::OpRef;
 use agaric_store::space::{SpaceId, SpaceScope};
 use serde::Serialize;
@@ -316,6 +317,10 @@ const RETURN_SHAPE: &[(&str, &str, &[&str], &[&str])] = &[
         &["pages_created", "entries_skipped", "properties_set"],
         &[],
     ),
+    // The end of a folder import answers a list of bare strings, its warnings,
+    // which the fixture pins whole: none carries a `#`. Backend-only on the
+    // mock like the two imports above.
+    ("link_import_anchors", HEADED_ID_KEY, &["warning"], &[]),
 ];
 
 fn to_json<T: Serialize>(outcome: Result<T, AppError>) -> Result<Value, AppError> {
@@ -379,19 +384,20 @@ pub(super) async fn apply_op_via_command(
             })
             .collect::<Vec<_>>()
     };
-    let block_ids = || {
-        arg("blockIds")
+    let label_ids = |key: &str| {
+        arg(key)
             .and_then(Value::as_array)
-            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'blockIds'"))
+            .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg '{key}'"))
             .iter()
             .map(|l| {
                 let label = l.as_str().unwrap_or_else(|| {
-                    panic!("conformance op '{command}': blockIds entry is not a string")
+                    panic!("conformance op '{command}': {key} entry is not a string")
                 });
                 BlockId::from(resolve_op_arg_id(label, created_ids).as_str())
             })
             .collect::<Vec<_>>()
     };
+    let block_ids = || label_ids("blockIds");
     // String args take no label expansion: a `property_definitions` key is
     // the user's own text, not a seed id.
     let opt_str = |k: &str| arg(k).and_then(Value::as_str).map(str::to_owned);
@@ -942,6 +948,39 @@ pub(super) async fn apply_op_via_command(
             )
             .await,
         ),
+        // The end of a folder import. The blocks it links and the pages and
+        // blocks its anchors name are labels; an anchor's own text, a `^id` or
+        // a Logseq uuid, is the caller's.
+        "link_import_anchors" => {
+            let anchors: Vec<ImportAnchor> = arg("anchors")
+                .and_then(Value::as_array)
+                .unwrap_or_else(|| panic!("conformance op '{command}' is missing arg 'anchors'"))
+                .iter()
+                .map(|anchor| {
+                    let field = |key: &str| {
+                        anchor[key].as_str().unwrap_or_else(|| {
+                            panic!("conformance op '{command}': anchor {key} is not a string")
+                        })
+                    };
+                    ImportAnchor {
+                        page_id: resolve_op_arg_id(field("page_id"), created_ids),
+                        anchor: field("anchor").to_owned(),
+                        block_id: resolve_op_arg_id(field("block_id"), created_ids),
+                    }
+                })
+                .collect();
+            to_json(
+                link_import_anchors_inner(
+                    pool,
+                    DEV,
+                    mat,
+                    arg_label_id("spaceId").expect("spaceId").as_str(),
+                    &anchors,
+                    &label_ids("blocks"),
+                )
+                .await,
+            )
+        }
         other => panic!("conformance op '{other}' is not wired in the command leg"),
     }
 }
@@ -1287,7 +1326,7 @@ mod tests {
     /// vice versa, and the count is the one this module claims — so a
     /// mutating command cannot join one table without the other, and cannot
     /// join at all without this number moving.
-    const MUTATING_ARM_COUNT: usize = 50;
+    const MUTATING_ARM_COUNT: usize = 51;
 
     #[test]
     fn the_dispatcher_and_the_return_shape_table_name_the_same_commands() {

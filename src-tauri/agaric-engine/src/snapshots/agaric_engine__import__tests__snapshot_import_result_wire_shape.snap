@@ -11,3 +11,9 @@ collapsed:
 warnings:
   - 1 block(s) exceeded maximum depth of 19 and were flattened
   - stripped 2 unresolvable ((block-ref)) token(s)
+anchors:
+  - page_id: 01J00000000000000000PAGE01
+    anchor: step-2
+    block_id: 01J00000000000000000BLOCK2
+deferred:
+  - 01J00000000000000000BLOCK3

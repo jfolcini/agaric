@@ -196,6 +196,8 @@ describe('DataTab', () => {
       properties_set: 2,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     }
     mockImportMarkdown.mockResolvedValueOnce(importResult)
@@ -296,6 +298,8 @@ describe('DataTab', () => {
       properties_set: 2,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     }
     mockImportMarkdown.mockResolvedValueOnce(importResult)
@@ -375,6 +379,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     })
@@ -689,6 +695,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     })
@@ -704,6 +712,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     })
@@ -756,6 +766,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     })
@@ -775,6 +787,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     })
@@ -820,6 +834,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     })
@@ -866,6 +882,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     })
@@ -882,6 +900,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     })
@@ -910,6 +930,8 @@ describe('DataTab', () => {
       properties_set: 0,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: ['Dropped malformed YAML on line 2', 'Unrecognized property "foo"'],
     })
 
@@ -1004,6 +1026,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
       .mockRejectedValueOnce(new Error('boom'))
@@ -1042,6 +1066,8 @@ describe('DataTab', () => {
       properties_set: 0,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     })
 
@@ -1107,6 +1133,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     })
@@ -1121,6 +1149,8 @@ describe('DataTab', () => {
         properties_set: 1,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: ['a warning'],
       })
       .mockRejectedValueOnce(new Error('boom'))
@@ -1217,6 +1247,8 @@ describe('DataTab', () => {
       properties_set: 0,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     })
 
@@ -1241,8 +1273,8 @@ describe('DataTab', () => {
         expect.any(Function),
         // No attachment refs in the content ⇒ null vaultFiles payload.
         null,
-        // No `[[Name]]` links ⇒ no vault notes.
-        null,
+        // No `[[Name]]` links ⇒ no vault notes, which still marks a folder's note.
+        [],
       )
     })
   })
@@ -1324,6 +1356,8 @@ describe('DataTab', () => {
       properties_set: 0,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     })
     mockResolvePageByAlias.mockResolvedValueOnce(['PAGE_ULID', 'My Imported Page'])
@@ -1394,6 +1428,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     })
@@ -1484,6 +1520,8 @@ describe('DataTab', () => {
         properties_set: 0,
         page_id: 'PAGE',
         collapsed: [],
+        anchors: [],
+        deferred: [],
         warnings: [],
       })
     })
@@ -1511,6 +1549,8 @@ describe('DataTab', () => {
       properties_set: 0,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     }
 
@@ -1591,6 +1631,8 @@ describe('DataTab', () => {
       properties_set: 0,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     })
 
@@ -1794,6 +1836,8 @@ describe('DataTab', () => {
       properties_set: 0,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     })
 
@@ -1970,6 +2014,8 @@ describe('DataTab', () => {
       properties_set: 12,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     }
 

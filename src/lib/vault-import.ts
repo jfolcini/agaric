@@ -206,20 +206,20 @@ const WIKILINK_NAME_RE = /\[\[([^\]|#\n]+)/g
 
 /**
  * The paths of the notes in `notesByName` (keyed by lowercased file stem) that
- * a `[[Name]]` in `content` may name, or `null` for none (#5740). The backend
+ * a `[[Name]]` or `![[Name]]` in `content` may name (#5740). The backend
  * writes such a link with the note's title and picks between notes of one
  * name, so every note of a matching name ships. A loose scan, like
  * {@link scanAttachmentRefs}: a path the backend then finds no link for is
  * harmless.
  */
-function linkedNotePaths(content: string, notesByName: Map<string, string[]>): string[] | null {
+function linkedNotePaths(content: string, notesByName: Map<string, string[]>): string[] {
   const paths = new Set<string>()
   for (const match of content.matchAll(WIKILINK_NAME_RE)) {
     for (const path of notesByName.get((match[1] as string).trim().toLowerCase()) ?? []) {
       paths.add(path)
     }
   }
-  return paths.size > 0 ? [...paths] : null
+  return [...paths]
 }
 
 /**
@@ -256,7 +256,9 @@ export function mdFilesToUnits(files: File[], vaultIndex: VaultIndex | null): Im
       const content = await file.text()
       const path = importPath(file)
       // #1925 — on a vault/folder import, ship matched sibling bytes; a
-      // single-file import (no index) has no siblings.
+      // single-file import (no index) has no siblings. A folder note always
+      // ships its note names, even none: that marks it as a folder's, whose
+      // references into other notes wait for `link_import_anchors`.
       const vaultFiles = vaultIndex == null ? null : await collectVaultFiles(content, vaultIndex)
       const vaultNotes = vaultIndex == null ? null : linkedNotePaths(content, notesByName)
       return { content, path, vaultFiles, vaultNotes }

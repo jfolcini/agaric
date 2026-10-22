@@ -259,9 +259,11 @@ describe('mdFilesToUnits', () => {
 
   // #5740 — the backend writes a `[[Name]]` naming a note of the pick with
   // that note's title, so each file ships the paths of the notes its links
-  // may name, every note of a shared name included.
-  it("ships the paths of the folder's notes a `[[Name]]` names, or null", async () => {
-    const home = folderFile(['- [[Topic]] [[twin#h|x]] [[none]]'], 'home.md', 'Vault/home.md')
+  // and embeds may name, every note of a shared name included, and none when
+  // there are none: a folder's note always ships them, which tells the
+  // backend it is one.
+  it("ships the paths of the folder's notes a `[[Name]]` names, or none", async () => {
+    const home = folderFile(['- [[Topic]] ![[twin#h|x]] [[none]]'], 'home.md', 'Vault/home.md')
     const topic = folderFile(['- body'], 'topic.md', 'Vault/sub/topic.md')
     const twin = folderFile(['- twin'], 'twin.md', 'Vault/twin.md')
     const deepTwin = folderFile(['- deep twin'], 'twin.md', 'Vault/a/twin.md')
@@ -274,7 +276,7 @@ describe('mdFilesToUnits', () => {
       'Vault/twin.md',
       'Vault/a/twin.md',
     ])
-    expect((await topicUnit?.load())?.vaultNotes).toBeNull()
+    expect((await topicUnit?.load())?.vaultNotes).toEqual([])
   })
 
   it('matches a `[[Name]]` to its note in any case and with padding spaces', async () => {

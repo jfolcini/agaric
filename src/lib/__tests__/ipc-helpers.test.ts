@@ -203,6 +203,8 @@ describe('importMarkdown', () => {
       properties_set: 2,
       page_id: 'PAGE',
       collapsed: [],
+      anchors: [],
+      deferred: [],
       warnings: [],
     }
     mockedInvoke.mockImplementation(mockInvokeCommands({ import_markdown: () => expected }))
@@ -236,6 +238,8 @@ describe('importMarkdown', () => {
           properties_set: 0,
           page_id: 'PAGE',
           collapsed: [],
+          anchors: [],
+          deferred: [],
           warnings: [],
         }),
       }),
@@ -268,6 +272,8 @@ describe('importMarkdown', () => {
             properties_set: 0,
             page_id: 'PAGE',
             collapsed: [],
+            anchors: [],
+            deferred: [],
             warnings: [],
           }
         },
@@ -294,6 +300,8 @@ describe('importMarkdown', () => {
           properties_set: 0,
           page_id: 'PAGE',
           collapsed: [],
+          anchors: [],
+          deferred: [],
           warnings: [],
         }),
       }),
